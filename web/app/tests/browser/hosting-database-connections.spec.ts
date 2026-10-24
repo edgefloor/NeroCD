@@ -5,13 +5,14 @@ import { expect, test, type Page } from "@playwright/test";
 async function fixture(page: Page) {
   let connected = false;
   let lose = false;
+  let authorityReads = 0;
   const writes: string[] = [];
   const list = (items: unknown[]) => ({ items, count: items.length, total: items.length, limit: 100, offset: 0 });
   const resource = { id: "app", project_id: "p", project_environment_id: "e", name: "Connection fixture application", kind: "application", generation: 3, created_by: "operator", created_at: "", updated_at: "", source: { kind: "image", image: { reference: "example.test/ui-fixture:1" } } };
   const connection = { id: "hcn_fixture", project_id: "p", application_resource_id: "app", database_resource_id: "db", binding_id: "binding", binding_hash: `sha256:${"a".repeat(64)}`, state: "active", reason_code: "completed", capture_id: "capture_fixture", upgrade_operation_id: "upgrade_fixture", application_operation_id: "application_fixture", membership_revision: 4, created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-24T00:00:00Z" };
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname;
-    if (path === "/api/v1/me") return route.fulfill({ json: { id: "operator", provider: "oidc", roles: [], name: "Fixture operator", email: "fixture@example.test" } });
+    if (path === "/api/v1/me") { authorityReads++; return route.fulfill({ json: { id: "operator", provider: "oidc", roles: [], name: "Fixture operator", email: "fixture@example.test" } }); }
     if (path === "/api/v1/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/api/v1/projects") return route.fulfill({ json: list([{ id: "p", name: "Intercepted database UI fixture", description: "", created_at: "" }]) });
     if (path === "/api/v1/project-members") return route.fulfill({ json: list([{ id: "member", project_id: "p", user_id: "operator", role: "owner", created_at: "" }]) });
@@ -42,7 +43,7 @@ async function fixture(page: Page) {
   await hosting.getByRole("button", { name: "Fixture environment", exact: true }).click();
   const panel = page.getByRole("region", { name: "Database connection for Connection fixture application", exact: true });
   await expect(panel.getByLabel("Database to connect", { exact: true })).toBeVisible();
-  return { panel, writes, lose: () => { lose = true; } };
+  return { panel, writes, authorityReads: () => authorityReads, lose: () => { lose = true; } };
 }
 for (const width of [320, 390, 430, 1440]) {
   test(`intercepted connection flow contains controls and supports keyboard at ${width}px`, async ({ page }, info) => {
@@ -68,10 +69,16 @@ for (const width of [320, 390, 430, 1440]) {
   });
 }
 test("intercepted uncertain connection delivery retains an identical request", async ({ page }) => {
-  const { panel, writes, lose } = await fixture(page);
+  await page.clock.install();
+  const { panel, writes, lose, authorityReads } = await fixture(page);
   await panel.getByLabel("Database to connect", { exact: true }).selectOption("db"); await panel.getByRole("form", { name: "Review database connection request" }).getByRole("checkbox").check(); lose();
   await panel.getByRole("button", { name: "Connect database and deploy application", exact: true }).click();
   await expect(panel.getByText(/No confirmed response/)).toBeVisible();
+  const before = authorityReads();
+  await page.clock.fastForward(11_000);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+  await expect.poll(authorityReads).toBeGreaterThan(before);
+  await expect(panel.getByText(/Retained request:/)).toBeVisible();
   await panel.getByRole("button", { name: "Retry identical connection request", exact: true }).click();
   await expect(panel.getByText("Connection workflow completed", { exact: true })).toBeVisible(); expect(writes[1]).toBe(writes[0]);
 });

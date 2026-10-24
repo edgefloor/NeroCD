@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
+import { allProjectMembersQuery, ApiError, principalQuery, queryKeys, type Principal, type ProjectMember } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResourceBinding } from "@/api/destinations";
@@ -18,12 +18,12 @@ export function ResourceDatabaseConnections({ resource, writable, blocked }: { r
   const [denied, setDenied] = useState("");
   const actor = identity.data ? JSON.stringify([identity.data.provider, identity.data.id]) : "";
   const scopeID = JSON.stringify([actor, resource.project_id, resource.id]);
-  if (blocked || identity.isPending || identity.isFetching || identity.isError || members.isPending || members.isFetching || members.isError || !identity.data) return <p role="status">Database connection access is pending or unavailable. Refresh project access to continue.</p>;
-  if (denied === scopeID) return <p role="alert">Database connection permission is unavailable. Reload to verify access. Retained requests and drafts have been cleared.</p>;
+  if (!identity.data || !members.data) return <p role="status">Database connection access is pending or unavailable. Refresh project access to continue.</p>;
+  if (denied === scopeID || databaseDenied(identity.error) || databaseDenied(members.error)) return <p role="alert">Database connection permission is unavailable. Reload to verify access. Retained requests and drafts have been cleared.</p>;
   const owner = writable && canOwnProject(identity.data, members.data ?? [], resource.project_id);
-  return <ConnectionSession key={JSON.stringify([scopeID, owner])} resource={resource} owner={owner} legacyWritable={writable} scope={{ actor, project: resource.project_id, resource: resource.id }} onDenied={() => setDenied(scopeID)} />;
+  return <ConnectionSession key={JSON.stringify([scopeID, owner])} resource={resource} owner={owner} legacyWritable={writable} accessPaused={blocked || identity.isFetching || identity.isError || members.isFetching || members.isError} scope={{ actor, project: resource.project_id, resource: resource.id }} onDenied={() => setDenied(scopeID)} />;
 }
-function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }: { resource: Resource; owner: boolean; legacyWritable: boolean; scope: DatabaseConnectionScope; onDenied: () => void }) {
+function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scope, onDenied }: { resource: Resource; owner: boolean; legacyWritable: boolean; accessPaused: boolean; scope: DatabaseConnectionScope; onDenied: () => void }) {
   const client = useQueryClient();
   const id = useId();
   const active = useRef(true);
@@ -52,9 +52,25 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
   const connection = status.data;
   const known = Boolean(connection && Object.hasOwn(states, connection.state));
   const selected = options.data?.items.find((item) => item.resource_id === database);
-  const paused = busy || status.isPending || status.isError || status.isFetching || (connection && !known);
+  const paused = accessPaused || busy || status.isPending || status.isError || status.isFetching || (connection && !known);
   const denied = databaseDenied(status.error) || databaseDenied(options.error);
   useEffect(() => { if (denied) onDenied(); }, [denied, onDenied]);
+  function currentAuthority() {
+    const principal = client.getQueryData<Principal>(queryKeys.principal);
+    const membership = client.getQueryData<ProjectMember[]>(queryKeys.allProjectMembers);
+    const identityState = client.getQueryState(queryKeys.principal);
+    const membershipState = client.getQueryState(queryKeys.allProjectMembers);
+    return active.current && owner && principal && JSON.stringify([principal.provider, principal.id]) === scope.actor && membership && canOwnProject(principal, membership, scope.project) && identityState?.status === "success" && membershipState?.status === "success" && identityState.fetchStatus !== "fetching" && membershipState.fetchStatus !== "fetching" && !databaseDenied(client.getQueryState(connectionKey(scope))?.error) && !databaseDenied(client.getQueryState(connectionOptionsQuery(scope).queryKey)?.error);
+  }
+  async function settleAuthority() {
+    // Join existing revalidation without starting another authority read. Query
+    // cache updates are synchronous; React observer notifications may be deferred.
+    const reads: Promise<unknown>[] = [];
+    if (client.getQueryState(queryKeys.principal)?.fetchStatus === "fetching") reads.push(client.fetchQuery({ ...principalQuery(), staleTime: 0 }));
+    if (client.getQueryState(queryKeys.allProjectMembers)?.fetchStatus === "fetching") reads.push(client.fetchQuery({ ...allProjectMembersQuery(), staleTime: 0 }));
+    try { await boundedDatabaseRequest(() => Promise.all(reads), pending.current?.signal); } catch { return false; }
+    return Boolean(currentAuthority());
+  }
   async function refresh() {
     const latest = await status.refetch();
     if (databaseDenied(latest.error)) { onDenied(); throw latest.error; }
@@ -67,7 +83,7 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
   }
   async function requestAction(kind: Attempt["kind"], event?: FormEvent) {
     event?.preventDefault();
-    if (!owner || submitting.current || paused || conflict || !confirmed || (attempt && attempt.kind !== kind)) return;
+    if (!currentAuthority() || submitting.current || paused || conflict || !confirmed || (attempt && attempt.kind !== kind)) return;
     if (!attempt && (kind === "connect" ? connection !== null || !selected || selected.status !== "available" || selected.reason_code !== "eligible" || options.isError || options.isFetching : !connection || connection.state !== "active" || Boolean(connection.hold_operation_id))) return;
     const controller = new AbortController(); pending.current = controller;
     submitting.current = true; setBusy(true); setError(""); setNotice("");
@@ -99,8 +115,10 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
         if (!active.current || controller.signal.aborted) return;
         setAttempt(input);
       }
+      if (!await settleAuthority() || controller.signal.aborted) return;
       const operation = input.kind === "connect" ? await connectDatabase(scope, input.body, controller.signal) : input.kind === "deploy" ? await deployConnectedApplication(scope, input.body, controller.signal) : await maintainConnectedDatabase(scope, input.database, input.body, controller.signal);
       if (!active.current || controller.signal.aborted) return;
+      if (!await settleAuthority() || controller.signal.aborted) return;
       setNotice(`Request accepted: ${operation.id}. Review recorded progress; acceptance does not confirm runtime health.`);
       setAttempt(undefined); setConfirmed(false);
       if (input.kind === "connect") client.setQueryData(connectionKey(scope), operation);
@@ -108,13 +126,14 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (databaseDenied(cause)) { onDenied(); return; }
+      if (!await settleAuthority() || controller.signal.aborted) return;
       setError(!input && !(cause instanceof ApiError) ? "Unable to verify current configuration. No new request was sent. Refresh before retrying." : connectionError(cause));
       if (cause instanceof ApiError && cause.status === 400) { setAttempt(undefined); setConfirmed(false); }
       if (cause instanceof ApiError && cause.status === 409) { setConflict(true); setReviewed(false); }
     } finally { submitting.current = false; if (pending.current === controller) pending.current = null; if (active.current) setBusy(false); }
   }
   async function review() {
-    if (busy) return;
+    if (busy || accessPaused) return;
     setBusy(true); setError("");
     try {
       await refresh();
@@ -125,15 +144,16 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
     catch (cause) { if (active.current) setError(connectionError(cause)); }
     finally { if (active.current) setBusy(false); }
   }
-  if (resource.source.kind !== "image") return <><p>Database connections require a public container image. Source builds are unsupported.</p><ResourceDeployments resource={resource} writable={legacyWritable} blocked={false} /></>;
+  if (resource.source.kind !== "image") return <><p>Database connections require a public container image. Source builds are unsupported.</p><ResourceDeployments resource={resource} writable={legacyWritable} blocked={accessPaused} /></>;
   if (denied) return <p role="alert">Database connection access is unavailable.</p>;
-  const editingLocked = busy || Boolean(attempt);
+  const editingLocked = accessPaused || busy || Boolean(attempt);
   const canConnect = !connection && !options.isError && !options.isPending && selected?.status === "available" && selected.reason_code === "eligible";
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Database connection for ${resource.name}`}>
     <h5 className="font-medium">Database connection</h5>
+    {accessPaused ? <p role="status">Project access is being verified or is temporarily unavailable. Changes are paused; retained requests and draft settings are preserved.</p> : null}
     {status.isPending ? <p role="status">Checking saved database connection...</p> : null}
     {status.isError ? <p role="alert">Unable to verify the database connection. Deployment controls are paused. {connectionError(status.error)}</p> : null}
-    <Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={busy || status.isFetching} onClick={() => void review()}>Refresh database connection</Button>
+    <Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={accessPaused || busy || status.isFetching} onClick={() => void review()}>Refresh database connection</Button>
     {connection ? <>
       <p role="status">{states[connection.state] ?? "Unrecognized connection status. Actions are paused."}</p>
       <dl className="space-y-1 break-all text-sm"><dt>Application</dt><dd>{connection.application_resource_id}</dd><dt>Database</dt><dd>{connection.database_resource_id}</dd><dt>Membership revision</dt><dd>{connection.membership_revision}</dd><dt>Recorded reason</dt><dd>{connection.reason_code || "None recorded"}</dd><dt>Network observation</dt><dd>{connection.capture_id || "Not recorded"}</dd><dt>Database update operation</dt><dd>{connection.upgrade_operation_id || "Not recorded"}</dd><dt>Application operation</dt><dd>{connection.application_operation_id || "Not recorded"}</dd><dt>Recorded update</dt><dd>{connection.updated_at}</dd></dl>
@@ -150,13 +170,13 @@ function ConnectionSession({ resource, owner, legacyWritable, scope, onDenied }:
     {owner && !status.isPending && !status.isError ? <form className="min-w-0 space-y-3 rounded-lg border p-3" aria-label="Review database connection request" onSubmit={(event) => void requestAction(attempt?.kind ?? (connection ? "deploy" : "connect"), event)}>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2"><label htmlFor={`${id}-port`}>Application container port<Input id={`${id}-port`} type="number" min={1} max={65535} value={port} disabled={editingLocked} required onChange={(event) => { setPort(event.target.value); setConfirmed(false); }} /></label><label htmlFor={`${id}-path`}>Application readiness path<Input id={`${id}-path`} maxLength={1024} value={readiness} required disabled={editingLocked} onChange={(event) => { setReadiness(event.target.value); setConfirmed(false); }} /></label><label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={editingLocked} required onChange={(event) => { setTimeoutValue(event.target.value); setConfirmed(false); }} /></label></div>
       <p className="text-xs text-muted-foreground">The readiness path is local, such as /health. The server allocates a separate runner-local application port. These actions do not promise public traffic or uninterrupted service. Database redeployment can interrupt database access.</p>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed the selected database and application settings and approve this request.</span></label>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={accessPaused || busy} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed the selected database and application settings and approve this request.</span></label>
       <div className="flex flex-wrap gap-2"><Button type="submit" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={Boolean(paused) || conflict || !confirmed || (attempt ? attempt.kind === "maintain" : connection ? connection.state !== "active" || Boolean(connection.hold_operation_id) : !canConnect)}>{attempt?.kind === "connect" ? "Retry identical connection request" : attempt?.kind === "deploy" ? "Retry identical application request" : connection ? "Redeploy connected application" : "Connect database and deploy application"}</Button>
       {connection ? <Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={Boolean(paused) || conflict || !confirmed || (attempt ? attempt.kind !== "maintain" : connection.state !== "active" || connection.membership_revision < 1 || Boolean(connection.hold_operation_id))} onClick={() => void requestAction("maintain")}>{attempt?.kind === "maintain" ? "Retry identical database request" : "Redeploy connected database"}</Button> : null}</div>
     </form> : <p className="text-xs text-muted-foreground">Project owner access is required for database connection changes.</p>}
     {attempt ? <p className="break-all text-xs">Retained request: {attempt.kind === "connect" ? attempt.body.binding.request_id : attempt.body.idempotency_key}. Settings stay frozen for an identical retry.</p> : null}
-    {conflict ? <section className="space-y-2" aria-label="Review changed connection"><p role="status">Nothing was resubmitted. Refresh the recorded connection, then explicitly approve a separate request.</p><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={busy} onClick={() => void review()}>Refresh for conflict review</Button><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={!reviewed || busy || status.isError} onClick={() => { setReviewBase(reviewResource); setConflict(false); setAttempt(undefined); setConfirmed(false); setReviewed(false); setError(""); }}>Use refreshed configuration for a new request</Button></section> : null}
+    {conflict ? <section className="space-y-2" aria-label="Review changed connection"><p role="status">Nothing was resubmitted. Refresh the recorded connection, then explicitly approve a separate request.</p><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={busy || accessPaused} onClick={() => void review()}>Refresh for conflict review</Button><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={!reviewed || busy || accessPaused || status.isError} onClick={() => { setReviewBase(reviewResource); setConflict(false); setAttempt(undefined); setConfirmed(false); setReviewed(false); setError(""); }}>Use refreshed configuration for a new request</Button></section> : null}
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status" className="break-all">{notice}</p> : null}
-    {status.data === null && !status.isError && !attempt && !busy && !conflict ? <ResourceDeployments resource={resource} writable={legacyWritable} blocked={false} /> : null}
+    {status.data === null && !status.isError && !attempt && !busy && !conflict ? <ResourceDeployments resource={resource} writable={legacyWritable} blocked={accessPaused} /> : null}
   </section>;
 }

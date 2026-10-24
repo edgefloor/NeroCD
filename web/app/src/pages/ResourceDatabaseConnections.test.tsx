@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
 import type { Resource } from "@/api/hosting";
@@ -26,7 +26,7 @@ function setup(handler?: (url: string, init: RequestInit) => Response | Promise<
   vi.stubGlobal("fetch", fetch);
   return { fetch, ...render(<QueryClientProvider client={client}><ResourceDatabaseConnections resource={resource} writable blocked={false} /></QueryClientProvider>) };
 }
-afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); client?.clear(); focusManager.setFocused(undefined); vi.unstubAllGlobals(); });
 async function choose() {
   await screen.findByRole("option", { name: "Data · postgresql · Available" });
   fireEvent.change(screen.getByLabelText("Database to connect"), { target: { value: "db" } });
@@ -168,4 +168,65 @@ test("unknown authoritative option status remains unavailable even after a synth
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.submit(screen.getByRole("form", { name: "Review database connection request" }));
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+});
+test("unchanged permission focus revalidation preserves the uncertain request and pauses replay", async () => {
+  let resolveIdentity!: (response: Response) => void;
+  let resolveMembers!: (response: Response) => void;
+  const { fetch } = setup((url, init) => {
+    if (url === "/api/v1/me") return new Promise<Response>((done) => { resolveIdentity = done; });
+    if (url.startsWith("/api/v1/project-members")) return new Promise<Response>((done) => { resolveMembers = done; });
+    if (url.endsWith("/database-connections") && init.method === "POST") return Promise.reject(new TypeError("lost"));
+  });
+  await choose(); await screen.findByText(/No confirmed response/);
+  const firstBody = fetch.mock.calls.find(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")![1].body;
+  // Make both authority reads stale, then trigger the actual focus lifecycle.
+  await client.invalidateQueries({ queryKey: queryKeys.principal, refetchType: "none" });
+  await client.invalidateQueries({ queryKey: queryKeys.allProjectMembers, refetchType: "none" });
+  act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
+  await waitFor(() => { expect(resolveIdentity).toBeTruthy(); expect(resolveMembers).toBeTruthy(); });
+  expect((screen.getByRole("button", { name: "Retry identical connection request" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/Retained request:/)).toBeTruthy();
+  await act(async () => { resolveIdentity(json({ id: "actor", provider: "oidc", roles: [] })); resolveMembers(json({ items: [{ project_id: "project", user_id: "actor", role: "owner" }], count: 1, total: 1, limit: 100, offset: 0 })); });
+  await waitFor(() => expect((screen.getByRole("button", { name: "Retry identical connection request" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Retry identical connection request" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")).toHaveLength(2));
+  expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")[1]![1].body).toBe(firstBody);
+});
+test("accepted response waits for in-flight membership authority and cannot outlive denial", async () => {
+  let resolveMutation!: (response: Response) => void;
+  let resolveAccess!: (response: Response) => void;
+  setup((url, init) => {
+    if (url.endsWith("/database-connections") && init.method === "POST") return new Promise<Response>((done) => { resolveMutation = done; });
+    if (url.startsWith("/api/v1/project-members")) return new Promise<Response>((done) => { resolveAccess = done; });
+  });
+  await choose(); await waitFor(() => expect(resolveMutation).toBeTruthy());
+  const access = client.refetchQueries({ queryKey: queryKeys.allProjectMembers });
+  await waitFor(() => expect(resolveAccess).toBeTruthy());
+  await act(async () => resolveMutation(json(connection, 202)));
+  expect(screen.queryByText(/Request accepted/)).toBeNull();
+  expect(screen.getByText(/Retained request:/)).toBeTruthy();
+  await act(async () => { resolveAccess(json({}, 403)); await access; });
+  await screen.findByText(/Database connection permission is unavailable/);
+  expect(screen.queryByText(/Request accepted/)).toBeNull();
+  expect(screen.queryByText(/Retained request:/)).toBeNull();
+});
+
+test("cache-level owner revocation blocks success before deferred observers render", async () => {
+  let resolve!: (response: Response) => void;
+  setup((url, init) => url.endsWith("/database-connections") && init.method === "POST" ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+  await choose(); await waitFor(() => expect(resolve).toBeTruthy());
+  const notifications: (() => void)[] = [];
+  notifyManager.setScheduler((callback) => { notifications.push(callback); });
+  try {
+    await act(async () => {
+      client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "actor", role: "viewer" }]);
+      resolve(json(connection, 202));
+    });
+    // The old session is still mounted here. Cache authority must already win.
+    expect(screen.queryByText(/Request accepted/)).toBeNull();
+  } finally {
+    notifyManager.setScheduler((callback) => { setTimeout(callback, 0); });
+    act(() => { for (const notify of notifications) notify(); });
+  }
+  await waitFor(() => expect(screen.queryByRole("form", { name: "Review database connection request" })).toBeNull());
 });
