@@ -62,6 +62,7 @@ type HostingApplicationDatabasePlanInput struct {
 	Origin                     HostingDatabaseNetworkOrigin
 	MembershipRevision         int64
 	Members                    []HostingDatabaseNetworkMemberProof
+	Retired                    []HostingDatabaseNetworkRetirementProof
 }
 
 func applicationDatabaseNonce(value string) bool {
@@ -119,17 +120,18 @@ func applicationDatabaseMembers(in HostingApplicationDatabasePlanInput) ([]Hosti
 				return nil, ErrInvalidHostingApplicationDatabasePlan
 			}
 		} else {
-			// This compiler has no retirement proof contract. A later revision
-			// can add settled endpoints, but cannot silently drop known members.
 			if in.MembershipRevision <= n.MembershipRevision {
 				return nil, ErrInvalidHostingApplicationDatabasePlan
 			}
-			for _, old := range n.Members {
-				if !slices.Contains(members, old) {
-					return nil, ErrInvalidHostingApplicationDatabasePlan
-				}
-			}
 		}
+	}
+	var prior []HostingDatabaseNetworkMember
+	var priorRevision int64
+	if n := in.DatabasePlan.Database.Network; n != nil {
+		prior, priorRevision = n.Members, n.MembershipRevision
+	}
+	if validateDatabaseNetworkRetirements(prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
+		return nil, ErrInvalidHostingApplicationDatabasePlan
 	}
 	return members, nil
 }

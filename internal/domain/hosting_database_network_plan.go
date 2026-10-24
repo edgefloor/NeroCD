@@ -108,6 +108,7 @@ type HostingDatabaseNetworkPlanInput struct {
 	Origin             HostingDatabaseNetworkOrigin
 	MembershipRevision int64
 	Members            []HostingDatabaseNetworkMemberProof
+	Retired            []HostingDatabaseNetworkRetirementProof
 }
 
 func databaseNetworkMemberLess(a, b HostingDatabaseNetworkMember) int {
@@ -191,11 +192,10 @@ func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDat
 	if h == nil || h.Storage == nil || o.Version != 1 || !o.InitReady || !databaseBindingDockerID(o.NetworkID) || o.Binding != p.Snapshot.BindingID || o.Destination != p.Snapshot.DestinationID || o.Daemon != p.Release.DaemonID || o.Configuration != p.Snapshot.Database.ConfigurationHash || o.Storage != p.Snapshot.Storage || o.OriginOperation != p.Storage.CreationOperationID || o.OriginPlan != h.Storage.CreationPlanHash || !imageSHA256.MatchString(o.OriginPlan) || o.VolumeNonce != p.Storage.CreationNonce || len(o.Nonce) != 32 || strings.Trim(o.Nonce, "0123456789abcdef") != "" || err != nil || created.IsZero() || len(o.VolumeCreatedAt) > 64 || in.MembershipRevision < 1 || len(in.Members) > 2 {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan
 	}
-	if len(in.Members) == 0 && previousPlan.CompilerVersion != HostingDatabaseCompilerVersion {
+	if n := previousPlan.Database.Network; n != nil && len(in.Members) == 0 && len(n.Members) == 0 {
 		// An attachment that never happened must not prevent DB maintenance.
-		// Existing endpoints require retirement proof, not an empty caller list.
-		n := previousPlan.Database.Network
-		if n == nil || len(n.Members) != 0 || in.MembershipRevision != n.MembershipRevision {
+		// An unchanged empty set keeps its exact expected revision.
+		if in.MembershipRevision != n.MembershipRevision {
 			return nil, ErrInvalidHostingDatabaseNetworkPlan
 		}
 	}
@@ -216,6 +216,14 @@ func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDat
 	}
 	slices.SortFunc(members, databaseNetworkMemberLess)
 	if previousPlan.Database.Network != nil && !slices.Equal(members, previousPlan.Database.Network.Members) && in.MembershipRevision == previousPlan.Database.Network.MembershipRevision {
+		return nil, ErrInvalidHostingDatabaseNetworkPlan
+	}
+	var prior []HostingDatabaseNetworkMember
+	var priorRevision int64
+	if n := previousPlan.Database.Network; n != nil {
+		prior, priorRevision = n.Members, n.MembershipRevision
+	}
+	if validateDatabaseNetworkRetirements(prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan
 	}
 	return members, nil

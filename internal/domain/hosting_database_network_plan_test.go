@@ -423,15 +423,18 @@ func TestDatabaseNetworkV2OriginalProofAndRevision(t *testing.T) {
 		t.Fatal("changed membership accepted without revision advance")
 	}
 	changed.MembershipRevision++
-	q := compileDatabaseNetwork(t, p, next, changed)
-	if ValidateHostingDatabasePlanTransition(q, p, changed) != nil {
-		t.Fatal("revision advance with full observed proof rejected")
+	// A different receipt is a different exact member, even for the same
+	// endpoint. Revision advance cannot replace it without actual retirement.
+	if _, err := retirementCompile(p, next, changed); err == nil {
+		t.Fatal("equivalent endpoint receipt silently replaced its settled identity")
 	}
+	q := compileDatabaseNetwork(t, p, next, in)
 	q.Database.Network.Predecessor.Alias = ""
 	rehashDatabaseNetwork(&q)
-	if ValidateHostingDatabasePlanTransition(q, p, changed) == nil {
+	if ValidateHostingDatabasePlanTransition(q, p, in) == nil {
 		t.Fatal("v2 predecessor lost its original alias")
 	}
+	changed = in
 	changed.Origin.Nonce = strings.Repeat("b", 32)
 	if _, err := CompileHostingDatabasePlanV2(p.Snapshot, p.Release, next, p, *p.Storage, db, changed); err == nil {
 		t.Fatal("v2 silently replaced retained network origin")

@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -436,5 +437,120 @@ func TestApplicationDatabaseMembershipAndRetention(t *testing.T) {
 	missing := previous
 	if _, err := CompileHostingApplicationDatabasePlan(s, r, &missing, nil, in); err == nil {
 		t.Fatal("previous healthy metadata accepted without settled membership proof")
+	}
+}
+
+func retirementApplicationInput(baseline HostingApplyPlan, healthy HostingHealthy, in HostingDatabaseNetworkPlanInput) HostingApplicationDatabasePlanInput {
+	attached := in.Members[0]
+	return HostingApplicationDatabasePlanInput{OperationID: "candidate_b", CreateNonce: strings.Repeat("b", 32), Binding: attached.Binding, ApplicationProjectID: attached.ApplicationProjectID, DatabaseProjectID: attached.DatabaseProjectID, BindingApplicationSnapshot: attached.ApplicationHealthy.Snapshot, BindingDatabasePlan: attached.DatabasePlan, DatabasePlan: baseline, DatabaseHealthy: healthy, Origin: in.Origin, MembershipRevision: in.MembershipRevision, Members: slices.Clone(in.Members)}
+}
+
+func TestApplicationDatabaseRepeatedReplacementWithRetirement(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			baseline, healthy, network := retirementFixture(t, engine, false)
+			a := network.Members[0]
+			in := retirementApplicationInput(baseline, healthy, network)
+			s, r := in.BindingApplicationSnapshot, a.ApplicationHealthy.Release
+			s.PolicyVersion = HostingApplicationDatabasePolicyVersion
+			s.ApplicationDatabase = HostingApplicationDatabaseRef{BindingID: in.Binding.ID, BindingHash: in.Binding.Hash}
+			s.HostPort = 21002
+			planB, err := CompileHostingApplicationDatabasePlan(s, r, &a.ApplicationHealthy, nil, in)
+			if err != nil || ValidateHostingApplicationDatabasePlan(planB, in) != nil {
+				t.Fatal("A to B desired deployment failed", err)
+			}
+			// Supply separately settled B evidence only after compiling its desired
+			// plan. Neither compiler creates this observed healthy/attached record.
+			b := retirementMember(a, "b", "4", "5", in.MembershipRevision+1)
+			b.ApplicationHealthy.Snapshot, b.ApplicationHealthy.Release = planB.Snapshot, planB.Release
+			b.ApplicationHealthy.OperationID, b.ApplicationHealthy.PlanHash = in.OperationID, planB.Hash
+			b.EndpointPlan.Target.ContainerOperationID = b.ApplicationHealthy.OperationID
+			b.EndpointPlan.Target.ContainerPlanHash = planB.Hash
+			b.EndpointPlan.Hash = b.EndpointPlan.DocumentHash()
+			b.Receipt.Observation.Endpoint.Target = b.EndpointPlan.Target
+			b.Receipt.PlanHash, b.Receipt.Hash = b.EndpointPlan.Hash, ""
+			b.Receipt.Hash = b.Receipt.DocumentHash()
+			in.MembershipRevision += 2
+			retiredA := retirementProof(a, in.MembershipRevision)
+			in.OperationID, in.Members, in.Retired = "candidate_c", []HostingDatabaseNetworkMemberProof{b}, []HostingDatabaseNetworkRetirementProof{retiredA}
+			s.HostPort++
+			planC, err := CompileHostingApplicationDatabasePlan(s, r, &b.ApplicationHealthy, nil, in)
+			if err != nil || ValidateHostingApplicationDatabasePlan(planC, in) != nil || len(planC.ApplicationDatabase.PreviousMembers) != 1 || planC.ApplicationDatabase.DatabasePlanHash != baseline.Hash {
+				t.Fatal("B to C against the older database baseline failed", err)
+			}
+			for name, change := range map[string]func(*HostingApplicationDatabasePlanInput){
+				"missing_retirement":   func(v *HostingApplicationDatabasePlanInput) { v.Retired = nil },
+				"duplicate_retirement": func(v *HostingApplicationDatabasePlanInput) { v.Retired = append(v.Retired, v.Retired[0]) },
+				"no_advance": func(v *HostingApplicationDatabasePlanInput) {
+					v.MembershipRevision = baseline.Database.Network.MembershipRevision
+				},
+				"uncertain": func(v *HostingApplicationDatabasePlanInput) {
+					v.Retired[0].Detached = databaseBindingReceipt(v.Retired[0].RetirePlan, "uncertain")
+				},
+				"extraneous_member": func(v *HostingApplicationDatabasePlanInput) { v.Retired[0] = retirementProof(b, v.MembershipRevision) },
+			} {
+				t.Run(name, func(t *testing.T) {
+					value := in
+					value.Retired = slices.Clone(in.Retired)
+					change(&value)
+					if _, err := CompileHostingApplicationDatabasePlan(s, r, &b.ApplicationHealthy, nil, value); err == nil || ValidateHostingApplicationDatabasePlan(planC, value) == nil {
+						t.Fatal("compiler or validator accepted missing or altered app retirement proof")
+					}
+				})
+			}
+			// C becomes independently settled, then the database is replaced using
+			// the same retained A retirement proof against its still-old baseline.
+			c := retirementMember(b, "c", "6", "7", in.MembershipRevision+1)
+			c.ApplicationHealthy.Snapshot, c.ApplicationHealthy.Release = planC.Snapshot, planC.Release
+			c.ApplicationHealthy.OperationID, c.ApplicationHealthy.PlanHash = in.OperationID, planC.Hash
+			c.EndpointPlan.Target.ContainerOperationID = c.ApplicationHealthy.OperationID
+			c.EndpointPlan.Target.ContainerPlanHash = planC.Hash
+			c.EndpointPlan.Hash = c.EndpointPlan.DocumentHash()
+			c.Receipt.Observation.Endpoint.Target = c.EndpointPlan.Target
+			c.Receipt.PlanHash, c.Receipt.Hash = c.EndpointPlan.Hash, ""
+			c.Receipt.Hash = c.Receipt.DocumentHash()
+			network.MembershipRevision = in.MembershipRevision + 2
+			network.Members, network.Retired = []HostingDatabaseNetworkMemberProof{c}, []HostingDatabaseNetworkRetirementProof{retiredA}
+			nextDB, err := retirementCompile(baseline, healthy, network)
+			if err != nil || ValidateHostingDatabasePlanTransition(nextDB, baseline, network) != nil || nextDB.Database.Network.Members[0].Endpoint.Target.ContainerID != c.ApplicationHealthy.ContainerID {
+				t.Fatal("database replacement lost repeated application membership", err)
+			}
+			// The retirement proof is obsolete against a baseline that already
+			// forgot A. Historical replay never substitutes for a different effect.
+			healthy.Snapshot, healthy.PlanHash = nextDB.Snapshot, nextDB.Hash
+			if _, err := retirementCompile(nextDB, healthy, network); err == nil {
+				t.Fatal("retirement proof accepted against a different settled baseline")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRetirementToEmpty(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			baseline, healthy, network := retirementFixture(t, engine, true)
+			in := retirementApplicationInput(baseline, healthy, network)
+			s, r := in.BindingApplicationSnapshot, network.Members[0].ApplicationHealthy.Release
+			s.PolicyVersion, s.HostPort = HostingApplicationDatabasePolicyVersion, 21003
+			s.ApplicationDatabase = HostingApplicationDatabaseRef{BindingID: in.Binding.ID, BindingHash: in.Binding.Hash}
+			in.MembershipRevision++
+			in.Members = nil
+			for _, attached := range network.Members {
+				in.Retired = append(in.Retired, retirementProof(attached, in.MembershipRevision))
+			}
+			p, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+			if err != nil || ValidateHostingApplicationDatabasePlan(p, in) != nil || len(p.ApplicationDatabase.PreviousMembers) != 0 || p.PreviousHealthy != nil {
+				t.Fatal("retirement to empty required invented candidate health", err)
+			}
+			slices.Reverse(in.Retired)
+			q, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+			if err != nil || p.Hash != q.Hash {
+				t.Fatal("retirement proof order changed application plan", err)
+			}
+			in.Retired[0].Attached.Binding.EnvironmentNames[0] = "foreign"
+			if p.ApplicationDatabase.Binding.EnvironmentNames[0] == "foreign" {
+				t.Fatal("application plan aliases transient retirement evidence")
+			}
+		})
 	}
 }
