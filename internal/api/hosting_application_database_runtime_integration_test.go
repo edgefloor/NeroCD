@@ -57,6 +57,19 @@ func applicationDatabaseCompleteReceiptMatches(op domain.HostingOperation, origi
 	return op.Result != nil && *op.Result == original.Result && op.CompleteReceipt != nil && op.CompleteReceipt.ID == original.ReceiptID && op.CompleteReceipt.BodyHash == domain.HostingDocumentHash(original.Result)
 }
 
+// This is retained permission history, used only to prove terminal denial.
+// Its identifier, complete request and response must all belong to the original
+// attempt; a newly invented identifier would not prove historical correlation.
+func applicationDatabaseOriginalCreateAuthorization(id, requestHash string, raw, response []byte, original domain.HostingCompleteRequest, revision int64) (domain.HostingApplicationDatabaseEffectRequest, bool) {
+	var request domain.HostingApplicationDatabaseEffectRequest
+	var grant domain.HostingApplicationDatabaseEffectAuthorization
+	if domain.DecodeHostingStorageProtocolJSON(raw, &request) != nil || domain.DecodeHostingStorageProtocolJSON(response, &grant) != nil || request.Validate() != nil || grant.Validate() != nil {
+		return request, false
+	}
+	return request, request.AuthorizationID == id && requestHash == domain.HostingDocumentHash(request) && request.HostingAuthority == original.HostingAuthority && request.Action == "create" && request.ExpectedStageHash == "" &&
+		grant.AuthorizationID == id && grant.OperationID == original.OperationID && grant.PlanHash == original.Result.PlanHash && grant.Action == request.Action && grant.StageHash == request.ExpectedStageHash && grant.LeaseID == original.LeaseID && grant.Attempt == original.Attempt && grant.Fence == original.Fence && grant.MembershipRevision == revision
+}
+
 func applicationDatabaseCompleted(op domain.HostingOperation) bool {
 	if op.State != "succeeded" || op.Plan == nil || op.Release == nil || op.Result == nil || !op.Result.Ready || op.Result.Uncertain || op.Result.ContainerID == "" || op.CompleteReceipt == nil || op.MutationHold || op.RestoreOwnershipHeld {
 		return false
@@ -396,14 +409,36 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			if err != nil {
 				t.Fatal("protected runner credential unavailable")
 			}
-			staleAuthority := domain.HostingApplicationDatabaseEffectRequest{HostingAuthority: original.HostingAuthority, AuthorizationID: strings.Repeat("f", 32), Action: "create"}
-			databaseRunnerJSON[json.RawMessage](f, string(credential), "POST", "/api/v1/runners/hosting/database-binding/authorize", staleAuthority, 409)
-			clear(credential)
+			defer clear(credential)
+			var authorizationID, authorizationHash string
+			var authorizationRequest, authorizationResponse []byte
+			if f.database.QueryRow(t.Context(), `SELECT authorization_id,request_hash,request,response FROM hosting_application_database_effect_authorizations WHERE operation_id=$1 AND request->>'action'='create' ORDER BY created_at,authorization_id LIMIT 1`, third.ID).Scan(&authorizationID, &authorizationHash, &authorizationRequest, &authorizationResponse) != nil {
+				t.Fatal("missing original persisted create authorization")
+			}
+			staleAuthority, exact := applicationDatabaseOriginalCreateAuthorization(authorizationID, authorizationHash, authorizationRequest, authorizationResponse, original, c.ApplicationDatabase.MembershipRevision)
+			clear(authorizationRequest)
+			clear(authorizationResponse)
+			if !exact {
+				t.Fatal("persisted create authorization differs from original Complete authority")
+			}
 			before := f.applicationContainer(c)
 			f.exactMembers(c, maintained)
 			counts, applies, deliveries := f.connectionDurableCounts(), f.applyRequests.Load(), f.deliveryRequests.Load()
 			runtimeDeliveries, authorizations := f.runtimeDeliveryRequests.Load(), f.connectionAuthorizationRequests.Load()
 			since := time.Now().UTC().Format(time.RFC3339Nano)
+			// Effect authorization requires a live lease before it reads historical
+			// authorization IDs. Complete retired this exact lease, so denial is
+			// specifically 404/not_found, while saved Complete ACK replay remains valid.
+			denied := databaseRunnerJSON[struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}](f, string(credential), "POST", "/api/v1/runners/hosting/database-binding/authorize", staleAuthority, http.StatusNotFound)
+			clear(credential)
+			if denied.Error.Code != "not_found" || f.connectionDurableCounts() != counts || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries || f.runtimeDeliveryRequests.Load() != runtimeDeliveries || f.connectionAuthorizationRequests.Load() != authorizations+1 || !reflect.DeepEqual(before, f.applicationContainer(c)) {
+				t.Fatal("terminal original authorization was not denied without mutation or delivery")
+			}
+			authorizations++
 			f.start()
 			select {
 			case <-wire.replayed:
@@ -478,6 +513,58 @@ func TestApplicationDatabaseRuntimeCompleteReceiptContract(t *testing.T) {
 			}
 			if applicationDatabaseCompleteReceiptMatches(op, original) != (test == "exact_result") {
 				t.Fatal("Complete receipt did not retain the controller result-body hash contract")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRuntimeOriginalCreateAuthorization(t *testing.T) {
+	original := domain.HostingCompleteRequest{HostingAuthority: domain.HostingAuthority{OperationID: "operation_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "private_fence_fixture"}, Result: domain.HostingResult{PlanHash: "sha256:" + strings.Repeat("b", 64)}}
+	for _, name := range []string{"exact_historical", "row_id", "request_hash", "run", "lease", "attempt", "fence", "operation", "grant_id", "grant_plan", "grant_revision", "grant_lease", "grant_attempt", "grant_fence", "grant_action", "malformed"} {
+		t.Run(name, func(t *testing.T) {
+			id := strings.Repeat("a", 32)
+			request := domain.HostingApplicationDatabaseEffectRequest{HostingAuthority: original.HostingAuthority, AuthorizationID: id, Action: "create"}
+			grant := domain.HostingApplicationDatabaseEffectAuthorization{AuthorizationID: id, OperationID: original.OperationID, PlanHash: original.Result.PlanHash, Action: "create", LeaseID: original.LeaseID, Attempt: original.Attempt, Fence: original.Fence, MembershipRevision: 7, UseUntil: time.Unix(1, 0).UTC()}
+			switch name {
+			case "row_id":
+				id = strings.Repeat("c", 32)
+			case "run":
+				request.RunID = "foreign_run"
+			case "lease":
+				request.LeaseID = "foreign_lease"
+			case "attempt":
+				request.Attempt++
+			case "fence":
+				request.Fence = "foreign_fence"
+			case "operation":
+				request.OperationID = "foreign_operation"
+			case "grant_id":
+				grant.AuthorizationID = strings.Repeat("c", 32)
+			case "grant_plan":
+				grant.PlanHash = "sha256:" + strings.Repeat("c", 64)
+			case "grant_revision":
+				grant.MembershipRevision++
+			case "grant_lease":
+				grant.LeaseID = "foreign_lease"
+			case "grant_attempt":
+				grant.Attempt++
+			case "grant_fence":
+				grant.Fence = "foreign_fence"
+			case "grant_action":
+				grant.Action, grant.StageHash = "start", "sha256:"+strings.Repeat("c", 64)
+			}
+			requestHash := domain.HostingDocumentHash(request)
+			if name == "request_hash" {
+				requestHash = "sha256:" + strings.Repeat("c", 64)
+			}
+			raw, _ := json.Marshal(request)
+			response, _ := json.Marshal(grant)
+			if name == "malformed" {
+				raw = []byte(`{`)
+			}
+			saved, ok := applicationDatabaseOriginalCreateAuthorization(id, requestHash, raw, response, original, 7)
+			if ok != (name == "exact_historical") || ok && saved != request {
+				t.Fatal("historical authorization did not require exact original request and response identity")
 			}
 		})
 	}

@@ -8,8 +8,23 @@ type Progress = { phase: string; revision: number; operation_id: string };
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw ? JSON.parse(raw) as Metadata : undefined;
 const headers = (m: Metadata) => ({ Origin: m.origin, "X-NeroCD-CSRF": "1" });
+async function request(page: Pick<Page, "request">, method: "get" | "post", path: string, options: Parameters<Page["request"]["post"]>[1] = {}) {
+  try { return await page.request[method](path, { ...options, timeout: options.timeout ?? 5000 }); }
+  catch { throw new Error(`live browser fixture ${method.toUpperCase()} request failed`); }
+}
+test("browser fixture transport diagnostics discard cookie-bearing errors", async () => {
+  for (const method of ["get", "post"] as const) {
+    let timeout: number | undefined;
+    const failing = { request: { [method]: async (_path: string, options: { timeout: number }) => { timeout = options.timeout; throw new Error("Cookie: SENSITIVE-COOKIE-CANARY"); } } } as unknown as Page;
+    await expect(request(failing, method, "/fixture")).rejects.toThrow(new RegExp(`^live browser fixture ${method.toUpperCase()} request failed$`));
+    expect(timeout).toBe(5000);
+  }
+  const denied = { status: () => 403 };
+  const available = { request: { get: async () => denied } } as unknown as Page;
+  expect(await request(available, "get", "/fixture")).toBe(denied);
+});
 async function login(page: Page, viewer = false) {
-  const bootstrap = await page.request.get("/api/v1/bootstrap-status", { timeout: 5000 });
+  const bootstrap = await request(page, "get", "/api/v1/bootstrap-status");
   expect(bootstrap.status(), "live installation bootstrap status must be available before login").toBe(200);
   expect(await bootstrap.json(), "live installation must retain its bootstrap administrator").toEqual({ status: "complete" });
   await page.goto("/sign-in", { waitUntil: "domcontentloaded", timeout: 15_000 });
@@ -29,7 +44,7 @@ async function panel(page: Page, m: Metadata) {
 async function progress(page: Page, m: Metadata, phase: string) {
   let value!: Progress;
   await expect.poll(async () => {
-    const response = await page.request.get(m.control_path + "/state", { headers: headers(m), timeout: 5000 });
+    const response = await request(page, "get", m.control_path + "/state", { headers: headers(m) });
     if (response.status() !== 200) return "unavailable";
     value = await response.json() as Progress; return value.phase;
   }, { timeout: 180_000, intervals: [100, 250, 500] }).toBe(phase);
@@ -43,7 +58,7 @@ async function settled(connection: Locator, state: Progress) {
   await expect(connection.getByText(/Changes are paused for operation/)).toHaveCount(0);
 }
 async function proof(page: Page, m: Metadata, state: Progress, count: number) {
-  const response = await page.request.get(m.control_path + "/proof/" + state.operation_id, { headers: headers(m) });
+  const response = await request(page, "get", m.control_path + "/proof/" + state.operation_id, { headers: headers(m) });
   expect(response.status()).toBe(200);
   const body = await response.json() as { verified: boolean; container_id: string; record_count: number };
   expect(body.verified).toBe(true); expect(body.container_id).toMatch(/^[a-f0-9]{64}$/); expect(body.record_count).toBe(count);
@@ -101,16 +116,16 @@ test("live owner connects, redeploys and maintains a retained database; viewer o
     await expect(read.getByText("Project owner access is required for database connection changes.", { exact: true })).toBeVisible();
     await expect(read.getByRole("form", { name: "Review database connection request", exact: true })).toHaveCount(0);
     await expect(read.getByText("Connection workflow completed", { exact: true })).toBeVisible();
-    expect((await viewer.request.get(`/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(200);
-    for (const [path, data] of [[connectPath, connectBody], [deployPath, deployBody], [maintenancePath, maintenanceBody]] as const) expect((await viewer.request.post(path, { headers: headers(m), data })).status()).toBe(403);
-    expect((await viewer.request.get(m.control_path + "/state", { headers: headers(m) })).status()).toBe(403);
-    expect((await viewer.request.post(m.control_path + "/finish", { headers: headers(m) })).status()).toBe(403);
+    expect((await request(viewer, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(200);
+    for (const [path, data] of [[connectPath, connectBody], [deployPath, deployBody], [maintenancePath, maintenanceBody]] as const) expect((await request(viewer, "post", path, { headers: headers(m), data })).status()).toBe(403);
+    expect((await request(viewer, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(403);
+    expect((await request(viewer, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(403);
   } finally { await viewerContext.close(); }
   const anonymous = await browser.newContext({ baseURL: m.origin });
-  try { expect((await anonymous.request.get(`/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(401); expect((await anonymous.request.get(m.control_path + "/state", { headers: headers(m) })).status()).toBe(401); } finally { await anonymous.close(); }
-  expect((await page.request.get(`/api/v1/resources/${m.foreign_resource_id}/database-connection`)).status()).toBe(403);
-  expect((await page.request.post(`/api/v1/resources/${m.foreign_resource_id}/database-connections`, { headers: headers(m), data: connectBody })).status()).toBe(403);
-  expect((await page.request.post(m.control_path + "/finish", { headers: { ...headers(m), Origin: "http://127.0.0.1:1" } })).status()).toBe(403);
+  try { expect((await request(anonymous, "get", `/api/v1/resources/${m.application_resource_id}/database-connection`)).status()).toBe(401); expect((await request(anonymous, "get", m.control_path + "/state", { headers: headers(m) })).status()).toBe(401); } finally { await anonymous.close(); }
+  expect((await request(page, "get", `/api/v1/resources/${m.foreign_resource_id}/database-connection`)).status()).toBe(403);
+  expect((await request(page, "post", `/api/v1/resources/${m.foreign_resource_id}/database-connections`, { headers: headers(m), data: connectBody })).status()).toBe(403);
+  expect((await request(page, "post", m.control_path + "/finish", { headers: { ...headers(m), Origin: "http://127.0.0.1:1" } })).status()).toBe(403);
   expect(errors).toEqual([]); expect(reveals).toEqual([]);
-  expect((await page.request.post(m.control_path + "/finish", { headers: headers(m) })).status()).toBe(204);
+  expect((await request(page, "post", m.control_path + "/finish", { headers: headers(m) })).status()).toBe(204);
 });
