@@ -29,7 +29,8 @@ import (
 )
 
 // This hook observes the compiled process's real HTTP requests. It drops exactly
-// one response only after the real origin handler returns its committed 200.
+// one origin response after committed 200, plus one automatic claim response.
+// The automatic replay barrier holds a real empty poll only after origin replay.
 type databaseCaptureRuntimeWire struct {
 	mu                               sync.Mutex
 	journalPath                      string
@@ -39,6 +40,10 @@ type databaseCaptureRuntimeWire struct {
 	suppressed200                    bool
 	bodies, acks                     [][]byte
 	lost, invalid                    bool
+	automatic, claimLost             bool
+	claims                           []domain.HostingDatabaseNetworkCaptureClaim
+	replayReached, replayJoined      chan struct{}
+	replayPaused                     bool
 }
 
 func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Request, handler http.Handler) bool {
@@ -48,11 +53,66 @@ func (c *databaseCaptureRuntimeWire) serve(w http.ResponseWriter, r *http.Reques
 	case "/api/v1/runners/identity":
 		c.identity++
 		return false
-	case "/api/v1/runners/database-network-captures/claim":
+	case "/api/v1/runners/heartbeat", "/api/v1/runners/telemetry":
+		if !c.automatic {
+			c.forbidden++
+		}
+		return false
+	case "/api/v1/runners/database-network-captures/claim", "/api/v1/runners/database-network-captures/claim-next":
 		c.claim++
+		next := r.URL.Path == "/api/v1/runners/database-network-captures/claim-next"
+		if next != c.automatic {
+			c.invalid = true
+		}
+		if next {
+			raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+			if err != nil || len(raw) > 4096 || !bytes.Equal(bytes.TrimSpace(raw), []byte("{}")) {
+				c.invalid = true
+				w.WriteHeader(http.StatusBadRequest)
+				return true
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+		}
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, r)
 		c.claimResponse = databaseCaptureObserveClaim(rec.Code, rec.Body.Bytes(), c.expectedCapture, c.expectedRunner, time.Now())
+		if next && rec.Code == http.StatusOK {
+			var claim domain.HostingDatabaseNetworkCaptureClaim
+			if len(c.claims) >= 2 || !c.claimResponse.ClientShape || domain.DecodeHostingStorageProtocolJSON(rec.Body.Bytes(), &claim) != nil {
+				c.invalid = true
+			} else {
+				c.claims = append(c.claims, claim)
+				if !c.claimLost {
+					c.claimLost = true
+					w.Header().Set("Cache-Control", "no-store")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `{"error":{"code":"unavailable","detail":"capture_claim_ack_loss_canary"}}`)
+					return true
+				}
+			}
+		}
+		if next && len(c.bodies) == 2 && c.replayReached != nil {
+			// The actual controller is called first. Hold only its post-replay
+			// empty response so the fixture can prove durable retirement and join
+			// before ordinary work would perform its separate Docker preflight.
+			if rec.Code != http.StatusNotFound || c.replayPaused {
+				c.invalid = true
+			} else {
+				c.replayPaused = true
+				close(c.replayReached)
+				c.mu.Unlock()
+				select {
+				case <-r.Context().Done():
+				case <-time.After(20 * time.Second):
+					c.mu.Lock()
+					c.invalid = true
+					c.mu.Unlock()
+				}
+				c.mu.Lock()
+				close(c.replayJoined)
+				return true
+			}
+		}
 		response := rec.Result()
 		for key, values := range response.Header {
 			w.Header()[key] = slices.Clone(values)
@@ -127,6 +187,25 @@ func (c *databaseCaptureRuntimeWire) exactReplay() bool {
 	return !c.invalid && c.lost && len(c.bodies) == 2 && bytes.Equal(c.bodies[0], c.bodies[1]) && len(c.acks) == 2 && bytes.Equal(c.acks[0], c.acks[1])
 }
 
+func (c *databaseCaptureRuntimeWire) automaticClaimLost() (domain.HostingDatabaseNetworkCaptureClaim, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.automatic || !c.claimLost || c.invalid || c.claim != 1 || len(c.claims) != 1 || c.plan != 0 || len(c.bodies) != 0 || c.forbidden != 0 {
+		return domain.HostingDatabaseNetworkCaptureClaim{}, false
+	}
+	return c.claims[0], true
+}
+
+func (c *databaseCaptureRuntimeWire) automaticClaimReused() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.automatic || !c.claimLost || c.invalid || len(c.claims) != 2 {
+		return false
+	}
+	a, b := c.claims[0], c.claims[1]
+	return a.Capture.ID == b.Capture.ID && a.Capture.RunID == b.Capture.RunID && a.Capture.Plan.Hash == b.Capture.Plan.Hash && a.Lease.ID == b.Lease.ID && a.Lease.RunID == b.Lease.RunID && a.Lease.RunnerID == b.Lease.RunnerID && a.Lease.Attempt == b.Lease.Attempt && a.Lease.Fence == b.Lease.Fence && a.Lease.CreatedAt.Equal(b.Lease.CreatedAt) && a.Lease.ExpiresAt.Equal(b.Lease.ExpiresAt)
+}
+
 // Hash protected files without retaining their plaintext in fixture snapshots.
 type databaseCaptureTreeEntry struct {
 	Mode fs.FileMode
@@ -177,6 +256,23 @@ func (f *databaseRunnerFixture) captureTrees() map[string]map[string]databaseCap
 
 func databaseCaptureArguments(f *databaseRunnerFixture, id, endpoint string) []string {
 	return []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--database-network-capture-id", id, "--journal-dir", filepath.Join(f.root, "journal"), "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--image-docker-endpoint", endpoint}
+}
+
+func databaseAutomaticCaptureArguments(f *databaseRunnerFixture, endpoint string) []string {
+	args := databaseRunnerArguments(f)
+	index := slices.Index(args, "--image-docker-endpoint")
+	args[index+1] = endpoint
+	return append(args, "--hosting-database-network-capture", "--once")
+}
+
+func databaseCaptureJournalRetired(path string) bool {
+	raw, err := os.ReadFile(path)
+	defer clear(raw)
+	var disk struct {
+		Version int                                    `json:"version"`
+		Capture []runner.JournalDatabaseNetworkCapture `json:"database_network_capture"`
+	}
+	return err == nil && len(raw) <= 8<<20 && json.Unmarshal(raw, &disk) == nil && disk.Version > 0 && disk.Version <= 14 && len(disk.Capture) == 0
 }
 
 func (f *databaseRunnerFixture) awaitCaptureExit(success bool, checkpoint string, cursor int, wire *databaseCaptureRuntimeWire) string {
@@ -279,6 +375,17 @@ func (f *databaseRunnerFixture) captureStored(id string) databaseCaptureStored {
 	return stored
 }
 
+func (f *databaseRunnerFixture) captureClaimIdentity(capture domain.HostingDatabaseNetworkCapture, a domain.HostingAuthority, recorded bool) {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.t.Context(), 5*time.Second)
+	defer cancel()
+	var lease domain.RunLease
+	var leases, claims, origins int
+	if f.database.QueryRow(ctx, `SELECT l.id,l.run_id,l.runner_id,l.attempt,l.fence,(SELECT count(*) FROM run_leases WHERE run_id=$1),(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='hosting.database_network_capture.claimed'),(SELECT count(*) FROM audit_events WHERE target_id=$2 AND action='hosting.database_network_capture.recorded') FROM run_leases l WHERE l.run_id=$1`, capture.RunID, capture.ID).Scan(&lease.ID, &lease.RunID, &lease.RunnerID, &lease.Attempt, &lease.Fence, &leases, &claims, &origins) != nil || leases != 1 || claims != 1 || origins != map[bool]int{false: 0, true: 1}[recorded] || lease.RunnerID != capture.Plan.RunnerID || a != (domain.HostingAuthority{OperationID: capture.ID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}) {
+		f.t.Fatal("automatic capture duplicated or changed retained lease/audit authority")
+	}
+}
+
 // Verify that controller provenance came from this actual database deployment,
 // retained volume creation and initialized on-disk record, not a test attestation.
 func (f *databaseRunnerFixture) capturePhysical(source domain.HostingOperation, p domain.HostingDatabaseNetworkCapturePlan) domain.HostingDatabaseNetworkOrigin {
@@ -325,6 +432,11 @@ func (f *databaseRunnerFixture) capturePhysical(source domain.HostingOperation, 
 // sequence. Its caller has already joined the ordinary source runner.
 func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperation) (domain.HostingDatabaseNetworkCapture, databaseCaptureStored, map[string]map[string]databaseCaptureTreeEntry) {
 	f.t.Helper()
+	return f.captureWithRecoveryMode(source, false)
+}
+
+func (f *databaseRunnerFixture) captureWithRecoveryMode(source domain.HostingOperation, automatic bool) (domain.HostingDatabaseNetworkCapture, databaseCaptureStored, map[string]map[string]databaseCaptureTreeEntry) {
+	f.t.Helper()
 	before, err := f.operation(f.t.Context(), source.ID)
 	if err != nil || before.State != "succeeded" || before.Result == nil || before.CompleteReceipt == nil {
 		f.t.Fatal("capture source not settled")
@@ -338,11 +450,29 @@ func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperati
 	inventory := f.replayInventory([]domain.HostingOperation{source}, source)
 	completeCount := f.completionCount(source.ID)
 	genericClaims, applies, deliveries := f.claimRequests.Load(), f.applyRequests.Load(), f.deliveryRequests.Load()
-	wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json"), expectedCapture: capture.ID, expectedRunner: capture.Plan.RunnerID}
+	wire := &databaseCaptureRuntimeWire{journalPath: filepath.Join(f.root, "journal", "journal.json"), expectedCapture: capture.ID, expectedRunner: capture.Plan.RunnerID, automatic: automatic}
+	if automatic {
+		wire.replayReached, wire.replayJoined = make(chan struct{}), make(chan struct{})
+	}
 	if !f.capture.CompareAndSwap(nil, wire) {
 		f.t.Fatal("capture wire hook already active")
 	}
 	args := databaseCaptureArguments(f, capture.ID, "unix:///var/run/docker.sock")
+	if automatic {
+		args = databaseAutomaticCaptureArguments(f, "unix:///var/run/docker.sock")
+		cursor := f.captureLogCursor()
+		f.startRunner(args)
+		f.awaitCaptureExit(false, "automatic_claim_loss", cursor, wire)
+		claim, lost := wire.automaticClaimLost()
+		if !lost || len(f.captureChain()) != 0 {
+			f.t.Fatal("automatic claim response loss did not retain exactly one unobserved server lease")
+		}
+		a := domain.HostingAuthority{OperationID: capture.ID, RunID: claim.Lease.RunID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		f.captureClaimIdentity(capture, a, false)
+		if !reflect.DeepEqual(trees, f.captureTrees()) {
+			f.t.Fatal("automatic claim loss changed protected workload state")
+		}
+	}
 	cursor := f.captureLogCursor()
 	f.startRunner(args)
 	diagnostic := f.awaitCaptureExit(false, "initial", cursor, wire)
@@ -363,7 +493,15 @@ func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperati
 	}
 	// Ordinary mode must not poll around unresolved capture state.
 	claimCount, planCount, originCount, forbidden := wire.counts()
-	if claimCount != 1 || planCount == 0 || originCount != 1 || forbidden != 0 {
+	wantClaims := 1
+	if automatic {
+		wantClaims = 2
+		if !wire.automaticClaimReused() {
+			f.t.Fatal("automatic claim restart changed original lease/attempt/fence")
+		}
+		f.captureClaimIdentity(capture, original.HostingAuthority, true)
+	}
+	if claimCount != wantClaims || planCount == 0 || originCount != 1 || forbidden != 0 {
 		f.t.Fatal("dedicated capture used unexpected API authority")
 	}
 	cursor = f.captureLogCursor()
@@ -382,13 +520,53 @@ func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperati
 		f.t.Fatal("replay absence proof socket already exists")
 	}
 	replayArgs := databaseCaptureArguments(f, capture.ID, "unix://"+absent)
+	if automatic {
+		replayArgs = databaseAutomaticCaptureArguments(f, "unix://"+absent)
+	}
 	cursor = f.captureLogCursor()
 	f.startRunner(replayArgs)
-	f.awaitCaptureExit(true, "historical_replay", cursor, wire)
+	if automatic {
+		f.t.Cleanup(func() {
+			f.stop()
+			select {
+			case <-wire.replayReached:
+				select {
+				case <-wire.replayJoined:
+				case <-time.After(5 * time.Second):
+					f.t.Error("automatic post-replay barrier did not join during cleanup")
+				}
+			default:
+			}
+		})
+		select {
+		case <-wire.replayReached:
+		case <-f.process.done:
+			f.t.Fatal("automatic replay process exited before post-ACK phase barrier")
+		case <-time.After(15 * time.Second):
+			f.t.Fatal("automatic replay did not reach post-ACK phase barrier")
+		}
+		if !wire.exactReplay() || !databaseCaptureJournalRetired(filepath.Join(f.root, "journal", "journal.json")) {
+			f.t.Fatal("automatic replay did not prove historical ACK and durable retirement before cancellation")
+		}
+		f.stop()
+		select {
+		case <-wire.replayJoined:
+		case <-time.After(5 * time.Second):
+			f.t.Fatal("automatic post-replay request did not join")
+		}
+		f.t.Log("automatic replay ACK and journal retirement proved before cancellation; whole runtime success not asserted")
+	} else {
+		f.awaitCaptureExit(true, "historical_replay", cursor, wire)
+	}
 	if len(f.captureChain()) != 0 || !wire.exactReplay() {
 		f.t.Fatal("compiled historical replay changed wire body/ACK or failed durable retirement")
 	}
-	if c, p, o, b := wire.counts(); c != claimCount || p != planCount || o != originCount+1 || b != 0 {
+	postReplayClaims := claimCount
+	if automatic {
+		postReplayClaims++ // One real, empty poll held after successful reconciliation.
+		f.captureClaimIdentity(capture, original.HostingAuthority, true)
+	}
+	if c, p, o, b := wire.counts(); c != postReplayClaims || p != planCount || o != originCount+1 || b != 0 {
 		f.t.Fatal("historical replay reclaimed, refreshed plan or used generic runner APIs")
 	}
 	if !reflect.DeepEqual(stored, f.captureStored(capture.ID)) || !reflect.DeepEqual(trees, f.captureTrees()) {
@@ -418,7 +596,7 @@ func (f *databaseRunnerFixture) captureWithRecovery(source domain.HostingOperati
 	}
 	f.assertRedacted()
 	output := f.logs.snapshot()
-	for _, private := range []string{original.Fence, original.LeaseID, "capture_ack_loss_canary"} {
+	for _, private := range []string{original.Fence, original.LeaseID, "capture_ack_loss_canary", "capture_claim_ack_loss_canary"} {
 		if bytes.Contains(output, []byte(private)) {
 			f.t.Fatal("capture output exposed private authority or response diagnostics")
 		}
@@ -434,31 +612,42 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Fatal("native Linux arm64 required")
 	}
-	f := newDatabaseRunnerFixtureWithCapture(t, true)
-	for index, engine := range []string{"postgresql", "redis"} {
-		version := domain.HostingDatabasePostgresRecipe
-		if engine == "redis" {
-			version = domain.HostingDatabaseRedisRecipe
+	if os.Getenv("NEROCD_TEST_DATABASE_URL") == "" {
+		t.Fatal("physical capture control database configuration missing")
+	}
+	for _, automatic := range []bool{false, true} {
+		mode := "exact_id"
+		if automatic {
+			mode = "automatic"
 		}
-		if index > 0 {
-			f.start()
-		}
-		view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", domain.HostingDatabaseCreateInput{RequestID: strings.Repeat(string(rune('c'+index)), 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "capture physical " + engine, DestinationID: f.destination, Engine: engine, RecipeVersion: version}, 201)
-		source := f.await(f.deploy(view, "capture_source").ID)
-		marker := "capture_physical_" + engine + "_before"
-		f.marker(view, source, marker, true)
-		f.awaitSourceJournalRetired()
-		f.stop()
-		capture, stored, trees := f.captureWithRecovery(source)
-		f.marker(view, source, marker, false)
-		freshMarker := "capture_physical_" + engine + "_after"
-		f.marker(view, source, freshMarker, true)
-		f.marker(view, source, freshMarker, false)
-		if !reflect.DeepEqual(trees, f.captureTrees()) {
-			t.Fatal("post-capture application access changed protected roots")
-		}
-		f.assertRedacted()
-		t.Logf("physical capture engine=%s source=%s capture=%s original_receipt=%s container=%s volume=%s network=%s lazy_replay_absent_socket=true", engine, source.ID, capture.ID, stored.Receipt.ID, source.Result.ContainerID, source.Plan.Storage.VolumeName, stored.Receipt.Origin.NetworkID)
+		t.Run(mode, func(t *testing.T) {
+			f := newDatabaseRunnerFixtureWithCapture(t, true)
+			for index, engine := range []string{"postgresql", "redis"} {
+				version := domain.HostingDatabasePostgresRecipe
+				if engine == "redis" {
+					version = domain.HostingDatabaseRedisRecipe
+				}
+				if index > 0 {
+					f.start()
+				}
+				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", domain.HostingDatabaseCreateInput{RequestID: strings.Repeat(string(rune('c'+index)), 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "capture physical " + engine, DestinationID: f.destination, Engine: engine, RecipeVersion: version}, 201)
+				source := f.await(f.deploy(view, "capture_source").ID)
+				marker := "capture_physical_" + engine + "_before"
+				f.marker(view, source, marker, true)
+				f.awaitSourceJournalRetired()
+				f.stop()
+				capture, stored, trees := f.captureWithRecoveryMode(source, automatic)
+				f.marker(view, source, marker, false)
+				freshMarker := "capture_physical_" + engine + "_after"
+				f.marker(view, source, freshMarker, true)
+				f.marker(view, source, freshMarker, false)
+				if !reflect.DeepEqual(trees, f.captureTrees()) {
+					t.Fatal("post-capture application access changed protected roots")
+				}
+				f.assertRedacted()
+				t.Logf("physical capture automatic=%t engine=%s source=%s capture=%s original_receipt=%s container=%s volume=%s network=%s lazy_replay_absent_socket=true", automatic, engine, source.ID, capture.ID, stored.Receipt.ID, source.Result.ContainerID, source.Plan.Storage.VolumeName, stored.Receipt.Origin.NetworkID)
+			}
+		})
 	}
 }
 
@@ -623,7 +812,7 @@ func (c *databaseCaptureRuntimeWire) committedACKLost() bool {
 
 func databaseCaptureDiagnostic(checkpoint string, pid int, exit databaseRunnerExit, path string, wire *databaseCaptureRuntimeWire, output []byte) string {
 	switch checkpoint {
-	case "initial", "ordinary_hold", "historical_replay":
+	case "initial", "ordinary_hold", "historical_replay", "automatic_claim_loss":
 	default:
 		checkpoint = "unknown"
 	}
@@ -880,5 +1069,169 @@ func TestDatabaseCaptureRuntimeClaimShapeUsesActualIdentityAndTime(t *testing.T)
 	bounded := databaseCaptureObserveClaim(900, oversized, id, runnerID, now)
 	if bounded.Status != 0 || bounded.BodyBytes != domain.HostingStorageProtocolJSONLimit+1 || bounded.BodyWithinLimit || bounded.Decoded {
 		t.Fatal("claim response diagnostics exceeded fixed bounds")
+	}
+}
+
+func databaseCaptureAutomaticClaimFixture(t *testing.T) domain.HostingDatabaseNetworkCaptureClaim {
+	t.Helper()
+	op := databaseOperationResponse(t, "postgresql")
+	created := time.Now().UTC().Add(-time.Hour)
+	storage := domain.HostingStorage{ID: op.Snapshot.Storage.StorageID, ProjectID: op.ProjectID, ResourceID: op.ResourceID, BindingID: op.BindingID, DestinationID: op.Snapshot.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: op.Plan.Storage.VolumeName, MountPath: op.Plan.Storage.MountPath, AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: op.CreatedBy, CreatedAt: created}
+	storage.Hash = storage.DocumentHash()
+	snapshot := op.Snapshot
+	snapshot.Storage = storage.Reference()
+	db := *op.Plan.Database
+	var err error
+	snapshot.Database.ConfigurationHash, err = domain.HostingDatabaseConfigurationHash(snapshot, db.Credentials)
+	if err != nil {
+		t.Fatal("automatic claim configuration fixture failed")
+	}
+	db.Reference = snapshot.Database
+	sp := *op.Plan.Storage
+	sp.Reference = storage.Reference()
+	sp.CreationNonce = domain.HostingStorageCreationNonce(sp.Reference, sp.CreationOperationID, sp.DaemonID)
+	plan, err := domain.CompileHostingDatabasePlan(snapshot, *op.Release, nil, sp, db)
+	if err != nil {
+		t.Fatal("automatic claim source fixture failed")
+	}
+	receipt := domain.HostingReceipt{ID: "receipt_fixture", BodyHash: domain.HostingDocumentHash("receipt_fixture"), CreatedAt: created}
+	m := domain.HostingStorageMaterialization{StorageRef: storage.Reference(), State: "materialized", CreationOperationID: op.ID, CreationPlanHash: plan.Hash, CreationNonce: sp.CreationNonce, DaemonID: op.Release.DaemonID, MaterializedReceipt: &receipt}
+	m.Labels = domain.ExpectedHostingStorageLabels(storage, m)
+	healthy := domain.HostingHealthy{Snapshot: snapshot, OperationID: op.ID, ContainerID: strings.Repeat("a", 64), Release: *op.Release, PlanHash: plan.Hash, Storage: &domain.HostingHealthyStorage{Plan: sp, CreationPlanHash: plan.Hash}}
+	p := domain.HostingDatabaseNetworkCapturePlan{Version: domain.HostingDatabaseNetworkCaptureVersion, OperationID: domain.HostingDatabaseNetworkCaptureID(op.ID), SourceOperationID: op.ID, ProjectID: op.ProjectID, ResourceID: op.ResourceID, BindingID: op.BindingID, DestinationID: snapshot.DestinationID, ServerID: snapshot.ServerID, RunnerID: snapshot.RunnerID, SourcePlan: plan, SourceHealthy: healthy, Storage: storage, Materialization: m, Creation: domain.HostingDatabaseNetworkCaptureCreation{Receipt: receipt, VolumeName: storage.VolumeName, Driver: "local", Scope: "local", Labels: m.Labels, Options: map[string]string{}}}
+	p.Hash = p.DocumentHash()
+	if p.Validate() != nil {
+		t.Fatal("automatic claim capture fixture invalid")
+	}
+	now := time.Now().UTC()
+	c := domain.HostingDatabaseNetworkCapture{ID: p.OperationID, RunID: "capture_" + p.OperationID, State: "running", Plan: p, CreatedBy: op.CreatedBy, CreatedAt: now, UpdatedAt: now}
+	return domain.HostingDatabaseNetworkCaptureClaim{Capture: c, Lease: domain.RunLease{ID: "lease_fixture", RunID: c.RunID, RunnerID: p.RunnerID, Status: domain.LeaseActive, Attempt: 1, Fence: "fence_private_canary", CreatedAt: now, ExpiresAt: now.Add(time.Minute)}}
+}
+
+func TestDatabaseCaptureRuntimeAutomaticClaimLossAndIdentity(t *testing.T) {
+	claim := databaseCaptureAutomaticClaimFixture(t)
+	raw, err := json.Marshal(claim)
+	if err != nil {
+		t.Fatal("automatic claim fixture encoding failed")
+	}
+	wire := &databaseCaptureRuntimeWire{automatic: true, expectedCapture: claim.Capture.ID, expectedRunner: claim.Lease.RunnerID}
+	calls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, e := io.ReadAll(r.Body)
+		if e != nil || string(body) != "{}" {
+			t.Error("automatic wire changed strict empty request")
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(raw)
+	})
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusOK} {
+		rec := httptest.NewRecorder()
+		if !wire.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/claim-next", strings.NewReader("{}")), handler) || rec.Code != status {
+			t.Fatal("automatic wire did not lose exactly one committed claim response")
+		}
+		if status == http.StatusServiceUnavailable {
+			if _, ok := wire.automaticClaimLost(); !ok {
+				t.Fatal("automatic claim loss not qualified")
+			}
+		} else if !bytes.Equal(rec.Body.Bytes(), raw) {
+			t.Fatal("claim recovery changed real envelope bytes")
+		}
+	}
+	if calls != 2 || !wire.automaticClaimReused() {
+		t.Fatal("automatic claim recovery changed original authority")
+	}
+	wire.claims[1].Lease.Fence = "changed_private_canary"
+	if wire.automaticClaimReused() {
+		t.Fatal("automatic fixture accepted changed original fence")
+	}
+	for _, bad := range []string{`{"capture_id":"private_canary"}`, `{} {}`, `null`, strings.Repeat(" ", 4095) + "{}"} {
+		rec := httptest.NewRecorder()
+		before := calls
+		if !wire.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/claim-next", strings.NewReader(bad)), handler) || rec.Code != http.StatusBadRequest || calls != before {
+			t.Fatal("automatic fixture forwarded nonempty or unbounded selection input")
+		}
+	}
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusForbidden} {
+		rejected := &databaseCaptureRuntimeWire{automatic: true}
+		rec := httptest.NewRecorder()
+		rejected.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/claim-next", strings.NewReader("{}")), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		if _, ok := rejected.automaticClaimLost(); ok || rec.Code != status {
+			t.Fatal("server rejection qualified as committed automatic claim loss")
+		}
+	}
+}
+
+func TestDatabaseCaptureRuntimeAutomaticReplayBarrierJoins(t *testing.T) {
+	wire := &databaseCaptureRuntimeWire{automatic: true, bodies: [][]byte{[]byte("origin"), []byte("origin")}, replayReached: make(chan struct{}), replayJoined: make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	var called bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusNotFound) })
+	rec := httptest.NewRecorder()
+	go func() {
+		defer close(done)
+		wire.serve(rec, httptest.NewRequest("POST", "/api/v1/runners/database-network-captures/claim-next", strings.NewReader("{}")).WithContext(ctx), handler)
+	}()
+	select {
+	case <-wire.replayReached:
+	case <-time.After(time.Second):
+		t.Fatal("post-replay barrier did not enter")
+	}
+	if !called || rec.Body.Len() != 0 {
+		t.Fatal("post-replay barrier did not call real handler before holding response")
+	}
+	counts := make(chan struct{})
+	go func() { wire.counts(); close(counts) }()
+	select {
+	case <-counts:
+	case <-time.After(time.Second):
+		t.Fatal("post-replay barrier retained diagnostic mutex")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("post-replay barrier did not cancel and join")
+	}
+	select {
+	case <-wire.replayJoined:
+	default:
+		t.Fatal("post-replay barrier join not published")
+	}
+	if wire.invalid || !wire.replayPaused {
+		t.Fatal("canceled post-replay barrier lost phase evidence")
+	}
+}
+
+func TestDatabaseCaptureRuntimeAutomaticArgumentsAndRetirement(t *testing.T) {
+	f := &databaseRunnerFixture{root: "/fixture/owned", server: &httptest.Server{URL: "https://fixture.invalid"}}
+	args := databaseAutomaticCaptureArguments(f, "unix:///fixture/owned/absent.sock")
+	for _, required := range []string{"--hosting-database-network-capture", "--hosting-database", "--once", "--execute", "--credential-file", "--journal-dir", "--database-state-root", "--database-secret-root"} {
+		if !slices.Contains(args, required) {
+			t.Fatal("automatic arguments lost explicit protected configuration")
+		}
+	}
+	for _, forbidden := range []string{"--database-network-capture-id", "--register", "--capabilities", "--complete-status"} {
+		if slices.Contains(args, forbidden) {
+			t.Fatal("automatic arguments supplied identity or generic completion")
+		}
+	}
+	index := slices.Index(args, "--image-docker-endpoint")
+	if index < 0 || args[index+1] != "unix:///fixture/owned/absent.sock" {
+		t.Fatal("automatic replay arguments lost absent socket")
+	}
+	path := filepath.Join(t.TempDir(), "journal.json")
+	for _, tc := range []struct {
+		body    string
+		retired bool
+	}{{`{"version":1,"events":[],"completions":[],"provenance":[]}`, true}, {`{"version":13,"database_network_capture":[{}]}`, false}, {`{"version":0}`, false}, {`{"version":1`, false}} {
+		if os.WriteFile(path, []byte(tc.body), 0600) != nil {
+			t.Fatal("retirement fixture write failed")
+		}
+		if databaseCaptureJournalRetired(path) != tc.retired {
+			t.Fatal("retirement phase proof accepted unresolved or malformed journal")
+		}
 	}
 }
