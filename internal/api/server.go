@@ -260,7 +260,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" {
+	if r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" || r.URL.Path == "/api/v1/runners/hosting/database-credentials" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
@@ -465,7 +465,7 @@ func requiresRunnerAuth(path string) bool {
 		return true
 	case "/api/v1/runners/hosting-observations/targets", "/api/v1/runners/hosting-observations/report":
 		return true
-	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment":
+	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment", "/api/v1/runners/hosting/database-credentials":
 		return true
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
@@ -668,7 +668,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
-	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable):
+	case errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable), errors.Is(err, app.ErrHostingDatabaseCredentialsUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "unavailable"
 	case errors.Is(err, auth.ErrUnauthenticated):
