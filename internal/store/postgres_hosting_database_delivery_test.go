@@ -3,10 +3,13 @@ package store_test
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
@@ -512,7 +515,7 @@ func secretBinding(project string, ref domain.HostingDatabaseCredentialRef) secr
 
 // Simulate a future qualified engine operation in this disposable schema. The
 // existing generic mutation guard itself remains unchanged and is re-enabled.
-func injectDatabaseCredentialChange(ctx context.Context, f storageMaterializationFixture, version bool) error {
+func injectDatabaseCredentialChange(ctx context.Context, f storageMaterializationFixture, version bool) (err error) {
 	tx, err := f.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -520,7 +523,9 @@ func injectDatabaseCredentialChange(ctx context.Context, f storageMaterializatio
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = tx.Rollback(cleanup)
+		if rollbackErr := tx.Rollback(cleanup); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			err = errors.Join(err, fmt.Errorf("rollback database credential injection: %w", rollbackErr))
+		}
 	}()
 	if _, err = tx.Exec(ctx, `ALTER TABLE project_managed_secrets DISABLE TRIGGER hosting_database_secret_update_guard; ALTER TABLE project_managed_secret_versions DISABLE TRIGGER hosting_database_secret_version_guard`); err != nil {
 		return err
