@@ -896,14 +896,53 @@ func (f *databaseRunnerFixture) replayInventory(known []domain.HostingOperation,
 }
 
 func databaseRunnerClientMatches(got databaseRunnerContainer, id, name, image, network string) bool {
-	if len(id) != 64 || strings.ToLower(id) != id {
-		return false
+	return databaseRunnerClientMismatch(got, id, name, image, network) == "none"
+}
+
+// Classification is closed: no inspected or expected value enters diagnostics.
+func databaseRunnerClientMismatch(got databaseRunnerContainer, id, name, image, network string) string {
+	if len(id) != 64 {
+		return "expected_id_length"
+	}
+	if strings.ToLower(id) != id {
+		return "expected_id_case"
 	}
 	if _, err := hex.DecodeString(id); err != nil {
-		return false
+		return "expected_id_encoding"
 	}
 	_, attached := got.NetworkSettings.Networks[network]
-	return got.ID == id && got.Name == "/"+name && got.Image == image && len(got.Config.Labels) == 1 && got.Config.Labels[databaseRunnerLabel] == databaseRunnerOwner && len(got.Config.Env) == 0 && len(got.Config.Cmd) == 0 && reflect.DeepEqual(got.Config.Entrypoint, []string{"/client"}) && len(got.Mounts) == 0 && got.HostConfig.NetworkMode == network && !got.HostConfig.Privileged && len(got.HostConfig.PortBindings) == 0 && len(got.NetworkSettings.Networks) == 1 && attached
+	switch {
+	case got.ID != id:
+		return "container_id"
+	case got.Name != "/"+name:
+		return "container_name"
+	case got.Image != image:
+		return "image"
+	case len(got.Config.Labels) != 1:
+		return "label_count"
+	case got.Config.Labels[databaseRunnerLabel] != databaseRunnerOwner:
+		return "owner"
+	case len(got.Config.Env) != 0:
+		return "environment"
+	case len(got.Config.Cmd) != 0:
+		return "command"
+	case !reflect.DeepEqual(got.Config.Entrypoint, []string{"/client"}):
+		return "entrypoint"
+	case len(got.Mounts) != 0:
+		return "mounts"
+	case got.HostConfig.NetworkMode != network:
+		return "network_mode"
+	case got.HostConfig.Privileged:
+		return "privileged"
+	case len(got.HostConfig.PortBindings) != 0:
+		return "port_bindings"
+	case len(got.NetworkSettings.Networks) != 1:
+		return "network_count"
+	case !attached:
+		return "network_attachment"
+	default:
+		return "none"
+	}
 }
 
 func TestDatabaseRunnerClientIdentityBeforeSecretStdin(t *testing.T) {
@@ -919,45 +958,85 @@ func TestDatabaseRunnerClientIdentityBeforeSecretStdin(t *testing.T) {
 	if !databaseRunnerClientMatches(valid, id, name, image, network) {
 		t.Fatal("owned private client refused")
 	}
-	for _, change := range []string{"identity", "name", "image", "owner", "network", "privilege", "environment", "command", "entrypoint", "mount", "port"} {
+	poison := "synthetic-protected-value\nAuthorization: Bearer never-print-this\x00%+v"
+	for change, want := range map[string]string{
+		"expected_length": "expected_id_length", "expected_case": "expected_id_case", "expected_encoding": "expected_id_encoding",
+		"identity": "container_id", "name": "container_name", "image": "image", "owner": "owner",
+		"missing_labels": "label_count", "extra_label": "label_count", "network": "network_mode",
+		"privilege": "privileged", "environment": "environment", "command": "command", "entrypoint": "entrypoint",
+		"mount": "mounts", "port": "port_bindings", "network_count": "network_count", "network_attachment": "network_attachment",
+		"expected_name": "container_name", "expected_image": "image", "expected_network": "network_mode",
+	} {
 		t.Run(change, func(t *testing.T) {
 			raw, e := json.Marshal(valid)
 			if e != nil {
-				t.Fatal(e)
+				t.Fatal("client_identity_fixture_encoding")
 			}
+			defer clear(raw)
 			var got databaseRunnerContainer
 			if json.Unmarshal(raw, &got) != nil {
 				t.Fatal("client identity fixture")
 			}
+			expectedID, expectedName, expectedImage, expectedNetwork := id, name, image, network
 			switch change {
+			case "expected_length":
+				expectedID = poison
+			case "expected_case":
+				expectedID = strings.Repeat("A", 64)
+			case "expected_encoding":
+				expectedID = strings.Repeat("z", 64)
+			case "expected_name":
+				expectedName = poison
+			case "expected_image":
+				expectedImage = poison
+			case "expected_network":
+				expectedNetwork = poison
 			case "identity":
-				got.ID = strings.Repeat("c", 64)
+				got.ID = poison
 			case "name":
-				got.Name = "/foreign"
+				got.Name = poison
 			case "image":
-				got.Image = "foreign"
+				got.Image = poison
 			case "owner":
-				got.Config.Labels[databaseRunnerLabel] = "foreign"
+				got.Config.Labels[databaseRunnerLabel] = poison
+			case "missing_labels":
+				got.Config.Labels = nil
+			case "extra_label":
+				got.Config.Labels[poison] = poison
 			case "network":
-				got.HostConfig.NetworkMode = "host"
+				got.HostConfig.NetworkMode = poison
+			case "network_count":
+				got.NetworkSettings.Networks = nil
+			case "network_attachment":
+				delete(got.NetworkSettings.Networks, network)
+				got.NetworkSettings.Networks[poison] = struct{ NetworkID, IPAddress string }{poison, poison}
 			case "privilege":
 				got.HostConfig.Privileged = true
 			case "environment":
-				got.Config.Env = []string{"UNEXPECTED=1"}
+				got.Config.Env = []string{poison}
 			case "command":
-				got.Config.Cmd = []string{"unexpected"}
+				got.Config.Cmd = []string{poison}
 			case "entrypoint":
-				got.Config.Entrypoint = []string{"/foreign"}
+				got.Config.Entrypoint = []string{poison}
 			case "mount":
 				got.Mounts = append(got.Mounts, struct {
 					Type, Name, Source, Destination string
 					RW                              bool
-				}{Type: "bind"})
+				}{Type: "bind", Source: poison, Destination: poison})
 			case "port":
-				got.HostConfig.PortBindings = map[string]any{"80/tcp": true}
+				got.HostConfig.PortBindings = map[string]any{poison: poison}
 			}
-			if databaseRunnerClientMatches(got, id, name, image, network) {
+			mismatch := databaseRunnerClientMismatch(got, expectedID, expectedName, expectedImage, expectedNetwork)
+			if mismatch != want || databaseRunnerClientMatches(got, expectedID, expectedName, expectedImage, expectedNetwork) {
 				t.Fatal("changed client could receive credential stdin")
+			}
+			for _, diagnostic := range []string{
+				fmt.Sprintf("client identity refused before credential stdin classification=%s", mismatch),
+				fmt.Sprintf("verified client cleanup refused classification=%s", mismatch),
+			} {
+				if strings.Contains(diagnostic, poison) || strings.Contains(diagnostic, "never-print-this") || strings.ContainsAny(diagnostic, "\n\x00") {
+					t.Fatal("client identity diagnostic exposed protected input")
+				}
 			}
 		})
 	}
@@ -1003,46 +1082,46 @@ func (f *databaseRunnerFixture) marker(view domain.HostingDatabase, op domain.Ho
 		f.t.Fatal("client image ownership mismatch")
 	}
 	id := ""
-	verify := func(ctx context.Context, identity string) error {
+	verify := func(ctx context.Context, identity string) string {
 		data, e := databaseRunnerDocker(ctx, nil, "container", "inspect", identity, "--format", "{{json .}}")
 		if e != nil {
-			return e
+			return "inspect_unavailable"
 		}
 		var got databaseRunnerContainer
-		if json.Unmarshal(data, &got) != nil || !databaseRunnerClientMatches(got, identity, name, imageProof.ID, op.Plan.Database.NetworkName) {
-			return errors.New("client ownership changed")
+		if json.Unmarshal(data, &got) != nil {
+			return "inspect_invalid"
 		}
-		return nil
+		return databaseRunnerClientMismatch(got, identity, name, imageProof.ID, op.Plan.Database.NetworkName)
 	}
-	cleanup := func() error {
+	cleanup := func() string {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		data, e := databaseRunnerDocker(ctx, nil, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "name=^/"+name+"$")
 		if e != nil {
-			return e
+			return "cleanup_inventory_unavailable"
 		}
 		ids := strings.Fields(string(data))
 		if len(ids) == 0 {
-			return nil
+			return "none"
 		}
 		if len(ids) != 1 || id != "" && ids[0] != id {
-			return errors.New("client cleanup identity changed")
+			return "cleanup_identity"
 		}
-		if e = verify(ctx, ids[0]); e != nil {
-			return e
+		if mismatch := verify(ctx, ids[0]); mismatch != "none" {
+			return mismatch
 		}
 		if _, e = databaseRunnerDocker(ctx, nil, "container", "rm", "--force", ids[0]); e != nil {
-			return e
+			return "cleanup_remove_unavailable"
 		}
 		data, e = databaseRunnerDocker(ctx, nil, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "name=^/"+name+"$")
 		if e != nil || strings.TrimSpace(string(data)) != "" {
-			return errors.New("client remains attached")
+			return "cleanup_absence_unconfirmed"
 		}
-		return nil
+		return "none"
 	}
 	defer func() {
-		if cleanup() != nil {
-			f.t.Fatal("verified client cleanup failed; no further database operation permitted")
+		if mismatch := cleanup(); mismatch != "none" {
+			f.t.Fatalf("verified client cleanup refused classification=%s", mismatch)
 		}
 	}()
 	created, e := databaseRunnerDocker(f.t.Context(), nil, "container", "create", "--interactive", "--name", name, "--label", databaseRunnerLabel+"="+databaseRunnerOwner, "--network", op.Plan.Database.NetworkName, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", imageProof.ID)
@@ -1050,8 +1129,8 @@ func (f *databaseRunnerFixture) marker(view domain.HostingDatabase, op domain.Ho
 		f.t.Fatal("private client creation failed")
 	}
 	id = strings.TrimSpace(string(created))
-	if verify(f.t.Context(), id) != nil {
-		f.t.Fatal("client identity refused before credential stdin")
+	if mismatch := verify(f.t.Context(), id); mismatch != "none" {
+		f.t.Fatalf("client identity refused before credential stdin classification=%s", mismatch)
 	}
 	inspected, err := json.Marshal(container)
 	if err != nil {
