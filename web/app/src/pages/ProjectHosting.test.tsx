@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ApiError } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
+vi.mock("./DatabaseCreateForm", () => ({ DatabaseCreateForm: ({ projectID, environmentID }: { projectID: string; environmentID: string }) => <div>Database creation for {projectID}/{environmentID}</div> }));
+vi.mock("./ResourceDatabase", () => ({ ResourceDatabase: ({ resource }: { resource: api.Resource }) => <div>Dedicated database metadata for {resource.name}</div> }));
 
 vi.mock("./ResourceRuntimeStatus", () => ({ ResourceRuntimeStatus: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-status" data-blocked={String(blocked)}>Runtime status for {resource.name}</div> }));
 vi.mock("./ResourceRuntimeLogs", () => ({ ResourceRuntimeLogs: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-logs" data-blocked={String(blocked)}>Runtime logs for {resource.name}</div> }));
@@ -34,6 +36,16 @@ function setup(writable = true, unavailable = false) {
 }
 async function selectEnvironment() { fireEvent.click(await screen.findByRole("button", { name: "Production" })); await screen.findByRole("heading", { name: "Web" }); }
 async function edit() { await selectEnvironment(); fireEvent.click(screen.getByRole("button", { name: "Edit configuration" })); return screen.getByRole("form", { name: "Edit Web" }); }
+test("mixed resources branch databases before every generic application panel and editor", async () => {
+  vi.mocked(api.listResources).mockResolvedValue(page([resource, { ...resource, id: "db", name: "Database", kind: "database", source: { kind: "image", image: { reference: "database-only-source" } } }]));
+  setup(); await selectEnvironment();
+  expect(screen.getByText("Dedicated database metadata for Database")).toBeTruthy();
+  expect(screen.getByText("Database creation for one/env")).toBeTruthy();
+  expect(screen.queryByText("database-only-source")).toBeNull();
+  for (const label of ["Desired destination", "Build controls", "Runtime status", "Runtime logs", "Runtime variables", "Image deployments", "Resource routes"]) expect(screen.queryByText(`${label} for Database`)).toBeNull();
+  expect(screen.queryByRole("region", { name: "Persistent storage for Database" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Edit configuration" })).toHaveLength(1);
+});
 
 test("viewers read environments and saved application configuration without write controls", async () => {
   setup(false); await selectEnvironment();
