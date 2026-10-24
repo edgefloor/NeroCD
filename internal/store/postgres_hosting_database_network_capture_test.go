@@ -12,7 +12,6 @@ import (
 	"nerocd/internal/store"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -310,16 +309,50 @@ func TestPostgresDatabaseNetworkCaptureBothEnginesAndHistoricalReplay(t *testing
 
 func TestPostgresDatabaseNetworkCaptureClaimsAndStaleAttempt(t *testing.T) {
 	f := newNetworkCaptureFixture(t, "postgresql")
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	f.ctx = ctx
 	c := f.request(t)
 	claims := make([]domain.HostingDatabaseNetworkCaptureClaim, 2)
 	errs := make([]error, 2)
-	var wg sync.WaitGroup
-	for i := range claims {
-		wg.Go(func() {
-			claims[i], errs[i] = f.pg.ClaimHostingDatabaseNetworkCapture(f.ctx, f.runner, f.credential, c.ID, time.Minute)
-		})
+	type outcome struct {
+		index int
+		claim domain.HostingDatabaseNetworkCaptureClaim
+		err   error
 	}
-	wg.Wait()
+	// Two callers report once each; cancellation cleanup drains both results.
+	done := make(chan outcome, 2)
+	started, joined := 0, 0
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		for joined < started {
+			select {
+			case <-done:
+				joined++
+			case <-cleanup.Done():
+				t.Error("simultaneous capture claim did not join")
+				return
+			}
+		}
+	}()
+	for i := range claims {
+		started++
+		go func() {
+			claim, err := f.pg.ClaimHostingDatabaseNetworkCapture(ctx, f.runner, f.credential, c.ID, time.Minute)
+			done <- outcome{i, claim, err}
+		}()
+	}
+	for joined < started {
+		select {
+		case result := <-done:
+			joined++
+			claims[result.index], errs[result.index] = result.claim, result.err
+		case <-ctx.Done():
+			t.Fatal("simultaneous capture claim deadline")
+		}
+	}
 	if errs[0] != nil || errs[1] != nil || claims[0].Lease.ID != claims[1].Lease.ID {
 		t.Fatal("simultaneous claims minted competing leases", errs)
 	}
@@ -337,6 +370,94 @@ func TestPostgresDatabaseNetworkCaptureClaimsAndStaleAttempt(t *testing.T) {
 	}
 	if _, e := f.pg.RecordHostingDatabaseNetworkOrigin(f.ctx, f.runner, f.credential, captureOriginRequest(next)); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestPostgresDatabaseNetworkCaptureBlockedClaimsCancelAndJoin(t *testing.T) {
+	f := newNetworkCaptureFixture(t, "postgresql")
+	c := f.request(t)
+	ctx, stop := context.WithTimeout(f.ctx, 15*time.Second)
+	defer stop()
+	claims, cancel := context.WithCancel(ctx)
+	defer cancel()
+	blocker, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both blocked calls can finish without a receiver after cancellation.
+	done := make(chan error, 2)
+	started, joined := 0, 0
+	defer func() {
+		cancel()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := blocker.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error("blocked claim rollback failed")
+		}
+		for joined < started {
+			select {
+			case <-done:
+				joined++
+			case <-cleanup.Done():
+				t.Error("blocked capture claim did not join")
+				return
+			}
+		}
+	}()
+	before := captureCounts(t, f)
+	var pid int
+	if blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid) != nil {
+		t.Fatal("blocked claim identity unavailable")
+	}
+	if _, err = blocker.Exec(ctx, `SELECT id FROM task_runs WHERE id=$1 FOR UPDATE`, c.RunID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		started++
+		go func() {
+			_, err := f.pg.ClaimHostingDatabaseNetworkCapture(claims, f.runner, f.credential, c.ID, time.Minute)
+			done <- err
+		}()
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting int
+		// A row-lock waiter can queue behind the first waiter rather than the
+		// original blocker. Include that bounded two-caller wait chain.
+		if f.db.QueryRow(ctx, `WITH RECURSIVE waiters(pid) AS (
+ SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
+ UNION SELECT a.pid FROM pg_stat_activity a JOIN waiters w ON w.pid=ANY(pg_blocking_pids(a.pid))
+) SELECT count(*) FROM waiters`, pid).Scan(&waiting) != nil {
+			t.Fatal("blocked claim observation failed")
+		}
+		if waiting == 2 {
+			break
+		}
+		select {
+		case <-done:
+			joined++
+			t.Fatal("claim did not reach its barrier")
+		case <-ctx.Done():
+			t.Fatal("blocked claim barrier deadline")
+		case <-ticker.C:
+		}
+	}
+	cancel()
+	// The blocker remains held: both calls must join because they were canceled.
+	for joined < started {
+		select {
+		case err := <-done:
+			joined++
+			if !errors.Is(err, context.Canceled) {
+				t.Error("blocked claim did not return cancellation")
+			}
+		case <-ctx.Done():
+			t.Fatal("canceled blocked claim join deadline")
+		}
+	}
+	if captureCounts(t, f) != before {
+		t.Fatal("canceled blocked claims created effects")
 	}
 }
 
