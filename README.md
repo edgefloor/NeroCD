@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`f4a54506f388339ffe8acdd6b8ec4133690188fa`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`c731f708e62e2376d174041957b8654fe83d5bcf`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -170,7 +170,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   saving mount intent alone does not materialize or mount a volume.
   Storage deployment-review/recovery UI is accepted with UX-only limits below.
 Direct database engine qualification and default-off runner coordination are
-accepted below; actual API/runner workflow qualification remains unaccepted. Backups/restore,
+accepted below; the later exact API/runner workflow and direct UI are accepted below; metadata
+remains `adapter_unqualified` and application binding remains unfinished. Backups/restore,
   unknown-writer recovery, production ACME and complete A19/A26 remain open.
 - Storage deployment-review/recovery UI is accepted at
   `77be63a03c9caf3e95239a751045f0fe7b5918cf`. Its browser qualification covers
@@ -183,8 +184,13 @@ accepted below; actual API/runner workflow qualification remains unaccepted. Bac
   accepted at `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; default-off runner
   coordination is accepted at `f4a54506f388339ffe8acdd6b8ec4133690188fa`.
   The original physical pass does not qualify the changed combined tree. Database
-  UI saves metadata only; actual API/runner qualification, deployment UI and
-  application bindings remain unfinished.
+  direct deployment UI is accepted separately from its intercepted browser proof.
+  The exact authenticated API/River/compiled-runner workflow at
+  `c731f708e62e2376d174041957b8654fe83d5bcf` physically passed PostgreSQL/Redis
+  write, redeploy/read and lost-completion-ACK restart/read in 29.75 seconds.
+  See the [workflow fixture](acceptance/runtime-hosting-database-runner/README.md).
+  Default-off opt-in and metadata `adapter_unqualified` remain. Application binding,
+  archive backup/restore, public ACME and complete A17 remain unfinished.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon

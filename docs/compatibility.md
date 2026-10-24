@@ -2,7 +2,7 @@
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`f4a54506f388339ffe8acdd6b8ec4133690188fa`, 2026-10-24.
+`c731f708e62e2376d174041957b8654fe83d5bcf`, 2026-10-24.
 The Coolify reference remains
 [`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
 Earlier planning at `a763a90b3896257b784c9498d01650ccdad2427a` and the
@@ -88,7 +88,8 @@ artifact deployment, build output and private Git control-plane contracts:
 | Connected storage deployment-review/recovery UI | Accepted `77be63a03c9caf3e95239a751045f0fe7b5918cf`; [deployment review](../web/app/src/pages/StorageDeploymentReview.tsx), [deployment page](../web/app/src/pages/ResourceDeployments.tsx), [browser scenarios](../web/app/tests/browser/hosting-storage-deployment.spec.ts) | Authoritative options and connected review/retry/continuity controls accepted; browser uses real authentication/resource setup with intercepted deployment/options/status responses, so it proves UX rather than a new mounted workflow or physical proxy recovery; earlier physical upload proof retains its original revision |
 | Private database foundations | Creation/domain `d2dd99af9a88f64b68a9ad25c42a23a7826d20db`; metadata UI `bed700ed0bb8f006c10cd355b98eab1df9c8b5e0`, source `e143e45dde772a881ec75e0602985c84df06a92e`; controller `b93eef4a5b633f7639adc2bee78b7c39bbf8af83`; engine helpers `ca818c6ec94c0bdea661373566e28f46cf5ef229`; protected delivery `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`; [metadata UI](../web/app/src/pages/ResourceDatabase.tsx), [engine tests](../internal/runnerruntime/hosting_database_engine_test.go), [delivery API tests](../internal/api/hosting_database_delivery_handlers_test.go) | Migrations 0065–0066 and 211-route contract; accepted metadata/creation, private controller/helpers and protected credential API/protocol/client only; engine and delivery were not runner-wired at this checkpoint; later direct-engine qualification and default-off coordinator are recorded below; no database deployment button, application binding, combined API/runner physical pass or complete A17 |
 | Direct private database engine qualification | Accepted `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; [physical fixture contract](../acceptance/runtime-hosting-database/README.md) | Six native Linux arm64 engine cases, PostgreSQL 17.11/Redis 8.2.10, passed in 30.52 seconds; A/B/C data continuity on the same volume/private bridge, changed credentials and revoked exact replay denied, lost retirement ACK recovered, missing/foreign-volume negatives; direct engine only, not API/runner workflow, archive restore, AMD64 or full A17 |
-| Default-off database runner coordinator | Source `9040572132e60787186fd59ffddc57d765d6c752`, accepted `f4a54506f388339ffe8acdd6b8ec4133690188fa`; [typed coordinator](../internal/runnerruntime/hosting_database_execution.go), [replay tests](../internal/runnerruntime/hosting_database_replay_test.go), [CLI configuration tests](../cmd/nerocd/runner_database_config_test.go) | Journal v11, protected delivery before ApplyBegin, current-authority callback, native Linux arm64 and verified HTTPS for database runner-to-control-plane requests; capability disabled by default; accepted code and race/build evidence, no accepted current API/runner physical workflow or deployment UI |
+| Default-off database runner coordinator | Source `9040572132e60787186fd59ffddc57d765d6c752`, accepted `f4a54506f388339ffe8acdd6b8ec4133690188fa`; [typed coordinator](../internal/runnerruntime/hosting_database_execution.go), [replay tests](../internal/runnerruntime/hosting_database_replay_test.go), [CLI configuration tests](../cmd/nerocd/runner_database_config_test.go) | Journal v11, protected delivery before ApplyBegin, current-authority callback, native Linux arm64 and verified HTTPS for database runner-to-control-plane requests; capability disabled by default; accepted code and race/build evidence, API/runner physical workflow and direct deployment UI were not qualified at this coordinator checkpoint; later accepted evidence is below |
+| Private database API/runner workflow and direct UI | Accepted `c731f708e62e2376d174041957b8654fe83d5bcf`; [compiled-runner fixture contract](../acceptance/runtime-hosting-database-runner/README.md), [actual API/runtime fixture](../internal/api/hosting_database_runtime_integration_test.go), [UI browser scenarios](../web/app/tests/browser/database-deployments.spec.ts) | Authenticated API/River/compiled runner physically qualified for private PostgreSQL and Redis on native Linux arm64: A write, B redeploy/read, C restart and committed Complete-ACK loss/read retain volume/network/credential references and the same operation receipt, without repeated Apply or secret delivery; direct UI accepted separately with intercepted four-width browser evidence; default-off opt-in and metadata `adapter_unqualified` remain; no application binding, archive restore or full A17 |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -104,6 +105,22 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Exact combined physical qualification at `c731f708e62e2376d174041957b8654fe83d5bcf` passed in
+29.75 seconds, with both clients and owned outer cleanup passing. Source evidence
+is `/tmp/nerocd-database-client-environment-physical-handoff.json` and
+`/tmp/nerocd-main-database-qualified-promotion.json`; the stable fixture links above
+identify executable assertions. Earlier failed attempts remain historical failures.
+The typed-claim 409 was repaired at `664bc50e487f757a5f371c72659425c53b2a47e9`;
+that repair's unit/PG evidence is distinct from the later exact physical pass.
+
+Direct database UI evidence retains 1,380 frontend tests and four-width intercepted
+keyboard-browser checks at `00ec9b461c625eba7b8fa9a1bc37cae71f987e95`, with unchanged UI inputs
+recorded in `/tmp/nerocd-database-ui-claim-handoff.json`. These UI checks do not
+replace physical API/runtime proof. The workflow remains default-off and opt-in;
+metadata stays `adapter_unqualified`. Application binding is missing, so complete
+A17 is not claimed. Archive backup/restore, public ACME and full parity remain
+unfinished; archive helper work is in progress and unaccepted.
+
 Direct-engine evidence in `/tmp/nerocd-database-qualified-physical-handoff.json`
 belongs to `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`: six cases passed in
 30.52 seconds on native Linux arm64. The coordinator handoff
@@ -112,9 +129,9 @@ runner/client/runtime/CLI race checks in 81.189 seconds, compile, vet and Linux
 arm64 build at `f4a54506f388339ffe8acdd6b8ec4133690188fa`. Eight engine files
 remain identical to the qualified engine revision, but the shared volume helper
 changed; the earlier physical pass is not qualification of the final combined
-tree. The current API workflow fixture remains unaccepted and unrun. No database
-deployment UI, application binding, archive backup/restore, major upgrade, public
-database, AMD64 qualification, complete A17 or full parity is claimed.
+tree. The later exact combined workflow pass is recorded below. Application
+binding, archive backup/restore, major upgrade, public database, AMD64
+qualification, complete A17 and full parity remain unfinished.
 
 Current storage UI evidence at `77be63a03c9caf3e95239a751045f0fe7b5918cf`
 records 179 frontend tests, responsive/keyboard browser checks, compiled Go and
@@ -132,9 +149,10 @@ controller/storage race checks, focused races, vet, SQL placement, Go compile,
 `/tmp/nerocd-database-delivery-integration-handoff.json` and
 `/tmp/nerocd-main-database-delivery-promotion.json`. Engine helpers and delivery
 were unwired at this credential-delivery checkpoint. Later direct-engine and
-default-off coordinator evidence is recorded below. Database UI remains metadata
-only; no combined API/runner pass, application binding, complete A17, backup/archive
-restore or production ACME is claimed.
+default-off coordinator evidence is recorded below. Database UI was metadata
+only at that checkpoint; later direct deployment UI and combined workflow evidence
+are below. Application binding, complete A17, backup/archive restore and production
+ACME remain unqualified.
 
 Physical storage evidence at `b33466c81899e2a7278b2e551fb2532ae17b46bc`
 passed in 17.06 seconds. The retained summary
@@ -156,7 +174,8 @@ domain/application/API checks passed with a maximum package time of 8.014 second
 These are contract/database tests, not an actual proxy-recovery runtime fixture.
 Storage deployment-review/recovery UI is accepted with UX-only limits below.
 Direct database engine qualification and default-off runner coordination are
-accepted below; actual API/runner workflow qualification remains unaccepted. Backups,
+accepted below; the later exact API/runner workflow and direct UI are accepted below; metadata
+remains `adapter_unqualified` and application binding remains unfinished. Backups,
 restore, unknown-writer handling, production ACME, complete A19/A26 and full
 hosting parity remain unfinished.
 
@@ -190,7 +209,8 @@ at main. The qualified current artifact was built and served in the integration
 checkout; root ignored assets remain historical. Storage metadata, the private helper and durable admission are accepted below;
 the bounded API/compiled-runner mounted workflow is accepted below; accepted storage deployment-review/recovery UI is separate UX evidence; database
 direct engine qualification and default-off coordination are accepted below;
-actual API/runner workflow qualification remains unaccepted.
+the later exact API/runner workflow and direct UI are accepted below; metadata
+remains `adapter_unqualified` and application binding remains unfinished.
 
 Automatic deployment evidence is source-bound: runtime
 `3510437292cb7195a7cda9760b7eb7bf468d7877` passed in 66.85 seconds at
@@ -495,7 +515,7 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; bounded completed-conflict recovery API accepted; bounded recovery administrator UI accepted; bounded automatic_unprotected deployment accepted; protected approval remains planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | partial: accepted metadata/admission, explicit storage capability, API/compiled-runner uploaded-file runtime and bounded unqueued-continuity recovery; metadata API/UI accepted; connected deployment-review/recovery UX accepted separately from physical runtime; broader directories/managed files/external files, backups and unknown-writer recovery planned | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
-| Databases | C7 | partial foundations: metadata/creation UI, private controller/engine helpers and protected credential delivery accepted; direct engine qualification/default-off coordinator accepted; combined API/runner physical qualification, deployment UI and application binding unfinished; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
+| Databases | C7 | partial foundations: metadata/creation UI, private controller/engine helpers and protected credential delivery accepted; direct engine qualification/default-off coordinator accepted; bounded combined API/runner physical workflow and direct deployment UI accepted; application binding, archive backup/restore and broader qualification unfinished; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
 | Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; bounded private Git and managed runtime delivery/execution accepted; broader delivery/scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
 | Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; accepted bounded runtime-status dashboard; bounded live runtime logs/viewer are accepted; broader resource actions remain planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
