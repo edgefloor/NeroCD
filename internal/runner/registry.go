@@ -75,6 +75,12 @@ func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, err
 		}
 		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
 	}
+	if run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
+		if err := domain.ValidateDatabaseDeploymentTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
 		return domain.RunnerPrimitivePlan{}, errors.New("hosting execution cannot be embedded in a generic plan")
 	}

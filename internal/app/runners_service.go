@@ -433,7 +433,7 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 		if _, err := s.RunnerProxyPlan(ctx, a); err != nil {
 			return domain.ClaimedRun{}, err
 		}
-	} else if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	} else if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
 		if err := validateClaimedHostingDeployment(claim.Run); err != nil {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
@@ -601,8 +601,12 @@ func (s *Service) AuthorizeSecretAccess(ctx context.Context, input SecretAccessI
 }
 
 func validateClaimedHostingDeployment(run domain.TaskRun) error {
-	if run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	switch run.RunSpec.Type {
+	case domain.RunTypeLocalBuildDeploy:
 		return domain.ValidateLocalBuildDeploymentTask(run)
+	case domain.RunTypeDatabaseDeploy:
+		return domain.ValidateDatabaseDeploymentTask(run)
+	default:
+		return domain.ValidateImageDeploymentTask(run)
 	}
-	return domain.ValidateImageDeploymentTask(run)
 }
