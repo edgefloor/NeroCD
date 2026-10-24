@@ -17,6 +17,8 @@ import { ResourceRuntimeStatus } from "./ResourceRuntimeStatus";
 import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 
 import { ResourceStorage } from "./ResourceStorage";
+import { ResourceDatabase } from "./ResourceDatabase";
+import { DatabaseCreateForm } from "./DatabaseCreateForm";
 
 const pageSize = 20;
 const selectClass = "h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm";
@@ -152,7 +154,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     {resources.isError ? <div className="space-y-2"><p role="alert">Unable to load application configurations. Your draft is preserved.</p><Button type="button" variant="outline" disabled={resources.isFetching} onClick={() => void resources.refetch()}>Retry applications</Button></div> : null}
     {resources.isPending ? <p role="status">Loading applications...</p> : null}
     {resources.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">No saved applications in this environment.</p> : null}
-    <div className="space-y-3">{resources.data?.items.map((resource) => <article key={resource.id} className="min-w-0 space-y-3 rounded-xl border p-3" aria-label={resource.name}>
+    <div className="space-y-3">{resources.data?.items.map((resource) => resource.kind === "database" ? <article key={resource.id} className="min-w-0 rounded-xl border p-3" aria-label={resource.name}>{resource.project_id === projectID && resource.project_environment_id === environment.id ? <ResourceDatabase resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} /> : <p role="alert">Database resource scope mismatch.</p>}</article> : <article key={resource.id} className="min-w-0 space-y-3 rounded-xl border p-3" aria-label={resource.name}>
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.kind === "image" ? resource.source.image.reference : `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
@@ -178,6 +180,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}
     </form> : null}
+    <DatabaseCreateForm projectID={projectID} environmentID={environment.id} blocked={blocked || resources.isError || resources.isPending || environment.project_id !== projectID} accessError={resources.isError ? resources.error : undefined} />
     {notice ? <p role="status">{notice}</p> : null}
   </section>;
 }
@@ -225,7 +228,7 @@ export function ProjectHosting({ projects, canOperateProject, unavailable = fals
   const [projectID, setProjectID] = useState("");
   const project = projects.find((item) => item.id === projectID);
   return <Card className="min-w-0" role="region" aria-label="Project hosting">
-    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save image or Git application configuration in shared project environments, choose placement, and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
+    <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save application or database configuration in shared project environments. Database metadata does not start an engine. Choose application placement and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}
