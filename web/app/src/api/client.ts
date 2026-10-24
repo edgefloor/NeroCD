@@ -21,6 +21,15 @@ function withQuery(path: string, query: RequestOptions["query"]): string {
 }
 
 async function errorFor(response: Response): Promise<ApiError> {
+  if (response.status === 401 || response.status === 403) {
+    // Denial headers remain authoritative even when the body never completes.
+    try {
+      void response.body?.cancel().catch(() => {});
+    } catch {
+      // Cancellation is best effort and must not delay or replace the denial.
+    }
+    return new ApiError(response.status, response.status === 401 ? "401 Unauthorized" : "403 Forbidden", response.headers.get("X-Request-ID"));
+  }
   let message = `${response.status} ${response.statusText}`.trim();
   try {
     const body = (await response.json()) as { error?: unknown };

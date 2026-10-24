@@ -103,9 +103,9 @@ test("failed browser sign-in rejects for router control while retaining the rend
     .mockResolvedValueOnce(new Response(JSON.stringify({ error: "invalid credentials" }), { status: 401, headers: { "Content-Type": "application/json" } }));
   const { result } = renderHook(() => useAuth(), { wrapper });
   await waitFor(() => expect(result.current.authenticated).toBe(false));
-  await expect(result.current.signIn("bad@example.local", "wrong")).rejects.toThrow("invalid credentials");
+  await expect(result.current.signIn("bad@example.local", "wrong")).rejects.toThrow("401 Unauthorized");
   expect(result.current.authenticated).toBe(false);
-  await waitFor(() => expect(result.current.authError).toBe("invalid credentials"));
+  await waitFor(() => expect(result.current.authError).toBe("401 Unauthorized"));
 });
 
 

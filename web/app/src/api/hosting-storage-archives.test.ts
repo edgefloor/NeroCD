@@ -185,6 +185,43 @@ test("refresh waits for ordinary siblings and then preserves the first endpoint 
   await expect(pending).rejects.toMatchObject({ status: 503 });
   expect(vi.getTimerCount()).toBe(0);
 });
+test.each([401, 403])(
+  "refresh preserves observed %i headers when its error body never finishes and other reads fail",
+  async (status) => {
+    vi.useFakeTimers();
+    const fetch = vi.fn((path: string) =>
+      Promise.resolve(
+        path.endsWith("/storage")
+          ? new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("{"));
+                },
+              }),
+              { status, headers: { "X-Request-ID": "unfinished-denial" } },
+            )
+          : new Response("{}", {
+              status: path.endsWith("/binding") ? 500 : 503,
+            }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const observed = vi.fn();
+    void refreshArchiveConfiguration(
+      scope,
+      storage as components["schemas"]["HostingStorage"],
+    ).then(
+      () => observed("resolved"),
+      (cause) => observed(cause),
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    expect(observed).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ status, requestID: "unfinished-denial" }),
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
 test("refresh cancellation retires every bounded read and consumes late transport rejections", async () => {
   vi.useFakeTimers();
   const replies = [deferredResponse(), deferredResponse(), deferredResponse()];

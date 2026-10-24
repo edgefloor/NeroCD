@@ -36,5 +36,5 @@ test("hosting writes send exact accepted bodies with cookie CSRF protection", as
 
 test.each([400, 401, 403, 404, 409, 500])("hosting failures retain status %s and request identity", async (status) => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "unable to save" }), { status, headers: { "X-Request-ID": "hosting-request" } })));
-  await expect(updateResource("app", { name: "Draft", expected_generation: 1 })).rejects.toEqual(new ApiError(status, "unable to save", "hosting-request"));
+  await expect(updateResource("app", { name: "Draft", expected_generation: 1 })).rejects.toEqual(new ApiError(status, status === 401 ? "401 Unauthorized" : status === 403 ? "403 Forbidden" : "unable to save", "hosting-request"));
 });

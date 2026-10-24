@@ -86,7 +86,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 test.each([401, 403])(
-  "actual refresh adapter masks a saved intent when delayed %i follows 503, without waiting for a stalled read",
+  "actual refresh adapter masks a saved intent when delayed %i headers with an unfinished body follow 503, without waiting for a stalled read",
   async (status) => {
     const actual = await vi.importActual<typeof api>(
       "@/api/hosting-storage-archives",
@@ -123,7 +123,16 @@ test.each([401, 403])(
       });
       expect(screen.getByText(/Saved backup request/)).toBeTruthy();
       await act(async () => {
-        deny(new Response("{}", { status }));
+        deny(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("{"));
+              },
+            }),
+            { status, headers: { "X-Request-ID": "unfinished-denial" } },
+          ),
+        );
       });
       await screen.findByText(/Archive access is unavailable. Reload the page/);
       expect(screen.queryByText(/Saved backup request/)).toBeNull();

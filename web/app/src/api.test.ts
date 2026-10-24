@@ -4,7 +4,7 @@ import { ApiError, archiveProject, approveRun, cancelDeployment, cancelRun, conf
 import { request } from "./api/client";
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => { globalThis.fetch = originalFetch; vi.useRealTimers(); });
 
 function mockFetch(response: Response) {
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(response.clone()));
@@ -13,6 +13,86 @@ function mockFetch(response: Response) {
 }
 
 describe("native cookie API client", () => {
+  test.each(
+    [401, 403].flatMap((status) =>
+      ["pending", "rejected", "throws"].map((cancel) => ({ status, cancel })),
+    ),
+  )(
+    "denial $status uses safe header evidence without waiting for an unfinished body or $cancel cancellation",
+    async ({ status, cancel }) => {
+      vi.useFakeTimers();
+      let finish!: () => void;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{"));
+          finish = () => {
+            try {
+              controller.close();
+            } catch {
+              /* Cancellation may have closed it already. */
+            }
+          };
+        },
+      });
+      const response = new Response(stream, {
+        status,
+        statusText: "private diagnostic",
+        headers: { "X-Request-ID": "denial-request" },
+      });
+      const cancelBody = vi
+        .spyOn(response.body!, "cancel")
+        .mockImplementation(() => {
+          if (cancel === "throws") throw new Error("cancel failed synchronously");
+          return cancel === "rejected"
+            ? Promise.reject(new Error("cancel failed"))
+            : new Promise<void>(() => {});
+        });
+      globalThis.fetch = vi.fn().mockResolvedValue(response);
+      const observed = vi.fn();
+      void request("/example").then(
+        () => observed("success"),
+        (cause) => observed(cause),
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(1);
+        expect(observed).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            name: "ApiError",
+            status,
+            message: status === 401 ? "401 Unauthorized" : "403 Forbidden",
+            requestID: "denial-request",
+          }),
+        );
+        expect(cancelBody).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        await vi.advanceTimersByTimeAsync(1);
+      }
+    },
+  );
+  test.each([401, 403])(
+    "denial %i remains a header-based ApiError when the body is already aborted",
+    async (status) => {
+      const response = new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new DOMException("body aborted", "AbortError"));
+          },
+        }),
+        { status, headers: { "X-Request-ID": "aborted-request" } },
+      );
+      globalThis.fetch = vi.fn().mockResolvedValue(response);
+      const controller = new AbortController();
+      const pending = request("/example", { signal: controller.signal });
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({
+        status,
+        message: status === 401 ? "401 Unauthorized" : "403 Forbidden",
+        requestID: "aborted-request",
+      });
+    },
+  );
+
   test("encodes query parameters and includes browser credentials", async () => {
     const fetchMock = mockFetch(new Response(JSON.stringify({ items: [], limit: 10, offset: 2, count: 0, total: 0 }), { headers: { "Content-Type": "application/json" } }));
     await listProjects({ limit: 10, offset: 2 });
