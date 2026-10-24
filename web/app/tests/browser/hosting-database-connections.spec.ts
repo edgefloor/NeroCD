@@ -154,3 +154,21 @@ test("intercepted failed route refresh permits keyboard removal from an unsent d
   expect(JSON.parse(writes[0])).not.toHaveProperty("application_database_route_continuity");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("intercepted refreshed eligible routes require renewed approval before deployment", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 1000 });
+  const { panel, writes, stale } = await fixture(page, true);
+  await panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.").check();
+  const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request.");
+  await approve.check(); stale();
+  await panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+  await expect(panel.getByText("Loaded route choices changed. Review the current routes and confirm this request again.")).toBeVisible();
+  await expect(approve).not.toBeChecked();
+  const deploy = panel.getByRole("button", { name: "Redeploy connected application", exact: true });
+  await expect(deploy).toBeDisabled(); expect(writes).toHaveLength(0);
+  await approve.focus(); await page.keyboard.press("Space");
+  await deploy.focus(); await page.keyboard.press("Enter");
+  await expect(panel.getByText(/Request accepted: hop_fixture/)).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0]).application_database_route_continuity.expected_loaded_generation).toBe(8);
+});

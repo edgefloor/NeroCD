@@ -368,3 +368,58 @@ test("route refresh failure cannot remove continuation from a transmitted uncert
   expect(bodies[0]).toBe(bodies[1]);
   expect(JSON.parse(String(bodies[1]))).toHaveProperty("application_database_route_continuity");
 });
+
+const refreshedEligibleRoutes = [
+  { ...loadedRoutes, loaded_generation: 8 },
+  { ...loadedRoutes, loaded_proxy_operation_id: "pop_next" },
+  { ...loadedRoutes, routes: [{ ...loadedRoutes.routes[0]!, version: 4 }] },
+  { ...loadedRoutes, routes: [{ ...loadedRoutes.routes[0]!, id: "route_b", hostname: "next.example.test" }] },
+];
+test.each(refreshedEligibleRoutes)("material refreshed route choices invalidate unsent approval: %j", async (updated) => {
+  let changed = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return json(changed ? updated : loadedRoutes);
+    if (init.method === "POST") return json({ id: "operation", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+  });
+  await selectContinuation(); changed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText("Loaded route choices changed. Review the current routes and confirm this request again.");
+  const approve = screen.getByLabelText("I reviewed the selected database and application settings and approve this request.");
+  expect((approve as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByRole("button", { name: "Redeploy connected application" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Review database connection request" }));
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+  fireEvent.click(approve);
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1));
+  const body = JSON.parse(String(fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body));
+  expect(body.application_database_route_continuity).toEqual({ expected_loaded_generation: updated.loaded_generation, expected_loaded_proxy_operation_id: updated.loaded_proxy_operation_id, routes: updated.routes.map((route) => ({ route_id: route.id, expected_version: route.version, expected_selected_release_operation_id: route.selected_release_operation_id })) });
+});
+test("unchanged route refresh preserves exact approval", async () => {
+  setup((url) => url.endsWith("/database-connection") ? json(connection) : url.endsWith("/route-switches") ? json(loadedRoutes) : undefined);
+  await selectContinuation();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Refresh database connection" }) as HTMLButtonElement).disabled).toBe(false));
+  expect((screen.getByLabelText("I reviewed the selected database and application settings and approve this request.") as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByText(/Loaded route choices changed/)).toBeNull();
+});
+test("material route refresh cannot rewrite an uncertain submitted request", async () => {
+  let changed = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return json(changed ? refreshedEligibleRoutes[0] : loadedRoutes);
+    if (init.method === "POST") return Promise.reject(new TypeError("lost"));
+  });
+  await selectContinuation();
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/No confirmed response/); changed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText(/Loaded generation 8/);
+  await waitFor(() => expect((screen.getByRole("button", { name: "Retry identical application request" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Retry identical application request" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+  const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+  expect(bodies[0]).toBe(bodies[1]);
+  expect(JSON.parse(String(bodies[1])).application_database_route_continuity.expected_loaded_generation).toBe(7);
+});
