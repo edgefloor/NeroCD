@@ -605,6 +605,20 @@ func (f *databaseRunnerFixture) captureWithRecoveryMode(source domain.HostingOpe
 	return capture, stored, trees
 }
 
+func databaseCaptureCreateInput(engine string, automatic bool, environment, destination string) domain.HostingDatabaseCreateInput {
+	version, requestID := domain.HostingDatabasePostgresRecipe, strings.Repeat("c", 32)
+	if automatic {
+		requestID = strings.Repeat("c2", 16)
+	}
+	if engine == "redis" {
+		version, requestID = domain.HostingDatabaseRedisRecipe, strings.Repeat("d", 32)
+		if automatic {
+			requestID = strings.Repeat("d2", 16)
+		}
+	}
+	return domain.HostingDatabaseCreateInput{RequestID: requestID, ProjectID: "proj_platform", ProjectEnvironmentID: environment, Name: "capture physical " + engine, DestinationID: destination, Engine: engine, RecipeVersion: version}
+}
+
 func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 	if os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" {
 		t.Skip("run reviewed acceptance/runtime-hosting-database-runner/gate.sh after exact physical authorization")
@@ -623,14 +637,10 @@ func TestHostingDatabaseCaptureCompiledRunner(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newDatabaseRunnerFixtureWithCapture(t, true)
 			for index, engine := range []string{"postgresql", "redis"} {
-				version := domain.HostingDatabasePostgresRecipe
-				if engine == "redis" {
-					version = domain.HostingDatabaseRedisRecipe
-				}
 				if index > 0 {
 					f.start()
 				}
-				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", domain.HostingDatabaseCreateInput{RequestID: strings.Repeat(string(rune('c'+index)), 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "capture physical " + engine, DestinationID: f.destination, Engine: engine, RecipeVersion: version}, 201)
+				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", databaseCaptureCreateInput(engine, automatic, f.environment, f.destination), 201)
 				source := f.await(f.deploy(view, "capture_source").ID)
 				marker := "capture_physical_" + engine + "_before"
 				f.marker(view, source, marker, true)
@@ -1232,6 +1242,57 @@ func TestDatabaseCaptureRuntimeAutomaticArgumentsAndRetirement(t *testing.T) {
 		}
 		if databaseCaptureJournalRetired(path) != tc.retired {
 			t.Fatal("retirement phase proof accepted unresolved or malformed journal")
+		}
+	}
+}
+
+func TestDatabaseCaptureRuntimePhysicalIdentitiesDisjoint(t *testing.T) {
+	const environment, destination = "penv_fixture", "dest_fixture"
+	type createCase struct {
+		name    string
+		input   domain.HostingDatabaseCreateInput
+		request string
+	}
+	var cases []createCase
+	for index, engine := range []string{"postgresql", "redis"} {
+		normal := databaseCaptureCreateInput(engine, false, environment, destination)
+		normal.RequestID = strings.Repeat(string(rune('a'+index)), 32)
+		cases = append(cases, createCase{"normal_" + engine, normal, normal.RequestID})
+		upgrade := databaseUpgradeCreateInput(engine, environment, destination)
+		cases = append(cases, createCase{"upgrade_" + engine, upgrade, strings.Repeat(string(rune('e'+index)), 32)})
+	}
+	for _, automatic := range []bool{false, true} {
+		mode := "exact"
+		if automatic {
+			mode = "automatic"
+		}
+		for index, engine := range []string{"postgresql", "redis"} {
+			request := strings.Repeat(string(rune('c'+index)), 32)
+			if automatic {
+				request = strings.Repeat(string(rune('c'+index))+"2", 16)
+			}
+			cases = append(cases, createCase{"capture_" + mode + "_" + engine, databaseCaptureCreateInput(engine, automatic, environment, destination), request})
+		}
+	}
+	seen := map[string]string{}
+	for _, tc := range cases {
+		if tc.input.Validate() != nil {
+			t.Fatalf("%s has invalid database-create fixture input", tc.name)
+		}
+		resource := domain.HostingDatabaseResourceID(tc.input.ProjectID, tc.input.RequestID)
+		// This is the store's database-creation binding projection. The storage
+		// and network names use their actual production identity functions.
+		binding := "binding_db_" + strings.TrimPrefix(resource, "res_db_")
+		storage, volume := domain.HostingStorageIdentity(binding)
+		for _, identity := range []struct{ kind, value string }{{"resource", resource}, {"binding", binding}, {"storage", storage}, {"volume", volume}, {"network", domain.HostingDatabaseNetworkName(binding)}} {
+			key := identity.kind + ":" + identity.value
+			if prior, exists := seen[key]; exists {
+				t.Fatalf("%s %s collides with %s", tc.name, identity.kind, prior)
+			}
+			seen[key] = tc.name
+		}
+		if tc.input.RequestID != tc.request {
+			t.Fatalf("%s changed a frozen fixture request identity", tc.name)
 		}
 	}
 }
