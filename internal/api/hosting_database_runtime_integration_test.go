@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
@@ -218,6 +219,10 @@ func databaseRunnerDiagnostic(op domain.HostingOperation, exit databaseRunnerExi
 }
 
 type databaseRunnerFixture struct {
+	service                               *app.Service
+	owner                                 context.Context
+	database                              *pgxpool.Pool
+	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	t                                     *testing.T
 	server                                *httptest.Server
 	client                                *http.Client
@@ -287,6 +292,11 @@ func databaseRunnerEnrollmentConsumeInput(credential string) app.RunnerEnrollmen
 
 func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 	t.Helper()
+	return newDatabaseRunnerFixtureWithCapture(t, false)
+}
+
+func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRunnerFixture {
+	t.Helper()
 	_, pg, database := newHostingBuildAPIFixture(t)
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
@@ -310,12 +320,15 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 			t.Error("fixture root cleanup failed")
 		}
 	})
-	f := &databaseRunnerFixture{t: t, root: root, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
+	f := &databaseRunnerFixture{t: t, root: root, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
 	handler := NewServer(service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static())
 	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
 		defer func() { f.apiCounts.record(r.Method, r.URL.Path, observed.status) }()
 		w = observed
+		if wire := f.capture.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
 		if r.URL.Path == "/api/v1/runners/claim" {
 			f.claimRequests.Add(1)
 		}
@@ -376,6 +389,14 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 	}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
 	f.token = login.Token
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	if capture {
+		principal, err := service.AuthenticateSessionToken(t.Context(), f.token)
+		if err != nil {
+			t.Fatal("fixture owner authentication failed")
+		}
+		f.owner = auth.WithCredentialSource(auth.WithPrincipal(t.Context(), principal), auth.CredentialSourceBearer)
+		caps = append(caps, domain.RunTypeComposeDeploy, domain.HostingDatabaseNetworkCaptureCapability)
+	}
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, 201)
 	credential := "ncr_database_runner_fixture_only"
 	enrolled := databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", databaseRunnerEnrollmentConsumeInput(credential), 200)
@@ -440,11 +461,16 @@ func newDatabaseRunnerFixture(t *testing.T) *databaseRunnerFixture {
 
 func (f *databaseRunnerFixture) start() {
 	f.t.Helper()
+	f.startRunner([]string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"})
+}
+
+func (f *databaseRunnerFixture) startRunner(args []string) {
+	f.t.Helper()
 	if f.process != nil {
 		f.t.Fatal("runner already active")
 	}
 	ctx, cancel := context.WithCancel(f.t.Context())
-	cmd := exec.CommandContext(ctx, "/fixture/nerocd", "runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms")
+	cmd := exec.CommandContext(ctx, "/fixture/nerocd", args...)
 	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+filepath.Join(f.root, "api.pem"), "NEROCD_MODE=development", "NEROCD_TOKEN=", "NEROCD_RUNNER_CREDENTIAL_FILE=")
 	cmd.Stdout, cmd.Stderr = f.logs, f.logs
 	cmd.Cancel = func() error {

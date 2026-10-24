@@ -141,7 +141,16 @@ elif tool == "docker":
             if case == "guest_join_failure":
                 sys.exit(26)
         elif "/fixture/api.test" in args:
+            if case == "runtime_sigterm":
+                block()
+            if case == "runtime_failure":
+                sys.exit(31)
             print("harmless runtime model passed")
+            print("--- PASS: TestHostingDatabaseCompiledRunner (0.01s)")
+            if case == "capture_skipped":
+                print("--- SKIP: TestHostingDatabaseCaptureCompiledRunner (0.00s)")
+            elif case != "capture_missing":
+                print("--- PASS: TestHostingDatabaseCaptureCompiledRunner (0.01s)")
         elif args[1:3] == [identity, "docker"]:
             if "--detach" in args:
                 print("e" * 64)
@@ -349,10 +358,33 @@ class GateTest(unittest.TestCase):
                     os.kill(pid, 0)
             self.assertIn("owned process group joined: " + str(pids[0]), messages)
 
+    def test_missing_or_skipped_capture_cannot_qualify_baseline_only(self):
+        for case in ("capture_missing", "capture_skipped"):
+            with self.subTest(case=case):
+                state, commands, output = self.run_gate(case, 1)
+                self.assertEqual(state, {})
+                self.assertIn("required physical test did not pass: TestHostingDatabaseCaptureCompiledRunner", output)
+                self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+
+    def test_runtime_failure_retains_exit_and_cleans_owned_fixture(self):
+        state, commands, _ = self.run_gate("runtime_failure", 31)
+        self.assertEqual(state, {})
+        self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+
+    def test_sigterm_during_runtime_joins_child_and_cleans_owned_fixture(self):
+        state, commands, _ = self.run_gate("runtime_sigterm", 143, signal.SIGTERM)
+        self.assertEqual(state, {})
+        self.assertIn(["container", "rm", "--force", IDENTITY], commands)
+
     def test_harmless_complete_model(self):
         state, commands, output = self.run_gate("success", 0)
         self.assertEqual(state, {})
         self.assertIn("harmless runtime model passed", output)
+        runtime_command = next(args for args in commands if "/fixture/api.test" in args)
+        self.assertEqual(runtime_command[runtime_command.index("-test.run") + 1],
+                         "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner)$")
+        self.assertIn("-test.timeout=25m", runtime_command)
+        self.assertEqual(sum("/fixture/api.test" in args for args in commands), 1)
         create = next(index for index, args in enumerate(commands) if args[:2] == ["container", "create"])
         start = next(index for index, args in enumerate(commands) if args[:2] == ["container", "start"])
         self.assertTrue(any(args[:2] == ["volume", "inspect"] for args in commands[create + 1:start]))

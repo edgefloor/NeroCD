@@ -229,6 +229,10 @@ def main():
         raise Failure("exact fixture name already exists; no mutation permitted")
     run(["git", "ls-files", "-s", "acceptance/runtime-hosting-database-runner/",
          "acceptance/runtime-hosting-database-client/", "internal/api/hosting_database_runtime_integration_test.go",
+         "internal/api/hosting_database_capture_runtime_integration_test.go",
+         "cmd/nerocd/runner.go", "internal/runnerruntime/hosting_database_network_capture_execution.go",
+         "internal/runnerruntime/hosting_database_network_capture.go", "internal/runner/journal_database_network_capture.go",
+         "internal/runnerclient/hosting_database_network_capture.go",
          "internal/runnerruntime/hosting_database_execution.go", "internal/runnerruntime/hosting_database_engine.go",
          "internal/runnerruntime/hosting_database_secrets.go", "internal/runnerruntime/hosting_database_network.go",
          "internal/runnerruntime/hosting_database_readiness.go", "internal/runnerruntime/hosting_owned_volume.go",
@@ -302,12 +306,18 @@ def main():
             raise Failure("control PostgreSQL did not become ready")
         time.sleep(1)
     docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}", output="inner-images-before-test")
-    say(docker("exec", "--workdir", "/workspace/internal/api",
+    runtime_output = docker("exec", "--workdir", "/workspace/internal/api",
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
                "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable",
-               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHostingDatabaseCompiledRunner$", "-test.timeout=20m",
-               timeout=1210, output="runtime-test"))
-    say("compiled runner / authenticated API / River / private PostgreSQL and Redis gate passed")
+               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner)$", "-test.timeout=25m",
+               timeout=1510, output="runtime-test")
+    say(runtime_output)
+    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner"):
+        if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
+            raise Failure("required physical test did not pass: " + test)
+        if re.search(r"^--- SKIP: " + test + r" ", runtime_output, re.MULTILINE):
+            raise Failure("required physical test skipped: " + test)
+    say("compiled database and capture runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 
 GUEST_JOIN = r"""
