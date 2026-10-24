@@ -5,7 +5,7 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`, reviewed on 2026-10-24. Native migrations extend through 0066. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `f4a54506f388339ffe8acdd6b8ec4133690188fa`, reviewed on 2026-10-24. Native migrations extend through 0066. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
@@ -890,7 +890,7 @@ The earlier revision 3 instruction to make Task collaboration and D0–D3 the fi
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0066, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0066, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `f4a54506f388339ffe8acdd6b8ec4133690188fa`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
 
 The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
 
@@ -934,7 +934,9 @@ The implementation campaign changed application code and exercised real infrastr
 | Uploaded-file storage runtime | Source `b33466c81899e2a7278b2e551fb2532ae17b46bc`; [physical qualification contract](../acceptance/runtime-hosting-storage/README.md), [API/compiled-runner fixture](../internal/api/hosting_storage_runtime_integration_test.go) | Accepted through current assessment; migration 0064 continuity, public deployment options/status, typed materialization acknowledgment and explicit `hosting_owned_storage_v1` opt-in; uploaded bytes survive A-to-B replacement, lost ACK/restart and failed-readiness restoration with the same volume, single writer and unrelated HTTPS route preserved; this runtime fixture does not qualify deployment-review/recovery UI, backups/restore, unknown-writer recovery, public ACME or complete A19/A26 |
 | Bounded storage-continuity recovery API | Accepted `284f45cf1659a559d55d54342a902d0eeb112685`; [public handler](../internal/api/hosting_storage_route_recovery_handlers.go), [PostgreSQL recovery tests](../internal/store/postgres_hosting_storage_route_recovery_test.go) | Recovery only for eligible unqueued continuity; current authorization, immutable identity, drift rejection and duplicate/concurrent replay checked; queues authorized continuity work without claiming proxy convergence or generic unlock; no actual proxy-recovery fixture; later UI evidence does not add physical proxy-recovery proof |
 | Connected storage deployment-review/recovery UI | Accepted `77be63a03c9caf3e95239a751045f0fe7b5918cf`; [deployment review](../web/app/src/pages/StorageDeploymentReview.tsx), [deployment page](../web/app/src/pages/ResourceDeployments.tsx), [browser scenarios](../web/app/tests/browser/hosting-storage-deployment.spec.ts) | Authoritative options and connected review/retry/continuity controls accepted; browser uses real authentication/resource setup with intercepted deployment/options/status responses, so it proves UX rather than a new mounted workflow or physical proxy recovery; earlier physical upload proof retains its original revision |
-| Private database foundations | Creation/domain `d2dd99af9a88f64b68a9ad25c42a23a7826d20db`; metadata UI `bed700ed0bb8f006c10cd355b98eab1df9c8b5e0`, source `e143e45dde772a881ec75e0602985c84df06a92e`; controller `b93eef4a5b633f7639adc2bee78b7c39bbf8af83`; engine helpers `ca818c6ec94c0bdea661373566e28f46cf5ef229`; protected delivery `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`; [metadata UI](../web/app/src/pages/ResourceDatabase.tsx), [engine tests](../internal/runnerruntime/hosting_database_engine_test.go), [delivery API tests](../internal/api/hosting_database_delivery_handlers_test.go) | Migrations 0065–0066 and 211-route contract; accepted metadata/creation, private controller/helpers and protected credential API/protocol/client only; engine and credential delivery are not runner-wired or capability-qualified; no database deployment button, application binding, physical fixture pass or complete A17 |
+| Private database foundations | Creation/domain `d2dd99af9a88f64b68a9ad25c42a23a7826d20db`; metadata UI `bed700ed0bb8f006c10cd355b98eab1df9c8b5e0`, source `e143e45dde772a881ec75e0602985c84df06a92e`; controller `b93eef4a5b633f7639adc2bee78b7c39bbf8af83`; engine helpers `ca818c6ec94c0bdea661373566e28f46cf5ef229`; protected delivery `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`; [metadata UI](../web/app/src/pages/ResourceDatabase.tsx), [engine tests](../internal/runnerruntime/hosting_database_engine_test.go), [delivery API tests](../internal/api/hosting_database_delivery_handlers_test.go) | Migrations 0065–0066 and 211-route contract; accepted metadata/creation, private controller/helpers and protected credential API/protocol/client only; engine and delivery were not runner-wired at this checkpoint; later direct-engine qualification and default-off coordinator are recorded below; no database deployment button, application binding, combined API/runner physical pass or complete A17 |
+| Direct private database engine qualification | Accepted `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; [physical fixture contract](../acceptance/runtime-hosting-database/README.md) | Six native Linux arm64 engine cases, PostgreSQL 17.11/Redis 8.2.10, passed in 30.52 seconds; A/B/C data continuity on the same volume/private bridge, changed credentials and revoked exact replay denied, lost retirement ACK recovered, missing/foreign-volume negatives; direct engine only, not API/runner workflow, archive restore, AMD64 or full A17 |
+| Default-off database runner coordinator | Source `9040572132e60787186fd59ffddc57d765d6c752`, accepted `f4a54506f388339ffe8acdd6b8ec4133690188fa`; [typed coordinator](../internal/runnerruntime/hosting_database_execution.go), [replay tests](../internal/runnerruntime/hosting_database_replay_test.go), [CLI configuration tests](../cmd/nerocd/runner_database_config_test.go) | Journal v11, protected delivery before ApplyBegin, current-authority callback, native Linux arm64 and HTTPS for all database traffic; capability disabled by default; accepted code and race/build evidence, no accepted current API/runner physical workflow or deployment UI |
 | Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
 
 Private Railpack qualification is now accepted at
@@ -950,6 +952,18 @@ them. This qualifies the existing Railpack static provider on trusted Linux/Dock
 with seeded accounts, existing secret metadata and a local test CA. It adds no
 production UI and does not establish arbitrary language providers, Nixpacks,
 compiled frontend builds, public production ACME, complete A03 or hosting parity.
+Direct-engine evidence in `/tmp/nerocd-database-qualified-physical-handoff.json`
+belongs to `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`: six cases passed in
+30.52 seconds on native Linux arm64. The coordinator handoff
+`/tmp/nerocd-database-runner-integration-handoff.json` records full combined
+runner/client/runtime/CLI race checks in 81.189 seconds, compile, vet and Linux
+arm64 build at `f4a54506f388339ffe8acdd6b8ec4133690188fa`. Eight engine files
+remain identical to the qualified engine revision, but the shared volume helper
+changed; the earlier physical pass is not qualification of the final combined
+tree. The current API workflow fixture remains unaccepted and unrun. No database
+deployment UI, application binding, archive backup/restore, major upgrade, public
+database, AMD64 qualification, complete A17 or full parity is claimed.
+
 Current storage UI evidence at `77be63a03c9caf3e95239a751045f0fe7b5918cf`
 records 179 frontend tests, responsive/keyboard browser checks, compiled Go and
 207-route contract/74-served-asset checks in
@@ -965,10 +979,10 @@ controller/storage race checks, focused races, vet, SQL placement, Go compile,
 211-route contract, generated-client parity and 74 served assets in
 `/tmp/nerocd-database-delivery-integration-handoff.json` and
 `/tmp/nerocd-main-database-delivery-promotion.json`. Engine helpers and delivery
-remain unwired to the runner, with capability disabled. Database UI saves
-metadata only. Runner wiring and the actual database fixture remain in progress
-and unaccepted; no physical database pass, application binding, complete A17,
-backup/archive restore or production ACME is claimed.
+were unwired at this credential-delivery checkpoint. Later direct-engine and
+default-off coordinator evidence is recorded below. Database UI remains metadata
+only; no combined API/runner pass, application binding, complete A17, backup/archive
+restore or production ACME is claimed.
 
 Physical storage evidence at `b33466c81899e2a7278b2e551fb2532ae17b46bc`
 passed in 17.06 seconds. The retained summary
@@ -989,8 +1003,8 @@ Source PostgreSQL recovery checks passed in 4.377 seconds; fresh combined
 domain/application/API checks passed with a maximum package time of 8.014 seconds.
 These are contract/database tests, not an actual proxy-recovery runtime fixture.
 Storage deployment-review/recovery UI is accepted with UX-only limits below.
-Database foundations are accepted, but PostgreSQL/Redis runner wiring and physical
-qualification remain in progress and unaccepted. Backups,
+Direct database engine qualification and default-off runner coordination are
+accepted below; actual API/runner workflow qualification remains unaccepted. Backups,
 restore, unknown-writer handling, production ACME, complete A19/A26 and full
 hosting parity remain unfinished.
 
@@ -1023,7 +1037,8 @@ Exact source retention and limits are recorded in
 at main. The qualified current artifact was built and served in the integration
 checkout; root ignored assets remain historical. Storage metadata, the private helper and durable admission are accepted below;
 the bounded API/compiled-runner mounted workflow is accepted below; accepted storage deployment-review/recovery UI is separate UX evidence; database
-runner wiring and physical qualification remain unaccepted.
+direct engine qualification and default-off coordination are accepted below;
+actual API/runner workflow qualification remains unaccepted.
 
 Automatic deployment evidence is source-bound: runtime
 `3510437292cb7195a7cda9760b7eb7bf468d7877` passed in 66.85 seconds at

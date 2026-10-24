@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`, 2026-10-24, through migration 0066.
+`f4a54506f388339ffe8acdd6b8ec4133690188fa`, 2026-10-24, through migration 0066.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -144,8 +144,10 @@ intercepted operation responses, not new physical runtime proof. Metadata API/UI
 `2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`; saving metadata does not mount a
 volume or prove persistence. Database creation/domain, metadata UI, private controller/helpers and protected
 credential delivery are accepted through `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`.
-Next are runner wiring/capability qualification, actual PostgreSQL/Redis deployment
-and application binding. The actual database fixture remains unaccepted; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
+Direct engine qualification is accepted at `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`;
+default-off runner coordination is accepted at `f4a54506f388339ffe8acdd6b8ec4133690188fa`.
+Next is actual combined API/runner qualification, then deployment UI and application
+binding. The current API workflow fixture remains unaccepted and unrun; backups/restore, unknown-writer recovery and complete A19/A26 remain open. Protected plans
 under R17/R19 and applicable A09/A10 checks, production TLS and remaining parity
 remain separate unfinished work. Live GitHub webhook configuration,
 PR previews, other providers, remote image transfer and complete A09 remain open.

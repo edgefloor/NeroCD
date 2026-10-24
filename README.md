@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`f4a54506f388339ffe8acdd6b8ec4133690188fa`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -169,8 +169,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Metadata API/UI is accepted at `2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`;
   saving mount intent alone does not materialize or mount a volume.
   Storage deployment-review/recovery UI is accepted with UX-only limits below.
-Database foundations are accepted, but PostgreSQL/Redis runner wiring and physical
-qualification remain in progress and unaccepted. Backups/restore,
+Direct database engine qualification and default-off runner coordination are
+accepted below; actual API/runner workflow qualification remains unaccepted. Backups/restore,
   unknown-writer recovery, production ACME and complete A19/A26 remain open.
 - Storage deployment-review/recovery UI is accepted at
   `77be63a03c9caf3e95239a751045f0fe7b5918cf`. Its browser qualification covers
@@ -179,8 +179,12 @@ qualification remain in progress and unaccepted. Backups/restore,
 - Database creation/domain, metadata UI, private controller/engine helpers and
   protected credential delivery are accepted through
   `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`. The engine and credentials are not
-  runner-wired or capability-qualified. Database UI saves metadata only; deployment,
-  application bindings and actual PostgreSQL/Redis qualification remain unfinished.
+  runner-wired at that delivery checkpoint. Direct engine qualification is now
+  accepted at `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; default-off runner
+  coordination is accepted at `f4a54506f388339ffe8acdd6b8ec4133690188fa`.
+  The original physical pass does not qualify the changed combined tree. Database
+  UI saves metadata only; actual API/runner qualification, deployment UI and
+  application bindings remain unfinished.
 - [Same-host artifact deployment](docs/hosting-local-build-runtime.md) and its
   [resource UI](docs/hosting-build-deployments.md#deploy-through-the-resource-ui).
   An explicitly enabled agent deploys the recorded artifact on the same daemon
