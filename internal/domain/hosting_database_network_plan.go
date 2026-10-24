@@ -124,7 +124,7 @@ func (n HostingDatabaseNetworkPlan) validate(s HostingSnapshot, r HostingRelease
 			return ErrInvalidHostingDatabaseNetworkPlan
 		}
 	case HostingDatabaseNetworkCompilerVersion:
-		if n.Predecessor.Alias != n.Alias || len(n.Members) == 0 {
+		if n.Predecessor.Alias != n.Alias {
 			return ErrInvalidHostingDatabaseNetworkPlan
 		}
 	default:
@@ -188,8 +188,16 @@ func databaseNetworkSameTarget(a, b HostingApplyPlan) bool {
 func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDatabaseNetworkPlanInput) ([]HostingDatabaseNetworkMember, error) {
 	o, h := in.Origin, p.PreviousHealthy
 	created, err := time.Parse(time.RFC3339Nano, o.VolumeCreatedAt)
-	if h == nil || h.Storage == nil || o.Version != 1 || !o.InitReady || !databaseBindingDockerID(o.NetworkID) || o.Binding != p.Snapshot.BindingID || o.Destination != p.Snapshot.DestinationID || o.Daemon != p.Release.DaemonID || o.Configuration != p.Snapshot.Database.ConfigurationHash || o.Storage != p.Snapshot.Storage || o.OriginOperation != p.Storage.CreationOperationID || o.OriginPlan != h.Storage.CreationPlanHash || !imageSHA256.MatchString(o.OriginPlan) || o.VolumeNonce != p.Storage.CreationNonce || len(o.Nonce) != 32 || strings.Trim(o.Nonce, "0123456789abcdef") != "" || err != nil || created.IsZero() || len(o.VolumeCreatedAt) > 64 || in.MembershipRevision < 1 || len(in.Members) > 2 || len(in.Members) == 0 && previousPlan.CompilerVersion != HostingDatabaseCompilerVersion {
+	if h == nil || h.Storage == nil || o.Version != 1 || !o.InitReady || !databaseBindingDockerID(o.NetworkID) || o.Binding != p.Snapshot.BindingID || o.Destination != p.Snapshot.DestinationID || o.Daemon != p.Release.DaemonID || o.Configuration != p.Snapshot.Database.ConfigurationHash || o.Storage != p.Snapshot.Storage || o.OriginOperation != p.Storage.CreationOperationID || o.OriginPlan != h.Storage.CreationPlanHash || !imageSHA256.MatchString(o.OriginPlan) || o.VolumeNonce != p.Storage.CreationNonce || len(o.Nonce) != 32 || strings.Trim(o.Nonce, "0123456789abcdef") != "" || err != nil || created.IsZero() || len(o.VolumeCreatedAt) > 64 || in.MembershipRevision < 1 || len(in.Members) > 2 {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan
+	}
+	if len(in.Members) == 0 && previousPlan.CompilerVersion != HostingDatabaseCompilerVersion {
+		// An attachment that never happened must not prevent DB maintenance.
+		// Existing endpoints require retirement proof, not an empty caller list.
+		n := previousPlan.Database.Network
+		if n == nil || len(n.Members) != 0 || in.MembershipRevision != n.MembershipRevision {
+			return nil, ErrInvalidHostingDatabaseNetworkPlan
+		}
 	}
 	if previousPlan.Database.Network != nil && (o.DocumentHash() != previousPlan.Database.Network.OriginHash || o.NetworkID != previousPlan.Database.Network.NetworkID || in.MembershipRevision < previousPlan.Database.Network.MembershipRevision) {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan

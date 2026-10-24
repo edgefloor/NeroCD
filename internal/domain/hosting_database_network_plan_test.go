@@ -316,13 +316,87 @@ func TestDatabaseNetworkEmptyFirstTransitionAndProofCorrespondence(t *testing.T)
 	next.Snapshot, next.PlanHash = p.Snapshot, p.Hash
 	db := *p.Database
 	db.Network = nil
-	if _, err := CompileHostingDatabasePlanV2(p.Snapshot, p.Release, next, p, *p.Storage, db, in); err == nil {
-		t.Fatal("empty v2 replacement accepted")
+	if _, err := CompileHostingDatabasePlanV2(p.Snapshot, p.Release, next, p, *p.Storage, db, in); err != nil {
+		t.Fatal("unchanged empty v2 maintenance rejected", err)
 	}
 	wrong := original
 	wrong.Hash = "sha256:" + strings.Repeat("0", 64)
 	if ValidateHostingDatabasePlanTransition(p, wrong, in) == nil {
 		t.Fatal("unvalidated original predecessor accepted")
+	}
+}
+
+func TestDatabaseNetworkEmptyV2Maintenance(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			original, healthy, in := databaseNetworkFixture(t, engine)
+			in.Members = nil
+			first := compileDatabaseNetwork(t, original, healthy, in)
+			previous := healthy
+			previous.Snapshot, previous.PlanHash, previous.OperationID = first.Snapshot, first.Hash, "empty_database_previous"
+			maintained := compileDatabaseNetwork(t, first, previous, in)
+			if ValidateHostingDatabasePlanV2(maintained) != nil || ValidateHostingDatabasePlanTransition(maintained, first, in) != nil || maintained.Database.Network.MembershipRevision != first.Database.Network.MembershipRevision || maintained.Database.Network.OriginHash != first.Database.Network.OriginHash || maintained.Database.Network.NetworkID != first.Database.Network.NetworkID || maintained.Database.Network.Alias != first.Database.Network.Alias || len(maintained.Database.Network.Members) != 0 || HostingPlanFamilyMatches(maintained.Snapshot, maintained) {
+				t.Fatal("empty maintenance changed identity or escaped v2 staging")
+			}
+			for name, change := range map[string]func(*HostingDatabaseNetworkPlanInput){
+				"revision_advanced": func(v *HostingDatabaseNetworkPlanInput) { v.MembershipRevision++ },
+				"revision_lowered":  func(v *HostingDatabaseNetworkPlanInput) { v.MembershipRevision-- },
+				"origin":            func(v *HostingDatabaseNetworkPlanInput) { v.Origin.Nonce = strings.Repeat("b", 32) },
+				"network":           func(v *HostingDatabaseNetworkPlanInput) { v.Origin.NetworkID = strings.Repeat("0", 64) },
+				"uninitialized":     func(v *HostingDatabaseNetworkPlanInput) { v.Origin.InitReady = false },
+			} {
+				t.Run(name, func(t *testing.T) {
+					changed := in
+					change(&changed)
+					db := *first.Database
+					db.Network = nil
+					if _, err := CompileHostingDatabasePlanV2(maintained.Snapshot, first.Release, previous, first, *first.Storage, db, changed); err == nil {
+						t.Fatal("empty maintenance accepted changed proof identity or revision")
+					}
+				})
+			}
+			for _, predecessorAlias := range []bool{false, true} {
+				changed := maintained
+				db, network := *maintained.Database, *maintained.Database.Network
+				changed.Database, db.Network = &db, &network
+				if predecessorAlias {
+					network.Predecessor.Alias = "foreign"
+				} else {
+					network.Alias = "foreign"
+				}
+				rehashDatabaseNetwork(&changed)
+				if ValidateHostingDatabasePlanV2(changed) == nil || ValidateHostingDatabasePlanTransition(changed, first, in) == nil {
+					t.Fatal("empty maintenance accepted changed alias")
+				}
+			}
+			_, _, memberProof := databaseNetworkFixture(t, engine)
+			nonempty := compileDatabaseNetwork(t, original, healthy, memberProof)
+			previous.Snapshot, previous.PlanHash = nonempty.Snapshot, nonempty.Hash
+			for _, advanceRevision := range []bool{false, true} {
+				changed := maintained
+				db, network := *maintained.Database, *maintained.Database.Network
+				changed.Database, db.Network = &db, &network
+				changed.PreviousHealthy = &previous
+				network.Predecessor.PlanHash = nonempty.Hash
+				emptyProof := in
+				if advanceRevision {
+					network.MembershipRevision++
+					emptyProof.MembershipRevision++
+				}
+				rehashDatabaseNetwork(&changed)
+				if ValidateHostingDatabasePlanV2(changed) != nil {
+					t.Fatal("disappearance regression did not reach contextual proof validation")
+				}
+				if ValidateHostingDatabasePlanTransition(changed, nonempty, emptyProof) == nil {
+					t.Fatal("nonempty membership disappeared without retirement proof")
+				}
+				inputDB := *nonempty.Database
+				inputDB.Network = nil
+				if _, err := CompileHostingDatabasePlanV2(changed.Snapshot, nonempty.Release, previous, nonempty, *nonempty.Storage, inputDB, emptyProof); err == nil {
+					t.Fatal("compiler forgot existing endpoints")
+				}
+			}
+		})
 	}
 }
 
