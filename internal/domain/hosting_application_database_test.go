@@ -1,12 +1,103 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestApplicationDatabasePlanValidatesPersistedEmptyRetention(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, v2 := range []bool{false, true} {
+			name := engine + "/v1"
+			if v2 {
+				name = engine + "/v2"
+			}
+			t.Run(name, func(t *testing.T) {
+				s, r, in := applicationDatabaseFixture(t, engine, v2)
+				previous := in.Members[0].ApplicationHealthy
+				p, err := CompileHostingApplicationDatabasePlan(s, r, &previous, nil, in)
+				if err != nil || ValidateHostingApplicationDatabasePlan(p, in) != nil {
+					t.Fatal("valid source plan rejected", err)
+				}
+				raw, err := json.Marshal(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// A persisted empty array has the same canonical document and hash
+				// as omitted retention, but decodes to a nonnil empty Go slice.
+				wire := bytes.Replace(raw, []byte(`"snapshot":`), []byte(`"retained_releases":[],"snapshot":`), 1)
+				var persisted HostingApplyPlan
+				if err = json.Unmarshal(wire, &persisted); err != nil {
+					t.Fatal(err)
+				}
+				canonical, err := json.Marshal(persisted)
+				if err != nil || persisted.RetainedReleases == nil || !bytes.Equal(raw, canonical) {
+					t.Fatal("fixture did not preserve canonical document identity", err)
+				}
+				if err = ValidateHostingApplicationDatabasePlan(persisted, in); err != nil {
+					t.Fatal("persisted equivalent plan rejected", err)
+				}
+			})
+		}
+	}
+}
+
+func TestApplicationDatabasePlanFinalSerializedSizeBound(t *testing.T) {
+	const limit = 48 << 10
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			s, r, in := applicationDatabaseFixture(t, engine, true)
+			seed, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(seed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []int{limit, limit + 1} {
+				// Padding one snapshot string isolates the aggregate plan bound.
+				// The ordinary retained plan still fits before the DB descriptor.
+				snapshot := s
+				snapshot.RuntimeNamespace = strings.Repeat("n", len(s.RuntimeNamespace)+target-len(raw))
+				ordinary, err := compileRetainedHostingPlan(snapshot, r, nil, nil, HostingApplicationDatabasePolicyVersion, HostingApplicationDatabaseCompilerVersion)
+				if err != nil {
+					t.Fatal("ordinary precursor unexpectedly exceeded its bound", err)
+				}
+				ordinaryRaw, err := json.Marshal(ordinary)
+				if err != nil || len(ordinaryRaw) >= limit {
+					t.Fatal("fixture did not isolate appended descriptor size", err)
+				}
+				persisted := seed
+				persisted.Snapshot = snapshot
+				persisted.Hash = ""
+				persisted.Hash = HostingDocumentHash(persisted)
+				finalRaw, err := json.Marshal(persisted)
+				if err != nil || len(finalRaw) != target {
+					t.Fatal("fixture missed exact serialized boundary", err)
+				}
+				compiled, compileErr := CompileHostingApplicationDatabasePlan(snapshot, r, nil, nil, in)
+				validateErr := ValidateHostingApplicationDatabasePlan(persisted, in)
+				if target == limit {
+					if compileErr != nil || validateErr != nil || compiled.Hash != persisted.Hash {
+						t.Fatal("plan at final serialized limit rejected", compileErr, validateErr)
+					}
+				} else {
+					if compileErr == nil || validateErr == nil {
+						t.Fatalf("oversized final plan accepted: ordinary=%d final=%d compile_error=%v validation_error=%v", len(ordinaryRaw), len(finalRaw), compileErr, validateErr)
+					}
+					if !reflect.DeepEqual(compiled, HostingApplyPlan{}) {
+						t.Fatal("failed compilation returned a usable oversized plan")
+					}
+				}
+			}
+		})
+	}
+}
 
 func applicationDatabaseFixture(t *testing.T, engine string, v2 bool) (HostingSnapshot, HostingRelease, HostingApplicationDatabasePlanInput) {
 	t.Helper()

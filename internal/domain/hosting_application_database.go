@@ -1,9 +1,10 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"math"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -184,6 +185,10 @@ func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, 
 	descriptor.Hash = descriptor.DocumentHash()
 	p.ApplicationDatabase, p.Hash = descriptor, ""
 	p.Hash = HostingDocumentHash(p)
+	raw, err := json.Marshal(p)
+	if err != nil || len(raw) > 48<<10 {
+		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
+	}
 	return p, nil
 }
 
@@ -194,7 +199,15 @@ func ValidateHostingApplicationDatabasePlan(p HostingApplyPlan, in HostingApplic
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
 	want, err := CompileHostingApplicationDatabasePlan(p.Snapshot, p.Release, p.PreviousHealthy, p.RetainedReleases, in)
-	if err != nil || !reflect.DeepEqual(p, want) {
+	if err != nil {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
+	expected, err := json.Marshal(want)
+	if err != nil || !bytes.Equal(raw, expected) {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
 	return nil
