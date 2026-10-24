@@ -1021,6 +1021,123 @@ func TestStorageArchiveEngineImageEnvironmentProfile(t *testing.T) {
 	}
 }
 
+func TestStorageArchiveEngineCapabilitySpellings(t *testing.T) {
+	for _, mode := range []string{"backup", "restore"} {
+		t.Run(mode, func(t *testing.T) {
+			legacy, canonical := []string{"DAC_READ_SEARCH"}, []string{"CAP_DAC_READ_SEARCH"}
+			if mode == "restore" {
+				legacy, canonical = []string{"CHOWN", "FOWNER"}, []string{"CAP_CHOWN", "CAP_FOWNER"}
+			}
+			type capabilityCase struct {
+				name    string
+				caps    []string
+				allowed bool
+			}
+			cases := []capabilityCase{
+				{"legacy", legacy, true},
+				{"docker_canonical", canonical, true},
+				{"missing", nil, false},
+				{"empty", []string{}, false},
+				{"duplicate", append(slices.Clone(legacy), legacy[0]), false},
+				{"alias_duplicate", append(slices.Clone(legacy), canonical[0]), false},
+				{"unknown", append(slices.Clone(legacy), "CAP_SYS_ADMIN"), false},
+				{"unexpected_mode", []string{"CHOWN"}, false},
+			}
+			if mode == "restore" {
+				cases[len(cases)-1].caps = []string{"CAP_DAC_READ_SEARCH", "FOWNER"}
+				cases = append(cases,
+					capabilityCase{"reordered_mixed_spelling", []string{"CAP_FOWNER", "CHOWN"}, true},
+					capabilityCase{"missing_chown", []string{"FOWNER"}, false},
+					capabilityCase{"missing_fowner", []string{"CHOWN"}, false})
+			}
+			for _, malformed := range []struct{ name, value string }{
+				{"unknown_member", "CAP_SYS_ADMIN"},
+				{"repeated_prefix", "CAP_" + canonical[0]},
+				{"lowercase", strings.ToLower(canonical[0])},
+				{"mixed_case", "Cap_" + legacy[0]},
+				{"leading_space", " " + canonical[0]},
+				{"trailing_space", canonical[0] + " "},
+				{"empty_member", ""},
+				{"prefix_only", "CAP_"},
+			} {
+				caps := []string{malformed.value}
+				if mode == "restore" {
+					// Keep the second required member, so the malformed spelling
+					// is tested independently of cardinality rejection.
+					caps = append(caps, "FOWNER")
+				}
+				cases = append(cases, capabilityCase{malformed.name, caps, false})
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					f := archiveFixture(t)
+					id := f.stoppedHelper()
+					if mode == "restore" {
+						blob, err := f.e.Backup(t.Context(), f.p, id, "helper_receipt", f.before)
+						if err != nil || f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) != nil {
+							t.Fatal("backup fixture failed")
+						}
+						f.restorePlan(blob)
+						req := archiveTargetRequest(f.p)
+						req.CreatePermitted = true
+						if _, err := f.e.EnsureRestoreVolume(t.Context(), req, f.before); err != nil {
+							t.Fatal("restore target fixture failed")
+						}
+					} else if f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) != nil {
+						t.Fatal("backup helper fixture cleanup failed")
+					}
+					// Keep the actual create argument assertion. Only the daemon's
+					// inspected spelling differs, as in the physical Docker receipt.
+					f.e.image.command = imageCommandFunc(func(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
+						raw, err := f.command(ctx, binary, args, dir, env)
+						if err == nil && len(args) > 5 && args[4] == "container" && args[5] == "inspect" {
+							var h archiveHelperContainer
+							if json.Unmarshal(raw, &h) != nil {
+								t.Fatal("helper inspection fixture failed")
+							}
+							h.HostConfig.CapAdd = tc.caps
+							return json.Marshal(h)
+						}
+						return raw, err
+					})
+					mutations, starts := f.mutations, f.starts
+					id, err := f.e.CreateHelper(t.Context(), f.p, "helper_receipt", f.before)
+					if (err == nil) != tc.allowed || id != strings.Repeat("d", 64) || f.mutations != mutations+1 || f.starts != starts {
+						t.Fatal("capability profile disagreed with closed set or started an unverified helper")
+					}
+					mutations = f.mutations
+					if (f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) == nil) != tc.allowed {
+						t.Fatal("capability inspection disagreed during cleanup")
+					}
+					if !tc.allowed && (f.mutations != mutations || len(f.helpers) != 1) {
+						t.Fatal("rejected helper was mutated or discarded")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestStorageArchiveEngineCapabilityDropRemainsExact(t *testing.T) {
+	for name, drop := range map[string][]string{
+		"missing": nil, "empty": {}, "prefixed": {"CAP_ALL"},
+		"duplicate": {"ALL", "ALL"}, "lowercase": {"all"}, "extra": {"ALL", "CHOWN"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := archiveFixture(t)
+			id := f.stoppedHelper()
+			h := f.helpers[id]
+			h.HostConfig.CapAdd = []string{"CAP_DAC_READ_SEARCH"}
+			h.HostConfig.CapDrop = drop
+			f.helpers[id] = h
+			mutations := f.mutations
+			if f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) == nil || f.mutations != mutations || len(f.helpers) != 1 {
+				t.Fatal("changed capability drop profile gained mutation authority")
+			}
+		})
+	}
+}
+
 func TestStorageArchiveEngineHelperProvenanceAndSandboxDriftRejects(t *testing.T) {
 	for _, failure := range []string{"image", "label", "entrypoint", "privilege", "device", "network", "source_write", "environment"} {
 		t.Run(failure, func(t *testing.T) {

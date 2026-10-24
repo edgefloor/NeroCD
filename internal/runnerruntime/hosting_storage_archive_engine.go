@@ -450,6 +450,11 @@ func (e *storageArchiveEngine) helper(ctx context.Context, p domain.HostingStora
 	c := h.HostConfig
 	memory := p.Limits.ArchiveBytes + (128 << 20)
 	caps := slices.Clone(c.CapAdd)
+	// Docker may return a single CAP_ prefix. The exact mode-specific set
+	// below still rejects unknown names, repeated prefixes and duplicates.
+	for i, capability := range caps {
+		caps[i] = strings.TrimPrefix(capability, "CAP_")
+	}
 	sort.Strings(caps)
 	expectedCaps := archiveHelperCaps(p)
 	sort.Strings(expectedCaps)
