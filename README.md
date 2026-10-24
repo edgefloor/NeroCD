@@ -195,7 +195,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   database-native backup/restore, public ACME and complete A17 remain unfinished.
 - Internal R42 prerequisites are accepted through
   `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, including the read-only origin
-  observer, authenticated capture API/typed client, format 12 journal and private
+  observer, authenticated capture API/typed client, format 13 journal and private
   capture coordinator. Direct private-engine origin capture and empty-v2 alias
   upgrades physically passed PostgreSQL 17.11 and Redis 8.2.10 A→B→C in 27.89
   seconds, preserving volume/network/credential references, private DNS reads

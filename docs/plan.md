@@ -165,7 +165,7 @@ passed. The [component ledger](compatibility.md#r42-remains-an-unfinished-hostin
 links source and tests and records the limits.
 
 Accepted progress now extends through `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`.
-The read-only observer, authenticated capture API/typed client, format 12 journal
+The read-only observer, authenticated capture API/typed client, format 13 journal
 and private exact-ID coordinator are implemented. The
 [direct-engine origin/upgrade fixture](../acceptance/runtime-hosting-database-origin-upgrade/README.md)
 physically passed PostgreSQL 17.11 and Redis 8.2.10 A→B→C in 27.89 seconds, with
