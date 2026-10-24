@@ -116,6 +116,12 @@ func archiveImageLabels(h domain.HostingStorageArchiveHelper) map[string]string 
 	return map[string]string{"io.nerocd.storage-archive.recipe": "scratch-v1", "io.nerocd.storage-archive.source-commit": h.SourceCommit, "io.nerocd.storage-archive.executable-sha256": strings.TrimPrefix(h.ExecutableSHA256, "sha256:")}
 }
 
+// Docker may inject this single default PATH into the fixed scratch image.
+// CreateHelper overrides it; container inspection still requires PATH=/ HOME=/.
+func archiveImageEnvironment(env []string) bool {
+	return len(env) == 0 || len(env) == 1 && env[0] == "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
 func (e *storageArchiveEngine) inspectProfile(ctx context.Context, p domain.HostingStorageArchivePlan) error {
 	if ctx.Err() != nil || p.Validate() != nil || p.Helper != e.config.Helper || e.host.validateHost(ctx, e.image) != nil || e.image.verifyDaemon(ctx, p.Helper.DaemonID) != nil {
 		return errStorageArchiveEngine
@@ -130,7 +136,7 @@ func (e *storageArchiveEngine) inspectProfile(ctx context.Context, p domain.Host
 			User, WorkingDir     string
 		}
 	}
-	if err != nil || json.Unmarshal(raw, &image) != nil || image.ID != p.Helper.ImageID || image.OS != "linux" || image.Architecture != "arm64" || image.Variant != "" || !slices.Equal(image.Config.Entrypoint, []string{"/nerocd-storage-archive"}) || len(image.Config.Cmd) != 0 || len(image.Config.Env) != 0 || len(image.Config.Volumes) != 0 || image.Config.User != "" || image.Config.WorkingDir != "/" || !maps.Equal(image.Config.Labels, archiveImageLabels(p.Helper)) {
+	if err != nil || json.Unmarshal(raw, &image) != nil || image.ID != p.Helper.ImageID || image.OS != "linux" || image.Architecture != "arm64" || image.Variant != "" || !slices.Equal(image.Config.Entrypoint, []string{"/nerocd-storage-archive"}) || len(image.Config.Cmd) != 0 || !archiveImageEnvironment(image.Config.Env) || len(image.Config.Volumes) != 0 || image.Config.User != "" || image.Config.WorkingDir != "/" || !maps.Equal(image.Config.Labels, archiveImageLabels(p.Helper)) {
 		return errStorageArchiveEngine
 	}
 	return nil

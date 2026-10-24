@@ -929,6 +929,98 @@ func TestStorageArchiveEngineAbsentHelperRequiresExactSuccessfulListingAndAuthor
 	}
 }
 
+func TestStorageArchiveEngineObservedImageEnvironmentKeepsContainerOverride(t *testing.T) {
+	f := archiveFixture(t)
+	// Config projected from the accepted scratch recipe's physical image inspect.
+	// Daemon/volume authority remains the isolated fake fixture's authority.
+	f.p.Helper.ImageID = "sha256:cf90ca4bae9d117a4671eea1591612e94d48fa4b1cccf8af9a8a5a311b85e88d"
+	f.p.Helper.ExecutableSHA256 = "sha256:1e9e58b76d5efcbcad419d94bedef83960391b2e75690b8a8007b3f1e59bc164"
+	f.p.Helper.SourceCommit = "774169ede7d8e430df8978dbdad429a67a994f6b"
+	f.p.Helper.Hash = ""
+	f.p.Helper.Hash = domain.HostingDocumentHash(f.p.Helper)
+	archiveHash(&f.p)
+	f.e.config.Helper = f.p.Helper
+	var config map[string]any
+	if json.Unmarshal([]byte(`{
+		"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+		"Entrypoint":["/nerocd-storage-archive"],"WorkingDir":"/",
+		"Labels":{
+			"io.nerocd.storage-archive.executable-sha256":"1e9e58b76d5efcbcad419d94bedef83960391b2e75690b8a8007b3f1e59bc164",
+			"io.nerocd.storage-archive.recipe":"scratch-v1",
+			"io.nerocd.storage-archive.source-commit":"774169ede7d8e430df8978dbdad429a67a994f6b"
+		}
+	}`), &config) != nil {
+		t.Fatal("observed image configuration fixture failed")
+	}
+	f.imageMutation = func(image map[string]any) { image["Config"] = config }
+	if f.e.Prepare(t.Context(), f.p) != nil || f.e.check(t.Context(), f.p, false) != nil || f.mutations != 0 {
+		t.Fatal("observed scratch image profile rejected or mutated during preparation")
+	}
+	// checkCreateArgs independently requires the exact two override flags and
+	// absolute immutable image/entrypoint profile during this creation.
+	id := f.stoppedHelper()
+	helper := f.helpers[id]
+	if !slices.Equal(helper.Config.Env, []string{"PATH=/", "HOME=/"}) {
+		t.Fatal("image environment escaped the fixed container override")
+	}
+	for name, environment := range map[string][]string{
+		"inherited_default_path": {"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/"},
+		"missing_home":           {"PATH=/"},
+		"duplicate_path":         {"PATH=/", "HOME=/", "PATH=/"},
+		"additional_key":         {"PATH=/", "HOME=/", "PRIVATE=environment_canary"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := helper
+			changed.Config.Env = environment
+			f.helpers[id] = changed
+			mutations := f.mutations
+			if f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) == nil || f.mutations != mutations {
+				t.Fatal("changed container environment gained cleanup authority")
+			}
+		})
+	}
+}
+
+func TestStorageArchiveEngineImageEnvironmentProfile(t *testing.T) {
+	const observed = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	for _, tc := range []struct {
+		name        string
+		environment any
+		allowed     bool
+	}{
+		{"legacy_nil", nil, true},
+		{"legacy_empty", []string{}, true},
+		{"docker_default", []string{observed}, true},
+		{"duplicate", []string{observed, observed}, false},
+		{"additional_home", []string{observed, "HOME=/"}, false},
+		{"additional_private", []string{observed, "PRIVATE=environment_canary"}, false},
+		{"changed_path", []string{"PATH=/usr/bin:/bin"}, false},
+		{"container_path", []string{"PATH=/"}, false},
+		{"lowercase_key", []string{"path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}, false},
+		{"missing_equals", []string{"PATH"}, false},
+		{"trailing_separator", []string{observed + ":"}, false},
+		{"trailing_space", []string{observed + " "}, false},
+		{"nonarray", observed, false},
+		{"nonstring_member", []any{123}, false},
+		{"object", map[string]string{"PATH": "/"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := archiveFixture(t)
+			f.imageMutation = func(image map[string]any) { image["Config"].(map[string]any)["Env"] = tc.environment }
+			// Reinspect an already-prepared engine as well as preparing it anew.
+			if (f.e.check(t.Context(), f.p, false) == nil) != tc.allowed {
+				t.Fatal("image environment drift check disagreed with closed profile")
+			}
+			if (f.e.Prepare(t.Context(), f.p) == nil) != tc.allowed || f.mutations != 0 {
+				t.Fatal("image environment preparation disagreed with closed profile or mutated")
+			}
+			if !tc.allowed && f.e.prepared.Hash != "" {
+				t.Fatal("failed image profile retained preparation approval")
+			}
+		})
+	}
+}
+
 func TestStorageArchiveEngineHelperProvenanceAndSandboxDriftRejects(t *testing.T) {
 	for _, failure := range []string{"image", "label", "entrypoint", "privilege", "device", "network", "source_write", "environment"} {
 		t.Run(failure, func(t *testing.T) {
