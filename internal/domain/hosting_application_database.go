@@ -150,6 +150,9 @@ func applicationDatabasePrevious(h HostingHealthy, proofs []HostingDatabaseNetwo
 // fetch credentials, create an endpoint, or invent a healthy candidate record.
 func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, previous *HostingHealthy, retained []HostingHealthy, in HostingApplicationDatabasePlanInput) (HostingApplyPlan, error) {
 	b := in.Binding
+	if in.OperationID == in.DatabaseHealthy.OperationID || in.OperationID == in.Origin.OriginOperation {
+		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
+	}
 	if !hostingProxyID.MatchString(in.OperationID) || !applicationDatabaseNonce(in.CreateNonce) || in.BindingApplicationSnapshot.PolicyVersion != HostingRuntimePolicyVersion || in.BindingApplicationSnapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || b.ValidateTargets(in.ApplicationProjectID, in.BindingApplicationSnapshot, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || s.PolicyVersion != HostingApplicationDatabasePolicyVersion || b.ValidateTargets(in.ApplicationProjectID, s, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || r.LocalBuild != (HostingBuildArtifact{}) || ValidateHostingSnapshotRelease(s, r) != nil || r.DaemonID != in.DatabasePlan.Release.DaemonID || !applicationDatabaseOrigin(in) {
 		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
 	}

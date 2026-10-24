@@ -69,6 +69,56 @@ func TestApplicationDatabaseCompileAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestApplicationDatabaseRejectsDatabaseOperationCollision(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, version := range []string{"v1", "v2"} {
+			for _, source := range []string{"healthy", "origin"} {
+				t.Run(engine+"/"+version+"/"+source, func(t *testing.T) {
+					s, r, in := applicationDatabaseFixture(t, engine, version == "v2")
+					p, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+					if err != nil {
+						t.Fatal("valid distinct application operation rejected", err)
+					}
+					in.OperationID = in.DatabaseHealthy.OperationID
+					if source == "origin" {
+						in.OperationID = in.Origin.OriginOperation
+					}
+					if _, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in); err == nil {
+						t.Error("compiler accepted an existing database operation as the application operation")
+					}
+					// Rehash a previously valid plan so rejection must depend on
+					// operation scope, not a stale descriptor or plan hash.
+					p.ApplicationDatabase.OperationID = in.OperationID
+					p.ApplicationDatabase.Hash = p.ApplicationDatabase.DocumentHash()
+					p.Hash = ""
+					p.Hash = HostingDocumentHash(p)
+					if ValidateHostingApplicationDatabasePlan(p, in) == nil {
+						t.Error("validator accepted a self-rehashed database operation collision")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestApplicationDatabaseAllowsEqualNonceValuesAcrossScopes(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, version := range []string{"v1", "v2"} {
+			t.Run(engine+"/"+version, func(t *testing.T) {
+				s, r, in := applicationDatabaseFixture(t, engine, version == "v2")
+				in.CreateNonce = in.Origin.Nonce
+				p, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+				if err != nil || ValidateHostingApplicationDatabasePlan(p, in) != nil {
+					t.Fatal("equal nonce values rejected despite distinct application and database operations", err)
+				}
+				if p.ApplicationDatabase.CreateNonce != p.ApplicationDatabase.Origin.Nonce {
+					t.Fatal("compiler changed independently scoped nonce values")
+				}
+			})
+		}
+	}
+}
+
 func TestApplicationDatabaseBindingExactReference(t *testing.T) {
 	for _, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {
