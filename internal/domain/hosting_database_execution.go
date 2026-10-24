@@ -28,6 +28,7 @@ type HostingDatabasePlan struct {
 	Reference   HostingDatabaseExecutionRef    `json:"reference"`
 	NetworkName string                         `json:"network_name"`
 	Credentials []HostingDatabaseCredentialRef `json:"credentials"`
+	Network     *HostingDatabaseNetworkPlan    `json:"network,omitempty"`
 }
 
 // HostingDatabaseDeploymentInput selects the current saved database metadata.
@@ -177,7 +178,7 @@ func ValidateHostingDatabaseRelease(s HostingSnapshot, r HostingRelease) error {
 
 // Validate checks the complete canonical database plan descriptor.
 func (p HostingDatabasePlan) Validate(s HostingSnapshot, r HostingRelease) error {
-	if ValidateHostingDatabaseRelease(s, r) != nil || p.Reference != s.Database || p.NetworkName != HostingDatabaseNetworkName(s.BindingID) {
+	if p.Network != nil || ValidateHostingDatabaseRelease(s, r) != nil || p.Reference != s.Database || p.NetworkName != HostingDatabaseNetworkName(s.BindingID) {
 		return errors.New("database plan reference or network mismatch")
 	}
 	canonical, err := hostingDatabaseCredentials(s, p.Credentials)
