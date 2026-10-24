@@ -41,6 +41,15 @@ func newOwnedIO(ctx context.Context, file *os.File, write bool, blocked func(str
 	if kind != unix.S_IFIFO && kind != unix.S_IFSOCK {
 		return nil, errUnsupportedStream
 	}
+	if kind == unix.S_IFSOCK {
+		socketType, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TYPE)
+		if err != nil {
+			return nil, fmt.Errorf("inspect owned socket type: %w", err)
+		}
+		if socketType != unix.SOCK_STREAM {
+			return nil, errUnsupportedStream
+		}
+	}
 	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		return nil, fmt.Errorf("inspect owned stream flags: %w", err)
@@ -192,4 +201,24 @@ func runOwned(ctx context.Context, args []string, stdin, stdout *os.File, blocke
 	}
 	defer func() { err = errors.Join(err, output.Close()) }()
 	return run(ctx, args, input, output, os.OpenRoot, "/tmp")
+}
+
+// writeDiagnostic makes one nonblocking attempt to write fixed text. A full,
+// closed or unsupported sink drops diagnostics rather than delaying failure.
+// It never polls, retries or starts a goroutine, even without cancellation.
+func writeDiagnostic(stderr *os.File, message string) (err error) {
+	stream, err := newOwnedIO(context.Background(), stderr, true, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, stream.Close()) }()
+	data := []byte(message + "\n")
+	n, err := unix.Write(stream.fd, data)
+	if err != nil {
+		return fmt.Errorf("write archive diagnostic: %w", err)
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }

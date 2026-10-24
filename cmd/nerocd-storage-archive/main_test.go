@@ -374,3 +374,84 @@ func TestArchiveChildCleanupAfterSetupFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandWithFullStderr(t *testing.T) {
+	for _, failure := range []string{"signal", "malformed_input"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			errR, errW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { closeArchiveTestStream(t, errR); closeArchiveTestStream(t, errW) })
+			filled := fillArchiveTestPipe(t, errW)
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestArchiveCommandChild$")
+			cmd.Env = append(os.Environ(), "NEROCD_ARCHIVE_SIGNAL_CHILD=1")
+			cmd.Stdout, cmd.Stderr = io.Discard, errW
+			var readyR, readyW *os.File
+			var stdin io.WriteCloser
+			if failure == "signal" {
+				readyR, readyW, err = os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { closeArchiveTestStream(t, readyR); closeArchiveTestStream(t, readyW) })
+				cmd.ExtraFiles = []*os.File{readyW}
+				cmd.Env = append(cmd.Env, "NEROCD_ARCHIVE_SIGNAL_STAGE=input")
+				stdin, err = cmd.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { closeArchiveTestStream(t, stdin) })
+			} else {
+				cmd.Stdin = strings.NewReader("private-malformed-archive-bytes")
+			}
+			p := startArchiveTestProcess(t, cmd, cancel)
+			if failure == "signal" {
+				if err := readyW.Close(); err != nil {
+					t.Fatal("parent handshake close failed")
+				}
+				if err := readyR.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+					t.Fatal("handshake deadline failed")
+				}
+				if _, err := stdin.Write([]byte("private-unfinished-upload")); err != nil {
+					t.Fatal("child input failed")
+				}
+				var ready [1]byte
+				if _, err := io.ReadFull(readyR, ready[:]); err != nil || ready[0] != 1 {
+					t.Fatal("child never reached blocked input")
+				}
+				time.Sleep(100 * time.Millisecond)
+				select {
+				case <-p.done:
+					t.Fatal("child exited before signal")
+				default:
+				}
+				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal("child signal failed")
+				}
+			}
+			select {
+			case <-p.done:
+				var exited *exec.ExitError
+				if !errors.As(p.err, &exited) || exited.ExitCode() != 1 {
+					t.Fatal("unexpected child exit")
+				}
+			case <-time.After(300 * time.Millisecond):
+				p.stop(t)
+				t.Fatal("full diagnostic sink prevented prompt failure; child killed and joined")
+			}
+			if err := errW.Close(); err != nil {
+				t.Fatal("parent diagnostic close failed")
+			}
+			data, err := io.ReadAll(io.LimitReader(errR, int64(filled+1)))
+			if err != nil || !bytes.Equal(data, bytes.Repeat([]byte{'x'}, filled)) {
+				t.Fatal("unavailable sink received unexpected diagnostic bytes")
+			}
+			if p.wait(t) != p.err {
+				t.Fatal("child exit result was consumed")
+			}
+		})
+	}
+}

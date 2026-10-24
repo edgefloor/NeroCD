@@ -198,3 +198,73 @@ func TestRunOwnedValidatesPipeArchive(t *testing.T) {
 		t.Fatal("owned input was not closed after successful validation")
 	}
 }
+
+func TestOwnedIORejectsNonstreamSocketsBeforeChangingFlags(t *testing.T) {
+	for _, kind := range []int{unix.SOCK_DGRAM, unix.SOCK_SEQPACKET} {
+		name := "datagram"
+		if kind == unix.SOCK_SEQPACKET {
+			name = "sequence_packet"
+		}
+		t.Run(name, func(t *testing.T) {
+			fds, err := unix.Socketpair(unix.AF_UNIX, kind, 0)
+			if kind == unix.SOCK_SEQPACKET && (errors.Is(err, unix.EPROTONOSUPPORT) || errors.Is(err, unix.ESOCKTNOSUPPORT)) {
+				t.Skip("host does not support UNIX sequence-packet sockets")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := unix.SetNonblock(fds[0], true); err != nil {
+				t.Fatal(err)
+			}
+			left := os.NewFile(uintptr(fds[0]), "nonstream-socket")
+			right := os.NewFile(uintptr(fds[1]), "nonstream-peer")
+			t.Cleanup(func() { closeArchiveTestStream(t, left); closeArchiveTestStream(t, right) })
+			original, err := unix.FcntlInt(uintptr(fds[0]), unix.F_GETFL, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, write := range []bool{false, true} {
+				owned, err := newOwnedIO(t.Context(), left, write, nil)
+				if owned != nil {
+					closeArchiveTestStream(t, owned)
+					t.Fatal("nonstream socket accepted as byte stream")
+				}
+				if !errors.Is(err, errUnsupportedStream) {
+					t.Fatal("nonstream socket rejection lost its contract")
+				}
+				flags, err := unix.FcntlInt(uintptr(fds[0]), unix.F_GETFL, 0)
+				if err != nil || flags != original {
+					t.Fatal("rejected nonstream socket flags or ownership changed")
+				}
+			}
+		})
+	}
+}
+
+func TestDiagnosticWritableAndUnsupportedSinks(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeArchiveTestStream(t, r); closeArchiveTestStream(t, w) })
+	if err := writeDiagnostic(w, "storage archive helper failed"); err != nil {
+		t.Fatal("writable pipe lost diagnostic")
+	}
+	data, err := io.ReadAll(io.LimitReader(r, 128))
+	if err != nil || string(data) != "storage archive helper failed\n" {
+		t.Fatal("diagnostic text or owned close changed")
+	}
+
+	file, err := os.CreateTemp(t.TempDir(), "unsupported-diagnostic-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeArchiveTestStream(t, file) })
+	if err := writeDiagnostic(file, "storage archive helper failed"); !errors.Is(err, errUnsupportedStream) {
+		t.Fatal("unsupported diagnostic sink accepted")
+	}
+	stat, err := file.Stat()
+	if err != nil || stat.Size() != 0 {
+		t.Fatal("unsupported sink was changed or closed")
+	}
+}

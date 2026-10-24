@@ -18,7 +18,7 @@ import (
 
 func main() { os.Exit(command()) }
 
-var errUnsupportedStream = errors.New("archive helper requires owned FIFO or socket streams")
+var errUnsupportedStream = errors.New("archive helper requires owned FIFO or SOCK_STREAM streams")
 
 func command() int { return commandReady(nil) }
 
@@ -29,9 +29,10 @@ func commandReady(blocked func(string)) int {
 		// Upload names, contents and parser/OS errors never enter diagnostics.
 		message := "storage archive helper failed"
 		if errors.Is(err, errUnsupportedStream) {
-			message = "storage archive helper requires FIFO or socket stdin/stdout"
+			message = "storage archive helper requires FIFO or SOCK_STREAM stdin/stdout"
 		}
-		_, _ = fmt.Fprintln(os.Stderr, message)
+		// Diagnostic failure never changes the failed command outcome or blocks exit.
+		_ = writeDiagnostic(os.Stderr, message)
 		return 1
 	}
 	return 0
