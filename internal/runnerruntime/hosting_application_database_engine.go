@@ -83,7 +83,9 @@ func applicationDatabaseName(in applicationDatabaseEngineInput) string {
 }
 
 func (e *applicationDatabaseEngine) check(ctx context.Context, in applicationDatabaseEngineInput) error {
-	if ctx.Err() != nil || e == nil || e.image == nil || domain.ValidateHostingApplicationDatabasePlan(in.Plan, in.Proof) != nil || e.config.validateHost(ctx, e.image) != nil || e.image.verifyDaemon(ctx, in.Plan.Release.DaemonID) != nil {
+	// Historical v1 proof remains valid domain input, but cannot serve the
+	// binding-derived hostname. Runtime effects require the settled v2 alias.
+	if ctx.Err() != nil || e == nil || e.image == nil || domain.ValidateHostingApplicationDatabasePlan(in.Plan, in.Proof) != nil || domain.ValidateHostingDatabasePlanV2(in.Proof.DatabasePlan) != nil || e.config.validateHost(ctx, e.image) != nil || e.image.verifyDaemon(ctx, in.Plan.Release.DaemonID) != nil {
 		return errApplicationDatabaseEngine
 	}
 	return nil

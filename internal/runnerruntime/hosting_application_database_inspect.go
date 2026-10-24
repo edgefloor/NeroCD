@@ -217,10 +217,7 @@ func (e *applicationDatabaseEngine) network(ctx context.Context, in applicationD
 		return errApplicationDatabaseEngine
 	}
 	dbEndpoint := observed.NetworkSettings.Networks[n.Name]
-	var aliases []string
-	if descriptor := in.Proof.DatabasePlan.Database.Network; descriptor != nil {
-		aliases = []string{descriptor.Alias}
-	}
+	aliases := []string{in.Proof.DatabasePlan.Database.Network.Alias}
 	dns := append([]string{strings.TrimPrefix(db.Name, "/")}, aliases...)
 	dns = append(dns, db.ID[:12])
 	if !slices.Equal(dbEndpoint.Aliases, aliases) || !slices.Equal(dbEndpoint.DNSNames, dns) || len(dbEndpoint.Links) != 0 || len(dbEndpoint.IPAMConfig) != 0 || len(dbEndpoint.DriverOpts) != 0 || dbEndpoint.GwPriority != 0 || dbEndpoint.EndpointID != n.Containers[h.ContainerID].EndpointID {

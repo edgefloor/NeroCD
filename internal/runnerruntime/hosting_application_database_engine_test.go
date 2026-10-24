@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +58,10 @@ func TestApplicationDatabaseEngineOwnsIsolatedConfiguration(t *testing.T) {
 }
 
 func applicationDatabaseFixture(t *testing.T, engine string, previous bool) (*applicationDatabaseFake, *hostingruntimeprotocol.Environment) {
+	return applicationDatabaseFixtureVersion(t, engine, previous, true)
+}
+
+func applicationDatabaseFixtureVersion(t *testing.T, engine string, previous, currentV2 bool) (*applicationDatabaseFake, *hostingruntimeprotocol.Environment) {
 	t.Helper()
 	db, credentials := databaseFixture(t, engine)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -110,6 +115,27 @@ func applicationDatabaseFixture(t *testing.T, engine string, previous bool) (*ap
 		receipt.Hash = receipt.DocumentHash()
 		proof.Members = []domain.HostingDatabaseNetworkMemberProof{{Binding: b, EndpointPlan: ep, Receipt: receipt, ApplicationHealthy: old, DatabasePlan: db.plan, ApplicationProjectID: "project", DatabaseProjectID: "project"}}
 	}
+	if currentV2 {
+		current, err := domain.CompileHostingDatabasePlanV2(db.plan.Snapshot, db.plan.Release, h, db.plan, *db.plan.Storage, *db.plan.Database, domain.HostingDatabaseNetworkPlanInput{Origin: origin, MembershipRevision: proof.MembershipRevision, Members: proof.Members})
+		if err != nil {
+			t.Fatal("current v2 database fixture compilation", err)
+		}
+		proof.DatabasePlan = current
+		proof.DatabaseHealthy.OperationID = "database_replace"
+		proof.DatabaseHealthy.PlanHash = current.Hash
+		proof.DatabaseHealthy.Snapshot, proof.DatabaseHealthy.Release = current.Snapshot, current.Release
+		// Model the already-settled replacement observation. The original v1
+		// binding, storage creation proof and retained network record stay exact.
+		databaseContainer["Name"] = "/" + databaseContainerName(proof.DatabaseHealthy.OperationID, current)
+		databaseContainer["Config"].(map[string]any)["Labels"] = databaseContainerLabels(proof.DatabaseHealthy.OperationID, current, record)
+		for _, rawMount := range databaseContainer["Mounts"].([]map[string]any) {
+			if rawMount["Destination"] == databaseSecretMount {
+				rawMount["Source"] = filepath.Join(db.config.secretRoot, databaseGeneration(proof.DatabaseHealthy.OperationID, current))
+			}
+		}
+		databaseEndpoint["Aliases"] = []string{b.Alias}
+		databaseEndpoint["DNSNames"] = []string{strings.TrimPrefix(databaseContainer["Name"].(string), "/"), b.Alias, result.ContainerID[:12]}
+	}
 	s.PolicyVersion = domain.HostingApplicationDatabasePolicyVersion
 	s.ApplicationDatabase = domain.HostingApplicationDatabaseRef{BindingID: b.ID, BindingHash: b.Hash}
 	p, err := domain.CompileHostingApplicationDatabasePlan(s, r, nil, nil, proof)
@@ -134,6 +160,20 @@ func applicationDatabaseFixture(t *testing.T, engine string, previous bool) (*ap
 	}
 	t.Cleanup(environment.Close)
 	return f, environment
+}
+
+func TestApplicationDatabaseRequiresSettledV2DatabaseAlias(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, env := applicationDatabaseFixtureVersion(t, engine, false, false)
+			if domain.ValidateHostingApplicationDatabasePlan(f.in.Plan, f.in.Proof) != nil {
+				t.Fatal("historical v1 proof must remain valid domain input")
+			}
+			if _, err := f.e.CreateStopped(context.Background(), f.in, env, time.Now().Add(time.Minute), f.before); err == nil || len(f.effects) != 0 {
+				t.Fatal("v1 database without deterministic alias admitted an app effect")
+			}
+		})
+	}
 }
 
 func (f *applicationDatabaseFake) app(id, operation, plan, nonce string, running bool) applicationDatabaseContainer {

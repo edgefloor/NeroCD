@@ -319,6 +319,13 @@ func TestApplicationDatabaseEndpointAuthorityAndRevision(t *testing.T) {
 func TestApplicationDatabaseRejectsRetirementRevisionOverflowBeforeCreate(t *testing.T) {
 	f, environment := applicationDatabaseFixture(t, "redis", true)
 	f.in.Proof.MembershipRevision = math.MaxInt64 - 1
+	original := f.in.Proof.BindingDatabasePlan
+	current, err := domain.CompileHostingDatabasePlanV2(original.Snapshot, original.Release, *f.in.Proof.DatabasePlan.PreviousHealthy, original, *original.Storage, *original.Database, domain.HostingDatabaseNetworkPlanInput{Origin: f.in.Proof.Origin, MembershipRevision: f.in.Proof.MembershipRevision, Members: f.in.Proof.Members})
+	if err != nil {
+		t.Fatal("valid near-limit database proof rejected", err)
+	}
+	f.in.Proof.DatabasePlan = current
+	f.in.Proof.DatabaseHealthy.PlanHash = current.Hash
 	p, err := domain.CompileHostingApplicationDatabasePlan(f.in.Plan.Snapshot, f.in.Plan.Release, nil, nil, f.in.Proof)
 	if err != nil {
 		t.Fatal("valid near-limit proof fixture rejected", err)
@@ -336,5 +343,59 @@ func TestApplicationDatabaseRejectsRetirementRevisionOverflowBeforeCreate(t *tes
 	defer updated.Close()
 	if _, err := f.e.CreateStopped(context.Background(), f.in, updated, time.Now().Add(time.Minute), f.before); err == nil || len(f.effects) != 0 {
 		t.Fatal("created replacement whose retirement revision overflows")
+	}
+}
+
+func TestApplicationDatabaseRequiresObservedDatabaseAliasBeforeEffects(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, mode := range []string{"missing", "wrong", "extra", "dns_missing"} {
+			t.Run(engine+"/"+mode, func(t *testing.T) {
+				f, environment := applicationDatabaseFixture(t, engine, false)
+				db := f.db.containers[f.in.Proof.DatabaseHealthy.ContainerID]
+				endpoint := db["NetworkSettings"].(map[string]any)["Networks"].(map[string]any)[f.in.Proof.Binding.NetworkName].(map[string]any)
+				switch mode {
+				case "missing":
+					endpoint["Aliases"] = nil
+				case "wrong":
+					endpoint["Aliases"] = []string{"foreign"}
+				case "extra":
+					endpoint["Aliases"] = []string{f.in.Proof.Binding.Alias, "foreign"}
+				case "dns_missing":
+					endpoint["DNSNames"] = []string{strings.TrimPrefix(db["Name"].(string), "/"), f.in.Proof.DatabaseHealthy.ContainerID[:12]}
+				}
+				if _, err := f.e.CreateStopped(context.Background(), f.in, environment, time.Now().Add(time.Minute), f.before); err == nil || len(f.effects) != 0 {
+					t.Fatal("unresolvable or substituted database alias admitted an app effect")
+				}
+			})
+		}
+	}
+}
+
+func TestApplicationDatabaseAliasLossPreventsConfigurationAndStart(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		for _, stage := range []string{"configure", "start"} {
+			t.Run(engine+"/"+stage, func(t *testing.T) {
+				f, environment := applicationDatabaseFixture(t, engine, false)
+				candidate, err := f.e.CreateStopped(context.Background(), f.in, environment, time.Now().Add(time.Minute), f.before)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var configured applicationDatabaseConfiguration
+				if stage == "start" {
+					configured = applicationDatabaseConfigure(t, f, candidate)
+				}
+				db := f.db.containers[f.in.Proof.DatabaseHealthy.ContainerID]
+				db["NetworkSettings"].(map[string]any)["Networks"].(map[string]any)[f.in.Proof.Binding.NetworkName].(map[string]any)["Aliases"] = nil
+				before := len(f.effects)
+				if stage == "configure" {
+					_, err = f.e.ConfigureStoppedNetwork(context.Background(), f.in, candidate, applicationDatabaseAttachPlan(f, candidate), f.before)
+				} else {
+					_, err = f.e.StartAndObserve(context.Background(), f.in, candidate, applicationDatabaseAttachPlan(f, candidate), configured, f.before)
+				}
+				if err == nil || len(f.effects) != before || f.apps[candidate.ContainerID].State.Running {
+					t.Fatal("database alias loss escaped the next effect boundary")
+				}
+			})
+		}
 	}
 }
