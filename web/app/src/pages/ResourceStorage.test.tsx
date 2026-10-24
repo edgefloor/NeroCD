@@ -97,6 +97,28 @@ const submit = () =>
   fireEvent.submit(
     screen.getByRole("form", { name: "Configure persistent storage" }),
   );
+test("configured local storage exposes archive history to viewers and reports missing qualified configuration", async () => {
+  setup("viewer", (url) => {
+    if (url.endsWith("/storage"))
+      return json({
+        ...saved,
+        kind: "platform_managed",
+        driver: "local",
+        access_mode: "read_write",
+        generation: 1,
+        hash: `sha256:${"a".repeat(64)}`,
+      });
+    if (url.includes("/storage-backups"))
+      return json({ error: "private configuration detail" }, 503);
+    return undefined;
+  });
+  await screen.findByRole("region", { name: "Upload backups and restores" });
+  await screen.findByText(/Qualified archive configuration/);
+  expect(
+    screen.queryByRole("button", { name: "Request upload backup" }),
+  ).toBeNull();
+  expect(screen.queryByText("private configuration detail")).toBeNull();
+});
 test("owner explicitly saves metadata only and sees immutable retained identity, not activation", async () => {
   const { fetch } = setup();
   await screen.findByText("No configured persistent storage.");

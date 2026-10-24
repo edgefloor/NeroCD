@@ -14,6 +14,7 @@ import {
 import { canOwnProject } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StorageArchives } from "@/components/hosting/StorageArchives";
 
 const button = "h-auto max-w-full whitespace-normal";
 const denied = (error: unknown) =>
@@ -106,6 +107,7 @@ function StorageAccess({
   );
   return (
     <section
+      id={`storage-${resource.id}`}
       aria-label={`Persistent storage for ${resource.name}`}
       className="min-w-0 space-y-3 border-t pt-3"
     >
@@ -571,6 +573,26 @@ function StorageValues({
         </form>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
+      {!failed &&
+      storage.data?.kind === "platform_managed" &&
+      storage.data.driver === "local" &&
+      binding.data &&
+      storage.data.binding_id === binding.data.id &&
+      storage.data.destination_id === binding.data.destination_id ? (
+        <StorageArchives
+          key={JSON.stringify([
+            actor,
+            resource.id,
+            storage.data.hash,
+            owner,
+          ])}
+          actor={actor}
+          resource={resource}
+          storage={storage.data}
+          owner={owner}
+          paused={blocked || accessDenied}
+        />
+      ) : null}
     </>
   );
 }
