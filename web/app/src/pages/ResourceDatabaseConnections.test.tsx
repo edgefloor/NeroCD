@@ -255,3 +255,50 @@ test.each([401, 403, 500])("manual review resource HTTP %s retires denied reques
     expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
   }
 });
+
+const loadedRoutes = { resource_id: "app", loaded_generation: 7, loaded_proxy_operation_id: "pop_loaded", available: true, reason: "available", next_after_operation_id: null, routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 3, selected_release_operation_id: "app_operation" }], targets: [{ operation_id: "app_operation", kind: "current_healthy" }] };
+test("explicit route continuation sends all reviewed routes and identical uncertain retries", async () => {
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return json(loadedRoutes);
+    if (init.method === "POST") return Promise.reject(new TypeError("lost"));
+  });
+  await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application.");
+  fireEvent.click(screen.getByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/No confirmed response/);
+  fireEvent.click(screen.getByRole("button", { name: "Retry identical application request" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+  const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+  expect(bodies[0]).toBe(bodies[1]);
+  expect(JSON.parse(String(bodies[0])).application_database_route_continuity).toEqual({ expected_loaded_generation: 7, expected_loaded_proxy_operation_id: "pop_loaded", routes: [{ route_id: "route", expected_version: 3, expected_selected_release_operation_id: "app_operation" }] });
+});
+test("changed loaded generation requires fresh review and sends no deployment", async () => {
+  let reads = 0;
+  const { fetch } = setup((url) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return json({ ...loadedRoutes, loaded_generation: ++reads === 1 ? 7 : 8 });
+  });
+  fireEvent.click(await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/Saved configuration or membership changed/);
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+});
+
+test("ready candidate remains incomplete and permission denial clears continuation choices", async () => {
+  let deny = false;
+  setup((url) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return deny ? json({}, 403) : json(loadedRoutes);
+    if (url.includes("/hosting-operations/")) return json({ id: "app_operation", project_id: "project", resource_id: "app", state: "verifying", mutation_hold: true, restore_ownership_held: false, application_database_route_continuity: { operation_id: "app_operation", proxy_operation_id: "pop_next" }, application_database_yield: { version: "application-database.route-continuity.v1", receipt_id: "receipt", plan_hash: `sha256:${"a".repeat(64)}`, stage_hash: `sha256:${"b".repeat(64)}`, candidate_hash: `sha256:${"c".repeat(64)}`, continuation_hash: `sha256:${"d".repeat(64)}` } });
+  });
+  await screen.findByText(/Candidate readiness was recorded. Route switching and finalization are incomplete/);
+  expect(screen.getByText(/Route continuation requested through proxy operation pop_next/)).toBeTruthy();
+  fireEvent.click(await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  deny = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText(/Retained requests and drafts have been cleared/);
+  expect(screen.queryByText(/app.example.test/)).toBeNull();
+});

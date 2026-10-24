@@ -26,3 +26,9 @@ test("a deadline retires ignored transport and cannot be revived by a late respo
   vi.useFakeTimers(); let resolve!: (value: Response) => void; const fetch = vi.fn((_url: string, _options: RequestInit) => new Promise<Response>((done) => { resolve = done; })); vi.stubGlobal("fetch", fetch);
   const read = getSwitchOptions(scope); const rejected = expect(read).rejects.toThrow("timed out"); await vi.advanceTimersByTimeAsync(5000); await rejected; expect(fetch.mock.calls[0]![1].signal?.aborted).toBe(true); resolve(new Response(JSON.stringify(options))); await Promise.resolve();
 });
+
+test("loaded predecessor id is nullable and strictly validated when present", () => {
+  expect(() => validateSwitchOptions({ ...options, loaded_proxy_operation_id: "pop_loaded" }, "resource")).not.toThrow();
+  expect(() => validateSwitchOptions({ ...options, loaded_proxy_operation_id: null }, "resource")).not.toThrow();
+  expect(() => validateSwitchOptions({ ...options, loaded_proxy_operation_id: "foreign/id" }, "resource")).toThrow();
+});

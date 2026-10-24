@@ -37,3 +37,20 @@ test("malformed options fail closed", async () => {
   await expect(getDatabaseConnectionOptions(scope)).rejects.toThrow();
   await expect(getDatabaseConnectionOptions(scope)).rejects.toThrow();
 });
+
+test("continuation freezes every route and requires the exact healthy loaded predecessor", async () => {
+  const { connectionRouteIntent } = await import("./hosting-database-connections");
+  const options = { resource_id: "app", loaded_generation: 7, loaded_proxy_operation_id: "pop_loaded", available: true, reason: "available" as const, next_after_operation_id: null, routes: [{ id: "route_a", hostname: "app.example.test", path_prefix: "/", version: 3, selected_release_operation_id: "hop_old" }, { id: "route_b", hostname: "other.example.test", path_prefix: "/", version: 4, selected_release_operation_id: "hop_old" }], targets: [{ operation_id: "hop_old", kind: "current_healthy" as const }] };
+  expect(connectionRouteIntent(options)).toEqual({ expected_loaded_generation: 7, expected_loaded_proxy_operation_id: "pop_loaded", routes: options.routes.map((route) => ({ route_id: route.id, expected_version: route.version, expected_selected_release_operation_id: "hop_old" })) });
+  for (const value of [{ ...options, loaded_proxy_operation_id: null }, { ...options, available: false }, { ...options, routes: [{ ...options.routes[0]!, selected_release_operation_id: "foreign" }] }]) expect(connectionRouteIntent(value)).toBeUndefined();
+});
+test("progress reads reject foreign scope and project only safe public status", async () => {
+  const { connectedProgressQuery } = await import("./hosting-database-connections");
+  const { QueryClient } = await import("@tanstack/react-query");
+  const client = new QueryClient();
+  const value = { id: "hop", project_id: "project", resource_id: "app", state: "verifying", mutation_hold: true, restore_ownership_held: false, application_database_route_continuity: { operation_id: "hop", proxy_operation_id: "pop" }, application_database_yield: { version: "application-database.route-continuity.v1", receipt_id: "receipt", plan_hash: `sha256:${"a".repeat(64)}`, stage_hash: `sha256:${"b".repeat(64)}`, candidate_hash: `sha256:${"c".repeat(64)}`, continuation_hash: `sha256:${"d".repeat(64)}` }, lease: "must_not_cache" };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(value))).mockResolvedValueOnce(new Response(JSON.stringify({ ...value, project_id: "foreign" }))));
+  expect(await client.fetchQuery(connectedProgressQuery(scope, "hop"))).toEqual({ id: "hop", state: "verifying", mutation_hold: true, restore_ownership_held: false, proxy_operation_id: "pop", yielded: true });
+  await expect(client.fetchQuery(connectedProgressQuery(scope, "hop"))).rejects.toThrow("scope mismatch");
+  client.clear();
+});

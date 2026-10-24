@@ -2,10 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 
 // Intercepted UI evidence only. These fixtures prove no database binding,
 // controller execution, secret injection or physical workload health.
-async function fixture(page: Page) {
-  let connected = false;
+async function fixture(page: Page, connectedStart = false, viewerStart = false) {
+  let connected = connectedStart;
   let lose = false;
   let authorityReads = 0;
+  let routeGeneration = 7;
+  const viewer = viewerStart;
   const writes: string[] = [];
   const list = (items: unknown[]) => ({ items, count: items.length, total: items.length, limit: 100, offset: 0 });
   const resource = { id: "app", project_id: "p", project_environment_id: "e", name: "Connection fixture application", kind: "application", generation: 3, created_by: "operator", created_at: "", updated_at: "", source: { kind: "image", image: { reference: "example.test/ui-fixture:1" } } };
@@ -15,11 +17,13 @@ async function fixture(page: Page) {
     if (path === "/api/v1/me") { authorityReads++; return route.fulfill({ json: { id: "operator", provider: "oidc", roles: [], name: "Fixture operator", email: "fixture@example.test" } }); }
     if (path === "/api/v1/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/api/v1/projects") return route.fulfill({ json: list([{ id: "p", name: "Intercepted database UI fixture", description: "", created_at: "" }]) });
-    if (path === "/api/v1/project-members") return route.fulfill({ json: list([{ id: "member", project_id: "p", user_id: "operator", role: "owner", created_at: "" }]) });
+    if (path === "/api/v1/project-members") return route.fulfill({ json: list([{ id: "member", project_id: "p", user_id: "operator", role: viewer ? "viewer" : "owner", created_at: "" }]) });
     if (path === "/api/v1/project-environments") return route.fulfill({ json: list([{ id: "e", project_id: "p", name: "Fixture environment", created_at: "" }]) });
     if (path === "/api/v1/resources") return route.fulfill({ json: list([resource]) });
     if (path === "/api/v1/resources/app") return route.fulfill({ json: resource });
     if (path === "/api/v1/resources/db") return route.fulfill({ json: { ...resource, id: "db", kind: "database", generation: 7 } });
+    if (path.endsWith("/route-switches")) return route.fulfill({ json: { resource_id: "app", loaded_generation: routeGeneration, loaded_proxy_operation_id: "pop_loaded", available: true, reason: "available", next_after_operation_id: null, routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 3, selected_release_operation_id: "application_fixture" }], targets: [{ operation_id: "application_fixture", kind: "current_healthy" }] } });
+    if (path.startsWith("/api/v1/hosting-operations/")) return route.fulfill({ json: { id: path.split("/").at(-1), project_id: "p", resource_id: "app", state: "verifying", mutation_hold: true, restore_ownership_held: false } });
     if (path.endsWith("/database-connection")) return route.fulfill({ status: connected ? 200 : 404, json: connected ? connection : { error: "Fixture has no connection" } });
     if (path.endsWith("/database-connections/options")) return route.fulfill({ json: { items: [{ resource_id: "db", name: "Fixture PostgreSQL", engine: "postgresql", generation: 2, destination_id: "dest", status: "available", reason_code: "eligible" }] } });
     if (path.endsWith("/database-connections") && request.method() === "POST") {
@@ -28,7 +32,7 @@ async function fixture(page: Page) {
       connected = true; return route.fulfill({ status: 202, json: connection });
     }
     if (path.endsWith("/database-connection/deployments") || path.endsWith("/database/maintenance")) {
-      writes.push(request.postData()!); const target = path.includes("/db/") ? "db" : "app";
+      writes.push(request.postData()!); if (lose) { lose = false; return route.abort("failed"); } const target = path.includes("/db/") ? "db" : "app";
       return route.fulfill({ status: 202, json: { id: "hop_fixture", project_id: "p", resource_id: target, snapshot: { resource_id: target } } });
     }
     if (path.endsWith("/runtime-configuration")) return route.fulfill({ json: { runtime_configuration: { resource_id: "app", project_id: "p", resource_generation: 3, runtime_generation: 5, entries: [] } } });
@@ -42,8 +46,9 @@ async function fixture(page: Page) {
   await hosting.getByLabel("Hosting project", { exact: true }).selectOption("p");
   await hosting.getByRole("button", { name: "Fixture environment", exact: true }).click();
   const panel = page.getByRole("region", { name: "Database connection for Connection fixture application", exact: true });
-  await expect(panel.getByLabel("Database to connect", { exact: true })).toBeVisible();
-  return { panel, writes, authorityReads: () => authorityReads, lose: () => { lose = true; } };
+  if (connectedStart) await expect(panel.getByText("Connection workflow completed", { exact: true })).toBeVisible();
+  else await expect(panel.getByLabel("Database to connect", { exact: true })).toBeVisible();
+  return { panel, writes, authorityReads: () => authorityReads, lose: () => { lose = true; }, stale: () => { routeGeneration++; } };
 }
 for (const width of [320, 390, 430, 1440]) {
   test(`intercepted connection flow contains controls and supports keyboard at ${width}px`, async ({ page }, info) => {
@@ -51,7 +56,7 @@ for (const width of [320, 390, 430, 1440]) {
     const { panel, writes } = await fixture(page);
     await panel.getByLabel("Database to connect", { exact: true }).selectOption("db");
     await panel.getByLabel("Application container port", { exact: true }).fill("8080");
-    const approve = panel.getByRole("form", { name: "Review database connection request" }).getByRole("checkbox"); await approve.focus(); await page.keyboard.press("Space");
+    const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request."); await approve.focus(); await page.keyboard.press("Space");
     const connect = panel.getByRole("button", { name: "Connect database and deploy application", exact: true }); await connect.focus(); await page.keyboard.press("Enter");
     await expect(panel.getByText("Connection workflow completed", { exact: true })).toBeVisible();
     expect(JSON.parse(writes[0]).binding.expected_runtime_generation).toBe(5);
@@ -81,4 +86,49 @@ test("intercepted uncertain connection delivery retains an identical request", a
   await expect(panel.getByText(/Retained request:/)).toBeVisible();
   await panel.getByRole("button", { name: "Retry identical connection request", exact: true }).click();
   await expect(panel.getByText("Connection workflow completed", { exact: true })).toBeVisible(); expect(writes[1]).toBe(writes[0]);
+});
+
+for (const width of [320, 390, 430, 1440]) {
+  test(`intercepted connected route review and identical retry at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const { panel, writes, lose } = await fixture(page);
+    await panel.getByLabel("Database to connect", { exact: true }).selectOption("db");
+    const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request.");
+    await approve.check();
+    await panel.getByRole("button", { name: "Connect database and deploy application", exact: true }).click();
+    const continuation = panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.");
+    await expect(continuation).toBeVisible();
+    await continuation.focus(); await page.keyboard.press("Space");
+    await approve.check(); lose();
+    const deploy = panel.getByRole("button", { name: "Redeploy connected application", exact: true });
+    await deploy.focus(); await page.keyboard.press("Enter");
+    await expect(panel.getByText(/No confirmed response/)).toBeVisible();
+    await panel.getByRole("button", { name: "Retry identical application request", exact: true }).click();
+    await expect(panel.getByText(/Request accepted: hop_fixture/)).toBeVisible();
+    expect(writes[1]).toBe(writes[2]);
+    expect(JSON.parse(writes[1]).application_database_route_continuity).toEqual({ expected_loaded_generation: 7, expected_loaded_proxy_operation_id: "pop_loaded", routes: [{ route_id: "route", expected_version: 3, expected_selected_release_operation_id: "application_fixture" }] });
+    await expect(panel.getByText(/Application deployment hop_fixture: verifying/)).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  });
+}
+
+test("intercepted stale route generation requires a new reviewed request", async ({ page }) => {
+  const { panel, writes, stale } = await fixture(page);
+  await panel.getByLabel("Database to connect", { exact: true }).selectOption("db");
+  const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request.");
+  await approve.check(); await panel.getByRole("button", { name: "Connect database and deploy application", exact: true }).click();
+  await panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.").check();
+  await approve.check(); stale();
+  await panel.getByRole("button", { name: "Redeploy connected application", exact: true }).click();
+  await expect(panel.getByText(/Saved configuration or membership changed/)).toBeVisible();
+  expect(writes).toHaveLength(1);
+});
+
+test("intercepted connected viewer can read progress but cannot request route continuation", async ({ page }) => {
+  const { panel, writes } = await fixture(page, true, true);
+  await expect(panel.getByRole("region", { name: "Connected application deployment progress" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Redeploy connected application", exact: true })).toHaveCount(0);
+  await expect(panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.")).toHaveCount(0);
+  expect(writes).toHaveLength(0);
 });

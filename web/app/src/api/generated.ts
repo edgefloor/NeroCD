@@ -3643,6 +3643,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/database-binding/yield": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
+        post: operations["yieldHostingApplicationDatabasePreparation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/database-binding/stage": {
         parameters: {
             query?: never;
@@ -4905,6 +4922,8 @@ export interface components {
             resource_id: components["schemas"]["HostingIdentifier"];
             /** Format: int64 */
             loaded_generation: number | null;
+            /** @description Exact validated loaded proxy predecessor; explanatory state, not mutation authority. */
+            loaded_proxy_operation_id: string | null;
             available: boolean;
             /** @enum {string} */
             reason: "available" | "unbound" | "proxy_unavailable" | "busy" | "restore_hold" | "runner_ineligible" | "no_loaded_generation" | "stale_routes" | "no_routes" | "no_targets";
@@ -5076,7 +5095,55 @@ export interface components {
             /** @enum {integer} */
             timeout_seconds: 0;
         };
+        HostingRouteSwitchSelection: {
+            route_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            expected_version: number;
+            expected_selected_release_operation_id: components["schemas"]["HostingIdentifier"];
+        };
+        HostingApplicationDatabaseRouteContinuityInput: {
+            /** Format: int64 */
+            expected_loaded_generation: number;
+            expected_loaded_proxy_operation_id: components["schemas"]["HostingIdentifier"];
+            routes: components["schemas"]["HostingRouteSwitchSelection"][];
+        };
+        HostingApplicationDatabaseRouteContinuity: {
+            /** @enum {string} */
+            version: "application-database.route-continuity.v1";
+            operation_id: components["schemas"]["HostingIdentifier"];
+            proxy_operation_id: components["schemas"]["HostingIdentifier"];
+            finalize_run_id: components["schemas"]["HostingIdentifier"];
+            request: components["schemas"]["HostingApplicationDatabaseRouteContinuityInput"];
+            proxy_id: components["schemas"]["HostingIdentifier"];
+            loaded_snapshot_hash: string;
+            previous_healthy: components["schemas"]["HostingHealthy"];
+            hash: string;
+        };
+        HostingApplicationDatabaseYieldReceipt: {
+            /** @enum {string} */
+            version: "application-database.route-continuity.v1";
+            receipt_id: components["schemas"]["HostingIdentifier"];
+            plan_hash: string;
+            stage_hash: string;
+            candidate_hash: string;
+            continuation_hash: string;
+        };
+        HostingApplicationDatabaseYieldRequest: {
+            /** @enum {string} */
+            version: "application-database.route-continuity.v1";
+            receipt_id: components["schemas"]["HostingIdentifier"];
+            plan_hash: string;
+            stage_hash: string;
+            candidate_hash: string;
+            continuation_hash: string;
+            operation_id: components["schemas"]["HostingIdentifier"];
+            run_id: components["schemas"]["HostingIdentifier"];
+            lease_id: string;
+            attempt: number;
+            fence: string;
+        };
         HostingDeploymentInput: {
+            application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuityInput"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             /**
              * Format: int64
@@ -5470,6 +5537,8 @@ export interface components {
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
+            application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuity"];
+            application_database_yield?: components["schemas"]["HostingApplicationDatabaseYieldReceipt"];
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
             /** @enum {string} */
@@ -14464,6 +14533,39 @@ export interface operations {
         responses: {
             /** @description Authorized metadata or accepted operation; do not cache */
             202: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    yieldHostingApplicationDatabasePreparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseYieldRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
                 headers: {
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;

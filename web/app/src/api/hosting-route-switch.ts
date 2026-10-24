@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { components } from "./generated";
 import { request, type RequestOptions } from "./client";
-export type SwitchOptions = components["schemas"]["HostingRouteSwitchOptions"];
+export type SwitchOptions = Omit<components["schemas"]["HostingRouteSwitchOptions"], "loaded_proxy_operation_id"> & { loaded_proxy_operation_id?: string | null };
 export type SwitchInput = components["schemas"]["HostingRouteSwitchInput"];
 export type SwitchOperation = components["schemas"]["HostingProxyOperationView"];
 export type SwitchScope = { actor: string; project: string; resource: string };
@@ -15,7 +15,8 @@ function keys(value: unknown, required: string[], optional: string[] = []): asse
 }
 const reasons = ["available", "unbound", "proxy_unavailable", "busy", "restore_hold", "runner_ineligible", "no_loaded_generation", "stale_routes", "no_routes", "no_targets"];
 export function validateSwitchOptions(value: unknown, resource: string, after = ""): asserts value is SwitchOptions {
-  keys(value, ["resource_id", "loaded_generation", "available", "reason", "routes", "targets", "next_after_operation_id"], ["pending_operation_id"]);
+  keys(value, ["resource_id", "loaded_generation", "available", "reason", "routes", "targets", "next_after_operation_id"], ["pending_operation_id", "loaded_proxy_operation_id"]);
+  if (value.loaded_proxy_operation_id !== undefined && value.loaded_proxy_operation_id !== null && !identifier(value.loaded_proxy_operation_id)) fail();
   if (value.resource_id !== resource || value.loaded_generation !== null && !positive(value.loaded_generation) || typeof value.available !== "boolean" || !reasons.includes(String(value.reason)) || value.available !== (value.reason === "available") || value.available && (!positive(value.loaded_generation) || !Array.isArray(value.routes) || value.routes.length === 0) || value.pending_operation_id !== undefined && (!identifier(value.pending_operation_id) || value.available) || !Array.isArray(value.routes) || value.routes.length > 32 || !Array.isArray(value.targets) || value.targets.length > 50 || value.next_after_operation_id !== null && !identifier(value.next_after_operation_id)) fail();
   const routeIDs = new Set<string>();
   for (const route of value.routes) {

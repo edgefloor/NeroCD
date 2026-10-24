@@ -3,6 +3,7 @@ import { ApiError } from "./errors";
 import { request } from "./client";
 import { boundedDatabaseRequest } from "./hosting-databases";
 import type { components } from "./generated";
+import type { SwitchOptions } from "./hosting-route-switch";
 
 type Schema<K extends keyof components["schemas"]> = components["schemas"][K];
 export type DatabaseConnection = Schema<"HostingDatabaseConnection">;
@@ -10,6 +11,30 @@ export type DatabaseConnectionInput = Schema<"HostingDatabaseConnectionInput">;
 export type DatabaseConnectionOptions = Schema<"HostingDatabaseConnectionOptions">;
 export type DatabaseConnectionScope = { actor: string; project: string; resource: string };
 export type ConnectedDeploymentInput = Schema<"HostingDeploymentInput">;
+export function connectionRouteIntent(options: SwitchOptions): ConnectedDeploymentInput["application_database_route_continuity"] {
+  const healthy = options.targets.find((target) => target.kind === "current_healthy");
+  if (!options.available || options.pending_operation_id || !options.loaded_generation || !options.loaded_proxy_operation_id || !healthy || !options.routes.length || options.routes.some((route) => route.selected_release_operation_id !== healthy.operation_id)) return undefined;
+  return { expected_loaded_generation: options.loaded_generation, expected_loaded_proxy_operation_id: options.loaded_proxy_operation_id, routes: options.routes.map((route) => ({ route_id: route.id, expected_version: route.version, expected_selected_release_operation_id: route.selected_release_operation_id })) };
+}
+export type ConnectedProgress = { id: string; state: string; mutation_hold: boolean; restore_ownership_held: boolean; proxy_operation_id?: string; yielded: boolean };
+export const connectedProgressQuery = (scope: DatabaseConnectionScope, operation: string) => queryOptions({
+  queryKey: [...connectionKey(scope), "operation", operation], retry: false, gcTime: 0, refetchOnWindowFocus: false,
+  queryFn: async ({ signal }): Promise<ConnectedProgress> => {
+    const value = await boundedDatabaseRequest((signal) => request<Record<string, unknown>>(`/api/v1/hosting-operations/${encodeURIComponent(operation)}`, { signal, cache: "no-store" }), signal);
+    if (!value || value.id !== operation || value.project_id !== scope.project || value.resource_id !== scope.resource || !text(value.state, 64) || !value.state || typeof value.mutation_hold !== "boolean" || typeof value.restore_ownership_held !== "boolean") throw new Error("Database operation scope mismatch");
+    const continuity = value.application_database_route_continuity;
+    let proxy: string | undefined;
+    if (continuity !== undefined) {
+      if (!continuity || typeof continuity !== "object" || Array.isArray(continuity) || !("operation_id" in continuity) || continuity.operation_id !== operation || !("proxy_operation_id" in continuity) || !identifier(continuity.proxy_operation_id)) throw new Error("Database continuation scope mismatch");
+      proxy = continuity.proxy_operation_id;
+    }
+    if (value.application_database_yield !== undefined) {
+      const yielded = value.application_database_yield as Record<string, unknown>;
+      if (!closed(yielded, ["version", "receipt_id", "plan_hash", "stage_hash", "candidate_hash", "continuation_hash"]) || yielded.version !== "application-database.route-continuity.v1" || !identifier(yielded.receipt_id) || [yielded.plan_hash, yielded.stage_hash, yielded.candidate_hash, yielded.continuation_hash].some((hash) => typeof hash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(hash))) throw new Error("Database candidate evidence is malformed");
+    }
+    return { id: operation, state: value.state, mutation_hold: value.mutation_hold, restore_ownership_held: value.restore_ownership_held, proxy_operation_id: proxy, yielded: value.application_database_yield !== undefined };
+  },
+});
 export type DatabaseMaintenanceInput = Schema<"HostingDatabaseMaintenanceInput">;
 const path = (id: string) => `/api/v1/resources/${encodeURIComponent(id)}`;
 const identifier = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);

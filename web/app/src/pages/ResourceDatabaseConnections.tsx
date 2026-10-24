@@ -5,7 +5,8 @@ import { getResource, type Resource } from "@/api/hosting";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResourceBinding } from "@/api/destinations";
 import { databaseRequestID, boundedDatabaseRequest, databaseDenied } from "@/api/hosting-databases";
-import { connectDatabase, connectionError, connectionKey, connectionOptionsQuery, connectionQuery, deployConnectedApplication, maintainConnectedDatabase, type ConnectedDeploymentInput, type DatabaseConnectionInput, type DatabaseConnectionScope, type DatabaseMaintenanceInput } from "@/api/hosting-database-connections";
+import { connectDatabase, connectedProgressQuery, connectionRouteIntent, connectionError, connectionKey, connectionOptionsQuery, connectionQuery, deployConnectedApplication, maintainConnectedDatabase, type ConnectedDeploymentInput, type DatabaseConnectionInput, type DatabaseConnectionScope, type DatabaseMaintenanceInput } from "@/api/hosting-database-connections";
+import { getSwitchOptions, switchOptionsQuery } from "@/api/hosting-route-switch";
 import { canOwnProject } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,17 +51,29 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
   const [reviewResource, setReviewResource] = useState<Resource>();
   const [reviewBase, setReviewBase] = useState<Resource>();
   const connection = status.data;
+  const [continueRoutes, setContinueRoutes] = useState(false);
+  const [operationID, setOperationID] = useState("");
+  const routeChoices = useQuery({ ...switchOptionsQuery(scope), enabled: Boolean(connection && owner) });
+  const routeIntent = routeChoices.data && !routeChoices.isError && !routeChoices.isFetching ? connectionRouteIntent(routeChoices.data) : undefined;
+  const progressID = operationID || connection?.hold_operation_id || connection?.application_operation_id || "";
+  const progress = useQuery({ ...connectedProgressQuery(scope, progressID), enabled: Boolean(progressID), refetchInterval: (query) => query.state.error || query.state.data && ["succeeded", "failed", "canceled", "reconciliation_required"].includes(query.state.data.state) ? false : 5000 });
+  useEffect(() => {
+    if (progress.data?.state !== "succeeded") return;
+    void client.invalidateQueries({ queryKey: ["hostingRoutes", scope.actor, scope.project, scope.resource] });
+    void client.invalidateQueries({ queryKey: ["routeSwitchOptions", scope.actor, scope.project, scope.resource] });
+  }, [progress.data?.id, progress.data?.state, client, scope.actor, scope.project, scope.resource]);
   const known = Boolean(connection && Object.hasOwn(states, connection.state));
   const selected = options.data?.items.find((item) => item.resource_id === database);
-  const paused = accessPaused || busy || status.isPending || status.isError || status.isFetching || (connection && !known);
-  const denied = databaseDenied(status.error) || databaseDenied(options.error);
+  const deploymentPending = Boolean(operationID && (!progress.data || progress.isError || !["succeeded", "failed", "canceled"].includes(progress.data.state) || progress.data.mutation_hold || progress.data.restore_ownership_held));
+  const paused = deploymentPending || accessPaused || busy || status.isPending || status.isError || status.isFetching || (connection && !known);
+  const denied = databaseDenied(status.error) || databaseDenied(options.error) || databaseDenied(routeChoices.error) || databaseDenied(progress.error);
   useEffect(() => { if (denied) onDenied(); }, [denied, onDenied]);
   function currentAuthority() {
     const principal = client.getQueryData<Principal>(queryKeys.principal);
     const membership = client.getQueryData<ProjectMember[]>(queryKeys.allProjectMembers);
     const identityState = client.getQueryState(queryKeys.principal);
     const membershipState = client.getQueryState(queryKeys.allProjectMembers);
-    return active.current && owner && principal && JSON.stringify([principal.provider, principal.id]) === scope.actor && membership && canOwnProject(principal, membership, scope.project) && identityState?.status === "success" && membershipState?.status === "success" && identityState.fetchStatus !== "fetching" && membershipState.fetchStatus !== "fetching" && !databaseDenied(client.getQueryState(connectionKey(scope))?.error) && !databaseDenied(client.getQueryState(connectionOptionsQuery(scope).queryKey)?.error);
+    return active.current && owner && principal && JSON.stringify([principal.provider, principal.id]) === scope.actor && membership && canOwnProject(principal, membership, scope.project) && identityState?.status === "success" && membershipState?.status === "success" && identityState.fetchStatus !== "fetching" && membershipState.fetchStatus !== "fetching" && !databaseDenied(client.getQueryState(connectionKey(scope))?.error) && !databaseDenied(client.getQueryState(connectionOptionsQuery(scope).queryKey)?.error) && !databaseDenied(client.getQueryState(switchOptionsQuery(scope).queryKey)?.error) && !databaseDenied(client.getQueryState(connectedProgressQuery(scope, progressID).queryKey)?.error);
   }
   async function settleAuthority() {
     // Join existing revalidation without starting another authority read. Query
@@ -75,6 +88,8 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
     const latest = await status.refetch();
     if (databaseDenied(latest.error)) { onDenied(); throw latest.error; }
     if (latest.error) throw latest.error;
+    if (connection && owner) await routeChoices.refetch();
+    if (progressID) await progress.refetch();
     if (latest.data === null) {
       const choices = await options.refetch();
       if (databaseDenied(choices.error)) { onDenied(); throw choices.error; }
@@ -83,6 +98,7 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
   }
   async function requestAction(kind: Attempt["kind"], event?: FormEvent) {
     event?.preventDefault();
+    if (!attempt && kind === "deploy" && continueRoutes && !routeIntent) return;
     if (!currentAuthority() || submitting.current || paused || conflict || !confirmed || (attempt && attempt.kind !== kind)) return;
     if (!attempt && (kind === "connect" ? connection !== null || !selected || selected.status !== "available" || selected.reason_code !== "eligible" || options.isError || options.isFetching : !connection || connection.state !== "active" || Boolean(connection.hold_operation_id))) return;
     const controller = new AbortController(); pending.current = controller;
@@ -101,6 +117,12 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
           if (!active.current || controller.signal.aborted) return;
           if (runtime.resource_id !== resource.id || runtime.project_id !== scope.project || runtime.resource_generation !== latest.generation || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
           const deployment: ConnectedDeploymentInput = { expected_generation: latest.generation, expected_runtime_configuration_generation: runtime.runtime_generation, idempotency_key: databaseRequestID(), container_port: Number(port), readiness: { path: readiness, timeout_seconds: Number(timeout) } };
+          if (kind === "deploy" && continueRoutes) {
+            const choices = await getSwitchOptions(scope, "", controller.signal);
+            const current = connectionRouteIntent(choices);
+            if (!current || !routeIntent || JSON.stringify(current) !== JSON.stringify(routeIntent)) throw new ApiError(409, "Loaded routes changed", null);
+            deployment.application_database_route_continuity = current;
+          }
           if (kind === "connect") {
             const currentOptions = await options.refetch();
             if (currentOptions.error) throw currentOptions.error;
@@ -120,6 +142,9 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
       if (!active.current || controller.signal.aborted) return;
       if (!await settleAuthority() || controller.signal.aborted) return;
       setNotice(`Request accepted: ${operation.id}. Review recorded progress; acceptance does not confirm runtime health.`);
+      if (input.kind === "deploy" && input.body.application_database_route_continuity) setOperationID(operation.id);
+      await client.invalidateQueries({ queryKey: ["hostingRoutes", scope.actor, scope.project, scope.resource] });
+      await client.invalidateQueries({ queryKey: ["routeSwitchOptions", scope.actor, scope.project, scope.resource] });
       setAttempt(undefined); setConfirmed(false);
       if (input.kind === "connect") client.setQueryData(connectionKey(scope), operation);
       await refresh();
@@ -159,13 +184,14 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
     {status.isError ? <p role="alert">Unable to verify the database connection. Deployment controls are paused. {connectionError(status.error)}</p> : null}
     <Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={accessPaused || busy || status.isFetching} onClick={() => void review()}>Refresh database connection</Button>
     {connection ? <>
+      {progress.data ? <section className="min-w-0 space-y-1 break-all text-sm" aria-label="Connected application deployment progress"><p>Application deployment {progress.data.id}: {progress.data.state}</p><p>Current progress read: {progress.isError ? "unavailable, recorded evidence only" : progress.isFetching ? "refreshing" : "recorded"}</p>{progress.data.yielded && progress.data.state !== "succeeded" ? <p>Candidate readiness was recorded. Route switching and finalization are incomplete. The candidate is not a completed deployment.</p> : null}{progress.data.proxy_operation_id ? <p>Route continuation requested through proxy operation {progress.data.proxy_operation_id}. Review the existing route controls for loaded HTTP and HTTPS observations.</p> : null}{progress.data.mutation_hold || progress.data.restore_ownership_held ? <p>Ownership remains held. Refreshing does not release a hold or authorize recovery.</p> : null}<p>This operation records deployment progress. It does not verify current public HTTPS health or database contents.</p></section> : progress.isError ? <p role="status">Application deployment progress is unavailable. Refresh before relying on recorded state.</p> : null}
       <p role="status">{states[connection.state] ?? "Unrecognized connection status. Actions are paused."}</p>
       <dl className="space-y-1 break-all text-sm"><dt>Application</dt><dd>{connection.application_resource_id}</dd><dt>Database</dt><dd>{connection.database_resource_id}</dd><dt>Membership revision</dt><dd>{connection.membership_revision}</dd><dt>Recorded reason</dt><dd>{connection.reason_code || "None recorded"}</dd><dt>Network observation</dt><dd>{connection.capture_id || "Not recorded"}</dd><dt>Database update operation</dt><dd>{connection.upgrade_operation_id || "Not recorded"}</dd><dt>Application operation</dt><dd>{connection.application_operation_id || "Not recorded"}</dd><dt>Recorded update</dt><dd>{connection.updated_at}</dd></dl>
       {connection.state === "active" ? <p className="text-sm">The connection workflow completed. This recorded result is not continuous health monitoring.</p> : null}
       {connection.hold_operation_id || connection.state === "held" ? <div role="status" className="space-y-2 break-all"><p>Changes are paused for operation {connection.hold_operation_id || "awaiting recorded identity"}. The hold remains in place.</p><p>Observation is unavailable here until the server provides the original operation, stage and candidate evidence. No unlock or replay is requested.</p></div> : null}
     </> : status.data === null ? <>
       <p>Connect one undeployed public-image application to a healthy PostgreSQL or Redis database on the same destination. The server checks eligibility and adds the named PG* or REDIS* credential references. Credential values are never displayed.</p>
-      <p className="text-xs text-muted-foreground">One application per database. Source builds, application storage, route continuity and an already running unbound application are unsupported. The controller observes the database network, updates it and deploys the application.</p>
+      <p className="text-xs text-muted-foreground">One application per database. Source builds, application storage and an already running unbound application are unsupported. Add the first public route through the existing route controls after connecting. The controller observes the database network, updates it and deploys the application.</p>
       {options.isPending ? <p role="status">Loading eligible databases...</p> : null}
       {options.isError ? <p role="alert">Eligible databases are unavailable. {connectionError(options.error)}</p> : null}
       {options.data?.items.length === 0 ? <p>No eligible databases were returned. Check database health, placement and application prerequisites.</p> : null}
@@ -174,12 +200,13 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
     {owner && !status.isPending && !status.isError ? <form className="min-w-0 space-y-3 rounded-lg border p-3" aria-label="Review database connection request" onSubmit={(event) => void requestAction(attempt?.kind ?? (connection ? "deploy" : "connect"), event)}>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2"><label htmlFor={`${id}-port`}>Application container port<Input id={`${id}-port`} type="number" min={1} max={65535} value={port} disabled={editingLocked} required onChange={(event) => { setPort(event.target.value); setConfirmed(false); }} /></label><label htmlFor={`${id}-path`}>Application readiness path<Input id={`${id}-path`} maxLength={1024} value={readiness} required disabled={editingLocked} onChange={(event) => { setReadiness(event.target.value); setConfirmed(false); }} /></label><label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={editingLocked} required onChange={(event) => { setTimeoutValue(event.target.value); setConfirmed(false); }} /></label></div>
       <p className="text-xs text-muted-foreground">The readiness path is local, such as /health. The server allocates a separate runner-local application port. These actions do not promise public traffic or uninterrupted service. Database redeployment can interrupt database access.</p>
+      {connection ? <section aria-label="Connected application route continuation" className="min-w-0 space-y-2 break-all text-sm"><p>Existing public routes</p>{routeChoices.isError ? <p role="status">Loaded route choices are unavailable. Route continuation is paused.</p> : routeChoices.isPending ? <p role="status">Checking loaded route choices...</p> : routeIntent ? <><p>Loaded generation {routeIntent.expected_loaded_generation}. Continue all {routeIntent.routes.length} enabled application routes from the reviewed release.</p><ul>{routeChoices.data?.routes.map((route) => <li key={route.id}>{route.hostname}{route.path_prefix}</li>)}</ul><label className="flex items-start gap-2"><input type="checkbox" checked={continueRoutes} disabled={editingLocked} onChange={(event) => { setContinueRoutes(event.target.checked); setConfirmed(false); }} /><span>Continue all reviewed public routes when redeploying the connected application.</span></label><p>The server prepares the candidate, switches the reviewed routes, then finalizes the deployment. A ready candidate alone does not confirm loaded routes or HTTPS health.</p></> : <p>No verified route continuation is available. Existing route controls show prerequisites and recorded HTTP/HTTPS observations.</p>}</section> : null}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={accessPaused || busy} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed the selected database and application settings and approve this request.</span></label>
-      <div className="flex flex-wrap gap-2"><Button type="submit" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={Boolean(paused) || conflict || !confirmed || (attempt ? attempt.kind === "maintain" : connection ? connection.state !== "active" || Boolean(connection.hold_operation_id) : !canConnect)}>{attempt?.kind === "connect" ? "Retry identical connection request" : attempt?.kind === "deploy" ? "Retry identical application request" : connection ? "Redeploy connected application" : "Connect database and deploy application"}</Button>
+      <div className="flex flex-wrap gap-2"><Button type="submit" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={Boolean(paused) || conflict || !confirmed || (!attempt && continueRoutes && !routeIntent) || (attempt ? attempt.kind === "maintain" : connection ? connection.state !== "active" || Boolean(connection.hold_operation_id) : !canConnect)}>{attempt?.kind === "connect" ? "Retry identical connection request" : attempt?.kind === "deploy" ? "Retry identical application request" : connection ? "Redeploy connected application" : "Connect database and deploy application"}</Button>
       {connection ? <Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={Boolean(paused) || conflict || !confirmed || (attempt ? attempt.kind !== "maintain" : connection.state !== "active" || connection.membership_revision < 1 || Boolean(connection.hold_operation_id))} onClick={() => void requestAction("maintain")}>{attempt?.kind === "maintain" ? "Retry identical database request" : "Redeploy connected database"}</Button> : null}</div>
     </form> : <p className="text-xs text-muted-foreground">Project owner access is required for database connection changes.</p>}
     {attempt ? <p className="break-all text-xs">Retained request: {attempt.kind === "connect" ? attempt.body.binding.request_id : attempt.body.idempotency_key}. Settings stay frozen for an identical retry.</p> : null}
-    {conflict ? <section className="space-y-2" aria-label="Review changed connection"><p role="status">Nothing was resubmitted. Refresh the recorded connection, then explicitly approve a separate request.</p><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={busy || accessPaused} onClick={() => void review()}>Refresh for conflict review</Button><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={!reviewed || busy || accessPaused || status.isError} onClick={() => { setReviewBase(reviewResource); setConflict(false); setAttempt(undefined); setConfirmed(false); setReviewed(false); setError(""); }}>Use refreshed configuration for a new request</Button></section> : null}
+    {conflict ? <section className="space-y-2" aria-label="Review changed connection"><p role="status">Nothing was resubmitted. Refresh the recorded connection, then explicitly approve a separate request.</p><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={busy || accessPaused} onClick={() => void review()}>Refresh for conflict review</Button><Button type="button" variant="outline" className="h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words" disabled={!reviewed || busy || accessPaused || status.isError} onClick={() => { setContinueRoutes(false); setReviewBase(reviewResource); setConflict(false); setAttempt(undefined); setConfirmed(false); setReviewed(false); setError(""); }}>Use refreshed configuration for a new request</Button></section> : null}
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status" className="break-all">{notice}</p> : null}
     {status.data === null && !status.isError && !attempt && !busy && !conflict ? <ResourceDeployments resource={resource} writable={legacyWritable} blocked={accessPaused} /> : null}
   </section>;
