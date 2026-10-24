@@ -15,6 +15,7 @@ export function validateMetadata(value, origin) {
 
 function alive(group) { try { process.kill(-group, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } }
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+class BrowserCleanupUnresolved extends Error {}
 function join(child) {
   if (child.joinPromise) return child.joinPromise;
   child.joinPromise = joinGroup(child);
@@ -24,9 +25,19 @@ async function joinGroup(child) {
   if (!child.pid) { await child.joined; return; }
   if (alive(child.pid)) process.kill(-child.pid, "SIGTERM");
   await Promise.race([child.joined, delay(1000)]);
-  if (alive(child.pid)) process.kill(-child.pid, "SIGKILL");
+  let browserCleanupUnresolved = false;
+  if (alive(child.pid)) {
+    process.kill(-child.pid, "SIGKILL");
+    if (child.browserRunner) {
+      // Playwright's browser has its own process group. Killing Bun cannot prove
+      // that it exited; inherited browser pipes must not block this diagnostic.
+      browserCleanupUnresolved = true;
+      child.stdout.destroy(); child.stderr.destroy();
+    }
+  }
   await Promise.race([child.joined, delay(1000)]);
   for (let i = 0; i < 25 && alive(child.pid); i++) await delay(20);
+  if (browserCleanupUnresolved) throw new BrowserCleanupUnresolved();
   if (alive(child.pid)) throw Error("owned browser child group did not join");
 }
 export async function drive(origin, evidence, command) {
@@ -37,8 +48,9 @@ export async function drive(origin, evidence, command) {
   const abort = () => { failed = true; finish(); };
   process.on("SIGINT", abort); process.on("SIGTERM", abort);
   const timer = setTimeout(abort, 40 * 60_000);
-  const start = (executable, args, env) => {
+  const start = (executable, args, env, browserRunner = false) => {
     const child = spawn(executable, args, { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    child.browserRunner = browserRunner;
     child.joined = new Promise((resolve) => { child.once("close", (code) => resolve(code)); child.once("error", () => { failed = true; resolve(1); finish(); }); });
     children.push(child);
     child.stderr.on("data", (chunk) => { outputBytes += chunk.length; if (outputBytes > 1 << 20) abort(); else process.stderr.write(chunk); });
@@ -48,7 +60,7 @@ export async function drive(origin, evidence, command) {
     if (failed || active || !queue.length) return;
     const meta = queue.shift();
     const env = Object.fromEntries(["PATH", "HOME", "TMPDIR", "NODE_PATH", "PLAYWRIGHT_BROWSERS_PATH", "CI"].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
-    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) });
+    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
     active.stdout.on("data", (chunk) => { outputBytes += chunk.length; if (outputBytes > 1 << 20) abort(); else process.stdout.write(chunk); });
     const current = active;
     current.joined.then(async (code) => {
@@ -84,14 +96,18 @@ export async function drive(origin, evidence, command) {
     return 0;
   } finally {
     clearTimeout(timer);
-    let cleanupFailed = false;
-    for (const child of children.reverse()) { try { await join(child); } catch { cleanupFailed = true; } }
+    let cleanupFailed = false, browserCleanupUnresolved = false;
+    for (const child of children.reverse()) { try { await join(child); } catch (error) { cleanupFailed = true; browserCleanupUnresolved ||= error instanceof BrowserCleanupUnresolved; } }
     process.removeListener("SIGINT", abort); process.removeListener("SIGTERM", abort);
+    if (browserCleanupUnresolved) throw new BrowserCleanupUnresolved();
     if (cleanupFailed) throw Error("live browser child cleanup failed");
   }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [origin, evidence, separator, ...command] = process.argv.slice(2);
   try { if (separator !== "--") throw Error("invalid driver arguments"); process.exitCode = await drive(origin, evidence, command); }
-  catch { process.stderr.write("database connection browser driver failed\n"); process.exitCode = 1; }
+  catch (error) {
+    if (error instanceof BrowserCleanupUnresolved) process.stderr.write("database connection browser cleanup unresolved: forced runner termination cannot prove detached browser exit\n");
+    process.stderr.write("database connection browser driver failed\n"); process.exitCode = 1;
+  }
 }

@@ -790,7 +790,7 @@ class GateTest(unittest.TestCase):
 DRIVER_FIXTURE = r'''
 import json, pathlib, signal, subprocess, sys, time
 root=pathlib.Path(sys.argv[1]);case=(root/'case').read_text()
-child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)',str(root)])
 with (root/'pids').open('a') as out: out.write(str(__import__('os').getpid())+'\n'+str(child.pid)+'\n')
 def stop(*_):
  child.terminate();child.wait(timeout=2);sys.exit(1)
@@ -813,12 +813,14 @@ import json, os, pathlib, signal, subprocess, sys, time
 root=pathlib.Path(__file__).resolve().parent.parent
 case=(root/'case').read_text();meta=json.loads(os.environ['NEROCD_DATABASE_CONNECTION_BROWSER_META'])
 assert 'NEROCD_TEST_DATABASE_URL' not in os.environ
-child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)',str(root)],start_new_session=case=='detached_cancel')
 with (root/'pids').open('a') as out:out.write(str(os.getpid())+'\n'+str(child.pid)+'\n')
+if case=='detached_cancel':(root/'detached-pid').write_text(str(child.pid))
 def stop(*_):
+ if case=='detached_cancel':time.sleep(3)
  child.terminate();child.wait(timeout=2);sys.exit(1)
 signal.signal(signal.SIGTERM,stop)
-if case=='cancel':
+if case in ('cancel','detached_cancel'):
  (root/'blocked').touch()
  while True:time.sleep(.01)
 child.terminate();child.wait(timeout=2)
@@ -827,6 +829,25 @@ if case=='browser_failure':sys.exit(9)
 '''
 
 class BrowserDriverTest(unittest.TestCase):
+    def cleanup_stub(self, pid, root):
+        def owned():
+            state=subprocess.run(['ps','-p',str(pid),'-o','command='],capture_output=True,text=True,check=False)
+            if state.returncode==1 and not state.stdout.strip():return False
+            self.assertEqual(state.returncode,0)
+            self.assertIn(str(root),state.stdout,'refusing to signal a PID without the private stub identity')
+            return True
+        if not owned():return
+        try:os.kill(pid,signal.SIGTERM)
+        except ProcessLookupError:return
+        deadline=time.monotonic()+2
+        while owned() and time.monotonic()<deadline:time.sleep(.02)
+        if owned():
+            try:os.kill(pid,signal.SIGKILL)
+            except ProcessLookupError:return
+            deadline=time.monotonic()+2
+            while owned() and time.monotonic()<deadline:time.sleep(.02)
+        self.assertFalse(owned(),'private browser-driver stub did not exit')
+
     def run_driver(self, case, expected, cancel=False):
         node=shutil.which('node')
         self.assertIsNotNone(node)
@@ -851,8 +872,16 @@ class BrowserDriverTest(unittest.TestCase):
                 if expected==0:
                     self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS postgresql'),1)
                     self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS redis'),1)
+                detached=int((root/'detached-pid').read_text()) if case=='detached_cancel' else None
+                if detached is not None:
+                    self.assertIn('database connection browser cleanup unresolved: forced runner termination cannot prove detached browser exit',output)
+                    self.assertIn('database connection browser driver failed',output)
+                    os.kill(detached,0)
+                else:
+                    self.assertNotIn('cleanup unresolved',output)
                 pids=[int(pid) for pid in (root/'pids').read_text().splitlines()]
                 for pid in pids:
+                    if pid==detached:continue
                     with self.assertRaises(ProcessLookupError,msg=output):os.kill(pid,0)
             finally:
                 if process.poll() is None:
@@ -860,11 +889,13 @@ class BrowserDriverTest(unittest.TestCase):
                     try:process.communicate(timeout=5)
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid,signal.SIGKILL);process.communicate(timeout=2)
-                # Exact PIDs belong to these private executable unit-test stubs.
+                # Verify the private path before signaling, including on failed assertions.
                 if (root/'pids').exists():
+                    cleanup_errors=[]
                     for pid in [int(pid) for pid in (root/'pids').read_text().splitlines()]:
-                        try:os.kill(pid,signal.SIGTERM)
-                        except ProcessLookupError:pass
+                        try:self.cleanup_stub(pid,root)
+                        except (AssertionError,OSError) as error:cleanup_errors.append(error)
+                    self.assertEqual(cleanup_errors,[],'private browser-driver stub cleanup failed')
 
     def test_successful_two_engine_driver(self):
         self.run_driver('success',0)
@@ -875,6 +906,9 @@ class BrowserDriverTest(unittest.TestCase):
 
     def test_cancellation_joins_fixture_browser_and_children(self):
         self.run_driver('cancel',1,cancel=True)
+
+    def test_forced_runner_exit_reports_detached_browser_cleanup_unresolved(self):
+        self.run_driver('detached_cancel',1,cancel=True)
 
 
 if __name__ == "__main__":
