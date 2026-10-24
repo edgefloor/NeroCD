@@ -14,6 +14,8 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
+	Database             bool                                      `json:"database,omitempty"`
+	DatabaseRef          domain.HostingDatabaseExecutionRef        `json:"database_ref,omitzero"`
 	StorageRef           domain.HostingStorageRef                  `json:"storage_ref,omitzero"`
 	StorageCreate        *domain.HostingStorageCreateRequest       `json:"storage_create,omitempty"`
 	StorageMaterialized  *domain.HostingStorageMaterializedRequest `json:"storage_materialized,omitempty"`
@@ -79,6 +81,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	if HostingJournalUsesStorage(entry) && j.state.Version < 10 {
 		j.state.Version = 10
 	}
+	if HostingJournalUsesDatabase(entry) && j.state.Version < 11 {
+		j.state.Version = 11
+	}
 	j.state.Hosting = append(j.state.Hosting, entry)
 	if err = j.persistLocked(); err != nil {
 		j.state.Hosting = j.state.Hosting[:len(j.state.Hosting)-1]
@@ -125,7 +130,7 @@ func hostingJournalNeedsV3(entry JournalHosting) bool {
 // HostingJournalUsesRuntimeEnvironment detects nonsecret runtime authority at
 // every retained level. It does not authorize fetching values during replay.
 func HostingJournalUsesRuntimeEnvironment(entry JournalHosting) bool {
-	if entry.RuntimeEnvironment || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" || hostingJournalHasRuntimeCompiler(entry) {
+	if entry.RuntimeEnvironment || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" && !HostingJournalUsesDatabase(entry) || hostingJournalHasRuntimeCompiler(entry) {
 		return true
 	}
 	for _, s := range hostingJournalSnapshots(entry) {
@@ -170,7 +175,7 @@ func validateHostingJournalRuntimeEnvironment(entry JournalHosting) error {
 		hasReference = hasReference || s.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{})
 	}
 	if !entry.RuntimeEnvironment {
-		if hasReference || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" {
+		if hasReference || entry.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || entry.DeliveryID != "" && !HostingJournalUsesDatabase(entry) {
 			return errors.New("journal runtime environment marker missing")
 		}
 		return nil
@@ -242,6 +247,9 @@ func cloneHostingEntries(entries []JournalHosting) []JournalHosting {
 	return copy
 }
 func validateJournalHosting(entry JournalHosting) error {
+	if err := validateHostingJournalDatabase(entry); err != nil {
+		return err
+	}
 	if err := validateHostingJournalStorage(entry); err != nil {
 		return err
 	}

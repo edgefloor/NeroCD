@@ -111,7 +111,7 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
 		}
-		if j.state.Version == 10 {
+		if j.state.Version == 10 || j.state.Version == 11 {
 			if err := decodeStorageJournal(contents, &j.state); err != nil {
 				_ = store.Close()
 				return nil, err
@@ -387,6 +387,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 11 && !journalStateUsesDatabase(state) {
+		state.Version = 10
+	}
 	if state.Version == 10 && !journalStateUsesStorage(state) {
 		state.Version = 9
 	}
@@ -414,7 +417,7 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
-	if state.Version < journalFormatVersion || state.Version > 10 {
+	if state.Version < journalFormatVersion || state.Version > 11 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
@@ -452,6 +455,9 @@ func validateJournalState(state journalState) error {
 		return errors.New("hosting journal requires version2")
 	}
 	for _, entry := range state.Hosting {
+		if state.Version < 11 && HostingJournalUsesDatabase(entry) {
+			return errors.New("database journal requires version 11")
+		}
 		if state.Version < 10 && HostingJournalUsesStorage(entry) {
 			return errors.New("owned storage journal requires version 10")
 		}
@@ -491,6 +497,9 @@ func validateJournalState(state journalState) error {
 	}
 	if state.Version == 9 && !strictProxy {
 		return errors.New("journal version 9 requires verified switch intent")
+	}
+	if state.Version == 11 && !journalStateUsesDatabase(state) {
+		return errors.New("journal version 11 requires database evidence")
 	}
 	if state.Version == 10 && !journalStateUsesStorage(state) {
 		return errors.New("journal version 10 requires owned storage evidence")

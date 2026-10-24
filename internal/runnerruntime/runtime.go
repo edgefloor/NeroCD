@@ -166,6 +166,7 @@ type runnerEventBatchAck = runnerclient.EventBatchAck
 
 // Config supplies the narrow command-owned settings needed by the runner runtime.
 type Config struct {
+	Database            *DatabaseExecutionConfig
 	HostingReadiness    *HostingReadinessConfig
 	HostingObservation  *HostingObservationConfig
 	HostingRuntimeLogs  *HostingRuntimeLogsConfig
@@ -197,6 +198,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if err := validateDatabaseExecutionConfig(config); err != nil {
+		return err
+	}
 	if err := validateHostingReadinessConfig(config); err != nil {
 		return err
 	}
@@ -221,7 +225,12 @@ func RunContext(ctx context.Context, config Config) error {
 	if config.Proxy.Enabled() && !config.Execute {
 		return errors.New("configured managed proxy requires execution")
 	}
-	if config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
+	if config.Database != nil {
+		if err := ValidateDatabaseExecution(ctx, *config.Database, config.ImageDockerEndpoint); err != nil {
+			return err
+		}
+	}
+	if config.Database != nil || config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -252,6 +261,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
+	if err := reconcileHostingDatabaseJournal(ctx, config, journal); err != nil {
+		return err
+	}
 	if err := reconcileHostingJournalWithLocalBuild(config.Server, config.Token, journal, config.ImageDockerEndpoint, config.LocalBuildDeploy, ctx); err != nil {
 		return fmt.Errorf("reconcile hosting journal: %w", err)
 	}
@@ -260,7 +272,7 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
+	if config.Database == nil && !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -320,6 +332,9 @@ func RunContext(ctx context.Context, config Config) error {
 			}
 			continue
 		}
+		if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy && (config.Database == nil || !config.Execute || config.CompleteStatus != "") {
+			return errors.New("database_deploy requires configured execution; generic completion is forbidden")
+		}
 		if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy && (!config.LocalBuildDeploy || !config.Execute || config.CompleteStatus != "") {
 			return errors.New("local build deployment requires explicit execution; generic completion is forbidden")
 		}
@@ -327,7 +342,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -390,6 +405,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 }
 
 type claimExecutionOptions struct {
+	database           *DatabaseExecutionConfig
 	runtimeEnvironment *RuntimeEnvironmentConfig
 	localBuild         bool
 	imageEndpoint      string
@@ -407,7 +423,11 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
+		if options.database == nil || domain.ValidateDatabaseDeploymentTask(claim.Run) != nil {
+			return errors.New("invalid or unconfigured database task")
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		if !options.localBuild || validateLocalBuildClaim(claim) != nil {
 			return errors.New("invalid or unconfigured local build deployment task")
 		}
@@ -476,7 +496,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -495,6 +515,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy {
+		return executeDatabaseClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.database)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
 		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
 	}

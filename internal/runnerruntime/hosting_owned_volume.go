@@ -112,7 +112,14 @@ func (r hostingOwnedVolumeRequest) validate() error {
 // the volume. Only a subsequent call without creation permission may reconcile
 // it. This helper does not consume or persist the controller's permission.
 func (e *imageEngine) ensureOwnedVolume(parent context.Context, req hostingOwnedVolumeRequest) (hostingOwnedVolumeEvidence, error) {
+	return e.ensureOwnedVolumeWithAuthority(parent, req)
+}
+
+func (e *imageEngine) ensureOwnedVolumeWithAuthority(parent context.Context, req hostingOwnedVolumeRequest, beforeMutation ...func(context.Context) error) (hostingOwnedVolumeEvidence, error) {
 	var zero hostingOwnedVolumeEvidence
+	if len(beforeMutation) > 1 {
+		return zero, errors.New("invalid volume mutation authority")
+	}
 	if err := req.validate(); err != nil {
 		return zero, err
 	}
@@ -147,9 +154,15 @@ func (e *imageEngine) ensureOwnedVolume(parent context.Context, req hostingOwned
 		args = append(args, "--label", key+"="+labels[key])
 	}
 	args = append(args, req.Storage.VolumeName)
-	// mutate rechecks the daemon; docker checks cancellation again immediately
-	// before invoking the existing joined, context-owned command executor.
-	if _, err := e.mutate(ctx, req.DaemonID, args...); err != nil {
+	// Finish fallible daemon verification before the optional authority check.
+	// docker checks cancellation again before the joined command executor.
+	if err := e.verifyDaemon(ctx, req.DaemonID); err != nil {
+		return zero, errors.Join(errHostingOwnedVolumeUncertain, err, ctx.Err())
+	}
+	if len(beforeMutation) == 1 && (beforeMutation[0] == nil || beforeMutation[0](ctx) != nil || ctx.Err() != nil) {
+		return zero, errors.New("owned volume mutation authority unavailable")
+	}
+	if _, err := e.docker(ctx, args...); err != nil {
 		return zero, errors.Join(errHostingOwnedVolumeUncertain, err, ctx.Err())
 	}
 	evidence, err := e.verifyOwnedVolume(ctx, req)

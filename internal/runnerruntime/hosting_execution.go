@@ -16,7 +16,7 @@ func hostingAuthority(runID, operationID string, lease domain.RunLease) domain.H
 	return domain.HostingAuthority{OperationID: operationID, RunID: runID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
 }
 func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAuthority, runnerID, mode string) error {
-	if op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
+	if runner.HostingJournalUsesDatabase(runner.JournalHosting{Plan: op.Plan, CleanupPlan: op.CleanupPlan}) || op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
 		return errors.New("hosting response does not match the exact task target")
 	}
 	if (mode == "deploy" || mode == "cleanup") && op.RunID != a.RunID {
@@ -291,6 +291,9 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 	}
 	snapshot = journal.Snapshot()
 	for _, entry := range snapshot.Hosting {
+		if runner.HostingJournalUsesDatabase(entry) {
+			continue
+		}
 		if entry.Phase != "prepared" {
 			continue
 		}
@@ -323,6 +326,9 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 		}
 	}
 	for _, entry := range journal.Snapshot().Hosting {
+		if runner.HostingJournalUsesDatabase(entry) {
+			continue
+		}
 		if entry.Phase != "result" {
 			continue
 		}
@@ -350,6 +356,9 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 		}
 	}
 	for _, entry := range journal.Snapshot().Hosting {
+		if runner.HostingJournalUsesDatabase(entry) {
+			continue
+		}
 		if entry.Phase != "cleanup_intent" {
 			continue
 		}
@@ -379,6 +388,9 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 		}
 	}
 	for _, entry := range journal.Snapshot().Hosting {
+		if runner.HostingJournalUsesDatabase(entry) {
+			continue
+		}
 		if entry.Phase != "apply_intent" {
 			continue
 		}

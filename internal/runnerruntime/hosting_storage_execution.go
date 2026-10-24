@@ -31,7 +31,7 @@ func storageOperationMatches(op domain.HostingOperation, a domain.HostingAuthori
 }
 
 func storageOperationScopeMatches(op domain.HostingOperation, a domain.HostingAuthority, ref domain.HostingStorageRef) bool {
-	return op.ID == a.OperationID && op.RunID == a.RunID && op.TaskMode == "deploy" && op.ResourceID == op.Snapshot.ResourceID && op.Snapshot.Storage == ref && ref != (domain.HostingStorageRef{}) && domain.ValidateHostingStorageSnapshot(op.Snapshot) == nil && op.BindingID == op.Snapshot.BindingID
+	return op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) && !runner.HostingJournalUsesDatabase(runner.JournalHosting{Plan: op.Plan, CleanupPlan: op.CleanupPlan}) && op.ID == a.OperationID && op.RunID == a.RunID && op.TaskMode == "deploy" && op.ResourceID == op.Snapshot.ResourceID && op.Snapshot.Storage == ref && ref != (domain.HostingStorageRef{}) && domain.ValidateHostingStorageSnapshot(op.Snapshot) == nil && op.BindingID == op.Snapshot.BindingID
 }
 
 // Reuse the original timestamp and attempt expiry as part of the immutable
@@ -41,7 +41,7 @@ func storageExistingEntry(journal *runner.AttemptJournal, entry runner.JournalHo
 		if old.ID != entry.ID {
 			continue
 		}
-		if old.Phase != entry.Phase || storageEntryAuthority(old) != storageEntryAuthority(entry) || old.StorageRef != entry.StorageRef || old.Plan == nil || entry.Plan == nil || domain.HostingDocumentHash(old.Plan) != domain.HostingDocumentHash(entry.Plan) {
+		if old.Database != entry.Database || old.DatabaseRef != entry.DatabaseRef || old.Phase != entry.Phase || storageEntryAuthority(old) != storageEntryAuthority(entry) || old.StorageRef != entry.StorageRef || old.Plan == nil || entry.Plan == nil || domain.HostingDocumentHash(old.Plan) != domain.HostingDocumentHash(entry.Plan) {
 			return entry, errors.New("storage journal identity changed")
 		}
 		return old, nil
@@ -211,7 +211,7 @@ func reconcileHostingStorageJournalWithEngine(server, token string, journal *run
 		}
 	}
 	for _, first := range entries {
-		if !runner.HostingJournalUsesStorage(first) || cleanup[storageEntryAuthority(first)] {
+		if runner.HostingJournalUsesDatabase(first) || !runner.HostingJournalUsesStorage(first) || cleanup[storageEntryAuthority(first)] {
 			continue
 		}
 		a := storageEntryAuthority(first)
