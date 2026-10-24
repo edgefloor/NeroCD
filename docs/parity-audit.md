@@ -6,7 +6,7 @@ Audited NeroCD commit: `563fb88f707b75563d03f0408df0267e3af473e9`. Coolify refer
 
 Primary audited checklist coverage, a conservative evidence-verified lower bound: **4/933 = 0.43%**. Each atomic mandatory hosting outcome has one binary point. Only `verified` earns a point. This measures evidence-complete coverage of this versioned checklist. It does not measure engineering effort, elapsed time, implementation completion, or an intrinsic percentage of Coolify.
 
-Implementation presence is separate: 53 implemented, 280 partial, 600 missing. Verified: 4. These totals cannot be added.
+Implementation presence is separate: 56 implemented, 287 partial, 590 missing. Verified: 4. These totals cannot be added.
 
 Definition inventory: 934; eligible hosting outcomes: 933. Deferred Task-derived preview R54-C03 is retained outside this numerator, denominator and hosting-gate boundary.
 
@@ -328,17 +328,17 @@ Every row names a mandatory outcome and its next acceptance. Implementation pres
 | `R11-C06` Retain Railpack Beta qualification | partial | partial | [internal/domain/hosting_build.go:1](#source-563fb88f707b75563d03f0408df0267e3af473e9-2620298d0a770a9aaf7016e792dba5a2b89e591ee9d987da57962cf1633008ef-l1-l368); No current candidate-specific end-to-end pass for this outcome. Partial implementation earns no verified point. | Exercise: Retain Railpack Beta qualification. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C07` Dockerfile: Execute declared strategy and settings | partial | partial | [internal/domain/hosting_build.go:1](#source-563fb88f707b75563d03f0408df0267e3af473e9-2620298d0a770a9aaf7016e792dba5a2b89e591ee9d987da57962cf1633008ef-l1-l368); No current candidate-specific end-to-end pass for this outcome. Partial implementation earns no verified point. | Exercise: Dockerfile: Execute declared strategy and settings. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C08` Dockerfile: Record exact builder/tool versions | partial | partial | [internal/domain/hosting_build.go:1](#source-563fb88f707b75563d03f0408df0267e3af473e9-2620298d0a770a9aaf7016e792dba5a2b89e591ee9d987da57962cf1633008ef-l1-l368); No current candidate-specific end-to-end pass for this outcome. Partial implementation earns no verified point. | Exercise: Dockerfile: Record exact builder/tool versions. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C09` Dockerfile: Qualify linux/amd64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C10` Dockerfile: Qualify linux/arm64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C11` Dockerfile: Qualify strategy-specific version/language fixtures | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
+| `R11-C09` Dockerfile: Qualify linux/amd64 native build-to-destination | partial | partial | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [acceptance/runtime-hosting-local-build/gate.sh:101](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l101-l102); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit. | Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient. |
+| `R11-C10` Dockerfile: Qualify linux/arm64 native build-to-destination | implemented | evidence_unavailable | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [internal/runnerruntime/private_git_runtime_integration_test.go:574](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l574-l725); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Implemented bounded trusted native Linux arm64 Dockerfile/Railpack same-host build-to-deployment path. Historical physical qualification supports that profile, but full relevant current combined dependencies are not reconciled. No current verified point; no cross-host, production ACME or arbitrary language/version claim. | Retain or rerun a candidate-specific native Linux arm64 same-host production build/deployment receipt after checking all relevant source, fixture and toolchain inputs. Keep broader profiles separate. |
+| `R11-C11` Dockerfile: Qualify strategy-specific version/language fixtures | partial | partial | [internal/runnerruntime/private_git_runtime_integration_test.go:574](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l574-l725); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point. | Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits. |
 | `R11-C12` Dockerfile: Scope credentials | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Scope credentials. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C13` Dockerfile: Authorize shared-cache access and retain cache identity | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Authorize shared-cache access and retain cache identity. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C14` Dockerfile: Protect retained artifacts from cleanup | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Dockerfile: Protect retained artifacts from cleanup. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C15` Dockerfile: Transfer produced output to the intended deployment host | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Qualify actual delivery of Dockerfile output to the intended deployment host through the declared transport. Current target-platform, availability and pull-authorization preflight are scored once under R14-C04/C05/C06; transport integrity/trust is scored under R15-C28. |
 | `R11-C17` Railpack: Record exact builder/tool versions | partial | partial | [internal/domain/hosting_build.go:1](#source-563fb88f707b75563d03f0408df0267e3af473e9-2620298d0a770a9aaf7016e792dba5a2b89e591ee9d987da57962cf1633008ef-l1-l368); No current candidate-specific end-to-end pass for this outcome. Partial implementation earns no verified point. | Exercise: Railpack: Record exact builder/tool versions. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C18` Railpack: Qualify linux/amd64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C19` Railpack: Qualify linux/arm64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C20` Railpack: Qualify strategy-specific version/language fixtures | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
+| `R11-C18` Railpack: Qualify linux/amd64 native build-to-destination | partial | partial | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [acceptance/runtime-hosting-local-build/gate.sh:101](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l101-l102); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit. | Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient. |
+| `R11-C19` Railpack: Qualify linux/arm64 native build-to-destination | implemented | evidence_unavailable | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [internal/runnerruntime/private_git_runtime_integration_test.go:574](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l574-l725); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Implemented bounded trusted native Linux arm64 Dockerfile/Railpack same-host build-to-deployment path. Historical physical qualification supports that profile, but full relevant current combined dependencies are not reconciled. No current verified point; no cross-host, production ACME or arbitrary language/version claim. | Retain or rerun a candidate-specific native Linux arm64 same-host production build/deployment receipt after checking all relevant source, fixture and toolchain inputs. Keep broader profiles separate. |
+| `R11-C20` Railpack: Qualify strategy-specific version/language fixtures | partial | partial | [internal/runnerruntime/private_git_runtime_integration_test.go:574](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l574-l725); [internal/runnerruntime/private_git_runtime_integration_test.go:1692](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l1692-l1754); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point. | Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits. |
 | `R11-C21` Railpack: Scope credentials | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Scope credentials. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C22` Railpack: Authorize shared-cache access and retain cache identity | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Authorize shared-cache access and retain cache identity. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C23` Railpack: Protect retained artifacts from cleanup | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Railpack: Protect retained artifacts from cleanup. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
@@ -361,10 +361,10 @@ Every row names a mandatory outcome and its next acceptance. Implementation pres
 | `R11-C41` Prebuilt static files: Protect retained artifacts from cleanup | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Prebuilt static files: Protect retained artifacts from cleanup. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C42` Prebuilt static files: Transfer produced output to the intended deployment host | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Qualify actual delivery of Prebuilt static files output to the intended deployment host through the declared transport. Current target-platform, availability and pull-authorization preflight are scored once under R14-C04/C05/C06; transport integrity/trust is scored under R15-C28. |
 | `R11-C43` Compiled static/SPA: Execute declared strategy and settings | partial | partial | [internal/domain/hosting_build.go:1](#source-563fb88f707b75563d03f0408df0267e3af473e9-2620298d0a770a9aaf7016e792dba5a2b89e591ee9d987da57962cf1633008ef-l1-l368); No current candidate-specific end-to-end pass for this outcome. Partial implementation earns no verified point. | Exercise: Compiled static/SPA: Execute declared strategy and settings. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C44` Compiled static/SPA: Record exact builder/tool versions | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Record exact builder/tool versions. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C45` Compiled static/SPA: Qualify linux/amd64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C46` Compiled static/SPA: Qualify linux/arm64 native build-to-destination | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
-| `R11-C47` Compiled static/SPA: Qualify strategy-specific version/language fixtures | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
+| `R11-C44` Compiled static/SPA: Record exact builder/tool versions | partial | partial | [internal/runnerruntime/private_git_runtime_integration_test.go:1692](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l1692-l1754); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Pinned compiled Vite fixture records resolved Node 22.22.0, Bun 1.3.6, Caddy 2.10.2 and source Vite 8.2.2 with exact artifact/daemon/platform. This is a bounded resolved-tool-version fixture, not a strategy-wide persisted builder/tool version contract. Zero verified credit. | Complete the strategy-wide exact builder/tool-version record contract and qualify its persisted effective versions across declared compiled-static configurations. Retain current bounded Vite proof with its original limits. |
+| `R11-C45` Compiled static/SPA: Qualify linux/amd64 native build-to-destination | partial | partial | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [acceptance/runtime-hosting-local-build/gate.sh:101](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l101-l102); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit. | Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient. |
+| `R11-C46` Compiled static/SPA: Qualify linux/arm64 native build-to-destination | implemented | evidence_unavailable | [acceptance/runtime-hosting-local-build/gate.sh:44](#source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48); [internal/runnerruntime/private_git_runtime_integration_test.go:1692](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l1692-l1754); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Implemented pinned compiled Vite native Linux arm64 same-host build/deployment path, including exact artifact/platform and real compiler-failure assertions. Current combined receipt relevance remains unresolved. No current verified point, broad frontend matrix, native amd64 runtime or production ACME claim. | Retain candidate-specific native arm64 pinned Vite build/deployment and failure-preservation evidence after scoped dependency comparison. Broader frontend/profile coverage requires separate qualification. |
+| `R11-C47` Compiled static/SPA: Qualify strategy-specific version/language fixtures | partial | partial | [internal/runnerruntime/private_git_runtime_integration_test.go:1692](#source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l1692-l1754); [docs/hosting-build-engine.md:5](#source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30); Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point. | Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits. |
 | `R11-C48` Compiled static/SPA: Scope credentials | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Scope credentials. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C49` Compiled static/SPA: Authorize shared-cache access and retain cache identity | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Authorize shared-cache access and retain cache identity. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
 | `R11-C50` Compiled static/SPA: Protect retained artifacts from cleanup | missing | missing | No bounded source evidence recorded; No bounded implementation/verification evidence recorded for this outcome at the audited SHA. | Exercise: Compiled static/SPA: Protect retained artifacts from cleanup. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits. |
@@ -1795,6 +1795,31 @@ Schema 1; scoring `hosting-atomic-v1`. Criterion IDs and outcome definitions are
 ## Immutable source excerpts
 
 Each fenced excerpt contains the exact selected source lines at its named Git object. Line numbers are given above the excerpt rather than inserted into source text.
+
+<a id="source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l44-l48"></a>
+
+### `acceptance/runtime-hosting-local-build/gate.sh` lines 44-48
+
+Subject `563fb88f707b75563d03f0408df0267e3af473e9`. Reproduce with `git show 563fb88f707b75563d03f0408df0267e3af473e9:acceptance/runtime-hosting-local-build/gate.sh` and select lines 44-48.
+
+```text
+arch=$(docker info --format '{{.Architecture}}')
+case "$arch" in
+ aarch64|arm64) goarch=arm64; railarch=arm64; misearch=arm64; mise_sha=cf9a7c3e64688a7909fa69a4989d3b8daf6dd1b3e583fa0ab7c08139ae6d3dcd; buildx_sha=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a; rail_sha=c24a064b586b8f4f8c2fab44dd5ef19253e4c6cc4e1df793b3ae19cd87f7a5d4 ;;
+ x86_64|amd64) goarch=amd64; railarch=x86_64; misearch=x64; mise_sha=e331f3fa3c360c63e996ef70bc183ce178cb16d21f8bf4926c61cf6fa6b9fafd; buildx_sha=e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4; rail_sha=2842de93e68713af9037e0bc0a398d7da78f3b96aa4804303a638db2bc69bd30 ;;
+ *) echo 'unsupported daemon architecture' >&2; exit 1 ;;
+```
+
+<a id="source-563fb88f707b75563d03f0408df0267e3af473e9-ef54b6c36670fdc3dab5fbcc16e1bc06d448a1b9ea1edfc2faf93f0566a8a7e5-l101-l102"></a>
+
+### `acceptance/runtime-hosting-local-build/gate.sh` lines 101-102
+
+Subject `563fb88f707b75563d03f0408df0267e3af473e9`. Reproduce with `git show 563fb88f707b75563d03f0408df0267e3af473e9:acceptance/runtime-hosting-local-build/gate.sh` and select lines 101-102.
+
+```text
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$fixture_dir/hosting-controller.test" ./internal/runnerruntime
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/nerocd" ./cmd/nerocd
+```
 
 <a id="source-563fb88f707b75563d03f0408df0267e3af473e9-16cdac13dd8a32decd591a6b2ab41b65468dc12835e78ee1bceb4e6b7fbcf315-l1-l756"></a>
 
@@ -3232,6 +3257,41 @@ No full NeroCD domain migration, Coolify migration or unchanged-client
 compatibility is validated at this assessment. Additive hosting and River
 migration checks cover only their stated schema boundaries. Existing-container
 adoption is a separate capability; discovered labels do not prove surrender of
+```
+
+<a id="source-563fb88f707b75563d03f0408df0267e3af473e9-266bdeff849e516e79c3fa33936b7a70baf3ce1c5520fabfeec8f9be865ff02b-l5-l30"></a>
+
+### `docs/hosting-build-engine.md` lines 5-30
+
+Subject `563fb88f707b75563d03f0408df0267e3af473e9`. Reproduce with `git show 563fb88f707b75563d03f0408df0267e3af473e9:docs/hosting-build-engine.md` and select lines 5-30.
+
+```text
+## Host and toolchain contract
+
+The engine runs as an administrator on the Linux host of its fixed rootful Docker daemon. It requires cgroup v2, visibility of the daemon's storage and actual host process tree, an administrator-delegated cgroup directory, and support for OCI archive imports. The runtime fixture uses Docker 29.4.0 with its containerd image store. Classic Docker image stores are not a tested support target.
+
+The rootful BuildKit container is privileged. The host, Docker daemon, Docker executable, Buildx executable, helper image, and administrative state directory are trusted. This boundary does not isolate hostile forks from the host. Build steps have no granted privileged entitlement, host network, host device, production credential, or workload Docker socket. BuildKit's own privileged daemon remains part of the trusted host.
+
+`Config` is operator configuration. It never comes from a build request. `DockerBinary`, `BuildxBinary`, and `Socket` are fixed absolute paths. The engine supplies an empty Docker configuration, fixed Unix endpoint, and explicit process environment. It does not inherit Docker contexts, credential helpers, bearer tokens, SSH agents, registry passwords, or proxy variables.
+
+The supported toolchain is pinned below. Image digests identify the published multi-architecture index. The runtime fixture selects the daemon's native Linux architecture.
+
+| Component | Version | Immutable reference |
+| --- | --- | --- |
+| BuildKit | 0.34.1 | `moby/buildkit@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c` |
+| Dockerfile frontend | 1.28.0 | `docker/dockerfile@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b` |
+| Railpack frontend | 0.40.1 | `ghcr.io/railwayapp/railpack-frontend@sha256:f1973377693af30c9b37a92c97c661c07b277ccdc6be909213c74c771f8d2d6d` |
+| Static runtime | nginx 1.29.3 Alpine | `nginx@sha256:b3c656d55d7ad751196f21b7fd2e8d4da9cb430e32f646adcf92441b72f82b14` |
+| Buildx Linux amd64 binary | 0.38.1 | `sha256:e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4` |
+| Buildx Linux arm64 binary | 0.38.1 | `sha256:3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a` |
+| Railpack amd64 musl archive | 0.40.1 | `sha256:2842de93e68713af9037e0bc0a398d7da78f3b96aa4804303a638db2bc69bd30` |
+| Railpack arm64 musl archive | 0.40.1 | `sha256:c24a064b586b8f4f8c2fab44dd5ef19253e4c6cc4e1df793b3ae19cd87f7a5d4` |
+| Mise amd64 musl archive | 2026.9.15 | `sha256:e331f3fa3c360c63e996ef70bc183ce178cb16d21f8bf4926c61cf6fa6b9fafd` |
+| Mise arm64 musl archive | 2026.9.15 | `sha256:cf9a7c3e64688a7909fa69a4989d3b8daf6dd1b3e583fa0ab7c08139ae6d3dcd` |
+
+Release asset checksums come from the official [Buildx release](https://github.com/docker/buildx/releases/tag/v0.38.1), [Railpack release](https://github.com/railwayapp/railpack/releases/tag/v0.40.1), and [Mise release](https://github.com/jdx/mise/releases/tag/v2026.9.15). BuildKit and Dockerfile references come from the official Docker registry. Railpack's custom frontend comes from its official GHCR repository. `gate.sh` verifies downloaded archive checksums before use. `New` checks the Buildx executable against the architecture's compiled-in checksum.
+
+The pinned BuildKit image must already exist on the fixed daemon. `PlannerImage` is an immutable digest or local image ID of an operator-built helper. That helper contains the verified Railpack CLI at `/usr/local/bin/railpack` and Mise binary at `/usr/local/bin/mise`. The fixture builds this helper from verified archives. The engine does not download administrative executables.
 ```
 
 <a id="source-563fb88f707b75563d03f0408df0267e3af473e9-7fb950cc48f32f7fb5b6d25fcbb3ecbe8ce22c1c171b883f776c5e05713e70a4-l1-l180"></a>
@@ -12378,6 +12438,239 @@ func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPla
 	result.Outcome = "succeeded"
 	return result
 }
+```
+
+<a id="source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l574-l725"></a>
+
+### `internal/runnerruntime/private_git_runtime_integration_test.go` lines 574-725
+
+Subject `563fb88f707b75563d03f0408df0267e3af473e9`. Reproduce with `git show 563fb88f707b75563d03f0408df0267e3af473e9:internal/runnerruntime/private_git_runtime_integration_test.go` and select lines 574-725.
+
+```text
+	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "local-artifact", "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: strategy}}}}, 201, &resource)
+	f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/binding", f.admin, map[string]string{"destination_id": f.target.Destination.ID}, 201, nil)
+	secret, grant := privateRuntimeGrant(t, f, resource, username, password)
+	awaitOperation := func(id string) domain.HostingOperation {
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			op, e := f.pg.GetHostingOperation(t.Context(), id)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if op.RunID != "" {
+				return op
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("real River local dispatch timeout")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	build := func(key string) domain.HostingBuild {
+		b := privateRuntimeBuild(t, f, resource, grant.ID, key)
+		if err := cli(); err != nil {
+			// Retain bounded actual API diagnostics without printing known credentials.
+			var page domain.HostingBuildLogPage
+			f.request(t, "GET", "/api/v1/hosting-builds/"+b.ID+"/logs?limit=200", f.admin, nil, 200, &page)
+			for _, item := range page.Items {
+				message := item.Message
+				for _, pattern := range []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), f.credential, f.admin} {
+					message = strings.ReplaceAll(message, pattern, "[REDACTED fixture credential]")
+				}
+				if len(message) > 2000 {
+					message = message[:2000]
+				}
+				t.Logf("typed private build diagnostic sequence=%d component=%s: %s", item.Sequence, item.Component, message)
+			}
+			t.Fatal(err)
+		}
+		full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", b.ID)
+		if err != nil || full.State != "succeeded" || full.Artifact == nil {
+			t.Fatal("actual public Git build did not persist artifact")
+		}
+		return full
+	}
+	deploy := func(b domain.HostingBuild, key string) domain.HostingOperation {
+		var op domain.HostingOperation
+		f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/deployments/from-build", f.admin, domain.HostingBuildDeploymentInput{BuildID: b.ID, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedGeneration: resource.Generation, IdempotencyKey: key, ContainerPort: 80, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 5}}, 202, &op)
+		return awaitOperation(op.ID)
+	}
+	firstBuild := build("local-build-A")
+	first := deploy(firstBuild, "local-deploy-A")
+	if err = cli(); err != nil {
+		t.Fatal(err)
+	}
+	first, err = f.pg.GetHostingOperation(t.Context(), first.ID)
+	if err != nil || first.State != "succeeded" || first.Result == nil || first.Release == nil || first.Release.LocalBuild != *firstBuild.Artifact {
+		t.Fatal("CLI local deployment failed exact artifact contract")
+	}
+	owned := []string{first.Result.ContainerID}
+	t.Cleanup(func() {
+		for _, id := range owned {
+			out := controlDocker(t, "inspect", "--format", `{{index .Config.Labels "io.nerocd.binding"}}`, id)
+			if strings.TrimSpace(string(out)) != first.BindingID {
+				t.Error("owned local workload identity changed")
+				continue
+			}
+			controlDocker(t, "rm", "--force", id)
+		}
+	})
+	localBuildFixtureHTTP(t, first, "local-A\n")
+	proxy := controlJSON[domain.HostingProxy](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: f.environment.ProjectID, IdempotencyKey: "local-enable-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
+	proxyRun := func() {
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			p, e := f.pg.GetHostingProxy(t.Context(), proxy.ID)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if p.ActiveOperationID != "" {
+				op, e := f.pg.GetHostingProxyOperation(t.Context(), p.ActiveOperationID)
+				if e == nil && op.Generation == p.DesiredGeneration {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("real River proxy dispatch timeout")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if e := RunContext(t.Context(), Config{Build: &f.config, LocalBuildDeploy: true, Proxy: proxyConfig, Server: f.server.URL, Token: f.credential, RunnerID: f.config.Target.RunnerID, WorkDir: f.work, JournalDir: f.journal, Execute: true, Once: true, CancelPollInterval: 100 * time.Millisecond}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	proxyRun()
+	proxyID := strings.TrimSpace(string(controlDocker(t, "inspect", "--format", "{{.Id}}", "nerocd-proxy-"+proxy.ID)))
+	t.Cleanup(func() {
+		if strings.TrimSpace(string(controlDocker(t, "inspect", "--format", `{{index .Config.Labels "io.nerocd.proxy"}}`, proxyID))) != proxy.ID {
+			t.Error("owned proxy identity changed")
+			return
+		}
+		controlDocker(t, "rm", "--force", proxyID)
+	})
+	controlJSON[domain.HostingHostnameGrant](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: f.environment.ProjectID, Hostname: "local.example.test"}, 201)
+	_ = controlJSON[domain.HostingRoute](t, f.server.URL, f.admin, "POST", "/api/v1/resources/"+resource.ID+"/routes", domain.HostingRouteInput{IdempotencyKey: "local-route-A", Hostname: "local.example.test", PathPrefix: "/", ExpectedHealthyOperationID: first.ID}, 202)
+	proxyRun()
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, e := net.SplitHostPort(address)
+		if e != nil {
+			return nil, e
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+	probe := func(want string) {
+		t.Helper()
+		response, e := client.Get("https://local.example.test/")
+		if e != nil {
+			t.Fatal(e)
+		}
+		body, e := io.ReadAll(io.LimitReader(response.Body, 4096))
+		_ = response.Body.Close()
+		if e != nil || response.StatusCode != 200 || string(body) != want {
+			t.Fatalf("managed HTTPS body=%q wanted%q err=%v", body, want, e)
+		}
+	}
+	probe("local-A\n")
+	deliveryMu.Lock()
+	if len(deliveries) != 2 || deliveries[0] != deliveries[1] || !lost.Load() {
+		t.Error("credential response-loss changed delivery identity")
+	}
+	deliveryMu.Unlock()
+	publicDTO, err := json.Marshal(domain.PublicBuild(firstBuild))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range []string{password, username + ":" + password, secret.ID} {
+		if strings.Contains(string(publicDTO), pattern) {
+			t.Fatal("secret leaked into public build DTO")
+		}
+	}
+	if strings.Contains(string(cliOutput), password) || strings.Contains(string(cliOutput), username+":"+password) {
+		t.Fatal("credential leaked into compiled CLI output")
+	}
+	privateRuntimeNoSecrets(t, f, firstBuild.ID, password, username+":"+password)
+	t.Logf("real private TLS Git %s -> compiled CLI -> same-host artifact -> trusted-test-CA HTTPS; anonymous/wrong auth denied", strategy)
+}
+func TestPrivateBuildProductionHTTPS(t *testing.T) {
+	for _, strategy := range []string{"dockerfile", "railpack"} {
+		t.Run(strategy, func(t *testing.T) { testPrivateBuildProductionHTTPS(t, strategy) })
+	}
+}
+
+```
+
+<a id="source-563fb88f707b75563d03f0408df0267e3af473e9-1305c0a7c4fc3497484db442845a00245cc810f71e55523cd06c9b504fb20400-l1692-l1754"></a>
+
+### `internal/runnerruntime/private_git_runtime_integration_test.go` lines 1692-1754
+
+Subject `563fb88f707b75563d03f0408df0267e3af473e9`. Reproduce with `git show 563fb88f707b75563d03f0408df0267e3af473e9:internal/runnerruntime/private_git_runtime_integration_test.go` and select lines 1692-1754.
+
+```text
+		if i == 0 && compiledVite {
+			if len(deploymentIDs) != 1 || full.Artifact == nil {
+				t.Fatal("compiled deployment missing")
+			}
+			operation, e := f.pg.GetHostingOperation(t.Context(), deploymentIDs[0])
+			if e != nil || operation.State != "succeeded" || operation.Release == nil || operation.Release.LocalBuild != *full.Artifact || operation.Snapshot.LocalBuild.Artifact != *full.Artifact || operation.Snapshot.ContainerPort != int(effectivePort.Load()) || effectivePort.Load() == 0 || full.Artifact.DaemonID != strings.TrimSpace(string(controlDocker(t, "info", "--format", "{{.ID}}"))) || full.Artifact.DaemonID != full.DaemonID || full.Artifact.Platform != f.config.Policy.Platform {
+				t.Fatal("compiled deployment changed artifact daemon/platform")
+			}
+			t.Logf("compiled artifact image=%s daemon=%s platform=%s exact_release=true application_port=%d", full.Artifact.ImageID, full.Artifact.DaemonID, full.Artifact.Platform, effectivePort.Load())
+		}
+		if i == 0 && (full.State != "succeeded" || full.Artifact == nil) {
+			t.Fatal("browser success artifact missing")
+		}
+		if i == 1 && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
+			t.Fatal("genuine failed build published an artifact or unexpected status")
+		}
+		privateRuntimeNoSecrets(t, f, id, patterns...)
+		if i == 1 && compiledVite {
+			// A generic build_failed status also covers transport/resource errors.
+			// Require the source-owned invalid syntax to reach the real compiler.
+			var compilerOutput strings.Builder
+			cursor := 0
+			for page := 0; page < 10; page++ {
+				logs, e := f.pg.ListHostingBuildLogs(t.Context(), "usr_bootstrap", id, cursor, 200)
+				if e != nil {
+					t.Fatal("compiled syntax failure output unavailable")
+				}
+				for _, row := range logs.Items {
+					compilerOutput.WriteString(row.Message)
+				}
+				if logs.NextSequence <= cursor {
+					break
+				}
+				cursor = logs.NextSequence
+			}
+			text := compilerOutput.String()
+			if !compiledViteSyntaxDiagnostic(text) {
+				t.Fatal("failed compiled build lacks genuine source syntax diagnostic")
+			}
+			t.Log("compiled failure proved by typed compiler error at genuineSyntaxFailure; no artifact published")
+		}
+		if i == 0 && strategy == "railpack" {
+			plan, err := os.ReadFile(filepath.Join(f.config.Engine.StateDir, id, "context", "railpack-plan.json"))
+			if err != nil || !json.Valid(plan) {
+				t.Fatal("actual pinned planner output plan missing or invalid")
+			}
+			if compiledVite {
+				for _, required := range []string{"22.22.0", "1.3.6", "2.10.2", "bun install --frozen-lockfile", "bun run build", "dist", "/Caddyfile"} {
+					if !bytes.Contains(plan, []byte(required)) {
+						t.Fatalf("resolved compiled plan missing %q", required)
+					}
+				}
+				t.Logf("compiled resolved plan Node=22.22.0 Bun=1.3.6 Caddy=2.10.2 sourceVite=8.2.2 lock_sha256=%x", sha256.Sum256([]byte(compiledViteLock)))
+			}
+			starts := strings.Fields(plannerEvents.String())
+			if len(starts) != 2 {
+				t.Fatal("pinned planner success/failure invocations missing")
+			}
+			for _, name := range starts {
+				if !strings.HasPrefix(name, "nerocd-planner-") || len(name) != len("nerocd-planner-")+32 {
+					t.Fatal("unexpected planner event identity")
+				}
+			}
 ```
 
 <a id="source-563fb88f707b75563d03f0408df0267e3af473e9-b033512ee74aad7d5d8ac22cb3cb3949acab34a410e6934412bc67bfe3302c28-l1-l1274"></a>

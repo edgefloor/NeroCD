@@ -34298,18 +34298,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Dockerfile: Qualify linux/amd64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 101,
+          "end": 102,
+          "relevance": "Fixture compiles the runtime test binary and production CLI for the selected native daemon GOARCH.",
+          "limits": "Architecture-specific compilation support in source, not a retained actual amd64 runtime pass."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Dockerfile: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit.",
+      "next_acceptance": "Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient.",
       "eligibility": "hosting"
     },
     {
@@ -34317,18 +34342,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Dockerfile: Qualify linux/arm64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "evidence_unavailable",
+      "presence": "implemented",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 574,
+          "end": 725,
+          "relevance": "Production fixture builds granted private Git through Dockerfile/Railpack and deploys its exact same-host artifact with trusted HTTPS checks.",
+          "limits": "Bounded trusted native Linux arm64 same-host fixture. Not broad language coverage, native amd64 qualification, cross-host publication or production ACME."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Dockerfile: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Implemented bounded trusted native Linux arm64 Dockerfile/Railpack same-host build-to-deployment path. Historical physical qualification supports that profile, but full relevant current combined dependencies are not reconciled. No current verified point; no cross-host, production ACME or arbitrary language/version claim.",
+      "next_acceptance": "Retain or rerun a candidate-specific native Linux arm64 same-host production build/deployment receipt after checking all relevant source, fixture and toolchain inputs. Keep broader profiles separate.",
       "eligibility": "hosting"
     },
     {
@@ -34336,18 +34386,35 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Dockerfile: Qualify strategy-specific version/language fixtures",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 574,
+          "end": 725,
+          "relevance": "Production fixture builds granted private Git through Dockerfile/Railpack and deploys its exact same-host artifact with trusted HTTPS checks.",
+          "limits": "Bounded trusted native Linux arm64 same-host fixture. Not broad language coverage, native amd64 qualification, cross-host publication or production ACME."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Dockerfile: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point.",
+      "next_acceptance": "Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits.",
       "eligibility": "hosting"
     },
     {
@@ -34487,18 +34554,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Railpack: Qualify linux/amd64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 101,
+          "end": 102,
+          "relevance": "Fixture compiles the runtime test binary and production CLI for the selected native daemon GOARCH.",
+          "limits": "Architecture-specific compilation support in source, not a retained actual amd64 runtime pass."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Railpack: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit.",
+      "next_acceptance": "Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient.",
       "eligibility": "hosting"
     },
     {
@@ -34506,18 +34598,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Railpack: Qualify linux/arm64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "evidence_unavailable",
+      "presence": "implemented",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 574,
+          "end": 725,
+          "relevance": "Production fixture builds granted private Git through Dockerfile/Railpack and deploys its exact same-host artifact with trusted HTTPS checks.",
+          "limits": "Bounded trusted native Linux arm64 same-host fixture. Not broad language coverage, native amd64 qualification, cross-host publication or production ACME."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Railpack: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Implemented bounded trusted native Linux arm64 Dockerfile/Railpack same-host build-to-deployment path. Historical physical qualification supports that profile, but full relevant current combined dependencies are not reconciled. No current verified point; no cross-host, production ACME or arbitrary language/version claim.",
+      "next_acceptance": "Retain or rerun a candidate-specific native Linux arm64 same-host production build/deployment receipt after checking all relevant source, fixture and toolchain inputs. Keep broader profiles separate.",
       "eligibility": "hosting"
     },
     {
@@ -34525,18 +34642,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Railpack: Qualify strategy-specific version/language fixtures",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 574,
+          "end": 725,
+          "relevance": "Production fixture builds granted private Git through Dockerfile/Railpack and deploys its exact same-host artifact with trusted HTTPS checks.",
+          "limits": "Bounded trusted native Linux arm64 same-host fixture. Not broad language coverage, native amd64 qualification, cross-host publication or production ACME."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 1692,
+          "end": 1754,
+          "relevance": "Compiled Vite fixture checks exact deployed image/daemon/platform, genuine failed-source compiler diagnostic and resolved Node/Bun/Caddy/Vite versions.",
+          "limits": "Pinned compiled Vite case only. Not a strategy-wide tool-version/language matrix or current candidate-specific combined runtime receipt."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Railpack: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point.",
+      "next_acceptance": "Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits.",
       "eligibility": "hosting"
     },
     {
@@ -34999,18 +35141,35 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Compiled static/SPA: Record exact builder/tool versions",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 1692,
+          "end": 1754,
+          "relevance": "Compiled Vite fixture checks exact deployed image/daemon/platform, genuine failed-source compiler diagnostic and resolved Node/Bun/Caddy/Vite versions.",
+          "limits": "Pinned compiled Vite case only. Not a strategy-wide tool-version/language matrix or current candidate-specific combined runtime receipt."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Compiled static/SPA: Record exact builder/tool versions. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Pinned compiled Vite fixture records resolved Node 22.22.0, Bun 1.3.6, Caddy 2.10.2 and source Vite 8.2.2 with exact artifact/daemon/platform. This is a bounded resolved-tool-version fixture, not a strategy-wide persisted builder/tool version contract. Zero verified credit.",
+      "next_acceptance": "Complete the strategy-wide exact builder/tool-version record contract and qualify its persisted effective versions across declared compiled-static configurations. Retain current bounded Vite proof with its original limits.",
       "eligibility": "hosting"
     },
     {
@@ -35018,18 +35177,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Compiled static/SPA: Qualify linux/amd64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 101,
+          "end": 102,
+          "relevance": "Fixture compiles the runtime test binary and production CLI for the selected native daemon GOARCH.",
+          "limits": "Architecture-specific compilation support in source, not a retained actual amd64 runtime pass."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Compiled static/SPA: Qualify linux/amd64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Native Linux amd64 fixture/tool identities and selected-architecture test/CLI compilation paths exist. No actual native amd64 build-to-deployment runtime pass is retained here. Code presence is partial, not missing; zero verified credit.",
+      "next_acceptance": "Qualify the declared strategy through actual native Linux amd64 build, exact artifact deployment and meaningful application access with pinned toolchain/profile. Compilation support alone is insufficient.",
       "eligibility": "hosting"
     },
     {
@@ -35037,18 +35221,43 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Compiled static/SPA: Qualify linux/arm64 native build-to-destination",
-      "state": "missing",
-      "presence": "missing",
+      "state": "evidence_unavailable",
+      "presence": "implemented",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "acceptance/runtime-hosting-local-build/gate.sh",
+          "start": 44,
+          "end": 48,
+          "relevance": "Fixture selects native Linux arm64 or amd64 from daemon architecture and pins architecture-specific helper checksums.",
+          "limits": "Source presence for both architecture paths. This audit did not execute either path."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 1692,
+          "end": 1754,
+          "relevance": "Compiled Vite fixture checks exact deployed image/daemon/platform, genuine failed-source compiler diagnostic and resolved Node/Bun/Caddy/Vite versions.",
+          "limits": "Pinned compiled Vite case only. Not a strategy-wide tool-version/language matrix or current candidate-specific combined runtime receipt."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Compiled static/SPA: Qualify linux/arm64 native build-to-destination. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Implemented pinned compiled Vite native Linux arm64 same-host build/deployment path, including exact artifact/platform and real compiler-failure assertions. Current combined receipt relevance remains unresolved. No current verified point, broad frontend matrix, native amd64 runtime or production ACME claim.",
+      "next_acceptance": "Retain candidate-specific native arm64 pinned Vite build/deployment and failure-preservation evidence after scoped dependency comparison. Broader frontend/profile coverage requires separate qualification.",
       "eligibility": "hosting"
     },
     {
@@ -35056,18 +35265,35 @@
       "requirement": "R11",
       "area": "Sources and builds",
       "outcome": "Compiled static/SPA: Qualify strategy-specific version/language fixtures",
-      "state": "missing",
-      "presence": "missing",
+      "state": "partial",
+      "presence": "partial",
       "source": {
         "path": "docs/product-spec.md",
         "start": 410,
         "end": 410,
         "text": "R11. Build strategies. Support Dockerfile contexts and targets, automatic builders, static file packaging, compiled static output and Compose build sections. Record the exact builder/version and effective settings. Validate monorepo base paths, output directories and command overrides. Nixpacks and Railpack support must be tracked separately. Coolify currently marks Railpack as Beta. C12"
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "internal/runnerruntime/private_git_runtime_integration_test.go",
+          "start": 1692,
+          "end": 1754,
+          "relevance": "Compiled Vite fixture checks exact deployed image/daemon/platform, genuine failed-source compiler diagnostic and resolved Node/Bun/Caddy/Vite versions.",
+          "limits": "Pinned compiled Vite case only. Not a strategy-wide tool-version/language matrix or current candidate-specific combined runtime receipt."
+        },
+        {
+          "subject_sha": "563fb88f707b75563d03f0408df0267e3af473e9",
+          "path": "docs/hosting-build-engine.md",
+          "start": 5,
+          "end": 30,
+          "relevance": "Declared trusted native Linux toolchain includes pinned Docker/BuildKit/Railpack and separate amd64/arm64 executable identities.",
+          "limits": "One fixed trusted native daemon profile; this does not qualify every strategy/version/language or remote delivery."
+        }
+      ],
       "verification": null,
-      "limits": "No bounded implementation/verification evidence recorded for this outcome at the audited SHA.",
-      "next_acceptance": "Exercise: Compiled static/SPA: Qualify strategy-specific version/language fixtures. Retain candidate SHA, named scenario, pass output, profile and failure/recovery limits.",
+      "limits": "Pinned strategy-specific fixture cases exist: Dockerfile, Railpack static-provider and compiled Vite within their declared trusted same-host profiles. These do not establish broad strategy/language/version compatibility. No new physical qualification or verified point.",
+      "next_acceptance": "Publish and qualify the supported strategy/language/version fixture matrix, preserving existing bounded cases and explicitly naming unsupported combinations. Retain exact candidate-specific outputs and limits.",
       "eligibility": "hosting"
     },
     {
