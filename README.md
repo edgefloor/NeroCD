@@ -24,14 +24,14 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b7771468edf95f531c13d69b361ed901d9efbbc8`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`563fb88f707b75563d03f0408df0267e3af473e9`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
   direct image/Git application guidance and advanced workflows preserved.
   Accepted at `43e9c305f71a267b1d201f7849c12a31f8c532d6`; see the
   [navigation evidence and limits](docs/compatibility.md#accepted-foundations-and-evidence).
-- PostgreSQL state, checked migrations through 0070, bootstrap administration,
+- PostgreSQL state, checked migrations through 0071, bootstrap administration,
   local-password sessions and one configured OIDC issuer.
 - Projects, operational templates and execution runs, approvals, service
   accounts, API tokens, enrolled runners, fenced leases, replay and audit.
@@ -204,8 +204,9 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   and [accepted components and R42 limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
   Materialization is fixture-local, without controller provenance. This does
   not qualify the connected API/River path; later capture proof is below.
-  Generic dispatch, upgrade controller, application membership ledger/API/UI
-  and full R42 remain unfinished. Database-native backup/restore and rotation remain open.
+  Generic capture dispatch, application membership ledger/API/UI
+  and full R42 remain unfinished. Later upgrade controller implementation is
+  below. Database-native backup/restore and rotation remain open.
 - Compiled capture/replay and normal PostgreSQL/Redis recovery are accepted at
   `b7771468edf95f531c13d69b361ed901d9efbbc8`. Both engines passed without skips:
   capture/replay in 22.00 seconds and normal recovery in 23.40 seconds, using
@@ -217,9 +218,26 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   capture round trips compare persisted JSON identity. See the
   [compiled-runner fixture](acceptance/runtime-hosting-database-runner/README.md).
   This qualifies native Linux arm64/trusted Docker with a verified test CA.
-  Application binding, upgrade controller, membership ledger/API/UI,
+  Application binding, membership ledger/API/UI,
   database-native backup/restore, rotation and full R42/A17/A26/A37 remain open;
   production ACME and untrusted workload isolation are unqualified.
+- Private empty-v2 upgrade control and compiled execution are accepted through
+  `79b50e245a756022b2fc0b8ac98428bb1acfcc3b`, with migration 0071.
+  The owner-scoped controller derives proof from retained capture/origin records,
+  admits initial upgrades and empty-v2 maintenance, and persists idempotency and
+  historical ACK replay. The runner requires explicit upgrade opt-in and matching
+  capability. Selected real PostgreSQL control tests passed without skips in
+  104.040 seconds for store and 15.104 seconds for API, with exact cleanup.
+  The compiled physical gate is accepted at
+  `563fb88f707b75563d03f0408df0267e3af473e9`: capture/replay 38.22 seconds,
+  normal recovery 23.40 seconds and empty-network upgrade 26.36 seconds, all
+  without skips. PostgreSQL and Redis passed initial upgrade, maintenance,
+  retained origin, alias reads/writes, exact Complete-ACK loss replay and
+  single-writer checks. Owned cleanup and outer inventories were verified.
+  This qualifies the native Linux arm64 disposable private fixture with a
+  verified test CA. Public application binding, automatic capture dispatch,
+  engine-version upgrades and full R42/A17 remain unfinished. See the
+  [current evidence and limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`b7771468edf95f531c13d69b361ed901d9efbbc8`, 2026-10-24, through migration 0070.
+`563fb88f707b75563d03f0408df0267e3af473e9`, 2026-10-24, through migration 0071.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0070, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0071, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -187,8 +187,26 @@ UTC JSON identity are fixed. The
 [compiled-runner contract](../acceptance/runtime-hosting-database-runner/README.md)
 records the native Linux arm64/trusted Docker/test-CA scope and limits.
 
-R42 still needs generic capture dispatch, the upgrade controller, application
-membership ledger/API/UI and connected application-binding qualification.
+Private upgrade control and compiled execution are now accepted through
+`79b50e245a756022b2fc0b8ac98428bb1acfcc3b`, including migration 0071. The
+owner-scoped controller derives retained capture/origin proof for initial empty-v2
+upgrade and maintenance, with durable idempotency and historical ACK replay.
+Execution requires explicit runner upgrade opt-in and the matching capability.
+Selected actual PostgreSQL control tests passed without skips, store in 104.040
+seconds and API in 15.104 seconds, with exact cleanup. The compiled physical
+three-fixture gate is accepted at `563fb88f707b75563d03f0408df0267e3af473e9`.
+Capture/replay passed in 38.22 seconds, normal recovery in 23.40 seconds and
+empty-network upgrade in 26.36 seconds, all without skips. PostgreSQL and Redis
+passed initial upgrade and maintenance, retained origin, alias reads/writes,
+exact Complete-ACK loss replay and single-writer checks. Owned cleanup and outer
+inventories were verified. Qualification remains bounded to the native Linux
+arm64 disposable private fixture with a verified test CA. Engine-version upgrades
+remain open. Automatic capture dispatch is next work, not accepted behavior.
+See the [current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+
+R42 still needs generic capture dispatch, the durable application membership
+ledger/controller/runner and public binding API/UI, plus connected application
+qualification.
 Database-native backup/restore, rotation, full A17/A26/A37 and broader stateful
 parity remain open. Production ACME, untrusted workload isolation and broader
 host profiles are not qualified by this pass.
