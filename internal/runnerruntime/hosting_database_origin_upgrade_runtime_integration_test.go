@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -385,28 +386,214 @@ func TestDatabaseOriginUpgradeDiagnosticBoundaries(t *testing.T) {
 	}
 }
 
-// Every successful observation must remain within an explicit read-only command
+type databaseOriginTopShape struct {
+	OutputBounded, HeaderMatches, RowsBounded bool
+	FieldsMatch, PIDsCanonical, PIDsUnique    bool
+	UIDsMatch, ExpectedPIDKnown, PIDPresent   bool
+	OwnershipMatches                          bool
+	Rows                                      int
+}
+
+// This projection never retains process IDs, user strings, or raw ps output.
+func databaseOriginTopSummary(raw []byte, expectedPID int) databaseOriginTopShape {
+	shape := databaseOriginTopShape{OutputBounded: len(raw) <= 8192, ExpectedPIDKnown: expectedPID > 0}
+	if !shape.OutputBounded {
+		return shape
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	shape.HeaderMatches = slices.Equal(strings.Fields(lines[0]), []string{"PID", "UID"})
+	shape.RowsBounded = len(lines) >= 2 && len(lines) <= 256
+	if !shape.RowsBounded {
+		return shape
+	}
+	shape.Rows = len(lines) - 1
+	shape.FieldsMatch, shape.PIDsCanonical, shape.PIDsUnique, shape.UIDsMatch = true, true, true, true
+	seen := map[int]bool{}
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			shape.FieldsMatch = false
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid < 1 || strconv.Itoa(pid) != fields[0] {
+			shape.PIDsCanonical = false
+		} else {
+			shape.PIDsUnique = shape.PIDsUnique && !seen[pid]
+			seen[pid] = true
+			shape.PIDPresent = shape.PIDPresent || pid == expectedPID
+		}
+		shape.UIDsMatch = shape.UIDsMatch && fields[1] == "999"
+	}
+	shape.OwnershipMatches = databaseUpgradeTopMatches(raw, expectedPID)
+	return shape
+}
+
+func TestDatabaseOriginTopDiagnosticShape(t *testing.T) {
+	for _, test := range []struct {
+		name, raw string
+		pid       int
+		want      databaseOriginTopShape
+	}{
+		{"exact", "PID UID\n123 999\n124 999\n", 123, databaseOriginTopShape{true, true, true, true, true, true, true, true, true, true, 2}},
+		{"wrong_header", "USER PID\n123 999\n", 123, databaseOriginTopShape{true, false, true, true, true, true, true, true, true, false, 1}},
+		{"wrong_uid", "PID UID\n123 0\n", 123, databaseOriginTopShape{true, true, true, true, true, true, false, true, true, false, 1}},
+		{"missing_pid", "PID UID\n124 999\n", 123, databaseOriginTopShape{true, true, true, true, true, true, true, true, false, false, 1}},
+		{"unknown_pid", "PID UID\n123 999\n", 0, databaseOriginTopShape{true, true, true, true, true, true, true, false, false, false, 1}},
+		{"duplicate_pid", "PID UID\n123 999\n123 999\n", 123, databaseOriginTopShape{true, true, true, true, true, false, true, true, true, false, 2}},
+		{"noncanonical_pid", "PID UID\n+123 999\n", 123, databaseOriginTopShape{true, true, true, true, false, true, true, true, false, false, 1}},
+		{"extra_field", "PID UID\n123 999 private\n", 123, databaseOriginTopShape{true, true, true, false, true, true, true, true, false, false, 1}},
+		{"too_many_rows", "PID UID\n" + strings.Repeat("123 999\n", 256), 123, databaseOriginTopShape{OutputBounded: true, HeaderMatches: true, ExpectedPIDKnown: true}},
+		{"oversized", strings.Repeat("SENSITIVE-TOP-OUTPUT", 512), 123, databaseOriginTopShape{ExpectedPIDKnown: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := databaseOriginTopSummary([]byte(test.raw), test.pid)
+			if got != test.want {
+				t.Fatalf("closed top diagnostic mismatch: got %+v want %+v", got, test.want)
+			}
+			raw, err := json.Marshal(got)
+			if err != nil || bytes.Contains(raw, []byte("SENSITIVE-TOP-OUTPUT")) || bytes.Contains(raw, []byte("private")) {
+				t.Fatal("top diagnostic leaked private content")
+			}
+		})
+	}
+}
+
+// Every observation must remain within an explicit read-only command
 // set, and leave retained state, credentials and actual writer identity unchanged.
 func databaseOriginReadOnly(t *testing.T, f *databaseRuntimeFixture, run func()) {
 	t.Helper()
 	state, secrets := observerTree(t, f.config.stateRoot), observerTree(t, f.config.secretRoot)
 	base := f.engine.command
+	var sequence []string
+	var inspected databaseContainer
+	var top databaseOriginTopShape
+	topCount, dropped := 0, 0
+	record := func(stage string) {
+		if len(sequence) == 256 {
+			sequence = sequence[1:]
+			dropped++
+		}
+		sequence = append(sequence, stage)
+	}
 	f.engine.command = imageCommandFunc(func(ctx context.Context, name string, args []string, dir string, env []string) ([]byte, error) {
 		if len(args) < 6 {
+			record("unclassified:refused")
 			return nil, errors.New("read-only fixture command refused")
 		}
 		a := args[4:]
 		allowed := databaseOriginReadOnlyAllowed(a, f.request.Storage.VolumeName)
 		if !allowed {
+			record(databaseOriginCommandStage(a) + ":refused")
 			t.Errorf("observation command refused: stage=%s", databaseOriginCommandStage(a))
 			return nil, errors.New("read-only fixture effect refused")
 		}
-		return base.RunEnvironment(ctx, name, args, dir, env)
+		raw, err := base.RunEnvironment(ctx, name, args, dir, env)
+		stage := databaseOriginCommandStage(a)
+		if err != nil {
+			record(stage + ":error")
+		} else {
+			record(stage + ":ok")
+		}
+		if stage == "container_inspect" {
+			inspected = databaseContainer{}
+			if err == nil && len(raw) <= 256<<10 {
+				// A malformed response cannot supply the PID for a later top.
+				var current databaseContainer
+				if json.Unmarshal(raw, &current) == nil && len(a) > 2 && current.ID == a[2] {
+					inspected.ID, inspected.State.Pid = current.ID, current.State.Pid
+				}
+			}
+		}
+		if stage == "container_top" {
+			expectedPID := 0
+			if len(a) > 2 && a[2] == inspected.ID {
+				expectedPID = inspected.State.Pid
+			}
+			top = databaseOriginTopSummary(raw, expectedPID)
+			topCount++
+		}
+		return raw, err
 	})
-	defer func() { f.engine.command = base }()
+	defer func() {
+		f.engine.command = base
+		if !maps.Equal(state, observerTree(t, f.config.stateRoot)) || !maps.Equal(secrets, observerTree(t, f.config.secretRoot)) {
+			t.Error("read-only physical observation changed protected state")
+		}
+		if t.Failed() {
+			raw, err := json.Marshal(top)
+			if err != nil {
+				t.Error("closed observation diagnostics unavailable")
+				return
+			}
+			t.Logf("closed_observation_command_sequence=%s dropped_stages=%d top_count=%d top_shape=%s", strings.Join(sequence, ","), dropped, topCount, raw)
+		}
+	}()
 	run()
-	if !maps.Equal(state, observerTree(t, f.config.stateRoot)) || !maps.Equal(secrets, observerTree(t, f.config.secretRoot)) {
-		t.Fatal("read-only physical observation changed protected state")
+}
+
+// FailNow must still check protected state and restore the command runner. This
+// child intentionally fails; its parent checks only closed fixture diagnostics.
+func TestDatabaseOriginReadOnlyFatalDiagnostics(t *testing.T) {
+	if os.Getenv("NEROCD_DATABASE_OBSERVATION_FATAL") == "fixture" {
+		state, secrets := t.TempDir(), t.TempDir()
+		path := filepath.Join(state, "record")
+		if os.WriteFile(path, []byte("original"), 0o600) != nil {
+			t.Fatal("fixture state unavailable")
+		}
+		baseCalls := 0
+		id := strings.Repeat("a", 64)
+		engine := &imageEngine{command: imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+			baseCalls++
+			if len(args) > 5 && args[4] == "container" {
+				switch args[5] {
+				case "inspect":
+					return json.Marshal(map[string]any{"Id": id, "State": map[string]any{"Pid": 123}})
+				case "top":
+					return []byte("PID UID\n123 0\nSENSITIVE-OBSERVATION-OUTPUT 999\n"), nil
+				}
+			}
+			return nil, errors.New("SENSITIVE-OBSERVATION-ERROR")
+		})}
+		f := &databaseRuntimeFixture{engine: engine, config: DatabaseEngineConfig{stateRoot: state, secretRoot: secrets}}
+		t.Cleanup(func() {
+			before := baseCalls
+			_, _ = engine.command.RunEnvironment(t.Context(), "fixture", nil, "", nil)
+			if baseCalls != before+1 {
+				t.Error("read-only command runner restoration failed")
+			} else {
+				t.Log("read-only command runner restored")
+			}
+		})
+		databaseOriginReadOnly(t, f, func() {
+			for range 260 {
+				_, _ = engine.docker(t.Context(), "info", "SENSITIVE-OBSERVATION-ARGUMENT")
+			}
+			_, _ = engine.docker(t.Context(), "container", "inspect", id)
+			_, _ = engine.docker(t.Context(), "container", "top", id, "-eo", "pid,uid")
+			if os.WriteFile(path, []byte("changed"), 0o600) != nil {
+				t.Fatal("fixture state change unavailable")
+			}
+			t.Fatal("injected observation assertion")
+		})
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal("fixture subprocess unavailable")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable, "-test.run", "^TestDatabaseOriginReadOnlyFatalDiagnostics$", "-test.v")
+	cmd.Env = append(os.Environ(), "NEROCD_DATABASE_OBSERVATION_FATAL=fixture")
+	out, err := cmd.CombinedOutput()
+	if err == nil || ctx.Err() != nil || bytes.Contains(out, []byte("SENSITIVE-OBSERVATION")) {
+		t.Fatal("failure subprocess escaped closed diagnostics")
+	}
+	for _, want := range []string{"injected observation assertion", "read-only physical observation changed protected state", "read-only command runner restored", "closed_observation_command_sequence=daemon_info:error", "dropped_stages=6 top_count=1", `"ExpectedPIDKnown":true`, `"PIDPresent":true`, `"PIDsCanonical":false`, `"UIDsMatch":false`, `"OwnershipMatches":false`} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("fatal observation omitted required evidence: %s", want)
+		}
 	}
 }
 
@@ -716,6 +903,16 @@ func databaseOriginUpgradePhysical(t *testing.T, root, kind string) {
 		databaseOriginReadOnly(t, f, func() {
 			got, err := f.engine.ObserveDatabaseNetworkUpgrade(t.Context(), domain.HostingOperation{ID: opB, Plan: &in.Plan, Result: &b}, in, credentials, f.config)
 			if want && (err != nil || !got.Ready || got.ContainerID != b.ContainerID) || !want && err == nil {
+				t.Logf("observation_predicates want_ready=%t error_present=%t ready=%t container_matches=%t", want, err != nil, got.Ready, got.ContainerID == b.ContainerID)
+				shape := databaseOriginCandidateShape{State: "unavailable"}
+				if container, inspectErr := f.engine.inspectDatabaseContainer(t.Context(), b.ContainerID); inspectErr == nil {
+					shape = databaseOriginCandidateSummary(container, opB, in, record, f.config)
+				}
+				raw, encodeErr := json.Marshal(shape)
+				if encodeErr != nil {
+					t.Fatal("closed observed candidate diagnostics unavailable")
+				}
+				t.Logf("failed_observation_candidate_shape=%s", raw)
 				t.Fatal("physical upgrade observation mismatch")
 			}
 		})
