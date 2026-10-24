@@ -90,6 +90,75 @@ paths:
         }
       }
     }
+  /api/v1/runners/database-network-captures/claim-next:
+    {
+      "post": {
+        "operationId": "claimNextHostingDatabaseNetworkCapture",
+        "summary": "Claim the next eligible private database network capture",
+        "description": "Dedicated current runner bearer and capture capability required. Polls existing eligible captures for the authenticated runner; the caller supplies no capture or runner identity. Requires exactly an empty JSON object; rejects unknown fields, duplicate keys, trailing documents, and query parameters. Request maximum 16384 bytes and response maximum 32768 bytes. Cache-Control: no-store on every response. Returns 404 when no eligible capture is available; does not select generic work or activate a public binding.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated private capture metadata; do not cache",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureClaim"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
   /api/v1/runners/database-network-captures/plan:
     {
       "post": {

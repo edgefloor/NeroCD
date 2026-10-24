@@ -24,6 +24,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/database-network-captures/claim-next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim the next eligible private database network capture
+         * @description Dedicated current runner bearer and capture capability required. Polls existing eligible captures for the authenticated runner; the caller supplies no capture or runner identity. Requires exactly an empty JSON object; rejects unknown fields, duplicate keys, trailing documents, and query parameters. Request maximum 16384 bytes and response maximum 32768 bytes. Cache-Control: no-store on every response. Returns 404 when no eligible capture is available; does not select generic work or activate a public binding.
+         */
+        post: operations["claimNextHostingDatabaseNetworkCapture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/database-network-captures/plan": {
         parameters: {
             query?: never;
@@ -7037,6 +7057,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HostingDatabaseNetworkCaptureClaimInput"];
+            };
+        };
+        responses: {
+            /** @description Authenticated private capture metadata; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseNetworkCaptureClaim"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    claimNextHostingDatabaseNetworkCapture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmptyRequest"];
             };
         };
         responses: {
