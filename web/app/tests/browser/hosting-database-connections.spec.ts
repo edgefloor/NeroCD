@@ -132,3 +132,25 @@ test("intercepted connected viewer can read progress but cannot request route co
   await expect(panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.")).toHaveCount(0);
   expect(writes).toHaveLength(0);
 });
+
+test("intercepted failed route refresh permits keyboard removal from an unsent draft", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 1000 });
+  const { panel, writes } = await fixture(page, true);
+  await panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.").check();
+  const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request.");
+  await approve.check();
+  await page.route("**/resources/app/route-switches", (route) => route.fulfill({ status: 503, json: { error: "Fixture route refresh unavailable" } }));
+  await panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+  await expect(panel.getByText("Loaded route choices are unavailable. Route continuation is paused.")).toBeVisible();
+  const clear = panel.getByRole("button", { name: "Remove route continuation from draft", exact: true });
+  await expect(clear).toBeEnabled(); await clear.focus(); await page.keyboard.press("Enter");
+  await expect(approve).not.toBeChecked();
+  const deploy = panel.getByRole("button", { name: "Redeploy connected application", exact: true });
+  await expect(deploy).toBeDisabled();
+  await approve.focus(); await page.keyboard.press("Space");
+  await deploy.focus(); await page.keyboard.press("Enter");
+  await expect(panel.getByText(/Request accepted: hop_fixture/)).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0])).not.toHaveProperty("application_database_route_continuity");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

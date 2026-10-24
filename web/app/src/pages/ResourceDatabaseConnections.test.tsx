@@ -302,3 +302,69 @@ test("ready candidate remains incomplete and permission denial clears continuati
   await screen.findByText(/Retained requests and drafts have been cleared/);
   expect(screen.queryByText(/app.example.test/)).toBeNull();
 });
+
+async function selectContinuation() {
+  fireEvent.click(await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+}
+async function removeContinuationAndDeploy(fetch: ReturnType<typeof setup>["fetch"]) {
+  const clear = await screen.findByRole("button", { name: "Remove route continuation from draft" });
+  await waitFor(() => expect((clear as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(clear);
+  const approve = screen.getByLabelText("I reviewed the selected database and application settings and approve this request.");
+  expect((approve as HTMLInputElement).checked).toBe(false);
+  const deploy = screen.getByRole("button", { name: "Redeploy connected application" });
+  expect((deploy as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(approve); fireEvent.click(deploy);
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1));
+  const body = JSON.parse(String(fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body));
+  expect(body).not.toHaveProperty("application_database_route_continuity");
+}
+test("failed refresh with cached route choices keeps an accessible draft opt-out", async () => {
+  let fail = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return fail ? json({}, 503) : json(loadedRoutes);
+    if (init.method === "POST") return json({ id: "operation", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+  });
+  await selectContinuation(); fail = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText("Loaded route choices are unavailable. Route continuation is paused.");
+  await removeContinuationAndDeploy(fetch);
+});
+test.each([
+  { ...loadedRoutes, available: false, reason: "busy" },
+  { ...loadedRoutes, available: false, reason: "no_loaded_generation", loaded_generation: null, loaded_proxy_operation_id: null },
+  { ...loadedRoutes, available: false, reason: "no_routes", routes: [] },
+])("successful refresh without continuation eligibility keeps a draft opt-out: $reason", async (unavailable) => {
+  let changed = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return json(changed ? unavailable : loadedRoutes);
+    if (init.method === "POST") return json({ id: "operation", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+  });
+  await selectContinuation(); changed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText(/No verified route continuation is available/);
+  await removeContinuationAndDeploy(fetch);
+});
+test("route refresh failure cannot remove continuation from a transmitted uncertain request", async () => {
+  let fail = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/route-switches")) return fail ? json({}, 503) : json(loadedRoutes);
+    if (init.method === "POST") return Promise.reject(new TypeError("lost"));
+  });
+  await selectContinuation();
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/No confirmed response/); fail = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  const clear = await screen.findByRole("button", { name: "Remove route continuation from draft" });
+  expect((clear as HTMLButtonElement).disabled).toBe(true);
+  await waitFor(() => expect((screen.getByRole("button", { name: "Retry identical application request" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Retry identical application request" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+  const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+  expect(bodies[0]).toBe(bodies[1]);
+  expect(JSON.parse(String(bodies[1]))).toHaveProperty("application_database_route_continuity");
+});
