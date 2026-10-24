@@ -217,7 +217,9 @@ func (j *AttemptJournal) AppendStorageArchive(entry JournalStorageArchive) (Jour
 		return JournalStorageArchive{}, errors.New("runner journal entry limit reached")
 	}
 	priorVersion := j.state.Version
-	j.state.Version = 12
+	if j.state.Version < 12 {
+		j.state.Version = 12
+	}
 	j.state.StorageArchive = append(j.state.StorageArchive, entry)
 	err = validateJournalState(j.state)
 	if err == nil {

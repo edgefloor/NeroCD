@@ -68,28 +68,30 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
-	StorageArchive  []JournalStorageArchive `json:"storage_archive,omitempty"`
-	BuildLogs       []JournalBuildLog       `json:"build_logs,omitempty"`
-	BuildLogCursors []JournalBuildLogCursor `json:"build_log_cursors,omitempty"`
-	Build           []JournalBuild          `json:"build,omitempty"`
-	Proxy           []JournalProxy          `json:"proxy,omitempty"`
-	Hosting         []JournalHosting        `json:"hosting,omitempty"`
-	Events          []JournalEvent          `json:"events"`
-	Completions     []JournalCompletion     `json:"completions"`
-	Provenance      []JournalProvenance     `json:"provenance"`
+	DatabaseNetworkCapture []JournalDatabaseNetworkCapture `json:"database_network_capture,omitempty"`
+	StorageArchive         []JournalStorageArchive         `json:"storage_archive,omitempty"`
+	BuildLogs              []JournalBuildLog               `json:"build_logs,omitempty"`
+	BuildLogCursors        []JournalBuildLogCursor         `json:"build_log_cursors,omitempty"`
+	Build                  []JournalBuild                  `json:"build,omitempty"`
+	Proxy                  []JournalProxy                  `json:"proxy,omitempty"`
+	Hosting                []JournalHosting                `json:"hosting,omitempty"`
+	Events                 []JournalEvent                  `json:"events"`
+	Completions            []JournalCompletion             `json:"completions"`
+	Provenance             []JournalProvenance             `json:"provenance"`
 }
 
 type journalState struct {
-	StorageArchive  []JournalStorageArchive `json:"storage_archive,omitempty"`
-	BuildLogs       []JournalBuildLog       `json:"build_logs,omitempty"`
-	BuildLogCursors []JournalBuildLogCursor `json:"build_log_cursors,omitempty"`
-	Build           []JournalBuild          `json:"build,omitempty"`
-	Proxy           []JournalProxy          `json:"proxy,omitempty"`
-	Hosting         []JournalHosting        `json:"hosting,omitempty"`
-	Version         int                     `json:"version"`
-	Events          []JournalEvent          `json:"events"`
-	Completions     []JournalCompletion     `json:"completions"`
-	Provenance      []JournalProvenance     `json:"provenance"`
+	DatabaseNetworkCapture []JournalDatabaseNetworkCapture `json:"database_network_capture,omitempty"`
+	StorageArchive         []JournalStorageArchive         `json:"storage_archive,omitempty"`
+	BuildLogs              []JournalBuildLog               `json:"build_logs,omitempty"`
+	BuildLogCursors        []JournalBuildLogCursor         `json:"build_log_cursors,omitempty"`
+	Build                  []JournalBuild                  `json:"build,omitempty"`
+	Proxy                  []JournalProxy                  `json:"proxy,omitempty"`
+	Hosting                []JournalHosting                `json:"hosting,omitempty"`
+	Version                int                             `json:"version"`
+	Events                 []JournalEvent                  `json:"events"`
+	Completions            []JournalCompletion             `json:"completions"`
+	Provenance             []JournalProvenance             `json:"provenance"`
 }
 
 // AttemptJournal is an append-before-send, atomic-rewrite journal. The secure
@@ -114,7 +116,7 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			return nil, fmt.Errorf("decode runner journal: %w", err)
 		}
 		switch j.state.Version {
-		case 12:
+		case 12, 13:
 			if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {
 				_ = store.Close()
 				return nil, err
@@ -296,6 +298,11 @@ func (j *AttemptJournal) AckProvenance(id string) error {
 func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	for _, entry := range j.state.DatabaseNetworkCapture {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("capture evidence requires acknowledged retirement")
+		}
+	}
 	for _, entry := range j.state.StorageArchive {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("archive mutation evidence requires explicit reconciliation")
@@ -361,15 +368,16 @@ func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JournalSnapshot{
-		StorageArchive:  cloneStorageArchiveEntries(j.state.StorageArchive),
-		BuildLogs:       cloneBuildLogs(j.state.BuildLogs),
-		BuildLogCursors: append([]JournalBuildLogCursor(nil), j.state.BuildLogCursors...),
-		Build:           cloneBuildEntries(j.state.Build),
-		Proxy:           cloneProxyEntries(j.state.Proxy),
-		Hosting:         cloneHostingEntries(j.state.Hosting),
-		Events:          append([]JournalEvent(nil), j.state.Events...),
-		Completions:     append([]JournalCompletion(nil), j.state.Completions...),
-		Provenance:      append([]JournalProvenance(nil), j.state.Provenance...),
+		DatabaseNetworkCapture: cloneDatabaseNetworkCaptures(j.state.DatabaseNetworkCapture),
+		StorageArchive:         cloneStorageArchiveEntries(j.state.StorageArchive),
+		BuildLogs:              cloneBuildLogs(j.state.BuildLogs),
+		BuildLogCursors:        append([]JournalBuildLogCursor(nil), j.state.BuildLogCursors...),
+		Build:                  cloneBuildEntries(j.state.Build),
+		Proxy:                  cloneProxyEntries(j.state.Proxy),
+		Hosting:                cloneHostingEntries(j.state.Hosting),
+		Events:                 append([]JournalEvent(nil), j.state.Events...),
+		Completions:            append([]JournalCompletion(nil), j.state.Completions...),
+		Provenance:             append([]JournalProvenance(nil), j.state.Provenance...),
 	}
 }
 
@@ -390,10 +398,13 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
+	return len(j.state.DatabaseNetworkCapture) + len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if err := validateJournalDatabaseNetworkCaptures(j.state); err != nil {
+		return err
+	}
 	if err := validateJournalStorageArchives(j.state); err != nil {
 		return err
 	}
@@ -404,6 +415,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
+		state.Version = 12
+	}
 	if state.Version == 12 && len(state.StorageArchive) == 0 {
 		state.Version = 11
 	}
@@ -437,17 +451,29 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
+	if err := validateJournalDatabaseNetworkCaptures(state); err != nil {
+		return err
+	}
 	if err := validateJournalStorageArchives(state); err != nil {
 		return err
 	}
-	if state.Version < journalFormatVersion || state.Version > 12 {
+	if state.Version < journalFormatVersion || state.Version > 13 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
+	if len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))
-	if len(state.StorageArchive) > 0 && state.Version != 12 || state.Version == 12 && len(state.StorageArchive) == 0 {
+	if len(state.DatabaseNetworkCapture) > 0 && state.Version != 13 || state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
+		return errors.New("capture journal requires marked version 13 evidence")
+	}
+	for _, entry := range state.DatabaseNetworkCapture {
+		if _, exists := ids[entry.ID]; exists {
+			return errors.New("runner journal contains duplicate ids")
+		}
+		ids[entry.ID] = struct{}{}
+	}
+	if len(state.StorageArchive) > 0 && state.Version < 12 || state.Version == 12 && len(state.StorageArchive) == 0 {
 		return errors.New("archive journal requires marked version 12 evidence")
 	}
 	for _, entry := range state.StorageArchive {
