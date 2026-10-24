@@ -89,7 +89,12 @@ func applicationDatabaseSafeContainer(c applicationDatabaseContainer) bool {
 }
 
 func (e *applicationDatabaseEngine) inspectCandidate(ctx context.Context, in applicationDatabaseEngineInput, c applicationDatabaseCandidate, attached, running bool, retired ...string) error {
-	if len(retired) > 1 {
+	return e.inspectCandidateState(ctx, in, c, attached, running, false, retired...)
+}
+
+// Recovery alone admits an exited candidate; ordinary configuration requires created.
+func (e *applicationDatabaseEngine) inspectCandidateState(ctx context.Context, in applicationDatabaseEngineInput, c applicationDatabaseCandidate, attached, running, stopped bool, retired ...string) error {
+	if len(retired) > 1 || stopped && running {
 		return errApplicationDatabaseEngine
 	}
 	removed := ""
@@ -103,8 +108,15 @@ func (e *applicationDatabaseEngine) inspectCandidate(ctx context.Context, in app
 	if err != nil || bridge != c.DefaultNetworkID {
 		return errApplicationDatabaseEngine
 	}
+	status, defaultID, privateID := "created", "", ""
+	if stopped {
+		status, defaultID, privateID = "exited", bridge, in.Proof.Origin.NetworkID
+	}
+	if running {
+		status = "running"
+	}
 	actual, err := e.container(ctx, c.ContainerID)
-	if err != nil || !applicationDatabaseSafeContainer(actual) || actual.Image != c.ImageID || actual.Name != "/"+applicationDatabaseName(in) || actual.Config.Labels[applicationDatabaseNonceLabel] != c.CreateNonce || actual.Config.Labels[imageBindingLabel] != in.Plan.Snapshot.BindingID || actual.Config.Labels[imageOperationLabel] != c.OperationID || actual.Config.Labels[imagePlanLabel] != c.PlanHash || actual.Config.Labels[imageReleaseLabel] != in.Plan.Release.Hash || actual.State.Running != running || !running && actual.State.Status != "created" || running && actual.State.Status != "running" {
+	if err != nil || !applicationDatabaseSafeContainer(actual) || actual.Image != c.ImageID || actual.Name != "/"+applicationDatabaseName(in) || actual.Config.Labels[applicationDatabaseNonceLabel] != c.CreateNonce || actual.Config.Labels[imageBindingLabel] != in.Plan.Snapshot.BindingID || actual.Config.Labels[imageOperationLabel] != c.OperationID || actual.Config.Labels[imagePlanLabel] != c.PlanHash || actual.Config.Labels[imageReleaseLabel] != in.Plan.Release.Hash || actual.State.Running != running || actual.State.Status != status {
 		return errApplicationDatabaseEngine
 	}
 	ports := actual.HostConfig.PortBindings[strconv.Itoa(in.Plan.Snapshot.ContainerPort)+"/tcp"]
@@ -116,12 +128,12 @@ func (e *applicationDatabaseEngine) inspectCandidate(ctx context.Context, in app
 		count++
 	}
 	defaultNetwork := actual.NetworkSettings.Networks["bridge"]
-	if len(actual.NetworkSettings.Networks) != count || !applicationDatabaseEndpointConfig(defaultNetwork, actual.Name, c.ContainerID, false) || running && (defaultNetwork.NetworkID != bridge || !dockerObjectID.MatchString(defaultNetwork.EndpointID)) || !running && (defaultNetwork.NetworkID != "" || defaultNetwork.EndpointID != "" || defaultNetwork.IPAddress != "") {
+	if len(actual.NetworkSettings.Networks) != count || !applicationDatabaseEndpointConfig(defaultNetwork, actual.Name, c.ContainerID, false) || running && (defaultNetwork.NetworkID != bridge || !dockerObjectID.MatchString(defaultNetwork.EndpointID)) || !running && (defaultNetwork.NetworkID != defaultID || defaultNetwork.EndpointID != "" || defaultNetwork.IPAddress != "") {
 		return errApplicationDatabaseEngine
 	}
 	if attached {
 		n := actual.NetworkSettings.Networks[in.Proof.Binding.NetworkName]
-		if !applicationDatabaseEndpointConfig(n, actual.Name, c.ContainerID, true) || running && (n.NetworkID != in.Proof.Origin.NetworkID || !dockerObjectID.MatchString(n.EndpointID)) || !running && (n.NetworkID != "" || n.EndpointID != "" || n.IPAddress != "") {
+		if !applicationDatabaseEndpointConfig(n, actual.Name, c.ContainerID, true) || running && (n.NetworkID != in.Proof.Origin.NetworkID || !dockerObjectID.MatchString(n.EndpointID)) || !running && (n.NetworkID != privateID || n.EndpointID != "" || n.IPAddress != "") {
 			return errApplicationDatabaseEngine
 		}
 		if running {
