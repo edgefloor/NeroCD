@@ -539,10 +539,45 @@ func TestDatabasePreparePinsChildManifestAndConfigIdentity(t *testing.T) {
 			if !matched {
 				t.Skip("test host architecture has no frozen recipe")
 			}
-			release, err := f.e.PrepareDatabase(context.Background(), f.plan.Snapshot, f.config, f.before)
-			if err != nil || release != f.plan.Release || release.CanonicalImage == f.plan.Snapshot.ImageReference {
-				t.Fatal("preparation confused index/child/config identity", err)
+			canonical := f.plan.Release.CanonicalImage
+			short := strings.TrimPrefix(canonical, "docker.io/library/")
+			repository := strings.Split(canonical, "@")[0]
+			for _, tc := range []struct {
+				name    string
+				digests []string
+				accept  bool
+			}{
+				{"canonical", []string{canonical}, true},
+				{"short_alias", []string{short}, true},
+				{"library_alias", []string{"library/" + short}, true},
+				{"alias_among_other_digests", []string{"malformed reference", "foreign.invalid/library/" + short, short}, true},
+				{"wrong_registry", []string{"foreign.invalid/library/" + short}, false},
+				{"wrong_repository", []string{"docker.io/foreign/" + short}, false},
+				{"wrong_digest", []string{repository + "@sha256:" + strings.Repeat("0", 64)}, false},
+				{"index_digest", []string{f.plan.Snapshot.ImageReference}, false},
+				{"malformed", []string{"malformed reference"}, false},
+				{"tag_only", []string{repository + ":latest"}, false},
+				{"empty", nil, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					f.hook = func(_ context.Context, args []string) ([]byte, error, bool) {
+						if len(args) > 1 && args[0] == "image" && args[1] == "inspect" {
+							raw, err := json.Marshal(map[string]any{"Id": f.plan.Release.ImageID, "RepoDigests": tc.digests, "Os": f.plan.Release.OS, "Architecture": f.plan.Release.Architecture, "Variant": f.plan.Release.Variant})
+							return raw, err, true
+						}
+						return nil, nil, false
+					}
+					release, err := f.e.PrepareDatabase(context.Background(), f.plan.Snapshot, f.config, f.before)
+					if tc.accept {
+						if err != nil || release != f.plan.Release || release.CanonicalImage == f.plan.Snapshot.ImageReference {
+							t.Fatal("preparation confused repository/child/config identity", err)
+						}
+					} else if err == nil || err.Error() != "database image lacks exact child manifest digest" || release != (domain.HostingRelease{}) {
+						t.Fatal("preparation accepted unapproved repository or child digest", err)
+					}
+				})
 			}
+			f.hook = nil
 			for _, call := range f.calls {
 				if strings.Contains(call, "container create") || strings.Contains(call, "network create") || strings.Contains(call, "volume create") {
 					t.Fatal("preparation mutated workload")
