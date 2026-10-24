@@ -24,7 +24,7 @@ are different outcomes.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
+`d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, 2026-10-24. Existing Go API/application services, PostgreSQL, River execution,
 authorization, audit and the embedded React/TypeScript UI are the starting system.
 
 - Hosting navigation leads with Home, Projects and Servers and runners, with
@@ -194,15 +194,18 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Default-off opt-in and metadata `adapter_unqualified` remain. Application binding,
   database-native backup/restore, public ACME and complete A17 remain unfinished.
 - Internal R42 prerequisites are accepted through
-  `c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`: the binding controller, network
-  retirement proof, private application/database adapter, origin capture
-  controller and private empty-v2 alias upgrade engine. See the
-  [accepted components and remaining R42 work](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
-  These are internal components. Connected API/UI application binding and
-  physical alias qualification remain unfinished. The actual runner capture
-  observer and typed transport, upgrade controller, application network ledger,
-  and PostgreSQL/Redis application write/redeploy/read qualification are still
-  required. Database-native backup/restore and rotation also remain open.
+  `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, including the read-only origin
+  observer, authenticated capture API/typed client, format 12 journal and private
+  capture coordinator. Direct private-engine origin capture and empty-v2 alias
+  upgrades physically passed PostgreSQL 17.11 and Redis 8.2.10 A→B→C in 27.89
+  seconds, preserving volume/network/credential references, private DNS reads
+  and writes, retained origin and reopened UID 999 ownership. See the
+  [fixture contract](acceptance/runtime-hosting-database-origin-upgrade/README.md)
+  and [accepted components and R42 limits](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+  Materialization is fixture-local, without controller provenance. This does
+  not qualify the connected API/River path. Capability activation, generic
+  dispatch, upgrade controller, application membership ledger/API/UI and full
+  R42 remain unfinished. Database-native backup/restore and rotation remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

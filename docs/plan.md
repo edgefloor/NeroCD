@@ -8,7 +8,7 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Accepted application/source assessment:
-`c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`, 2026-10-24, through migration 0070.
+`d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`, 2026-10-24, through migration 0070.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey
@@ -159,17 +159,25 @@ the binding controller through `15fe8877d2e7ee22602d8cc20fb8db29fc83de0c`,
 retirement proof at `a87bb68373016509d24724aba6d127738012638c`, private
 application/database adapter at `621af78038f7231b43f7d7a7a899b17bde5c06e4`,
 origin capture controller at `584cb6c7f4a62821308acad4a5e67192e3608e11`, and
-private empty-v2 alias upgrade engine at the current assessment. Their
+private empty-v2 alias upgrade engine at that checkpoint. Their
 integration checks and code hygiene, specification and critical security reviews
 passed. The [component ledger](compatibility.md#r42-remains-an-unfinished-hosting-workflow)
 links source and tests and records the limits.
 
-R42 still needs the actual runner capture observer with typed API/client,
-journal and dispatch, the upgrade controller, application network ledger and
-API/UI, and physical application write/redeploy/read qualification for both
-PostgreSQL and Redis on the combined candidate. Internal components do not
-complete application binding. Database-native backup/restore, rotation and
-broader stateful parity remain open.
+Accepted progress now extends through `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`.
+The read-only observer, authenticated capture API/typed client, format 12 journal
+and private exact-ID coordinator are implemented. The
+[direct-engine origin/upgrade fixture](../acceptance/runtime-hosting-database-origin-upgrade/README.md)
+physically passed PostgreSQL 17.11 and Redis 8.2.10 A→B→C in 27.89 seconds, with
+private DNS application reads/writes, retained volume/network/credentials and
+origin, reopened UID 999 ownership, and wrong-alias rejection. Combined local
+race, vet, changed-code lint, Linux arm64 compile and build checks passed.
+
+This fixture uses local materialization evidence and proves no controller
+provenance or API/River/runner-admission path. R42 still needs capability
+activation and generic dispatch, the upgrade controller, application membership
+ledger/API/UI, and connected application write/redeploy/read qualification.
+Database-native backup/restore, rotation and broader stateful parity remain open.
 
 The standalone archive helper is accepted at
 `3b34b3920378cc41613bc87ca69eea2d35d2f175`;
