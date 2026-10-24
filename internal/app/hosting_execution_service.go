@@ -66,7 +66,7 @@ func (s *Service) hostingOperationForRole(ctx context.Context, id, role string) 
 	if _, err = s.authorizeHostingProject(ctx, op.ProjectID, role); err != nil {
 		return nil, domain.HostingOperation{}, err
 	}
-	if op.StorageArchive != nil {
+	if op.StorageArchive != nil || op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil {
 		if _, _, err = s.resourceForDestinationRole(ctx, op.ResourceID, role); err != nil {
 			return nil, domain.HostingOperation{}, err
 		}
@@ -86,7 +86,7 @@ func (s *Service) CancelHostingOperation(ctx context.Context, id string) (domain
 	if err != nil {
 		return op, err
 	}
-	if op.StorageArchive != nil {
+	if op.StorageArchive != nil || op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil {
 		if _, err = s.authorizeHostingProject(ctx, op.ProjectID, domain.RoleOwner); err != nil {
 			return domain.HostingOperation{}, err
 		}

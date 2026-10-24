@@ -58,6 +58,9 @@ func (s *PostgresStore) databaseCredentialTransaction(ctx context.Context, runne
 	}()
 	q := sqlcgen.New(tx)
 	before, err := hostingOperation(ctx, tx, in.Authority.OperationID)
+	if err == nil && before.DatabaseMaintenance != nil {
+		ctx, err = BindHostingDatabaseConnectionRunnerContext(ctx, runner, credentialHash)
+	}
 	if err != nil {
 		return result, fmt.Errorf("read credential operation: %w", err)
 	}

@@ -410,6 +410,18 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 			return domain.ClaimedRun{}, err
 		}
 	}
+	if claimedRun.RunSpec.Type == domain.RunTypeImageDeploy && claimedRun.RunSpec.HostingOperationID != "" {
+		op, err := hostingOperation(ctx, tx, claimedRun.RunSpec.HostingOperationID)
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		if op.ApplicationDatabase != nil {
+			a := domain.HostingAuthority{OperationID: op.ID, RunID: claimedRun.ID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
+			if err = finalDatabaseConnectionAuthority(ctx, tx, runner.ID, a, op, claimedRun.RunSpec.HostingMode == "observe", false); err != nil {
+				return domain.ClaimedRun{}, err
+			}
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ClaimedRun{}, fmt.Errorf("commit transaction: %w", err)
 	}

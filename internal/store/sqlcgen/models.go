@@ -159,6 +159,38 @@ type Environment struct {
 	CreatedAt                time.Time       `json:"created_at"`
 }
 
+type HostingApplicationDatabaseEffectAuthorization struct {
+	AuthorizationID string          `json:"authorization_id"`
+	OperationID     string          `json:"operation_id"`
+	Request         json.RawMessage `json:"request"`
+	RequestHash     string          `json:"request_hash"`
+	Response        json.RawMessage `json:"response"`
+	UseUntil        time.Time       `json:"use_until"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+type HostingApplicationDatabaseRetirement struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	Plan        json.RawMessage `json:"plan"`
+	Receipt     json.RawMessage `json:"receipt"`
+	ReceiptID   string          `json:"receipt_id"`
+	ReceiptHash string          `json:"receipt_hash"`
+	Authority   json.RawMessage `json:"authority"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingApplicationDatabaseStage struct {
+	OperationID  string          `json:"operation_id"`
+	ReceiptID    string          `json:"receipt_id"`
+	Phase        string          `json:"phase"`
+	PreviousHash *string         `json:"previous_hash"`
+	Authority    json.RawMessage `json:"authority"`
+	Stage        json.RawMessage `json:"stage"`
+	StageHash    string          `json:"stage_hash"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
 type HostingApplyAdmission struct {
 	OperationID string          `json:"operation_id"`
 	RunID       string          `json:"run_id"`
@@ -359,6 +391,49 @@ type HostingDatabaseBindingReceipt struct {
 	AuditID               string          `json:"audit_id"`
 }
 
+type HostingDatabaseConnection struct {
+	ID                         string          `json:"id"`
+	ApplicationResourceID      string          `json:"application_resource_id"`
+	DatabaseResourceID         string          `json:"database_resource_id"`
+	ProjectID                  string          `json:"project_id"`
+	BindingID                  string          `json:"binding_id"`
+	SourceOperationID          string          `json:"source_operation_id"`
+	CaptureID                  string          `json:"capture_id"`
+	UpgradeOperationID         string          `json:"upgrade_operation_id"`
+	ApplicationOperationID     string          `json:"application_operation_id"`
+	AcceptedRequest            json.RawMessage `json:"accepted_request"`
+	RequestHash                string          `json:"request_hash"`
+	BindingApplicationSnapshot json.RawMessage `json:"binding_application_snapshot"`
+	State                      string          `json:"state"`
+	ReasonCode                 string          `json:"reason_code"`
+	CreatedBy                  string          `json:"created_by"`
+	AuditID                    string          `json:"audit_id"`
+	CreatedAt                  time.Time       `json:"created_at"`
+	UpdatedAt                  time.Time       `json:"updated_at"`
+}
+
+type HostingDatabaseConnectionExecution struct {
+	OperationID                string          `json:"operation_id"`
+	ConnectionID               string          `json:"connection_id"`
+	Family                     string          `json:"family"`
+	ExpectedMembershipRevision int64           `json:"expected_membership_revision"`
+	Proof                      json.RawMessage `json:"proof"`
+	ProofHash                  string          `json:"proof_hash"`
+	AuditID                    string          `json:"audit_id"`
+}
+
+type HostingDatabaseConnectionRecovery struct {
+	ID              string          `json:"id"`
+	ConnectionID    string          `json:"connection_id"`
+	OperationID     string          `json:"operation_id"`
+	ActorID         string          `json:"actor_id"`
+	IdempotencyKey  string          `json:"idempotency_key"`
+	AcceptedRequest json.RawMessage `json:"accepted_request"`
+	RequestHash     string          `json:"request_hash"`
+	AuditID         string          `json:"audit_id"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
 type HostingDatabaseCredential struct {
 	ResourceID string `json:"resource_id"`
 	Role       string `json:"role"`
@@ -376,6 +451,25 @@ type HostingDatabaseDeployment struct {
 	Credentials   json.RawMessage `json:"credentials"`
 }
 
+type HostingDatabaseMembershipHead struct {
+	DatabaseBindingID string          `json:"database_binding_id"`
+	ConnectionID      string          `json:"connection_id"`
+	OriginReceiptID   string          `json:"origin_receipt_id"`
+	Revision          int64           `json:"revision"`
+	Members           json.RawMessage `json:"members"`
+	Retired           json.RawMessage `json:"retired"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+type HostingDatabaseMembershipReceipt struct {
+	DatabaseBindingID string          `json:"database_binding_id"`
+	Revision          int64           `json:"revision"`
+	OperationID       string          `json:"operation_id"`
+	Action            string          `json:"action"`
+	Body              json.RawMessage `json:"body"`
+	BodyHash          string          `json:"body_hash"`
+}
+
 type HostingDatabaseNetworkCapture struct {
 	ID                string          `json:"id"`
 	SourceOperationID string          `json:"source_operation_id"`
@@ -387,6 +481,13 @@ type HostingDatabaseNetworkCapture struct {
 	PlanHash          string          `json:"plan_hash"`
 	CreatedBy         string          `json:"created_by"`
 	CreatedAt         time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseNetworkHold struct {
+	DatabaseBindingID string    `json:"database_binding_id"`
+	ConnectionID      string    `json:"connection_id"`
+	OperationID       *string   `json:"operation_id"`
+	AcquiredAt        time.Time `json:"acquired_at"`
 }
 
 type HostingDatabaseNetworkOriginReceipt struct {

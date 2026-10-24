@@ -112,6 +112,9 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 	if err = s.recoverArchiveDispatch(ctx, tx); err != nil {
 		return err
 	}
+	if err = s.recoverDatabaseConnectionDispatch(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -577,6 +580,14 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 			return err
 		}
 	}
+	if connectionOperation(op) {
+		if err = sqlcgen.New(tx).FlushDatabaseConnection(ctx); err != nil {
+			return err
+		}
+		if err = databaseConnectionAuthority(ctx, tx, op, false, false); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -657,10 +668,13 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 		if err = finalLocalHostingAuthority(ctx, tx, runnerID, a, op, true); err != nil {
 			return domain.HostingOperation{}, err
 		}
-		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if op.Snapshot.Storage != (domain.HostingStorageRef{}) && !connectionOperation(op) {
 			if err = finalHostingStorageAuthority(ctx, tx, runnerID, a, op); err != nil {
 				return domain.HostingOperation{}, err
 			}
+		}
+		if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, a, op, true, false); err != nil {
+			return domain.HostingOperation{}, err
 		}
 		return op, nil
 	}
@@ -776,6 +790,9 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 			return op, readErr
 		}
 		op.TaskMode = "deploy"
+		if err = databaseConnectionHistoricalRunnerRead(ctx, tx, runnerID, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
 		return op, nil
 	}
 	if err = hostingAuthorityExists(ctx, tx, runnerID, in.HostingAuthority, true); err != nil {
@@ -841,7 +858,13 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		}
 	}
 	var plan domain.HostingApplyPlan
-	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+	if op.ApplicationDatabase != nil {
+		input, inputErr := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
+		if inputErr != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		plan, err = domain.CompileHostingApplicationDatabasePlan(op.Snapshot, in.Release, previous, nil, input)
+	} else if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
 		plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, nil)
 	} else if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
 		var retained []domain.HostingHealthy
@@ -871,6 +894,13 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 	}
 	if err != nil {
 		return domain.HostingOperation{}, ErrConflict
+	}
+	if connectionOperation(op) {
+		candidate := op
+		candidate.Plan, candidate.Release = &plan, &in.Release
+		if err = connectionPublicationBound(candidate); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	releaseRaw, err := json.Marshal(in.Release)
 	if err != nil {
@@ -970,6 +1000,9 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 			return domain.HostingOperation{}, ErrConflict
 		}
 		if err = replayHostingApplyAdmission(ctx, tx, a, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, a, op, false, false); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		return op, nil
@@ -1072,7 +1105,11 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 		return domain.HostingOperation{}, err
 	}
 	if replay {
-		return hostingTaskOperation(ctx, tx, in.HostingAuthority)
+		op, e := hostingTaskOperation(ctx, tx, in.HostingAuthority)
+		if e != nil {
+			return op, e
+		}
+		return op, databaseConnectionHistoricalRunnerRead(ctx, tx, runnerID, op)
 	}
 	// Only a previously committed matching receipt survives loss of authority.
 	// Every first result remains a fenced mutation, even when a hold exists.
@@ -1082,6 +1119,9 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	op, err := hostingOperation(ctx, tx, in.OperationID)
 	if err != nil {
 		return op, err
+	}
+	if connectionOperation(op) {
+		return s.completeDatabaseConnection(ctx, tx, runnerID, in, op)
 	}
 	if op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
 		if err = hostingOperationTargetGate(ctx, tx, op, false); err != nil {
@@ -1255,6 +1295,15 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 	before, err := hostingOperation(ctx, tx, id)
 	if err != nil {
 		return before, err
+	}
+	if connectionOperation(before) {
+		if reconcile {
+			// Specialized recovery requires exact retained stage/candidate CAS.
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if err = authorizeBuildActor(ctx, tx, audit.ActorID, before.ProjectID, domain.RoleOwner); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	if before.StorageArchive != nil {
 		if reconcile {
@@ -1460,6 +1509,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 				return domain.HostingOperation{}, err
 			}
 		}
+		if err = databaseConnectionRunnerRead(ctx, tx, runnerID, before, true); err != nil {
+			return domain.HostingOperation{}, err
+		}
 		return hostingTaskOperation(ctx, tx, in.HostingAuthority)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -1477,6 +1529,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	}
 	if op.RunID != before.RunID || op.ReconciliationRunID != before.ReconciliationRunID || !op.ReconcileRequested || op.ReconciliationRunID != in.RunID || op.BindingID != in.BindingID {
 		return domain.HostingOperation{}, ErrConflict
+	}
+	if connectionOperation(op) {
+		return s.recordDatabaseConnectionObservation(ctx, tx, runnerID, in, op)
 	}
 	var daemon *string
 	var healthyRaw []byte
@@ -1658,6 +1713,14 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 	if run.RunSpec.Type != hostingSnapshotTaskType(op.Snapshot) || op.Snapshot.RunnerID != runnerID || run.RunSpec.HostingOperationID != op.ID || run.RunSpec.HostingMode != mode {
 		return false, nil
 	}
+	if connectionOperation(op) {
+		if _, err = databaseConnectionContextCredential(ctx, runnerID); err != nil {
+			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
 	if mode == "observe" {
 		if !op.ReconcileRequested || op.ReconciliationRunID != run.ID {
 			return false, nil
@@ -1677,6 +1740,12 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		}
 	}
 	err = hostingOperationTargetGate(ctx, tx, op, mode == "observe")
+	if err == nil && connectionOperation(op) {
+		err = checkDatabaseConnectionRunnerContext(ctx, tx, runnerID)
+		if err == nil && mode == "observe" {
+			err = databaseConnectionObservationHold(ctx, tx, op)
+		}
+	}
 	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrHostingRestoreHold) {
 		return false, nil
 	}
@@ -1781,6 +1850,25 @@ func (s *PostgresStore) HostingStatus(ctx context.Context, runnerID string, in d
 	}
 	op.TaskMode = mode
 	if in.Phase == "" {
+		observe := mode == "observe"
+		borrowObservation := connectionOperation(op) && mode == "deploy" && op.ReconcileRequested
+		if borrowObservation {
+			if !op.MutationHold || in.RunID != op.RunID {
+				return domain.HostingOperation{}, ErrConflict
+			}
+			if err = databaseConnectionObservationHold(ctx, tx, op); err != nil {
+				return domain.HostingOperation{}, err
+			}
+			observe = true
+		}
+		if err = databaseConnectionRunnerRead(ctx, tx, runnerID, op, observe); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if borrowObservation {
+			if err = databaseConnectionObservationHold(ctx, tx, op); err != nil {
+				return domain.HostingOperation{}, err
+			}
+		}
 		return op, nil
 	}
 	if in.Phase != "verifying" || mode != "deploy" || !op.MutationHold || (op.State != "applying" && op.State != "verifying") {
@@ -1793,6 +1881,9 @@ func (s *PostgresStore) HostingStatus(ctx context.Context, runnerID string, in d
 		return domain.HostingOperation{}, err
 	}
 	op.State = "verifying"
+	if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, in.HostingAuthority, op, false, false); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	return op, tx.Commit(ctx)
 }
 
@@ -1831,6 +1922,11 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	if !op.ReconcileRequested || op.ReconciliationRunID == "" || op.RunID != before.RunID || op.ReconciliationRunID != before.ReconciliationRunID {
 		return domain.HostingOperation{}, ErrConflict
 	}
+	if connectionOperation(op) {
+		if err = databaseConnectionObservationHold(ctx, tx, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	q := s.queries.WithTx(tx)
 	existing, err := q.GetActiveLeaseForRun(ctx, op.ReconciliationRunID)
 	if err == nil {
@@ -1844,16 +1940,26 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 		if err = finalLocalHostingAuthority(ctx, tx, runnerID, current, op, true); err != nil {
 			return domain.HostingOperation{}, err
 		}
+		if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, current, op, true, false); err != nil {
+			return domain.HostingOperation{}, err
+		}
 		return op, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingOperation{}, err
 	}
-	if _, err = sqlcgen.New(tx).ExpireHostingObservationLease(ctx, op.ReconciliationRunID); err != nil {
-		return domain.HostingOperation{}, err
-	}
-	if _, err = sqlcgen.New(tx).ResetHostingObservation(ctx, op.ReconciliationRunID); err != nil {
-		return domain.HostingOperation{}, err
+	if connectionOperation(op) {
+		queued, readErr := q.GetRun(ctx, op.ReconciliationRunID)
+		if readErr != nil || queued.Status != domain.RunQueued || op.ReconciliationRunID != "observe_"+op.ID {
+			return domain.HostingOperation{}, ErrConflict
+		}
+	} else {
+		if _, err = sqlcgen.New(tx).ExpireHostingObservationLease(ctx, op.ReconciliationRunID); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		if _, err = sqlcgen.New(tx).ResetHostingObservation(ctx, op.ReconciliationRunID); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	attempt, err := q.ClaimQueuedRun(ctx, sqlcgen.ClaimQueuedRunParams{RunID: op.ReconciliationRunID, RunnerID: &runnerID})
 	if err != nil {
@@ -1880,6 +1986,9 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	}
 	current := domain.HostingAuthority{OperationID: op.ID, RunID: lease.RunID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
 	if err = finalLocalHostingAuthority(ctx, tx, runnerID, current, op, true); err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, current, op, true, false); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	return op, tx.Commit(ctx)

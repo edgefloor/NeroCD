@@ -29,6 +29,9 @@ func databaseUpgradeSchema(ctx context.Context, q *sqlcgen.Queries) error {
 
 // Old schemas keep their original operations. V2 always requires the sidecar.
 func loadDatabaseUpgrade(ctx context.Context, db sqlcgen.DBTX, op *domain.HostingOperation) error {
+	if err := loadDatabaseConnectionExecution(ctx, db, op); err != nil {
+		return err
+	}
 	q := sqlcgen.New(db)
 	present, err := q.DatabaseNetworkUpgradeSchemaPresent(ctx)
 	if err != nil {
@@ -46,6 +49,12 @@ func loadDatabaseUpgrade(ctx context.Context, db sqlcgen.DBTX, op *domain.Hostin
 			return e
 		}
 	}
+	if connectionOperation(*op) {
+		if op.DatabaseUpgrade != nil {
+			return ErrConflict
+		}
+		return nil
+	}
 	if domain.ValidateHostingDatabaseUpgradeOperation(*op) != nil {
 		return ErrConflict
 	}
@@ -55,6 +64,12 @@ func loadDatabaseUpgrade(ctx context.Context, db sqlcgen.DBTX, op *domain.Hostin
 func hostingOperationPlanMatches(op domain.HostingOperation) bool {
 	if op.Plan == nil {
 		return false
+	}
+	if op.ApplicationDatabase != nil {
+		return domain.ValidateHostingApplicationDatabaseOperation(op) == nil
+	}
+	if op.DatabaseMaintenance != nil {
+		return domain.ValidateHostingDatabaseMaintenanceOperation(op) == nil
 	}
 	if op.DatabaseUpgrade != nil {
 		return domain.ValidateHostingDatabaseUpgradeOperation(op) == nil
@@ -98,6 +113,14 @@ func requireDatabaseUpgradeAgent(ctx context.Context, tx pgx.Tx, snap domain.Hos
 // historical proof is never sufficient to authorize a new network effect.
 func databaseUpgradeAuthority(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, observe bool) error {
 	q := sqlcgen.New(tx)
+	if connectionOperation(op) {
+		return databaseConnectionAuthority(ctx, tx, op, observe, false)
+	}
+	if !observe {
+		if err := databaseConnectionLegacyDatabaseGate(ctx, tx, op); err != nil {
+			return err
+		}
+	}
 	if op.DatabaseUpgrade == nil {
 		// An ordinary v1 deployment must never replace a current v2 writer.
 		raw, err := q.GetHostingHealthy(ctx, op.BindingID)

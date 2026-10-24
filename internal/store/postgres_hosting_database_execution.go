@@ -48,6 +48,11 @@ func requireHostingDatabaseAgent(ctx context.Context, tx pgx.Tx, snap domain.Hos
 // Settlement has tentatively completed its lease; every other first mutation
 // requires the same tuple to remain live after audit and lock waits.
 func finalDatabaseAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation, observe, settled bool) error {
+	if connectionOperation(op) {
+		if err := finalDatabaseConnectionAuthority(ctx, tx, runner, a, op, observe, settled); err != nil {
+			return err
+		}
+	}
 	if op.DatabaseUpgrade != nil {
 		if err := sqlcgen.New(tx).FlushDatabaseNetworkUpgrade(ctx); err != nil {
 			return err
@@ -96,6 +101,11 @@ func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.Ho
 			err = ErrConflict
 		}
 	}()
+	if connectionOperation(op) {
+		if err = databaseConnectionAuthority(ctx, tx, op, observe, historical); err != nil || op.ApplicationDatabase != nil {
+			return err
+		}
+	}
 	if op.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) {
 		return nil
 	}
@@ -130,6 +140,9 @@ func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.Ho
 		return ErrConflict
 	}
 	actor, role := op.CreatedBy, domain.RoleMaintainer
+	if op.DatabaseMaintenance != nil {
+		role = domain.RoleOwner
+	}
 	if observe {
 		if op.ReconciliationRunID == "" {
 			return ErrConflict
@@ -146,7 +159,7 @@ func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.Ho
 	if err = requireHostingDatabaseAgent(ctx, tx, op.Snapshot); err != nil {
 		return err
 	}
-	if !historical || op.DatabaseUpgrade != nil {
+	if !connectionOperation(op) && (!historical || op.DatabaseUpgrade != nil) {
 		if err = databaseUpgradeAuthority(ctx, tx, op, observe || historical); err != nil {
 			return err
 		}

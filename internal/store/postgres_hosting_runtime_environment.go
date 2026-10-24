@@ -80,8 +80,14 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if op.CleanupPlan != nil {
 		return nil
 	}
-	if err := databaseBindingPendingGate(ctx, tx, op.ResourceID); err != nil {
-		return err
+	if connectionOperation(op) {
+		if err := databaseConnectionAuthority(ctx, tx, op, false, false); err != nil {
+			return err
+		}
+	} else {
+		if err := databaseBindingPendingGate(ctx, tx, op.ResourceID); err != nil {
+			return err
+		}
 	}
 	if err := validateStorageContinuityFresh(ctx, tx, op); err != nil {
 		return err
@@ -127,6 +133,9 @@ func replayHostingApplyAdmission(ctx context.Context, tx pgx.Tx, a domain.Hostin
 // Runtime admission retains current initiator authority across waits; historical
 // evidence and receipt replay deliberately do not call this helper.
 func runtimeHostingActorAuthority(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
+	if connectionOperation(op) {
+		return authorizeBuildActor(ctx, tx, op.CreatedBy, op.ProjectID, domain.RoleOwner)
+	}
 	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 {
 		return nil
 	}
@@ -138,6 +147,9 @@ func runtimeHostingActorAuthority(ctx context.Context, tx pgx.Tx, op domain.Host
 }
 
 func finalHostingRuntimeAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation) error {
+	if connectionOperation(op) {
+		return finalDatabaseConnectionAuthority(ctx, tx, runner, a, op, false, false)
+	}
 	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 {
 		return nil
 	}

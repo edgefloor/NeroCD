@@ -86,6 +86,7 @@ type Client struct {
 	hasBuild               bool
 	hasGitHubPush          bool
 	hasAutoDeploy          bool
+	hasDatabaseConnection  bool
 	river                  *river.Client[pgx.Tx]
 	pool                   *pgxpool.Pool
 	schema, host, database string
@@ -150,12 +151,17 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		river.AddWorker(workers, &autoDeployWorker{handler: automatic})
 		hasAutoDeploy = true
 	}
+	hasDatabaseConnection := false
+	if connection, ok := handler.(DatabaseConnectionHandler); ok {
+		river.AddWorker(workers, &databaseConnectionWorker{handler: connection})
+		hasDatabaseConnection = true
+	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers, Queues: map[string]river.QueueConfig{Queue: {MaxWorkers: cfg.MaxWorkers}}, JobTimeout: cfg.JobTimeout, SoftStopTimeout: cfg.DrainTimeout, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), FetchCooldown: 10 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap}, nil
+	return &Client{hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

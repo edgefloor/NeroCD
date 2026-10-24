@@ -202,6 +202,14 @@ func databaseBindingEntries(binding domain.HostingDatabaseBinding) []domain.Host
 // PutHostingDatabaseBinding atomically saves one pending binding and injected
 // runtime version. It does not dispatch jobs, connect containers or reveal secrets.
 func (s *PostgresStore) PutHostingDatabaseBinding(ctx context.Context, actor, application string, in domain.HostingDatabaseBindingInput, event domain.AuditEvent) (domain.HostingDatabaseBinding, error) {
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBinding, error) {
+		return putDatabaseBinding(ctx, tx, actor, application, in, event)
+	})
+}
+
+// putDatabaseBinding participates in the connection owner's transaction. The
+// standalone pending-binding path retains the same validation and receipts.
+func putDatabaseBinding(ctx context.Context, tx pgx.Tx, actor, application string, in domain.HostingDatabaseBindingInput, event domain.AuditEvent) (domain.HostingDatabaseBinding, error) {
 	if err := in.Validate(); err != nil {
 		return domain.HostingDatabaseBinding{}, err
 	}
@@ -209,164 +217,165 @@ func (s *PostgresStore) PutHostingDatabaseBinding(ctx context.Context, actor, ap
 		Actor, Application string
 		Input              domain.HostingDatabaseBindingInput
 	}{actor, application, in})
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBinding, error) {
-		var zero domain.HostingDatabaseBinding
-		q := sqlcgen.New(tx)
-		if err := databaseBindingSchema(ctx, q); err != nil {
-			return zero, err
-		}
-		app, database, err := lockDatabaseBindingTargets(ctx, tx, application, in.DatabaseResourceID)
-		if err != nil {
-			return zero, err
-		}
-		if err = authorizeBuildActor(ctx, tx, actor, app.ProjectID, "owner"); err != nil {
-			return zero, err
-		}
-		if err = databaseBindingGrant(ctx, q, app.ProjectID, app.DestinationID); err != nil {
-			return zero, err
-		}
-		generation, err := q.LockHostingRuntimeConfiguration(ctx, application)
-		if errors.Is(err, pgx.ErrNoRows) {
-			generation, err = 0, nil
-		}
-		if err != nil {
-			return zero, err
-		}
-		receipt, err := q.ReadHostingDatabaseBindingReceipt(ctx, sqlcgen.ReadHostingDatabaseBindingReceiptParams{ApplicationResourceID: application, RequestID: in.RequestID})
-		if err == nil {
-			var accepted domain.HostingDatabaseBindingInput
-			if receipt.ActorID != actor || receipt.RequestHash != requestHash || json.Unmarshal(receipt.AcceptedRequest, &accepted) != nil || accepted != in {
-				return zero, ErrConflict
-			}
-			binding, e := readDatabaseBinding(ctx, q, application)
-			if e != nil || binding.DatabaseResourceID != in.DatabaseResourceID || binding.ProjectID != app.ProjectID || binding.DestinationID != app.DestinationID || binding.ApplicationBindingID != app.BindingID || binding.DatabaseBindingID != database.BindingID || binding.ServerID != app.ServerID || binding.RunnerID != app.RunnerID || binding.Hash != receipt.BindingHash || binding.RuntimeConfiguration.Generation != receipt.RuntimeGeneration || binding.RuntimeConfiguration.Hash != receipt.RuntimeHash {
-				return zero, ErrConflict
-			}
-			version, e := q.GetHostingRuntimeVersion(ctx, sqlcgen.GetHostingRuntimeVersionParams{ResourceID: application, Generation: receipt.RuntimeGeneration})
-			if e != nil || version.BodyHash != receipt.RuntimeHash || version.ProjectID != app.ProjectID {
-				return zero, ErrConflict
-			}
-			var document domain.HostingRuntimeDocument
-			if json.Unmarshal(version.Body, &document) != nil {
-				return zero, ErrConflict
-			}
-			canonical, refs, e := domain.CanonicalHostingRuntimeDocument(document.Entries)
-			if e != nil || domain.HostingDocumentHash(canonical) != version.BodyHash {
-				return zero, ErrConflict
-			}
-			if e = validateRuntimeReferences(ctx, q, binding.ProjectID, refs); e != nil {
-				return zero, e
-			}
-			return binding, finalizeDatabaseBinding(ctx, tx, actor, app.ProjectID, app.DestinationID, "owner")
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return zero, err
-		}
-		if err = databaseBindingPendingGate(ctx, tx, application); err != nil {
-			return zero, err
-		}
-		if app.Generation != in.ExpectedResourceGeneration || database.Generation != in.ExpectedDatabaseGeneration || generation != in.ExpectedRuntimeGeneration || generation == math.MaxInt64 {
+	var zero domain.HostingDatabaseBinding
+	q := sqlcgen.New(tx)
+	if err := databaseBindingSchema(ctx, q); err != nil {
+		return zero, err
+	}
+	app, database, err := lockDatabaseBindingTargets(ctx, tx, application, in.DatabaseResourceID)
+	if err != nil {
+		return zero, err
+	}
+	if err = databaseConnectionBindingGate(ctx, tx, application, in.DatabaseResourceID); err != nil {
+		return zero, err
+	}
+	if err = authorizeBuildActor(ctx, tx, actor, app.ProjectID, "owner"); err != nil {
+		return zero, err
+	}
+	if err = databaseBindingGrant(ctx, q, app.ProjectID, app.DestinationID); err != nil {
+		return zero, err
+	}
+	generation, err := q.LockHostingRuntimeConfiguration(ctx, application)
+	if errors.Is(err, pgx.ErrNoRows) {
+		generation, err = 0, nil
+	}
+	if err != nil {
+		return zero, err
+	}
+	receipt, err := q.ReadHostingDatabaseBindingReceipt(ctx, sqlcgen.ReadHostingDatabaseBindingReceiptParams{ApplicationResourceID: application, RequestID: in.RequestID})
+	if err == nil {
+		var accepted domain.HostingDatabaseBindingInput
+		if receipt.ActorID != actor || receipt.RequestHash != requestHash || json.Unmarshal(receipt.AcceptedRequest, &accepted) != nil || accepted != in {
 			return zero, ErrConflict
 		}
-		supported, err := q.HostingDatabaseBindingApplicationSupported(ctx, application)
-		if err != nil || supported == nil || !*supported {
+		binding, e := readDatabaseBinding(ctx, q, application)
+		if e != nil || binding.DatabaseResourceID != in.DatabaseResourceID || binding.ProjectID != app.ProjectID || binding.DestinationID != app.DestinationID || binding.ApplicationBindingID != app.BindingID || binding.DatabaseBindingID != database.BindingID || binding.ServerID != app.ServerID || binding.RunnerID != app.RunnerID || binding.Hash != receipt.BindingHash || binding.RuntimeConfiguration.Generation != receipt.RuntimeGeneration || binding.RuntimeConfiguration.Hash != receipt.RuntimeHash {
 			return zero, ErrConflict
 		}
-		for _, target := range []string{app.BindingID, database.BindingID} {
-			safe, e := q.HostingDatabaseBindingTargetSafe(ctx, target)
-			if e != nil || safe == nil || !*safe {
-				return zero, ErrConflict
-			}
-		}
-		healthy, err := databaseBindingHealthy(ctx, tx, in.DatabaseResourceID, database.BindingID)
-		if err != nil {
-			return zero, err
-		}
-		binding := domain.HostingDatabaseBinding{Version: domain.HostingDatabaseBindingVersion, ID: domain.HostingDatabaseBindingID(app.BindingID, database.BindingID), Generation: 1, ApplicationResourceID: application, ApplicationResourceGeneration: app.Generation, ApplicationBindingID: app.BindingID, DatabaseResourceID: in.DatabaseResourceID, DatabaseResourceGeneration: database.Generation, DatabaseBindingID: database.BindingID, ProjectID: app.ProjectID, DestinationID: app.DestinationID, ServerID: app.ServerID, RunnerID: app.RunnerID, Database: healthy.Snapshot.Database, NetworkName: domain.HostingDatabaseNetworkName(database.BindingID), Alias: domain.HostingDatabaseBindingAlias(database.BindingID), EnvironmentNames: domain.HostingDatabaseBindingEnvironmentNames(healthy.Snapshot.Database.Engine)}
-		for _, ref := range healthy.Plan.Database.Credentials {
-			if ref.Role == "app" {
-				binding.Credential = ref
-			}
-		}
-		credentials, err := q.HostingDatabaseCredentials(ctx, in.DatabaseResourceID)
-		if err != nil {
-			return zero, err
-		}
-		matched := false
-		for _, ref := range credentials {
-			if ref.Role == "app" && ref.Username == binding.Credential.Username && ref.SecretID == binding.Credential.SecretID && ref.Version == binding.Credential.Version {
-				matched = true
-			}
-		}
-		if !matched {
+		version, e := q.GetHostingRuntimeVersion(ctx, sqlcgen.GetHostingRuntimeVersionParams{ResourceID: application, Generation: receipt.RuntimeGeneration})
+		if e != nil || version.BodyHash != receipt.RuntimeHash || version.ProjectID != app.ProjectID {
 			return zero, ErrConflict
 		}
-		entries := []domain.HostingRuntimeEntry{}
-		if generation > 0 {
-			prior, e := q.GetHostingRuntimeVersion(ctx, sqlcgen.GetHostingRuntimeVersionParams{ResourceID: application, Generation: generation})
-			if e != nil {
-				return zero, e
-			}
-			saved, e := runtimeVersion(prior, app.Generation)
-			if e != nil {
-				return zero, e
-			}
-			entries = saved.Entries
-		}
-		for _, entry := range entries {
-			if slices.Contains(binding.EnvironmentNames, entry.Name) {
-				return zero, ErrConflict
-			}
-		}
-		entries = append(entries, databaseBindingEntries(binding)...)
-		doc, refs, err := domain.CanonicalHostingRuntimeDocument(entries)
-		if err != nil {
+		var document domain.HostingRuntimeDocument
+		if json.Unmarshal(version.Body, &document) != nil {
 			return zero, ErrConflict
 		}
-		binding.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{Generation: generation + 1, Hash: domain.HostingDocumentHash(doc)}
-		binding.Hash = binding.DocumentHash()
-		appSnapshot := domain.HostingSnapshot{ResourceID: application, ResourceGeneration: app.Generation, BindingID: app.BindingID, DestinationID: app.DestinationID, ServerID: app.ServerID, RunnerID: app.RunnerID, PolicyVersion: domain.HostingRuntimePolicyVersion, RuntimeConfiguration: binding.RuntimeConfiguration}
-		if binding.ValidateTargets(app.ProjectID, appSnapshot, database.ProjectID, *healthy.Plan) != nil {
+		canonical, refs, e := domain.CanonicalHostingRuntimeDocument(document.Entries)
+		if e != nil || domain.HostingDocumentHash(canonical) != version.BodyHash {
 			return zero, ErrConflict
 		}
-		if err = validateRuntimeReferences(ctx, q, app.ProjectID, refs); err != nil {
-			return zero, err
-		}
-		if generation == 0 {
-			if err = q.CreateHostingRuntimeConfiguration(ctx, sqlcgen.CreateHostingRuntimeConfigurationParams{ResourceID: application, ProjectID: app.ProjectID}); err != nil {
-				return zero, err
-			}
-		}
-		if _, err = q.InsertHostingRuntimeVersion(ctx, sqlcgen.InsertHostingRuntimeVersionParams{ResourceID: application, ProjectID: app.ProjectID, Generation: generation + 1, Body: buildJSON(doc), BodyHash: binding.RuntimeConfiguration.Hash, CreatedBy: actor}); err != nil {
-			return zero, err
-		}
-		for _, ref := range refs {
-			if err = q.InsertHostingRuntimeSecretReference(ctx, sqlcgen.InsertHostingRuntimeSecretReferenceParams{ResourceID: application, ProjectID: app.ProjectID, Generation: generation + 1, SecretID: ref.SecretID, SecretVersion: ref.Version}); err != nil {
-				return zero, err
-			}
-		}
-		if generation > 0 {
-			if err = casBuild(q.AdvanceHostingRuntimeConfiguration(ctx, sqlcgen.AdvanceHostingRuntimeConfigurationParams{ResourceID: application, Generation: generation})); err != nil {
-				return zero, err
-			}
-		}
-		event.ID, event.ActorID, event.Action, event.TargetID = domain.HostingRuntimeAuditID(application, in.RequestID), actor, "hosting.runtime_configuration.updated", application
-		event.Metadata = map[string]any{"purpose": "database_binding_pending", "binding_id": binding.ID, "database_resource_id": in.DatabaseResourceID, "project_id": app.ProjectID, "resource_id": application, "runtime_generation": generation + 1, "entry_count": len(doc.Entries), "secret_reference_count": len(refs)}
-		if event.CreatedAt.IsZero() {
-			event.CreatedAt = time.Now().UTC()
-		}
-		if err = createAuditWithQueries(ctx, q, event); err != nil {
-			return zero, err
-		}
-		if err = q.InsertHostingRuntimeReceipt(ctx, sqlcgen.InsertHostingRuntimeReceiptParams{ResourceID: application, ProjectID: app.ProjectID, RequestID: in.RequestID, ActorID: actor, RequestHash: requestHash, ExpectedResourceGeneration: app.Generation, ExpectedRuntimeGeneration: generation, RuntimeGeneration: generation + 1, AuditID: event.ID}); err != nil {
-			return zero, err
-		}
-		if err = q.InsertHostingDatabaseBinding(ctx, sqlcgen.InsertHostingDatabaseBindingParams{ID: binding.ID, ApplicationResourceID: application, ApplicationBindingID: app.BindingID, DatabaseResourceID: in.DatabaseResourceID, DatabaseBindingID: database.BindingID, ProjectID: app.ProjectID, DestinationID: app.DestinationID, DatabaseOperationID: healthy.ID, RuntimeGeneration: generation + 1, RuntimeHash: binding.RuntimeConfiguration.Hash, CredentialSecretID: binding.Credential.SecretID, CredentialVersion: binding.Credential.Version, Body: buildJSON(binding), BodyHash: binding.Hash, CreatedBy: actor}); err != nil {
-			return zero, err
-		}
-		if err = q.InsertHostingDatabaseBindingReceipt(ctx, sqlcgen.InsertHostingDatabaseBindingReceiptParams{ApplicationResourceID: application, RequestID: in.RequestID, ActorID: actor, AcceptedRequest: buildJSON(in), RequestHash: requestHash, BindingHash: binding.Hash, RuntimeGeneration: generation + 1, RuntimeHash: binding.RuntimeConfiguration.Hash, AuditID: event.ID}); err != nil {
-			return zero, err
+		if e = validateRuntimeReferences(ctx, q, binding.ProjectID, refs); e != nil {
+			return zero, e
 		}
 		return binding, finalizeDatabaseBinding(ctx, tx, actor, app.ProjectID, app.DestinationID, "owner")
-	})
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return zero, err
+	}
+	if err = databaseBindingPendingGate(ctx, tx, application); err != nil {
+		return zero, err
+	}
+	if app.Generation != in.ExpectedResourceGeneration || database.Generation != in.ExpectedDatabaseGeneration || generation != in.ExpectedRuntimeGeneration || generation == math.MaxInt64 {
+		return zero, ErrConflict
+	}
+	supported, err := q.HostingDatabaseBindingApplicationSupported(ctx, application)
+	if err != nil || supported == nil || !*supported {
+		return zero, ErrConflict
+	}
+	for _, target := range []string{app.BindingID, database.BindingID} {
+		safe, e := q.HostingDatabaseBindingTargetSafe(ctx, target)
+		if e != nil || safe == nil || !*safe {
+			return zero, ErrConflict
+		}
+	}
+	healthy, err := databaseBindingHealthy(ctx, tx, in.DatabaseResourceID, database.BindingID)
+	if err != nil {
+		return zero, err
+	}
+	binding := domain.HostingDatabaseBinding{Version: domain.HostingDatabaseBindingVersion, ID: domain.HostingDatabaseBindingID(app.BindingID, database.BindingID), Generation: 1, ApplicationResourceID: application, ApplicationResourceGeneration: app.Generation, ApplicationBindingID: app.BindingID, DatabaseResourceID: in.DatabaseResourceID, DatabaseResourceGeneration: database.Generation, DatabaseBindingID: database.BindingID, ProjectID: app.ProjectID, DestinationID: app.DestinationID, ServerID: app.ServerID, RunnerID: app.RunnerID, Database: healthy.Snapshot.Database, NetworkName: domain.HostingDatabaseNetworkName(database.BindingID), Alias: domain.HostingDatabaseBindingAlias(database.BindingID), EnvironmentNames: domain.HostingDatabaseBindingEnvironmentNames(healthy.Snapshot.Database.Engine)}
+	for _, ref := range healthy.Plan.Database.Credentials {
+		if ref.Role == "app" {
+			binding.Credential = ref
+		}
+	}
+	credentials, err := q.HostingDatabaseCredentials(ctx, in.DatabaseResourceID)
+	if err != nil {
+		return zero, err
+	}
+	matched := false
+	for _, ref := range credentials {
+		if ref.Role == "app" && ref.Username == binding.Credential.Username && ref.SecretID == binding.Credential.SecretID && ref.Version == binding.Credential.Version {
+			matched = true
+		}
+	}
+	if !matched {
+		return zero, ErrConflict
+	}
+	entries := []domain.HostingRuntimeEntry{}
+	if generation > 0 {
+		prior, e := q.GetHostingRuntimeVersion(ctx, sqlcgen.GetHostingRuntimeVersionParams{ResourceID: application, Generation: generation})
+		if e != nil {
+			return zero, e
+		}
+		saved, e := runtimeVersion(prior, app.Generation)
+		if e != nil {
+			return zero, e
+		}
+		entries = saved.Entries
+	}
+	for _, entry := range entries {
+		if slices.Contains(binding.EnvironmentNames, entry.Name) {
+			return zero, ErrConflict
+		}
+	}
+	entries = append(entries, databaseBindingEntries(binding)...)
+	doc, refs, err := domain.CanonicalHostingRuntimeDocument(entries)
+	if err != nil {
+		return zero, ErrConflict
+	}
+	binding.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{Generation: generation + 1, Hash: domain.HostingDocumentHash(doc)}
+	binding.Hash = binding.DocumentHash()
+	appSnapshot := domain.HostingSnapshot{ResourceID: application, ResourceGeneration: app.Generation, BindingID: app.BindingID, DestinationID: app.DestinationID, ServerID: app.ServerID, RunnerID: app.RunnerID, PolicyVersion: domain.HostingRuntimePolicyVersion, RuntimeConfiguration: binding.RuntimeConfiguration}
+	if binding.ValidateTargets(app.ProjectID, appSnapshot, database.ProjectID, *healthy.Plan) != nil {
+		return zero, ErrConflict
+	}
+	if err = validateRuntimeReferences(ctx, q, app.ProjectID, refs); err != nil {
+		return zero, err
+	}
+	if generation == 0 {
+		if err = q.CreateHostingRuntimeConfiguration(ctx, sqlcgen.CreateHostingRuntimeConfigurationParams{ResourceID: application, ProjectID: app.ProjectID}); err != nil {
+			return zero, err
+		}
+	}
+	if _, err = q.InsertHostingRuntimeVersion(ctx, sqlcgen.InsertHostingRuntimeVersionParams{ResourceID: application, ProjectID: app.ProjectID, Generation: generation + 1, Body: buildJSON(doc), BodyHash: binding.RuntimeConfiguration.Hash, CreatedBy: actor}); err != nil {
+		return zero, err
+	}
+	for _, ref := range refs {
+		if err = q.InsertHostingRuntimeSecretReference(ctx, sqlcgen.InsertHostingRuntimeSecretReferenceParams{ResourceID: application, ProjectID: app.ProjectID, Generation: generation + 1, SecretID: ref.SecretID, SecretVersion: ref.Version}); err != nil {
+			return zero, err
+		}
+	}
+	if generation > 0 {
+		if err = casBuild(q.AdvanceHostingRuntimeConfiguration(ctx, sqlcgen.AdvanceHostingRuntimeConfigurationParams{ResourceID: application, Generation: generation})); err != nil {
+			return zero, err
+		}
+	}
+	event.ID, event.ActorID, event.Action, event.TargetID = domain.HostingRuntimeAuditID(application, in.RequestID), actor, "hosting.runtime_configuration.updated", application
+	event.Metadata = map[string]any{"purpose": "database_binding_pending", "binding_id": binding.ID, "database_resource_id": in.DatabaseResourceID, "project_id": app.ProjectID, "resource_id": application, "runtime_generation": generation + 1, "entry_count": len(doc.Entries), "secret_reference_count": len(refs)}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	if err = createAuditWithQueries(ctx, q, event); err != nil {
+		return zero, err
+	}
+	if err = q.InsertHostingRuntimeReceipt(ctx, sqlcgen.InsertHostingRuntimeReceiptParams{ResourceID: application, ProjectID: app.ProjectID, RequestID: in.RequestID, ActorID: actor, RequestHash: requestHash, ExpectedResourceGeneration: app.Generation, ExpectedRuntimeGeneration: generation, RuntimeGeneration: generation + 1, AuditID: event.ID}); err != nil {
+		return zero, err
+	}
+	if err = q.InsertHostingDatabaseBinding(ctx, sqlcgen.InsertHostingDatabaseBindingParams{ID: binding.ID, ApplicationResourceID: application, ApplicationBindingID: app.BindingID, DatabaseResourceID: in.DatabaseResourceID, DatabaseBindingID: database.BindingID, ProjectID: app.ProjectID, DestinationID: app.DestinationID, DatabaseOperationID: healthy.ID, RuntimeGeneration: generation + 1, RuntimeHash: binding.RuntimeConfiguration.Hash, CredentialSecretID: binding.Credential.SecretID, CredentialVersion: binding.Credential.Version, Body: buildJSON(binding), BodyHash: binding.Hash, CreatedBy: actor}); err != nil {
+		return zero, err
+	}
+	if err = q.InsertHostingDatabaseBindingReceipt(ctx, sqlcgen.InsertHostingDatabaseBindingReceiptParams{ApplicationResourceID: application, RequestID: in.RequestID, ActorID: actor, AcceptedRequest: buildJSON(in), RequestHash: requestHash, BindingHash: binding.Hash, RuntimeGeneration: generation + 1, RuntimeHash: binding.RuntimeConfiguration.Hash, AuditID: event.ID}); err != nil {
+		return zero, err
+	}
+	return binding, finalizeDatabaseBinding(ctx, tx, actor, app.ProjectID, app.DestinationID, "owner")
 }

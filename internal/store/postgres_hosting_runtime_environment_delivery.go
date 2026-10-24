@@ -49,7 +49,13 @@ func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, 
 	if err != nil {
 		return result, err
 	}
-	if op.State != "prepared" || op.MutationHold || op.CleanupPlan != nil || op.RunID != in.Authority.RunID || op.PreparedReceipt == nil || op.CompleteReceipt != nil || op.Plan == nil || op.Release == nil || op.Snapshot.RunnerID != runner || op.Plan.Hash != in.PlanHash || op.Snapshot.RuntimeConfiguration != in.RuntimeConfiguration || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
+	if op.ApplicationDatabase != nil {
+		ctx, err = BindHostingDatabaseConnectionRunnerContext(ctx, runner, credentialHash)
+		if err != nil {
+			return result, err
+		}
+	}
+	if op.State != "prepared" || op.MutationHold || op.CleanupPlan != nil || op.RunID != in.Authority.RunID || op.PreparedReceipt == nil || op.CompleteReceipt != nil || op.Plan == nil || op.Release == nil || op.Snapshot.RunnerID != runner || op.Plan.Hash != in.PlanHash || op.Snapshot.RuntimeConfiguration != in.RuntimeConfiguration || !hostingOperationPlanMatches(op) {
 		return result, ErrConflict
 	}
 	if err = hostingRequireMode(ctx, tx, in.Authority, "deploy"); err != nil {
@@ -89,6 +95,11 @@ func (s *PostgresStore) AuthorizeHostingRuntimeEnvironment(ctx context.Context, 
 	}
 	if err = validateRuntimeReferences(ctx, q, op.ProjectID, refs); err != nil {
 		return result, err
+	}
+	if op.ApplicationDatabase != nil {
+		if err = connectionRuntimeSecretReferences(ctx, tx, op, refs); err != nil {
+			return result, err
+		}
 	}
 	if err = q.LockHostingRuntimeEnvironmentDelivery(ctx, in.DeliveryID); err != nil {
 		return result, err

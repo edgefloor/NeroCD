@@ -146,6 +146,13 @@ func compileHostingStoragePlan(ctx context.Context, tx pgx.Tx, op domain.Hosting
 		if len(retained) != 0 {
 			return domain.HostingApplyPlan{}, ErrConflict
 		}
+		if op.DatabaseMaintenance != nil {
+			proof := op.DatabaseMaintenance
+			if proof.Validate() != nil || proof.PreviousPlan.Storage == nil || previous == nil || !networkCaptureDocumentEqual(*previous, proof.PreviousHealthy) || release != proof.PreviousPlan.Release || descriptor != *proof.PreviousPlan.Storage {
+				return domain.HostingApplyPlan{}, ErrConflict
+			}
+			return domain.CompileHostingDatabaseMaintenancePlan(op.Snapshot, release, *proof)
+		}
 		if op.DatabaseUpgrade != nil {
 			proof := op.DatabaseUpgrade
 			if previous == nil || !networkCaptureDocumentEqual(*previous, proof.PreviousHealthy) || release != proof.PreviousPlan.Release || descriptor != *proof.PreviousPlan.Storage {
@@ -221,7 +228,7 @@ func finalHostingStorageAuthority(ctx context.Context, tx pgx.Tx, runner string,
 	if err := validateStorageContinuityFinal(ctx, tx, op); err != nil {
 		return err
 	}
-	if op.DatabaseUpgrade != nil {
+	if op.DatabaseUpgrade != nil || op.DatabaseMaintenance != nil {
 		return finalDatabaseAuthority(ctx, tx, runner, a, op, false, false)
 	}
 	return nil
@@ -395,6 +402,9 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 				if readErr = databaseUpgradeHistoricalRead(ctx, tx, op); readErr != nil {
 					return zero, readErr
 				}
+			}
+			if err = databaseConnectionHistoricalRunnerRead(ctx, tx, runner, op); err != nil {
+				return zero, err
 			}
 			return domain.HostingStorageMaterializedAck{Materialization: origin, Receipt: storageReceipt(prior)}, nil
 		}
