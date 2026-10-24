@@ -176,30 +176,31 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
-	StorageArchive        *HostingStorageArchive `json:"storage_archive,omitempty"`
-	CleanupPlan           *HostingCleanupPlan    `json:"cleanup_plan,omitempty"`
-	ObservationLease      *RunLease              `json:"observation_lease,omitempty"`
-	TaskMode              string                 `json:"task_mode,omitempty"`
-	ReconciliationRunID   string                 `json:"reconciliation_run_id,omitempty"`
-	ReconciliationHealthy *HostingHealthy        `json:"reconciliation_healthy,omitempty"`
-	ID                    string                 `json:"id"`
-	ProjectID             string                 `json:"project_id"`
-	ResourceID            string                 `json:"resource_id"`
-	BindingID             string                 `json:"binding_id"`
-	RunID                 string                 `json:"run_id,omitempty"`
-	State                 string                 `json:"state"`
-	Snapshot              HostingSnapshot        `json:"snapshot"`
-	Release               *HostingRelease        `json:"release,omitempty"`
-	Plan                  *HostingApplyPlan      `json:"plan,omitempty"`
-	PreparedReceipt       *HostingReceipt        `json:"prepared_receipt,omitempty"`
-	CompleteReceipt       *HostingReceipt        `json:"complete_receipt,omitempty"`
-	Result                *HostingResult         `json:"result,omitempty"`
-	RestoreOwnershipHeld  bool                   `json:"restore_ownership_held"`
-	MutationHold          bool                   `json:"mutation_hold"`
-	ReconcileRequested    bool                   `json:"reconcile_requested"`
-	CreatedBy             string                 `json:"created_by"`
-	CreatedAt             time.Time              `json:"created_at"`
-	UpdatedAt             time.Time              `json:"updated_at"`
+	DatabaseUpgrade       *HostingDatabaseUpgradeProof `json:"database_upgrade,omitempty"`
+	StorageArchive        *HostingStorageArchive       `json:"storage_archive,omitempty"`
+	CleanupPlan           *HostingCleanupPlan          `json:"cleanup_plan,omitempty"`
+	ObservationLease      *RunLease                    `json:"observation_lease,omitempty"`
+	TaskMode              string                       `json:"task_mode,omitempty"`
+	ReconciliationRunID   string                       `json:"reconciliation_run_id,omitempty"`
+	ReconciliationHealthy *HostingHealthy              `json:"reconciliation_healthy,omitempty"`
+	ID                    string                       `json:"id"`
+	ProjectID             string                       `json:"project_id"`
+	ResourceID            string                       `json:"resource_id"`
+	BindingID             string                       `json:"binding_id"`
+	RunID                 string                       `json:"run_id,omitempty"`
+	State                 string                       `json:"state"`
+	Snapshot              HostingSnapshot              `json:"snapshot"`
+	Release               *HostingRelease              `json:"release,omitempty"`
+	Plan                  *HostingApplyPlan            `json:"plan,omitempty"`
+	PreparedReceipt       *HostingReceipt              `json:"prepared_receipt,omitempty"`
+	CompleteReceipt       *HostingReceipt              `json:"complete_receipt,omitempty"`
+	Result                *HostingResult               `json:"result,omitempty"`
+	RestoreOwnershipHeld  bool                         `json:"restore_ownership_held"`
+	MutationHold          bool                         `json:"mutation_hold"`
+	ReconcileRequested    bool                         `json:"reconcile_requested"`
+	CreatedBy             string                       `json:"created_by"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
 }
 
 // HostingAuthority must match the authenticated runner and persisted task target.

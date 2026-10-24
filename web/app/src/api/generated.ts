@@ -5234,6 +5234,7 @@ export interface components {
             /** @enum {string} */
             state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "verifying" | "succeeded" | "failed" | "canceled" | "cancel_requested" | "reconciliation_required";
             snapshot: components["schemas"]["HostingSnapshot"] | components["schemas"]["HostingStorageArchiveZeroSnapshot"];
+            database_upgrade?: components["schemas"]["HostingDatabaseUpgradeProof"];
             cleanup_plan?: components["schemas"]["HostingCleanupPlan"];
             release?: components["schemas"]["HostingRelease"];
             plan?: components["schemas"]["HostingApplyPlan"];
@@ -6983,6 +6984,22 @@ export interface components {
         HostingDatabaseNetworkCaptureClaim: {
             capture: components["schemas"]["HostingDatabaseNetworkCapture"];
             lease: components["schemas"]["HostingDatabaseNetworkCaptureLease"];
+        };
+        HostingDatabaseUpgradeInput: {
+            /** Format: int64 */
+            expected_generation: number;
+            capture_id: string;
+            expected_origin_hash: string;
+            idempotency_key: string;
+        };
+        HostingDatabaseUpgradeProof: {
+            /** @enum {string} */
+            version: "database-network.empty-upgrade.v1";
+            capture_plan: components["schemas"]["HostingDatabaseNetworkCapturePlan"];
+            origin_receipt: components["schemas"]["HostingDatabaseNetworkOriginReceipt"];
+            previous_plan: components["schemas"]["HostingApplyPlan"];
+            previous_healthy: components["schemas"]["HostingHealthy"];
+            hash: string;
         };
     };
     responses: {

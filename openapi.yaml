@@ -8050,6 +8050,9 @@ components:
               }
             ]
           },
+          "database_upgrade": {
+            "$ref": "#/components/schemas/HostingDatabaseUpgradeProof"
+          },
           "cleanup_plan": {
             "$ref": "#/components/schemas/HostingCleanupPlan"
           },
@@ -11888,5 +11891,31 @@ components:
           "lease": {
             "$ref": "#/components/schemas/HostingDatabaseNetworkCaptureLease"
           }
+        }
+      }
+    HostingDatabaseUpgradeInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["expected_generation", "capture_id", "expected_origin_hash", "idempotency_key"],
+        "properties": {
+          "expected_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "capture_id": {"type": "string", "pattern": "^hnc_[0-9a-f]{32}$"},
+          "expected_origin_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    HostingDatabaseUpgradeProof:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "capture_plan", "origin_receipt", "previous_plan", "previous_healthy", "hash"],
+        "properties": {
+          "version": {"type": "string", "enum": ["database-network.empty-upgrade.v1"]},
+          "capture_plan": {"$ref": "#/components/schemas/HostingDatabaseNetworkCapturePlan"},
+          "origin_receipt": {"$ref": "#/components/schemas/HostingDatabaseNetworkOriginReceipt"},
+          "previous_plan": {"$ref": "#/components/schemas/HostingApplyPlan"},
+          "previous_healthy": {"$ref": "#/components/schemas/HostingHealthy"},
+          "hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         }
       }
