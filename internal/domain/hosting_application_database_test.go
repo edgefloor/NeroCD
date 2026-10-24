@@ -464,14 +464,20 @@ func TestApplicationDatabaseRepeatedReplacementWithRetirement(t *testing.T) {
 			b := retirementMember(a, "b", "4", "5", in.MembershipRevision+1)
 			b.ApplicationHealthy.Snapshot, b.ApplicationHealthy.Release = planB.Snapshot, planB.Release
 			b.ApplicationHealthy.OperationID, b.ApplicationHealthy.PlanHash = in.OperationID, planB.Hash
+			b.EndpointPlan.OperationID = in.OperationID
 			b.EndpointPlan.Target.ContainerOperationID = b.ApplicationHealthy.OperationID
 			b.EndpointPlan.Target.ContainerPlanHash = planB.Hash
 			b.EndpointPlan.Hash = b.EndpointPlan.DocumentHash()
 			b.Receipt.Observation.Endpoint.Target = b.EndpointPlan.Target
+			b.Receipt.OperationID = b.EndpointPlan.OperationID
 			b.Receipt.PlanHash, b.Receipt.Hash = b.EndpointPlan.Hash, ""
 			b.Receipt.Hash = b.Receipt.DocumentHash()
 			in.MembershipRevision += 2
 			retiredA := retirementProof(a, in.MembershipRevision)
+			// B attaches itself and retires A within its own live operation.
+			// C's later intent is distinct from this now-settled history.
+			retiredA.RetirePlan.OperationID = b.ApplicationHealthy.OperationID
+			retirementReceipts(&retiredA)
 			in.OperationID, in.Members, in.Retired = "candidate_c", []HostingDatabaseNetworkMemberProof{b}, []HostingDatabaseNetworkRetirementProof{retiredA}
 			s.HostPort++
 			planC, err := CompileHostingApplicationDatabasePlan(s, r, &b.ApplicationHealthy, nil, in)
@@ -550,6 +556,36 @@ func TestApplicationDatabaseRetirementToEmpty(t *testing.T) {
 			in.Retired[0].Attached.Binding.EnvironmentNames[0] = "foreign"
 			if p.ApplicationDatabase.Binding.EnvironmentNames[0] == "foreign" {
 				t.Fatal("application plan aliases transient retirement evidence")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRejectsHistoricalRetirementOperation(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			baseline, healthy, network := retirementFixture(t, engine, false)
+			in := retirementApplicationInput(baseline, healthy, network)
+			s, r := in.BindingApplicationSnapshot, network.Members[0].ApplicationHealthy.Release
+			s.PolicyVersion, s.HostPort = HostingApplicationDatabasePolicyVersion, 21003
+			s.ApplicationDatabase = HostingApplicationDatabaseRef{BindingID: in.Binding.ID, BindingHash: in.Binding.Hash}
+			in.MembershipRevision++
+			in.Retired = []HostingDatabaseNetworkRetirementProof{retirementProof(in.Members[0], in.MembershipRevision)}
+			in.Members = nil
+			p, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in)
+			if err != nil || ValidateHostingApplicationDatabasePlan(p, in) != nil {
+				t.Fatal("valid prospective operation distinct from historical retirement rejected", err)
+			}
+			in.OperationID = in.Retired[0].RetirePlan.OperationID
+			if _, err := CompileHostingApplicationDatabasePlan(s, r, nil, nil, in); err == nil {
+				t.Error("compiler accepted settled retirement operation as a new application intent")
+			}
+			p.ApplicationDatabase.OperationID = in.OperationID
+			p.ApplicationDatabase.Hash = p.ApplicationDatabase.DocumentHash()
+			p.Hash = ""
+			p.Hash = HostingDocumentHash(p)
+			if ValidateHostingApplicationDatabasePlan(p, in) == nil {
+				t.Error("validator accepted self-rehashed historical retirement operation reuse")
 			}
 		})
 	}
