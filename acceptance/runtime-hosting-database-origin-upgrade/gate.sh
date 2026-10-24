@@ -172,6 +172,30 @@ def inventory(kind, tag, users=False):
     return found
 
 
+def canonical_inventory(lines):
+    # Docker formats Labels from a map with unstable order. Preserve every other
+    # field and compare strict key/value maps; ambiguous formatting fails closed.
+    if len(lines) > 4096:
+        raise Failure("Docker inventory exceeds bound")
+    result = []
+    for line in lines:
+        row = document(line)
+        if not isinstance(row, dict):
+            raise Failure("malformed inventory row")
+        if "Labels" in row:
+            if not isinstance(row["Labels"], str):
+                raise Failure("malformed inventory labels")
+            labels = {}
+            for item in row["Labels"].split(",") if row["Labels"] else []:
+                key, separator, value = item.partition("=")
+                if not separator or not key or key in labels:
+                    raise Failure("ambiguous inventory labels")
+                labels[key] = value
+            row["Labels"] = labels
+        result.append(json.dumps(row, sort_keys=True))
+    return sorted(result)
+
+
 def verified_volume(allowed_user=""):
     global volume_pin
     value = inspect("volume", VOLUME, "volume-latest-inspect")
@@ -230,7 +254,7 @@ def main():
         if kind == "image":
             args += ["--digests"]
         rows = docker(*args, "--format", "{{json .}}", output="host-" + kind + "s-before").splitlines()
-        other_inventories[kind] = sorted(json.dumps(document(line), sort_keys=True) for line in rows)
+        other_inventories[kind] = canonical_inventory(rows)
     # Only successful complete inventories establish absence. Inspect errors never do.
     containers = inventory("container", "host-containers-before")
     volumes = inventory("volume", "host-volumes-before")
@@ -367,28 +391,34 @@ finally:
         cleanup_failure = str(error)
         say("cleanup failed: " + cleanup_failure)
         status = status or 1
+    # Capture every inventory kind even when another comparison fails. A failed
+    # check remains failed; it must not erase evidence needed for reconciliation.
+    for kind in ("container", "volume", "network", "image"):
+        try:
+            if kind in ("container", "volume"):
+                after = inventory(kind, "host-" + ("containers" if kind == "container" else "volumes") + "-after")
+                before = evidence / ("host-containers-before" if kind == "container" else "host-volumes-before")
+                if before.exists():
+                    if kind == "container":
+                        original = {document(line)["Names"]: document(line)["ID"] for line in before.read_text().splitlines()}
+                        actual = {name: row["ID"] for name, row in after.items() if name != NAME}
+                    else:
+                        original = {document(line)["Name"] for line in before.read_text().splitlines()}
+                        actual = set(after) - {VOLUME}
+                    if original != actual:
+                        raise Failure("unrelated outer " + kind + " inventory changed")
+            else:
+                args = [kind, "ls", "--no-trunc"]
+                if kind == "image":
+                    args += ["--digests"]
+                rows = docker(*args, "--format", "{{json .}}", output="host-" + kind + "s-after").splitlines()
+                actual = canonical_inventory(rows)
+                if kind in other_inventories and other_inventories[kind] != actual:
+                    raise Failure("unrelated outer " + kind + " inventory changed")
+        except Exception as error:
+            say("final inventory/check failed: " + str(error))
+            status = status or 1
     try:
-        after_containers = inventory("container", "host-containers-after")
-        after_volumes = inventory("volume", "host-volumes-after")
-        # Preserve every unrelated outer object; compare stable identities only.
-        before_containers = evidence / "host-containers-before"
-        before_volumes = evidence / "host-volumes-before"
-        if before_containers.exists():
-            original = {document(line)["Names"]: document(line)["ID"] for line in before_containers.read_text().splitlines()}
-            actual = {name: row["ID"] for name, row in after_containers.items() if name != NAME}
-            if original != actual:
-                raise Failure("unrelated outer container inventory changed")
-        if before_volumes.exists():
-            original = {document(line)["Name"] for line in before_volumes.read_text().splitlines()}
-            if original != set(after_volumes) - {VOLUME}:
-                raise Failure("unrelated outer volume inventory changed")
-        for kind, original in other_inventories.items():
-            args = [kind, "ls", "--no-trunc"]
-            if kind == "image":
-                args += ["--digests"]
-            rows = docker(*args, "--format", "{{json .}}", output="host-" + kind + "s-after").splitlines()
-            if original != sorted(json.dumps(document(line), sort_keys=True) for line in rows):
-                raise Failure("unrelated outer " + kind + " inventory changed")
         if head is not None and (run(["git", "rev-parse", "HEAD"]).strip() != head or
                                  run(["git", "rev-parse", "HEAD^{tree}"]).strip() != tree or
                                  run(["git", "status", "--porcelain"], output="status-after").strip()):

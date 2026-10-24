@@ -72,10 +72,16 @@ elif tool == "docker":
         if state.get("foreign_user") and "--filter" in args:
             print(json.dumps(dict(Names="foreign-stopped", ID="e" * 64)))
     elif args[:2] in (["network", "ls"], ["image", "ls"]):
-        if case == "unrelated_network_change" and args[0] == "network":
+        if case in ("unrelated_network_change", "label_reordering", "label_value_changed") and args[0] == "network":
             state["network_lists"] = state.get("network_lists", 0) + 1
             save()
-            print(json.dumps(dict(ID="a" * 64 if state["network_lists"] == 1 else "b" * 64, Name="unrelated")))
+            if case == "unrelated_network_change":
+                print(json.dumps(dict(ID="a" * 64 if state["network_lists"] == 1 else "b" * 64, Name="unrelated")))
+            else:
+                labels = "first=1,second=2" if state["network_lists"] == 1 else "second=2,first=1"
+                if case == "label_value_changed" and state["network_lists"] != 1:
+                    labels = "second=3,first=1"
+                print(json.dumps(dict(ID="a" * 64, Name="unrelated", Labels=labels)))
     elif args[:2] == ["image", "inspect"]:
         print(json.dumps([dict(Id="sha256:" + "a" * 64, Config=dict(Labels={}))]))
     elif args[:2] == ["volume", "inspect"]:
@@ -203,6 +209,8 @@ class GateTest(unittest.TestCase):
                                      if line.startswith("evidence=")))
                 self.assertIn(f"gate_exit={expected}\n", (evidence / "result").read_text())
                 self.assertEqual(output.count("gate exit="), 1, output)
+                self.assertTrue((evidence / "host-images-after").is_file(), output)
+                self.assertTrue((evidence / "status-after").is_file(), output)
                 for pid in blocked:
                     with self.assertRaises(ProcessLookupError, msg=output):
                         os.kill(pid, 0)
@@ -333,6 +341,32 @@ class GateTest(unittest.TestCase):
                 with self.assertRaises(ProcessLookupError):
                     os.kill(pid, 0)
             self.assertIn("owned process group joined: " + str(pids[0]), messages)
+
+    def test_outer_label_reordering_is_equal_but_value_change_fails(self):
+        for case, expected in (("label_reordering", 0), ("label_value_changed", 1)):
+            with self.subTest(case=case):
+                state, commands, output = self.run_gate(case, expected)
+                self.assertEqual(state, {"network_lists": 2})
+                self.assertTrue(any(args[:2] == ["image", "ls"] for args in commands))
+                if expected:
+                    self.assertIn("unrelated outer network inventory changed", output)
+
+    def test_canonical_label_parser_rejects_ambiguity(self):
+        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n", 1)[1].rsplit("\nPY\n", 1)[0]
+        names = {"Failure", "document", "canonical_inventory"}
+        definitions = [node for node in ast.parse(source).body
+                       if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
+        namespace = dict(json=json)
+        exec(compile(ast.Module(body=definitions, type_ignores=[]), "canonical-inventory", "exec"), namespace)
+        canonical = namespace["canonical_inventory"]
+        for labels in ("duplicate=1,duplicate=1", "missing_separator", "=empty_key", None):
+            with self.subTest(labels=labels):
+                with self.assertRaises(namespace["Failure"]):
+                    canonical([json.dumps(dict(ID="a" * 64, Labels=labels))])
+        self.assertEqual(canonical([json.dumps(dict(Labels="a=1,b=2"))]),
+                         canonical([json.dumps(dict(Labels="b=2,a=1"))]))
+        self.assertNotEqual(canonical([json.dumps(dict(Labels="a=1,b=2"))]),
+                            canonical([json.dumps(dict(Labels="b=3,a=1"))]))
 
     def test_unrelated_outer_network_change_rejects_result(self):
         state, commands, output = self.run_gate("unrelated_network_change", 1)

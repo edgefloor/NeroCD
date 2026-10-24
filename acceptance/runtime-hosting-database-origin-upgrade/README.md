@@ -20,7 +20,10 @@ Missing or changed retained origin, expired authority/credentials and a foreign 
 reject upgrade without any Docker mutation or source stop. A deliberately wrong
 actual alias must reject read-only observation; the fixture restores the intended
 alias before C. Observation commands are restricted to inspect/list/info/top and
-must preserve all protected state and secret files. Client credential JSON travels
+must preserve all protected state and secret files. The exact owned-volume listing
+used by the engine is permitted; other volume actions remain refused. Failed B/C
+applications retain a bounded sequence of closed command tags and candidate shape
+booleans/counts, excluding raw command arguments, paths and credentials. Client credential JSON travels
 only over Docker exec stdin, and client diagnostics are discarded. The local
 redaction test verifies malformed/oversized inputs cannot echo credential markers.
 
@@ -70,6 +73,8 @@ volume metadata before removal. Ambiguous outcomes preserve reserved storage;
 inspection errors never establish absence. On interruption, task-owned host process
 groups are joined and fixed guest executable paths are stopped/joined before the
 owned outer and volume are removed. Unrelated outer container and volume identities,
-plus image and network inventories, must remain unchanged. A nonzero exit or
+plus image and network inventories, must remain unchanged. Network label ordering
+is normalized as strict key/value maps; changed values and ambiguous labels fail.
+Every final inventory kind is captured even if an earlier comparison fails. A nonzero exit or
 preserved resource requires reconciliation; it is not a successful physical
 qualification.

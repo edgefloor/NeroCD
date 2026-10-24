@@ -203,6 +203,187 @@ func databaseOriginCredentials(f *databaseRuntimeFixture, in databaseNetworkUpgr
 	return credentials
 }
 
+// Only the exact existing-volume presence query may accompany observation. A
+// broader volume subcommand allowance could conceal a storage effect.
+func databaseOriginReadOnlyAllowed(args []string, volume string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	if slices.Equal(args, []string{"volume", "ls", "--quiet", "--filter", "name=" + volume}) && volume != "" {
+		return true
+	}
+	return args[0] == "info" || args[1] == "inspect" && slices.Contains([]string{"image", "container", "network", "volume"}, args[0]) || args[0] == "container" && slices.Contains([]string{"ls", "top"}, args[1])
+}
+
+// Diagnostics contain only fixed action tags; raw arguments may include private
+// paths, and arbitrary command errors must never enter fixture output.
+func databaseOriginCommandStage(args []string) string {
+	if len(args) == 0 {
+		return "unclassified"
+	}
+	if args[0] == "info" {
+		return "daemon_info"
+	}
+	if len(args) < 2 {
+		return "unclassified"
+	}
+	switch args[0] + " " + args[1] {
+	case "container ls":
+		return "container_list"
+	case "container inspect":
+		return "container_inspect"
+	case "container top":
+		return "container_top"
+	case "container create":
+		return "container_create"
+	case "container start":
+		return "container_start"
+	case "container stop":
+		return "container_stop"
+	case "container rm":
+		return "container_remove"
+	case "container exec":
+		return "container_exec"
+	case "volume ls":
+		return "volume_list"
+	case "volume inspect":
+		return "volume_inspect"
+	case "network inspect":
+		return "network_inspect"
+	case "image inspect":
+		return "image_inspect"
+	default:
+		return "unclassified"
+	}
+}
+
+type databaseOriginCandidateShape struct {
+	DNSNameAtZero, DNSAliasAtOne, DNSShortIDAtTwo       bool
+	DNSNamePresent, DNSAliasPresent, DNSShortIDPresent  bool
+	Inspected, BaseMatches, QualifiedMatches            bool
+	Running, PIDPresent                                 bool
+	State                                               string
+	AliasMatches, DNSMatches, DNSNil                    bool
+	AliasCount, DNSCount                                int
+	NetworkIDPresent, EndpointIDPresent, AddressPresent bool
+	Links, IPAMEntries, DriverOptions, GatewayPriority  int
+}
+
+func databaseOriginCandidateSummary(container databaseContainer, operation string, in databaseNetworkUpgradeInput, record databaseNetworkRecord, config DatabaseEngineConfig) databaseOriginCandidateShape {
+	n := container.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+	dns := []string{strings.TrimPrefix(container.Name, "/"), in.Plan.Database.Network.Alias}
+	if len(container.ID) >= 12 {
+		dns = append(dns, container.ID[:12])
+	}
+	state := "unclassified"
+	switch container.State.Status {
+	case "created", "running", "exited", "dead", "paused", "restarting":
+		state = container.State.Status
+	}
+	secret := filepath.Join(config.secretRoot, databaseGeneration(operation, in.Plan))
+	inspection := &databaseUpgradeInspection{Previous: in.PreviousPlan, Origin: in.Proof.Origin}
+	short := ""
+	if len(container.ID) >= 12 {
+		short = container.ID[:12]
+	}
+	name := strings.TrimPrefix(container.Name, "/")
+	return databaseOriginCandidateShape{DNSNameAtZero: len(n.DNSNames) > 0 && n.DNSNames[0] == name, DNSAliasAtOne: len(n.DNSNames) > 1 && n.DNSNames[1] == in.Plan.Database.Network.Alias, DNSShortIDAtTwo: len(n.DNSNames) > 2 && n.DNSNames[2] == short, DNSNamePresent: slices.Contains(n.DNSNames, name), DNSAliasPresent: slices.Contains(n.DNSNames, in.Plan.Database.Network.Alias), DNSShortIDPresent: short != "" && slices.Contains(n.DNSNames, short), Inspected: true, BaseMatches: databaseContainerMatches(container, operation, in.Plan, record, secret), QualifiedMatches: databaseContainerMatchesWithInspection(container, operation, in.Plan, record, secret, inspection), Running: container.State.Running, PIDPresent: container.State.Pid > 0, State: state, AliasMatches: slices.Equal(n.Aliases, []string{in.Plan.Database.Network.Alias}), DNSMatches: slices.Equal(n.DNSNames, dns), DNSNil: n.DNSNames == nil, AliasCount: len(n.Aliases), DNSCount: len(n.DNSNames), NetworkIDPresent: n.NetworkID != "", EndpointIDPresent: n.EndpointID != "", AddressPresent: n.IPAddress != "", Links: len(n.Links), IPAMEntries: len(n.IPAMConfig), DriverOptions: len(n.DriverOpts), GatewayPriority: n.GwPriority}
+}
+
+func databaseOriginApplyWithEvidence(f *databaseRuntimeFixture, operation string, in databaseNetworkUpgradeInput, credentials *DatabaseCredentials) domain.HostingResult {
+	f.t.Helper()
+	base := f.engine.command
+	var sequence []string
+	dropped := 0
+	f.engine.command = imageCommandFunc(func(ctx context.Context, name string, args []string, dir string, env []string) ([]byte, error) {
+		raw, err := base.RunEnvironment(ctx, name, args, dir, env)
+		stage := "unclassified"
+		if len(args) >= 4 {
+			stage = databaseOriginCommandStage(args[4:])
+		}
+		if err != nil {
+			stage += ":error"
+		} else {
+			stage += ":ok"
+		}
+		if len(sequence) == 256 {
+			sequence = sequence[1:]
+			dropped++
+		}
+		sequence = append(sequence, stage)
+		return raw, err
+	})
+	defer func() { f.engine.command = base }()
+	result := f.engine.ApplyDatabaseNetworkUpgrade(f.t.Context(), operation, in, f.request, f.evidence, credentials, f.config, databaseRuntimeAuthority)
+	if !result.Ready || result.Uncertain || result.Outcome != "succeeded" {
+		shape := databaseOriginCandidateShape{State: "unavailable"}
+		if dockerObjectID.MatchString(result.ContainerID) {
+			container, err := f.engine.inspectDatabaseContainer(f.t.Context(), result.ContainerID)
+			if err == nil {
+				shape = databaseOriginCandidateSummary(container, operation, in, databaseNetworkRecord(in.Proof.Origin), f.config)
+			}
+		}
+		raw, err := json.Marshal(shape)
+		if err != nil {
+			f.t.Fatal("closed candidate diagnostics unavailable")
+		}
+		f.t.Logf("failed_upgrade_candidate_shape=%s closed_command_sequence=%s dropped_stages=%d", raw, strings.Join(sequence, ","), dropped)
+	}
+	return result
+}
+
+func TestDatabaseOriginUpgradeDiagnosticBoundaries(t *testing.T) {
+	volume := "ncdv_fixture"
+	exact := []string{"volume", "ls", "--quiet", "--filter", "name=" + volume}
+	for _, test := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"exact_existing_volume", exact, true},
+		{"other_volume", []string{"volume", "ls", "--quiet", "--filter", "name=foreign"}, false},
+		{"extra_argument", append(slices.Clone(exact), "--all"), false},
+		{"changed_flag", []string{"volume", "ls", "--format", "--filter", "name=" + volume}, false},
+		{"remove", []string{"volume", "rm", volume}, false},
+		{"create", []string{"volume", "create", volume}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if databaseOriginReadOnlyAllowed(test.args, volume) != test.want {
+				t.Fatal("read-only volume classification mismatch")
+			}
+		})
+	}
+	f, in, credentials := upgradeFixture(t, "redis")
+	credentials.Close()
+	marker := "SENSITIVE-DIAGNOSTIC-MARKER"
+	container := databaseContainer{}
+	container.ID, container.Name, container.State.Status = marker, marker, marker
+	container.NetworkSettings.Networks = map[string]databaseUpgradeEndpoint{in.Plan.Database.NetworkName: {Aliases: []string{marker}, DNSNames: []string{marker}, IPAddress: marker, NetworkID: marker, EndpointID: marker}}
+	raw, err := json.Marshal(databaseOriginCandidateSummary(container, marker, in, databaseNetworkRecord(in.Proof.Origin), f.config))
+	if err != nil || bytes.Contains(raw, []byte(marker)) || databaseOriginCommandStage([]string{marker, marker}) != "unclassified" {
+		t.Fatal("candidate diagnostic leaked unclassified content")
+	}
+	if databaseOriginCommandStage([]string{"container", "create", marker}) != "container_create" {
+		t.Fatal("candidate diagnostic classification mismatch")
+	}
+	container.ID = strings.Repeat("a", 64)
+	container.Name = "/expected_name"
+	endpoint := container.NetworkSettings.Networks[in.Plan.Database.NetworkName]
+	endpoint.Aliases = []string{in.Plan.Database.Network.Alias}
+	endpoint.DNSNames = []string{"expected_name", in.Plan.Database.Network.Alias, container.ID[:12]}
+	container.NetworkSettings.Networks[in.Plan.Database.NetworkName] = endpoint
+	got := databaseOriginCandidateSummary(container, marker, in, databaseNetworkRecord(in.Proof.Origin), f.config)
+	if !got.DNSMatches || !got.DNSNameAtZero || !got.DNSAliasAtOne || !got.DNSShortIDAtTwo || !got.DNSNamePresent || !got.DNSAliasPresent || !got.DNSShortIDPresent || !got.AliasMatches || got.DNSNil || got.DNSCount != 3 {
+		t.Fatal("candidate DNS diagnostic identity flags mismatch")
+	}
+	endpoint.DNSNames = nil
+	container.NetworkSettings.Networks[in.Plan.Database.NetworkName] = endpoint
+	got = databaseOriginCandidateSummary(container, marker, in, databaseNetworkRecord(in.Proof.Origin), f.config)
+	if !got.DNSNil || got.DNSMatches || got.DNSNamePresent || got.DNSAliasPresent || got.DNSShortIDPresent || got.DNSCount != 0 {
+		t.Fatal("candidate missing DNS diagnostic flags mismatch")
+	}
+}
+
 // Every successful observation must remain within an explicit read-only command
 // set, and leave retained state, credentials and actual writer identity unchanged.
 func databaseOriginReadOnly(t *testing.T, f *databaseRuntimeFixture, run func()) {
@@ -214,9 +395,9 @@ func databaseOriginReadOnly(t *testing.T, f *databaseRuntimeFixture, run func())
 			return nil, errors.New("read-only fixture command refused")
 		}
 		a := args[4:]
-		allowed := a[0] == "info" || len(a) > 1 && (a[1] == "inspect" && slices.Contains([]string{"image", "container", "network", "volume"}, a[0]) || a[0] == "container" && slices.Contains([]string{"ls", "top"}, a[1]))
+		allowed := databaseOriginReadOnlyAllowed(a, f.request.Storage.VolumeName)
 		if !allowed {
-			t.Error("observation attempted effect or exec")
+			t.Errorf("observation command refused: stage=%s", databaseOriginCommandStage(a))
 			return nil, errors.New("read-only fixture effect refused")
 		}
 		return base.RunEnvironment(ctx, name, args, dir, env)
@@ -403,7 +584,7 @@ func databaseOriginUpgradePhysical(t *testing.T, root, kind string) {
 		assertSource()
 		t.Logf("physical upgrade denial engine=%s case=%s source_unchanged=true", kind, negative)
 	}
-	b := f.engine.ApplyDatabaseNetworkUpgrade(t.Context(), opB, in, f.request, f.evidence, credentials, f.config, databaseRuntimeAuthority)
+	b := databaseOriginApplyWithEvidence(f, opB, in, credentials)
 	if got := f.live(opB, in.Plan, b, a.ContainerID); got != record {
 		t.Fatal("upgrade changed retained physical origin")
 	}
@@ -441,7 +622,7 @@ func databaseOriginUpgradePhysical(t *testing.T, root, kind string) {
 	observe(true)
 	next := upgradeNext(t, in.Plan, databaseOriginHealthy(f, opB, in.Plan, b), origin)
 	opC := "hop_origin_upgrade_" + kind + "_c"
-	c := f.engine.ApplyDatabaseNetworkUpgrade(t.Context(), opC, next, f.request, f.evidence, databaseOriginCredentials(f, next), f.config, databaseRuntimeAuthority)
+	c := databaseOriginApplyWithEvidence(f, opC, next, databaseOriginCredentials(f, next))
 	if got := f.live(opC, next.Plan, c, b.ContainerID); got != record {
 		t.Fatal("redeploy changed retained physical origin")
 	}
