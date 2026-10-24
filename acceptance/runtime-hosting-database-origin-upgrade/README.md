@@ -73,8 +73,11 @@ volume metadata before removal. Ambiguous outcomes preserve reserved storage;
 inspection errors never establish absence. On interruption, task-owned host process
 groups are joined and fixed guest executable paths are stopped/joined before the
 owned outer and volume are removed. Unrelated outer container and volume identities,
-plus image and network inventories, must remain unchanged. Network label ordering
-is normalized as strict key/value maps; changed values and ambiguous labels fail.
+plus image and network inventories, must remain unchanged. Network listings require unique full IDs and names. Each exact ID is inspected
+read-only for its structured label map; flattened listing labels are never parsed.
+Raw listings, complete inspect documents and structured comparison records are
+retained. Label ordering compares equally, while changed values (including commas
+inside a value), duplicate documents and missing/mismatched inspections fail.
 Every final inventory kind is captured even if an earlier comparison fails. A nonzero exit or
 preserved resource requires reconciliation; it is not a successful physical
 qualification.

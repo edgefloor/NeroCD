@@ -71,17 +71,63 @@ elif tool == "docker":
             print(json.dumps(dict(Names=name, ID=identity)))
         if state.get("foreign_user") and "--filter" in args:
             print(json.dumps(dict(Names="foreign-stopped", ID="e" * 64)))
-    elif args[:2] in (["network", "ls"], ["image", "ls"]):
-        if case in ("unrelated_network_change", "label_reordering", "label_value_changed") and args[0] == "network":
+    elif args[:2] == ["image", "ls"]:
+        pass
+    elif args[:2] == ["network", "ls"]:
+        if case in ("unrelated_network_change", "label_reordering", "label_value_changed", "comma_label_change", "comma_label_unchanged") or case.startswith("network_"):
             state["network_lists"] = state.get("network_lists", 0) + 1
             save()
-            if case == "unrelated_network_change":
-                print(json.dumps(dict(ID="a" * 64 if state["network_lists"] == 1 else "b" * 64, Name="unrelated")))
+            network_id = "a" * 64
+            if case == "unrelated_network_change" and state["network_lists"] != 1:
+                network_id = "b" * 64
+            labels = "first=1,second=2" if state["network_lists"] == 1 else "second=2,first=1"
+            if case in ("comma_label_change", "comma_label_unchanged"):
+                labels = "x=1,y=2"  # Deliberately indistinguishable flattened values.
+            row = dict(ID=network_id, Name="unrelated", Labels=labels)
+            if case == "network_bad_id":
+                row["ID"] = "short"
+            if case == "network_bad_row":
+                print("[]")
+            elif case == "network_duplicate_listing_key":
+                print('{"ID":"' + network_id + '","ID":"' + network_id + '","Name":"unrelated","Labels":""}')
             else:
-                labels = "first=1,second=2" if state["network_lists"] == 1 else "second=2,first=1"
-                if case == "label_value_changed" and state["network_lists"] != 1:
-                    labels = "second=3,first=1"
-                print(json.dumps(dict(ID="a" * 64, Name="unrelated", Labels=labels)))
+                print(json.dumps(row))
+                if case == "network_duplicate_id":
+                    print(json.dumps(dict(row, Name="another")))
+                if case == "network_duplicate_name":
+                    print(json.dumps(dict(row, ID="b" * 64)))
+    elif args[:2] == ["network", "inspect"]:
+        assert len(args) == 3 and len(args[2]) == 64
+        if case == "network_missing_inspect":
+            sys.exit(27)
+        labels = {"first": "1", "second": "2"}
+        if state["network_lists"] != 1:
+            labels = {"second": "2", "first": "1"}
+        if case == "label_value_changed" and state["network_lists"] != 1:
+            labels["second"] = "3"
+        if case in ("comma_label_change", "comma_label_unchanged"):
+            labels = {"x": "1,y=2"}
+            if case == "comma_label_change" and state["network_lists"] != 1:
+                labels = {"x": "1", "y": "2"}
+        value = dict(Id=args[2], Name="unrelated", Labels=labels)
+        if case == "network_inspect_wrong_id":
+            value["Id"] = "c" * 64
+        if case == "network_inspect_wrong_name":
+            value["Name"] = "another"
+        if case == "network_inspect_labels_malformed":
+            value["Labels"] = "flattened=value"
+        if case == "network_inspect_label_value_malformed":
+            value["Labels"] = {"key": ["wrong-type"]}
+        if case == "network_inspect_missing_labels":
+            value.pop("Labels")
+        if case == "network_inspect_duplicate_label":
+            print('[{"Id":"' + args[2] + '","Name":"unrelated","Labels":{"x":"1","x":"2"}}]')
+        elif case == "network_inspect_multiple":
+            print(json.dumps([value, value]))
+        elif case == "network_inspect_empty":
+            print("[]")
+        else:
+            print(json.dumps([value]))
     elif args[:2] == ["image", "inspect"]:
         print(json.dumps([dict(Id="sha256:" + "a" * 64, Config=dict(Labels={}))]))
     elif args[:2] == ["volume", "inspect"]:
@@ -211,6 +257,17 @@ class GateTest(unittest.TestCase):
                 self.assertEqual(output.count("gate exit="), 1, output)
                 self.assertTrue((evidence / "host-images-after").is_file(), output)
                 self.assertTrue((evidence / "status-after").is_file(), output)
+                if case in ("label_reordering", "label_value_changed", "comma_label_change", "comma_label_unchanged", "unrelated_network_change"):
+                    before = json.loads((evidence / "host-networks-before-structured").read_text())
+                    after = json.loads((evidence / "host-networks-after-structured").read_text())
+                    self.assertIsInstance(before[0]["Labels"], dict)
+                    self.assertTrue((evidence / ("host-networks-before-inspect-" + before[0]["ID"])).is_file())
+                    self.assertTrue((evidence / ("host-networks-after-inspect-" + after[0]["ID"])).is_file())
+                    if case == "comma_label_change":
+                        self.assertEqual(before[0]["Labels"], {"x": "1,y=2"})
+                        self.assertEqual(after[0]["Labels"], {"x": "1", "y": "2"})
+                        self.assertEqual((evidence / "host-networks-before").read_text(),
+                                         (evidence / "host-networks-after").read_text())
                 for pid in blocked:
                     with self.assertRaises(ProcessLookupError, msg=output):
                         os.kill(pid, 0)
@@ -351,22 +408,28 @@ class GateTest(unittest.TestCase):
                 if expected:
                     self.assertIn("unrelated outer network inventory changed", output)
 
-    def test_canonical_label_parser_rejects_ambiguity(self):
-        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n", 1)[1].rsplit("\nPY\n", 1)[0]
-        names = {"Failure", "document", "canonical_inventory"}
-        definitions = [node for node in ast.parse(source).body
-                       if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
-        namespace = dict(json=json)
-        exec(compile(ast.Module(body=definitions, type_ignores=[]), "canonical-inventory", "exec"), namespace)
-        canonical = namespace["canonical_inventory"]
-        for labels in ("duplicate=1,duplicate=1", "missing_separator", "=empty_key", None):
-            with self.subTest(labels=labels):
-                with self.assertRaises(namespace["Failure"]):
-                    canonical([json.dumps(dict(ID="a" * 64, Labels=labels))])
-        self.assertEqual(canonical([json.dumps(dict(Labels="a=1,b=2"))]),
-                         canonical([json.dumps(dict(Labels="b=2,a=1"))]))
-        self.assertNotEqual(canonical([json.dumps(dict(Labels="a=1,b=2"))]),
-                            canonical([json.dumps(dict(Labels="b=3,a=1"))]))
+    def test_structured_comma_label_value_cannot_hide_metadata_change(self):
+        for case, expected in (("comma_label_unchanged", 0), ("comma_label_change", 1)):
+            with self.subTest(case=case):
+                state, commands, output = self.run_gate(case, expected)
+                self.assertEqual(state, {"network_lists": 2})
+                self.assertTrue(any(args[:2] == ["network", "inspect"] for args in commands))
+                if expected:
+                    self.assertIn("unrelated outer network inventory changed", output)
+
+    def test_network_evidence_rejects_duplicates_malformed_or_missing_inspection(self):
+        cases = ("network_duplicate_id", "network_duplicate_name", "network_bad_id", "network_bad_row",
+                 "network_duplicate_listing_key", "network_missing_inspect", "network_inspect_wrong_id",
+                 "network_inspect_wrong_name", "network_inspect_labels_malformed",
+                 "network_inspect_label_value_malformed", "network_inspect_missing_labels",
+                 "network_inspect_duplicate_label", "network_inspect_multiple", "network_inspect_empty")
+        for case in cases:
+            with self.subTest(case=case):
+                state, commands, _ = self.run_gate(case, 27 if case == "network_missing_inspect" else 1)
+                self.assert_no_creation(commands)
+                self.assertEqual(state, {"network_lists": 2})
+                if case in ("network_duplicate_id", "network_duplicate_name", "network_bad_id", "network_bad_row", "network_duplicate_listing_key"):
+                    self.assertFalse(any(args[:2] == ["network", "inspect"] for args in commands))
 
     def test_unrelated_outer_network_change_rejects_result(self):
         state, commands, output = self.run_gate("unrelated_network_change", 1)

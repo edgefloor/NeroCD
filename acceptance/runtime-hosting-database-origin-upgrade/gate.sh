@@ -173,27 +173,64 @@ def inventory(kind, tag, users=False):
 
 
 def canonical_inventory(lines):
-    # Docker formats Labels from a map with unstable order. Preserve every other
-    # field and compare strict key/value maps; ambiguous formatting fails closed.
     if len(lines) > 4096:
         raise Failure("Docker inventory exceeds bound")
-    result = []
+    rows = [document(line) for line in lines]
+    if any(not isinstance(row, dict) for row in rows):
+        raise Failure("malformed inventory row")
+    return sorted(json.dumps(row, sort_keys=True) for row in rows)
+
+
+def network_document(raw):
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise Failure("duplicate network document key")
+            value[key] = item
+        return value
+    try:
+        return json.loads(raw, object_pairs_hook=unique_object)
+    except (ValueError, TypeError) as error:
+        raise Failure("malformed network document") from error
+
+
+def network_inventory(tag):
+    lines = docker("network", "ls", "--no-trunc", "--format", "{{json .}}", output=tag).splitlines()
+    if len(lines) > 4096:
+        raise Failure("network inventory exceeds bound")
+    found, names = {}, set()
+    # Validate the entire successful listing before inspecting exact IDs. Never
+    # split its flattened Labels string: commas may be part of one label value.
     for line in lines:
-        row = document(line)
+        row = network_document(line)
         if not isinstance(row, dict):
-            raise Failure("malformed inventory row")
-        if "Labels" in row:
-            if not isinstance(row["Labels"], str):
-                raise Failure("malformed inventory labels")
-            labels = {}
-            for item in row["Labels"].split(",") if row["Labels"] else []:
-                key, separator, value = item.partition("=")
-                if not separator or not key or key in labels:
-                    raise Failure("ambiguous inventory labels")
-                labels[key] = value
-            row["Labels"] = labels
-        result.append(json.dumps(row, sort_keys=True))
-    return sorted(result)
+            raise Failure("malformed network inventory row")
+        identity, name = row.get("ID"), row.get("Name")
+        if (not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity) or
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,254}", name) or
+                not isinstance(row.get("Labels"), str) or identity in found or name in names):
+            raise Failure("malformed or duplicate network inventory identity")
+        found[identity] = row
+        names.add(name)
+    result = []
+    for identity, row in sorted(found.items()):
+        value = network_document(docker("network", "inspect", identity, output=tag + "-inspect-" + identity))
+        if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+            raise Failure("network inspect must return exactly one object")
+        value = value[0]
+        labels = value.get("Labels")
+        if (value.get("Id") != identity or value.get("Name") != row["Name"] or "Labels" not in value or
+                labels is not None and (not isinstance(labels, dict) or
+                    any(not isinstance(key, str) or not isinstance(item, str) for key, item in labels.items()))):
+            raise Failure("network inspect identity or labels mismatch")
+        normalized = dict(row)
+        normalized["Labels"] = labels if labels is not None else {}
+        result.append(normalized)
+    # Raw listing and each complete raw inspect are retained alongside the exact
+    # listing metadata with structured labels used by the comparison.
+    (evidence / (tag + "-structured")).write_text(json.dumps(result, sort_keys=True) + "\n")
+    return result
 
 
 def verified_volume(allowed_user=""):
@@ -249,12 +286,9 @@ def main():
         raise Failure("host daemon/native architecture mismatch")
     # These commands only list existing outer objects. No pulls or network writes
     # are part of this launcher; preserve the complete unrelated inventories.
-    for kind in ("network", "image"):
-        args = [kind, "ls", "--no-trunc"]
-        if kind == "image":
-            args += ["--digests"]
-        rows = docker(*args, "--format", "{{json .}}", output="host-" + kind + "s-before").splitlines()
-        other_inventories[kind] = canonical_inventory(rows)
+    other_inventories["network"] = network_inventory("host-networks-before")
+    rows = docker("image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}", output="host-images-before").splitlines()
+    other_inventories["image"] = canonical_inventory(rows)
     # Only successful complete inventories establish absence. Inspect errors never do.
     containers = inventory("container", "host-containers-before")
     volumes = inventory("volume", "host-volumes-before")
@@ -408,11 +442,11 @@ finally:
                     if original != actual:
                         raise Failure("unrelated outer " + kind + " inventory changed")
             else:
-                args = [kind, "ls", "--no-trunc"]
-                if kind == "image":
-                    args += ["--digests"]
-                rows = docker(*args, "--format", "{{json .}}", output="host-" + kind + "s-after").splitlines()
-                actual = canonical_inventory(rows)
+                if kind == "network":
+                    actual = network_inventory("host-networks-after")
+                else:
+                    rows = docker("image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}", output="host-images-after").splitlines()
+                    actual = canonical_inventory(rows)
                 if kind in other_inventories and other_inventories[kind] != actual:
                     raise Failure("unrelated outer " + kind + " inventory changed")
         except Exception as error:
