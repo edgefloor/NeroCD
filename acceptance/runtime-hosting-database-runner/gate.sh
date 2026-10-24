@@ -363,6 +363,17 @@ def main():
          "acceptance/runtime-hosting-database-client/", "internal/api/hosting_database_runtime_integration_test.go",
          "internal/api/hosting_database_capture_runtime_integration_test.go",
          "internal/api/hosting_database_upgrade_runtime_integration_test.go",
+         "internal/api/hosting_application_database_runtime_integration_test.go",
+         "internal/api/hosting_database_connection*.go",
+         "internal/app/hosting_database_connection_service.go", "internal/store/postgres_hosting_database_connection*.go",
+         "internal/store/sql/hosting_database_connection.sql", "internal/store/sqlcgen/hosting_database_connection.sql.go",
+         "db/migrations/0072_hosting_application_database_connections.sql",
+         "cmd/nerocd/runner_application_database_config.go", "internal/runner/journal_application_database.go",
+         "internal/runnerclient/hosting_database_connection.go", "internal/domain/hosting_database_connection.go",
+         "internal/domain/hosting_application_database*.go", "internal/domain/hosting_database_maintenance.go",
+         "internal/runnerruntime/hosting_application_database_execution.go",
+         "internal/runnerruntime/hosting_application_database_engine.go", "internal/runnerruntime/hosting_database_maintenance_execution.go",
+         "internal/runnerruntime/hosting_database_member_maintenance.go", "internal/runnerruntime/runtime.go",
          "cmd/nerocd/runner.go", "cmd/nerocd/runner_database_config.go",
          "internal/runnerruntime/hosting_database_network_capture_execution.go",
          "internal/runnerruntime/hosting_database_network_capture.go", "internal/runner/journal_database_network_capture.go",
@@ -392,6 +403,7 @@ def main():
     client_context.mkdir()
     run(["go", "build", "-trimpath", "-o", str(client_context / "client"), "./acceptance/runtime-hosting-database-client"], timeout=300, env=environment)
     (client_context / "Dockerfile").write_bytes(Path("acceptance/runtime-hosting-database-client/Dockerfile").read_bytes())
+    (client_context / "Dockerfile.http").write_bytes(Path("acceptance/runtime-hosting-database-client/Dockerfile.http").read_bytes())
     for name, binary in (("api.test", evidence / "api.test"), ("nerocd", evidence / "nerocd"), ("client", client_context / "client")):
         run(["go", "version", "-m", str(binary)], output=name + "-build-info")
         (evidence / (name + "-sha256")).write_text(hashlib.sha256(binary.read_bytes()).hexdigest() + "\n")
@@ -433,6 +445,55 @@ def main():
     docker("cp", str(client_context), outer + ":/fixture/client")
     docker("exec", outer, "docker", "--host", ENDPOINT, "build", "--build-arg", "FIXTURE_OWNER=" + OWNER,
            "--tag", "nerocd-database-client:" + OWNER, "/fixture/client", timeout=120, output="client-image-build")
+    # This registry and its loopback publication exist only in the owned DinD.
+    registry_image = "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+    docker("exec", outer, "docker", "--host", ENDPOINT, "pull", registry_image, timeout=180, output="registry-pull")
+    registry = docker("exec", outer, "docker", "--host", ENDPOINT, "run", "--detach", "--name", OWNER + "-registry",
+                      "--label", LABEL + "=" + OWNER, "--publish", "127.0.0.1::5000", "--tmpfs", "/var/lib/registry:rw", registry_image).strip()
+    if not re.fullmatch(r"[a-f0-9]{64}", registry):
+        raise Failure("invalid inner registry identity")
+    registry_state = document(docker("exec", outer, "docker", "--host", ENDPOINT, "container", "inspect", registry,
+                                     "--format", "{{json .}}", output="inner-registry-profile"))
+    if not isinstance(registry_state, dict):
+        raise Failure("inner registry inspection is not an object")
+    ports = registry_state.get("HostConfig", {}).get("PortBindings", {})
+    publication = ports.get("5000/tcp", [])
+    if (registry_state.get("Id") != registry or registry_state.get("Name") != "/" + OWNER + "-registry"
+            or registry_state.get("Config", {}).get("Labels", {}).get(LABEL) != OWNER
+            or registry_state.get("Config", {}).get("Image") != registry_image
+            or registry_state.get("HostConfig", {}).get("Privileged") is not False
+            or not registry_state.get("State", {}).get("Running") or len(ports) != 1 or len(publication) != 1
+            or publication[0].get("HostIp") != "127.0.0.1"):
+        raise Failure("inner registry ownership/publication mismatch")
+    assigned = registry_state.get("NetworkSettings", {}).get("Ports", {}).get("5000/tcp", [])
+    if len(assigned) != 1 or assigned[0].get("HostIp") != "127.0.0.1" or not re.fullmatch(r"[0-9]{4,5}", assigned[0].get("HostPort", "")):
+        raise Failure("inner registry dynamic loopback port missing")
+    port = int(assigned[0]["HostPort"])
+    if not 1024 <= port <= 65535:
+        raise Failure("inner registry port out of bounds")
+    app_repository = "127.0.0.1:" + str(port) + "/nerocd-http-app"
+    app_tag = app_repository + ":" + OWNER
+    for attempt in range(20):
+        try:
+            if docker("exec", outer, "wget", "-q", "-O", "-", "http://127.0.0.1:" + str(port) + "/v2/", timeout=5).strip() == "{}":
+                break
+        except Failure:
+            pass
+        if attempt == 19:
+            raise Failure("owned inner registry did not become ready")
+        time.sleep(1)
+    docker("exec", outer, "docker", "--host", ENDPOINT, "build", "--file", "/fixture/client/Dockerfile.http",
+           "--build-arg", "FIXTURE_OWNER=" + OWNER, "--tag", app_tag, "/fixture/client", timeout=120, output="http-app-image-build")
+    docker("exec", outer, "docker", "--host", ENDPOINT, "push", app_tag, timeout=120, output="http-app-image-push")
+    digests = document(docker("exec", outer, "docker", "--host", ENDPOINT, "image", "inspect", app_tag,
+                              "--format", "{{json .RepoDigests}}", output="http-app-digests"))
+    if not isinstance(digests, list) or len(digests) != 1 or not re.fullmatch(re.escape(app_repository) + r"@sha256:[a-f0-9]{64}", digests[0]):
+        raise Failure("HTTP app registry digest missing")
+    app_image = digests[0]
+    (evidence / "http-app-image").write_text(app_image + "\n")
+    docker("exec", outer, "docker", "--host", ENDPOINT, "image", "rm", app_tag, output="http-app-remove-local-tag")
+    if docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--quiet", "--no-trunc", "--filter", "reference=" + app_repository + "*").strip():
+        raise Failure("HTTP fixture image remained local before production pull")
     postgres = "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
     docker("exec", outer, "docker", "--host", ENDPOINT, "pull", postgres, timeout=180, output="control-postgres-pull")
     pg = docker("exec", outer, "docker", "--host", ENDPOINT, "run", "--detach", "--name", OWNER + "-control-pg",
@@ -457,16 +518,17 @@ def main():
     docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}", output="inner-images-before-test")
     runtime_output = docker("exec", "--workdir", "/workspace/internal/api",
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
+               "--env", "NEROCD_DATABASE_HTTP_APP_IMAGE=" + app_image,
                "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable",
-               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)$", "-test.timeout=25m",
-               timeout=1510, output="runtime-test")
+               outer, "/fixture/api.test", "-test.v", "-test.run", "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$", "-test.timeout=40m",
+               timeout=2410, output="runtime-test")
     say(runtime_output)
-    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner"):
+    for test in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
         if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test did not pass: " + test)
         if re.search(r"^--- SKIP: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test skipped: " + test)
-    say("compiled database, capture and upgrade runners / authenticated API / River / private PostgreSQL and Redis gate passed")
+    say("compiled database, capture, upgrade and connected HTTP app runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 
 GUEST_JOIN = r"""

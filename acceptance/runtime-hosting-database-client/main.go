@@ -1,4 +1,4 @@
-// The disposable acceptance client accepts credentials only through bounded stdin.
+// The acceptance client supports the legacy stdin probe and an explicit HTTP app.
 package main
 
 import (
@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,6 +34,13 @@ type input struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		if serve() != nil {
+			_, _ = io.WriteString(os.Stderr, "database HTTP app failed\n")
+			os.Exit(1)
+		}
+		return
+	}
 	if run() != nil {
 		_, _ = io.WriteString(os.Stderr, "database marker client failed\n")
 		os.Exit(1)
@@ -185,4 +195,227 @@ func redis(ctx context.Context, in input) (err error) {
 		return errors.New("marker mismatch")
 	}
 	return nil
+}
+
+type httpDatabase struct{ engine, host, username, password, namespace string }
+
+func fixtureWord(value string, limit int) bool {
+	return value != "" && len(value) <= limit && strings.Trim(value, "abcdefghijklmnopqrstuvwxyz0123456789_") == ""
+}
+
+func httpDatabaseEnvironment(env func(string) string) (httpDatabase, error) {
+	c := httpDatabase{engine: env("FIXTURE_DATABASE_ENGINE"), namespace: env("FIXTURE_DATABASE_NAMESPACE")}
+	invalid := errors.New("HTTP database configuration invalid")
+	if !fixtureWord(c.namespace, 64) {
+		return c, invalid
+	}
+	switch c.engine {
+	case "postgresql":
+		c.host, c.username, c.password = env("PGHOST"), env("PGUSER"), env("PGPASSWORD")
+		if env("PGPORT") != "5432" || env("PGDATABASE") != "app" {
+			return c, invalid
+		}
+	case "redis":
+		c.host, c.username, c.password = env("REDIS_HOST"), env("REDIS_USERNAME"), env("REDIS_PASSWORD")
+		if env("REDIS_PORT") != "6379" {
+			return c, invalid
+		}
+	default:
+		return c, invalid
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(c.password)
+	defer clear(decoded)
+	if c.username != "ncd_app" || len(c.password) != 43 || err != nil || len(decoded) != 32 || len(c.host) != 37 || !strings.HasPrefix(c.host, "ncdb-") || strings.Trim(c.host[5:], "0123456789abcdef") != "" {
+		return c, invalid
+	}
+	return c, nil
+}
+
+// A request pins the private alias before opening its own bounded connection.
+func (c httpDatabase) record(ctx context.Context, action, key, value string) (string, error) {
+	addresses, err := net.DefaultResolver.LookupHost(ctx, c.host)
+	if err != nil || len(addresses) != 1 {
+		return "", errors.New("HTTP database unavailable")
+	}
+	host, err := privateEndpoint(ctx, c.host, addresses[0], func(context.Context, string) ([]string, error) { return addresses, nil })
+	if err != nil {
+		return "", errors.New("HTTP database unavailable")
+	}
+	if c.engine == "postgresql" {
+		return c.postgresRecord(ctx, host, action, key, value)
+	}
+	return c.redisRecord(ctx, host, action, key, value)
+}
+
+func (c httpDatabase) postgresRecord(ctx context.Context, host, action, key, value string) (string, error) {
+	invalid := errors.New("HTTP database unavailable")
+	cfg, err := pgx.ParseConfig("host=127.0.0.1 port=5432 dbname=app user=ncd_app sslmode=disable")
+	if err != nil {
+		return "", invalid
+	}
+	cfg.Host, cfg.Password, cfg.ConnectTimeout = host, c.password, 2*time.Second
+	cfg.RuntimeParams = map[string]string{"application_name": "nerocd-http-fixture", "statement_timeout": "2000", "lock_timeout": "1000"}
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	cfg.Password = ""
+	if err != nil {
+		return "", invalid
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = conn.Close(closeCtx)
+	}()
+	if action == "ready" {
+		if conn.Ping(ctx) != nil {
+			return "", invalid
+		}
+		return "ready", nil
+	}
+	if action == "put" {
+		if _, err = conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS public.nerocd_fixture_http (namespace text NOT NULL, key text NOT NULL, value text NOT NULL, PRIMARY KEY(namespace,key))"); err != nil {
+			return "", invalid
+		}
+		if _, err = conn.Exec(ctx, "INSERT INTO public.nerocd_fixture_http(namespace,key,value) VALUES($1,$2,$3) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value", c.namespace, key, value); err != nil {
+			return "", invalid
+		}
+	}
+	var result string
+	if err = conn.QueryRow(ctx, "SELECT value FROM public.nerocd_fixture_http WHERE namespace=$1 AND key=$2", c.namespace, key).Scan(&result); err != nil || len(result) > 4096 {
+		return "", invalid
+	}
+	return result, nil
+}
+
+func (c httpDatabase) redisRecord(ctx context.Context, host, action, key, value string) (result string, err error) {
+	invalid := errors.New("HTTP database unavailable")
+	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(host, "6379"))
+	if err != nil {
+		return "", invalid
+	}
+	defer func() {
+		if conn.Close() != nil {
+			result, err = "", invalid
+		}
+	}()
+	deadline, ok := ctx.Deadline()
+	if !ok || conn.SetDeadline(deadline) != nil {
+		return "", invalid
+	}
+	reader := bufio.NewReaderSize(conn, 4096)
+	command := func(args ...string) (string, error) {
+		var b bytes.Buffer
+		fmt.Fprintf(&b, "*%d\r\n", len(args))
+		for _, arg := range args {
+			fmt.Fprintf(&b, "$%d\r\n%s\r\n", len(arg), arg)
+		}
+		payload := b.Bytes()
+		defer clear(payload)
+		if n, e := conn.Write(payload); e != nil || n != len(payload) {
+			return "", invalid
+		}
+		line, e := reader.ReadSlice('\n')
+		if e != nil || len(line) < 3 || line[len(line)-2] != '\r' {
+			return "", invalid
+		}
+		if line[0] == '+' {
+			return string(line[1 : len(line)-2]), nil
+		}
+		if line[0] != '$' {
+			return "", invalid
+		}
+		size, e := strconv.Atoi(string(line[1 : len(line)-2]))
+		if e != nil || size < 0 || size > 4096 {
+			return "", invalid
+		}
+		raw := make([]byte, size+2)
+		defer clear(raw)
+		if _, e = io.ReadFull(reader, raw); e != nil || string(raw[size:]) != "\r\n" {
+			return "", invalid
+		}
+		return string(raw[:size]), nil
+	}
+	if out, e := command("AUTH", c.username, c.password); e != nil || out != "OK" {
+		return "", invalid
+	}
+	if action == "ready" {
+		out, e := command("PING")
+		if e != nil || out != "PONG" {
+			return "", invalid
+		}
+		return "ready", nil
+	}
+	name := "nerocd_http:" + c.namespace + ":" + key
+	if action == "put" {
+		if out, e := command("SET", name, value); e != nil || out != "OK" {
+			return "", invalid
+		}
+	}
+	return command("GET", name)
+}
+
+func httpDatabaseHandler(record func(context.Context, string, string, string) (string, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		action, key, value := "", "", ""
+		switch {
+		case r.URL.Path == "/ready" && r.Method == http.MethodGet && r.URL.RawQuery == "":
+			action = "ready"
+		case strings.HasPrefix(r.URL.Path, "/records/") && (r.Method == http.MethodPut || r.Method == http.MethodGet):
+			key = strings.TrimPrefix(r.URL.Path, "/records/")
+			if !fixtureWord(key, 64) || r.URL.RawQuery != "" {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			action = "get"
+			if r.Method == http.MethodPut {
+				raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
+				defer clear(raw)
+				if err != nil || len(raw) == 0 {
+					http.Error(w, "invalid request", http.StatusBadRequest)
+					return
+				}
+				action, value = "put", string(raw)
+			}
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		out, err := record(ctx, action, key, value)
+		if err != nil || len(out) > 4096 {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, out)
+	})
+}
+
+func serve() error {
+	cfg, err := httpDatabaseEnvironment(os.Getenv)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	server := &http.Server{Addr: ":8080", Handler: httpDatabaseHandler(cfg.record), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 6 * time.Second, WriteTimeout: 6 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
+	done := make(chan error, 1)
+	go func() { done <- server.ListenAndServe() }()
+	select {
+	case err = <-done:
+		return err
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+		defer cancel()
+		err = server.Shutdown(shutdown)
+		if err != nil {
+			_ = server.Close()
+		}
+		joined := <-done
+		if !errors.Is(joined, http.ErrServerClosed) {
+			return errors.New("HTTP app shutdown failed")
+		}
+		return err
+	}
 }

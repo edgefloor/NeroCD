@@ -1,0 +1,6 @@
+FROM scratch
+ARG FIXTURE_OWNER
+LABEL io.nerocd.database-runner.owner=$FIXTURE_OWNER
+COPY client /client
+USER 65532:65532
+ENTRYPOINT ["/client", "serve"]

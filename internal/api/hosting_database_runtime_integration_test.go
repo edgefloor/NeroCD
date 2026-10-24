@@ -224,6 +224,7 @@ type databaseRunnerFixture struct {
 	database                              *pgxpool.Pool
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	upgrade                               bool
+	connected                             bool
 	upgradeComplete                       atomic.Pointer[databaseUpgradeCompleteWire]
 	t                                     *testing.T
 	server                                *httptest.Server
@@ -239,6 +240,8 @@ type databaseRunnerFixture struct {
 	completeCounts                        map[string]int
 	applyRequests                         atomic.Int64
 	deliveryRequests                      atomic.Int64
+	runtimeDeliveryRequests               atomic.Int64
+	connectionAuthorizationRequests       atomic.Int64
 	protected                             [][]byte
 }
 
@@ -302,8 +305,12 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 	return newDatabaseRunnerFixtureWithProfile(t, capture, false)
 }
 
-func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool) *databaseRunnerFixture {
+func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, connectedProfile ...bool) *databaseRunnerFixture {
 	t.Helper()
+	connected := len(connectedProfile) == 1 && connectedProfile[0]
+	if len(connectedProfile) > 1 || connected && (!capture || !upgrade) {
+		t.Fatal("connected fixture requires automatic capture and upgrade")
+	}
 	_, pg, database := newHostingBuildAPIFixture(t)
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
@@ -327,7 +334,7 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool) *d
 			t.Error("fixture root cleanup failed")
 		}
 	})
-	f := &databaseRunnerFixture{t: t, root: root, upgrade: upgrade, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
+	f := &databaseRunnerFixture{t: t, root: root, upgrade: upgrade, connected: connected, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
 	handler := NewServer(service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static())
 	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
@@ -344,6 +351,12 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool) *d
 		}
 		if r.URL.Path == "/api/v1/runners/hosting/database-credentials" {
 			f.deliveryRequests.Add(1)
+		}
+		if r.URL.Path == "/api/v1/runners/hosting/runtime-environment" {
+			f.runtimeDeliveryRequests.Add(1)
+		}
+		if r.URL.Path == "/api/v1/runners/hosting/database-binding/authorize" {
+			f.connectionAuthorizationRequests.Add(1)
 		}
 		if wire := f.upgradeComplete.Load(); wire != nil && wire.serve(w, r, handler) {
 			return
@@ -409,6 +422,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool) *d
 	}
 	if upgrade {
 		caps = append(caps, domain.HostingDatabaseUpgradeCapability)
+	}
+	if connected {
+		caps = append(caps, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability)
 	}
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, 201)
 	credential := "ncr_database_runner_fixture_only"
@@ -481,6 +497,9 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	args := []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"}
 	if f.upgrade {
 		args = append(args, "--hosting-database-network-upgrade")
+	}
+	if f.connected {
+		args = append(args, "--hosting-database-network-capture", "--hosting-runtime-env", "--hosting-application-database", "--hosting-database-membership-maintenance")
 	}
 	return args
 }

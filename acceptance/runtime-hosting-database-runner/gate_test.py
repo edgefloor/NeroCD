@@ -286,13 +286,28 @@ elif tool == "docker":
                 print("--- SKIP: TestHostingDatabaseUpgradeCompiledRunner (0.00s)")
             elif case != "upgrade_missing":
                 print("--- PASS: TestHostingDatabaseUpgradeCompiledRunner (0.01s)")
+            if case == "connection_failed":
+                print("--- FAIL: TestHostingApplicationDatabaseCompiledRunner (0.01s)")
+                sys.exit(38)
+            if case == "connection_skipped":
+                print("--- SKIP: TestHostingApplicationDatabaseCompiledRunner (0.00s)")
+            elif case != "connection_missing":
+                print("--- PASS: TestHostingApplicationDatabaseCompiledRunner (0.01s)")
+            if case == "connection_skipped_after_pass":
+                print("--- SKIP: TestHostingApplicationDatabaseCompiledRunner (0.00s)")
             if case == "upgrade_skipped_after_pass":
                 print("--- SKIP: TestHostingDatabaseUpgradeCompiledRunner (0.00s)")
         elif args[1:3] == [identity, "docker"]:
-            if "--detach" in args:
+            if "container" in args and "inspect" in args and "e" * 64 in args:
+                print(json.dumps(dict(Id="e" * 64, Name="/"+owner+"-registry", Config=dict(Image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",Labels={label:"foreign" if case=="registry_foreign" else owner}), State=dict(Running=True), HostConfig=dict(Privileged=False,PortBindings={"5000/tcp":[dict(HostIp="0.0.0.0" if case=="registry_public" else "127.0.0.1",HostPort="")]}), NetworkSettings=dict(Ports={"5000/tcp":[dict(HostIp="127.0.0.1",HostPort="35001")]}))))
+            elif "image" in args and "inspect" in args:
+                print(json.dumps(["127.0.0.1:35001/nerocd-http-app@sha256:"+"a"*64] if case!="registry_digest_foreign" else ["foreign/app@sha256:"+"a"*64]))
+            elif "--detach" in args:
                 print("e" * 64)
             elif "--command=SELECT current_database()" in args:
                 print("nerocd_database_runner")
+        elif args[1:3] == [identity, "wget"]:
+            print("{}")
         elif args[1:3] == [identity, "mkdir"]:
             pass
         else:
@@ -318,6 +333,7 @@ class GateTest(unittest.TestCase):
             client = root / "acceptance/runtime-hosting-database-client"
             client.mkdir(parents=True)
             (client / "Dockerfile").write_text("FROM scratch\nCOPY client /client\n")
+            (client / "Dockerfile.http").write_text("FROM scratch\nCOPY client /client\nENTRYPOINT [\"/client\",\"serve\"]\n")
             initial = {}
             if case == "preexisting_foreign":
                 initial["volume"] = {"Name": VOLUME, "Labels": {LABEL: "foreign"}}
@@ -596,14 +612,51 @@ class GateTest(unittest.TestCase):
         self.assertFalse(required - set(manifest), "upgrade source evidence omitted: " + str(sorted(required - set(manifest))))
 
 
+    def test_connected_physical_result_is_required(self):
+        for case in ("connection_missing", "connection_skipped", "connection_skipped_after_pass"):
+            with self.subTest(case=case):
+                state, _, output = self.run_gate(case, 1)
+                self.assertEqual(state, {})
+                self.assertIn("TestHostingApplicationDatabaseCompiledRunner", output)
+        state, _, _ = self.run_gate("connection_failed", 38)
+        self.assertEqual(state, {})
+
+    def test_inner_registry_trust_and_digest_fail_closed(self):
+        for case in ("registry_foreign", "registry_public", "registry_digest_foreign"):
+            with self.subTest(case=case):
+                state, commands, _ = self.run_gate(case, 1)
+                self.assertEqual(state, {})
+                self.assertFalse(any("/fixture/api.test" in args for args in commands))
+
+    def test_connected_registry_profile_and_source_evidence(self):
+        state, commands, _ = self.run_gate("success", 0)
+        self.assertEqual(state, {})
+        registry = next(args for args in commands if OWNER + "-registry" in args)
+        self.assertEqual(registry[:5], ["exec", IDENTITY, "docker", "--host", "unix:///var/run/docker.sock"])
+        self.assertEqual(registry[registry.index("--publish") + 1], "127.0.0.1::5000")
+        self.assertEqual(registry[registry.index("--tmpfs") + 1], "/var/lib/registry:rw")
+        self.assertEqual(registry[-1], "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373")
+        build = next(args for args in commands if "/fixture/client/Dockerfile.http" in args)
+        self.assertEqual(build[build.index("--file") + 1], "/fixture/client/Dockerfile.http")
+        remove = next(i for i, args in enumerate(commands) if args[5:7] == ["image", "rm"])
+        execute = next(i for i, args in enumerate(commands) if "/fixture/api.test" in args)
+        self.assertLess(remove, execute)
+        self.assertIn("NEROCD_DATABASE_HTTP_APP_IMAGE=127.0.0.1:35001/nerocd-http-app@sha256:" + "a" * 64, commands[execute])
+        self.assertTrue({"internal/api/hosting_application_database_runtime_integration_test.go",
+                         "internal/api/hosting_database_connection*.go",
+                         "internal/store/postgres_hosting_database_connection*.go",
+                         "db/migrations/0072_hosting_application_database_connections.sql",
+                         "internal/runnerruntime/hosting_application_database_execution.go",
+                         "internal/runnerruntime/hosting_database_maintenance_execution.go"}.issubset(self.source_manifests[0]))
+
     def test_harmless_complete_model(self):
         state, commands, output = self.run_gate("success", 0)
         self.assertEqual(state, {})
         self.assertIn("harmless runtime model passed", output)
         runtime_command = next(args for args in commands if "/fixture/api.test" in args)
         self.assertEqual(runtime_command[runtime_command.index("-test.run") + 1],
-                         "^TestHostingDatabase(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)$")
-        self.assertIn("-test.timeout=25m", runtime_command)
+                         "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$")
+        self.assertIn("-test.timeout=40m", runtime_command)
         self.assertEqual(sum("/fixture/api.test" in args for args in commands), 1)
         create = next(index for index, args in enumerate(commands) if args[:2] == ["container", "create"])
         start = next(index for index, args in enumerate(commands) if args[:2] == ["container", "start"])

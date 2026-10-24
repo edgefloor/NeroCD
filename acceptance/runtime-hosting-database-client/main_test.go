@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +16,92 @@ import (
 )
 
 const testAlias = "ncdb-0123456789abcdef0123456789abcdef"
+
+func TestHTTPDatabaseEnvironmentProfiles(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			env := map[string]string{"FIXTURE_DATABASE_ENGINE": engine, "FIXTURE_DATABASE_NAMESPACE": "isolated_a", "PGHOST": testAlias, "PGPORT": "5432", "PGDATABASE": "app", "PGUSER": "ncd_app", "PGPASSWORD": strings.Repeat("a", 43), "REDIS_HOST": testAlias, "REDIS_PORT": "6379", "REDIS_USERNAME": "ncd_app", "REDIS_PASSWORD": strings.Repeat("a", 43)}
+			// A canonical 32-byte credential, delivered through runtime configuration.
+			env["PGPASSWORD"], env["REDIS_PASSWORD"] = base64.RawURLEncoding.EncodeToString(make([]byte, 32)), base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+			if _, err := httpDatabaseEnvironment(func(k string) string { return env[k] }); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"FIXTURE_DATABASE_NAMESPACE", "FIXTURE_DATABASE_ENGINE", map[string]string{"postgresql": "PGHOST", "redis": "REDIS_HOST"}[engine], map[string]string{"postgresql": "PGPASSWORD", "redis": "REDIS_PASSWORD"}[engine]} {
+				saved := env[key]
+				env[key] = "SENSITIVE-invalid"
+				if _, err := httpDatabaseEnvironment(func(k string) string { return env[k] }); err == nil || strings.Contains(err.Error(), "SENSITIVE") {
+					t.Fatal("invalid environment accepted or reflected")
+				}
+				env[key] = saved
+			}
+		})
+	}
+}
+
+func TestHTTPDatabaseHandlerRequestsAndBounds(t *testing.T) {
+	records := map[string]string{}
+	calls := 0
+	handler := httpDatabaseHandler(func(ctx context.Context, action, key, value string) (string, error) {
+		calls++
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > 5*time.Second {
+			t.Fatal("missing bounded request context")
+		}
+		if action == "ready" {
+			return "ready", nil
+		}
+		if action == "put" {
+			records[key] = value
+		}
+		return records[key], nil
+	})
+	for _, test := range []struct {
+		method, path, body, want string
+		status                   int
+	}{
+		{"GET", "/ready", "", "ready", 200}, {"PUT", "/records/a", "retained_a", "retained_a", 200}, {"GET", "/records/a", "", "retained_a", 200},
+		{"PUT", "/records/a", strings.Repeat("a", 4097), "invalid request\n", 400}, {"PUT", "/records/a", "", "invalid request\n", 400},
+		{"GET", "/records/a?password=SENSITIVE", "", "invalid request\n", 400}, {"GET", "/records/../a", "", "invalid request\n", 400}, {"POST", "/records/a", "", "not found\n", 404},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(test.method, test.path, strings.NewReader(test.body)))
+		if response.Code != test.status || response.Body.String() != test.want || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("request mismatch method=%s status=%d", test.method, response.Code)
+		}
+	}
+	if calls != 3 {
+		t.Fatal("invalid requests reached database")
+	}
+	response := httptest.NewRecorder()
+	httpDatabaseHandler(func(context.Context, string, string, string) (string, error) {
+		return "SENSITIVE", errors.New("SENSITIVE")
+	}).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if response.Code != 503 || response.Body.String() != "database unavailable\n" {
+		t.Fatal("database diagnostic exposed")
+	}
+}
+
+func TestHTTPDatabaseHandlerCancellationAndResponseBounds(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	response := httptest.NewRecorder()
+	httpDatabaseHandler(func(ctx context.Context, _, _, _ string) (string, error) {
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatal("request cancellation lost")
+		}
+		return "", ctx.Err()
+	}).ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, "/ready", nil))
+	if response.Code != 503 || response.Body.String() != "database unavailable\n" {
+		t.Fatal("canceled request did not sanitize failure")
+	}
+	for _, size := range []int{4096, 4097} {
+		response = httptest.NewRecorder()
+		httpDatabaseHandler(func(context.Context, string, string, string) (string, error) { return strings.Repeat("a", size), nil }).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/records/a", nil))
+		if size == 4096 && (response.Code != 200 || response.Body.Len() != size) || size == 4097 && (response.Code != 503 || response.Body.String() != "database unavailable\n") {
+			t.Fatal("database response bound not enforced")
+		}
+	}
+}
 
 func TestPrivateEndpointIPCompatibility(t *testing.T) {
 	for _, host := range []string{"10.0.0.2", "172.18.0.3", "192.168.2.4", "::ffff:172.18.0.3"} {
