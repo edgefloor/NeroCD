@@ -629,6 +629,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/database-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver pinned private database credentials
+         * @description Current database deploy authority while prepared before writer ApplyBegin, or current explicit reconciliation authority only. Exact immutable recipe/configuration/credential references, actor, runner bearer/capabilities, destination, lease/fence and secret status are checked. Audit commits before decryption; a fresh transaction revalidates after decryption. Stable delivery IDs retain the original deadline capped by lease expiry and 60 seconds. Cache-Control: no-store on every response. Direct TLS or trusted immediate TLS termination required; ordinary JSON and logs suppress values. Delivered bytes cannot be recalled. This endpoint does not qualify an engine adapter.
+         */
+        post: operations["deliverHostingDatabaseCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/runtime-environment": {
         parameters: {
             query?: never;
@@ -3826,6 +3846,36 @@ export interface components {
             /** Format: date-time */
             observed_at: string;
             observation: components["schemas"]["HostingRuntimeObservation"];
+        };
+        HostingDatabaseCredentialRequest: {
+            authority: components["schemas"]["HostingAuthority"];
+            delivery_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            mode: "deploy" | "observe";
+        };
+        HostingDatabaseCredentials: {
+            authority: components["schemas"]["HostingAuthority"];
+            delivery_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            mode: "deploy" | "observe";
+            runner_id: components["schemas"]["HostingIdentifier"];
+            database: components["schemas"]["HostingDatabaseExecutionRef"];
+            request_hash: string;
+            /** @enum {string} */
+            purpose: "hosting_database_credentials";
+            /** Format: date-time */
+            use_until: string;
+            references: components["schemas"]["HostingDatabaseCredentialRef"][];
+            entries: {
+                reference: components["schemas"]["HostingDatabaseCredentialRef"];
+                /**
+                 * Format: byte
+                 * @description Base64 of the exact 43-byte canonical base64url generated password. Only the explicit protected codec may encode these bytes.
+                 */
+                value: string;
+            }[];
         };
         HostingRuntimeEnvironmentRequest: {
             authority: components["schemas"]["HostingAuthority"];
@@ -7381,6 +7431,36 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingDatabaseCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Protected credentials, at most 16 KiB encoded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseCredentials"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
