@@ -31,6 +31,9 @@ type connectedExecutionFixture struct {
 	observationLease                        *domain.RunLease
 	stage                                   *domain.HostingApplicationDatabaseStage
 	retirementPlan                          *domain.HostingDatabaseBindingEndpointPlan
+	canonicalRetirement                     *domain.HostingDatabaseBindingEndpointReceipt
+	retirementStateFault                    string
+	retirementEchoes, retirementRejects     int
 	retirement                              *domain.HostingDatabaseBindingEndpointReceipt
 	deny, lose                              string
 	failEnvironment                         bool
@@ -164,7 +167,11 @@ func (f *connectedExecutionFixture) serve(w http.ResponseWriter, r *http.Request
 		f.op.State, f.op.MutationHold = "applying", true
 		write(f.op)
 	case "hosting/database-binding/state":
-		write(domain.HostingApplicationDatabaseExecutionState{OperationID: f.op.ID, PlanHash: f.op.Plan.Hash, Stage: f.stage, RetirementPlan: f.retirementPlan, RetirementReceipt: f.retirement, MembershipRevision: f.op.ApplicationDatabase.MembershipRevision, HoldOperationID: f.op.ID})
+		state := domain.HostingApplicationDatabaseExecutionState{OperationID: f.op.ID, PlanHash: f.op.Plan.Hash, Stage: f.stage, RetirementPlan: f.retirementPlan, RetirementReceipt: f.retirement, MembershipRevision: f.op.ApplicationDatabase.MembershipRevision, HoldOperationID: f.op.ID}
+		if state.RetirementPlan != nil {
+			f.corruptRetirementState(&state)
+		}
+		write(state)
 	case "hosting/database-binding/authorize":
 		var req domain.HostingApplicationDatabaseEffectRequest
 		decode(&req)
@@ -215,13 +222,31 @@ func (f *connectedExecutionFixture) serve(w http.ResponseWriter, r *http.Request
 		m := in.Members[0]
 		p := domain.HostingDatabaseBindingEndpointPlan{Version: domain.HostingDatabaseBindingVersion, OperationID: f.op.ID, BindingHash: in.Binding.Hash, MembershipRevision: in.MembershipRevision + 2, Action: "retire", Target: m.EndpointPlan.Target, ExpectedEndpointID: m.Receipt.Observation.Endpoint.EndpointID}
 		p.Hash = p.DocumentHash()
-		f.retirementPlan = &p
-		write(p)
+		if f.retirementPlan == nil {
+			f.retirementPlan = &p
+			intent := domain.HostingDatabaseBindingEndpointReceipt{Version: domain.HostingDatabaseBindingVersion, ReceiptID: "controller_owned_retirement_intent", OperationID: f.op.ID, PlanHash: p.Hash, BindingHash: in.Binding.Hash, MembershipRevision: p.MembershipRevision, Phase: "retire_intent", Intent: &m.Receipt.Observation.Endpoint}
+			intent.Hash = intent.DocumentHash()
+			f.canonicalRetirement = &intent
+			f.retirement = &intent
+		}
+		write(*f.retirementPlan)
 	case "hosting/database-binding/retirement":
 		var req domain.HostingApplicationDatabaseRetirementRequest
 		decode(&req)
 		if !f.has("application_retirement") || req.PlanHash != f.op.Plan.Hash || req.Receipt.PlanHash != f.retirementPlan.Hash {
 			f.t.Error("retirement publication escaped durable exact separate plan identities")
+		}
+		if req.Receipt.Phase == "retire_intent" && (f.canonicalRetirement == nil || domain.HostingDocumentHash(req.Receipt) != domain.HostingDocumentHash(*f.canonicalRetirement) || f.retirement.Phase == "detached") {
+			f.retirementRejects++
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		if req.Receipt.Phase == "retire_intent" {
+			f.retirementEchoes++
+		}
+		if req.Receipt.ValidateTransition(f.retirement, *f.retirementPlan, f.op.ApplicationDatabase.Binding) != nil {
+			w.WriteHeader(http.StatusConflict)
+			return
 		}
 		copy := req.Receipt
 		f.retirement = &copy
@@ -338,6 +363,15 @@ func (e *connectedExecutionEngine) VerifyReady(context.Context, applicationDatab
 	return nil
 }
 func (e *connectedExecutionEngine) Retire(ctx context.Context, in applicationDatabaseEngineInput, c applicationDatabaseCandidate, o domain.HostingDatabaseBindingEndpointObservation, p domain.HostingDatabaseBindingEndpointPlan, before func(context.Context) error) (applicationDatabaseRetirement, error) {
+	known := false
+	for _, entry := range e.f.j.Snapshot().Hosting {
+		if entry.ApplicationRetirement != nil && e.f.canonicalRetirement != nil && domain.HostingDocumentHash(entry.ApplicationRetirement) == domain.HostingDocumentHash(e.f.canonicalRetirement) {
+			known = true
+		}
+	}
+	if !known || e.f.retirementEchoes == 0 {
+		e.f.t.Error("retirement effect escaped durable canonical intent echo")
+	}
 	if err := e.effect(ctx, "retire", before); err != nil {
 		return applicationDatabaseRetirement{}, err
 	}
@@ -472,24 +506,37 @@ func TestConnectedApplicationUnknownCreateAndDeniedEffectsHold(t *testing.T) {
 }
 
 func TestConnectedApplicationRetirementResponseLossDoesNotRepeatEffect(t *testing.T) {
-	for _, phase := range []string{"retire_intent", "detached"} {
-		t.Run(phase, func(t *testing.T) {
-			f := newConnectedExecutionFixture(t, "postgresql", true)
-			e := &connectedExecutionEngine{f: f}
-			f.lose = phase
-			server := httptest.NewServer(http.HandlerFunc(f.serve))
-			defer server.Close()
-			if err := f.run(t, e, server.URL); err == nil {
-				t.Fatal("lost retirement ACK ignored")
-			}
-			f.lose = ""
-			if err := reconcileApplicationDatabaseWithEngine(t.Context(), f.config(server.URL), f.j, func() (applicationDatabaseExecutionEngine, error) { return e, nil }); err != nil {
-				t.Fatal(err)
-			}
-			if e.retirements != 1 || e.creates != 1 || len(f.j.Snapshot().Hosting) != 0 {
-				t.Fatal("retirement replay repeated effect or lost chain")
-			}
-		})
+	for _, kind := range []string{"postgresql", "redis"} {
+		for _, phase := range []string{"retire_intent", "detached", "complete"} {
+			t.Run(kind+"/"+phase, func(t *testing.T) {
+				f := newConnectedExecutionFixture(t, kind, true)
+				e := &connectedExecutionEngine{f: f}
+				f.lose = phase
+				server := httptest.NewServer(http.HandlerFunc(f.serve))
+				defer server.Close()
+				if err := f.run(t, e, server.URL); err == nil {
+					t.Fatal("lost retirement/completion ACK ignored")
+				}
+				beforeRetirements, beforeEchoes := e.retirements, f.retirementEchoes
+				if phase != "retire_intent" && (beforeRetirements != 1 || !f.has("application_retirement")) {
+					t.Fatal("missing durable detached effect")
+				}
+				f.lose = ""
+				opens := 0
+				if err := reconcileApplicationDatabaseWithEngine(t.Context(), f.config(server.URL), f.j, func() (applicationDatabaseExecutionEngine, error) { opens++; return e, nil }); err != nil {
+					t.Fatal(err)
+				}
+				if e.retirements != 1 || e.creates != 1 || f.retirementRejects != 0 || len(f.j.Snapshot().Hosting) != 0 {
+					t.Fatal("retirement replay repeated effect or lost chain")
+				}
+				if phase != "retire_intent" && (f.retirementEchoes != beforeEchoes || e.retirements != beforeRetirements) {
+					t.Fatal("detached replay transmitted older intent or repeated effect")
+				}
+				if phase == "complete" && opens != 0 {
+					t.Fatal("saved completion opened effect engine")
+				}
+			})
+		}
 	}
 }
 
@@ -813,5 +860,202 @@ func TestConnectedApplicationStartupACKPrecedesHostAndMixedCaptureHolds(t *testi
 	}
 	if d.Reconcile(t.Context()) == nil || replays != 0 || preflight != 0 || len(capture.j.Snapshot().DatabaseNetworkCapture) == 0 || len(other.j.Snapshot().Hosting) == 0 {
 		t.Fatal("mixed evidence executed or cleared a family")
+	}
+}
+
+func TestConnectedApplicationControllerCanonicalRetirementIntent(t *testing.T) {
+	for _, kind := range []string{"postgresql", "redis"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newConnectedExecutionFixture(t, kind, true)
+			e := &connectedExecutionEngine{f: f}
+			server := httptest.NewServer(http.HandlerFunc(f.serve))
+			defer server.Close()
+			if err := f.run(t, e, server.URL); err != nil {
+				t.Fatal("canonical controller intent rejected", err)
+			}
+			if f.retirementRejects != 0 || f.retirementEchoes != 1 || e.retirements != 1 || f.complete != 1 || len(f.j.Snapshot().Hosting) != 0 {
+				t.Fatal("canonical retirement sequence incomplete")
+			}
+		})
+	}
+}
+
+func (f *connectedExecutionFixture) corruptRetirementState(state *domain.HostingApplicationDatabaseExecutionState) {
+	if f.retirementStateFault == "" {
+		return
+	}
+	p, r := *state.RetirementPlan, *state.RetirementReceipt
+	intent := *r.Intent
+	r.Intent = &intent
+	state.RetirementPlan, state.RetirementReceipt = &p, &r
+	switch f.retirementStateFault {
+	case "missing_plan":
+		state.RetirementPlan = nil
+	case "missing_intent":
+		state.RetirementReceipt = nil
+	case "operation":
+		state.OperationID = "foreign_operation"
+	case "operation_plan":
+		state.PlanHash = "sha256:" + strings.Repeat("b", 64)
+	case "revision":
+		state.MembershipRevision++
+	case "hold":
+		state.HoldOperationID = ""
+	case "stage":
+		stage := *state.Stage
+		stage.ReceiptID = "foreign_ready_stage"
+		stage.Hash = stage.DocumentHash()
+		state.Stage = &stage
+	case "plan":
+		p.MembershipRevision++
+		p.Hash = p.DocumentHash()
+		r.MembershipRevision = p.MembershipRevision
+		r.PlanHash = p.Hash
+	case "member":
+		p.Target.ContainerID = strings.Repeat("b", 64)
+		p.Hash = p.DocumentHash()
+		r.PlanHash = p.Hash
+		r.Intent.Target = p.Target
+	case "receipt":
+		r.BindingHash = "sha256:" + strings.Repeat("b", 64)
+	case "receipt_operation":
+		r.OperationID = "foreign_operation"
+	case "detached":
+		r.Phase = "detached"
+		r.Intent = nil
+		r.Observation = &domain.HostingDatabaseBindingEndpointObservation{Endpoint: intent, Present: false}
+	case "uncertain":
+		r.Phase = "uncertain"
+		r.Intent = nil
+		r.FailureCode = "inspection_failed"
+	}
+	r.Hash = r.DocumentHash()
+}
+
+func TestConnectedApplicationCanonicalRetirementStateFailsClosed(t *testing.T) {
+	for _, kind := range []string{"postgresql", "redis"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newConnectedExecutionFixture(t, kind, true)
+			f.retirementStateFault = "missing_intent"
+			e := &connectedExecutionEngine{f: f}
+			server := httptest.NewServer(http.HandlerFunc(f.serve))
+			defer server.Close()
+			// Establish the same durable ready state once; every fault below is
+			// confined to the read-only state response before any retirement echo.
+			if err := f.run(t, e, server.URL); err == nil {
+				t.Fatal("missing canonical intent admitted retirement")
+			}
+			in, err := applicationDatabaseInput(f.op)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := runnerclient.WithDatabaseTransport(t.Context(), runnerclient.DatabaseTransport{TrustedLoopbackHTTP: true})
+			supervisor := newAttemptSupervisorFrom(ctx, f.lease)
+			defer supervisor.Close()
+			x := applicationDatabaseExchange{s: supervisor, j: f.j, c: runnerclient.New(server.URL, "fixture"), a: f.a, lease: f.lease, op: f.op, in: in, e: e, stage: f.stage}
+			candidate := e.candidate(in)
+			observed := e.endpoint(f.stage.AttachPlan)
+			originalJournal := domain.HostingDocumentHash(f.j.Snapshot().Hosting)
+			originalState := domain.HostingDocumentHash(struct {
+				Operation domain.HostingOperation
+				Stage     *domain.HostingApplicationDatabaseStage
+				Plan      *domain.HostingDatabaseBindingEndpointPlan
+				Receipt   *domain.HostingDatabaseBindingEndpointReceipt
+			}{f.op, f.stage, f.retirementPlan, f.retirement})
+			for _, fault := range []string{"missing_plan", "missing_intent", "operation", "operation_plan", "revision", "hold", "stage", "plan", "member", "receipt", "receipt_operation", "detached", "uncertain"} {
+				t.Run(fault, func(t *testing.T) {
+					f.mu.Lock()
+					f.retirementStateFault = fault
+					f.mu.Unlock()
+					defer func() { f.mu.Lock(); f.retirementStateFault = ""; f.mu.Unlock() }()
+					if err := x.retire(candidate, observed); err == nil {
+						t.Fatal("invalid canonical state admitted retirement")
+					}
+					if e.retirements != 0 || f.retirementEchoes != 0 || f.complete != 0 || f.grants != 3 || !f.op.MutationHold || domain.HostingDocumentHash(f.j.Snapshot().Hosting) != originalJournal {
+						t.Fatal("invalid state escaped effect/hold/journal boundary")
+					}
+					actualState := domain.HostingDocumentHash(struct {
+						Operation domain.HostingOperation
+						Stage     *domain.HostingApplicationDatabaseStage
+						Plan      *domain.HostingDatabaseBindingEndpointPlan
+						Receipt   *domain.HostingDatabaseBindingEndpointReceipt
+					}{f.op, f.stage, f.retirementPlan, f.retirement})
+					if actualState != originalState {
+						t.Fatal("corrupt response changed retained fixture state")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestConnectedApplicationRetainedRetirementRejectsCorruptChain(t *testing.T) {
+	f := newConnectedExecutionFixture(t, "postgresql", true)
+	f.lose = "detached"
+	e := &connectedExecutionEngine{f: f}
+	server := httptest.NewServer(http.HandlerFunc(f.serve))
+	defer server.Close()
+	if f.run(t, e, server.URL) == nil {
+		t.Fatal("missing retained detached body")
+	}
+	original := f.j.Snapshot().Hosting
+	for _, fault := range []string{"missing_intent", "authority", "operation_plan", "stage", "plan", "receipt", "uncertain"} {
+		t.Run(fault, func(t *testing.T) {
+			raw, err := json.Marshal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var entries []runner.JournalHosting
+			if json.Unmarshal(raw, &entries) != nil {
+				t.Fatal("journal clone")
+			}
+			for i := range entries {
+				entry := &entries[i]
+				if entry.ApplicationRetirement == nil {
+					continue
+				}
+				if fault == "missing_intent" && entry.ApplicationRetirement.Phase == "retire_intent" {
+					entries = append(entries[:i], entries[i+1:]...)
+					break
+				}
+				if fault == "authority" {
+					entry.Attempt.Fence = "foreign_fence"
+					break
+				}
+				if fault == "operation_plan" {
+					entry.Plan.Hash = "sha256:" + strings.Repeat("b", 64)
+					break
+				}
+				if fault == "stage" {
+					entry.ApplicationStage.ReceiptID = "foreign_stage"
+					entry.ApplicationStage.Hash = entry.ApplicationStage.DocumentHash()
+					break
+				}
+				if fault == "plan" {
+					entry.ApplicationRetirementPlan.MembershipRevision++
+					entry.ApplicationRetirementPlan.Hash = entry.ApplicationRetirementPlan.DocumentHash()
+					break
+				}
+				if fault == "receipt" {
+					entry.ApplicationRetirement.BindingHash = "sha256:" + strings.Repeat("b", 64)
+					entry.ApplicationRetirement.Hash = entry.ApplicationRetirement.DocumentHash()
+					break
+				}
+				if fault == "uncertain" {
+					entry.ApplicationRetirement.Phase = "uncertain"
+					entry.ApplicationRetirement.Intent = nil
+					entry.ApplicationRetirement.Observation = nil
+					entry.ApplicationRetirement.FailureCode = "inspection_failed"
+					entry.ApplicationRetirement.Hash = entry.ApplicationRetirement.DocumentHash()
+					break
+				}
+			}
+			if selected, err := retainedApplicationDatabaseRetirement(entries, f.a, f.op); err == nil || selected != nil {
+				t.Fatal("corrupt chain selected later receipt")
+			}
+			if domain.HostingDocumentHash(original) != domain.HostingDocumentHash(f.j.Snapshot().Hosting) || e.retirements != 1 {
+				t.Fatal("validation changed durable evidence/effect")
+			}
+		})
 	}
 }

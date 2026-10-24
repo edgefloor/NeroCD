@@ -362,15 +362,26 @@ func (x *applicationDatabaseExchange) retire(candidate applicationDatabaseCandid
 	if err != nil {
 		return err
 	}
-	for _, old := range x.j.Snapshot().Hosting {
-		if storageEntryAuthority(old) == x.a && old.ApplicationRetirement != nil && old.ApplicationRetirement.Phase == "detached" {
-			if old.ApplicationRetirementPlan == nil || *old.ApplicationRetirementPlan != p {
-				return errApplicationDatabaseExecution
-			}
-			return x.publishRetirement(p, *old.ApplicationRetirement)
-		}
+	retained, err := retainedApplicationDatabaseRetirement(x.j.Snapshot().Hosting, x.a, x.op)
+	if err != nil {
+		return err
 	}
-	intent := x.endpointReceipt(p, "retire_intent", nil)
+	if retained != nil && retained.ApplicationRetirement.Phase == "detached" {
+		if *retained.ApplicationRetirementPlan != p {
+			return errApplicationDatabaseExecution
+		}
+		return x.publishRetirement(p, *retained.ApplicationRetirement)
+	}
+	// Plan creation admits the controller's exact immutable intent. Read it
+	// back rather than manufacturing a second body or guessing its receipt ID.
+	state, err := x.c.HostingApplicationDatabaseState(x.s.Context(), x.a, x.op)
+	if err != nil || x.stage == nil || state.Stage == nil || state.Stage.Hash != x.stage.Hash || state.Stage.Phase != "ready" || state.MembershipRevision != x.in.Proof.MembershipRevision || state.HoldOperationID != x.op.ID || state.RetirementPlan == nil || *state.RetirementPlan != p || state.RetirementReceipt == nil || state.RetirementReceipt.Phase != "retire_intent" || state.RetirementReceipt.ValidateTransition(nil, p, x.in.Proof.Binding) != nil {
+		return errApplicationDatabaseExecution
+	}
+	intent := *state.RetirementReceipt
+	if retained != nil && domain.HostingDocumentHash(retained.ApplicationRetirement) != domain.HostingDocumentHash(intent) {
+		return errApplicationDatabaseExecution
+	}
 	if err = x.publishRetirement(p, intent); err != nil {
 		return err
 	}
@@ -380,6 +391,58 @@ func (x *applicationDatabaseExchange) retire(candidate applicationDatabaseCandid
 	}
 	r := x.endpointReceipt(p, "detached", &retired.Endpoint)
 	return x.publishRetirement(p, r)
+}
+
+// A later detached body can supersede transmission of its saved intent, but
+// never validation or durability of that intent. This selects no effect authority.
+func retainedApplicationDatabaseRetirement(entries []runner.JournalHosting, a domain.HostingAuthority, op domain.HostingOperation) (*runner.JournalHosting, error) {
+	found := false
+	var readyStage *domain.HostingApplicationDatabaseStage
+	for _, entry := range entries {
+		if entry.OperationID != a.OperationID {
+			continue
+		}
+		if storageEntryAuthority(entry) != a {
+			return nil, errApplicationDatabaseExecution
+		}
+		if entry.Phase == "application_stage" {
+			readyStage = entry.ApplicationStage
+		}
+		if entry.ApplicationRetirement != nil || entry.ApplicationRetirementPlan != nil || entry.Phase == "application_retirement" {
+			found = true
+		}
+	}
+
+	if !found {
+		return nil, nil
+	}
+	in, err := applicationDatabaseInput(op)
+	if err != nil {
+		return nil, err
+	}
+	var latest *runner.JournalHosting
+	for _, entry := range entries {
+		if entry.OperationID != a.OperationID || entry.ApplicationRetirement == nil && entry.ApplicationRetirementPlan == nil && entry.Phase != "application_retirement" {
+			continue
+		}
+		p, r := entry.ApplicationRetirementPlan, entry.ApplicationRetirement
+		if storageEntryAuthority(entry) != a || entry.Phase != "application_retirement" || entry.Plan == nil || domain.HostingDocumentHash(entry.Plan) != domain.HostingDocumentHash(op.Plan) || entry.ApplicationDatabase == nil || domain.HostingDocumentHash(entry.ApplicationDatabase) != domain.HostingDocumentHash(op.ApplicationDatabase) || entry.ApplicationSnapshot == nil || domain.HostingDocumentHash(entry.ApplicationSnapshot) != domain.HostingDocumentHash(op.Snapshot) || entry.ApplicationStage == nil || entry.ApplicationStage.Phase != "ready" || readyStage == nil || domain.HostingDocumentHash(entry.ApplicationStage) != domain.HostingDocumentHash(readyStage) || entry.ApplicationStage.Validate(in.Plan, in.Proof) != nil || len(in.Proof.Members) != 1 || p == nil || r == nil || entry.ID != r.ReceiptID || p.ValidateApplication(in.Proof.Binding, in.Proof.Members[0].ApplicationHealthy) != nil || p.OperationID != a.OperationID || p.Action != "retire" || p.Target != in.Proof.Members[0].EndpointPlan.Target || p.ExpectedEndpointID != in.Proof.Members[0].Receipt.Observation.Endpoint.EndpointID || p.MembershipRevision != in.Proof.MembershipRevision+2 || r.Phase != "retire_intent" && r.Phase != "detached" {
+			return nil, errApplicationDatabaseExecution
+		}
+		var previous *domain.HostingDatabaseBindingEndpointReceipt
+		if latest != nil {
+			if *latest.ApplicationRetirementPlan != *p || domain.HostingDocumentHash(latest.ApplicationStage) != domain.HostingDocumentHash(entry.ApplicationStage) {
+				return nil, errApplicationDatabaseExecution
+			}
+			previous = latest.ApplicationRetirement
+		}
+		if r.ValidateTransition(previous, *p, in.Proof.Binding) != nil {
+			return nil, errApplicationDatabaseExecution
+		}
+		copy := entry
+		latest = &copy
+	}
+	return latest, nil
 }
 
 func (x *applicationDatabaseExchange) publishRetirement(p domain.HostingDatabaseBindingEndpointPlan, r domain.HostingDatabaseBindingEndpointReceipt) error {
@@ -538,6 +601,10 @@ func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, 
 			intent = &copy
 		}
 	}
+	retirement, err := retainedApplicationDatabaseRetirement(j.Snapshot().Hosting, a, op)
+	if err != nil {
+		return err
+	}
 	if result != nil {
 		if err := replayHostingEvents(config.Server, config.Token, j, first.Attempt, parent); err != nil {
 			return err
@@ -561,6 +628,9 @@ func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, 
 		return domain.ErrHostingDatabaseRecoveryObserveOnly
 	}
 	for _, e := range entries {
+		if retirement != nil && retirement.ApplicationRetirement.Phase == "detached" && e.ApplicationRetirement != nil && e.ID != retirement.ID {
+			continue
+		}
 		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		var ack domain.HostingOperation
 		var err error
