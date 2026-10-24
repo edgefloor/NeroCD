@@ -27,22 +27,23 @@ import (
 )
 
 type runtimeConfig struct {
-	serverBootstrap      *app.ServerBootstrapConfig
-	addr                 string
-	databaseURL          string
-	mode                 deploymentMode
-	leaseTTL             time.Duration
-	reaperInterval       time.Duration
-	cookieSecure         bool
-	publicOrigin         string
-	trustedProxyCIDRs    []string
-	developmentMemory    bool
-	devBootstrapEmail    string
-	devBootstrapPassword string
-	oidcProvider         auth.OIDCProvider
-	secretKeyring        *secretcrypto.Keyring
-	hostingGitHosts      []string
-	hostingBuildPolicy   *domain.HostingBuildPolicy
+	serverBootstrap             *app.ServerBootstrapConfig
+	addr                        string
+	databaseURL                 string
+	mode                        deploymentMode
+	leaseTTL                    time.Duration
+	reaperInterval              time.Duration
+	cookieSecure                bool
+	publicOrigin                string
+	trustedProxyCIDRs           []string
+	developmentMemory           bool
+	devBootstrapEmail           string
+	devBootstrapPassword        string
+	oidcProvider                auth.OIDCProvider
+	secretKeyring               *secretcrypto.Keyring
+	hostingGitHosts             []string
+	hostingBuildPolicy          *domain.HostingBuildPolicy
+	hostingStorageArchivePolicy *hostingStorageArchivePolicy
 }
 
 func runServer(args []string) error {
@@ -201,6 +202,13 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if hostingBuildPolicy != nil && databaseURL == "" {
 		return runtimeConfig{}, errors.New("hosting build controller requires PostgreSQL")
 	}
+	hostingStorageArchivePolicy, err := loadHostingStorageArchivePolicy()
+	if err != nil {
+		return runtimeConfig{}, err
+	}
+	if hostingStorageArchivePolicy != nil && databaseURL == "" {
+		return runtimeConfig{}, errors.New("hosting storage archive controller requires PostgreSQL")
+	}
 	serverBootstrap, err := loadServerBootstrapConfig()
 	if err != nil {
 		return runtimeConfig{}, err
@@ -220,10 +228,13 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	return runtimeConfig{serverBootstrap: serverBootstrap, addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts, hostingBuildPolicy: hostingBuildPolicy}, nil
+	return runtimeConfig{serverBootstrap: serverBootstrap, addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts, hostingBuildPolicy: hostingBuildPolicy, hostingStorageArchivePolicy: hostingStorageArchivePolicy}, nil
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
+	if cfg.hostingStorageArchivePolicy != nil && cfg.databaseURL == "" {
+		return nil, nil, errors.New("hosting storage archive controller requires PostgreSQL")
+	}
 	if cfg.databaseURL != "" {
 		pg, err := store.OpenPostgres(ctx, cfg.databaseURL)
 		if err != nil {
@@ -277,7 +288,7 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 				return nil, nil, err
 			}
 		}
-		stopHosting, err := pg.StartHostingExecution(ctx)
+		stopHosting, err := startConfiguredHostingExecution(ctx, pg, cfg.hostingStorageArchivePolicy)
 		if err != nil {
 			_ = pg.Close()
 			return nil, nil, err
