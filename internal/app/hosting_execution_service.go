@@ -66,6 +66,11 @@ func (s *Service) hostingOperationForRole(ctx context.Context, id, role string) 
 	if _, err = s.authorizeHostingProject(ctx, op.ProjectID, role); err != nil {
 		return nil, domain.HostingOperation{}, err
 	}
+	if op.StorageArchive != nil {
+		if _, _, err = s.resourceForDestinationRole(ctx, op.ResourceID, role); err != nil {
+			return nil, domain.HostingOperation{}, err
+		}
+	}
 	return executor, op, nil
 }
 
@@ -80,6 +85,11 @@ func (s *Service) CancelHostingOperation(ctx context.Context, id string) (domain
 	executor, op, err := s.hostingOperationForRole(ctx, id, domain.RoleMaintainer)
 	if err != nil {
 		return op, err
+	}
+	if op.StorageArchive != nil {
+		if _, err = s.authorizeHostingProject(ctx, op.ProjectID, domain.RoleOwner); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	principal, err := s.CurrentPrincipal(ctx)
 	if err != nil {

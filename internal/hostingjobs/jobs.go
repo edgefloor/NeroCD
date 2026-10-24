@@ -80,6 +80,7 @@ type Config struct {
 
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
+	hasStorageArchive      bool
 	hasServerBootstrap     bool
 	hasProxy               bool
 	hasBuild               bool
@@ -123,6 +124,10 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	cfg.Schema = schema
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &prepareWorker{handler: handler})
+	archiveHandler, hasStorageArchive := handler.(StorageArchiveHandler)
+	if hasStorageArchive {
+		river.AddWorker(workers, &storageArchiveWorker{handler: archiveHandler})
+	}
 	proxyHandler, hasProxy := handler.(ProxyHandler)
 	if hasProxy {
 		river.AddWorker(workers, &prepareProxyWorker{handler: proxyHandler})
@@ -150,7 +155,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap}, nil
+	return &Client{hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

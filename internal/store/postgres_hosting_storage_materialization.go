@@ -93,6 +93,15 @@ func hostingFreshStorageGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 func readHostingStorageMaterialization(ctx context.Context, tx pgx.Tx, storage domain.HostingStorage) (domain.HostingStorageMaterialization, error) {
 	var m domain.HostingStorageMaterialization
 	row, err := sqlcgen.New(tx).LockHostingStorageMaterialization(ctx, storage.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		present, e := sqlcgen.New(tx).StorageArchiveSchemaPresent(ctx)
+		if e != nil {
+			return m, e
+		}
+		if present {
+			return readArchiveRestoreMaterialization(ctx, tx, storage)
+		}
+	}
 	if err != nil {
 		return m, err
 	}
@@ -235,6 +244,11 @@ func (s *PostgresStore) HostingStorageCreateBegin(ctx context.Context, runner st
 		return zero, ErrConflict
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageCreateAck, error) {
+		if _, found, e := archiveOperation(ctx, tx, in.OperationID); e != nil {
+			return zero, e
+		} else if found {
+			return s.archiveStorageCreateBegin(ctx, tx, runner, in)
+		}
 		op, storage, err := storageAttemptOperation(ctx, tx, runner, in.HostingAuthority)
 		if err != nil {
 			return zero, err
@@ -243,7 +257,7 @@ func (s *PostgresStore) HostingStorageCreateBegin(ctx context.Context, runner st
 			return zero, ErrConflict
 		}
 		q := sqlcgen.New(tx)
-		prior, err := q.ReadHostingStorageOperationAdmission(ctx, op.ID)
+		prior, err := readStorageOperationAdmission(ctx, tx, op.ID)
 		if err == nil {
 			if !op.MutationHold || !storageAdmissionMatches(prior, in.HostingAuthority, in.PlanHash, in.StorageRef) {
 				return zero, ErrConflict
@@ -293,7 +307,7 @@ func (s *PostgresStore) HostingStorageCreateBegin(ctx context.Context, runner st
 		if origin.CreationNonce != op.Plan.Storage.CreationNonce || origin.CreationOperationID != op.Plan.Storage.CreationOperationID || origin.DaemonID != op.Release.DaemonID {
 			return zero, ErrConflict
 		}
-		if err = q.InsertHostingStorageOperationAdmission(ctx, sqlcgen.InsertHostingStorageOperationAdmissionParams{OperationID: op.ID, StorageID: storage.ID, PlanHash: op.Plan.Hash, Authority: buildJSON(in.HostingAuthority)}); err != nil {
+		if err = insertStorageOperationAdmission(ctx, tx, sqlcgen.InsertHostingStorageOperationAdmissionParams{OperationID: op.ID, StorageID: storage.ID, PlanHash: op.Plan.Hash, Authority: buildJSON(in.HostingAuthority)}); err != nil {
 			return zero, err
 		}
 		if err = storageMaterializationAudit(ctx, tx, runner, "create_admitted", op, storage.ID, in.PlanHash); err != nil {
@@ -325,6 +339,11 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 		return zero, ErrConflict
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageMaterializedAck, error) {
+		if _, found, e := archiveOperation(ctx, tx, in.OperationID); e != nil {
+			return zero, e
+		} else if found {
+			return s.archiveStorageMaterialized(ctx, tx, runner, in)
+		}
 		if err := hostingStorageMaterializationCompatible(ctx, sqlcgen.New(tx)); err != nil {
 			return zero, err
 		}
@@ -332,7 +351,7 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 			return zero, err
 		}
 		q := sqlcgen.New(tx)
-		prior, err := q.ReadHostingStorageMaterializedReceipt(ctx, in.OperationID)
+		prior, err := readStorageMaterializedReceipt(ctx, tx, in.OperationID)
 		if err == nil {
 			var authority domain.HostingAuthority
 			if json.Unmarshal(prior.Authority, &authority) != nil || authority != in.HostingAuthority || prior.ReceiptID != in.ReceiptID || prior.BodyHash != domain.HostingDocumentHash(in) {
@@ -362,7 +381,7 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 		if !op.MutationHold || op.State != "prepared" || in.PlanHash != op.Plan.Hash || in.StorageRef != op.Snapshot.Storage {
 			return zero, ErrConflict
 		}
-		admission, err := q.ReadHostingStorageOperationAdmission(ctx, op.ID)
+		admission, err := readStorageOperationAdmission(ctx, tx, op.ID)
 		if err != nil {
 			return zero, err
 		}
@@ -379,7 +398,7 @@ func (s *PostgresStore) HostingStorageMaterialized(ctx context.Context, runner s
 		if err = storageMaterializationAudit(ctx, tx, runner, "materialized", op, storage.ID, in.PlanHash); err != nil {
 			return zero, err
 		}
-		row, err := q.InsertHostingStorageMaterializedReceipt(ctx, sqlcgen.InsertHostingStorageMaterializedReceiptParams{OperationID: op.ID, StorageID: storage.ID, ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), AuditID: "aud_storage_materialized_" + op.ID})
+		row, err := insertStorageMaterializedReceipt(ctx, tx, sqlcgen.InsertHostingStorageMaterializedReceiptParams{OperationID: op.ID, StorageID: storage.ID, ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), AuditID: "aud_storage_materialized_" + op.ID})
 		if err != nil {
 			return zero, err
 		}
@@ -409,15 +428,14 @@ func hostingStorageWriterReady(ctx context.Context, tx pgx.Tx, a domain.HostingA
 	if op.Plan == nil || op.Plan.Storage == nil {
 		return ErrConflict
 	}
-	q := sqlcgen.New(tx)
-	admission, err := q.ReadHostingStorageOperationAdmission(ctx, op.ID)
+	admission, err := readStorageOperationAdmission(ctx, tx, op.ID)
 	if err != nil {
 		return ErrConflict
 	}
 	if !storageAdmissionMatches(admission, a, op.Plan.Hash, op.Snapshot.Storage) {
 		return ErrConflict
 	}
-	row, err := q.ReadHostingStorageMaterializedReceipt(ctx, op.ID)
+	row, err := readStorageMaterializedReceipt(ctx, tx, op.ID)
 	if err != nil {
 		return ErrConflict
 	}
@@ -446,7 +464,7 @@ func hostingStorageHealthyEvidence(ctx context.Context, tx pgx.Tx, op domain.Hos
 	if err != nil {
 		return nil, err
 	}
-	row, err := sqlcgen.New(tx).ReadHostingStorageMaterializedReceipt(ctx, op.ID)
+	row, err := readStorageMaterializedReceipt(ctx, tx, op.ID)
 	if err != nil {
 		return nil, ErrConflict
 	}

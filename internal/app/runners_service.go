@@ -411,7 +411,21 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	if claim.Run.RunSpec.Type == domain.HostingBuildTaskType {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
+		if domain.ValidateStorageArchiveTask(claim.Run) != nil {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		op, e := s.RunnerStorageArchivePlan(ctx, a)
+		if e != nil {
+			return domain.ClaimedRun{}, e
+		}
+		if op.StorageArchive == nil || op.TaskMode != claim.Run.RunSpec.HostingMode {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		claim.PrimitivePlan = domain.RunnerPrimitivePlan{RunID: claim.Run.ID}
+		return claim, nil
+	} else if claim.Run.RunSpec.Type == domain.HostingBuildTaskType {
 		if err := domain.ValidateHostingBuildTask(claim.Run); err != nil {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}

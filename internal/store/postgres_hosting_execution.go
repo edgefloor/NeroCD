@@ -91,6 +91,11 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 		return err
 	}
 	for _, id := range ids {
+		if _, archive, e := archiveOperation(ctx, tx, id); e != nil {
+			return e
+		} else if archive {
+			continue
+		}
 		if _, err = s.hostingJobs.EnqueueTx(ctx, tx, hostingjobs.PrepareDeploymentArgs{OperationID: id}); err != nil {
 			return err
 		}
@@ -104,6 +109,9 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 	if err = s.recoverBuildDispatch(ctx, tx); err != nil {
 		return err
 	}
+	if err = s.recoverArchiveDispatch(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -111,6 +119,9 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 var ErrHostingRestoreHold = fmt.Errorf("%w: restored hosting ownership requires trusted local journal and process recovery proof", ErrConflict)
 
 func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.HostingOperation, error) {
+	if op, found, err := archiveOperation(ctx, q, id); err != nil || found {
+		return op, err
+	}
 	var op domain.HostingOperation
 	var snapshot, release, plan, prepared, complete, result, cleanup []byte
 	err := func() error {
@@ -1216,6 +1227,16 @@ func (s *PostgresStore) hostingControlMutation(ctx context.Context, id string, a
 	if err != nil {
 		return before, err
 	}
+	if before.StorageArchive != nil {
+		if reconcile {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		op, e := archiveCancel(ctx, tx, before, audit.ActorID)
+		if e != nil {
+			return domain.HostingOperation{}, e
+		}
+		return op, tx.Commit(ctx)
+	}
 	if err = hostingLockOperationRuns(ctx, tx, before); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -1562,6 +1583,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.RunTypeStorageArchive {
+		return s.archiveClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.HostingBuildTaskType {
 		return s.buildClaimAllowed(ctx, tx, run, runnerID)
 	}
@@ -2160,6 +2184,9 @@ func hostingCleanupUnreferenced(ctx context.Context, tx pgx.Tx, plan domain.Host
 	if !reflect.DeepEqual(target, plan.Target) {
 		return ErrConflict
 	}
+	if err = archiveImageReferenced(ctx, tx, target); err != nil {
+		return err
+	}
 	referenced, err := sqlcgen.New(tx).HostingReleaseReferenced(ctx, target.OperationID)
 	if err != nil {
 		return err
@@ -2251,6 +2278,9 @@ func (s *PostgresStore) completeHostingCleanup(ctx context.Context, tx pgx.Tx, r
 		return domain.HostingOperation{}, err
 	}
 	if !uncertain {
+		if err := archiveImageReferenced(ctx, tx, op.CleanupPlan.Target); err != nil {
+			return domain.HostingOperation{}, err
+		}
 		if rows, err := q.MarkHostingCleanupRemoved(ctx, sqlcgen.MarkHostingCleanupRemovedParams{OperationID: op.CleanupPlan.Target.OperationID, CleanupOperationID: hostingStringPointer(op.ID)}); err != nil || rows != 1 {
 			return domain.HostingOperation{}, ErrConflict
 		}

@@ -280,6 +280,9 @@ func localHostingOperationAuthority(ctx context.Context, tx pgx.Tx, op domain.Ho
 }
 
 func hostingOperationTargetGate(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, observe bool) error {
+	if op.StorageArchive != nil {
+		return ErrConflict
+	}
 	if err := databaseOperationAuthority(ctx, tx, op, observe); err != nil {
 		return fmt.Errorf("check database operation authority: %w", err)
 	}
