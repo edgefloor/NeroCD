@@ -70,7 +70,14 @@ type DatabaseCredentials struct {
 // NewDatabaseCredentials copies the complete exact role/ref/version set. It does
 // not prove delivery authorization; the typed controller protocol owns that.
 func NewDatabaseCredentials(plan domain.HostingApplyPlan, values []DatabaseCredentialValue, useUntil time.Time) (*DatabaseCredentials, error) {
-	if domain.ValidateHostingDatabasePlan(plan) != nil || !useUntil.After(time.Now()) || useUntil.After(time.Now().Add(15*time.Minute)) || len(values) != len(plan.Database.Credentials) {
+	if domain.ValidateHostingDatabasePlan(plan) != nil {
+		return nil, errDatabaseSecret
+	}
+	return newValidatedDatabaseCredentials(plan, values, useUntil)
+}
+
+func newValidatedDatabaseCredentials(plan domain.HostingApplyPlan, values []DatabaseCredentialValue, useUntil time.Time) (*DatabaseCredentials, error) {
+	if plan.Database == nil || !useUntil.After(time.Now()) || useUntil.After(time.Now().Add(15*time.Minute)) || len(values) != len(plan.Database.Credentials) {
 		return nil, errDatabaseSecret
 	}
 	c := &DatabaseCredentials{planHash: plan.Hash, until: useUntil}

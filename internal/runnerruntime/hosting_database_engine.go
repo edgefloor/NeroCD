@@ -177,6 +177,7 @@ type databaseContainer struct {
 	State struct {
 		Running bool
 		Status  string
+		Pid     int
 	}
 	HostConfig struct {
 		PortBindings                                map[string]json.RawMessage
@@ -199,7 +200,7 @@ type databaseContainer struct {
 		RW                                      bool
 	}
 	NetworkSettings struct {
-		Networks map[string]struct{ NetworkID, IPAddress, GlobalIPv6Address string }
+		Networks map[string]databaseUpgradeEndpoint
 	}
 }
 
@@ -299,7 +300,14 @@ func databaseContainerMatches(container databaseContainer, operation string, pla
 }
 
 func databaseVolumeRequest(operation string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, evidence hostingOwnedVolumeEvidence) (hostingOwnedVolumeRequest, error) {
-	if domain.ValidateHostingDatabasePlan(plan) != nil || !hostingVolumeReference.MatchString(operation) || req.validate() != nil || req.CreatePermitted || req.Storage.Reference() != plan.Storage.Reference || req.Storage.BindingID != plan.Snapshot.BindingID || req.Storage.ResourceID != plan.Snapshot.ResourceID || req.Storage.DestinationID != plan.Snapshot.DestinationID || req.Storage.MountPath != plan.Storage.MountPath || req.Storage.VolumeName != plan.Storage.VolumeName || req.DaemonID != plan.Release.DaemonID || req.OriginOperationID != plan.Storage.CreationOperationID || req.CreationNonce != plan.Storage.CreationNonce || operation == req.OriginOperationID && req.OriginPlanHash != plan.Hash {
+	if domain.ValidateHostingDatabasePlan(plan) != nil {
+		return req, errors.New("invalid legacy database plan")
+	}
+	return databaseValidatedVolumeRequest(operation, plan, req, evidence)
+}
+
+func databaseValidatedVolumeRequest(operation string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, evidence hostingOwnedVolumeEvidence) (hostingOwnedVolumeRequest, error) {
+	if !hostingVolumeReference.MatchString(operation) || req.validate() != nil || req.CreatePermitted || req.Storage.Reference() != plan.Storage.Reference || req.Storage.BindingID != plan.Snapshot.BindingID || req.Storage.ResourceID != plan.Snapshot.ResourceID || req.Storage.DestinationID != plan.Snapshot.DestinationID || req.Storage.MountPath != plan.Storage.MountPath || req.Storage.VolumeName != plan.Storage.VolumeName || req.DaemonID != plan.Release.DaemonID || req.OriginOperationID != plan.Storage.CreationOperationID || req.CreationNonce != plan.Storage.CreationNonce || operation == req.OriginOperationID && req.OriginPlanHash != plan.Hash {
 		return req, errors.New("database materialization admission differs from plan")
 	}
 	if plan.PreviousHealthy != nil && (plan.PreviousHealthy.Storage == nil || plan.PreviousHealthy.Storage.CreationPlanHash != req.OriginPlanHash || !dockerObjectID.MatchString(plan.PreviousHealthy.ContainerID)) {
@@ -347,7 +355,7 @@ func (e *imageEngine) ApplyDatabase(parent context.Context, operation string, pl
 		// From the first retained-history write onward an unknown outcome keeps
 		// the controller hold; there is no inferred rollback or empty-volume reset.
 		result.Uncertain = true
-		return e.applyDatabase(ctx, operation, plan, req, evidence, values, config, before, &result)
+		return e.applyDatabase(ctx, operation, plan, req, evidence, values, config, before, &result, nil)
 	})
 	if err == nil && ctx.Err() == nil {
 		result.Outcome = "succeeded"
@@ -357,7 +365,7 @@ func (e *imageEngine) ApplyDatabase(parent context.Context, operation string, pl
 	return result
 }
 
-func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, evidence hostingOwnedVolumeEvidence, values []DatabaseCredentialValue, c DatabaseEngineConfig, before func(context.Context) error, result *domain.HostingResult) error {
+func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, evidence hostingOwnedVolumeEvidence, values []DatabaseCredentialValue, c DatabaseEngineConfig, before func(context.Context) error, result *domain.HostingResult, inspection *databaseUpgradeInspection) error {
 	name := databaseContainerName(operation, plan)
 	raw, err := e.ownedVolumeDocker(ctx, 16<<10, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "name=^/"+name+"$")
 	if err != nil {
@@ -386,7 +394,15 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		return err
 	}
 	known := databaseKnownContainers(plan, candidate)
-	record, _, err := e.ensureDatabaseNetwork(ctx, operation, plan, req, evidence, c, before, known)
+	var record databaseNetworkRecord
+	if inspection == nil {
+		record, _, err = e.ensureDatabaseNetwork(ctx, operation, plan, req, evidence, c, before, known)
+	} else {
+		record, err = inspection.record(c)
+		if err == nil {
+			_, err = e.databaseNetworkForInspection(ctx, operation, plan, record, c, known, inspection)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -398,7 +414,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		if err := c.checkSecretFiles(ctx, operation, plan, values); err != nil {
 			return err
 		}
-		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
+		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before, inspection) != nil {
 			return errors.New("database retirement requires existing ready replacement")
 		}
 	}
@@ -411,23 +427,23 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	}
 	if candidate != "" {
 		container, err := e.inspectDatabaseContainer(ctx, candidate)
-		if err != nil || !databaseContainerMatches(container, operation, plan, record, secretPath) {
+		if err != nil || !databaseContainerMatchesWithInspection(container, operation, plan, record, secretPath, inspection) {
 			return errors.New("database candidate ownership mismatch")
 		}
 		result.ContainerID = candidate
 	}
-	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, true); err != nil {
+	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, true, inspection); err != nil {
 		return err
 	}
 	if plan.PreviousHealthy != nil {
 		previous := *plan.PreviousHealthy
-		priorPlan := domain.HostingApplyPlan{Snapshot: previous.Snapshot, Release: previous.Release, Storage: &previous.Storage.Plan, Database: plan.Database, Hash: previous.PlanHash}
+		priorPlan := databasePreviousInspectionPlan(plan, inspection)
 		present, err := e.databaseContainerPresent(ctx, previous.ContainerID)
 		if err != nil {
 			return err
 		}
 		if !present {
-			if !retirementExists || e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
+			if !retirementExists || e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before, inspection) != nil {
 				return errors.New("database predecessor absent without exact retirement and ready replacement")
 			}
 		} else {
@@ -435,7 +451,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 				return errors.New("completed database retirement predecessor unexpectedly present")
 			}
 			container, err := e.inspectDatabaseContainer(ctx, previous.ContainerID)
-			if err != nil || !databaseContainerMatches(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan))) {
+			if err != nil || !databaseContainerMatchesWithInspection(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan)), inspection) {
 				return errors.New("database predecessor ownership mismatch")
 			}
 			if container.State.Running {
@@ -453,7 +469,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 				}
 			}
 			container, err = e.inspectDatabaseContainer(ctx, previous.ContainerID)
-			if err != nil || container.State.Running || !databaseContainerMatches(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan))) {
+			if err != nil || container.State.Running || !databaseContainerMatchesWithInspection(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan)), inspection) {
 				return errors.New("database predecessor writer stop not confirmed")
 			}
 		}
@@ -462,11 +478,14 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	if err = verifyVolume(); err != nil {
 		return err
 	}
-	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false); err != nil {
+	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false, inspection); err != nil {
 		return err
 	}
 	if candidate == "" {
 		args := []string{"container", "create", "--name", name, "--network", plan.Database.NetworkName, "--ipc", "private", "--restart", "unless-stopped", "--mount", "type=volume,source=" + plan.Storage.VolumeName + ",target=" + plan.Storage.MountPath + ",volume-nocopy", "--mount", "type=bind,source=" + secretPath + ",target=" + databaseSecretMount + ",readonly"}
+		if inspection != nil {
+			args = append(args, "--network-alias", plan.Database.Network.Alias)
+		}
 		labels := databaseContainerLabels(operation, plan, record)
 		keys := make([]string, 0, len(labels))
 		for key := range labels {
@@ -496,7 +515,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		result.ContainerID = candidate
 	}
 	container, err := e.inspectDatabaseContainer(ctx, candidate)
-	if err != nil || !databaseContainerMatches(container, operation, plan, record, secretPath) {
+	if err != nil || !databaseContainerMatchesWithInspection(container, operation, plan, record, secretPath, inspection) {
 		return errors.New("database created container provenance changed")
 	}
 	if !container.State.Running {
@@ -506,7 +525,7 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 		if err = verifyVolume(); err != nil {
 			return err
 		}
-		if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, "", false); err != nil {
+		if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, "", false, inspection); err != nil {
 			return err
 		}
 		if databaseAuthorize(ctx, before) != nil {
@@ -518,10 +537,10 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	}
 	for {
 		container, err = e.inspectDatabaseContainer(ctx, candidate)
-		if err != nil || !container.State.Running || !databaseContainerMatches(container, operation, plan, record, secretPath) {
+		if err != nil || !container.State.Running || !databaseContainerMatchesWithInspection(container, operation, plan, record, secretPath, inspection) {
 			return errors.New("database writer state or identity changed")
 		}
-		network, err := e.inspectDatabaseNetwork(ctx, plan.Database.NetworkName, record, databaseKnownContainers(plan, candidate))
+		network, err := e.databaseNetworkForInspection(ctx, operation, plan, record, c, databaseKnownContainers(plan, candidate), inspection)
 		if err != nil {
 			return err
 		}
@@ -544,17 +563,17 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 	if err = verifyVolume(); err != nil {
 		return err
 	}
-	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false); err != nil {
+	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false, inspection); err != nil {
 		return err
 	}
 	container, err = e.inspectDatabaseContainer(ctx, candidate)
-	if err != nil || !container.State.Running || !databaseContainerMatches(container, operation, plan, record, secretPath) {
+	if err != nil || !container.State.Running || !databaseContainerMatchesWithInspection(container, operation, plan, record, secretPath, inspection) {
 		return errors.New("database final writer identity changed")
 	}
 	if e.verifyLocalRelease(ctx, plan.Release) != nil || ctx.Err() != nil {
 		return errors.New("database final identity unavailable")
 	}
-	if _, err = e.inspectDatabaseNetwork(ctx, plan.Database.NetworkName, record, databaseKnownContainers(plan, candidate)); err != nil {
+	if _, err = e.databaseNetworkForInspection(ctx, operation, plan, record, c, databaseKnownContainers(plan, candidate), inspection); err != nil {
 		return err
 	}
 	if !record.InitReady {
@@ -563,16 +582,16 @@ func (e *imageEngine) applyDatabase(ctx context.Context, operation string, plan 
 			return err
 		}
 	}
-	if err = e.retireDatabasePredecessor(ctx, operation, plan, record, c, candidate, values, before); err != nil {
+	if err = e.retireDatabasePredecessor(ctx, operation, plan, record, c, candidate, values, before, inspection); err != nil {
 		return err
 	}
 	if err = verifyVolume(); err != nil {
 		return err
 	}
-	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false); err != nil {
+	if err = e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false, inspection); err != nil {
 		return err
 	}
-	if plan.PreviousHealthy != nil && e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
+	if plan.PreviousHealthy != nil && e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before, inspection) != nil {
 		return errors.New("database replacement readiness changed after retirement")
 	}
 	return nil
@@ -593,12 +612,12 @@ func (e *imageEngine) databaseContainerPresent(ctx context.Context, id string) (
 	return len(ids) == 1, nil
 }
 
-func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue, before func(context.Context) error) error {
+func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue, before func(context.Context) error, inspection *databaseUpgradeInspection) error {
 	container, err := e.inspectDatabaseContainer(ctx, candidate)
-	if err != nil || !record.InitReady || !container.State.Running || !databaseContainerMatches(container, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan))) {
+	if err != nil || !record.InitReady || !container.State.Running || !databaseContainerMatchesWithInspection(container, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan)), inspection) {
 		return errors.New("database retirement replacement identity unavailable")
 	}
-	network, err := e.inspectDatabaseNetwork(ctx, plan.Database.NetworkName, record, databaseKnownContainers(plan, candidate))
+	network, err := e.databaseNetworkForInspection(ctx, operation, plan, record, c, databaseKnownContainers(plan, candidate), inspection)
 	if err != nil {
 		return err
 	}
@@ -612,7 +631,7 @@ func (e *imageEngine) databaseReplacementReady(ctx context.Context, operation st
 	return nil
 }
 
-func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue, before func(context.Context) error) error {
+func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate string, values []DatabaseCredentialValue, before func(context.Context) error, inspection *databaseUpgradeInspection) error {
 	if plan.PreviousHealthy == nil {
 		return nil
 	}
@@ -632,15 +651,15 @@ func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation s
 		if exists && retirement.Completed {
 			return errors.New("completed database retirement predecessor unexpectedly present")
 		}
-		priorPlan := domain.HostingApplyPlan{Snapshot: previous.Snapshot, Release: previous.Release, Storage: &previous.Storage.Plan, Database: plan.Database, Hash: previous.PlanHash}
+		priorPlan := databasePreviousInspectionPlan(plan, inspection)
 		matchesStopped := func() bool {
 			container, err := e.inspectDatabaseContainer(ctx, previous.ContainerID)
-			return err == nil && !container.State.Running && databaseContainerMatches(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan)))
+			return err == nil && !container.State.Running && databaseContainerMatchesWithInspection(container, previous.OperationID, priorPlan, record, filepath.Join(c.secretRoot, databaseGeneration(previous.OperationID, priorPlan)), inspection)
 		}
 		if !matchesStopped() {
 			return errors.New("database retirement requires exact stopped predecessor")
 		}
-		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before) != nil {
+		if e.databaseReplacementReady(ctx, operation, plan, record, c, candidate, values, before, inspection) != nil {
 			return errors.New("database retirement replacement readiness changed")
 		}
 		if !exists {
@@ -654,11 +673,11 @@ func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation s
 		if databaseAuthorize(ctx, before) != nil || !matchesStopped() {
 			return errors.New("database predecessor retirement authority or ownership changed")
 		}
-		if e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false) != nil {
+		if e.databaseWriters(ctx, operation, plan, record, c, candidate, candidate, false, inspection) != nil {
 			return errors.New("database retirement has unknown or competing volume users")
 		}
 		replacement, err := e.inspectDatabaseContainer(ctx, candidate)
-		if err != nil || !replacement.State.Running || !databaseContainerMatches(replacement, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan))) {
+		if err != nil || !replacement.State.Running || !databaseContainerMatchesWithInspection(replacement, operation, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation, plan)), inspection) {
 			return errors.New("database retirement replacement stopped or changed")
 		}
 		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "rm", previous.ContainerID); err != nil {
@@ -681,7 +700,7 @@ func (e *imageEngine) retireDatabasePredecessor(ctx context.Context, operation s
 	return ctx.Err()
 }
 
-func (e *imageEngine) databaseWriters(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate, running string, allowPrevious bool) error {
+func (e *imageEngine) databaseWriters(ctx context.Context, operation string, plan domain.HostingApplyPlan, record databaseNetworkRecord, c DatabaseEngineConfig, candidate, running string, allowPrevious bool, inspection *databaseUpgradeInspection) error {
 	raw, err := e.ownedVolumeDocker(ctx, 16<<10, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "volume="+plan.Storage.VolumeName)
 	if err != nil {
 		return err
@@ -698,10 +717,10 @@ func (e *imageEngine) databaseWriters(ctx context.Context, operation string, pla
 			}
 			old := plan.PreviousHealthy
 			expectedOp = old.OperationID
-			expectedPlan = domain.HostingApplyPlan{Snapshot: old.Snapshot, Release: old.Release, Storage: &old.Storage.Plan, Database: plan.Database, Hash: old.PlanHash}
+			expectedPlan = databasePreviousInspectionPlan(plan, inspection)
 		}
 		container, err := e.inspectDatabaseContainer(ctx, id)
-		if err != nil || !databaseContainerMatches(container, expectedOp, expectedPlan, record, filepath.Join(c.secretRoot, databaseGeneration(expectedOp, expectedPlan))) {
+		if err != nil || !databaseContainerMatchesWithInspection(container, expectedOp, expectedPlan, record, filepath.Join(c.secretRoot, databaseGeneration(expectedOp, expectedPlan)), inspection) {
 			return errors.New("database volume user provenance changed")
 		}
 		previousAllowed := allowPrevious && plan.PreviousHealthy != nil && id == plan.PreviousHealthy.ContainerID
@@ -724,8 +743,15 @@ func (c DatabaseEngineConfig) probe(ctx context.Context, address string, plan do
 // ObserveDatabase validates an already-durable writer without initialization,
 // repairs, starts, stops, network creation, or writable readiness commands.
 func (e *imageEngine) ObserveDatabase(parent context.Context, operation domain.HostingOperation, credentials *DatabaseCredentials, c DatabaseEngineConfig) (domain.HostingObservation, error) {
+	if operation.Plan == nil || domain.ValidateHostingDatabasePlan(*operation.Plan) != nil {
+		return domain.HostingObservation{}, errors.New("invalid legacy database observation plan")
+	}
+	return e.observeDatabase(parent, operation, credentials, c, nil)
+}
+
+func (e *imageEngine) observeDatabase(parent context.Context, operation domain.HostingOperation, credentials *DatabaseCredentials, c DatabaseEngineConfig, inspection *databaseUpgradeInspection) (domain.HostingObservation, error) {
 	var observation domain.HostingObservation
-	if operation.Plan == nil || operation.Result == nil || operation.Result.ContainerID == "" || domain.ValidateHostingDatabasePlan(*operation.Plan) != nil || operation.Result.PlanHash != operation.Plan.Hash || operation.Result.DaemonID != operation.Plan.Release.DaemonID || operation.Result.ImageID != operation.Plan.Release.ImageID {
+	if operation.Plan == nil || operation.Result == nil || operation.Result.ContainerID == "" || operation.Result.PlanHash != operation.Plan.Hash || operation.Result.DaemonID != operation.Plan.Release.DaemonID || operation.Result.ImageID != operation.Plan.Release.ImageID {
 		return observation, errors.New("database observation requires exact durable result")
 	}
 	plan := *operation.Plan
@@ -744,12 +770,17 @@ func (e *imageEngine) ObserveDatabase(parent context.Context, operation domain.H
 		if err != nil || !exists || record.Binding != plan.Snapshot.BindingID || record.Destination != plan.Snapshot.DestinationID || record.Storage != plan.Snapshot.Storage || record.VolumeNonce != plan.Storage.CreationNonce || record.OriginOperation != plan.Storage.CreationOperationID || operation.ID == record.OriginOperation && record.OriginPlan != plan.Hash || plan.PreviousHealthy != nil && record.OriginPlan != plan.PreviousHealthy.Storage.CreationPlanHash || record.Configuration != plan.Database.Reference.ConfigurationHash || record.Daemon != plan.Release.DaemonID {
 			return errors.New("database observation origin unavailable")
 		}
+		if inspection != nil {
+			if _, err := inspection.record(c); err != nil {
+				return err
+			}
+		}
 		container, err := e.inspectDatabaseContainer(ctx, operation.Result.ContainerID)
-		if err != nil || !container.State.Running || !databaseContainerMatches(container, operation.ID, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation.ID, plan))) {
+		if err != nil || !container.State.Running || !databaseContainerMatchesWithInspection(container, operation.ID, plan, record, filepath.Join(c.secretRoot, databaseGeneration(operation.ID, plan)), inspection) {
 			return errors.New("database observed container provenance mismatch")
 		}
 		healthy := domain.HostingHealthy{Snapshot: plan.Snapshot, Release: plan.Release, PlanHash: plan.Hash, ContainerID: container.ID, OperationID: operation.ID, Storage: &domain.HostingHealthyStorage{Plan: *plan.Storage, CreationPlanHash: record.OriginPlan}}
-		if e.verifyHealthyStorageVolume(ctx, healthy) != nil || e.databaseWriters(ctx, operation.ID, plan, record, c, container.ID, container.ID, false) != nil {
+		if e.verifyHealthyStorageVolume(ctx, healthy) != nil || e.databaseWriters(ctx, operation.ID, plan, record, c, container.ID, container.ID, false, inspection) != nil {
 			return errors.New("database observed retained volume or writer changed")
 		}
 		raw, err := e.ownedVolumeDocker(ctx, 64<<10, "volume", "inspect", plan.Storage.VolumeName, "--format", "{{json .}}")
@@ -757,7 +788,7 @@ func (e *imageEngine) ObserveDatabase(parent context.Context, operation domain.H
 		if err != nil || json.Unmarshal(raw, &volume) != nil || volume.CreatedAt != record.VolumeCreatedAt {
 			return errors.New("database observed volume evidence changed")
 		}
-		network, err := e.inspectDatabaseNetwork(ctx, plan.Database.NetworkName, record, databaseKnownContainers(plan, container.ID))
+		network, err := e.databaseNetworkForInspection(ctx, operation.ID, plan, record, c, databaseKnownContainers(plan, container.ID), inspection)
 		if err != nil {
 			return err
 		}
@@ -768,8 +799,12 @@ func (e *imageEngine) ObserveDatabase(parent context.Context, operation domain.H
 		if c.probe(ctx, address, plan, values, true, false, nil) != nil || e.verifyLocalRelease(ctx, plan.Release) != nil || ctx.Err() != nil {
 			return errDatabaseReadiness
 		}
-		if e.databaseProcessOwnership(ctx, plan.Release.DaemonID, container.ID) != nil {
-			return errors.New("database observed runtime identity not confirmed")
+		if inspection == nil {
+			if e.databaseProcessOwnership(ctx, plan.Release.DaemonID, container.ID) != nil {
+				return errors.New("database observed runtime identity not confirmed")
+			}
+		} else if e.databaseUpgradeProcessOwnership(ctx, operation.ID, plan, record, c, container, inspection) != nil {
+			return errors.New("database upgrade observed runtime identity not confirmed")
 		}
 		if !record.InitReady {
 			return errDatabaseInitializationUnresolved
