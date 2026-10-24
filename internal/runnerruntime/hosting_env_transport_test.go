@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,56 @@ import (
 	"testing"
 	"time"
 )
+
+func TestAuthorizedRuntimeEnvironmentCreateRechecksAfterInspection(t *testing.T) {
+	for _, mode := range []string{"revoked", "canceled", "nil_callback"} {
+		t.Run(mode, func(t *testing.T) {
+			// No executable is available even if a regression reaches Run. The
+			// mocked command below serves read-only daemon inspection only.
+			t.Setenv("PATH", t.TempDir())
+			e := testImageEngine(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			inspected, authorized, callbacks := false, true, 0
+			e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+				if strings.Join(args[4:], " ") != "info --format {{json .ID}}" {
+					t.Fatal("unexpected process command")
+				}
+				inspected, authorized = true, false
+				if mode == "canceled" {
+					cancel()
+				}
+				return []byte(`"daemon"`), nil
+			})
+			before := func(ctx context.Context) error {
+				callbacks++
+				if !inspected {
+					t.Fatal("authority checked before final inspection")
+				}
+				if !authorized || ctx.Err() != nil {
+					return errors.New("private-canary-value")
+				}
+				return nil
+			}
+			if mode == "nil_callback" {
+				before = nil
+			}
+			id, err := e.createWithAuthorizedRuntimeEnvironment(ctx, "daemon", []string{"--name", "owned"}, "sha256:"+strings.Repeat("a", 64), map[string][]byte{"PASSWORD": []byte("private-canary-value")}, before)
+			if err == nil || id != "" || strings.Contains(err.Error(), "private-canary") {
+				t.Fatal("unsafe protected create outcome", err)
+			}
+			if mode == "revoked" && (!inspected || callbacks != 1) {
+				t.Fatal("revocation missed final boundary")
+			}
+			if mode == "canceled" && (!inspected || callbacks != 0) {
+				t.Fatal("canceled inspection reached admission")
+			}
+			if mode == "nil_callback" && (inspected || callbacks != 0) {
+				t.Fatal("missing authority reached Docker inspection")
+			}
+		})
+	}
+}
 
 // The test binary impersonates docker without putting fixture values in argv or
 // environment. Only stdin carries the payload. No helper writes its input.
@@ -64,9 +115,13 @@ func hostingEnvironmentHelper() int {
 		case "early-parent-failure":
 			return 1
 		case "early-parent-invalid":
-			fmt.Fprintln(os.Stdout, "invalid")
+			if _, err := fmt.Fprintln(os.Stdout, "invalid"); err != nil {
+				return 6
+			}
 		default:
-			fmt.Fprintln(os.Stdout, strings.Repeat("a", 64))
+			if _, err := fmt.Fprintln(os.Stdout, strings.Repeat("a", 64)); err != nil {
+				return 6
+			}
 		}
 		return 0
 	}
@@ -105,7 +160,9 @@ func hostingEnvironmentHelper() int {
 		if string(body) != "APP_EMPTY=\nAPP_SECRET=fixture-value-$#= Unicode-árvíz  \n" {
 			return 5
 		}
-		fmt.Fprintln(os.Stdout, strings.Repeat("a", 64))
+		if _, err := fmt.Fprintln(os.Stdout, strings.Repeat("a", 64)); err != nil {
+			return 6
+		}
 	}
 	return 0
 }

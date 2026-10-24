@@ -96,6 +96,19 @@ func (b *hostingEnvironmentOutput) Write(p []byte) (int, error) {
 // that uncertain outcome and must not retry the mutation automatically.
 // Docker's trusted daemon administrator can inspect the resulting Config.Env.
 func (e *imageEngine) createWithRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte) (string, error) {
+	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, nil)
+}
+
+// createWithAuthorizedRuntimeEnvironment requires a fresh admission check after
+// the last daemon inspection and command setup, immediately before process start.
+func (e *imageEngine) createWithAuthorizedRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte, before func(context.Context) error) (string, error) {
+	if before == nil {
+		return "", errors.New("hosting runtime environment create requires authority")
+	}
+	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, before)
+}
+
+func (e *imageEngine) createRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte, before func(context.Context) error) (string, error) {
 	failed := errors.New("hosting runtime environment container create failed")
 	if !validHostingEnvironmentCreate(createFlags, image) {
 		return "", failed
@@ -127,6 +140,9 @@ func (e *imageEngine) createWithRuntimeEnvironment(ctx context.Context, daemonID
 	command.Stdout, command.Stderr = output, io.Discard
 	configureProvenanceProcess(command)
 	command.WaitDelay = 2 * time.Second
+	if ctx.Err() != nil || before != nil && before(ctx) != nil || ctx.Err() != nil {
+		return "", failed
+	}
 	err = command.Run()
 	if err != nil || ctx.Err() != nil {
 		// WaitDelay can expire after the parent exits while a descendant keeps
