@@ -230,3 +230,28 @@ test("cache-level owner revocation blocks success before deferred observers rend
   }
   await waitFor(() => expect(screen.queryByRole("form", { name: "Review database connection request" })).toBeNull());
 });
+test.each([401, 403, 500])("manual review resource HTTP %s retires denied requests but preserves transient retries", async (status) => {
+  let reviewing = false;
+  const { fetch } = setup((url, init) => {
+    if (url.endsWith("/database-connections") && init.method === "POST") return Promise.reject(new TypeError("lost response"));
+    if (reviewing && url.endsWith("/resources/app")) return json({}, status);
+  });
+  await choose(); await screen.findByText(/No confirmed response/);
+  const body = fetch.mock.calls.find(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")![1].body;
+  reviewing = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  if (status === 500) {
+    await screen.findByText(/The request failed/);
+    expect(screen.getByText(/Retained request:/)).toBeTruthy();
+    expect((screen.getByLabelText("Database to connect") as HTMLSelectElement).value).toBe("db");
+    fireEvent.click(screen.getByRole("button", { name: "Retry identical connection request" }));
+    await waitFor(() => expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")).toHaveLength(2));
+    expect(fetch.mock.calls.filter(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")[1]![1].body).toBe(body);
+  } else {
+    await screen.findByText(/Database connection permission is unavailable/);
+    expect(screen.queryByText(/Retained request:/)).toBeNull();
+    expect(screen.queryByLabelText("Database to connect")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry identical connection request" })).toBeNull();
+    expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+  }
+});

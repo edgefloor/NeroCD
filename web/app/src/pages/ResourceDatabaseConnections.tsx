@@ -141,7 +141,11 @@ function ConnectionSession({ resource, owner, legacyWritable, accessPaused, scop
       if (latest.id !== resource.id || latest.project_id !== scope.project) throw new Error("Review scope mismatch");
       if (active.current) { setReviewResource(latest); setReviewed(true); }
     }
-    catch (cause) { if (active.current) setError(connectionError(cause)); }
+    catch (cause) {
+      if (!active.current) return;
+      if (databaseDenied(cause)) { onDenied(); return; }
+      setError(connectionError(cause));
+    }
     finally { if (active.current) setBusy(false); }
   }
   if (resource.source.kind !== "image") return <><p>Database connections require a public container image. Source builds are unsupported.</p><ResourceDeployments resource={resource} writable={legacyWritable} blocked={accessPaused} /></>;
