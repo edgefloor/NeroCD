@@ -26,6 +26,10 @@ func (s *Server) runnerHostingStorageCreateBegin(w http.ResponseWriter, r *http.
 	if !decodeHostingStorageProtocol(w, r, &in) {
 		return
 	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
 	out, err := s.app.RunnerHostingStorageCreateBegin(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -38,6 +42,10 @@ func (s *Server) runnerHostingStorageMaterialized(w http.ResponseWriter, r *http
 	w.Header().Set("Cache-Control", "no-store")
 	var in domain.HostingStorageMaterializedRequest
 	if !decodeHostingStorageProtocol(w, r, &in) {
+		return
+	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
 		return
 	}
 	out, err := s.app.RunnerHostingStorageMaterialized(r.Context(), in)

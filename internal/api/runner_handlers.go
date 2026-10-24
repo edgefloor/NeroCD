@@ -141,6 +141,10 @@ func (s *Server) claimRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
 	claim, err := s.app.ClaimRun(r.Context())
 	if err != nil {
 		writeError(w, err)

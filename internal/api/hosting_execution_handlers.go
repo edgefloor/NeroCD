@@ -64,6 +64,10 @@ func (s *Server) runnerHostingPlan(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
 	op, err := s.app.RunnerHostingPlan(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -74,6 +78,10 @@ func (s *Server) runnerHostingPlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runnerHostingPrepared(w http.ResponseWriter, r *http.Request) {
 	var in domain.HostingPreparedRequest
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
 		return
 	}
 	op, err := s.app.RunnerHostingPrepared(r.Context(), in)
@@ -88,6 +96,10 @@ func (s *Server) runnerHostingApplyBegin(w http.ResponseWriter, r *http.Request)
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
 	op, err := s.app.RunnerHostingApplyBegin(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -98,6 +110,10 @@ func (s *Server) runnerHostingApplyBegin(w http.ResponseWriter, r *http.Request)
 func (s *Server) runnerHostingComplete(w http.ResponseWriter, r *http.Request) {
 	var in domain.HostingCompleteRequest
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
 		return
 	}
 	op, err := s.app.RunnerHostingComplete(r.Context(), in)
@@ -112,6 +128,10 @@ func (s *Server) runnerHostingStatus(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
 	op, err := s.app.RunnerHostingStatus(r.Context(), in)
 	if err != nil {
 		writeError(w, err)
@@ -122,6 +142,10 @@ func (s *Server) runnerHostingStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runnerHostingReconciliation(w http.ResponseWriter, r *http.Request) {
 	var in domain.HostingObservation
 	if !decodeBody(w, r, &in) {
+		return
+	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
 		return
 	}
 	op, err := s.app.RunnerHostingReconciliation(r.Context(), in)
