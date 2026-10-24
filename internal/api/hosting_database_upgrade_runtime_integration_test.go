@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -106,6 +107,24 @@ func (c *databaseUpgradeCompleteWire) exactReplay() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.committed && !c.invalid && len(c.bodies) == 2 && len(c.acks) == 2 && bytes.Equal(c.bodies[0], c.bodies[1]) && bytes.Equal(c.acks[0], c.acks[1])
+}
+
+// Lease IDs are public correlation fields in printRunnerAuthorityEvent. The
+// retained fence remains private, including inside an otherwise valid event or
+// full authority tuple. Existing credential scans remain independently active.
+func databaseUpgradeAuthorityLogCheck(output []byte, authority domain.HostingAuthority, protected [][]byte) error {
+	if authority.LeaseID == "" || authority.Fence == "" {
+		return errors.New("upgrade retained authority incomplete")
+	}
+	if bytes.Contains(output, []byte(authority.Fence)) || bytes.Contains(output, []byte(base64.StdEncoding.EncodeToString([]byte(authority.Fence)))) {
+		return errors.New("upgrade output exposed retained fence")
+	}
+	for _, value := range protected {
+		if len(value) > 0 && (bytes.Contains(output, value) || bytes.Contains(output, []byte(base64.StdEncoding.EncodeToString(value)))) {
+			return errors.New("upgrade output exposed protected credential")
+		}
+	}
+	return nil
 }
 
 func databaseRunnerValidatePlan(op domain.HostingOperation) error {
@@ -450,8 +469,8 @@ func TestHostingDatabaseUpgradeCompiledRunner(t *testing.T) {
 		}
 		f.assertRedacted()
 		output := f.logs.snapshot()
-		if bytes.Contains(output, []byte(original.Fence)) || bytes.Contains(output, []byte(original.LeaseID)) {
-			t.Fatal("upgrade output exposed retained attempt authority")
+		if err := databaseUpgradeAuthorityLogCheck(output, original.HostingAuthority, f.protected); err != nil {
+			t.Fatal(err)
 		}
 		clear(output)
 		t.Logf("physical empty upgrade engine=%s first=true maintenance=true retained_origin=true alias_read_write=true exact_complete_replay=true single_writer=true", engine)
@@ -729,6 +748,57 @@ func TestDatabaseUpgradeRuntimeStorageInspectionReceipts(t *testing.T) {
 				if databaseUpgradeStorageContract(c, ops, changed) != nil || databaseUpgradeStoragePreserved(all, changed) {
 					t.Fatal("shape-valid immutable evidence rewrite escaped snapshot comparison")
 				}
+			}
+		})
+	}
+}
+
+func TestDatabaseUpgradeRuntimeAuthorityLogContract(t *testing.T) {
+	authority := domain.HostingAuthority{OperationID: "hop_log_fixture", RunID: "run_log_fixture", LeaseID: "lease_log_correlation", Attempt: 1, Fence: "fence_private_canary"}
+	credential := []byte("ncr_credential_private_canary")
+	// Match the closed event fields of printRunnerAuthorityEvent. Its public
+	// lease correlation is distinct from a full fenced authority document.
+	claimed := databaseUpgradeReceiptJSON(t, struct {
+		Event   string `json:"event"`
+		RunID   string `json:"run_id"`
+		LeaseID string `json:"lease_id"`
+		Attempt int    `json:"attempt"`
+		Status  string `json:"status,omitempty"`
+	}{"claimed_run", authority.RunID, authority.LeaseID, authority.Attempt, "active"})
+	for name, tc := range map[string]struct {
+		output  []byte
+		missing string
+		want    string
+	}{
+		"public_claimed_run": {output: claimed},
+		"fence":              {output: []byte(authority.Fence), want: "upgrade output exposed retained fence"},
+		"encoded_fence":      {output: []byte(base64.StdEncoding.EncodeToString([]byte(authority.Fence))), want: "upgrade output exposed retained fence"},
+		"full_authority":     {output: databaseUpgradeReceiptJSON(t, authority), want: "upgrade output exposed retained fence"},
+		"credential":         {output: append(bytes.Clone(claimed), credential...), want: "upgrade output exposed protected credential"},
+		"encoded_credential": {output: []byte(base64.StdEncoding.EncodeToString(credential)), want: "upgrade output exposed protected credential"},
+		"missing_lease":      {output: claimed, missing: "lease", want: "upgrade retained authority incomplete"},
+		"missing_fence":      {output: claimed, missing: "fence", want: "upgrade retained authority incomplete"},
+		"missing_authority":  {output: nil, missing: "all", want: "upgrade retained authority incomplete"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := authority
+			switch tc.missing {
+			case "lease":
+				a.LeaseID = ""
+			case "fence":
+				a.Fence = ""
+			case "all":
+				a = domain.HostingAuthority{}
+			}
+			err := databaseUpgradeAuthorityLogCheck(tc.output, a, [][]byte{credential})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal("supported public correlation event rejected")
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want || strings.Contains(err.Error(), authority.Fence) || strings.Contains(err.Error(), string(credential)) || strings.Contains(err.Error(), authority.LeaseID) {
+				t.Fatal("private exposure or missing authority did not fail with a closed diagnostic")
 			}
 		})
 	}
