@@ -151,7 +151,7 @@ BEGIN
  END IF;
  SELECT * INTO h FROM hosting_database_network_holds WHERE database_binding_id=binding_key;
  IF FOUND AND h.operation_id IS DISTINCT FROM operation_key THEN RAISE EXCEPTION 'database network is held by another operation' USING ERRCODE='23514'; END IF;
- IF TG_TABLE_NAME='hosting_database_deployments' AND EXISTS(SELECT 1 FROM hosting_database_membership_heads WHERE database_binding_id=binding_key) AND NOT EXISTS(SELECT 1 FROM hosting_database_connection_executions e JOIN hosting_database_connections c ON c.id=e.connection_id JOIN hosting_database_bindings b ON b.id=c.binding_id WHERE e.operation_id=operation_key AND e.family='maintenance' AND b.database_binding_id=binding_key) THEN RAISE EXCEPTION 'connected database requires member-aware maintenance' USING ERRCODE='23514'; END IF;
+ IF TG_TABLE_NAME='hosting_database_deployments' AND EXISTS(SELECT 1 FROM hosting_database_membership_heads WHERE database_binding_id=binding_key) AND NOT EXISTS(SELECT 1 FROM hosting_database_connection_executions e JOIN hosting_database_connections stored_connection ON stored_connection.id=e.connection_id JOIN hosting_database_bindings b ON b.id=stored_connection.binding_id WHERE e.operation_id=operation_key AND e.family='maintenance' AND b.database_binding_id=binding_key) THEN RAISE EXCEPTION 'connected database requires member-aware maintenance' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER hosting_connection_single_family BEFORE INSERT ON hosting_database_bindings FOR EACH ROW EXECUTE FUNCTION nerocd_database_connection_hold_guard();
