@@ -264,15 +264,28 @@ def verified_outer(identity):
             host.get("Binds") or host.get("PublishAllPorts") or
             host.get("NetworkMode") not in ("default", "bridge") or len(mounts) != 1):
         raise Failure("outer identity/configuration mismatch; preserving resources")
-    ports = host.get("PortBindings") or {}
-    assigned = value.get("NetworkSettings", {}).get("Ports") or {}
+    ports = host.get("PortBindings")
+    ports = {} if ports is None else ports
+    network = value.get("NetworkSettings", {})
+    if not isinstance(ports, dict) or not isinstance(network, dict):
+        raise Failure("outer port metadata malformed; preserving resources")
+    assigned = network.get("Ports")
+    assigned = {} if assigned is None else assigned
+    if not isinstance(assigned, dict) or any(
+            not isinstance(key, str) or not re.fullmatch(r"[1-9][0-9]{0,4}/(?:tcp|udp|sctp)", key) or
+            int(key.split("/")[0]) > 65535 or (bindings is not None and not isinstance(bindings, list))
+            for key, bindings in assigned.items()):
+        raise Failure("outer assigned port metadata malformed; preserving resources")
+    # Docker includes exposed image ports with null/empty assignments. Only
+    # nonempty bindings publish host ports, in both admission and cleanup.
+    assigned = {key: bindings for key, bindings in assigned.items() if bindings}
     if browser_mode == "1":
         publication = ports.get("18080/tcp", [])
-        if len(ports) != 1 or len(publication) != 1 or publication[0] != {"HostIp": "127.0.0.1", "HostPort": ""}:
+        if len(ports) != 1 or not isinstance(publication, list) or len(publication) != 1 or publication[0] != {"HostIp": "127.0.0.1", "HostPort": ""}:
             raise Failure("browser bridge publication mismatch; preserving resources")
-        if value.get("State", {}).get("Running"):
-            live = assigned.get("18080/tcp", [])
-            if len(assigned) != 1 or len(live) != 1 or live[0].get("HostIp") != "127.0.0.1" or not re.fullmatch(r"[1-9][0-9]{3,4}", live[0].get("HostPort", "")):
+        live = assigned.get("18080/tcp", [])
+        if assigned or value.get("State", {}).get("Running"):
+            if len(assigned) != 1 or len(live) != 1 or not isinstance(live[0], dict) or set(live[0]) != {"HostIp", "HostPort"} or live[0]["HostIp"] != "127.0.0.1" or not isinstance(live[0]["HostPort"], str) or not re.fullmatch(r"[1-9][0-9]{3,4}", live[0]["HostPort"]):
                 raise Failure("browser bridge assigned port mismatch; preserving resources")
             port = int(live[0]["HostPort"])
             if not 1024 <= port <= 65535:

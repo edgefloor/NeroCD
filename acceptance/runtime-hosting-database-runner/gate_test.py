@@ -246,6 +246,8 @@ elif tool == "docker":
         state["outer"]["State"]["Running"] = True
         if state["outer"]["HostConfig"]["PortBindings"]:
             state["outer"]["NetworkSettings"] = dict(Ports={"18080/tcp":[dict(HostIp="127.0.0.1",HostPort="35002")]})
+            if case == "browser_exposed":
+                state["outer"]["NetworkSettings"]["Ports"].update({"2375/tcp":None,"2376/tcp":None})
         save()
         if case == "start_response_loss":
             sys.exit(25)
@@ -685,7 +687,7 @@ class GateTest(unittest.TestCase):
                          "internal/runnerruntime/hosting_database_maintenance_execution.go"}.issubset(self.source_manifests[0]))
 
     def test_browser_bridge_and_embedding_order(self):
-        state, commands, _ = self.run_gate("success", 0, browser=True)
+        state, commands, _ = self.run_gate("browser_exposed", 0, browser=True)
         self.assertEqual(state,{})
         create=next(args for args in commands if args[:2]==["container","create"])
         self.assertEqual(create[create.index("--publish")+1],"127.0.0.1::18080")
@@ -785,6 +787,78 @@ class GateTest(unittest.TestCase):
         self.assertEqual(state, {})
         self.assertIn(["container", "rm", "--force", IDENTITY], commands)
         self.assertIn(["volume", "rm", VOLUME], commands)
+
+
+class OuterPublicationTest(unittest.TestCase):
+    def profile(self, browser=True):
+        source=Path(__file__).with_name('gate.sh').read_text().split('# PYTHON SOURCE\n',1)[1].rsplit('\nPY\n',1)[0]
+        function=next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name=='verified_outer')
+        image='sha256:'+'a'*64
+        value=dict(Id=IDENTITY,Name='/'+NAME,Image=image,
+                   Config=dict(Labels={LABEL:OWNER},Cmd=['dockerd','--host=unix:///var/run/docker.sock']),
+                   HostConfig=dict(Privileged=True,PortBindings={'18080/tcp':[dict(HostIp='127.0.0.1',HostPort='')]} if browser else {},NetworkMode='bridge'),
+                   Mounts=[dict(Type='volume',Name=VOLUME,Driver='local',Destination='/var/lib/docker',RW=True)],
+                   State=dict(Running=True),NetworkSettings=dict(Ports={
+                       '18080/tcp':[dict(HostIp='127.0.0.1',HostPort='33077')],
+                       '2375/tcp':None,'2376/tcp':None} if browser else {'2375/tcp':None,'2376/tcp':None}))
+        namespace=dict(re=__import__('re'),Failure=RuntimeError,image=dict(Id=image,Config={}),LABEL=LABEL,OWNER=OWNER,NAME=NAME,VOLUME=VOLUME,
+                       browser_mode='1' if browser else '0',browser_origin='',inspect=lambda *_:value)
+        exec(compile(ast.Module(body=[function],type_ignores=[]),'<real verified_outer>','exec'),namespace)
+        return value,namespace
+
+    def test_accepts_pinned_image_exposed_ports_during_preflight_and_cleanup(self):
+        for inert in (None,[]):
+            with self.subTest(exposure=inert):
+                value,namespace=self.profile()
+                value['NetworkSettings']['Ports'].update({'2375/tcp':inert,'2376/tcp':inert})
+                self.assertIs(namespace['verified_outer'](IDENTITY),value)
+                self.assertEqual(namespace['browser_origin'],'http://127.0.0.1:33077')
+                value['State']['Running']=False
+                self.assertIs(namespace['verified_outer'](IDENTITY),value)
+
+    def test_no_browser_allows_only_inert_exposures(self):
+        value,namespace=self.profile(browser=False)
+        namespace['verified_outer'](IDENTITY)
+        value['NetworkSettings']['Ports']['2375/tcp']=[]
+        namespace['verified_outer'](IDENTITY)
+        value['NetworkSettings']['Ports']['2375/tcp']=[dict(HostIp='127.0.0.1',HostPort='33078')]
+        with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
+
+    def test_rejects_every_extra_actual_publication_even_when_stopped(self):
+        for key in ('2375/tcp','2376/tcp','18081/tcp','18080/udp'):
+            for running in (True,False):
+                with self.subTest(port=key,running=running):
+                    value,namespace=self.profile()
+                    value['State']['Running']=running
+                    value['NetworkSettings']['Ports'][key]=[dict(HostIp='127.0.0.1',HostPort='33078')]
+                    with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
+
+    def test_rejects_malformed_or_missing_assigned_port_shapes(self):
+        valid=dict(HostIp='127.0.0.1',HostPort='33077')
+        malformed=[None,[],False,0,'',{'18080/tcp':None},{'18080/tcp':[]},
+                   {'18080/tcp':{}},{'18080/tcp':[None]},{'18080/tcp':[valid,valid]},
+                   {'18080/tcp':[dict(valid,HostIp='0.0.0.0')]},
+                   {'18080/tcp':[dict(valid,HostPort=33077)]},
+                   {'18080/tcp':[dict(valid,HostPort='65536')]},
+                   {'18080/tcp':[dict(valid,Unexpected='field')]},
+                   {'18080/tcp':[valid],'2375/tcp':False},
+                   {'18080/tcp':[valid],'2375/tcp':{}},
+                   {'18080/tcp':[valid],'bad-port':None}]
+        for assigned in malformed:
+            with self.subTest(assigned=assigned):
+                value,namespace=self.profile()
+                value['NetworkSettings']['Ports']=assigned
+                with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
+        value,namespace=self.profile()
+        value['NetworkSettings']=[]
+        with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
+
+    def test_rejects_malformed_configured_publication(self):
+        for ports in ([],False,'',{'18080/tcp':None},{'18080/tcp':{}},{'18080/tcp':[None]}):
+            with self.subTest(ports=ports):
+                value,namespace=self.profile()
+                value['HostConfig']['PortBindings']=ports
+                with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
 
 
 DRIVER_FIXTURE = r'''
