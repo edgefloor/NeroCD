@@ -216,8 +216,19 @@ func (in HostingApplicationDatabaseEffectRequest) Validate() error {
 
 // Validate checks response shape; freshness and correlation require live context.
 func (out HostingApplicationDatabaseEffectAuthorization) Validate() error {
-	in := HostingApplicationDatabaseEffectRequest{HostingAuthority: HostingAuthority{OperationID: out.OperationID, RunID: "run_" + out.OperationID, LeaseID: out.LeaseID, Attempt: out.Attempt, Fence: out.Fence}, AuthorizationID: out.AuthorizationID, ExpectedStageHash: out.StageHash, Action: out.Action}
-	if in.Validate() != nil || !imageSHA256.MatchString(out.PlanHash) || out.MembershipRevision < 1 || out.UseUntil.IsZero() {
+	if !hostingProxyID.MatchString(out.OperationID) || !validRuntimeReferenceID(out.LeaseID) || !validRuntimeReferenceID(out.Fence) || out.Attempt < 1 || out.Attempt > math.MaxInt32 || !hostingStorageRequest.MatchString(out.AuthorizationID) || !imageSHA256.MatchString(out.PlanHash) || out.MembershipRevision < 1 || out.UseUntil.IsZero() {
+		return ErrInvalidHostingDatabaseConnection
+	}
+	switch out.Action {
+	case "create":
+		if out.StageHash != "" {
+			return ErrInvalidHostingDatabaseConnection
+		}
+	case "configure", "start", "retire":
+		if !imageSHA256.MatchString(out.StageHash) {
+			return ErrInvalidHostingDatabaseConnection
+		}
+	default:
 		return ErrInvalidHostingDatabaseConnection
 	}
 	return nil

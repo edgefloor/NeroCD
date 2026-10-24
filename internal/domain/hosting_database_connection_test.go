@@ -95,3 +95,24 @@ func TestDatabaseConnectionSelectionAndRecoveryLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseConnectionEffectIndependentIdentifierBounds(t *testing.T) {
+	for _, length := range []int{124, 125, 126, 127, 128} {
+		operation := strings.Repeat("a", length)
+		request := HostingApplicationDatabaseEffectRequest{HostingAuthority: HostingAuthority{OperationID: operation, RunID: "independent_run", LeaseID: "lease", Attempt: 1, Fence: "fence"}, AuthorizationID: strings.Repeat("b", 32), Action: "create"}
+		response := HostingApplicationDatabaseEffectAuthorization{AuthorizationID: request.AuthorizationID, OperationID: operation, PlanHash: "sha256:" + strings.Repeat("c", 64), Action: request.Action, LeaseID: request.LeaseID, Attempt: request.Attempt, Fence: request.Fence, MembershipRevision: 1, UseUntil: time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)}
+		if request.Validate() != nil || response.Validate() != nil {
+			t.Fatal("independent bounded identifier rejected", length)
+		}
+		raw, err := json.Marshal(request)
+		var accepted HostingApplicationDatabaseEffectRequest
+		if err != nil || json.Unmarshal(raw, &accepted) != nil || accepted != request {
+			t.Fatal("request boundary did not round trip", length, err)
+		}
+		raw, err = json.Marshal(response)
+		var authorized HostingApplicationDatabaseEffectAuthorization
+		if err != nil || json.Unmarshal(raw, &authorized) != nil || authorized != response {
+			t.Fatal("response derived an unprovided run ID", length, err)
+		}
+	}
+}
