@@ -16,14 +16,15 @@ const HostingRouteSwitchTargetPageSize = 50
 
 // HostingRouteSwitchOptions is explanatory state, never admission authority.
 type HostingRouteSwitchOptions struct {
-	ResourceID           string                     `json:"resource_id"`
-	LoadedGeneration     *int64                     `json:"loaded_generation"`
-	Routes               []HostingRouteSwitchRoute  `json:"routes"`
-	Targets              []HostingRouteSwitchTarget `json:"targets"`
-	Available            bool                       `json:"available"`
-	Reason               string                     `json:"reason"`
-	PendingOperationID   string                     `json:"pending_operation_id,omitempty"`
-	NextAfterOperationID *string                    `json:"next_after_operation_id"`
+	LoadedProxyOperationID *string                    `json:"loaded_proxy_operation_id"`
+	ResourceID             string                     `json:"resource_id"`
+	LoadedGeneration       *int64                     `json:"loaded_generation"`
+	Routes                 []HostingRouteSwitchRoute  `json:"routes"`
+	Targets                []HostingRouteSwitchTarget `json:"targets"`
+	Available              bool                       `json:"available"`
+	Reason                 string                     `json:"reason"`
+	PendingOperationID     string                     `json:"pending_operation_id,omitempty"`
+	NextAfterOperationID   *string                    `json:"next_after_operation_id"`
 }
 
 // HostingRouteSwitchRoute contains only the resource's enabled desired selection.

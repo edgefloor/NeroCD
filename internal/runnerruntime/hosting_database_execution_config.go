@@ -16,6 +16,7 @@ type DatabaseExecutionConfig struct {
 	NetworkUpgrade        bool
 	NetworkCapture        bool
 	ApplicationDatabase   bool
+	RouteContinuity       bool
 	MembershipMaintenance bool
 }
 
@@ -35,6 +36,9 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.RouteContinuity && (!c.Database.ApplicationDatabase || !c.Proxy.Enabled() || !c.Proxy.VerifiedSwitch) {
+		return errors.New("application database route continuity requires connected execution and strict proxy switching")
 	}
 	if c.Database.ApplicationDatabase || c.Database.MembershipMaintenance {
 		if !c.Database.NetworkCapture || !c.Database.NetworkUpgrade || c.RuntimeEnvironment == nil || c.DatabaseNetworkCapture != nil || c.JournalDir == "" || c.Token == "" || c.Database.TrustedLoopbackHTTP || c.RuntimeEnvironment.TrustedLoopbackHTTP {

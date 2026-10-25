@@ -44,3 +44,20 @@ func runnerApplicationDatabaseCapabilities(application, maintenance bool, capabi
 	}
 	return capabilities, nil
 }
+
+func runnerApplicationDatabaseRouteCapabilities(enabled bool, caps []string) ([]string, error) {
+	if !enabled && slices.Contains(caps, domain.HostingApplicationDatabaseRouteContinuityCapability) {
+		return nil, errors.New("route continuity capability requires explicit opt-in")
+	}
+	if enabled {
+		for _, cap := range []string{domain.HostingApplicationDatabaseCapability, domain.HostingProxyVerifiedSwitchCapability} {
+			if !slices.Contains(caps, cap) {
+				return nil, errors.New("route continuity capability prerequisites unavailable")
+			}
+		}
+		if !slices.Contains(caps, domain.HostingApplicationDatabaseRouteContinuityCapability) {
+			caps = append(caps, domain.HostingApplicationDatabaseRouteContinuityCapability)
+		}
+	}
+	return caps, nil
+}

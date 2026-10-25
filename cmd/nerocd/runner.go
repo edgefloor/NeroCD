@@ -61,6 +61,7 @@ func runRunner(args []string) error {
 	hostingObservation := fs.Bool("hosting-observation", false, "enable independent read-only hosting status collection over HTTPS")
 	databaseCaptureID := fs.String("database-network-capture-id", "", "perform one exact-ID read-only database origin capture and return")
 	hostingDatabaseCapture := fs.Bool("hosting-database-network-capture", false, "explicitly select queued database origin captures before ordinary database work")
+	hostingApplicationDatabaseRouteContinuity := fs.Bool("hosting-application-database-route-continuity", false, "explicitly enable connected application verified HTTPS replacement")
 	hostingApplicationDatabase := fs.Bool("hosting-application-database", false, "explicitly enable application database binding execution")
 	hostingDatabaseMaintenance := fs.Bool("hosting-database-membership-maintenance", false, "explicitly enable member-preserving database replacement")
 	hostingDatabaseUpgrade := fs.Bool("hosting-database-network-upgrade", false, "explicitly enable existing-volume empty database network upgrades")
@@ -92,6 +93,12 @@ func runRunner(args []string) error {
 	}
 	if err = runnerApplicationDatabaseConfig(*hostingApplicationDatabase, *hostingDatabaseMaintenance, *hostingRuntimeEnv, databaseConfig); err != nil {
 		return err
+	}
+	if *hostingApplicationDatabaseRouteContinuity {
+		if databaseConfig == nil || !*hostingApplicationDatabase || !*proxyVerifiedSwitch {
+			return errors.New("route continuity requires connected execution and strict proxy switching")
+		}
+		databaseConfig.RouteContinuity = true
 	}
 	archiveConfig, err := loadRunnerStorageArchiveConfig(*storageArchiveFile, *execute, *completeStatus)
 	if err != nil {
@@ -230,6 +237,10 @@ func runRunner(args []string) error {
 	if err != nil {
 		return err
 	}
+	registrationCapabilities, err = runnerApplicationDatabaseRouteCapabilities(*hostingApplicationDatabaseRouteContinuity, registrationCapabilities)
+	if err != nil {
+		return err
+	}
 	registrationCapabilities, err = runnerReadinessCapabilities(*hostingReadiness, *execute, *once, *completeStatus, capabilitiesSpecified, registrationCapabilities)
 	if err != nil {
 		return err
@@ -336,7 +347,7 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

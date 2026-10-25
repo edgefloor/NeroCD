@@ -92,6 +92,9 @@ func (s *PostgresStore) HostingApplicationDatabaseStage(ctx context.Context, run
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
+		if op.ApplicationDatabaseRouteContinuity != nil && (op.ApplicationDatabaseYield != nil || in.RunID != op.RunID) {
+			return zero, ErrConflict
+		}
 		if op.State != "applying" && op.State != "verifying" || !op.MutationHold {
 			return zero, ErrConflict
 		}
@@ -201,6 +204,15 @@ func (s *PostgresStore) AuthorizeHostingApplicationDatabaseEffect(ctx context.Co
 		if err != nil {
 			return zero, err
 		}
+		if op.ApplicationDatabaseRouteContinuity != nil {
+			if in.Action == "retire" {
+				if err = continuityFinalizeAuthority(ctx, tx, runner, in.HostingAuthority, op, false); err != nil {
+					return zero, err
+				}
+			} else if op.ApplicationDatabaseYield != nil || in.RunID != op.RunID {
+				return zero, ErrConflict
+			}
+		}
 		if op.State != "applying" && op.State != "verifying" || !op.MutationHold {
 			return zero, ErrConflict
 		}
@@ -216,7 +228,11 @@ func (s *PostgresStore) AuthorizeHostingApplicationDatabaseEffect(ctx context.Co
 		if err != nil || !connectionEffectStage(in.Action, in.ExpectedStageHash, stage, retirement) {
 			return zero, ErrConflict
 		}
-		if err = hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
+		mode := "deploy"
+		if op.ApplicationDatabaseRouteContinuity != nil && in.Action == "retire" {
+			mode = "finalize"
+		}
+		if err = hostingRequireMode(ctx, tx, in.HostingAuthority, mode); err != nil {
 			return zero, err
 		}
 		out := domain.HostingApplicationDatabaseEffectAuthorization{AuthorizationID: in.AuthorizationID, OperationID: op.ID, PlanHash: op.Plan.Hash, Action: in.Action, StageHash: in.ExpectedStageHash, LeaseID: in.LeaseID, Attempt: in.Attempt, Fence: in.Fence, MembershipRevision: op.ApplicationDatabase.MembershipRevision}
@@ -275,6 +291,11 @@ func (s *PostgresStore) HostingApplicationDatabaseRetirementPlan(ctx context.Con
 		if _, err = q.LockHostingOperationState(ctx, op.ID); err != nil {
 			return zero, err
 		}
+		if op.ApplicationDatabaseRouteContinuity != nil {
+			if err = continuityFinalizeAuthority(ctx, tx, runner, a, op, false); err != nil {
+				return zero, err
+			}
+		}
 		old, receipt, err := connectionRetirement(ctx, q, op)
 		if err != nil {
 			return zero, err
@@ -324,6 +345,11 @@ func (s *PostgresStore) HostingApplicationDatabaseRetirement(ctx context.Context
 		q := sqlcgen.New(tx)
 		if _, err = q.LockHostingOperationState(ctx, op.ID); err != nil {
 			return zero, err
+		}
+		if op.ApplicationDatabaseRouteContinuity != nil {
+			if err = continuityFinalizeAuthority(ctx, tx, runner, in.HostingAuthority, op, false); err != nil {
+				return zero, err
+			}
 		}
 		plan, previous, err := connectionRetirement(ctx, q, op)
 		if err != nil || plan == nil || previous == nil || op.Plan.Hash != in.PlanHash || in.Receipt.PlanHash != plan.Hash {

@@ -24,7 +24,7 @@ func connectionAuthorityReference(value string) bool {
 
 func databaseConnectionRunnerPath(path string) bool {
 	switch path {
-	case "/api/v1/runners/hosting/database-binding/stage", "/api/v1/runners/hosting/database-binding/retirement-plan", "/api/v1/runners/hosting/database-binding/retirement", "/api/v1/runners/hosting/database-binding/authorize", "/api/v1/runners/hosting/database-binding/state":
+	case "/api/v1/runners/hosting/database-binding/yield", "/api/v1/runners/hosting/database-binding/stage", "/api/v1/runners/hosting/database-binding/retirement-plan", "/api/v1/runners/hosting/database-binding/retirement", "/api/v1/runners/hosting/database-binding/authorize", "/api/v1/runners/hosting/database-binding/state":
 		return true
 	default:
 		return false
@@ -209,5 +209,15 @@ func (s *Server) runnerDatabaseConnectionState(w http.ResponseWriter, r *http.Re
 	}
 	token, _ := bearerToken(r.Header.Get("Authorization"))
 	out, err := s.app.RunnerHostingApplicationDatabaseState(r.Context(), token, in)
+	databaseConnectionResponse(w, http.StatusOK, out, err)
+}
+
+func (s *Server) runnerDatabaseConnectionYield(w http.ResponseWriter, r *http.Request) {
+	var in domain.HostingApplicationDatabaseYieldRequest
+	if !decodeDatabaseConnection(w, r, &in) {
+		return
+	}
+	token, _ := bearerToken(r.Header.Get("Authorization"))
+	out, err := s.app.RunnerHostingApplicationDatabaseYield(r.Context(), token, in)
 	databaseConnectionResponse(w, http.StatusOK, out, err)
 }

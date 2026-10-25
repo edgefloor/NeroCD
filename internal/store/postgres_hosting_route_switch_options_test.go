@@ -272,6 +272,10 @@ func TestPostgresRouteSwitchReadSnapshotConsistency(t *testing.T) {
 			t.Error(err)
 			break
 		}
+		if !view.Available && view.LoadedProxyOperationID != nil {
+			t.Error("unavailable or stale scope exposed a loaded predecessor")
+		}
+
 		if view.LoadedGeneration != nil && *view.LoadedGeneration >= 10 {
 			for _, route := range view.Routes {
 				if route.ID == f.routes[0].ID && route.Version != *view.LoadedGeneration {

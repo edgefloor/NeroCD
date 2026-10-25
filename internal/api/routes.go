@@ -9,6 +9,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connection/deployments"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connection/recovery"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database/maintenance"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/yield"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/stage"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement-plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement"},
@@ -268,6 +269,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.recoverHostingDatabaseConnection
 	case "/api/v1/resources/{id}/database/maintenance":
 		return s.maintainHostingDatabaseConnection
+	case "/api/v1/runners/hosting/database-binding/yield":
+		return s.runnerDatabaseConnectionYield
 	case "/api/v1/runners/hosting/database-binding/stage":
 		return s.runnerDatabaseConnectionStage
 	case "/api/v1/runners/hosting/database-binding/retirement-plan":

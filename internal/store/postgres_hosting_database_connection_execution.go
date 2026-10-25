@@ -94,6 +94,13 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 	if domain.ValidateHostingDeployment(in) != nil || in.StorageRouteContinuity != nil {
 		return zero, ErrConflict
 	}
+	if in.ApplicationDatabaseRouteContinuity != nil {
+		canonical, err := domain.CanonicalHostingApplicationDatabaseRouteContinuityInput(*in.ApplicationDatabaseRouteContinuity)
+		if err != nil {
+			return zero, ErrConflict
+		}
+		in.ApplicationDatabaseRouteContinuity = &canonical
+	}
 	if s.hostingJobs == nil {
 		return zero, hostingjobs.ErrUnavailable
 	}
@@ -153,7 +160,7 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if app.Generation != in.ExpectedGeneration || app.Generation != binding.ApplicationResourceGeneration || database.Generation != binding.DatabaseResourceGeneration || in.ExpectedRuntimeConfigurationGeneration != binding.RuntimeConfiguration.Generation {
 			return zero, ErrConflict
 		}
-		supported, err := q.ConnectionApplicationSupported(ctx, sqlcgen.ConnectionApplicationSupportedParams{ID: application, DatabaseResourceID: c.DatabaseResourceID})
+		supported, err := connectionDeploymentSupported(ctx, tx, application, c.DatabaseResourceID, in.ApplicationDatabaseRouteContinuity != nil)
 		if err != nil || !supported {
 			return zero, ErrConflict
 		}
@@ -204,6 +211,17 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if err != nil || !port.RestoreAdmitted || port.HoldOperationID != nil {
 			return zero, ErrConflict
 		}
+		op := domain.HostingOperation{ID: id, ProjectID: app.ProjectID, ResourceID: application, BindingID: app.BindingID, CreatedBy: actor, State: "queued", Snapshot: snap, ApplicationDatabase: &proof}
+		if in.ApplicationDatabaseRouteContinuity != nil {
+			if initial {
+				return zero, ErrConflict
+			}
+			continuity, e := admitApplicationDatabaseContinuity(ctx, tx, op, *in.ApplicationDatabaseRouteContinuity, previous)
+			if e != nil {
+				return zero, e
+			}
+			op.ApplicationDatabaseRouteContinuity = &continuity
+		}
 		event.ID, event.ActorID, event.Action, event.TargetID = "aud_connection_execution_"+id, actor, "hosting.application_database.requested", id
 		event.Metadata = map[string]any{"connection_id": c.ID, "binding_id": binding.ID, "project_id": c.ProjectID, "proof_hash": proof.Hash, "membership_revision": head.Revision}
 		if event.CreatedAt.IsZero() {
@@ -235,7 +253,11 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if _, err = q.CreateHostingReleaseClaim(ctx, sqlcgen.CreateHostingReleaseClaimParams{OperationID: id, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), BindingID: snap.BindingID}); err != nil {
 			return zero, err
 		}
-		op := domain.HostingOperation{ID: id, ProjectID: app.ProjectID, ResourceID: application, BindingID: app.BindingID, CreatedBy: actor, State: "queued", Snapshot: snap, ApplicationDatabase: &proof}
+		if continuity := op.ApplicationDatabaseRouteContinuity; continuity != nil {
+			if e := q.InsertApplicationDatabaseRouteContinuation(ctx, sqlcgen.InsertApplicationDatabaseRouteContinuationParams{OperationID: id, ProxyID: continuity.ProxyID, ProxyOperationID: continuity.ProxyOperationID, FinalizeRunID: continuity.FinalizeRunID, Body: buildJSON(continuity), BodyHash: continuity.Hash}); e != nil {
+				return zero, e
+			}
+		}
 		if domain.ValidateHostingApplicationDatabaseOperation(op) != nil || connectionPublicationBound(op) != nil {
 			return zero, ErrConflict
 		}

@@ -35,6 +35,9 @@ func loadDatabaseConnectionExecution(ctx context.Context, db sqlcgen.DBTX, op *d
 			return ErrConflict
 		}
 		op.ApplicationDatabase = &p
+		if err = loadApplicationDatabaseContinuity(ctx, db, op); err != nil {
+			return err
+		}
 		if domain.ValidateHostingApplicationDatabaseOperation(*op) != nil {
 			return ErrConflict
 		}
@@ -84,6 +87,15 @@ func databaseConnectionAuthority(ctx context.Context, tx pgx.Tx, op domain.Hosti
 	b, err := lockConnectionTargets(ctx, tx, c, actor, domain.RoleOwner)
 	if err != nil {
 		return err
+	}
+	if op.ApplicationDatabaseRouteContinuity != nil {
+		compatible, e := q.ApplicationDatabaseRouteSchemaCompatible(ctx)
+		if e != nil || !compatible {
+			return ErrHostingDatabaseConnectionUnavailable
+		}
+		if err = continuityAgent(ctx, tx, b.RunnerID); err != nil {
+			return err
+		}
 	}
 	if err = requireConnectionAgent(ctx, tx, b.RunnerID, false); err != nil {
 		return err
@@ -240,7 +252,7 @@ func finalDatabaseConnectionAuthority(ctx context.Context, tx pgx.Tx, runner str
 	if err := databaseOperationAuthorityMode(ctx, tx, op, observe, settled); err != nil {
 		return err
 	}
-	if a.OperationID != op.ID || observe && a.RunID != op.ReconciliationRunID || !observe && a.RunID != op.RunID || op.Snapshot.RunnerID != runner {
+	if a.OperationID != op.ID || observe && a.RunID != op.ReconciliationRunID || !observe && a.RunID != op.RunID && !continuityFinalizeRun(op, a.RunID) || op.Snapshot.RunnerID != runner {
 		return ErrConflict
 	}
 	if err := checkDatabaseConnectionRunnerContext(ctx, tx, runner); err != nil {

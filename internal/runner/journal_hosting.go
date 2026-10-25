@@ -15,33 +15,36 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
-	ApplicationDatabase       *domain.HostingApplicationDatabaseExecutionProof `json:"application_database,omitempty"`
-	ApplicationSnapshot       *domain.HostingSnapshot                          `json:"application_snapshot,omitempty"`
-	ApplicationCandidate      *domain.HostingApplicationDatabaseCandidate      `json:"application_candidate,omitempty"`
-	ApplicationStage          *domain.HostingApplicationDatabaseStage          `json:"application_stage,omitempty"`
-	ApplicationRetirementPlan *domain.HostingDatabaseBindingEndpointPlan       `json:"application_retirement_plan,omitempty"`
-	ApplicationRetirement     *domain.HostingDatabaseBindingEndpointReceipt    `json:"application_retirement,omitempty"`
-	DatabaseMaintenance       *domain.HostingDatabaseMaintenanceProof          `json:"database_maintenance,omitempty"`
-	DatabaseUpgrade           *domain.HostingDatabaseUpgradeProof              `json:"database_upgrade,omitempty"`
-	Database                  bool                                             `json:"database,omitempty"`
-	DatabaseRef               domain.HostingDatabaseExecutionRef               `json:"database_ref,omitzero"`
-	StorageRef                domain.HostingStorageRef                         `json:"storage_ref,omitzero"`
-	StorageCreate             *domain.HostingStorageCreateRequest              `json:"storage_create,omitempty"`
-	StorageMaterialized       *domain.HostingStorageMaterializedRequest        `json:"storage_materialized,omitempty"`
-	StorageMetadata           *domain.HostingStorage                           `json:"storage_metadata,omitempty"`
-	RuntimeEnvironment        bool                                             `json:"runtime_environment,omitempty"`
-	RuntimeConfiguration      domain.HostingRuntimeConfigurationRef            `json:"runtime_configuration,omitzero"`
-	DeliveryID                string                                           `json:"delivery_id,omitempty"`
-	LocalBuild                bool                                             `json:"local_build,omitempty"`
-	ID                        string                                           `json:"id"`
-	Attempt                   AttemptIdentity                                  `json:"attempt_authority"`
-	OperationID               string                                           `json:"operation_id"`
-	Phase                     string                                           `json:"phase"`
-	Prepared                  *domain.HostingPreparedRequest                   `json:"prepared,omitempty"`
-	CleanupPlan               *domain.HostingCleanupPlan                       `json:"cleanup_plan,omitempty"`
-	Plan                      *domain.HostingApplyPlan                         `json:"plan,omitempty"`
-	Result                    *domain.HostingCompleteRequest                   `json:"result,omitempty"`
-	CreatedAt                 time.Time                                        `json:"created_at"`
+	ApplicationRouteContinuity *domain.HostingApplicationDatabaseRouteContinuity `json:"application_route_continuity,omitempty"`
+	ApplicationYield           *domain.HostingApplicationDatabaseYieldRequest    `json:"application_yield,omitempty"`
+	ApplicationFinalize        *domain.HostingApplicationDatabaseYieldReceipt    `json:"application_finalize,omitempty"`
+	ApplicationDatabase        *domain.HostingApplicationDatabaseExecutionProof  `json:"application_database,omitempty"`
+	ApplicationSnapshot        *domain.HostingSnapshot                           `json:"application_snapshot,omitempty"`
+	ApplicationCandidate       *domain.HostingApplicationDatabaseCandidate       `json:"application_candidate,omitempty"`
+	ApplicationStage           *domain.HostingApplicationDatabaseStage           `json:"application_stage,omitempty"`
+	ApplicationRetirementPlan  *domain.HostingDatabaseBindingEndpointPlan        `json:"application_retirement_plan,omitempty"`
+	ApplicationRetirement      *domain.HostingDatabaseBindingEndpointReceipt     `json:"application_retirement,omitempty"`
+	DatabaseMaintenance        *domain.HostingDatabaseMaintenanceProof           `json:"database_maintenance,omitempty"`
+	DatabaseUpgrade            *domain.HostingDatabaseUpgradeProof               `json:"database_upgrade,omitempty"`
+	Database                   bool                                              `json:"database,omitempty"`
+	DatabaseRef                domain.HostingDatabaseExecutionRef                `json:"database_ref,omitzero"`
+	StorageRef                 domain.HostingStorageRef                          `json:"storage_ref,omitzero"`
+	StorageCreate              *domain.HostingStorageCreateRequest               `json:"storage_create,omitempty"`
+	StorageMaterialized        *domain.HostingStorageMaterializedRequest         `json:"storage_materialized,omitempty"`
+	StorageMetadata            *domain.HostingStorage                            `json:"storage_metadata,omitempty"`
+	RuntimeEnvironment         bool                                              `json:"runtime_environment,omitempty"`
+	RuntimeConfiguration       domain.HostingRuntimeConfigurationRef             `json:"runtime_configuration,omitzero"`
+	DeliveryID                 string                                            `json:"delivery_id,omitempty"`
+	LocalBuild                 bool                                              `json:"local_build,omitempty"`
+	ID                         string                                            `json:"id"`
+	Attempt                    AttemptIdentity                                   `json:"attempt_authority"`
+	OperationID                string                                            `json:"operation_id"`
+	Phase                      string                                            `json:"phase"`
+	Prepared                   *domain.HostingPreparedRequest                    `json:"prepared,omitempty"`
+	CleanupPlan                *domain.HostingCleanupPlan                        `json:"cleanup_plan,omitempty"`
+	Plan                       *domain.HostingApplyPlan                          `json:"plan,omitempty"`
+	Result                     *domain.HostingCompleteRequest                    `json:"result,omitempty"`
+	CreatedAt                  time.Time                                         `json:"created_at"`
 }
 
 // AppendHosting durably records nonsecret hosting evidence before external mutation or delivery.
@@ -101,6 +104,9 @@ func (j *AttemptJournal) AppendHosting(entry JournalHosting) (JournalHosting, er
 	}
 	if entry.DatabaseUpgrade != nil && j.state.Version < 14 {
 		j.state.Version = 14
+	}
+	if hostingJournalUsesRouteContinuity(entry) && j.state.Version < 16 {
+		j.state.Version = 16
 	}
 	if hostingJournalUsesConnection(entry) && j.state.Version < 15 {
 		j.state.Version = 15

@@ -66,6 +66,8 @@ func ValidateImageDeploymentTask(run TaskRun) error {
 	prefix := "run_"
 	if spec.HostingMode == "observe" {
 		prefix = "observe_"
+	} else if spec.HostingMode == "finalize" {
+		prefix = "finalize_"
 	} else if spec.HostingMode == "cleanup" {
 		prefix = "cleanup_"
 	} else if spec.HostingMode != "deploy" {
@@ -85,13 +87,14 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
-	StorageRouteContinuity                 *HostingStorageRouteContinuityInput `json:"storage_route_continuity,omitempty"`
-	ExpectedRuntimeConfigurationGeneration int64                               `json:"expected_runtime_configuration_generation,omitempty"`
-	ExpectedGeneration                     int64                               `json:"expected_generation"`
-	IdempotencyKey                         string                              `json:"idempotency_key"`
-	ContainerPort                          int                                 `json:"container_port"`
-	HostPort                               int                                 `json:"host_port"`
-	Readiness                              HostingReadiness                    `json:"readiness"`
+	ApplicationDatabaseRouteContinuity     *HostingApplicationDatabaseRouteContinuityInput `json:"application_database_route_continuity,omitempty"`
+	StorageRouteContinuity                 *HostingStorageRouteContinuityInput             `json:"storage_route_continuity,omitempty"`
+	ExpectedRuntimeConfigurationGeneration int64                                           `json:"expected_runtime_configuration_generation,omitempty"`
+	ExpectedGeneration                     int64                                           `json:"expected_generation"`
+	IdempotencyKey                         string                                          `json:"idempotency_key"`
+	ContainerPort                          int                                             `json:"container_port"`
+	HostPort                               int                                             `json:"host_port"`
+	Readiness                              HostingReadiness                                `json:"readiness"`
 }
 
 // HostingSnapshot is captured under the resource and binding transaction locks.
@@ -176,33 +179,35 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
-	ApplicationDatabase   *HostingApplicationDatabaseExecutionProof `json:"application_database,omitempty"`
-	DatabaseMaintenance   *HostingDatabaseMaintenanceProof          `json:"database_maintenance,omitempty"`
-	DatabaseUpgrade       *HostingDatabaseUpgradeProof              `json:"database_upgrade,omitempty"`
-	StorageArchive        *HostingStorageArchive                    `json:"storage_archive,omitempty"`
-	CleanupPlan           *HostingCleanupPlan                       `json:"cleanup_plan,omitempty"`
-	ObservationLease      *RunLease                                 `json:"observation_lease,omitempty"`
-	TaskMode              string                                    `json:"task_mode,omitempty"`
-	ReconciliationRunID   string                                    `json:"reconciliation_run_id,omitempty"`
-	ReconciliationHealthy *HostingHealthy                           `json:"reconciliation_healthy,omitempty"`
-	ID                    string                                    `json:"id"`
-	ProjectID             string                                    `json:"project_id"`
-	ResourceID            string                                    `json:"resource_id"`
-	BindingID             string                                    `json:"binding_id"`
-	RunID                 string                                    `json:"run_id,omitempty"`
-	State                 string                                    `json:"state"`
-	Snapshot              HostingSnapshot                           `json:"snapshot"`
-	Release               *HostingRelease                           `json:"release,omitempty"`
-	Plan                  *HostingApplyPlan                         `json:"plan,omitempty"`
-	PreparedReceipt       *HostingReceipt                           `json:"prepared_receipt,omitempty"`
-	CompleteReceipt       *HostingReceipt                           `json:"complete_receipt,omitempty"`
-	Result                *HostingResult                            `json:"result,omitempty"`
-	RestoreOwnershipHeld  bool                                      `json:"restore_ownership_held"`
-	MutationHold          bool                                      `json:"mutation_hold"`
-	ReconcileRequested    bool                                      `json:"reconcile_requested"`
-	CreatedBy             string                                    `json:"created_by"`
-	CreatedAt             time.Time                                 `json:"created_at"`
-	UpdatedAt             time.Time                                 `json:"updated_at"`
+	ApplicationDatabaseRouteContinuity *HostingApplicationDatabaseRouteContinuity `json:"application_database_route_continuity,omitempty"`
+	ApplicationDatabaseYield           *HostingApplicationDatabaseYieldReceipt    `json:"application_database_yield,omitempty"`
+	ApplicationDatabase                *HostingApplicationDatabaseExecutionProof  `json:"application_database,omitempty"`
+	DatabaseMaintenance                *HostingDatabaseMaintenanceProof           `json:"database_maintenance,omitempty"`
+	DatabaseUpgrade                    *HostingDatabaseUpgradeProof               `json:"database_upgrade,omitempty"`
+	StorageArchive                     *HostingStorageArchive                     `json:"storage_archive,omitempty"`
+	CleanupPlan                        *HostingCleanupPlan                        `json:"cleanup_plan,omitempty"`
+	ObservationLease                   *RunLease                                  `json:"observation_lease,omitempty"`
+	TaskMode                           string                                     `json:"task_mode,omitempty"`
+	ReconciliationRunID                string                                     `json:"reconciliation_run_id,omitempty"`
+	ReconciliationHealthy              *HostingHealthy                            `json:"reconciliation_healthy,omitempty"`
+	ID                                 string                                     `json:"id"`
+	ProjectID                          string                                     `json:"project_id"`
+	ResourceID                         string                                     `json:"resource_id"`
+	BindingID                          string                                     `json:"binding_id"`
+	RunID                              string                                     `json:"run_id,omitempty"`
+	State                              string                                     `json:"state"`
+	Snapshot                           HostingSnapshot                            `json:"snapshot"`
+	Release                            *HostingRelease                            `json:"release,omitempty"`
+	Plan                               *HostingApplyPlan                          `json:"plan,omitempty"`
+	PreparedReceipt                    *HostingReceipt                            `json:"prepared_receipt,omitempty"`
+	CompleteReceipt                    *HostingReceipt                            `json:"complete_receipt,omitempty"`
+	Result                             *HostingResult                             `json:"result,omitempty"`
+	RestoreOwnershipHeld               bool                                       `json:"restore_ownership_held"`
+	MutationHold                       bool                                       `json:"mutation_hold"`
+	ReconcileRequested                 bool                                       `json:"reconcile_requested"`
+	CreatedBy                          string                                     `json:"created_by"`
+	CreatedAt                          time.Time                                  `json:"created_at"`
+	UpdatedAt                          time.Time                                  `json:"updated_at"`
 }
 
 // HostingAuthority must match the authenticated runner and persisted task target.
@@ -244,6 +249,11 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.ApplicationDatabaseRouteContinuity != nil {
+		if _, err := CanonicalHostingApplicationDatabaseRouteContinuityInput(*in.ApplicationDatabaseRouteContinuity); err != nil || in.StorageRouteContinuity != nil {
+			return errors.New("invalid application database route continuity request")
+		}
+	}
 	if in.StorageRouteContinuity != nil {
 		if _, err := CanonicalHostingStorageRouteContinuityInput(*in.StorageRouteContinuity); err != nil || in.HostPort < 1024 {
 			return errors.New("invalid storage route continuity request")

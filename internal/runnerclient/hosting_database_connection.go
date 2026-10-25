@@ -83,11 +83,11 @@ func connectionOperationValid(op domain.HostingOperation) bool {
 }
 
 func connectionOperationMatches(actual, expected domain.HostingOperation) bool {
-	return connectionOperationValid(actual) && connectionOperationValid(expected) && actual.ID == expected.ID && actual.ProjectID == expected.ProjectID && actual.ResourceID == expected.ResourceID && actual.BindingID == expected.BindingID && actual.RunID == expected.RunID && actual.TaskMode == expected.TaskMode && actual.ReconciliationRunID == expected.ReconciliationRunID && actual.Snapshot == expected.Snapshot && domain.HostingDocumentHash(actual.ApplicationDatabase) == domain.HostingDocumentHash(expected.ApplicationDatabase) && domain.HostingDocumentHash(actual.DatabaseMaintenance) == domain.HostingDocumentHash(expected.DatabaseMaintenance) && domain.HostingDocumentHash(actual.Plan) == domain.HostingDocumentHash(expected.Plan) && domain.HostingDocumentHash(actual.Release) == domain.HostingDocumentHash(expected.Release)
+	return connectionOperationValid(actual) && connectionOperationValid(expected) && actual.ID == expected.ID && actual.ProjectID == expected.ProjectID && actual.ResourceID == expected.ResourceID && actual.BindingID == expected.BindingID && domain.HostingDocumentHash(actual.ApplicationDatabaseRouteContinuity) == domain.HostingDocumentHash(expected.ApplicationDatabaseRouteContinuity) && actual.RunID == expected.RunID && actual.TaskMode == expected.TaskMode && actual.ReconciliationRunID == expected.ReconciliationRunID && actual.Snapshot == expected.Snapshot && domain.HostingDocumentHash(actual.ApplicationDatabase) == domain.HostingDocumentHash(expected.ApplicationDatabase) && domain.HostingDocumentHash(actual.DatabaseMaintenance) == domain.HostingDocumentHash(expected.DatabaseMaintenance) && domain.HostingDocumentHash(actual.Plan) == domain.HostingDocumentHash(expected.Plan) && domain.HostingDocumentHash(actual.Release) == domain.HostingDocumentHash(expected.Release)
 }
 
 func applicationConnectionInput(op domain.HostingOperation, a domain.HostingAuthority) (domain.HostingApplicationDatabasePlanInput, error) {
-	if a.Attempt < 1 || a.Attempt > math.MaxInt32 || !readinessResponseID.MatchString(a.LeaseID) || !readinessResponseID.MatchString(a.Fence) || op.ApplicationDatabase == nil || op.Plan == nil || !connectionOperationValid(op) || op.ID != a.OperationID || op.TaskMode != "deploy" && op.TaskMode != "observe" || op.TaskMode == "deploy" && op.RunID != a.RunID || op.TaskMode == "observe" && op.ReconciliationRunID != a.RunID {
+	if a.Attempt < 1 || a.Attempt > math.MaxInt32 || !readinessResponseID.MatchString(a.LeaseID) || !readinessResponseID.MatchString(a.Fence) || op.ApplicationDatabase == nil || op.Plan == nil || !connectionOperationValid(op) || op.ID != a.OperationID || op.TaskMode != "deploy" && op.TaskMode != "observe" && op.TaskMode != "finalize" || op.TaskMode == "deploy" && op.RunID != a.RunID || op.TaskMode == "observe" && op.ReconciliationRunID != a.RunID || op.TaskMode == "finalize" && (op.ApplicationDatabaseRouteContinuity == nil || op.ApplicationDatabaseYield == nil || op.ApplicationDatabaseRouteContinuity.FinalizeRunID != a.RunID) {
 		return domain.HostingApplicationDatabasePlanInput{}, errDatabaseConnection
 	}
 	return domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
@@ -170,7 +170,7 @@ func (c Client) HostingApplicationDatabaseRetirement(ctx context.Context, reques
 func (c Client) HostingApplicationDatabaseAuthorize(ctx context.Context, request domain.HostingApplicationDatabaseEffectRequest, expected domain.HostingOperation, revision int64, leaseExpiry time.Time) (domain.HostingApplicationDatabaseEffectAuthorization, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseEffectAuthorization]
 	in, err := applicationConnectionInput(expected, request.HostingAuthority)
-	if err != nil || revision != in.MembershipRevision || request.Validate() != nil || expected.TaskMode != "deploy" || expected.Result != nil || expected.RestoreOwnershipHeld || !expected.MutationHold || expected.State != "applying" && expected.State != "verifying" || !time.Now().Before(leaseExpiry) {
+	if err != nil || revision != in.MembershipRevision || request.Validate() != nil || expected.TaskMode != "deploy" && !(expected.TaskMode == "finalize" && request.Action == "retire") || expected.Result != nil || expected.RestoreOwnershipHeld || !expected.MutationHold || expected.State != "applying" && expected.State != "verifying" || !time.Now().Before(leaseExpiry) {
 		return reply.value, errDatabaseConnection
 	}
 	if err = c.connectionPost(ctx, "authorize", request, &reply); err != nil {
@@ -216,4 +216,20 @@ func (c Client) HostingDatabaseMaintenanceCredentials(ctx context.Context, runne
 		return nil, ErrDatabaseCredentials
 	}
 	return c.hostingDatabaseCredentials(ctx, runnerID, request, *op.Plan, options, true)
+}
+
+// HostingApplicationDatabaseYield acknowledges immutable preparation history.
+func (c Client) HostingApplicationDatabaseYield(ctx context.Context, in domain.HostingApplicationDatabaseYieldRequest, expected domain.HostingOperation) (domain.HostingOperation, error) {
+	var reply connectionResponse[domain.HostingOperation]
+	if in.Validate() != nil || expected.ApplicationDatabaseRouteContinuity == nil || expected.TaskMode != "deploy" || in.RunID != expected.RunID || expected.Plan == nil || in.PlanHash != expected.Plan.Hash || in.ContinuationHash != expected.ApplicationDatabaseRouteContinuity.Hash {
+		return reply.value, errDatabaseConnection
+	}
+	if err := c.connectionPost(ctx, "yield", in, &reply); err != nil {
+		return reply.value, err
+	}
+	receipt := in.Receipt()
+	if !connectionOperationMatches(reply.value, expected) || reply.value.ApplicationDatabaseYield == nil || *reply.value.ApplicationDatabaseYield != receipt {
+		return domain.HostingOperation{}, errDatabaseConnection
+	}
+	return reply.value, nil
 }

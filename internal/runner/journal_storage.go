@@ -9,7 +9,7 @@ import (
 )
 
 func decodeStorageJournal(raw []byte, state *journalState) error {
-	if state.Version == 11 || state.Version == 14 || state.Version == 15 {
+	if state.Version == 11 || state.Version == 14 || state.Version == 15 || state.Version == 16 {
 		return decodeDatabaseJournal(raw, state)
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))

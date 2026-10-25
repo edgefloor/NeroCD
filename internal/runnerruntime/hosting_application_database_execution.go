@@ -26,11 +26,11 @@ type applicationDatabaseExecutionEngine interface {
 }
 
 func applicationDatabaseScope(op domain.HostingOperation, a domain.HostingAuthority, runnerID, mode string) bool {
-	return op.ID == a.OperationID && op.Snapshot.RunnerID == runnerID && op.TaskMode == mode && (mode == "deploy" && op.RunID == a.RunID || mode == "observe" && op.ReconciliationRunID == a.RunID) && op.ApplicationDatabase != nil && domain.ValidateHostingApplicationDatabaseOperation(op) == nil
+	return op.ID == a.OperationID && op.Snapshot.RunnerID == runnerID && op.TaskMode == mode && (mode == "deploy" && op.RunID == a.RunID || mode == "observe" && op.ReconciliationRunID == a.RunID || mode == "finalize" && op.ApplicationDatabaseRouteContinuity != nil && op.ApplicationDatabaseYield != nil && op.ApplicationDatabaseRouteContinuity.FinalizeRunID == a.RunID) && op.ApplicationDatabase != nil && domain.ValidateHostingApplicationDatabaseOperation(op) == nil
 }
 
 func applicationDatabaseSame(expected, got domain.HostingOperation) bool {
-	return expected.ID == got.ID && expected.ProjectID == got.ProjectID && expected.ResourceID == got.ResourceID && expected.BindingID == got.BindingID && domain.HostingDocumentHash(expected.Snapshot) == domain.HostingDocumentHash(got.Snapshot) && domain.HostingDocumentHash(expected.ApplicationDatabase) == domain.HostingDocumentHash(got.ApplicationDatabase) && (expected.Plan == nil || domain.HostingDocumentHash(expected.Plan) == domain.HostingDocumentHash(got.Plan))
+	return domain.HostingDocumentHash(expected.ApplicationDatabaseRouteContinuity) == domain.HostingDocumentHash(got.ApplicationDatabaseRouteContinuity) && expected.ID == got.ID && expected.ProjectID == got.ProjectID && expected.ResourceID == got.ResourceID && expected.BindingID == got.BindingID && domain.HostingDocumentHash(expected.Snapshot) == domain.HostingDocumentHash(got.Snapshot) && domain.HostingDocumentHash(expected.ApplicationDatabase) == domain.HostingDocumentHash(got.ApplicationDatabase) && (expected.Plan == nil || domain.HostingDocumentHash(expected.Plan) == domain.HostingDocumentHash(got.Plan))
 }
 
 func applicationDatabaseInput(op domain.HostingOperation) (applicationDatabaseEngineInput, error) {
@@ -46,7 +46,11 @@ func applicationDatabaseInput(op domain.HostingOperation) (applicationDatabaseEn
 
 func applicationDatabaseEntry(s *attemptSupervisor, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation, phase, id string) runner.JournalHosting {
 	snapshot := op.Snapshot
-	return runner.JournalHosting{ID: id, Attempt: journalAttemptIdentity(a.RunID, lease, s), OperationID: a.OperationID, Phase: phase, ApplicationDatabase: op.ApplicationDatabase, ApplicationSnapshot: &snapshot, RuntimeEnvironment: true, RuntimeConfiguration: snapshot.RuntimeConfiguration, CreatedAt: time.Now().UTC()}
+	entry := runner.JournalHosting{ApplicationRouteContinuity: op.ApplicationDatabaseRouteContinuity, ID: id, Attempt: journalAttemptIdentity(a.RunID, lease, s), OperationID: a.OperationID, Phase: phase, ApplicationDatabase: op.ApplicationDatabase, ApplicationSnapshot: &snapshot, RuntimeEnvironment: true, RuntimeConfiguration: snapshot.RuntimeConfiguration, CreatedAt: time.Now().UTC()}
+	if op.TaskMode == "finalize" {
+		entry.ApplicationFinalize = op.ApplicationDatabaseYield
+	}
+	return entry
 }
 
 // An existing body retains its original timestamp and lease expiry. Renewals
@@ -92,6 +96,9 @@ func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, 
 	if config == nil || !config.ApplicationDatabase || environment == nil || !applicationDatabaseScope(op, a, claim.Lease.RunnerID, claim.Run.RunSpec.HostingMode) || claim.PrimitivePlan.RunID != a.RunID || claim.Lease.RunID != a.RunID || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 {
 		return errApplicationDatabaseExecution
 	}
+	if op.ApplicationDatabaseRouteContinuity != nil && !config.RouteContinuity {
+		return errApplicationDatabaseExecution
+	}
 	ec, err := NewDatabaseEngineConfig(config.StateRoot, config.SecretRoot)
 	if err != nil {
 		return errApplicationDatabaseExecution
@@ -101,6 +108,9 @@ func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, 
 		return errApplicationDatabaseExecution
 	}
 	defer func() { _ = e.Close() }()
+	if op.TaskMode == "finalize" {
+		return executeApplicationDatabaseFinalize(s, j, drain, c, e, a, claim.Lease, op)
+	}
 	if op.TaskMode == "observe" {
 		return observeApplicationDatabaseClaim(s, c, e, a, op, drain)
 	}
@@ -334,6 +344,12 @@ func (x *applicationDatabaseExchange) finish(candidate applicationDatabaseCandid
 	if stage.Phase != "ready" {
 		return errApplicationDatabaseExecution
 	}
+	if x.op.ApplicationDatabaseRouteContinuity != nil && x.op.TaskMode != "finalize" {
+		return x.yield(drain)
+	}
+	if x.op.TaskMode == "finalize" && x.e.VerifyReady(x.s.Context(), x.in, candidate, *stage.EndpointReceipt.Observation) != nil {
+		return errApplicationDatabaseExecution
+	}
 	if len(x.in.Proof.Members) == 1 {
 		if err := x.retire(candidate, *stage.EndpointReceipt.Observation); err != nil {
 			return err
@@ -405,7 +421,7 @@ func retainedApplicationDatabaseRetirement(entries []runner.JournalHosting, a do
 		if storageEntryAuthority(entry) != a {
 			return nil, errApplicationDatabaseExecution
 		}
-		if entry.Phase == "application_stage" {
+		if entry.Phase == "application_stage" || entry.Phase == "application_finalize" {
 			readyStage = entry.ApplicationStage
 		}
 		if entry.ApplicationRetirement != nil || entry.ApplicationRetirementPlan != nil || entry.Phase == "application_retirement" {
@@ -469,7 +485,7 @@ func completeApplicationDatabase(ctx context.Context, j *runner.AttemptJournal, 
 	if err != nil {
 		return err
 	}
-	if !applicationDatabaseScope(ack, a, expected.Snapshot.RunnerID, "deploy") || !applicationDatabaseSame(expected, ack) || ack.State != "succeeded" || ack.MutationHold || ack.RestoreOwnershipHeld || ack.Result == nil || *ack.Result != req.Result || ack.CompleteReceipt == nil || ack.CompleteReceipt.ID != req.ReceiptID || ack.CompleteReceipt.BodyHash != domain.HostingDocumentHash(req.Result) {
+	if !applicationDatabaseScope(ack, a, expected.Snapshot.RunnerID, expected.TaskMode) || !applicationDatabaseSame(expected, ack) || ack.State != "succeeded" || ack.MutationHold || ack.RestoreOwnershipHeld || ack.Result == nil || *ack.Result != req.Result || ack.CompleteReceipt == nil || ack.CompleteReceipt.ID != req.ReceiptID || ack.CompleteReceipt.BodyHash != domain.HostingDocumentHash(req.Result) {
 		return errApplicationDatabaseExecution
 	}
 	return j.AckHostingConnection(a)
@@ -553,7 +569,7 @@ func reconcileApplicationDatabaseWithEngine(parent context.Context, config Confi
 		if first.ApplicationDatabase == nil {
 			continue
 		}
-		if config.Database == nil || !config.Database.ApplicationDatabase || config.RuntimeEnvironment == nil {
+		if config.Database == nil || !config.Database.ApplicationDatabase || config.RuntimeEnvironment == nil || first.ApplicationRouteContinuity != nil && !config.Database.RouteContinuity {
 			return errApplicationDatabaseExecution
 		}
 		a := storageEntryAuthority(first)
@@ -570,7 +586,11 @@ func reconcileApplicationDatabaseWithEngine(parent context.Context, config Confi
 
 func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, c runnerclient.Client, j *runner.AttemptJournal, first runner.JournalHosting, open func() (applicationDatabaseExecutionEngine, error)) error {
 	a := storageEntryAuthority(first)
-	op := domain.HostingOperation{ID: a.OperationID, ProjectID: first.ApplicationDatabase.Binding.ProjectID, ResourceID: first.ApplicationSnapshot.ResourceID, BindingID: first.ApplicationSnapshot.BindingID, RunID: a.RunID, TaskMode: "deploy", Snapshot: *first.ApplicationSnapshot, ApplicationDatabase: first.ApplicationDatabase}
+	op := domain.HostingOperation{ID: a.OperationID, ProjectID: first.ApplicationDatabase.Binding.ProjectID, ResourceID: first.ApplicationSnapshot.ResourceID, BindingID: first.ApplicationSnapshot.BindingID, RunID: "run_" + a.OperationID, TaskMode: "deploy", Snapshot: *first.ApplicationSnapshot, ApplicationDatabase: first.ApplicationDatabase, ApplicationDatabaseRouteContinuity: first.ApplicationRouteContinuity, ApplicationDatabaseYield: first.ApplicationFinalize}
+	if first.ApplicationFinalize != nil {
+		op.TaskMode = "finalize"
+	}
+	var yielded *domain.HostingApplicationDatabaseYieldRequest
 	var entries []runner.JournalHosting
 	var result *domain.HostingCompleteRequest
 	var candidate *domain.HostingApplicationDatabaseCandidate
@@ -593,6 +613,12 @@ func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, 
 		if e.ApplicationCandidate != nil {
 			candidate = e.ApplicationCandidate
 		}
+		if e.ApplicationYield != nil {
+			yielded = e.ApplicationYield
+		}
+		if e.Phase == "application_finalize" {
+			candidate = &e.ApplicationStage.Candidate
+		}
 		if e.ApplicationStage != nil {
 			stage = e.ApplicationStage
 		}
@@ -604,6 +630,17 @@ func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, 
 	retirement, err := retainedApplicationDatabaseRetirement(j.Snapshot().Hosting, a, op)
 	if err != nil {
 		return err
+	}
+	if op.TaskMode == "finalize" && retirement != nil && retirement.ApplicationRetirement.Phase != "detached" {
+		return errApplicationDatabaseExecution
+	}
+	if yielded != nil {
+		if err := replayHostingEvents(config.Server, config.Token, j, first.Attempt, parent); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
+		return acknowledgeApplicationDatabaseYield(ctx, j, c, op, *yielded)
 	}
 	if result != nil {
 		if err := replayHostingEvents(config.Server, config.Token, j, first.Attempt, parent); err != nil {
@@ -656,7 +693,7 @@ func reconcileApplicationDatabaseAttempt(parent context.Context, config Config, 
 	ctx, cancel = context.WithTimeout(parent, 5*time.Second)
 	current, err := c.HostingPlan(ctx, a)
 	cancel()
-	if err != nil || !applicationDatabaseScope(current, a, config.RunnerID, "deploy") || !applicationDatabaseSame(op, current) || current.Result != nil || current.RestoreOwnershipHeld {
+	if err != nil || !applicationDatabaseScope(current, a, config.RunnerID, op.TaskMode) || !applicationDatabaseSame(op, current) || current.Result != nil || current.RestoreOwnershipHeld {
 		return errApplicationDatabaseExecution
 	}
 	// The controller cannot still be prepared after authorizing create. Only
@@ -791,4 +828,49 @@ func observeApplicationDatabaseRecovery(parent context.Context, config Config, c
 	}
 	defer func() { _ = e.Close() }()
 	return observeApplicationDatabaseClaim(s, c, e, a, plan, func(ctx context.Context) error { watcher.Stop(); renewer.Stop(); return ctx.Err() })
+}
+
+func (x *applicationDatabaseExchange) yield(drain func(context.Context) error) error {
+	if x.op.ApplicationDatabaseRouteContinuity == nil || x.stage == nil || x.stage.Phase != "ready" || x.a.RunID != x.op.RunID {
+		return errApplicationDatabaseExecution
+	}
+	request := domain.HostingApplicationDatabaseYieldRequest{HostingAuthority: x.a, Version: domain.HostingApplicationDatabaseRouteContinuityVersion, ReceiptID: attemptMutationKey("appdb_yield", x.a.LeaseID, x.a.Attempt, "ready"), PlanHash: x.op.Plan.Hash, StageHash: x.stage.Hash, CandidateHash: x.stage.Candidate.DocumentHash(), ContinuationHash: x.op.ApplicationDatabaseRouteContinuity.Hash}
+	entry := applicationDatabaseEntry(x.s, x.a, x.lease, x.op, "application_yield", request.ReceiptID)
+	entry.Plan, entry.ApplicationStage, entry.ApplicationYield = x.op.Plan, x.stage, &request
+	if _, err := appendApplicationDatabaseEntry(x.j, entry); err != nil {
+		return err
+	}
+	if drain != nil {
+		if err := drain(x.s.Context()); err != nil {
+			return err
+		}
+	}
+	return acknowledgeApplicationDatabaseYield(x.s.Context(), x.j, x.c, x.op, request)
+}
+func acknowledgeApplicationDatabaseYield(ctx context.Context, j *runner.AttemptJournal, c runnerclient.Client, op domain.HostingOperation, request domain.HostingApplicationDatabaseYieldRequest) error {
+	if _, err := c.HostingApplicationDatabaseYield(ctx, request, op); err != nil {
+		return err
+	}
+	return j.AckHostingConnection(request.HostingAuthority)
+}
+
+// Finalize reinspects only the retained ready candidate, then retires exactly
+// its admitted predecessor. This function has no prepare, create or secret path.
+func executeApplicationDatabaseFinalize(s *attemptSupervisor, j *runner.AttemptJournal, drain func(context.Context) error, c runnerclient.Client, e applicationDatabaseExecutionEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation) error {
+	in, err := applicationDatabaseInput(op)
+	if err != nil || op.ApplicationDatabaseRouteContinuity == nil || op.ApplicationDatabaseYield == nil || !applicationDatabaseScope(op, a, lease.RunnerID, "finalize") || !op.MutationHold || op.RestoreOwnershipHeld {
+		return errApplicationDatabaseExecution
+	}
+	state, err := c.HostingApplicationDatabaseState(s.Context(), a, op)
+	if err != nil || state.Stage == nil || state.Stage.Phase != "ready" || state.Stage.Hash != op.ApplicationDatabaseYield.StageHash || state.Stage.Candidate.DocumentHash() != op.ApplicationDatabaseYield.CandidateHash || state.RetirementPlan != nil || state.RetirementReceipt != nil {
+		return errApplicationDatabaseExecution
+	}
+	stage := state.Stage
+	entry := applicationDatabaseEntry(s, a, lease, op, "application_finalize", attemptMutationKey("appdb_finalize", a.LeaseID, a.Attempt, "intent"))
+	entry.Plan, entry.ApplicationStage = op.Plan, stage
+	if _, err = appendApplicationDatabaseEntry(j, entry); err != nil {
+		return err
+	}
+	x := applicationDatabaseExchange{s: s, j: j, c: c, a: a, lease: lease, op: op, in: in, e: e, stage: stage}
+	return x.finish(privateApplicationDatabaseCandidate(stage.Candidate), drain)
 }

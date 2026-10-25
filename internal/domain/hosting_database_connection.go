@@ -147,7 +147,7 @@ func (out HostingApplicationDatabaseExecutionState) Validate() error {
 // Validate checks the closed initial request without authorizing saved targets.
 // Both CAS inputs refer to the runtime generation before binding injection.
 func (in HostingDatabaseConnectionInput) Validate() error {
-	if in.Binding.Validate() != nil || ValidateHostingDeployment(in.Deployment) != nil || in.Deployment.StorageRouteContinuity != nil || in.Deployment.ExpectedGeneration != in.Binding.ExpectedResourceGeneration || in.Deployment.ExpectedRuntimeConfigurationGeneration != in.Binding.ExpectedRuntimeGeneration {
+	if in.Binding.Validate() != nil || ValidateHostingDeployment(in.Deployment) != nil || in.Deployment.StorageRouteContinuity != nil || in.Deployment.ApplicationDatabaseRouteContinuity != nil || in.Deployment.ExpectedGeneration != in.Binding.ExpectedResourceGeneration || in.Deployment.ExpectedRuntimeConfigurationGeneration != in.Binding.ExpectedRuntimeGeneration {
 		return ErrInvalidHostingDatabaseConnection
 	}
 	return nil

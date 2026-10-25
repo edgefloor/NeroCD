@@ -180,6 +180,16 @@ type HostingApplicationDatabaseRetirement struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+type HostingApplicationDatabaseRouteContinuation struct {
+	OperationID      string          `json:"operation_id"`
+	ProxyID          string          `json:"proxy_id"`
+	ProxyOperationID string          `json:"proxy_operation_id"`
+	FinalizeRunID    string          `json:"finalize_run_id"`
+	Body             json.RawMessage `json:"body"`
+	BodyHash         string          `json:"body_hash"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
 type HostingApplicationDatabaseStage struct {
 	OperationID  string          `json:"operation_id"`
 	ReceiptID    string          `json:"receipt_id"`
@@ -189,6 +199,14 @@ type HostingApplicationDatabaseStage struct {
 	Stage        json.RawMessage `json:"stage"`
 	StageHash    string          `json:"stage_hash"`
 	CreatedAt    time.Time       `json:"created_at"`
+}
+
+type HostingApplicationDatabaseYield struct {
+	OperationID string          `json:"operation_id"`
+	ReceiptID   string          `json:"receipt_id"`
+	Request     json.RawMessage `json:"request"`
+	RequestHash string          `json:"request_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type HostingApplyAdmission struct {

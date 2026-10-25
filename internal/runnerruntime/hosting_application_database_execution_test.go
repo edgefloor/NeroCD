@@ -179,7 +179,7 @@ func (f *connectedExecutionFixture) serve(w http.ResponseWriter, r *http.Request
 		if f.stage != nil {
 			hash = f.stage.Hash
 		}
-		if req.HostingAuthority != f.a || req.ExpectedStageHash != hash || !f.has("apply_intent") {
+		if req.HostingAuthority != f.a || req.ExpectedStageHash != hash || !f.has("apply_intent") && !(f.op.TaskMode == "finalize" && req.Action == "retire" && f.has("application_finalize")) {
 			f.t.Error("effect escaped exact current stage/authority")
 		}
 		if req.Action == f.deny {

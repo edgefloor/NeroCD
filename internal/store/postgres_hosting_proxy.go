@@ -278,7 +278,7 @@ func (s *PostgresStore) RunnerProxyPrepared(ctx context.Context, runner string, 
 	}
 	preparedProxy := p
 	preparedProxy.DaemonID = in.DaemonID
-	if err = proxyValidateSnapshot(ctx, tx, preparedProxy, op.Snapshot); err != nil {
+	if err = proxyValidateOperationSnapshot(ctx, tx, preparedProxy, op); err != nil {
 		return domain.HostingProxyOperation{}, err
 	}
 	// Snapshot validation acquires resource locks after the proxy lock.

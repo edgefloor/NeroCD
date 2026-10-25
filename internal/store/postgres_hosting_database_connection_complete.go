@@ -14,7 +14,11 @@ import (
 func (s *PostgresStore) completeDatabaseConnection(ctx context.Context, tx pgx.Tx, runner string, in domain.HostingCompleteRequest, op domain.HostingOperation) (domain.HostingOperation, error) {
 	var zero domain.HostingOperation
 	q := sqlcgen.New(tx)
-	if err := hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
+	mode := "deploy"
+	if op.ApplicationDatabaseRouteContinuity != nil {
+		mode = "finalize"
+	}
+	if err := hostingRequireMode(ctx, tx, in.HostingAuthority, mode); err != nil {
 		return zero, err
 	}
 	if err := finalDatabaseConnectionAuthority(ctx, tx, runner, in.HostingAuthority, op, false, false); err != nil {
@@ -43,7 +47,12 @@ func (s *PostgresStore) completeDatabaseConnection(ctx context.Context, tx pgx.T
 		if !op.MutationHold || op.Plan == nil || op.Release == nil || !in.Result.Ready || in.Result.Uncertain || in.Result.Restored || in.Result.PlanHash != op.Plan.Hash || in.Result.DaemonID != op.Release.DaemonID || in.Result.ImageID != op.Release.ImageID || in.Result.ContainerID == "" || op.State != "applying" && op.State != "verifying" {
 			return zero, ErrConflict
 		}
-		if err = replayHostingApplyAdmission(ctx, tx, in.HostingAuthority, op); err != nil {
+		if op.ApplicationDatabaseRouteContinuity != nil {
+			err = continuityFinalizeAuthority(ctx, tx, runner, in.HostingAuthority, op, false)
+		} else {
+			err = replayHostingApplyAdmission(ctx, tx, in.HostingAuthority, op)
+		}
+		if err != nil {
 			return zero, err
 		}
 		if op.ApplicationDatabase != nil {
@@ -76,7 +85,7 @@ func (s *PostgresStore) completeDatabaseConnection(ctx context.Context, tx pgx.T
 	if _, err = q.CompleteHostingLease(ctx, sqlcgen.CompleteHostingLeaseParams{ID: in.LeaseID, Status: in.Result.Outcome, CompletionKey: &in.ReceiptID}); err != nil {
 		return zero, err
 	}
-	if _, err = q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: op.RunID, Status: in.Result.Outcome}); err != nil {
+	if _, err = q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: in.RunID, Status: in.Result.Outcome}); err != nil {
 		return zero, err
 	}
 	if state == "succeeded" {

@@ -103,6 +103,9 @@ func (s *PostgresStore) recoverHostingDispatch(ctx context.Context) error {
 			return err
 		}
 	}
+	if err = recoverApplicationDatabaseRoutes(ctx, tx, s); err != nil {
+		return err
+	}
 	if err = s.recoverProxyDispatch(ctx, tx); err != nil {
 		return err
 	}
@@ -202,6 +205,9 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 			return domain.HostingOperation{}, ErrConflict
 		}
 		in.StorageRouteContinuity = &canonical
+	}
+	if in.ApplicationDatabaseRouteContinuity != nil {
+		return domain.HostingOperation{}, ErrConflict
 	}
 	if err := domain.ValidateHostingDeployment(in); err != nil {
 		return domain.HostingOperation{}, ErrConflict
@@ -674,6 +680,12 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 			}
 		}
 		if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, a, op, true, false); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		return op, nil
+	}
+	if mode == "finalize" {
+		if err = continuityFinalizeAuthority(ctx, tx, runnerID, a, op, false); err != nil {
 			return domain.HostingOperation{}, err
 		}
 		return op, nil
@@ -1724,6 +1736,23 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 	if mode == "observe" {
 		if !op.ReconcileRequested || op.ReconciliationRunID != run.ID {
 			return false, nil
+		}
+	} else if mode == "finalize" {
+		if !continuityFinalizeRun(op, run.ID) || op.ApplicationDatabaseYield == nil || !op.MutationHold || op.State != "applying" && op.State != "verifying" {
+			return false, nil
+		}
+		fresh, claimErr := sqlcgen.New(tx).ApplicationDatabaseFinalizeClaimFresh(ctx, run.ID)
+		if claimErr != nil {
+			return false, claimErr
+		}
+		if !fresh {
+			return false, nil
+		}
+		if err = continuityProxyApplied(ctx, tx, op); err != nil {
+			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return false, err
 		}
 	} else {
 		if op.RunID != run.ID || op.MutationHold || (op.State != "dispatched" && op.State != "prepared" && op.State != "preparing") {

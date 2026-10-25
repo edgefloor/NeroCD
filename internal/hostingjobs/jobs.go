@@ -80,18 +80,19 @@ type Config struct {
 
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
-	hasStorageArchive      bool
-	hasServerBootstrap     bool
-	hasProxy               bool
-	hasBuild               bool
-	hasGitHubPush          bool
-	hasAutoDeploy          bool
-	hasDatabaseConnection  bool
-	river                  *river.Client[pgx.Tx]
-	pool                   *pgxpool.Pool
-	schema, host, database string
-	port                   uint16
-	drainTimeout           time.Duration
+	hasStorageArchive           bool
+	hasServerBootstrap          bool
+	hasProxy                    bool
+	hasBuild                    bool
+	hasGitHubPush               bool
+	hasAutoDeploy               bool
+	hasDatabaseConnection       bool
+	hasApplicationDatabaseRoute bool
+	river                       *river.Client[pgx.Tx]
+	pool                        *pgxpool.Pool
+	schema, host, database      string
+	port                        uint16
+	drainTimeout                time.Duration
 }
 
 // New requires a supplied handler and a live application pool. There is no default no-op worker.
@@ -156,12 +157,17 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		river.AddWorker(workers, &databaseConnectionWorker{handler: connection})
 		hasDatabaseConnection = true
 	}
+	hasApplicationDatabaseRoute := false
+	if handler, ok := handler.(ApplicationDatabaseRouteHandler); ok {
+		river.AddWorker(workers, &applicationDatabaseRouteWorker{handler: handler})
+		hasApplicationDatabaseRoute = true
+	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers, Queues: map[string]river.QueueConfig{Queue: {MaxWorkers: cfg.MaxWorkers}}, JobTimeout: cfg.JobTimeout, SoftStopTimeout: cfg.DrainTimeout, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), FetchCooldown: 10 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection}, nil
+	return &Client{hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection, hasApplicationDatabaseRoute: hasApplicationDatabaseRoute}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

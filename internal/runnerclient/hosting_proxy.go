@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	ApplicationDatabaseRouteContinuity                                                                                           bool
 	ApplicationDatabase, DatabaseMaintenance                                                                                     bool
 	DatabaseNetworkCaptureAutomatic                                                                                              bool
 	DatabaseNetworkCapture, DatabaseUpgrade                                                                                      bool
@@ -195,6 +196,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		}
 	} else if upgradeCapable != options.DatabaseUpgrade || options.DatabaseUpgrade && !options.Database {
 		return "", errors.New("authenticated database upgrade capability does not match explicit configuration")
+	}
+	routeContinuityCap := false
+	for _, capability := range result.Capabilities {
+		routeContinuityCap = routeContinuityCap || capability == domain.HostingApplicationDatabaseRouteContinuityCapability
+	}
+	if routeContinuityCap != options.ApplicationDatabaseRouteContinuity || routeContinuityCap && (!options.ApplicationDatabase || !options.ProxyVerifiedSwitch || !options.Proxy) {
+		return "", errors.New("authenticated route continuity capability does not match explicit configuration")
 	}
 	applicationCap, maintenanceCap := false, false
 	for _, capability := range result.Capabilities {

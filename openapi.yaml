@@ -5347,6 +5347,22 @@ paths:
         "503": {"$ref": "#/components/responses/Error"}
       parameters: [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}}]
       requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingDatabaseMaintenanceInput"}}}}
+  /api/v1/runners/hosting/database-binding/yield:
+    post:
+      operationId: "yieldHostingApplicationDatabasePreparation"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseYieldRequest"}}}}
   /api/v1/runners/hosting/database-binding/stage:
     post:
       operationId: "recordHostingApplicationDatabaseStage"
@@ -6770,10 +6786,11 @@ components:
     HostingRouteSwitchOptions:
       type: object
       additionalProperties: false
-      required: [resource_id, loaded_generation, routes, targets, available, reason, next_after_operation_id]
+      required: [resource_id, loaded_generation, loaded_proxy_operation_id, routes, targets, available, reason, next_after_operation_id]
       properties:
         resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
         loaded_generation: {type: [integer, "null"], format: int64, minimum: 1}
+        loaded_proxy_operation_id: {type: [string, "null"], description: "Exact validated loaded proxy predecessor; explanatory state, not mutation authority."}
         available: {type: boolean}
         reason: {type: string, enum: [available, unbound, proxy_unavailable, busy, restore_hold, runner_ineligible, no_loaded_generation, stale_routes, no_routes, no_targets]}
         pending_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
@@ -7098,6 +7115,198 @@ components:
       properties:
         path: {type: string, enum: [""]}
         timeout_seconds: {type: integer, enum: [0]}
+    HostingRouteSwitchSelection:
+      type: object
+      additionalProperties: false
+      required: [route_id, expected_version, expected_selected_release_operation_id]
+      properties:
+        route_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        expected_version: {type: integer, format: int64, minimum: 1}
+        expected_selected_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
+    HostingApplicationDatabaseRouteContinuityInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_loaded_generation",
+          "expected_loaded_proxy_operation_id",
+          "routes"
+        ],
+        "properties": {
+          "expected_loaded_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "expected_loaded_proxy_operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "routes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingRouteSwitchSelection"
+            }
+          }
+        }
+      }
+    HostingApplicationDatabaseRouteContinuity:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "operation_id",
+          "proxy_operation_id",
+          "finalize_run_id",
+          "request",
+          "proxy_id",
+          "loaded_snapshot_hash",
+          "previous_healthy",
+          "hash"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.route-continuity.v1"
+            ]
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "proxy_operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "finalize_run_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "request": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseRouteContinuityInput"
+          },
+          "proxy_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "loaded_snapshot_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "previous_healthy": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    HostingApplicationDatabaseYieldReceipt:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "receipt_id",
+          "plan_hash",
+          "stage_hash",
+          "candidate_hash",
+          "continuation_hash"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.route-continuity.v1"
+            ]
+          },
+          "receipt_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stage_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "candidate_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "continuation_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    HostingApplicationDatabaseYieldRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "receipt_id",
+          "plan_hash",
+          "stage_hash",
+          "candidate_hash",
+          "continuation_hash",
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "attempt",
+          "fence"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.route-continuity.v1"
+            ]
+          },
+          "receipt_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stage_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "candidate_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "continuation_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
     HostingDeploymentInput:
       type: object
       additionalProperties: false
@@ -7107,6 +7316,7 @@ components:
         - container_port
         - readiness
       properties:
+        application_database_route_continuity: {$ref: "#/components/schemas/HostingApplicationDatabaseRouteContinuityInput"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}
         expected_runtime_configuration_generation:
           type: integer
@@ -8313,8 +8523,12 @@ components:
               }
             ]
           },
-          "application_database": {"$ref": "#/components/schemas/HostingApplicationDatabaseExecutionProof"},
-          "database_maintenance": {"$ref": "#/components/schemas/HostingDatabaseMaintenanceProof"},
+          "application_database": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseExecutionProof"
+          },
+          "database_maintenance": {
+            "$ref": "#/components/schemas/HostingDatabaseMaintenanceProof"
+          },
           "database_upgrade": {
             "$ref": "#/components/schemas/HostingDatabaseUpgradeProof"
           },
@@ -8362,7 +8576,8 @@ components:
               "cleanup",
               "backup",
               "restore",
-              "recover"
+              "recover",
+              "finalize"
             ]
           },
           "observation_lease": {
@@ -8373,6 +8588,12 @@ components:
           },
           "storage_archive": {
             "$ref": "#/components/schemas/HostingStorageArchive"
+          },
+          "application_database_route_continuity": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseRouteContinuity"
+          },
+          "application_database_yield": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseYieldReceipt"
           }
         },
         "oneOf": [
@@ -8391,7 +8612,8 @@ components:
                 "enum": [
                   "deploy",
                   "observe",
-                  "cleanup"
+                  "cleanup",
+                  "finalize"
                 ]
               }
             }

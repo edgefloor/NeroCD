@@ -174,12 +174,18 @@ func (p *HostingApplicationDatabaseExecutionProof) UnmarshalJSON(raw []byte) err
 // output. This is historical consistency, never current owner or lease authority.
 func ValidateHostingApplicationDatabaseOperation(op HostingOperation) error {
 	if op.ApplicationDatabase == nil {
-		if op.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || op.Plan != nil && op.Plan.ApplicationDatabase != nil {
+		if op.ApplicationDatabaseRouteContinuity != nil || op.ApplicationDatabaseYield != nil || op.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || op.Plan != nil && op.Plan.ApplicationDatabase != nil {
 			return ErrInvalidHostingApplicationDatabasePlan
 		}
 		return nil
 	}
+	if op.ApplicationDatabaseYield != nil && (op.ApplicationDatabaseRouteContinuity == nil || op.ApplicationDatabaseYield.Validate() != nil || op.Plan == nil || op.ApplicationDatabaseYield.PlanHash != op.Plan.Hash || op.ApplicationDatabaseYield.ContinuationHash != op.ApplicationDatabaseRouteContinuity.Hash) {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
 	proof := *op.ApplicationDatabase
+	if op.ApplicationDatabaseRouteContinuity != nil && op.ApplicationDatabaseRouteContinuity.Validate(op) != nil {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
 	if proof.Validate() != nil || op.ID != proof.OperationID || op.ProjectID != proof.Binding.ProjectID || op.ResourceID != proof.Binding.ApplicationResourceID || op.BindingID != proof.Binding.ApplicationBindingID || op.Snapshot.PolicyVersion != HostingApplicationDatabasePolicyVersion || proof.Binding.ValidateTargets(op.ProjectID, op.Snapshot, proof.DatabaseProjectID, proof.BindingDatabasePlan) != nil || op.DatabaseUpgrade != nil || op.DatabaseMaintenance != nil || op.CleanupPlan != nil || op.StorageArchive != nil {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}

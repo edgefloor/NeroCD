@@ -63,3 +63,24 @@ func TestRunnerApplicationDatabaseCapabilitiesDefaultOff(t *testing.T) {
 		t.Fatal("shell profile accepted")
 	}
 }
+
+func TestRunnerApplicationDatabaseRouteCapabilityExplicitAndDependent(t *testing.T) {
+	base := []string{domain.HostingApplicationDatabaseCapability, domain.HostingProxyVerifiedSwitchCapability}
+	caps, err := runnerApplicationDatabaseRouteCapabilities(false, slices.Clone(base))
+	if err != nil || slices.Contains(caps, domain.HostingApplicationDatabaseRouteContinuityCapability) {
+		t.Fatal("route permission enabled by default")
+	}
+	caps, err = runnerApplicationDatabaseRouteCapabilities(true, slices.Clone(base))
+	if err != nil || !slices.Contains(caps, domain.HostingApplicationDatabaseRouteContinuityCapability) {
+		t.Fatal("explicit route permission missing", err)
+	}
+	if _, err = runnerApplicationDatabaseRouteCapabilities(false, caps); err == nil {
+		t.Fatal("persisted route capability accepted without opt-in")
+	}
+	for _, missing := range base {
+		reduced := slices.DeleteFunc(slices.Clone(base), func(c string) bool { return c == missing })
+		if _, err = runnerApplicationDatabaseRouteCapabilities(true, reduced); err == nil {
+			t.Fatal("missing route prerequisite admitted", missing)
+		}
+	}
+}

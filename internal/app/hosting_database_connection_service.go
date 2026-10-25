@@ -205,3 +205,19 @@ func (s *Service) RunnerHostingApplicationDatabaseState(ctx context.Context, tok
 	}
 	return repo.GetHostingApplicationDatabaseState(ctx, runner, credential, in)
 }
+
+// RunnerHostingApplicationDatabaseYield records exact ready evidence and releases only the prepare claim.
+func (s *Service) RunnerHostingApplicationDatabaseYield(ctx context.Context, token string, in domain.HostingApplicationDatabaseYieldRequest) (domain.HostingOperation, error) {
+	if err := in.Validate(); err != nil {
+		return domain.HostingOperation{}, InvalidInput(err)
+	}
+	base, runner, credential, err := s.connectionRunner(ctx, token)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	repo, ok := base.(store.HostingApplicationDatabaseYieldRepository)
+	if !ok {
+		return domain.HostingOperation{}, store.ErrHostingDatabaseConnectionUnavailable
+	}
+	return repo.HostingApplicationDatabaseYield(ctx, runner, credential, in)
+}

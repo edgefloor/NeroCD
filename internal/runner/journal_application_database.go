@@ -11,8 +11,19 @@ import (
 
 var errJournalConnection = errors.New("invalid application database connection journal")
 
+func hostingJournalUsesRouteContinuity(e JournalHosting) bool {
+	return e.ApplicationRouteContinuity != nil || e.ApplicationYield != nil || e.ApplicationFinalize != nil
+}
+func journalStateUsesRouteContinuity(s journalState) bool {
+	for _, e := range s.Hosting {
+		if hostingJournalUsesRouteContinuity(e) {
+			return true
+		}
+	}
+	return false
+}
 func hostingJournalUsesApplicationDatabase(e JournalHosting) bool {
-	return e.ApplicationDatabase != nil || e.ApplicationSnapshot != nil || e.ApplicationCandidate != nil || e.ApplicationStage != nil || e.ApplicationRetirementPlan != nil || e.ApplicationRetirement != nil || e.Plan != nil && e.Plan.ApplicationDatabase != nil
+	return hostingJournalUsesRouteContinuity(e) || e.ApplicationDatabase != nil || e.ApplicationSnapshot != nil || e.ApplicationCandidate != nil || e.ApplicationStage != nil || e.ApplicationRetirementPlan != nil || e.ApplicationRetirement != nil || e.Plan != nil && e.Plan.ApplicationDatabase != nil
 }
 func hostingJournalUsesConnection(e JournalHosting) bool {
 	return hostingJournalUsesApplicationDatabase(e) || e.DatabaseMaintenance != nil
@@ -50,9 +61,10 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 		return errJournalConnection
 	}
 	proof := e.ApplicationDatabase
-	op := domain.HostingOperation{ID: e.OperationID, ProjectID: proof.Binding.ProjectID, ResourceID: e.ApplicationSnapshot.ResourceID, BindingID: e.ApplicationSnapshot.BindingID, Snapshot: *e.ApplicationSnapshot, ApplicationDatabase: proof, Plan: e.Plan}
+	op := domain.HostingOperation{ID: e.OperationID, ProjectID: proof.Binding.ProjectID, ResourceID: e.ApplicationSnapshot.ResourceID, BindingID: e.ApplicationSnapshot.BindingID, RunID: "run_" + e.OperationID, Snapshot: *e.ApplicationSnapshot, ApplicationDatabase: proof, Plan: e.Plan, ApplicationDatabaseRouteContinuity: e.ApplicationRouteContinuity}
 	if e.Plan != nil {
 		op.Release = &e.Plan.Release
+		op.ApplicationDatabaseYield = e.ApplicationFinalize
 	}
 	if domain.ValidateHostingApplicationDatabaseOperation(op) != nil || e.ApplicationSnapshot.RuntimeConfiguration == (domain.HostingRuntimeConfigurationRef{}) || e.ApplicationSnapshot.LocalBuild != (domain.HostingLocalBuildSource{}) {
 		return errJournalConnection
@@ -62,10 +74,24 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 		return errJournalConnection
 	}
 	a := domain.HostingAuthority{OperationID: e.OperationID, RunID: e.Attempt.RunID, LeaseID: e.Attempt.LeaseID, Attempt: e.Attempt.Attempt, Fence: e.Attempt.Fence}
-	if e.Phase != "apply_intent" && e.DeliveryID != "" || e.Phase != "application_candidate" && e.ApplicationCandidate != nil || e.Phase != "application_stage" && e.Phase != "application_retirement" && e.ApplicationStage != nil || e.Phase != "application_retirement" && (e.ApplicationRetirementPlan != nil || e.ApplicationRetirement != nil) {
+	if e.ApplicationFinalize != nil && (e.ApplicationFinalize.Validate() != nil || e.ApplicationRouteContinuity == nil || a.RunID != e.ApplicationRouteContinuity.FinalizeRunID || e.ApplicationFinalize.ContinuationHash != e.ApplicationRouteContinuity.Hash || e.ApplicationFinalize.Version != domain.HostingApplicationDatabaseRouteContinuityVersion || e.Phase != "application_finalize" && e.Phase != "application_retirement" && e.Phase != "result") {
+		return errJournalConnection
+	}
+	if e.ApplicationYield != nil && e.Phase != "application_yield" {
+		return errJournalConnection
+	}
+	if e.Phase != "apply_intent" && e.DeliveryID != "" || e.Phase != "application_candidate" && e.ApplicationCandidate != nil || e.Phase != "application_stage" && e.Phase != "application_retirement" && e.Phase != "application_yield" && e.Phase != "application_finalize" && e.ApplicationStage != nil || e.Phase != "application_retirement" && (e.ApplicationRetirementPlan != nil || e.ApplicationRetirement != nil) {
 		return errJournalConnection
 	}
 	switch e.Phase {
+	case "application_yield":
+		if e.ApplicationYield == nil || e.Plan == nil || e.ApplicationStage == nil || e.ApplicationYield.HostingAuthority != a || e.ApplicationYield.ReceiptID != e.ID || e.ApplicationYield.ValidateStage(op, *e.ApplicationStage) != nil || e.Prepared != nil || e.Result != nil || e.ApplicationFinalize != nil {
+			return errJournalConnection
+		}
+	case "application_finalize":
+		if e.ApplicationFinalize == nil || e.Plan == nil || e.ApplicationStage == nil || e.ApplicationStage.Phase != "ready" || e.ApplicationStage.Hash != e.ApplicationFinalize.StageHash || e.ApplicationStage.Candidate.DocumentHash() != e.ApplicationFinalize.CandidateHash || e.ApplicationStage.Validate(*e.Plan, in) != nil || e.Prepared != nil || e.Result != nil || e.ApplicationYield != nil {
+			return errJournalConnection
+		}
 	case "prepared":
 		if e.Plan != nil || e.Result != nil || e.Prepared == nil || e.Prepared.ReceiptID != e.ID || e.Prepared.HostingAuthority != a || domain.ValidateHostingSnapshotRelease(*e.ApplicationSnapshot, e.Prepared.Release) != nil {
 			return errJournalConnection
@@ -106,6 +132,7 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 	type chain struct {
 		proof, snapshot, maintenance, plan, delivery, previous string
+		continuity, finalize                                   string
 		candidate                                              *domain.HostingApplicationDatabaseCandidate
 		stage                                                  *domain.HostingApplicationDatabaseStage
 		retirement                                             *domain.HostingDatabaseBindingEndpointReceipt
@@ -134,6 +161,10 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 		if exists && (c.proof != proof || c.snapshot != snapshot || c.maintenance != maintenance) {
 			return errJournalConnection
 		}
+		if exists && (c.continuity != domain.HostingDocumentHash(e.ApplicationRouteContinuity) || c.finalize != domain.HostingDocumentHash(e.ApplicationFinalize)) {
+			return errJournalConnection
+		}
+		c.continuity, c.finalize = domain.HostingDocumentHash(e.ApplicationRouteContinuity), domain.HostingDocumentHash(e.ApplicationFinalize)
 		c.proof, c.snapshot, c.maintenance = proof, snapshot, maintenance
 		if proof != "" || maintenance != "" {
 			// Both connection families retain one compiled plan and original
@@ -160,6 +191,16 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 			}
 			in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*e.ApplicationDatabase)
 			if err != nil {
+				return errJournalConnection
+			}
+			if e.Phase == "application_finalize" {
+				if exists {
+					return errJournalConnection
+				}
+				c.stage = e.ApplicationStage
+				c.candidate = &e.ApplicationStage.Candidate
+			}
+			if e.Phase == "application_yield" && (c.stage == nil || c.stage.Phase != "ready" || c.stage.Hash != e.ApplicationStage.Hash || c.retirement != nil) {
 				return errJournalConnection
 			}
 			if e.ApplicationCandidate != nil {

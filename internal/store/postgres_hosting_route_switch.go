@@ -333,6 +333,9 @@ func (s *PostgresStore) proxyInsertSnapshot(ctx context.Context, tx pgx.Tx, p do
 
 func proxyValidateStrictSnapshot(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, op domain.HostingProxyOperation) error {
 	v := op.Snapshot.VerifiedSwitch
+	if op.Snapshot.ProxyID != p.ID || op.Snapshot.ServerID != p.ServerID || op.Snapshot.DestinationID != p.DestinationID || op.Snapshot.RunnerID != p.RunnerID || !reflect.DeepEqual(op.Snapshot.Configuration, p.Configuration) {
+		return ErrConflict
+	}
 	if v == nil {
 		return nil
 	}
@@ -351,7 +354,7 @@ func proxyValidateStrictSnapshot(ctx context.Context, tx pgx.Tx, p domain.Hostin
 	if err != nil {
 		return err
 	}
-	current, err := proxyCurrentScope(ctx, tx, p, rows)
+	current, err := continuityStrictScope(ctx, tx, p, op, rows)
 	if err != nil {
 		return err
 	}
@@ -695,6 +698,9 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 	finish := func(reason string) (domain.HostingRouteSwitchOptions, error) {
 		view.Reason = reason
 		view.Available = reason == "available"
+		if !view.Available {
+			view.LoadedProxyOperationID = nil
+		}
 		if err := proxyCheckLegacyToken(ctx, tx, actor); err != nil {
 			return domain.HostingRouteSwitchOptions{}, err
 		}
@@ -810,6 +816,7 @@ func (s *PostgresStore) HostingRouteSwitchOptions(ctx context.Context, resource,
 	if !reflect.DeepEqual(proxySortedTargets(current), proxySortedTargets(prior.Snapshot.Routes)) {
 		return finish("stale_routes")
 	}
+	view.LoadedProxyOperationID = &prior.ID
 	// Qualify and bound in SQL before decoding. A lookahead advertises another page.
 	candidates, err := q.ProxySwitchReadTargets(ctx, sqlcgen.ProxySwitchReadTargetsParams{ProjectID: project, ResourceID: resource, BindingID: placement.BindingID, DestinationID: p.DestinationID, ServerID: p.ServerID, RunnerID: p.RunnerID, DaemonID: p.DaemonID, AfterOperationID: after})
 	if err != nil {

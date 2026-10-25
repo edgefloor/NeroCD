@@ -30,3 +30,8 @@ type HostingApplicationDatabaseRunnerRepository interface {
 	AuthorizeHostingApplicationDatabaseEffect(context.Context, string, string, domain.HostingApplicationDatabaseEffectRequest) (domain.HostingApplicationDatabaseEffectAuthorization, error)
 	GetHostingApplicationDatabaseState(context.Context, string, string, domain.HostingAuthority) (domain.HostingApplicationDatabaseExecutionState, error)
 }
+
+// HostingApplicationDatabaseYieldRepository closes prepare under the original tuple.
+type HostingApplicationDatabaseYieldRepository interface {
+	HostingApplicationDatabaseYield(context.Context, string, string, domain.HostingApplicationDatabaseYieldRequest) (domain.HostingOperation, error)
+}

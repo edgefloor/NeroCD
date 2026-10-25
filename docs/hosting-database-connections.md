@@ -33,8 +33,10 @@ the retained private database network and a deterministic database alias.
 Cross-server networking is unsupported.
 
 This workflow supports one application per database. Source builds, application
-storage, route continuity and an already running unbound application are
-unsupported. It does not create a public application route or database endpoint.
+storage and an already running unbound application are unsupported. An explicit
+route continuity option supports replacement of an already connected application
+with existing HTTPS routes on the same destination. The workflow does not create
+a public application route or database endpoint.
 The application must listen on its configured container port and provide a local
 HTTP readiness path.
 
@@ -135,6 +137,80 @@ membership revision. See the [typed client](../web/app/src/api/hosting-database-
 and [domain inputs](../internal/domain/hosting_database_connection.go) for the
 closed request contracts. Unknown or conflicting fields are rejected.
 
+## Preserve existing HTTPS routes during connected redeployment
+
+`application_database_route_continuity` is an optional field on the connected
+application deployment request. Initial connection requests reject this option.
+The application must already have one active PostgreSQL or Redis connection on
+the same destination. Source builds and application storage remain unsupported.
+
+Read `GET /api/v1/resources/{id}/route-switches` before review. An available
+response includes `loaded_generation`, `loaded_proxy_operation_id`, every enabled
+resource route, and the current healthy release. These values are explanatory
+state. Admission checks the loaded proxy, all route versions, and the exact
+selected predecessor again.
+
+The additional request field has this shape:
+
+```json
+{
+  "application_database_route_continuity": {
+    "expected_loaded_generation": 4,
+    "expected_loaded_proxy_operation_id": "pop_loaded",
+    "routes": [
+      {
+        "route_id": "route_application",
+        "expected_version": 2,
+        "expected_selected_release_operation_id": "hop_previous"
+      }
+    ]
+  }
+}
+```
+
+Every enabled route owned by the application must be selected. The controller
+freezes the complete loaded proxy snapshot, including unrelated routes. The new
+application uses a different loopback port while the predecessor continues to
+serve. A ready candidate is not a published healthy release.
+
+The runner requires explicit `--hosting-application-database-route-continuity`
+with the existing connected database options, a configured proxy, and
+`--proxy-verified-switch`. The capability is
+`hosting_application_database_route_continuity_v1`. The versioned continuation is
+`application-database.route-continuity.v1`.
+
+The synchronous runner executes three serial tasks:
+
+1. Prepare creates, configures, starts, and checks the candidate. Journal version
+   16 records a yield receipt before transmission. The controller completes only
+   this task and lease. The original operation, healthy pointer, membership
+   revision, predecessor, and application and database holds remain pending.
+2. A separate proxy operation performs the existing strict HTTPS switch. Its
+   durable result records applied, refused, rolled back, or uncertain behavior.
+3. `finalize_{operation_id}` obtains a fresh lease for the original operation.
+   Finalize rechecks the exact yield, stage, candidate, applied proxy proof,
+   permissions, grants, secrets, and placement. It reinspects the candidate and
+   retires the exact predecessor. It never pulls an image, creates a container,
+   delivers secrets, or attaches the candidate again.
+
+Final completion atomically publishes healthy and membership evidence and
+releases both holds. `run_id` always identifies the original prepare task.
+`application_database_route_continuity.finalize_run_id` identifies the separate
+finalize task. The operation stays `applying` or `verifying` after yield.
+`application_database_yield` exposes receipt IDs and correlation hashes, without
+lease or fence authority.
+
+A lost yield ACK replays the original immutable request before the runner claims
+the proxy task. A lost final ACK replays its saved receipt without repeating
+retirement. Expired authority, revoked grants, partial retirement, failed
+readiness, or a failed or uncertain switch retain holds and original evidence.
+Observation recovery grants no new effects. An interrupted retirement intent
+without a detached receipt cannot automatically repeat retirement.
+
+Existing requests without this option keep their no-route admission rules.
+Package and PostgreSQL checks cover this protocol. Physical HTTPS and database
+read-write qualification is a separate acceptance gate.
+
 ## Handle an unavailable or conflicting request
 
 | Response | Action |
@@ -187,6 +263,8 @@ unchanged-client compatibility claims.
 | [`StartPostgresql::handle` and `generate_environment_variables`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartPostgresql.php#L33), destination network and persistent storage | [Connection controller](../internal/store/postgres_hosting_database_connection.go), retained network-origin proof and native Go database engine |
 | [`StartRedis::handle` and password configuration](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartRedis.php#L33) | Exact managed-secret references and protected runner credential delivery |
 | [`ApplicationDeploymentJob`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L1726), runtime environment and destination networking | [Owner service](../internal/app/hosting_database_connection_service.go), transactional River work, fenced Go-agent execution and durable journal |
+| [`ApplicationDeploymentJob::rolling_update`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2658), start and health-check the candidate before retiring the predecessor | Immutable ready yield, separate strict proxy operation, and fresh finalize lease for the original connected deployment |
+| [`generateLabelsApplication`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L1212), application hostname, port and HTTPS routing | Existing typed Traefik file snapshot and strict HTTP, HTTPS and certificate proof, with the complete unrelated route scope retained |
 | [`StandalonePostgresql`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandalonePostgresql.php#L322) and [`StandaloneRedis`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandaloneRedis.php#L308), internal connection details | Private deterministic alias, exact credential references and [connection UI](../web/app/src/pages/ResourceDatabaseConnections.tsx) without password disclosure |
 
 NeroCD uses a native enrolled Go agent, current effect authorization, retained

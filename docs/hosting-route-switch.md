@@ -5,8 +5,9 @@ routes, requiredRouteIDs)` prepares an opt-in engine plan for switching existing
 routes to new loopback host ports. This is a reusable engine mechanism for the
 hosting R21/R25/R28 and A11/A20 requirements. The controller exposes a bounded
 route-switch operation and admits only explicitly configured agents. R17 automatic
-HTTPS deployment orchestration remains separate work. Metadata conflict recovery
-also remains unsupported, as described below.
+HTTPS deployment orchestration remains separate work. The bounded connected
+application continuation is documented in
+[database connections](hosting-database-connections.md#preserve-existing-https-routes-during-connected-redeployment).
 
 The caller must hold the existing fenced proxy lease, authorize the settled
 healthy target bindings, and retain its hold when the engine reports `Uncertain`.
@@ -146,11 +147,15 @@ flags effective. Regranting or enabling cannot publish the unresolved candidate.
 A lost-response retry returns the original engine outcome with the current hold;
 it does not clear the conflict or claim new TLS evidence.
 
-There is currently no authorized API to reconcile a route-switch metadata
-conflict. This case requires a future reviewed reconciliation mechanism and
-cannot complete the automatic workflow in this slice. Operators must retain the
-hold; direct database edits are not a supported recovery procedure. Uncertain
-engine outcomes also retain ownership and references without automatic recovery.
+The existing metadata recovery API exposes status through
+`GET /api/v1/proxy-operations/{id}/recovery`, creates an exact reviewed plan through
+`POST /api/v1/proxy-operations/{id}/recovery-plans`, and applies that plan through
+`POST /api/v1/proxy-operations/{id}/recovery-plans/{plan_id}/apply`. Its current
+permission, expiry, terminal-task, route-selection and receipt checks remain
+mandatory. It preserves the engine result and does not invent fresh HTTPS proof.
+This API does not authorize connected application retirement or release its
+database hold. Direct database edits are not a supported recovery procedure.
+Uncertain engine outcomes retain ownership and references without automatic recovery.
 The database revocation is immediate, while physical proxy withdrawal can remain
 deferred by that uncertainty.
 
