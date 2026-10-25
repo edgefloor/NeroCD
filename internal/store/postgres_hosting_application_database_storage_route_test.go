@@ -1,14 +1,19 @@
 package store_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
+	"nerocd/internal/store"
 )
 
 func TestPostgresApplicationDatabaseStorageRoutedRedeployAfterHealthyStorage(t *testing.T) {
@@ -236,7 +241,8 @@ func TestPostgresApplicationDatabaseStorageFailedProxyForwardRecovery(t *testing
 			if err != nil || f.appOperation.RunID != yielded.RunID {
 				t.Fatal("finalize consumed wrong association", err)
 			}
-			f.connectionFixture = f.connectionFixture.retire(t).complete(t)
+			f.connectionFixture = f.connectionFixture.retire(t)
+			f.connectionFixture = completeStorageRecoveryDuringPublicRead(t, f.connectionFixture)
 			final, err := f.pg.GetHostingOperation(f.ctx, op.ID)
 			if err != nil || final.ApplicationDatabaseStorageState.RecoveryState != "succeeded" || final.ApplicationDatabaseRouteContinuity.ProxyOperationID != p.ID {
 				t.Fatal("recovery rewrote original P or lacks final settlement", err)
@@ -364,6 +370,132 @@ func TestPostgresApplicationDatabaseStorageUnknownProxyRetainsHolds(t *testing.T
 			}
 			if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_application_database_storage_recoveries WHERE operation_id=$1`, op.ID).Scan(&associations); err != nil || associations != wantAssociations {
 				t.Fatal("rejected recovery changed association", err)
+			}
+		})
+	}
+}
+
+// The next query starts only after hostingOperation decoded O's initial row.
+// Holding it here lets the real finalizer commit on another pool connection
+// before this same public Get loads task and recovery sidecar projections.
+type storageRecoveryReadBarrier struct {
+	operation       string
+	snapshotStarted atomic.Bool
+	once            sync.Once
+	paused          chan struct{}
+	release         chan struct{}
+}
+
+func (b *storageRecoveryReadBarrier) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if len(data.Args) == 0 {
+		return ctx
+	}
+	id, ok := data.Args[0].(string)
+	if !ok || id != b.operation {
+		return ctx
+	}
+	if strings.HasPrefix(data.SQL, "-- name: GetHostingOperationSnapshot :one") {
+		b.snapshotStarted.Store(true)
+	}
+	if strings.HasPrefix(data.SQL, "-- name: ReadDatabaseConnectionExecution :one") && b.snapshotStarted.Load() {
+		b.once.Do(func() {
+			close(b.paused)
+			select {
+			case <-b.release:
+			case <-ctx.Done():
+			}
+		})
+	}
+	return ctx
+}
+func (*storageRecoveryReadBarrier) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func completeStorageRecoveryDuringPublicRead(t *testing.T, f connectionFixture) connectionFixture {
+	t.Helper()
+	before, err := f.pg.GetHostingOperation(f.ctx, f.appOperation.ID)
+	if err != nil || before.ApplicationDatabaseStorageState == nil || before.ApplicationDatabaseStorageState.RecoveryState != "running" || !before.MutationHold || before.CompleteReceipt != nil {
+		t.Fatal("finalizer prerequisite is not old running recovery", err)
+	}
+	barrier := &storageRecoveryReadBarrier{operation: f.appOperation.ID, paused: make(chan struct{}), release: make(chan struct{})}
+	reader, err := store.HostingOperationReaderForTest(f.ctx, f.pg, barrier)
+	if err != nil {
+		t.Fatal("open traced operation reader", err)
+	}
+	defer closePostgresStore(t, reader)
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	type readResult struct {
+		op  domain.HostingOperation
+		err error
+	}
+	done := make(chan readResult, 1)
+	var wg sync.WaitGroup
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(barrier.release) }) }
+	defer func() { cancel(); unblock(); wg.Wait() }()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		op, err := reader.GetHostingOperation(ctx, f.appOperation.ID)
+		done <- readResult{op, err}
+	}()
+	select {
+	case <-barrier.paused:
+	case result := <-done:
+		t.Fatal("public Get missed decoded snapshot barrier", result.err)
+	case <-ctx.Done():
+		t.Fatal("public Get did not reach snapshot barrier", ctx.Err())
+	}
+	// Completion must finish before releasing the reader. This proves reads do
+	// not serialize the finalizer by accidentally acquiring its mutation locks.
+	f = f.complete(t)
+	unblock()
+	var result readResult
+	select {
+	case result = <-done:
+	case <-ctx.Done():
+		t.Fatal("concurrent public Get did not finish", ctx.Err())
+	}
+	if result.err != nil {
+		t.Fatal("concurrent operation read", result.err)
+	}
+	if result.op.ApplicationDatabaseStorageState == nil || result.op.ApplicationDatabaseStorageState.RecoveryState != "running" || domain.HostingDocumentHash(result.op) != domain.HostingDocumentHash(before) {
+		state := "missing"
+		if result.op.ApplicationDatabaseStorageState != nil {
+			state = result.op.ApplicationDatabaseStorageState.RecoveryState
+		}
+		t.Fatalf("public Get mixed pre-finalize O with post-finalize sidecars: operation=%s recovery=%s; want exact old running snapshot", result.op.State, state)
+	}
+	fresh, err := reader.GetHostingOperation(f.ctx, f.appOperation.ID)
+	if err != nil || fresh.State != "succeeded" || fresh.MutationHold || fresh.CompleteReceipt == nil || fresh.Result == nil || !fresh.Result.Ready || fresh.ApplicationDatabaseStorageState == nil || fresh.ApplicationDatabaseStorageState.RecoveryState != "succeeded" {
+		t.Fatal("fresh public Get lost committed successful recovery", err)
+	}
+	return f
+}
+
+func TestPostgresHostingOperationHistoricalUpgradeSnapshot(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, in := upgradeFixture(t, engine)
+			op, err := f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, in)
+			if err != nil {
+				t.Fatal("admit historical upgrade", err)
+			}
+			f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			first := f.op
+			nextInput := in
+			nextInput.IdempotencyKey = "historical_snapshot_maintenance"
+			next, err := f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, nextInput)
+			if err != nil {
+				t.Fatal("admit subsequent maintenance", err)
+			}
+			f = settleUpgrade(t, prepareUpgrade(t, f, next))
+			before := upgradeCounts(t, f)
+			historical, err := f.pg.GetHostingOperation(f.ctx, first.ID)
+			if err != nil || historical.State != "succeeded" || historical.MutationHold || historical.DatabaseUpgrade == nil || domain.HostingDocumentHash(historical.DatabaseUpgrade) != domain.HostingDocumentHash(first.DatabaseUpgrade) || historical.CompleteReceipt == nil || domain.HostingDocumentHash(historical.CompleteReceipt) != domain.HostingDocumentHash(first.CompleteReceipt) {
+				t.Fatal("public historical upgrade read lost exact evidence or writable authority flush", err)
+			}
+			if upgradeCounts(t, f) != before {
+				t.Fatal("historical read minted operation, receipt or authority")
 			}
 		})
 	}

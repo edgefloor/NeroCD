@@ -181,16 +181,26 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 
 // GetHostingOperation loads immutable evidence without exposing lease authority.
 func (s *PostgresStore) GetHostingOperation(ctx context.Context, id string) (domain.HostingOperation, error) {
-	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingOperation, error) {
-		op, err := hostingOperation(ctx, tx, id)
-		if err != nil || op.DatabaseUpgrade == nil {
-			return op, err
-		}
+	// Operation, task and sidecar projections must describe the same committed
+	// snapshot. Keep this writable for the historical upgrade constraint flush.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	defer rollbackTransaction(ctx, tx)
+	op, err := hostingOperation(ctx, tx, id)
+	if err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	if op.DatabaseUpgrade != nil {
 		if err = databaseUpgradeHistoricalRead(ctx, tx, op); err != nil {
-			return domain.HostingOperation{}, err
+			return domain.HostingOperation{}, hostingError(err)
 		}
-		return op, nil
-	})
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	return op, nil
 }
 
 // RequestHostingDeployment captures desired state and inserts the River job in
