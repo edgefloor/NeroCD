@@ -140,7 +140,7 @@ The accepted outcomes are:
   accepts another write. This source restart is fixture cleanup, not a restore
   requirement or an automatic source-management feature.
 - Corrupt and truncated artifacts and revoked authorization fail. The real
-  guest-tool timeout is exercised. Failed or uncertain effects preserve the
+  `pg_restore` guest timeout is exercised. Failed or uncertain effects preserve the
   appropriate hold, rather than fabricating a successful restore.
 
 The behavior assertions live in
@@ -155,7 +155,7 @@ Durable receipts are under
 
 | Receipt | Observed result and boundary |
 | --- | --- |
-| `thirteenth-runtime/driver.json` and `runtime-summary.json` | Final source `c1f7b153a963609336851f94a16b2eac96f86e91`, exit 0, `full_workflow_pass=1`, 130.140 seconds. Browser, application restore, guest timeout and corrupt/truncated/revoked markers passed. |
+| `thirteenth-runtime/driver.json` and `runtime-summary.json` | Final source `c1f7b153a963609336851f94a16b2eac96f86e91`, exit 0, `full_workflow_pass=1`, 130.140 seconds. Browser, application restore, restore guest timeout and corrupt/truncated/revoked markers passed. |
 | `thirteenth-runtime/independent-cleanup.json` | Owned outer container and volume absent. Existing container inventory and full volume profiles preserved. Health-log and mount-order differences are explicitly reconciled. |
 | `integration/handoff.json`, `sourceproof.json` and `retention.json` | Accepted source correspondence, 157 focused named passes with zero skips, vet, API generation, frontend and product builds, native/Linux binaries and embedded artifact checks passed. Physical and PostgreSQL results retain their original revisions. |
 | `integration/main-promotion.json` | Fast-forward to accepted `56cce329e620472e3c82e9ed7ef0ae0618f124e4` succeeded. The existing user UI process and its database were not restarted or migrated. |
@@ -169,7 +169,10 @@ as total delivery time. Receipts do not establish total elapsed effort, a total
 review-round count, token use or monetary cost.
 
 The [machine-readable checklist](parity-checklist.json) records ten later
-bounded outcome assessments under `supplemental_assessments`. Its historical
+bounded outcome assessments under `supplemental_assessments`. Nine are validated.
+R46-C06 remains partial: shared backup/restore timeout handling is implemented,
+but the physical fixture proves only `pg_restore` timeout. A forced `pg_dump`
+backup timeout remains unverified. Its historical
 `09a432407c41671517fa342d28c07e9c79978aea` audit and 933 eligible outcomes remain
 unchanged. The later assessments add no historical score or full requirement,
 acceptance or matrix gate. Scheduled PostgreSQL backup, S3 and retention remain

@@ -40846,7 +40846,7 @@
     "Current09a full qualification: seven Go groups,14 named subtests, zero Go skips/fails,683.423 seconds; six serialized browser phases,30 passes and6 deliberate opposite-profile skips. All32 required markers and exact owned cleanup passed. Full handoff: /tmp/nerocd-operation-status-retry-integrated-full-handoff.json.",
     "Refresh19 affected historical receipts without shrinking dependencies. R33-C02 retains its563fb88 original receipt after equality of all4 declared dependencies. Ten bounded R38/R23 outcomes gain proof; R38-C10 presence becomes implemented. R21-C07 stays partial and R38-C08 evidence_unavailable; no aggregate gates or broader storage/recovery features gain acceptance.",
     "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed.",
-    "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes gain a profile-specific validated assessment with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit."
+    "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -44882,7 +44882,7 @@
       "historical_audit_unchanged": true,
       "historical_eligible_count": 933,
       "historical_verified_count": 30,
-      "note": "These later profile-specific assessments update the delivery checklist without promoting the pinned historical audit or requalifying unrelated receipts. The existing validator checks the historical rows and generated report; independent specification review checks this supplemental assessment. No new overall percentage is claimed.",
+      "note": "These later profile-specific assessments update the delivery checklist without promoting the pinned historical audit or requalifying unrelated receipts. The existing validator checks the historical rows and generated report; independent specification review checks this supplemental assessment. No new overall percentage is claimed. Nine outcomes are validated within the declared profile. R46-C06 remains partial because backup-timeout execution is unverified; only restore timeout has physical proof.",
       "outcomes": [
         {
           "criterion_id": "R45-C02",
@@ -44963,11 +44963,11 @@
             "state": "partial"
           },
           "current_bounded_assessment": {
-            "classification": "validated",
+            "classification": "partial",
             "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
             "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
             "scope": "Immediate local PostgreSQL backup and new-private-database restore",
-            "justification": "The physical guest timeout marker proves bounded database-tool execution. Uncertain execution retains ownership.",
+            "justification": "The engine implements a shared guest-tool timeout for pg_dump and pg_restore. The physical timeout fixture delays target DDL and proves pg_restore timeout and retained ownership only. A forced pg_dump backup-timeout outcome remains unverified.",
             "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
             "named_tests": [
               "TestHostingDatabaseBackupCompiledRunner",
@@ -44975,7 +44975,8 @@
             ],
             "source_paths": [
               "internal/api/hosting_database_backup_runtime_integration_test.go",
-              "web/app/tests/browser/database-backups-live.spec.ts"
+              "web/app/tests/browser/database-backups-live.spec.ts",
+              "internal/runnerruntime/hosting_database_backup_engine.go"
             ],
             "evidence_paths": [
               "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
@@ -44984,7 +44985,7 @@
               "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
               "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
             ],
-            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged. The DATABASE_BACKUP_GUEST_TIMEOUT_PASS marker is restore-timeout evidence only; it does not validate backup timeout."
           },
           "historical_score_delta": 0,
           "aggregate_gate_delta": []
@@ -45236,6 +45237,7 @@
         }
       ],
       "unchanged_gaps": [
+        "R46-C06 forced pg_dump backup timeout remains unverified",
         "R44-C08 scheduled PostgreSQL backup",
         "R46-C02 scheduled backup",
         "R46-C07 automatic retention",
