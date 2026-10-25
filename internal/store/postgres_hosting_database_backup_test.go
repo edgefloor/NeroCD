@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
@@ -67,7 +68,11 @@ func completeBackup(t *testing.T, f networkCaptureFixture, id string) domain.Hos
 }
 
 func TestPostgresDatabaseBackupRestoredTargetApplicationConnection(t *testing.T) {
-	f := backupFixture(t)
+	source := newConnectionFixture(t, "postgresql").connect(t).prepareApp(t).ready(t).complete(t)
+	f := source.networkCaptureFixture
+	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability); err != nil {
+		t.Fatal(err)
+	}
 	backup, err := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "application_restore_source", ExpectedResourceGeneration: f.resource.Generation})
 	if err != nil {
 		t.Fatal("source backup admission", err)
@@ -93,8 +98,11 @@ func TestPostgresDatabaseBackupRestoredTargetApplicationConnection(t *testing.T)
 	if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, f.runner, capabilities); err != nil {
 		t.Fatal(err)
 	}
-	application, err := f.pg.GetResource(f.ctx, "resource_image_web")
+	application, err := f.service.CreateResource(f.ctx, app.ResourceInput{ProjectID: target.Resource.ProjectID, ProjectEnvironmentID: target.Resource.ProjectEnvironmentID, Name: "Restored database consumer", Kind: "application", Source: source.application.Source})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.BindResourceDestination(f.ctx, application.ID, app.ResourceBindingInput{DestinationID: child.Snapshot.DestinationID}); err != nil {
 		t.Fatal(err)
 	}
 	runnerContext, err := store.BindHostingDatabaseConnectionRunnerContext(f.ctx, f.runner, f.credential)
@@ -103,14 +111,43 @@ func TestPostgresDatabaseBackupRestoredTargetApplicationConnection(t *testing.T)
 	}
 	input := domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: target.Resource.ID, ExpectedResourceGeneration: application.Generation, ExpectedDatabaseGeneration: target.Resource.Generation, RequestID: strings.Repeat("f", 32)}, Deployment: hostingDeploymentRequest()}
 	input.Deployment.IdempotencyKey = "restored_application_initial"
-	connected := (connectionFixture{networkCaptureFixture: f, application: application, input: input, runnerContext: runnerContext}).connect(t)
+	input.Deployment.HostPort = 0 // A distinct consumer receives its own managed port.
+	connected := (connectionFixture{networkCaptureFixture: f, application: application, input: input, runnerContext: runnerContext}).connectWithCaptureReceipt(t, "origin_"+domain.HostingDocumentHash(child.ID)[7:39])
 	if connected.connection.CaptureID != domain.HostingDatabaseNetworkCaptureID(child.ID) || connected.appOperation.ApplicationDatabase == nil || connected.appOperation.ApplicationDatabase.Binding.DatabaseResourceID != target.Resource.ID {
 		t.Fatal("restored application used foreign capture or database evidence")
+	}
+	var sourceAudit, targetAudit string
+	if err = f.db.QueryRow(f.ctx, `SELECT audit_id FROM hosting_database_network_upgrades WHERE operation_id=$1`, source.connection.UpgradeOperationID).Scan(&sourceAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.db.QueryRow(f.ctx, `SELECT audit_id FROM hosting_database_network_upgrades WHERE operation_id=$1`, connected.connection.UpgradeOperationID).Scan(&targetAudit); err != nil || sourceAudit != "aud_connection_upgrade_"+source.connection.UpgradeOperationID || targetAudit != "aud_connection_upgrade_"+connected.connection.UpgradeOperationID || sourceAudit == targetAudit {
+		t.Fatal("connection upgrades did not retain distinct audit identities", err)
 	}
 	before := connectionCounts(t, connected)
 	replay, err := f.service.ConnectHostingApplicationDatabase(f.ctx, application.ID, input)
 	if err != nil || replay.ID != connected.connection.ID || replay.UpgradeOperationID != connected.connection.UpgradeOperationID || replay.ApplicationOperationID != connected.appOperation.ID || connectionCounts(t, connected) != before {
 		t.Fatal("connection replay changed restored-target admission", err)
+	}
+}
+
+func TestPostgresDatabaseConnectionUpgradeHistoricalEmptyAuditReplay(t *testing.T) {
+	f, input := upgradeFixture(t, "postgresql")
+	const id = "historical_connection_upgrade"
+	// Older controller versions supplied an empty ID. Admit that exact historical
+	// shape through the existing store boundary, without rewriting stored rows.
+	operation, err := f.pg.RequestHostingDatabaseNetworkUpgrade(f.ctx, id, f.resource.ID, f.op.CreatedBy, input, domain.AuditEvent{ActorID: f.op.CreatedBy, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal("historical admission", err)
+	}
+	f = settleUpgrade(t, prepareUpgrade(t, f, operation))
+	before := upgradeCounts(t, f)
+	replay, err := f.pg.RequestHostingDatabaseNetworkUpgrade(f.ctx, id, f.resource.ID, operation.CreatedBy, input, domain.AuditEvent{ID: "aud_connection_upgrade_" + id, ActorID: operation.CreatedBy, CreatedAt: time.Now().UTC()})
+	if err != nil || replay.ID != id || replay.State != "succeeded" || replay.DatabaseUpgrade == nil || replay.DatabaseUpgrade.Hash != f.op.DatabaseUpgrade.Hash || upgradeCounts(t, f) != before {
+		t.Fatal("historical replay changed accepted operation", err)
+	}
+	var auditID string
+	if err = f.db.QueryRow(f.ctx, `SELECT audit_id FROM hosting_database_network_upgrades WHERE operation_id=$1`, id).Scan(&auditID); err != nil || auditID != "" {
+		t.Fatal("historical empty audit identity was rewritten", err)
 	}
 }
 

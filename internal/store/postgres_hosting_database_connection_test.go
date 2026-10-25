@@ -136,6 +136,10 @@ func connectionCounts(t *testing.T, f connectionFixture) string {
 }
 
 func (f connectionFixture) connect(t *testing.T) connectionFixture {
+	return f.connectWithCaptureReceipt(t, "captured_origin")
+}
+
+func (f connectionFixture) connectWithCaptureReceipt(t *testing.T, receiptID string) connectionFixture {
 	t.Helper()
 	var view domain.HostingDatabaseConnection
 	var err error
@@ -156,7 +160,9 @@ func (f connectionFixture) connect(t *testing.T) connectionFixture {
 	if err != nil || claim.Capture.ID != view.CaptureID {
 		t.Fatal("connection capture claim", err)
 	}
-	if _, err = f.pg.RecordHostingDatabaseNetworkOrigin(f.ctx, f.runner, f.credential, captureOriginRequest(claim)); err != nil {
+	origin := captureOriginRequest(claim)
+	origin.ReceiptID = receiptID
+	if _, err = f.pg.RecordHostingDatabaseNetworkOrigin(f.ctx, f.runner, f.credential, origin); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pg.PrepareHostingDatabaseConnection(f.ctx, view.ID); err != nil && !errors.Is(err, hostingjobs.ErrDatabaseConnectionWaiting) {

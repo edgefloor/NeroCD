@@ -48,6 +48,7 @@ func (s *PostgresStore) PrepareHostingDatabaseConnection(ctx context.Context, id
 				return err
 			}
 		case "upgrade":
+			audit.ID = "aud_connection_upgrade_" + c.UpgradeOperationID
 			if _, err = s.RequestHostingDatabaseNetworkUpgrade(ctx, c.UpgradeOperationID, c.DatabaseResourceID, c.CreatedBy, step.upgrade, audit); err != nil {
 				return err
 			}
