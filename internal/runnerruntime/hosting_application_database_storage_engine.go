@@ -131,7 +131,16 @@ func (e *applicationDatabaseEngine) ResumeStoragePredecessor(ctx context.Context
 		return "", nil, errApplicationDatabaseEngine
 	}
 	actual, err := e.container(ctx, candidate.ContainerID)
-	if err != nil || actual.State.Running || !e.storageCandidateSafe(actual, in) || actual.Config.Labels[imageOperationLabel] != candidate.OperationID || actual.Config.Labels[imagePlanLabel] != candidate.PlanHash || actual.Config.Labels[applicationDatabaseNonceLabel] != candidate.CreateNonce || actual.Name != "/"+applicationDatabaseName(in) || actual.Image != candidate.ImageID {
+	if err != nil || actual.State.Running || e.inspectCandidateState(ctx, in, candidate, true, false, actual.State.Status == "exited") != nil {
+		return "", nil, errApplicationDatabaseEngine
+	}
+	// The durable resume intent covers exact failed-candidate cleanup as well as
+	// A's restart. Never delete the volume or retain B as a future known user.
+	if e.effect(ctx, in, before, "container", "rm", candidate.ContainerID) != nil {
+		return "", nil, errApplicationDatabaseEngine
+	}
+	absent, absenceErr := e.recoveryIDAbsent(ctx, candidate.ContainerID)
+	if absenceErr != nil || !absent || e.storageGuard(ctx, in, nil, true) != nil || e.network(ctx, in, nil, "") != nil {
 		return "", nil, errApplicationDatabaseEngine
 	}
 	old := in.Plan.ApplicationDatabase.PreviousMembers[0]
@@ -149,9 +158,9 @@ func (e *applicationDatabaseEngine) ResumeStoragePredecessor(ctx context.Context
 		return "", nil, errApplicationDatabaseEngine
 	}
 	checkResumed := func(ctx context.Context) error {
-		candidateActual, candidateErr := e.container(ctx, candidate.ContainerID)
+		absent, absenceErr := e.recoveryIDAbsent(ctx, candidate.ContainerID)
 		resumed, resumedErr := e.container(ctx, c.ID)
-		if candidateErr != nil || resumedErr != nil || candidateActual.State.Running || candidateActual.State.Paused || candidateActual.State.Restarting || candidateActual.State.Dead || !e.storageCandidateSafe(candidateActual, in) || candidateActual.Config.Labels[imageOperationLabel] != candidate.OperationID || candidateActual.Config.Labels[imagePlanLabel] != candidate.PlanHash || candidateActual.Config.Labels[applicationDatabaseNonceLabel] != candidate.CreateNonce || !e.memberIdentity(resumed, old, in.Proof.Binding.ApplicationBindingID) || !resumed.State.Running || resumed.NetworkSettings.Networks[in.Proof.Binding.NetworkName].EndpointID != private.EndpointID || e.storageGuard(ctx, in, &candidate, false) != nil {
+		if absenceErr != nil || !absent || resumedErr != nil || !e.memberIdentity(resumed, old, in.Proof.Binding.ApplicationBindingID) || !resumed.State.Running || resumed.NetworkSettings.Networks[in.Proof.Binding.NetworkName].EndpointID != private.EndpointID || e.storageGuard(ctx, in, nil, false) != nil {
 			return errApplicationDatabaseEngine
 		}
 		// Use the observed resumed container only as the allowed network user.

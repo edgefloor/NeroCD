@@ -376,9 +376,13 @@ operation ID, current stage/candidate hashes and membership revision, and includ
 
 - `resume_predecessor` follows a failed readiness attempt whose candidate has been
   proven stopped before any proxy yield. A dedicated fresh recovery lease checks
-  the exact volume/network ownership and candidate quiescence before starting the
-  original container. The original deployment remains failed. A dedicated receipt
-  records Docker's fresh private endpoint and advances membership by one; the
+  the exact volume/network ownership and candidate quiescence. It removes only
+  that failed stopped candidate, without deleting its volume, proves its absence,
+  and obtains current authorization again before starting the original container.
+  This keeps the next application deployment from encountering the failed volume
+  user. An ambiguous removal or restart retains holds and cannot replay effects
+  from its open resume intent. The original deployment remains failed. A dedicated
+  receipt records Docker's fresh private endpoint and advances membership by one; the
   healthy application identity and its reserved public host port stay unchanged.
 - `complete_replacement` follows a closed refused proxy switch with the exact
   known prior configuration and restored route metadata. It creates one fresh P2

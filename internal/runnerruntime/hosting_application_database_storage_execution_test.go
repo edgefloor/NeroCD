@@ -5,6 +5,7 @@ package runnerruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,7 +21,8 @@ import (
 
 type storageWriterEngine struct {
 	*connectedExecutionEngine
-	stops, resumes int
+	stops, removals, resumes int
+	removeErr                error
 }
 
 func (e *storageWriterEngine) bindStorage(domain.HostingOperation, domain.HostingStorageCreateAck) error {
@@ -44,14 +46,29 @@ func (e *storageWriterEngine) ResumeStoragePredecessor(ctx context.Context, in a
 	if err := before(ctx); err != nil {
 		return "", nil, err
 	}
+	e.removals++
+	if e.removeErr != nil {
+		return "", nil, e.removeErr
+	}
+	if err := before(ctx); err != nil {
+		return "", nil, err
+	}
 	e.resumes++
 	endpoint := in.Plan.ApplicationDatabase.PreviousMembers[0].Endpoint
 	endpoint.EndpointID = strings.Repeat("4", 64)
 	return domain.HostingDocumentHash("resumed"), &domain.HostingDatabaseBindingEndpointObservation{Endpoint: endpoint, Present: true}, nil
 }
 func TestApplicationDatabaseStorageJournal17FailureAndFreshResumeReplay(t *testing.T) {
-	for _, kind := range []string{"postgresql", "redis"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, tc := range []struct {
+		kind        string
+		lostRemoval bool
+	}{{kind: "postgresql"}, {kind: "redis"}, {kind: "redis", lostRemoval: true}} {
+		name := tc.kind
+		if tc.lostRemoval {
+			name += "_lost_removal_response"
+		}
+		t.Run(name, func(t *testing.T) {
+			kind := tc.kind
 			f := newConnectedExecutionFixture(t, kind, true)
 			in, _ := domain.HostingApplicationDatabaseExecutionPlanInput(*f.op.ApplicationDatabase)
 			snapshot := f.op.Snapshot
@@ -218,10 +235,38 @@ func TestApplicationDatabaseStorageJournal17FailureAndFreshResumeReplay(t *testi
 			f.op.TaskMode = "storage_recover"
 			fresh := newAttemptSupervisorFrom(ctx, f.lease)
 			defer fresh.Close()
-			if err = executeApplicationStorageRecovery(fresh, f.j, func(context.Context) error { return nil }, client, engine, f.a, f.lease, f.op); err != nil {
+			if tc.lostRemoval {
+				engine.removeErr = errors.New("lost exact candidate removal response")
+			}
+			err = executeApplicationStorageRecovery(fresh, f.j, func(context.Context) error { return nil }, client, engine, f.a, f.lease, f.op)
+			if tc.lostRemoval {
+				if err == nil || engine.removals != 1 || engine.resumes != 0 || !f.op.MutationHold || f.j.Depth() == 0 {
+					t.Fatal("uncertain removal settled recovery or lost intent")
+				}
+				if err = f.j.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f.j, err = runner.OpenAttemptJournal(f.dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.j.Close()
+				first := f.j.Snapshot().Hosting[0]
+				if err = reconcileApplicationDatabaseAttempt(ctx, config, client, f.j, first, func() (applicationDatabaseExecutionEngine, error) {
+					t.Fatal("open removal intent reopened Docker on restart")
+					return nil, nil
+				}); err == nil {
+					t.Fatal("uncertain removal was silently recovered")
+				}
+				if engine.removals != 1 || engine.resumes != 0 || !f.op.MutationHold || f.j.Depth() == 0 {
+					t.Fatal("restart repeated removal or resumed A")
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal("fresh recovery execution", err)
 			}
-			if engine.resumes != 1 || engine.stops != 2 || engine.creates != 0 || engine.configure != 0 || engine.starts != 0 || engine.retirements != 0 || grants != 3 || f.op.State != "failed" || f.op.MutationHold || f.j.Depth() != 0 {
+			if engine.removals != 1 || engine.resumes != 1 || engine.stops != 2 || engine.creates != 0 || engine.configure != 0 || engine.starts != 0 || engine.retirements != 0 || grants != 4 || f.op.State != "failed" || f.op.MutationHold || f.j.Depth() != 0 {
 				t.Fatal("recovery borrowed prepare or failed exact settlement")
 			}
 		})
