@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"net"
 	"os"
 	"reflect"
 	"time"
@@ -54,7 +55,9 @@ type Engine struct {
 	fixtureCA         string
 	fixtureRoots      *x509.CertPool
 	fixtureDockerArgs []string
-	verifyTimeout     time.Duration
+	// Only in-package tests set this dialer; constructors expose no override.
+	fixtureProbeDial func(context.Context, string, string) (net.Conn, error)
+	verifyTimeout    time.Duration
 }
 
 // New validates trusted operator settings and requires a Linux host.

@@ -83,7 +83,7 @@ func (e *Engine) ApplyInterruptedStorageSwitch(ctx context.Context, p, prior Pla
 	result.Outcome = Refused
 	// This verifies exact loaded management identity. HTTP/HTTPS readiness of A
 	// is deliberately absent only on this separately admitted interruption path.
-	if err = e.loaded(ctx, loaded); err != nil {
+	if err = e.loadedInterruptedStoragePredecessor(ctx, loaded, p); err != nil {
 		return result, errors.New("storage switch loaded state is outside admitted history")
 	}
 	if err = before(ctx); err != nil || ctx.Err() != nil {
@@ -112,4 +112,20 @@ func (e *Engine) ApplyInterruptedStorageSwitch(ctx context.Context, p, prior Pla
 		return result, err
 	}
 	return verified, nil
+}
+
+func (e *Engine) loadedInterruptedStoragePredecessor(ctx context.Context, loaded, next Plan) error {
+	if next.verification == nil || loaded.identity != next.identity || loaded.staticHash != next.staticHash || len(loaded.routes) != len(next.routes) {
+		return errors.New("interrupted predecessor configuration scope changed")
+	}
+	for i, route := range next.routes {
+		prior := loaded.routes[i]
+		if next.required(route.ID) {
+			route.HostPort = prior.HostPort
+		}
+		if route != prior {
+			return errors.New("interrupted predecessor route scope changed")
+		}
+	}
+	return e.loadedConfiguration(ctx, loaded, &next)
 }

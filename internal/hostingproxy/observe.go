@@ -37,6 +37,10 @@ func (e *Engine) raw(ctx context.Context) (data map[string]json.RawMessage, err 
 	return data, err
 }
 func (e *Engine) loaded(ctx context.Context, p Plan) error {
+	return e.loadedConfiguration(ctx, p, nil)
+}
+
+func (e *Engine) loadedConfiguration(ctx context.Context, p Plan, interruptedStorage *Plan) error {
 	if err := e.daemon(ctx, p); err != nil {
 		return err
 	}
@@ -97,7 +101,11 @@ func (e *Engine) loaded(ctx context.Context, p Plan) error {
 			}
 		}
 		// The generated response marker proves Host/path selected this generation even for app 401/404.
-		if !e.probe(ctx, p, r, false).HTTPReady {
+		if interruptedStorage != nil && interruptedStorage.required(r.ID) {
+			if err := e.interruptedStorageRouteMarker(ctx, p, r); err != nil {
+				return err
+			}
+		} else if !e.probe(ctx, p, r, false).HTTPReady {
 			return errors.New("host/path generation probe failed")
 		}
 	}
@@ -105,30 +113,11 @@ func (e *Engine) loaded(ctx context.Context, p Plan) error {
 }
 func (e *Engine) probe(ctx context.Context, p Plan, r Route, secure bool) RouteObservation {
 	result := RouteObservation{RouteID: r.ID, Certificate: Certificate{Hostname: r.Hostname, Status: "pending"}}
-	port, scheme := "80", "http"
-	if secure {
-		port, scheme = "443", "https"
-	}
-	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", "127.0.0.1:"+port)
-	}, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: r.Hostname, RootCAs: e.fixtureRoots}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, "GET", scheme+"://"+r.Hostname+r.PathPrefix, nil)
+	resp, closeResponse, err := e.routeResponse(ctx, r, secure)
 	if err != nil {
 		return result
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return result
-	}
-	defer func() {
-		// Closing this read-only response cannot invalidate the route header or
-		// verified TLS handshake. The private transport also closes idle
-		// connections on return.
-		_ = resp.Body.Close()
-	}()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	defer closeResponse()
 	if resp.Header.Get("X-NeroCD-Proxy-Generation") != p.hash || resp.Header.Get("X-NeroCD-Proxy-Route") != r.ID {
 		return result
 	}
@@ -150,6 +139,53 @@ func (e *Engine) probe(ctx context.Context, p Plan, r Route, secure bool) RouteO
 	result.HTTPSReady = true
 	result.Certificate = Certificate{Hostname: r.Hostname, Issuer: cert.Issuer.String(), Fingerprint: hex.EncodeToString(h[:]), ExpiresAt: cert.NotAfter, Status: "trusted"}
 	return result
+}
+
+// This internal fact establishes routing configuration for an explicitly stopped
+// selected backend. It never publishes an HTTPReady or HTTPSReady observation.
+func (e *Engine) interruptedStorageRouteMarker(ctx context.Context, p Plan, r Route) error {
+	resp, closeResponse, err := e.routeResponse(ctx, r, false)
+	if err != nil {
+		return errors.New("interrupted predecessor route marker unavailable")
+	}
+	defer closeResponse()
+	if resp.Header.Get("X-NeroCD-Proxy-Generation") != p.hash || resp.Header.Get("X-NeroCD-Proxy-Route") != r.ID {
+		return errors.New("interrupted predecessor route marker mismatch")
+	}
+	return ctx.Err()
+}
+
+func (e *Engine) routeResponse(ctx context.Context, r Route, secure bool) (*http.Response, func(), error) {
+	port, scheme := "80", "http"
+	if secure {
+		port, scheme = "443", "https"
+	}
+	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", "127.0.0.1:"+port)
+	}, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: r.Hostname, RootCAs: e.fixtureRoots}}
+	if e.fixtureProbeDial != nil {
+		transport.DialContext = e.fixtureProbeDial
+	}
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequestWithContext(ctx, "GET", scheme+"://"+r.Hostname+r.PathPrefix, nil)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, nil, err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	closeResponse := func() {
+		// Closing this read-only response cannot invalidate the route header or
+		// verified TLS handshake. The private transport also closes idle
+		// connections on return.
+		_ = resp.Body.Close()
+		transport.CloseIdleConnections()
+	}
+	return resp, closeResponse, nil
 }
 func (e *Engine) observation(ctx context.Context, p Plan, id string) Result {
 	result := Result{Outcome: Applied, DesiredGeneration: p.generation, LoadedGeneration: p.generation, Hash: p.hash, ContainerID: id}
