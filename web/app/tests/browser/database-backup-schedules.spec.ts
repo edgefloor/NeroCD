@@ -120,6 +120,10 @@ test("schedule owner create/replay/edit/disable and viewer history at four width
       body = database();
     else if (path === "/api/v1/resources/db_fixture/deployments")
       body = list([]);
+    else if (
+      path === "/api/v1/projects/project_fixture/database-backup-targets"
+    )
+      body = [];
     else if (path === "/api/v1/resources/db_fixture/database-backups")
       body = [];
     else if (

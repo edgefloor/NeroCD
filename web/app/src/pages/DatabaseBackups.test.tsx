@@ -1,3 +1,13 @@
+import * as remote from "../api/hosting-database-backup-targets";
+vi.mock("../api/hosting-database-backup-targets", async (original) => ({
+  ...(await original<
+    typeof import("../api/hosting-database-backup-targets")
+  >()),
+  listDatabaseBackupTargets: vi.fn(async () => []),
+  listDatabaseBackupValidations: vi.fn(async () => []),
+  listDatabaseBackupTransfers: vi.fn(async () => []),
+  retryDatabaseBackupUpload: vi.fn(),
+}));
 import { StrictMode } from "react";
 import {
   act,
@@ -38,6 +48,7 @@ const database = {
     generation: 2,
     name: "Data",
   },
+  binding: { destination_id: "runner" },
   engine: "postgresql",
 } as HostingDatabase;
 const scope = { actor: "owner", project: "project", environment: "env" };
@@ -63,6 +74,9 @@ const completed: DatabaseBackup = {
   },
 };
 beforeEach(() => {
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([]);
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([]);
   vi.mocked(api.listDatabaseBackups).mockResolvedValue([completed]);
   vi.mocked(api.requestDatabaseBackup).mockResolvedValue({
     ...completed,
@@ -237,4 +251,146 @@ test("denial clears scoped backup cache and disables controls", async () => {
   await waitFor(() => expect(view.denied).toHaveBeenCalled());
   expect(screen.queryByRole("button", { name: "Back up now" })).toBeNull();
   expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+});
+
+const target: remote.DatabaseBackupTarget = {
+  id: "storage",
+  project_id: "project",
+  version: "postgresql.backup-target.v1",
+  revision: 2,
+  name: "Daily archive",
+  endpoint: "https://s3.example.invalid",
+  bucket: "backups",
+  region: "us-east-1",
+  enabled: true,
+  created_at: completed.created_at,
+  updated_at: completed.updated_at,
+};
+const validation: remote.DatabaseBackupTransfer = {
+  id: "validation",
+  version: "postgresql.logical-s3-transfer.v1",
+  project_id: "project",
+  target_id: "storage",
+  target_revision: 2,
+  destination_id: "runner",
+  mode: "validate",
+  state: "succeeded",
+  failure_code: "",
+  created_at: completed.created_at,
+  updated_at: completed.updated_at,
+};
+const upload: remote.DatabaseBackupTransfer = {
+  ...validation,
+  id: "upload",
+  mode: "upload",
+  backup_id: "backup",
+  blob: completed.blob,
+};
+function remoteFixture() {
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([target]);
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([
+    validation,
+  ]);
+}
+test("only current runner validation enables immediate remote choice and freezes the selected revision", async () => {
+  remoteFixture();
+  mount();
+  await screen.findAllByRole("option", { name: "Daily archive · revision 2" });
+  fireEvent.change(screen.getByLabelText("Immediate backup destination"), {
+    target: { value: "storage:2" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
+  await waitFor(() =>
+    expect(api.requestDatabaseBackup).toHaveBeenCalledTimes(1),
+  );
+  expect(
+    vi.mocked(api.requestDatabaseBackup).mock.calls[0]![2].remote_target,
+  ).toEqual({ target_id: "storage", revision: 2 });
+});
+test("wrong runner, stale revision and disabled targets cannot be selected", async () => {
+  remoteFixture();
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([
+    { ...validation, destination_id: "foreign" },
+    { ...validation, id: "old", target_revision: 1 },
+  ]);
+  mount();
+  await screen.findByText(/Daily archive · revision 2 · Enabled/);
+  expect(
+    screen.queryAllByRole("option", { name: "Daily archive · revision 2" }),
+  ).toHaveLength(0);
+});
+test("successful dump and failed upload persist as separate outcomes and retry replays the same archive fence", async () => {
+  remoteFixture();
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([
+    { ...upload, state: "failed", failure_code: "access_denied" },
+  ]);
+  vi.mocked(remote.retryDatabaseBackupUpload)
+    .mockRejectedValueOnce(new TypeError("network"))
+    .mockResolvedValueOnce({ ...upload, id: "upload_retry", state: "queued" });
+  mount();
+  expect(
+    await screen.findByText(
+      /Local dump: succeeded. Latest remote upload: failed/,
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText(/Remote upload failed: access_denied/)).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry upload for backup" }),
+  );
+  await screen.findByRole("button", { name: "Retry the same upload request" });
+  const first = vi.mocked(remote.retryDatabaseBackupUpload).mock.calls[0]![2];
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry the same upload request" }),
+  );
+  await waitFor(() =>
+    expect(remote.retryDatabaseBackupUpload).toHaveBeenCalledTimes(2),
+  );
+  expect(vi.mocked(remote.retryDatabaseBackupUpload).mock.calls[1]![2]).toEqual(
+    first,
+  );
+  expect(first.expected_transfer_id).toBe("upload");
+  expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+});
+test("restore requires an explicit saved remote object choice and sends no arbitrary URL or key", async () => {
+  remoteFixture();
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([
+    { ...target, revision: 3 },
+  ]);
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([
+    upload,
+    { ...upload, id: "failed", state: "failed" },
+  ]);
+  mount();
+  await selectRestore();
+  await screen.findByRole("option", { name: /Saved remote object/ });
+  expect(
+    (screen.getByLabelText("Restore archive source") as HTMLSelectElement)
+      .value,
+  ).toBe("");
+  fireEvent.change(screen.getByLabelText("Restore archive source"), {
+    target: { value: "upload" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Restore into new database" }),
+  );
+  await waitFor(() =>
+    expect(api.restoreDatabaseBackup).toHaveBeenCalledTimes(1),
+  );
+  expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3]).toEqual({
+    request_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+    name: "Restored data",
+    remote_source: { transfer_id: "upload", expected_target_revision: 2 },
+  });
+});
+test("viewer cannot retry a failed upload", async () => {
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([
+    { ...upload, state: "failed" },
+  ]);
+  mount(false);
+  await screen.findByText(
+    /Local dump: succeeded. Latest remote upload: failed/,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry upload for backup" }),
+  ).toBeNull();
 });

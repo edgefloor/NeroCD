@@ -1,3 +1,7 @@
+import {
+  parseRemoteBackupTarget,
+  type RemoteBackupTarget,
+} from "./hosting-database-backup-targets";
 import { request } from "./client";
 import type { components } from "./generated";
 import {
@@ -7,9 +11,13 @@ import {
 } from "./hosting-databases";
 
 export type DatabaseBackupSchedule =
-  components["schemas"]["HostingDatabaseBackupSchedule"];
+  components["schemas"]["HostingDatabaseBackupSchedule"] & {
+    remote_target?: RemoteBackupTarget;
+  };
 export type DatabaseBackupScheduleInput =
-  components["schemas"]["HostingDatabaseBackupScheduleInput"];
+  components["schemas"]["HostingDatabaseBackupScheduleInput"] & {
+    remote_target?: RemoteBackupTarget;
+  };
 export type DatabaseBackupOccurrence =
   components["schemas"]["HostingDatabaseBackupOccurrence"];
 const identifier = (v: unknown): v is string =>
@@ -38,7 +46,11 @@ const scheduleRequired = [
   "created_at",
   "updated_at",
 ];
-const scheduleAllowed = new Set([...scheduleRequired, "last_scheduled_at"]);
+const scheduleAllowed = new Set([
+  ...scheduleRequired,
+  "last_scheduled_at",
+  "remote_target",
+]);
 const occurrenceRequired = [
   "id",
   "schedule_id",
@@ -156,6 +168,9 @@ export function parseDatabaseBackupSchedule(
     enabled: v.enabled,
     created_at: v.created_at,
     updated_at: v.updated_at,
+    ...(v.remote_target !== undefined
+      ? { remote_target: parseRemoteBackupTarget(v.remote_target) }
+      : {}),
     ...(v.last_scheduled_at !== undefined
       ? { last_scheduled_at: v.last_scheduled_at as string }
       : {}),
@@ -262,6 +277,8 @@ export async function saveDatabaseBackupSchedule(
     !validDatabaseBackupScheduleFields(input.frequency, input.timezone)
   )
     return fail();
+  if (input.remote_target !== undefined)
+    parseRemoteBackupTarget(input.remote_target);
   const raw = await boundedDatabaseRequest(
     (s) =>
       request<unknown>(
@@ -281,7 +298,9 @@ export async function saveDatabaseBackupSchedule(
     out.revision !== input.expected_version + 1 ||
     out.frequency !== input.frequency ||
     out.timezone !== input.timezone ||
-    out.enabled !== input.enabled
+    out.enabled !== input.enabled ||
+    out.remote_target?.target_id !== input.remote_target?.target_id ||
+    out.remote_target?.revision !== input.remote_target?.revision
   )
     return fail();
   return out;

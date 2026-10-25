@@ -1,3 +1,5 @@
+import type { RemoteBackupTarget } from "./hosting-database-backup-targets";
+import { parseRemoteBackupTarget } from "./hosting-database-backup-targets";
 import { request } from "./client";
 import type { components } from "./generated";
 import {
@@ -6,11 +8,17 @@ import {
   type HostingDatabase,
 } from "./hosting-databases";
 export type DatabaseBackup =
-  components["schemas"]["HostingDatabaseBackupOperation"];
+  components["schemas"]["HostingDatabaseBackupOperation"] & {
+    remote_target?: RemoteBackupTarget;
+  };
 export type DatabaseBackupInput =
-  components["schemas"]["HostingDatabaseBackupInput"];
+  components["schemas"]["HostingDatabaseBackupInput"] & {
+    remote_target?: RemoteBackupTarget;
+  };
 export type DatabaseRestoreInput =
-  components["schemas"]["HostingDatabaseBackupRestoreInput"];
+  components["schemas"]["HostingDatabaseBackupRestoreInput"] & {
+    remote_source?: { transfer_id: string; expected_target_revision: number };
+  };
 const id = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const fail = (): never => {
@@ -37,6 +45,7 @@ const allowed = new Set([
   "target_resource_id",
   "blob",
   "failure_code",
+  "remote_target",
 ]);
 export function parseDatabaseBackup(
   raw: unknown,
@@ -134,6 +143,9 @@ export function parseDatabaseBackup(
     ownership_held: v.ownership_held,
     created_at: String(v.created_at),
     updated_at: String(v.updated_at),
+    ...(v.remote_target !== undefined
+      ? { remote_target: parseRemoteBackupTarget(v.remote_target) }
+      : {}),
     ...(v.target_resource_id
       ? { target_resource_id: String(v.target_resource_id) }
       : {}),
@@ -175,6 +187,8 @@ export async function requestDatabaseBackup(
   input: DatabaseBackupInput,
   signal: AbortSignal,
 ) {
+  if (input.remote_target !== undefined)
+    parseRemoteBackupTarget(input.remote_target);
   const raw = await boundedDatabaseRequest(
     (s) =>
       request<unknown>(
@@ -183,7 +197,14 @@ export async function requestDatabaseBackup(
       ),
     signal,
   );
-  return parseDatabaseBackup(raw, scope, database);
+  const out = parseDatabaseBackup(raw, scope, database);
+  if (
+    out.mode !== "backup" ||
+    out.remote_target?.target_id !== input.remote_target?.target_id ||
+    out.remote_target?.revision !== input.remote_target?.revision
+  )
+    return fail();
+  return out;
 }
 export async function restoreDatabaseBackup(
   scope: DatabaseScope,
@@ -192,6 +213,15 @@ export async function restoreDatabaseBackup(
   input: DatabaseRestoreInput,
   signal: AbortSignal,
 ) {
+  if (
+    input.remote_source !== undefined &&
+    (!id(input.remote_source.transfer_id) ||
+      !Number.isSafeInteger(input.remote_source.expected_target_revision) ||
+      input.remote_source.expected_target_revision < 1 ||
+      Object.keys(input.remote_source).sort().join() !==
+        "expected_target_revision,transfer_id")
+  )
+    return fail();
   const raw = await boundedDatabaseRequest(
     (s) =>
       request<unknown>(

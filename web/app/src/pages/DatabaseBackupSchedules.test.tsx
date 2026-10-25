@@ -1,3 +1,13 @@
+import * as remote from "../api/hosting-database-backup-targets";
+vi.mock("../api/hosting-database-backup-targets", async (original) => ({
+  ...(await original<
+    typeof import("../api/hosting-database-backup-targets")
+  >()),
+  listDatabaseBackupTargets: vi.fn(async () => []),
+  listDatabaseBackupValidations: vi.fn(async () => []),
+  listDatabaseBackupTransfers: vi.fn(async () => []),
+  retryDatabaseBackupUpload: vi.fn(),
+}));
 import { StrictMode } from "react";
 import {
   act,
@@ -23,6 +33,7 @@ vi.mock("../api/hosting-database-backup-schedules", async (original) => ({
 }));
 const database = {
   resource: { id: "database", generation: 2 },
+  binding: { destination_id: "runner" },
   engine: "postgresql",
 } as HostingDatabase;
 const scope = {
@@ -44,6 +55,9 @@ const saved: api.DatabaseBackupSchedule = {
 };
 let values: api.DatabaseBackupSchedule[];
 beforeEach(() => {
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([]);
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([]);
   values = [];
   vi.mocked(api.listDatabaseBackupSchedules).mockImplementation(
     async () => values,
@@ -58,6 +72,7 @@ beforeEach(() => {
         frequency: input.frequency,
         timezone: input.timezone,
         enabled: input.enabled,
+        ...(input.remote_target ? { remote_target: input.remote_target } : {}),
       };
       values = [out];
       return out;
@@ -294,4 +309,54 @@ test("denial removes scoped cached metadata and hides owner actions", async () =
   expect(
     screen.queryByRole("button", { name: "Create backup schedule" }),
   ).toBeNull();
+});
+
+test("schedule creation, editing and disable preserve the explicit remote target revision", async () => {
+  const target: remote.DatabaseBackupTarget = {
+    id: "storage",
+    project_id: "project",
+    version: "postgresql.backup-target.v1",
+    revision: 2,
+    name: "Daily archive",
+    endpoint: "https://s3.example.invalid",
+    bucket: "backups",
+    region: "us-east-1",
+    enabled: true,
+    created_at: saved.created_at,
+    updated_at: saved.updated_at,
+  };
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([target]);
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([
+    {
+      id: "validation",
+      version: "postgresql.logical-s3-transfer.v1",
+      project_id: "project",
+      target_id: "storage",
+      target_revision: 2,
+      destination_id: "runner",
+      mode: "validate",
+      state: "succeeded",
+      failure_code: "",
+      created_at: saved.created_at,
+      updated_at: saved.updated_at,
+    },
+  ]);
+  mount();
+  await enabledButton();
+  await screen.findByRole("option", { name: "Daily archive · revision 2" });
+  fireEvent.change(screen.getByLabelText("Scheduled backup destination"), {
+    target: { value: "storage:2" },
+  });
+  fireEvent.click(await enabledButton());
+  await screen.findByText(/Saved schedule schedule revision 1/);
+  expect(savedCall(0)[3].remote_target).toEqual({
+    target_id: "storage",
+    revision: 2,
+  });
+  fireEvent.click(await enabledButton("Disable schedule"));
+  await screen.findByText(/Saved schedule schedule revision 2/);
+  expect(savedCall(1)[3].remote_target).toEqual({
+    target_id: "storage",
+    revision: 2,
+  });
 });

@@ -1,3 +1,9 @@
+import {
+  BackupDestinationSelect,
+  useDatabaseBackupDestinations,
+  validSelectedBackupDestination,
+} from "./DatabaseBackupDestinations";
+import type { RemoteBackupTarget } from "../api/hosting-database-backup-targets";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "../components/ui/button";
@@ -45,6 +51,15 @@ function DatabaseBackupSchedulePanel({
   onDenied,
 }: Props) {
   const client = useQueryClient();
+  const [accessRevoked, setAccessRevoked] = useState(false);
+  const destinations = useDatabaseBackupDestinations({
+    database,
+    scope,
+    owner,
+    blocked,
+    onDenied,
+  });
+  const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [editing, setEditing] = useState<{ id: string; revision: number }>({
     id: "",
     revision: 0,
@@ -71,7 +86,7 @@ function DatabaseBackupSchedulePanel({
     queryKey: key,
     queryFn: ({ signal }) =>
       listDatabaseBackupSchedules(scope, database, signal),
-    enabled: !blocked && database.engine === "postgresql",
+    enabled: !blocked && !accessRevoked && database.engine === "postgresql",
     retry: false,
     refetchInterval: 10000,
   });
@@ -81,17 +96,21 @@ function DatabaseBackupSchedulePanel({
       listDatabaseBackupOccurrences(scope, database, selected, signal),
     enabled:
       !blocked &&
+      !accessRevoked &&
       Boolean(selected) &&
       schedules.data?.some((s) => s.id === selected) === true,
     retry: false,
     refetchInterval: 3000,
   });
   const denied =
+    accessRevoked ||
+    destinations.denied ||
     databaseDenied(schedules.error) ||
     databaseDenied(occurrences.error) ||
     databaseDenied(error);
   useEffect(() => {
     if (denied) {
+      setAccessRevoked(true);
       lifetime.current?.abort();
       client.removeQueries({ queryKey: key });
       onDenied();
@@ -105,6 +124,7 @@ function DatabaseBackupSchedulePanel({
     setFrequency(schedule?.frequency ?? "daily");
     setTimezone(schedule?.timezone ?? "UTC");
     setEnabled(schedule?.enabled ?? true);
+    setRemoteTarget(schedule?.remote_target);
     setError(undefined);
     setAccepted("");
   }
@@ -138,6 +158,7 @@ function DatabaseBackupSchedulePanel({
         setFrequency(out.frequency);
         setTimezone(out.timezone);
         setEnabled(out.enabled);
+        setRemoteTarget(out.remote_target);
       }
       await schedules.refetch();
     } catch (cause) {
@@ -173,7 +194,8 @@ function DatabaseBackupSchedulePanel({
         Disable stops future discovery. Accepted work keeps its original
         identity and authority checks. Overlapping backups of the same source
         are skipped. Missed, denied and failed occurrences remain in history.
-        External notifications, retention and S3 are not available.
+        External notifications and retention are not available. Remote uploads
+        have separate transfer status in backup history.
       </p>
       {!owner ? (
         <p>
@@ -209,6 +231,13 @@ function DatabaseBackupSchedulePanel({
               onChange={(e) => setTimezone(e.target.value)}
             />
           </label>
+          <BackupDestinationSelect
+            label="Scheduled backup destination"
+            value={remoteTarget}
+            onChange={setRemoteTarget}
+            destinations={destinations}
+            disabled={unavailable}
+          />
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -225,7 +254,8 @@ function DatabaseBackupSchedulePanel({
               className="h-auto max-w-full whitespace-normal"
               disabled={
                 unavailable ||
-                !validDatabaseBackupScheduleFields(frequency, timezone)
+                !validDatabaseBackupScheduleFields(frequency, timezone) ||
+                !validSelectedBackupDestination(remoteTarget, destinations)
               }
               onClick={() =>
                 void submit({
@@ -237,6 +267,7 @@ function DatabaseBackupSchedulePanel({
                     frequency,
                     timezone,
                     enabled,
+                    ...(remoteTarget ? { remote_target: remoteTarget } : {}),
                   },
                 })
               }
@@ -299,6 +330,11 @@ function DatabaseBackupSchedulePanel({
             <p>
               {s.frequency} · {s.timezone}
             </p>
+            <p>
+              {s.remote_target
+                ? `Remote destination ${s.remote_target.target_id}, revision ${s.remote_target.revision}`
+                : "Local archive only"}
+            </p>
             {s.last_scheduled_at ? (
               <p>Last considered UTC minute: {s.last_scheduled_at}</p>
             ) : (
@@ -326,7 +362,14 @@ function DatabaseBackupSchedulePanel({
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={unavailable}
+                    disabled={
+                      unavailable ||
+                      (!s.enabled &&
+                        !validSelectedBackupDestination(
+                          s.remote_target,
+                          destinations,
+                        ))
+                    }
                     onClick={() =>
                       void submit({
                         schedule: s.id,
@@ -338,6 +381,9 @@ function DatabaseBackupSchedulePanel({
                           frequency: s.frequency,
                           timezone: s.timezone,
                           enabled: !s.enabled,
+                          ...(s.remote_target
+                            ? { remote_target: s.remote_target }
+                            : {}),
                         },
                       })
                     }

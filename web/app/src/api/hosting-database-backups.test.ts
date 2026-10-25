@@ -1,5 +1,12 @@
-import { expect, test } from "vitest";
-import { parseDatabaseBackup } from "./hosting-database-backups";
+import { afterEach, expect, test, vi } from "vitest";
+import { request } from "./client";
+vi.mock("./client", () => ({ request: vi.fn() }));
+afterEach(() => vi.resetAllMocks());
+import {
+  parseDatabaseBackup,
+  requestDatabaseBackup,
+  restoreDatabaseBackup,
+} from "./hosting-database-backups";
 import type { HostingDatabase } from "./hosting-databases";
 const db = { resource: { id: "db" } } as HostingDatabase;
 const scope = { actor: "owner", project: "project", environment: "env" };
@@ -45,3 +52,85 @@ for (const [name, patch] of Object.entries({
       parseDatabaseBackup({ ...operation, ...patch }, scope, db),
     ).toThrow();
   });
+
+test("backup history retains the admitted remote target and rejects unbounded remote metadata", () => {
+  const remote_target = { target_id: "storage", revision: 3 };
+  expect(
+    parseDatabaseBackup({ ...operation, remote_target }, scope, db)
+      .remote_target,
+  ).toEqual(remote_target);
+  for (const invalid of [
+    { target_id: "storage", revision: 0 },
+    { target_id: "storage", revision: 3, object_key: "private" },
+    { target_id: "foreign/path", revision: 3 },
+  ])
+    expect(() =>
+      parseDatabaseBackup({ ...operation, remote_target: invalid }, scope, db),
+    ).toThrow();
+});
+test("immediate admission must echo the exact selected remote revision", async () => {
+  const remote_target = { target_id: "storage", revision: 3 };
+  const input = {
+    request_id: "backup_request",
+    expected_resource_generation: 1,
+    remote_target,
+  };
+  vi.mocked(request).mockResolvedValue({ ...operation, remote_target });
+  expect(
+    (
+      await requestDatabaseBackup(
+        scope,
+        db,
+        input,
+        new AbortController().signal,
+      )
+    ).remote_target,
+  ).toEqual(remote_target);
+  vi.mocked(request).mockResolvedValue({
+    ...operation,
+    remote_target: { ...remote_target, revision: 4 },
+  });
+  await expect(
+    requestDatabaseBackup(scope, db, input, new AbortController().signal),
+  ).rejects.toThrow();
+});
+test("remote restore accepts a saved transfer reference and rejects arbitrary object inputs before sending", async () => {
+  vi.mocked(request).mockResolvedValue({
+    ...operation,
+    id: "restore",
+    mode: "restore",
+    target_resource_id: "new_database",
+  });
+  const input = {
+    request_id: "restore_request",
+    name: "New database",
+    remote_source: { transfer_id: "upload", expected_target_revision: 3 },
+  };
+  await restoreDatabaseBackup(
+    scope,
+    db,
+    "backup",
+    input,
+    new AbortController().signal,
+  );
+  expect(vi.mocked(request).mock.calls[0]?.[1]).toMatchObject({
+    body: input,
+    requestID: "restore_request",
+  });
+  await expect(
+    restoreDatabaseBackup(
+      scope,
+      db,
+      "backup",
+      {
+        ...input,
+        remote_source: {
+          ...input.remote_source,
+          url: "https://arbitrary.invalid",
+        },
+      } as typeof input,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+  expect(request).toHaveBeenCalledTimes(1);
+});

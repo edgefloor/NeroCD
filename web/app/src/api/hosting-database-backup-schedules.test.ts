@@ -188,3 +188,22 @@ test("client field validation rejects inline zones, unsupported intervals and im
   ])
     expect(validDatabaseBackupScheduleFields(frequency, timezone)).toBe(false);
 });
+
+test("schedule safe view preserves the exact admitted remote destination revision", () => {
+  const remote_target = { target_id: "storage", revision: 3 };
+  expect(
+    parseDatabaseBackupSchedule({ ...schedule, remote_target }, scope, db)
+      .remote_target,
+  ).toEqual(remote_target);
+  for (const invalid of [
+    { target_id: "storage", revision: 0 },
+    { target_id: "storage", revision: 3, access_key: "private" },
+  ])
+    expect(() =>
+      parseDatabaseBackupSchedule(
+        { ...schedule, remote_target: invalid },
+        scope,
+        db,
+      ),
+    ).toThrow();
+});
