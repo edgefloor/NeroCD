@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net"
 	"net/http"
@@ -594,6 +597,103 @@ func TestApplicationDatabaseRouteRuntimePendingSelection(t *testing.T) {
 	}
 }
 
+// Keep the yielded storage recheck on the actual recoverYield path. Testing
+// only the pending predicate would miss a call to the settled assertion here.
+func TestApplicationDatabaseRouteRuntimeStorageYieldRecheck(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("fixture source location unavailable")
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), filename, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := 0
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "recoverYield" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			branch, ok := node.(*ast.IfStmt)
+			if !ok {
+				return true
+			}
+			condition, ok := branch.Cond.(*ast.BinaryExpr)
+			if !ok || condition.Op != token.NEQ {
+				return true
+			}
+			field, ok := condition.X.(*ast.SelectorExpr)
+			if !ok || field.Sel.Name != "storage" {
+				return true
+			}
+			ast.Inspect(branch.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				method, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				receiver, ok := method.X.(*ast.Ident)
+				if !ok || receiver.Name != "r" {
+					return true
+				}
+				if method.Sel.Name == "assertUnrelated" {
+					t.Error("yielded storage recheck incorrectly requires settled route metadata")
+				}
+				if method.Sel.Name == "awaitYieldedRoute" && len(call.Args) == 1 {
+					if argument, ok := call.Args[0].(*ast.Ident); ok && argument.Name == "op" {
+						checks++
+					}
+				}
+				return true
+			})
+			return false
+		})
+	}
+	if checks != 1 {
+		t.Fatal("storage uploads must be followed by one exact yielded-operation recheck")
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimePendingUnrelatedHTTPS(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/records/unrelated" {
+			t.Error("unrelated probe changed record path")
+		}
+		w.Header().Set("X-NeroCD-Fixture-Instance", id[:12])
+		_, _ = io.WriteString(w, "unrelated_route")
+	}))
+	t.Cleanup(server.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	hash := sha256.Sum256(server.Certificate().Raw)
+	baseline := domain.HostingRoute{ID: "unrelated_route", ResourceID: "unrelated_resource", Hostname: "example.com", PathPrefix: "/", Version: 2, SelectedReleaseOperationID: "unrelated_app", Enabled: true, HTTPReady: true, HTTPSReady: true, Certificate: domain.HostingProxyCertificate{Hostname: "example.com", Status: "trusted", Fingerprint: hex.EncodeToString(hash[:])}}
+	for _, state := range []string{"queued", "dispatched", "applied"} {
+		t.Run(state, func(t *testing.T) {
+			current := baseline
+			current.OperationID = "appdb_proxy_candidate"
+			current.State = state
+			if state != "applied" {
+				current.HTTPReady = false
+				current.HTTPSReady = false
+				current.Certificate = domain.HostingProxyCertificate{Hostname: baseline.Hostname, Status: "pending"}
+			}
+			if applicationDatabaseRoutePendingSelection(current, baseline, "appdb_proxy_candidate") != (state != "applied") {
+				t.Fatal("pending and settled metadata were conflated")
+			}
+			// Pending API metadata carries no trusted fingerprint. The independent
+			// loaded baseline still verifies the actual chain, leaf and instance.
+			if applicationDatabaseRouteHTTPRecordAt(t.Context(), roots, baseline.Hostname, baseline.Certificate.Fingerprint, domain.HostingOperation{Result: &domain.HostingResult{ContainerID: id}}, "GET", "unrelated", "unrelated_route", server.Listener.Addr().String()) != nil {
+				t.Fatal("baseline unrelated trusted HTTPS identity was not preserved")
+			}
+		})
+	}
+}
+
 func TestApplicationDatabaseRouteRuntimeLoadedBeforeSwitch(t *testing.T) {
 	loaded := domain.HostingProxy{ID: "proxy_fixture", ServerID: "server_fixture", DestinationID: "dest_fixture", RunnerID: "runner_fixture", ControlProjectID: "proj_fixture", DaemonID: "daemon_fixture", StaticHash: "static_fixture", Enabled: true, LoadedGeneration: 3, DesiredGeneration: 3}
 	for _, test := range []struct {
@@ -670,7 +770,9 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 				f.t.Fatal("yielded candidate cannot read retained upload")
 			}
 		}
-		r.assertUnrelated()
+		// The runner is still stopped before P. Recheck exact pending metadata
+		// and the independently loaded unrelated HTTPS baseline after uploads.
+		r.awaitYieldedRoute(op)
 	} else {
 		r.record(f.t.Context(), previous, "GET", "a", "retained_a")
 		f.applicationContainer(previous)
