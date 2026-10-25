@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -374,10 +375,55 @@ type databaseRetentionObservationBoundedHTTP struct{ client s3.HTTPClient }
 
 func (c databaseRetentionObservationBoundedHTTP) Do(r *http.Request) (*http.Response, error) {
 	response, err := c.client.Do(r)
-	if err == nil && response != nil && response.Body != nil {
-		response.Body = http.MaxBytesReader(nil, response.Body, 64<<10)
+	if err != nil {
+		return nil, errors.New("remote observation request failed")
 	}
-	return response, err
+	if response == nil || response.Body == nil {
+		return nil, errors.New("remote observation response absent")
+	}
+	// Finish reading before SDK decoding: its XML decoder can stop at the first
+	// root and ignore errors encountered while draining the remaining body.
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || len(raw) > 64<<10 || !databaseRetentionObservationDocument(raw) {
+		clear(raw)
+		return nil, errors.New("remote observation document invalid")
+	}
+	response.Body = io.NopCloser(bytes.NewReader(raw))
+	return response, nil
+}
+
+func databaseRetentionObservationDocument(raw []byte) bool {
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	seenRoot, depth := false, 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return seenRoot && depth == 0
+		}
+		if err != nil {
+			return false
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				if seenRoot || token.Name.Local != "ListBucketResult" ||
+					(token.Name.Space != "" && token.Name.Space != "http://s3.amazonaws.com/doc/2006-03-01/") {
+					return false
+				}
+				seenRoot = true
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if depth == 0 && len(bytes.TrimSpace(token)) != 0 {
+				return false
+			}
+		case xml.Directive:
+			return false
+		}
+	}
 }
 
 func databaseRetentionObserveRemote(ctx context.Context, client *s3.Client, key string) string {
@@ -1176,11 +1222,12 @@ func TestDatabaseBackupRetentionUnknownFaultScope(t *testing.T) {
 // The SDK decodes these in-memory HTTP responses, so parsing failures exercise
 // the same boundary as physical Silo observations without starting a service.
 type databaseRetentionObservationHTTP struct {
-	status int
-	body   string
-	err    error
-	calls  int
-	scoped bool
+	status  int
+	body    string
+	err     error
+	readErr error
+	calls   int
+	scoped  bool
 }
 
 func (c *databaseRetentionObservationHTTP) Do(r *http.Request) (*http.Response, error) {
@@ -1189,8 +1236,16 @@ func (c *databaseRetentionObservationHTTP) Do(r *http.Request) (*http.Response, 
 	if c.err != nil {
 		return nil, c.err
 	}
-	return &http.Response{StatusCode: c.status, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(strings.NewReader(c.body)), Request: r}, nil
+	body := io.Reader(strings.NewReader(c.body))
+	if c.readErr != nil {
+		body = io.MultiReader(body, databaseRetentionObservationReadError{c.readErr})
+	}
+	return &http.Response{StatusCode: c.status, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(body), Request: r}, nil
 }
+
+type databaseRetentionObservationReadError struct{ err error }
+
+func (r databaseRetentionObservationReadError) Read([]byte) (int, error) { return 0, r.err }
 
 func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *testing.T) {
 	const key = "nerocd/postgresql/owned-backup/archive.dump"
@@ -1202,7 +1257,7 @@ func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *te
 	for _, tc := range []struct {
 		name, body, want string
 		status           int
-		err              error
+		err, readErr     error
 	}{
 		{name: "missing", status: 200, body: inventory("", 0, false), want: "missing"},
 		{name: "present", status: 200, body: inventory(present, 1, false), want: "present"},
@@ -1214,6 +1269,11 @@ func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *te
 		{name: "not_found_error", status: 404, body: "<Error><Code>NoSuchKey</Code></Error>", want: "unknown"},
 		{name: "deadline", err: context.DeadlineExceeded, want: "unknown"},
 		{name: "parsing_failure", status: 200, body: "<ListBucketResult><broken>" + canary, want: "unknown"},
+		{name: "wrong_root", status: 200, body: strings.ReplaceAll(inventory("", 0, false), "ListBucketResult", "UnexpectedRoot"), want: "unknown"},
+		{name: "malformed_tail", status: 200, body: inventory("", 0, false) + "<broken", want: "unknown"},
+		{name: "second_root", status: 200, body: inventory("", 0, false) + "<another/>", want: "unknown"},
+		{name: "overflow_after_root", status: 200, body: inventory("", 0, false) + strings.Repeat(" ", 65<<10), want: "unknown"},
+		{name: "read_error_after_root", status: 200, body: inventory("", 0, false), readErr: errors.New(canary), want: "unknown"},
 		{name: "empty_response", status: 200, want: "unknown"},
 		{name: "oversize_response", status: 200, body: "<ListBucketResult><Name>" + strings.Repeat("x", 65<<10) + "</Name></ListBucketResult>", want: "unknown"},
 		{name: "truncated", status: 200, body: inventory("", 0, true), want: "unknown"},
@@ -1226,7 +1286,7 @@ func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *te
 		{name: "incomplete_inventory", status: 200, body: "<ListBucketResult><Name>nerocd-runtime</Name></ListBucketResult>", want: "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			wire := &databaseRetentionObservationHTTP{status: tc.status, body: tc.body, err: tc.err}
+			wire := &databaseRetentionObservationHTTP{status: tc.status, body: tc.body, err: tc.err, readErr: tc.readErr}
 			client := databaseRetentionObservationClient("fixture-access", "fixture-secret", wire)
 			got := databaseRetentionObserveRemote(t.Context(), client, key)
 			if got != tc.want {
