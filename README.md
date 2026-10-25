@@ -170,7 +170,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   saving mount intent alone does not materialize or mount a volume.
   Storage deployment-review/recovery UI is accepted with UX-only limits below.
   Standalone database qualification and direct UI are recorded below. Metadata
-  remains `adapter_unqualified` and connected application binding is unfinished.
+  remains `adapter_unqualified`; connected application binding was unfinished at
+  this foundation checkpoint. Later bounded qualification is recorded below.
   Database-native backup/restore, unknown-writer recovery, production ACME and
   complete A19/A26 remain open. Bounded uploaded-file recovery is accepted below.
 - Storage deployment-review/recovery UI is accepted at
@@ -253,16 +254,19 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   application membership were absent at this checkpoint; bounded later proof is
   below. Complete R42/A17 remains unfinished. See the
   [qualification evidence](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
-- [Application/database connections](docs/hosting-database-connections.md) are
-  physically qualified at `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, migration
-  0073 and journal 16. Owners connect one public-image app and PostgreSQL or Redis
-  on the same destination, then opt into continuing all reviewed existing HTTPS
-  routes during app redeployment. Data and credential references survive app and
-  database replacement. Failed readiness or cutover preserves the old app;
-  exact acknowledgment replay does not repeat effects. Five runtime groups and
-  eight live browser tests passed without skips in the native Linux arm64 private
-  CA fixture. Initial routed Connect, source builds, application storage, rotation,
-  native backup/restore, disk loss, public ACME and full R42/A17 remain open.
+- [Application/database connections](docs/hosting-database-connections.md) with
+  one owned upload volume are qualified at physical source
+  `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
+  `3b192e4f9602d606f9f51c921adbce8870401588`, migration 0074 and journal 17.
+  First Connect deploys without application storage or routes. Owners then attach
+  one owned named volume and acknowledge interruption for replacement. Routed
+  redeployment, fresh-authority recovery and later deployment retain database
+  records and uploads. Seven Go groups passed in the 683.423-second full gate;
+  six browser phases passed with 30 tests passing and six explicit profile skips.
+  The trusted native Linux arm64/root-image fixture uses private-CA HTTPS.
+  Production ACME, arbitrary nonroot initialization, source builds, rotation,
+  native backup/restore, disk loss, cross-host/external storage and full R42/A17
+  remain unqualified. Earlier storage-less receipts retain their original scope.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

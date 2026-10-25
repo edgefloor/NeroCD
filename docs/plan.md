@@ -9,9 +9,9 @@ revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Historical accepted application/source assessment:
 `9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25, through migration 0072.
-Current bounded connected-application route qualification:
-`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, physically verified on 2026-10-25,
-through migration 0073. This qualification does not establish full hosting
+Current bounded connected-application/owned-volume qualification:
+physical source `09a432407c41671517fa342d28c07e9c79978aea`, physically verified on 2026-10-25,
+with documentation accepted at `3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17. This qualification does not establish full hosting
 acceptance or parity.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
@@ -33,7 +33,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0073, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0074, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -70,6 +70,17 @@ hosting behavior that needs them; H4 does not authorize delaying those safeguard
 A practical deployment demo alone does not complete Coolify parity.
 
 ## Next hosting slice
+
+The connected application, PostgreSQL/Redis and owned-upload-volume workflow is
+qualified within the [connection guide's profile](hosting-database-connections.md).
+Continue H2 with a bounded database-native backup and application-verified restore
+journey. First discover the existing archive, database and authority contracts;
+freeze the supported engine/profile, ownership and recovery boundaries before
+implementation. This is the next gap to investigate, not accepted backup/restore
+support. Broader R42 profiles, rotation, production ACME and aggregate stateful
+hosting gates remain open.
+
+## Earlier hosting checkpoints
 
 Accepted private HTTPS work at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`
 includes source grants, protected credential transport, compiled CLI Dockerfile
@@ -136,8 +147,9 @@ See the [navigation evidence and limits](compatibility.md#accepted-foundations-a
 
 Automatic deployment and SSH onboarding have bounded accepted evidence. Proceed
 with H2 stateful hosting. Bounded uploaded-file persistence/recovery and
-standalone PostgreSQL/Redis hosting have accepted evidence; connected application
-binding and broader stateful qualification remain unfinished.
+standalone PostgreSQL/Redis hosting have accepted evidence. Connected application
+binding was unfinished at the following checkpoints; current bounded storage
+qualification is summarized below. Broader stateful qualification remains open.
 Storage metadata, the private helper and durable materialization admission are
 accepted through `8e00631aac26e0787a43398332e31a35980f067d`, with migrations
 0062–0063. The opt-in API/compiled-runner uploaded-file workflow now has physical
@@ -219,6 +231,23 @@ the origin ACK and journal retirement with Docker absent before cancellation;
 it does not establish successful exit of the whole continuous runtime. Owned
 cleanup and outer inventories passed. See the
 [current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
+
+## Current connected stateful workflow
+
+Current connected application and owned-upload-volume qualification uses physical
+source `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
+`3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
+One image application connects to PostgreSQL or Redis without storage first, then
+attaches one owned named volume through acknowledged interruption. The qualified
+UI/API/runner workflow covers routed replacement, failure recovery and a later
+fresh deployment retaining database records and uploads. See the
+[connection guide](hosting-database-connections.md) for the exact profile,
+683.423-second full pass, historical evidence and limits. Qualification uses a
+trusted native Linux arm64/root-image fixture and private-CA HTTPS. It does not
+qualify production ACME, arbitrary nonroot initialization, database-native
+backup/restore, disk loss, cross-host/external storage or full R/A/matrix parity.
+
+### Historical storage-less route qualification
 
 The connected public-image workflow is physically qualified at
 `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree

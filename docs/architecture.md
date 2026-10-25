@@ -1,7 +1,7 @@
 # Architecture
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
+Historical accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
 2026-10-22. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
 and earlier `a763a90b3896257b784c9498d01650ccdad2427a` are historical.
 The [specification](product-spec.md) retains both targets. Hosting parity is the
@@ -29,6 +29,29 @@ runners, and retains operational evidence. Accepted hosting extends those execut
 | `internal/hostingproxy` | Standalone Linux Traefik configuration, TLS and state verification. |
 | `web/app` | React/Vite/TanStack application built into `web/dist` and embedded in Go. |
 | `db/migrations` | Ordered PostgreSQL schema changes with checksum protection. |
+
+## Connected stateful hosting
+
+Current connected application and owned-upload-volume qualification uses physical
+source `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
+`3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
+One image application connects to PostgreSQL or Redis without storage first, then
+attaches one owned named volume through acknowledged interruption. The qualified
+UI/API/runner workflow covers routed replacement, failure recovery and a later
+fresh deployment retaining database records and uploads. See the
+[connection guide](hosting-database-connections.md) for the exact profile,
+683.423-second full pass, historical evidence and limits. Qualification uses a
+trusted native Linux arm64/root-image fixture and private-CA HTTPS. It does not
+qualify production ACME, arbitrary nonroot initialization, database-native
+backup/restore, disk loss, cross-host/external storage or full R/A/matrix parity.
+
+The controller freezes resource, binding, storage and route inputs in immutable
+plans. The enrolled Go runner stops the exact predecessor before starting the
+replacement as the sole volume writer. Ready yield, strict proxy application and
+fresh finalization settle separate durable receipts. Offered recovery actions
+require fresh reviewed authority and preserve candidate-written records/uploads;
+resume does not undo data writes. The earlier storage-less replacement retains
+its distinct candidate-before-retirement contract.
 
 ## Flow
 

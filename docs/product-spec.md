@@ -7,7 +7,7 @@ Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08be
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Historical accepted application/source assessment: `5ff5b7e114fc922e3c3f2a6e93670c133d205923`, reviewed on 2026-10-24, through migration 0071.
-Current bounded connected-application route qualification: `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, physically verified on 2026-10-25, through migration 0073.
+Current bounded connected-application/owned-volume qualification: physical source `09a432407c41671517fa342d28c07e9c79978aea`, verified on 2026-10-25, documentation accepted at `3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
 This qualification does not establish full hosting acceptance or parity. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
@@ -1230,7 +1230,7 @@ These are contract/database tests, not an actual proxy-recovery runtime fixture.
 Storage deployment-review/recovery UI is accepted with UX-only limits below.
 Direct database engine qualification and default-off runner coordination are
 accepted below; the later exact API/runner workflow and direct UI are accepted below; metadata
-remains `adapter_unqualified` and application binding remains unfinished. Backups,
+remains `adapter_unqualified`; application binding was unfinished at this checkpoint. Backups,
 restore, unknown-writer handling, production ACME, complete A19/A26 and full
 hosting parity remain unfinished.
 
@@ -1265,7 +1265,7 @@ checkout; root ignored assets remain historical. Storage metadata, the private h
 the bounded API/compiled-runner mounted workflow is accepted below; accepted storage deployment-review/recovery UI is separate UX evidence; database
 direct engine qualification and default-off coordination are accepted below;
 the later exact API/runner workflow and direct UI are accepted below; metadata
-remains `adapter_unqualified` and application binding remains unfinished.
+remains `adapter_unqualified`; application binding was unfinished at this checkpoint.
 
 Automatic deployment evidence is source-bound: runtime
 `3510437292cb7195a7cda9760b7eb7bf468d7877` passed in 66.85 seconds at
@@ -1589,7 +1589,29 @@ Reviewed on 2026-10-22. These primary sources qualify design assumptions only; N
 - W12: [Docker Buildx remote driver](https://docs.docker.com/build/builders/drivers/remote/), connections to externally managed BuildKit.
 - W13: [Microsoft WSL security model](https://wsl.dev/technical-documentation/security/), distributions and integration settings do not create an untrusted-code sandbox.
 
+## Current connected stateful qualification
+
+Current connected application and owned-upload-volume qualification uses physical
+source `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
+`3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
+One image application connects to PostgreSQL or Redis without storage first, then
+attaches one owned named volume through acknowledged interruption. The qualified
+UI/API/runner workflow covers routed replacement, failure recovery and a later
+fresh deployment retaining database records and uploads. See the
+[connection guide](hosting-database-connections.md) for the exact profile,
+683.423-second full pass, historical evidence and limits. Qualification uses a
+trusted native Linux arm64/root-image fixture and private-CA HTTPS. It does not
+qualify production ACME, arbitrary nonroot initialization, database-native
+backup/restore, disk loss, cross-host/external storage or full R/A/matrix parity.
+
+The [atomic audit](parity-audit.md) retains 30 verified outcomes out of 933
+eligible outcomes, with 934 definitions. Presence is 66 implemented, 283 partial
+and 584 missing. No aggregate gate gains acceptance.
+
 ## Connected application route continuation qualification
+
+This section retains the historical storage-less qualification and its original
+limits. The current connected storage workflow is summarized above.
 
 The connected public-image workflow is physically qualified at
 `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
@@ -1626,7 +1648,7 @@ database-native backup/restore, disk loss and public ACME remain unqualified.
 There is no in-flight request draining or control-plane restart proof. Full R42,
 A17 and all full requirement, acceptance and matrix gates remain incomplete.
 
-The parity audit now retains 20 verified atomic outcomes out of 933 eligible
+At this historical checkpoint, the parity audit retained 20 verified atomic outcomes out of 933 eligible
 outcomes, with 934 definitions. Presence is 65 implemented, 284 partial and 584
 missing. This is an evidence lower bound, not a completion percentage. The
 previous 17-outcome snapshot and original 4-outcome baseline remain in audit
