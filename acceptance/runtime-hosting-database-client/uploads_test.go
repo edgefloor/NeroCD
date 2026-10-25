@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func uploadTestHandler(t *testing.T, directory, instance string) (*httpUploadHandler, http.Handler) {
@@ -33,6 +34,82 @@ func uploadTestRequest(handler http.Handler, method, path string, body io.Reader
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(method, path, body))
 	return response
+}
+
+func TestStorageReadinessWritesBeforeFailureAndOnlyOnce(t *testing.T) {
+	directory := t.TempDir()
+	uploads, err := newHTTPUploadHandler(directory, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = uploads.Close() })
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	count := 0
+	base := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) })
+	handler := httpStorageWriteThenUnready(base, uploads, func(ctx context.Context, action, key, value string) (string, error) {
+		count++
+		if action != "put" || key != "candidate_write" || value != "retained_candidate_before_recovery" {
+			t.Error("readiness wrote an unexpected database record")
+		}
+		data, err := os.ReadFile(filepath.Join(directory, "candidate_write"))
+		want := make([]byte, 65537)
+		for i := range want {
+			want[i] = byte(i*31) ^ 66
+		}
+		if err != nil || !bytes.Equal(data, want) {
+			t.Error("database write began before the atomic upload completed")
+		}
+		close(entered)
+		select {
+		case <-release:
+			return value, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	for _, target := range []struct{ method, path string }{{"POST", "/fixture-write-then-unready"}, {"GET", "/fixture-write-then-unready?extra=1"}, {"GET", "/ready"}} {
+		if uploadTestRequest(handler, target.method, target.path, nil).Code != 404 {
+			t.Fatal("controlled failure escaped its fixed readiness path")
+		}
+	}
+	if count != 0 {
+		t.Fatal("non-readiness request triggered candidate writes")
+	}
+	results := make(chan int, 9)
+	go func() { results <- uploadTestRequest(handler, "GET", "/fixture-write-then-unready", nil).Code }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("readiness did not reach deterministic database write")
+	}
+	select {
+	case <-results:
+		t.Fatal("readiness responded before candidate writes completed")
+	default:
+	}
+	var group sync.WaitGroup
+	for range 8 {
+		group.Go(func() { results <- uploadTestRequest(handler, "GET", "/fixture-write-then-unready", nil).Code })
+	}
+	releaseOnce.Do(func() { close(release) })
+	group.Wait()
+	for range 9 {
+		if <-results != 503 {
+			t.Fatal("controlled readiness failure became ready")
+		}
+	}
+	if count != 1 {
+		t.Fatal("repeated readiness probes rewrote candidate data")
+	}
+	files, err := os.ReadDir(directory)
+	if err != nil || len(files) != 1 || files[0].Name() != "candidate_write" {
+		t.Fatal("controlled failure left unexpected upload files")
+	}
+	if response := uploadTestRequest(httpStorageWriteThenUnready(base, nil, nil), "GET", "/fixture-write-then-unready", nil); response.Code != 404 {
+		t.Fatal("storage failure path escaped into storage-less image")
+	}
 }
 
 func TestUploadRetainsBytesAndModesAcrossApplicationReplacement(t *testing.T) {

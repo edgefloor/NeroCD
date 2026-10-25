@@ -446,7 +446,7 @@ func serve() error {
 		}
 		defer func() { _ = uploads.Close() }()
 	}
-	application, err := httpDatabaseInstanceHandler(instance, httpDatabaseUploads(httpDatabaseHandler(record), uploads))
+	application, err := httpDatabaseInstanceHandler(instance, httpStorageWriteThenUnready(httpDatabaseUploads(httpDatabaseHandler(record), uploads), uploads, record))
 	if err != nil {
 		return err
 	}

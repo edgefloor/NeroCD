@@ -31,6 +31,48 @@ import (
 
 const applicationDatabaseStorageVersion = "application-database.storage.v1"
 
+func TestApplicationDatabaseStorageReadinessFailureLifecycle(t *testing.T) {
+	stage := domain.HostingApplicationDatabaseStage{OperationID: "operation", Phase: "attached", Hash: "stage", Candidate: domain.HostingApplicationDatabaseCandidate{Hash: "candidate"}}
+	var public applicationDatabaseStoragePublic
+	if json.Unmarshal([]byte(`{"id":"operation","state":"failed","application_database_storage_state":{"version":"application-database.storage.v1","phase":"replacement_failed","receipt_id":"failed_receipt","state_hash":"writer","stage_hash":"stage","candidate_hash":"candidate","recovery_actions":["resume_predecessor"],"recovery_state":"none"}}`), &public) != nil {
+		t.Fatal("fixture projection invalid")
+	}
+	for _, mode := range []string{"stopped_failure_live_runner", "old_exit_failure", "transient_attached", "candidate_stop_incomplete", "wrong_operation", "wrong_stage", "wrong_candidate", "missing_resume_action", "wrong_state", "missing_projection"} {
+		t.Run(mode, func(t *testing.T) {
+			copy := public
+			state := *public.StorageState
+			copy.StorageState = &state
+			var exit databaseRunnerExit
+			switch mode {
+			case "old_exit_failure":
+				exit = databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 1}
+			case "transient_attached":
+				copy.StorageState.Phase = "stopped"
+			case "candidate_stop_incomplete":
+				copy.StorageState.Phase = "candidate_stopped"
+			case "wrong_operation":
+				copy.ID = "other"
+			case "wrong_stage":
+				copy.StorageState.StageHash = "other"
+			case "wrong_candidate":
+				copy.StorageState.CandidateHash = "other"
+			case "missing_resume_action":
+				copy.StorageState.RecoveryActions = []string{}
+			case "wrong_state":
+				copy.State = "applying"
+			case "missing_projection":
+				copy.StorageState = nil
+			}
+			if applicationDatabaseRouteProfileFailureObserved(true, "readiness", stage, &copy, exit) != (mode == "stopped_failure_live_runner") {
+				t.Fatal("storage readiness observation confused stopped recovery with old runner-exit failure")
+			}
+		})
+	}
+	if !applicationDatabaseRouteProfileFailureObserved(false, "readiness", stage, nil, databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 1}) || applicationDatabaseRouteProfileFailureObserved(false, "readiness", stage, nil, databaseRunnerExit{}) {
+		t.Fatal("storage-less readiness failure semantics changed")
+	}
+}
+
 // This fixture qualifies a trusted root client that initializes its one owned
 // volume. The normal nonroot, storage-less client remains a separate profile.
 type applicationDatabaseStorageFixture struct {
@@ -124,13 +166,17 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	r := f.routes
 	candidate := op
 	candidate.Result = &domain.HostingResult{ContainerID: stage.Candidate.ContainerID}
-	s.assertTransition(f, previous, candidate)
-	if applicationDatabaseUpload(f.t.Context(), nil, "", "", candidate, "GET", "retained_a", s.Files["retained_a"], "") != nil {
-		f.t.Fatal("failed candidate lost retained upload before recovery")
-	}
 	data := applicationDatabaseStoragePayload(66)
-	if applicationDatabaseUpload(f.t.Context(), nil, "", "", candidate, "PUT", "candidate_write", data, "") != nil || applicationDatabaseHTTPRecord(f.t.Context(), candidate, "PUT", "candidate_write", "retained_candidate_before_recovery") != nil {
-		f.t.Fatal("candidate data writes before recovery failed")
+	if failure == "readiness" {
+		s.assertReadinessStopped(f, previous, candidate, stage)
+	} else {
+		s.assertTransition(f, previous, candidate)
+		if applicationDatabaseUpload(f.t.Context(), nil, "", "", candidate, "GET", "retained_a", s.Files["retained_a"], "") != nil {
+			f.t.Fatal("failed candidate lost retained upload before recovery")
+		}
+		if applicationDatabaseUpload(f.t.Context(), nil, "", "", candidate, "PUT", "candidate_write", data, "") != nil || applicationDatabaseHTTPRecord(f.t.Context(), candidate, "PUT", "candidate_write", "retained_candidate_before_recovery") != nil {
+			f.t.Fatal("candidate data writes before recovery failed")
+		}
 	}
 	s.Files["candidate_write"] = data
 	action := "resume_predecessor"
@@ -486,19 +532,8 @@ func (s *applicationDatabaseStorageFixture) assertTransition(f *databaseRunnerFi
 	if s.Plan == nil || candidate.Plan == nil || candidate.Plan.Storage == nil || *candidate.Plan.Storage != *s.Plan || previous.Plan == nil || previous.Plan.Storage == nil || *previous.Plan.Storage != *s.Plan {
 		f.t.Fatal("one-writer transition changed exact retained volume origin")
 	}
-	inspect := func(op domain.HostingOperation) (databaseRunnerContainer, string, string) {
-		raw := f.docker("container", "inspect", op.Result.ContainerID, "--format", `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}},"State":{{json .State}},"Mounts":{{json .Mounts}}}`)
-		var c databaseRunnerContainer
-		var state struct {
-			State struct{ FinishedAt, StartedAt string }
-		}
-		if json.Unmarshal(raw, &c) != nil || json.Unmarshal(raw, &state) != nil || c.ID != op.Result.ContainerID || c.Image != op.Release.ImageID || c.Config.Labels["io.nerocd.binding"] != op.BindingID || c.Config.Labels["io.nerocd.operation"] != op.ID || c.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || c.Config.Labels["io.nerocd.release"] != op.Release.Hash || !applicationDatabaseStorageMount(c, s.Plan) {
-			f.t.Fatal("one-writer observation lacks exact container, image, labels or mount")
-		}
-		return c, state.State.FinishedAt, state.State.StartedAt
-	}
-	old, stopped, _ := inspect(previous)
-	next, _, started := inspect(candidate)
+	old, stopped, _ := s.inspectWriter(f, previous)
+	next, _, started := s.inspectWriter(f, candidate)
 	if !applicationDatabaseStorageStopBeforeStart(old.State.Running, next.State.Running, stopped, started) {
 		f.t.Fatal("previous application was not independently proven stopped before candidate start")
 	}
@@ -506,6 +541,93 @@ func (s *applicationDatabaseStorageFixture) assertTransition(f *databaseRunnerFi
 	if len(writers) != 1 || writers[0] != candidate.Result.ContainerID {
 		f.t.Fatal("retained upload volume has an extra or missing running writer")
 	}
+}
+
+func (s *applicationDatabaseStorageFixture) inspectWriter(f *databaseRunnerFixture, op domain.HostingOperation) (databaseRunnerContainer, string, string) {
+	f.t.Helper()
+	if s.Plan == nil || op.Plan == nil || op.Plan.Storage == nil || *op.Plan.Storage != *s.Plan || op.Result == nil || op.Release == nil {
+		f.t.Fatal("writer observation lacks exact retained plan and container identity")
+	}
+	raw := f.docker("container", "inspect", op.Result.ContainerID, "--format", `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}},"State":{{json .State}},"Mounts":{{json .Mounts}}}`)
+	var c databaseRunnerContainer
+	var state struct {
+		State struct{ FinishedAt, StartedAt string }
+	}
+	if json.Unmarshal(raw, &c) != nil || json.Unmarshal(raw, &state) != nil || c.ID != op.Result.ContainerID || c.Image != op.Release.ImageID || c.Config.Labels["io.nerocd.binding"] != op.BindingID || c.Config.Labels["io.nerocd.operation"] != op.ID || c.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || c.Config.Labels["io.nerocd.release"] != op.Release.Hash || !applicationDatabaseStorageMount(c, s.Plan) {
+		f.t.Fatal("one-writer observation lacks exact container, image, labels or mount")
+	}
+	return c, state.State.FinishedAt, state.State.StartedAt
+}
+
+func (s *applicationDatabaseStorageFixture) assertReadinessStopped(f *databaseRunnerFixture, previous, candidate domain.HostingOperation, stage domain.HostingApplicationDatabaseStage) {
+	f.t.Helper()
+	if candidate.State != "failed" || candidate.ApplicationDatabaseYield != nil || candidate.CompleteReceipt != nil || !candidate.MutationHold || stage.Phase != "attached" {
+		f.t.Fatal("storage readiness failure lost exact failed operation or safety hold")
+	}
+	old, oldFinished, _ := s.inspectWriter(f, previous)
+	next, finished, started := s.inspectWriter(f, candidate)
+	stopA, errA := time.Parse(time.RFC3339Nano, oldFinished)
+	startB, errB := time.Parse(time.RFC3339Nano, started)
+	stopB, errC := time.Parse(time.RFC3339Nano, finished)
+	if old.State.Running || next.State.Running || errA != nil || errB != nil || errC != nil || stopA.IsZero() || startB.IsZero() || stopB.IsZero() || stopA.After(startB) || startB.After(stopB) {
+		f.t.Fatal("storage readiness failure did not independently prove A then B stopped")
+	}
+	if strings.TrimSpace(string(f.docker("container", "ls", "--quiet", "--no-trunc", "--filter", "volume="+s.Plan.VolumeName))) != "" || f.volumeProof(candidate) != s.VolumeProof {
+		f.t.Fatal("failed readiness retained a running volume writer or changed volume identity")
+	}
+	var total int
+	if f.database.QueryRow(f.t.Context(), `SELECT count(*) FROM hosting_application_database_storage_writers WHERE operation_id=$1`, candidate.ID).Scan(&total) != nil || total != 4 {
+		f.t.Fatal("failed readiness lacks exact ordered stop and failure receipt cardinality")
+	}
+	var authority domain.HostingAuthority
+	prior, observation, lastReceipt := "", "", ""
+	for i, phase := range []string{"stop_intent", "stopped", "candidate_stopped", "replacement_failed"} {
+		var raw []byte
+		if f.database.QueryRow(f.t.Context(), `SELECT request FROM hosting_application_database_storage_writers WHERE operation_id=$1 AND phase=$2`, candidate.ID, phase).Scan(&raw) != nil || len(raw) > 32768 {
+			f.t.Fatal("failed readiness writer receipt unavailable")
+		}
+		var request struct {
+			domain.HostingAuthority
+			Receipt struct {
+				Version           string                   `json:"version"`
+				ReceiptID         string                   `json:"receipt_id"`
+				Phase             string                   `json:"phase"`
+				PlanHash          string                   `json:"plan_hash"`
+				StorageRef        domain.HostingStorageRef `json:"storage_ref"`
+				PreviousStateHash string                   `json:"previous_state_hash"`
+				StageHash         string                   `json:"stage_hash"`
+				CandidateHash     string                   `json:"candidate_hash"`
+				PredecessorHash   string                   `json:"predecessor_hash"`
+				ObservationHash   string                   `json:"observation_hash"`
+				Hash              string                   `json:"hash"`
+			} `json:"receipt"`
+		}
+		err := json.Unmarshal(raw, &request)
+		clear(raw)
+		receipt := request.Receipt
+		if i == 0 {
+			authority = request.HostingAuthority
+		}
+		if err != nil || request.HostingAuthority != authority || authority.OperationID != candidate.ID || authority.RunID != candidate.RunID || authority.LeaseID == "" || authority.Fence == "" || authority.Attempt < 1 || receipt.Version != applicationDatabaseStorageVersion || receipt.Phase != phase || receipt.ReceiptID == "" || receipt.Hash == "" || receipt.PlanHash != candidate.Plan.Hash || receipt.StorageRef != s.Plan.Reference || receipt.PredecessorHash != domain.HostingDocumentHash(candidate.Plan.PreviousHealthy) || receipt.PreviousStateHash != prior {
+			f.t.Fatal("failed readiness stop/failure receipt lost exact provenance or hash chain")
+		}
+		if i >= 2 && (receipt.StageHash != stage.Hash || receipt.CandidateHash != stage.Candidate.Hash || receipt.ObservationHash == "") {
+			f.t.Fatal("failed readiness receipt does not identify the exact stopped candidate")
+		}
+		if i == 2 {
+			observation = receipt.ObservationHash
+		}
+		if i == 3 && receipt.ObservationHash != observation {
+			f.t.Fatal("replacement failure does not retain exact candidate-stop observation")
+		}
+		prior, lastReceipt = receipt.Hash, receipt.ReceiptID
+	}
+	public := s.public(f, candidate.ID)
+	phase, err := f.applicationDatabasePhaseAuthority(authority.LeaseID)
+	if err != nil || phase.HostingAuthority != authority || phase.Mode != "deploy" || phase.LeaseStatus != "failed" || phase.TaskStatus != "failed" || phase.CompletionKey != lastReceipt || public.StorageState.StateHash != prior || public.StorageState.ReceiptID != lastReceipt || databaseUpgradeAuthorityLogCheck(f.logs.snapshot(), authority, f.protected) != nil {
+		f.t.Fatal("failed readiness did not settle original failed task under exact failure receipt")
+	}
+	f.assertConnectionJournalRetired(candidate.ID)
 }
 
 func (s *applicationDatabaseStorageFixture) deployment(f *databaseRunnerFixture, input any) any {

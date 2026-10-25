@@ -1,17 +1,59 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 const httpUploadLimit = 1 << 20
+
+// Only the opted-in disposable storage image exposes this fixed failure path.
+// Its first readiness probe completes both deterministic writes before returning
+// 503. Repeated probes cannot race another write or turn readiness successful.
+func httpStorageWriteThenUnready(base http.Handler, uploads *httpUploadHandler, record func(context.Context, string, string, string) (string, error)) http.Handler {
+	if uploads == nil {
+		return base
+	}
+	var once sync.Once
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fixture-write-then-unready" || r.URL.RawQuery != "" {
+			base.ServeHTTP(w, r)
+			return
+		}
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+			data := make([]byte, 65537)
+			for i := range data {
+				data[i] = byte(i*31) ^ 66
+			}
+			defer clear(data)
+			// Invoke the existing bounded handler directly; this URL is never dialed.
+			request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://fixture.invalid/uploads/candidate_write", bytes.NewReader(data))
+			if err != nil {
+				return
+			}
+			response := httptest.NewRecorder()
+			uploads.ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				return
+			}
+			_, _ = record(ctx, "put", "candidate_write", "retained_candidate_before_recovery")
+		})
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "fixture readiness intentionally rejected", http.StatusServiceUnavailable)
+	})
+}
 
 // This handler is enabled only by the separately qualified root fixture image.
 // It has no arbitrary path, remove, archive, or backup endpoint.

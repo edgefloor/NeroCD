@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1459,9 +1460,23 @@ func TestApplicationDatabaseRouteRuntimeReceiptReplay(t *testing.T) {
 }
 
 func applicationDatabaseRouteFailureObserved(scenario, phase string, exit databaseRunnerExit) bool {
-	// VerifyReady is read-only: its failure leaves the last acknowledged attached
+	// Storage-less VerifyReady failure leaves the last acknowledged attached
 	// stage and exits the runner. A transient attached stage is not failure proof.
 	return scenario == "readiness" && phase == "attached" && exit.Exited && exit.Kind == "process_exit" && exit.Code == 1 || scenario == "cutover" && phase == "ready" && !exit.Exited
+}
+
+func applicationDatabaseRouteProfileFailureObserved(storage bool, scenario string, stage domain.HostingApplicationDatabaseStage, public *applicationDatabaseStoragePublic, exit databaseRunnerExit) bool {
+	if !storage || scenario != "readiness" {
+		return applicationDatabaseRouteFailureObserved(scenario, stage.Phase, exit)
+	}
+	if exit.Exited || stage.Phase != "attached" || public == nil || public.StorageState == nil || public.ID != stage.OperationID || public.State != "failed" || stage.Hash == "" || stage.Candidate.Hash == "" {
+		return false
+	}
+	state := public.StorageState
+	if state.Version != applicationDatabaseStorageVersion || state.Phase != "replacement_failed" || state.ReceiptID == "" || state.StateHash == "" || state.RecoveryState != "none" {
+		return false
+	}
+	return state.StageHash == stage.Hash && state.CandidateHash == stage.Candidate.Hash && slices.Contains(state.RecoveryActions, "resume_predecessor")
 }
 
 func applicationDatabaseRouteReadinessRejected(ctx context.Context, snapshot domain.HostingSnapshot, container string) error {
@@ -1656,6 +1671,9 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 				deploy.ExpectedRuntimeConfigurationGeneration = a.Snapshot.RuntimeConfiguration.Generation
 				if failure == "readiness" {
 					deploy.Readiness = domain.HostingReadiness{Path: "/never-ready", TimeoutSeconds: 3}
+					if storage {
+						deploy.Readiness.Path = "/fixture-write-then-unready"
+					}
 				}
 				input := r.deployment(deploy)
 				if f.storage != nil {
@@ -1674,8 +1692,15 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 				for {
 					row, err := sqlcgen.New(f.database).ReadApplicationDatabaseStage(t.Context(), candidate.ID)
 					exit := f.process.status()
-					if err == nil && json.Unmarshal(row.Stage, &staged) == nil && applicationDatabaseRouteFailureObserved(failure, staged.Phase, exit) {
-						break
+					if err == nil && json.Unmarshal(row.Stage, &staged) == nil {
+						var public *applicationDatabaseStoragePublic
+						if storage && failure == "readiness" {
+							p := f.storage.public(f, candidate.ID)
+							public = &p
+						}
+						if applicationDatabaseRouteProfileFailureObserved(storage, failure, staged, public, exit) {
+							break
+						}
 					}
 					if time.Now().After(deadline) || exit.Exited {
 						t.Fatal("route failure candidate did not reach exact expected stage")
@@ -1694,6 +1719,9 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 						t.Fatal("cutover failure did not commit original ready yield")
 					}
 				}
+				if storage && failure == "readiness" {
+					f.awaitSourceJournalRetired()
+				}
 				f.stop()
 				if wire != nil {
 					select {
@@ -1710,7 +1738,7 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 				if err != nil || staged.Validate(*op.Plan, proof) != nil {
 					t.Fatal("route failure stage does not match exact operation, plan and endpoint proof")
 				}
-				if failure == "readiness" && (op.ApplicationDatabaseYield != nil || applicationDatabaseRouteReadinessRejected(t.Context(), op.Snapshot, staged.Candidate.ContainerID) != nil) {
+				if failure == "readiness" && !storage && (op.ApplicationDatabaseYield != nil || applicationDatabaseRouteReadinessRejected(t.Context(), op.Snapshot, staged.Candidate.ContainerID) != nil) {
 					t.Fatal("readiness failure yielded or lacks exact candidate HTTP rejection")
 				}
 				if storage {

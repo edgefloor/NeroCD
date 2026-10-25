@@ -181,7 +181,13 @@ and ordinary rolling update permit shared volume overlap; NeroCD's one-writer
 contract is intentionally stricter.
 
 Both engines exercise failed-readiness `resume_predecessor` and terminal failed
-proxy `complete_replacement` recovery. The proxy fault pauses only the exact
+proxy `complete_replacement` recovery. For the storage readiness case, the fixed
+`/fixture-write-then-unready` path synchronously completes one deterministic
+65,537-byte upload and database write before returning 503. Repeated probes stay
+503 without rewriting either value. The runner stops B, records the exact
+`candidate_stopped` then `replacement_failed` receipts, acknowledges its journal,
+and stays alive. The fixture inspects stopped B and verifies both writes after
+resuming A; it makes no HTTP request to stopped B. The proxy fault pauses only the exact
 ownership-verified nested managed proxy after B is ready. A fallback unpause is
 registered before the effect, and identity is checked again before each pause
 and unpause. This deliberately interrupts unrelated routes too. The test asserts
