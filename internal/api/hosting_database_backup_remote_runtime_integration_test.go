@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -257,19 +258,7 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 		Revision int64  `json:"revision"`
 	}](f, f.token, "POST", "/api/v1/projects/"+source.Resource.ProjectID+"/database-backup-targets", map[string]any{"request_id": backupRuntimeRequestID(t), "expected_revision": 0, "name": "Runtime S3", "endpoint": "http://127.0.0.1:9000", "bucket": "nerocd-runtime", "region": "us-east-1", "enabled": true, "credentials": map[string]string{"access_key": silo.access, "secret_key": silo.secret}}, 200)
 	validation := databaseRunnerJSON[databaseRemoteTransfer](f, f.token, "POST", "/api/v1/projects/"+source.Resource.ProjectID+"/database-backup-targets/"+target.ID+"/validations", map[string]any{"request_id": backupRuntimeRequestID(t), "expected_revision": target.Revision, "destination_id": f.destination}, 202)
-	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
-	defer cancel()
-	for validation.State != "succeeded" {
-		select {
-		case <-ctx.Done():
-			t.Fatal("real ListObjects validation failed")
-		case <-time.After(100 * time.Millisecond):
-		}
-		validation = databaseRunnerJSON[databaseRemoteTransfer](f, f.token, "GET", "/api/v1/database-backup-transfers/"+validation.ID, nil, 200)
-		if validation.State == "failed" || validation.State == "uncertain" {
-			t.Fatal("real ListObjects validation rejected")
-		}
-	}
+	databaseRemoteAwaitValidation(f, validation)
 	browser := startDatabaseBackupBrowserProfile(f, source, "backup_remote")
 	id := browser.await("backup")
 	diagnosticID = id
@@ -493,4 +482,148 @@ func databaseRemoteDumpPlanCount(counts *databaseRunnerAPICounts) uint32 {
 		}
 	}
 	return total
+}
+
+// Reuse the runner-aware waiter so an exited runner cancels a poll and retains
+// the last successfully observed transfer. Unknown values never become output.
+func waitDatabaseRemoteValidation(ctx context.Context, process *databaseRunnerProcess, last databaseRemoteTransfer, fetch func(context.Context) (databaseRemoteTransfer, error)) (databaseRemoteTransfer, string) {
+	_, reason := waitDatabaseRunnerOperation(ctx, process, func(ctx context.Context) (domain.HostingOperation, error) {
+		next, err := fetch(ctx)
+		if err != nil {
+			return domain.HostingOperation{}, err
+		}
+		last = next
+		state := next.State
+		if state == "uncertain" {
+			state = "reconciliation_required"
+		}
+		return domain.HostingOperation{State: state}, nil
+	})
+	return last, reason
+}
+
+func databaseRemoteAwaitValidation(f *databaseRunnerFixture, initial databaseRemoteTransfer) (last databaseRemoteTransfer) {
+	f.t.Helper()
+	last = initial
+	reason := "unknown"
+	defer func() {
+		if f.t.Failed() {
+			f.reportDatabaseRemoteValidationFailure(last, reason)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(f.t.Context(), 90*time.Second)
+	defer cancel()
+	f.processMu.Lock()
+	process := f.process
+	f.processMu.Unlock()
+	last, reason = waitDatabaseRemoteValidation(ctx, process, initial, func(ctx context.Context) (databaseRemoteTransfer, error) {
+		var value databaseRemoteTransfer
+		invalid := errors.New("remote validation poll unavailable")
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.server.URL+"/api/v1/database-backup-transfers/"+initial.ID, nil)
+		if err != nil {
+			return value, invalid
+		}
+		req.Header.Set("Authorization", "Bearer "+f.token)
+		response, err := f.client.Do(req)
+		if err != nil {
+			return value, invalid
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(response.Body, 16385))
+		defer clear(raw)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil || len(raw) > 16384 || response.StatusCode != http.StatusOK || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || json.Unmarshal(raw, &value) != nil || value.ID != initial.ID || value.Mode != "validate" {
+			return databaseRemoteTransfer{}, invalid
+		}
+		return value, nil
+	})
+	if reason != "" {
+		f.t.Fatal("real ListObjects validation did not succeed")
+	}
+	return last
+}
+
+type databaseRemoteValidationEvidence struct {
+	LastState, StoredState, FailureCode, Reason, RunStatus, LeaseStatus string
+	RunLinked, LeaseLinked, IntentReceipt, TerminalReceipt              string
+	TerminalClass, Requests                                             string
+	RunnerExited                                                        bool
+	RunnerCode                                                          int
+}
+
+func databaseRemoteValidationProjection(last, stored, failure, reason, run, lease string, observed, linked, leased, intent, terminal bool, raw []byte, exit databaseRunnerExit, counts *databaseRunnerAPICounts) databaseRemoteValidationEvidence {
+	out := databaseRemoteValidationEvidence{LastState: "unknown", StoredState: "unknown", FailureCode: "unknown", Reason: "unknown", RunStatus: "unknown", LeaseStatus: "unknown", RunLinked: "unknown", LeaseLinked: "unknown", IntentReceipt: "unknown", TerminalReceipt: "unknown", TerminalClass: databaseBackupTerminalClass(raw), Requests: counts.summary(), RunnerExited: exit.Exited, RunnerCode: -1}
+	state := func(v string) string {
+		switch v {
+		case "queued", "dispatched", "applying", "succeeded", "failed", "uncertain":
+			return v
+		}
+		return "unknown"
+	}
+	out.LastState = state(last)
+	switch reason {
+	case "runner_exited", "deadline", "canceled", "operation_poll", "terminal_operation":
+		out.Reason = reason
+	}
+	if exit.Exited && exit.Code >= 0 && exit.Code <= 255 {
+		out.RunnerCode = exit.Code
+	}
+	if !observed {
+		return out
+	}
+	out.StoredState = state(stored)
+	switch failure {
+	case "", "access_denied", "network_denied", "remote_unavailable", "object_mismatch", "archive_unavailable", "interrupted", "authority_denied":
+		out.FailureCode = failure
+	}
+	switch run {
+	case "none", "queued", "running", "succeeded", "failed", "canceled", "waiting_approval":
+		out.RunStatus = run
+	}
+	switch lease {
+	case "none", "active", "succeeded", "failed", "canceled", "expired":
+		out.LeaseStatus = lease
+	}
+	out.RunLinked, out.LeaseLinked = fmt.Sprint(linked), fmt.Sprint(leased)
+	out.IntentReceipt, out.TerminalReceipt = "absent", "absent"
+	if intent {
+		out.IntentReceipt = "present"
+	}
+	if terminal {
+		out.TerminalReceipt = "present"
+	}
+	return out
+}
+
+// Read only the exact validation's linked task and latest matching runner lease.
+// Receipt presence also matches that lease's complete authority, never another
+// operation or an earlier lease. Raw rows and identifiers stay private.
+const databaseRemoteValidationQuery = `SELECT b.state,b.failure_code,COALESCE(t.status,'none'),
+ COALESCE((CASE WHEN l.status='active' AND l.expires_at<=clock_timestamp() THEN 'expired' ELSE l.status END),'none'),t.id IS NOT NULL,l.id IS NOT NULL,
+ EXISTS(SELECT 1 FROM hosting_database_backup_transfer_receipts r WHERE r.operation_id=b.id AND r.phase='intent' AND r.authority=jsonb_build_object('operation_id',b.id,'run_id',t.id,'lease_id',l.id,'attempt',l.attempt,'fence',l.fence)),
+ EXISTS(SELECT 1 FROM hosting_database_backup_transfer_receipts r WHERE r.operation_id=b.id AND r.phase IN ('complete','failed','uncertain') AND r.authority=jsonb_build_object('operation_id',b.id,'run_id',t.id,'lease_id',l.id,'attempt',l.attempt,'fence',l.fence))
+ FROM hosting_database_backup_transfers b
+ LEFT JOIN task_runs t ON t.id=b.run_id AND t.id='db_transfer_'||b.id AND t.run_spec->>'type'='database_backup_transfer' AND t.run_spec->>'hosting_operation_id'=b.id AND t.run_spec->>'hosting_mode'=b.mode
+ LEFT JOIN LATERAL (SELECT x.* FROM run_leases x WHERE x.run_id=t.id AND x.runner_id=b.runner_id ORDER BY x.attempt DESC LIMIT 1) l ON true
+ WHERE b.id=$1 AND b.mode='validate'`
+
+func (f *databaseRunnerFixture) reportDatabaseRemoteValidationFailure(last databaseRemoteTransfer, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var state, failure, run, lease string
+	var linked, leased, intent, terminal bool
+	observed := false
+	if f.database != nil && last.ID != "" {
+		observed = f.database.QueryRow(ctx, databaseRemoteValidationQuery, last.ID).Scan(&state, &failure, &run, &lease, &linked, &leased, &intent, &terminal) == nil
+	}
+	raw := f.logs.snapshot()
+	defer clear(raw)
+	evidence := databaseRemoteValidationProjection(last.State, state, failure, reason, run, lease, observed, linked, leased, intent, terminal, raw, f.failureRunnerStatus(), &f.apiCounts)
+	output := f.failureOutput
+	if output == nil {
+		output = os.Stdout
+	}
+	encoded, err := json.Marshal(evidence)
+	if err == nil {
+		_, _ = fmt.Fprintf(output, "DATABASE_BACKUP_REMOTE_FAILURE_EVIDENCE %s\n", encoded)
+	}
 }

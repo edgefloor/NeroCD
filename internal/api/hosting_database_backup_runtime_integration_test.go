@@ -55,7 +55,31 @@ func databaseBackupTerminalClass(raw []byte) string {
 			}
 			return "unknown"
 		}
+		if code, ok := bytes.CutPrefix(line, []byte("remote backup transfer: ")); ok {
+			switch string(code) {
+			case "access_denied", "network_denied", "remote_unavailable", "object_mismatch", "archive_unavailable", "interrupted", "authority_denied":
+				return "remote_" + string(code)
+			default:
+				return "unknown"
+			}
+		}
 		switch string(line) {
+		case "remote backup authority unavailable":
+			return "remote_plan_authority"
+		case "invalid PostgreSQL remote backup request":
+			return "remote_response"
+		case "remote backup credentials unavailable":
+			return "remote_credentials"
+		case "remote backup receipt request failed":
+			return "remote_receipt_transport"
+		case "remote backup evidence requires reconciliation":
+			return "remote_evidence_held"
+		case "invalid protected remote backup network policy":
+			return "remote_network_policy"
+		case "remote backup network denied":
+			return "remote_network_denied"
+		case "remote database backups require native Linux arm64":
+			return "remote_platform"
 		case "invalid or unconfigured database backup task":
 			return "claim_configuration"
 		case "database backup authority unavailable":
