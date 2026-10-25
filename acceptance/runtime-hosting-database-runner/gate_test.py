@@ -386,6 +386,35 @@ else:
 '''
 
 
+class SourceManifestTest(unittest.TestCase):
+    def test_combined_recovery_component_is_tracked(self):
+        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n", 1)[1].rsplit("\nPY\n", 1)[0]
+        manifests = [ast.literal_eval(node.args[0]) for node in ast.walk(ast.parse(source))
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "run"
+                     and any(item.arg == "output" and isinstance(item.value, ast.Constant)
+                             and item.value.value == "source-blobs" for item in node.keywords)]
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(manifests[0][:3], ["git", "ls-files", "-s"])
+        component = "web/app/src/components/hosting/ConnectedStorageRecovery.tsx"
+        # The fixture branch does not contain the sibling UI candidate. Model
+        # its tracked path using real Git, which silently omits wrong pathspecs.
+        with tempfile.TemporaryDirectory(prefix="nerocd-source-manifest-test-") as temporary:
+            root = Path(temporary)
+            environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+            def git(*args):
+                return subprocess.run(["git", "-c", "core.fsmonitor=false", *args], cwd=root,
+                                      env=environment, capture_output=True, text=True, timeout=5, check=True).stdout
+            git("init", "--quiet")
+            path = root / component
+            path.parent.mkdir(parents=True)
+            path.write_text("export const recoveryFixture = true;\n")
+            git("add", "--", component)
+            expected = "100644 " + git("hash-object", component).strip() + " 0\t" + component
+            self.assertEqual(git(*manifests[0][1:]).splitlines(), [expected])
+            self.assertNotIn("web/app/src/pages/ConnectedStorageRecovery.tsx", manifests[0])
+
+
 class GateTest(unittest.TestCase):
     def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False):
         self.installed_closure = None

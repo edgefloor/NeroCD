@@ -310,11 +310,15 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		if f.volumeProof(maintained) != databaseVolume || f.credentialMetadata(database) != credentials {
 			f.t.Fatal("database maintenance after resume changed retained database identity")
 		}
-		proof := s.public(f,op.ID)
-		if maintained.Plan.Database.Network==nil || maintained.Plan.Database.Network.MembershipRevision!=resumed.MembershipRevision || len(maintained.Plan.Database.Network.Members)!=1 {f.t.Fatal("database maintenance did not compile resumed membership revision")}
-		member:=maintained.Plan.Database.Network.Members[0]
-		actualApp:=f.applicationContainer(previous)
-		if member.ReceiptID!=proof.StorageState.ReceiptID || member.ReceiptHash!=proof.StorageState.StateHash || member.Endpoint.Target!=op.ApplicationDatabase.Members[0].EndpointPlan.Target || member.Endpoint.EndpointID!=actualApp.Endpoints[op.ApplicationDatabase.Binding.NetworkName].EndpointID {f.t.Fatal("database maintenance did not consume exact fresh recovery receipt and observed endpoint")}
+		proof := s.public(f, op.ID)
+		if maintained.Plan.Database.Network == nil || maintained.Plan.Database.Network.MembershipRevision != resumed.MembershipRevision || len(maintained.Plan.Database.Network.Members) != 1 {
+			f.t.Fatal("database maintenance did not compile resumed membership revision")
+		}
+		member := maintained.Plan.Database.Network.Members[0]
+		actualApp := f.applicationContainer(previous)
+		if member.ReceiptID != proof.StorageState.ReceiptID || member.ReceiptHash != proof.StorageState.StateHash || member.Endpoint.Target != op.ApplicationDatabase.Members[0].EndpointPlan.Target || member.Endpoint.EndpointID != actualApp.Endpoints[op.ApplicationDatabase.Binding.NetworkName].EndpointID {
+			f.t.Fatal("database maintenance did not consume exact fresh recovery receipt and observed endpoint")
+		}
 		f.inspect(maintained)
 		var members map[string]json.RawMessage
 		if json.Unmarshal(f.docker("network", "inspect", previous.ApplicationDatabase.Origin.NetworkID, "--format", "{{json .Containers}}"), &members) != nil || len(members) != 2 || members[previous.Result.ContainerID] == nil || members[maintained.Result.ContainerID] == nil {

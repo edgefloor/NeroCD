@@ -421,7 +421,7 @@ def main():
          "internal/store/postgres_hosting_proxy.go", "internal/store/postgres_hosting_route_switch.go", "internal/hostingjobs/jobs.go",
          "internal/domain/hosting_route_switch.go", "internal/api/routes.go", "openapi.yaml", "web/app/src/api/generated.ts",
          "internal/api/hosting_database_connection*.go", "web/app/src/pages/ResourceDatabaseConnections.tsx",
-         "web/app/src/pages/ConnectedStorageRecovery.tsx",
+         "web/app/src/components/hosting/ConnectedStorageRecovery.tsx",
          "web/app/tests/browser/database-connection-live.spec.ts", "web/app/src/api/hosting-database-connections.ts", "web/app/package.json", "web/app/bun.lock",
          "internal/app/hosting_database_connection_service.go", "internal/store/postgres_hosting_database_connection*.go",
          "internal/store/sql/hosting_database_connection.sql", "internal/store/sqlcgen/hosting_database_connection.sql.go",
