@@ -51,6 +51,12 @@ func (r Registry) Supports(runType string) bool {
 
 // BuildPlan converts run into its runner primitive plan.
 func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, error) {
+	if run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
+		if domain.ValidateDatabaseBackupRetentionTask(run) != nil {
+			return domain.RunnerPrimitivePlan{}, domain.ErrInvalidDatabaseBackupRetention
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		if err := domain.ValidateDatabaseBackupTransferTask(run); err != nil {
 			return domain.RunnerPrimitivePlan{}, err

@@ -3,6 +3,17 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/retirement"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/credentials"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-retention"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/database-backup-retention"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backup-retention/previews"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backup-retention/executions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-retention/executions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-retention/executions/{execution_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/mutation"},
+
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/database-backup-targets"},
 	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/database-backup-targets"},
 	{Method: http.MethodPut, Path: "/api/v1/projects/{project_id}/database-backup-targets/{target_id}"},
@@ -283,6 +294,22 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/runners/hosting/database-backup-retention/retirement":
+		return s.runnerDatabaseBackupRetentionRetirement
+	case "/api/v1/runners/hosting/database-backup-retention/credentials":
+		return s.runnerBackupRemoteCredentials
+	case "/api/v1/resources/{id}/database-backup-retention":
+		return s.hostingDatabaseBackupRetention
+	case "/api/v1/resources/{id}/database-backup-retention/previews":
+		return s.previewDatabaseBackupRetention
+	case "/api/v1/resources/{id}/database-backup-retention/executions":
+		return s.executeDatabaseBackupRetention
+	case "/api/v1/resources/{id}/database-backup-retention/executions/{execution_id}":
+		return s.getDatabaseBackupRetentionExecution
+	case "/api/v1/runners/hosting/database-backup-retention/plan":
+		return s.runnerDatabaseBackupRetentionPlan
+	case "/api/v1/runners/hosting/database-backup-retention/mutation":
+		return s.runnerDatabaseBackupRetentionMutation
 	case "/api/v1/resources/{id}/database-connections":
 		return s.connectHostingDatabase
 	case "/api/v1/resources/{id}/database-connection":

@@ -71,9 +71,16 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 		}
 		return nil
 	}
+	var remote *backupRemoteS3
 	record := func(phase, failure string) (runner.JournalDatabaseBackupTransfer, error) {
 		id := attemptMutationKey("dbremote", a.LeaseID, a.Attempt, phase)
 		request := domain.HostingDatabaseBackupTransferMutation{HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, FailureCode: failure, DaemonID: daemon}
+		if phase == "complete" && p.Operation.Mode == "upload" && remote != nil {
+			request.RemoteCopy = remote.ownership
+		}
+		if phase == "complete" && p.Operation.Mode == "download" {
+			request.LocalCopy = e.localCopy
+		}
 		return j.AppendDatabaseBackupTransfer(runner.JournalDatabaseBackupTransfer{ID: id, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, s), Plan: p, Request: request, CreatedAt: time.Now().UTC()})
 	}
 	policy, err := databaseBackupRemotePolicy(*config)
@@ -113,7 +120,6 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 		}
 		return fresh.Metadata().UseUntil, nil
 	}
-	var remote *backupRemoteS3
 	err = credentials.Use(func(access, secret []byte) error {
 		var e error
 		remote, e = newBackupRemoteS3(ctx, p.Target.Target, access, secret, policy, time.Duration(p.TimeoutSeconds)*time.Second, grant)
@@ -232,9 +238,11 @@ func executeBackupRemoteObject(ctx context.Context, e *databaseBackupEngine, rem
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
-	if _, err = e.store.Put(ctx, file, key, blob.Bytes); err != nil {
+	_, proof, err := e.store.PutOwned(ctx, file, key, blob.Bytes)
+	if err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
+	e.localCopy = &domain.BackupLocalCopyProof{PoolID: proof.PoolID, Device: proof.Device, Inode: proof.Inode, Bytes: proof.Bytes, Created: proof.Created}
 	return nil
 }
 

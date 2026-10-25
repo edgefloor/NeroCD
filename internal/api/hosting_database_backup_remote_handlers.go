@@ -41,7 +41,12 @@ func (s *Server) runnerBackupRemoteCredentials(w http.ResponseWriter, r *http.Re
 		writeError(w, app.ErrHostingDatabaseCredentialsUnavailable)
 		return
 	}
-	out, err := s.app.RunnerBackupRemoteCredentials(r.Context(), in, token)
+	var out *domain.BackupRemoteCredentials
+	if r.URL.Path == "/api/v1/runners/hosting/database-backup-retention/credentials" {
+		out, err = s.app.RunnerBackupRetentionCredentials(r.Context(), in, token)
+	} else {
+		out, err = s.app.RunnerBackupRemoteCredentials(r.Context(), in, token)
+	}
 	if err != nil {
 		writeError(w, err)
 		return

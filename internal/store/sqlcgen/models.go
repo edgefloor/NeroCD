@@ -450,6 +450,20 @@ type HostingDatabaseBackup struct {
 	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
+type HostingDatabaseBackupCopy struct {
+	ID           string          `json:"id"`
+	BackupID     string          `json:"backup_id"`
+	TransferID   *string         `json:"transfer_id"`
+	ResourceID   string          `json:"resource_id"`
+	RunnerID     string          `json:"runner_id"`
+	Location     string          `json:"location"`
+	IdentityHash string          `json:"identity_hash"`
+	LocationHash string          `json:"location_hash"`
+	Body         json.RawMessage `json:"body"`
+	Availability string          `json:"availability"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
 type HostingDatabaseBackupReceipt struct {
 	OperationID string          `json:"operation_id"`
 	Phase       string          `json:"phase"`
@@ -490,6 +504,95 @@ type HostingDatabaseBackupRemoteSelection struct {
 	OperationID    string `json:"operation_id"`
 	TargetID       string `json:"target_id"`
 	TargetRevision int64  `json:"target_revision"`
+}
+
+type HostingDatabaseBackupRetentionDelivery struct {
+	DeliveryID  string          `json:"delivery_id"`
+	ExecutionID string          `json:"execution_id"`
+	CopyID      string          `json:"copy_id"`
+	Metadata    json.RawMessage `json:"metadata"`
+	UseUntil    time.Time       `json:"use_until"`
+}
+
+type HostingDatabaseBackupRetentionExecution struct {
+	ID              string          `json:"id"`
+	ResourceID      string          `json:"resource_id"`
+	ActorID         string          `json:"actor_id"`
+	RunnerID        string          `json:"runner_id"`
+	PreviewID       string          `json:"preview_id"`
+	RunID           *string         `json:"run_id"`
+	Plan            json.RawMessage `json:"plan"`
+	PlanHash        string          `json:"plan_hash"`
+	Body            json.RawMessage `json:"body"`
+	ReservationHeld bool            `json:"reservation_held"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseBackupRetentionItem struct {
+	ExecutionID     string `json:"execution_id"`
+	CopyID          string `json:"copy_id"`
+	IdentityHash    string `json:"identity_hash"`
+	LocationHash    string `json:"location_hash"`
+	State           string `json:"state"`
+	ReservationHeld bool   `json:"reservation_held"`
+}
+
+type HostingDatabaseBackupRetentionPolicy struct {
+	ResourceID string          `json:"resource_id"`
+	ProjectID  string          `json:"project_id"`
+	ActorID    string          `json:"actor_id"`
+	Revision   int64           `json:"revision"`
+	Body       json.RawMessage `json:"body"`
+}
+
+type HostingDatabaseBackupRetentionPreview struct {
+	ID             string          `json:"id"`
+	ResourceID     string          `json:"resource_id"`
+	ActorID        string          `json:"actor_id"`
+	PolicyRevision int64           `json:"policy_revision"`
+	Body           json.RawMessage `json:"body"`
+	Copies         json.RawMessage `json:"copies"`
+	PlanHash       string          `json:"plan_hash"`
+}
+
+type HostingDatabaseBackupRetentionPublication struct {
+	ID             string    `json:"id"`
+	ResourceID     string    `json:"resource_id"`
+	ActorID        string    `json:"actor_id"`
+	PolicyRevision int64     `json:"policy_revision"`
+	State          string    `json:"state"`
+	Reason         string    `json:"reason"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type HostingDatabaseBackupRetentionReceipt struct {
+	ExecutionID string          `json:"execution_id"`
+	CopyID      string          `json:"copy_id"`
+	Phase       string          `json:"phase"`
+	Attempt     int32           `json:"attempt"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	Response    json.RawMessage `json:"response"`
+}
+
+type HostingDatabaseBackupRetentionRequest struct {
+	ResourceID  string          `json:"resource_id"`
+	RequestID   string          `json:"request_id"`
+	Kind        string          `json:"kind"`
+	ActorID     string          `json:"actor_id"`
+	RequestHash string          `json:"request_hash"`
+	Response    json.RawMessage `json:"response"`
+}
+
+type HostingDatabaseBackupRetentionResume struct {
+	ExecutionID string    `json:"execution_id"`
+	NextAttempt int32     `json:"next_attempt"`
+	RequestID   string    `json:"request_id"`
+	ActorID     string    `json:"actor_id"`
+	PlanHash    string    `json:"plan_hash"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type HostingDatabaseBackupSchedule struct {

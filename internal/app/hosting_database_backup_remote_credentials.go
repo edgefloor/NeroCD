@@ -12,7 +12,13 @@ import (
 )
 
 func (s *Service) RunnerBackupRemoteCredentials(ctx context.Context, in domain.BackupRemoteCredentialRequest, token string) (*domain.BackupRemoteCredentials, error) {
-	if in.Validate() != nil {
+	return s.runnerBackupCredentials(ctx, in, token, false)
+}
+func (s *Service) RunnerBackupRetentionCredentials(ctx context.Context, in domain.BackupRemoteCredentialRequest, token string) (*domain.BackupRemoteCredentials, error) {
+	return s.runnerBackupCredentials(ctx, in, token, true)
+}
+func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupRemoteCredentialRequest, token string, retention bool) (*domain.BackupRemoteCredentials, error) {
+	if in.Validate() != nil || retention != (in.RetentionCopyID != "") {
 		return nil, InvalidInput(domain.ErrBackupRemoteCredentials)
 	}
 	principal, err := s.requireRunnerPrincipal(ctx)
@@ -25,6 +31,9 @@ func (s *Service) RunnerBackupRemoteCredentials(ctx context.Context, in domain.B
 		if e != nil || identity.RunnerID != principal.ID || !slices.Contains(identity.Capabilities, domain.HostingDatabaseBackupRemoteCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupTransfer) {
 			return false
 		}
+		if retention && (!slices.Contains(identity.Capabilities, domain.HostingDatabaseBackupRetentionCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupRetention)) {
+			return false
+		}
 		p, e := s.AuthenticateRunnerToken(ctx, token)
 		return e == nil && p.ID == principal.ID && p.Provider == domain.PrincipalRunner
 	}
@@ -32,7 +41,16 @@ func (s *Service) RunnerBackupRemoteCredentials(ctx context.Context, in domain.B
 	if !ok || s.secretKeyring == nil || token == "" || !current() {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
-	a, err := repo.AuthorizeBackupRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in)
+	var a store.BackupRemoteCredentialAuthorization
+	if retention {
+		r, ok := s.hosting.(store.HostingDatabaseBackupRetentionCredentialRepository)
+		if !ok {
+			return nil, domain.ErrBackupRemoteCredentials
+		}
+		a, err = r.AuthorizeBackupRetentionCredentials(ctx, principal.ID, runnerTokenHash(token), in)
+	} else {
+		a, err = repo.AuthorizeBackupRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in)
+	}
 	if err != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
@@ -53,7 +71,14 @@ func (s *Service) RunnerBackupRemoteCredentials(ctx context.Context, in domain.B
 	if err != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
-	if !current() || repo.RevalidateBackupRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata) != nil || ctx.Err() != nil || !s.clock().Before(a.Metadata.UseUntil) {
+	validate := func() error {
+		if retention {
+			r := s.hosting.(store.HostingDatabaseBackupRetentionCredentialRepository)
+			return r.RevalidateBackupRetentionCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
+		}
+		return repo.RevalidateBackupRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
+	}
+	if !current() || validate() != nil || ctx.Err() != nil || !s.clock().Before(a.Metadata.UseUntil) {
 		out.Close()
 		return nil, domain.ErrBackupRemoteCredentials
 	}

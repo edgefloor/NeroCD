@@ -3,13 +3,16 @@
 package artifactfs
 
 import (
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -170,4 +173,47 @@ func (d *directoryBackend) close() error {
 		return fmt.Errorf("artifactfs: close store root: %w", err)
 	}
 	return nil
+}
+
+// A root-directory flock serializes all cooperating Store instances, including
+// independently launched runner processes configured with the same pool.
+func (d *directoryBackend) lock(ctx context.Context) error {
+	for {
+		err := unix.Flock(d.fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			return ioError("lock store", err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+func (d *directoryBackend) unlock() { _ = unix.Flock(d.fd, unix.LOCK_UN) }
+func (d *directoryBackend) ownership(key string, max int64) (Ownership, error) {
+	pool, err := d.poolID()
+	if err != nil {
+		return Ownership{}, err
+	}
+	file, meta, err := d.openRegular(key, max)
+	if err != nil {
+		return Ownership{}, err
+	}
+	defer file.Close()
+	return Ownership{PoolID: pool, Device: meta.device, Inode: meta.inode, Bytes: meta.size}, nil
+}
+
+func (d *directoryBackend) poolID() (string, error) {
+	var root unix.Stat_t
+	if err := unix.Fstat(d.fd, &root); err != nil {
+		return "", ioError("inspect pool", err)
+	}
+	id := sha256.Sum256([]byte(fmt.Sprintf("artifactfs.pool.v1:%d:%d", root.Dev, root.Ino)))
+	return fmt.Sprintf("sha256:%x", id), nil
 }

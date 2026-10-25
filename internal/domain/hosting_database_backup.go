@@ -132,6 +132,7 @@ func (p HostingDatabaseBackupPlan) Validate() error {
 // HostingDatabaseBackupMutation is append-before-send phase evidence. Intent is
 // recorded before effects; replay may report a receipt but never repeat import.
 type HostingDatabaseBackupMutation struct {
+	LocalCopy *BackupLocalCopyProof `json:"local_copy,omitempty"`
 	HostingAuthority
 	ReceiptID   string                     `json:"receipt_id"`
 	PlanHash    string                     `json:"plan_hash"`
@@ -141,6 +142,9 @@ type HostingDatabaseBackupMutation struct {
 }
 
 func (in HostingDatabaseBackupMutation) Validate() error {
+	if in.LocalCopy != nil && (in.Phase != "complete" || in.LocalCopy.Validate() != nil || in.Blob == nil || in.LocalCopy.Bytes != in.Blob.Bytes) {
+		return ErrInvalidDatabaseBackup
+	}
 	if !validRuntimeReferenceID(in.OperationID) || !validRuntimeReferenceID(in.RunID) || !validRuntimeReferenceID(in.LeaseID) || !validRuntimeReferenceID(in.ReceiptID) || in.Attempt < 1 || in.Attempt > math.MaxInt32 || in.Fence == "" || len(in.Fence) > 256 || !imageSHA256.MatchString(in.PlanHash) {
 		return ErrInvalidDatabaseBackup
 	}

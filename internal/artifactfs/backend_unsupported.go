@@ -3,6 +3,7 @@
 package artifactfs
 
 import (
+	"context"
 	"os"
 )
 
@@ -22,3 +23,11 @@ func (*directoryBackend) remove(string) error                                { r
 func (*directoryBackend) sync() error                                        { return ErrUnsupported }
 func (*directoryBackend) close() error                                       { return nil }
 func (*directoryBackend) renameNoReplace(string, string) error               { return ErrUnsupported }
+
+func (*directoryBackend) lock(context.Context) error { return ErrUnsupported }
+func (*directoryBackend) unlock()                    {}
+func (*directoryBackend) ownership(string, int64) (Ownership, error) {
+	return Ownership{}, ErrUnsupported
+}
+
+func (*directoryBackend) poolID() (string, error) { return "", ErrUnsupported }

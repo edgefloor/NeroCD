@@ -68,3 +68,47 @@ func TestBackupRemoteRegistryCannotAcquireGenericPrimitive(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupRetentionDownloadProofJournal20(t *testing.T) {
+	entry := transferJournalEntry()
+	entry.Plan.Operation.Mode = "download"
+	entry.Plan.Operation.RestoreOperationID = "restore"
+	entry.Plan.Hash = ""
+	entry.Plan.Hash = domain.HostingDocumentHash(entry.Plan)
+	entry.Request.PlanHash = entry.Plan.Hash
+	entry.ID = "download_complete"
+	entry.Request.ReceiptID = entry.ID
+	entry.Request.Phase = "complete"
+	entry.Request.LocalCopy = &domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("b", 64), Device: 1, Inode: 2, Bytes: 65537, Created: true}
+	path := filepath.Join(t.TempDir(), "journal")
+	j, e := OpenAttemptJournal(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = j.AppendDatabaseBackupTransfer(entry); e != nil {
+		t.Fatal(e)
+	}
+	if j.state.Version != 20 {
+		t.Fatal("download proof not journal20")
+	}
+	if e = j.Close(); e != nil {
+		t.Fatal(e)
+	}
+	j, e = OpenAttemptJournal(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer j.Close()
+	if got := j.Snapshot().DatabaseBackupTransfers; len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
+		t.Fatal("download proof lost at restart")
+	}
+	bad := entry
+	bad.Plan.Operation.Mode = "upload"
+	bad.Plan.Operation.RestoreOperationID = ""
+	bad.Plan.Hash = ""
+	bad.Plan.Hash = domain.HostingDocumentHash(bad.Plan)
+	bad.Request.PlanHash = bad.Plan.Hash
+	if _, e = j.AppendDatabaseBackupTransfer(bad); e == nil {
+		t.Fatal("download proof accepted for upload")
+	}
+}

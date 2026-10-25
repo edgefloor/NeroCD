@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/domain"
 )
 
@@ -22,7 +23,7 @@ type HostingDatabaseBackupRemoteCredentialRepository interface {
 
 func backupRemoteDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, tokenHash string, in domain.BackupRemoteCredentialRequest) (backupRemoteRow, time.Time, error) {
 	var expiry time.Time
-	if in.Validate() != nil {
+	if in.Validate() != nil || in.RetentionCopyID != "" {
 		return backupRemoteRow{}, expiry, ErrConflict
 	}
 	r, err := backupRemoteAuthority(ctx, tx, runner, in.Authority, true)

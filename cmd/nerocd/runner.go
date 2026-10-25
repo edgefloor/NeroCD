@@ -68,6 +68,7 @@ func runRunner(args []string) error {
 	hostingDatabaseUpgrade := fs.Bool("hosting-database-network-upgrade", false, "explicitly enable existing-volume empty database network upgrades")
 	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
+	backupRetention := fs.Bool("hosting-database-backup-retention", false, "enable fenced exact-copy local and remote backup retention")
 	remoteDatabaseBackups := fs.Bool("hosting-database-remote-backups", false, "enable fenced PostgreSQL S3 transfers and recorded remote restores")
 	remoteEndpoints := fs.String("hosting-backup-remote-endpoints", "", "operator-approved private HTTPS origins, comma-separated")
 	remoteCIDRs := fs.String("hosting-backup-remote-cidrs", "", "operator-approved private endpoint CIDRs, comma-separated")
@@ -111,6 +112,12 @@ func runRunner(args []string) error {
 			return errors.New("route continuity requires connected execution and strict proxy switching")
 		}
 		databaseConfig.RouteContinuity = true
+	}
+	if *backupRetention {
+		if databaseConfig == nil || !*remoteDatabaseBackups {
+			return errors.New("backup retention requires --hosting-database-remote-backups")
+		}
+		databaseConfig.BackupRetention = true
 	}
 	if *remoteDatabaseBackups {
 		if databaseConfig == nil || !*logicalDatabaseBackups {
@@ -257,6 +264,9 @@ func runRunner(args []string) error {
 		return err
 	}
 	if *remoteDatabaseBackups {
+		if *backupRetention {
+			registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability)
+		}
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability)
 	}
 	if *logicalDatabaseBackups {
@@ -392,7 +402,7 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

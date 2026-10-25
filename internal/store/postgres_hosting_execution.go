@@ -15,6 +15,7 @@ import (
 	"github.com/distribution/reference"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
@@ -44,6 +45,7 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 		defer close(done)
 		var scheduleObserver databaseBackupScheduleObserver
 		var remoteWarningAfter time.Time
+		var retentionWarningAfter time.Time
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -51,7 +53,16 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			_ = s.recoverHostingDispatch(recoveryAttempt)
 			stop()
 			scheduleObserver.run(recoveryCtx, time.Now(), slog.Default(), s.ReconcileDatabaseBackupSchedules)
+			retentionCtx, stopRetention := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.ReconcileDatabaseBackupRetention(retentionCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(retentionWarningAfter) {
+				slog.Warn("backup retention publication reconciliation failed")
+				retentionWarningAfter = time.Now().Add(time.Minute)
+			}
+			stopRetention()
 			remoteCtx, stopRemote := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.recoverDatabaseBackupRetentions(remoteCtx); err != nil && recoveryCtx.Err() == nil {
+				slog.Warn("backup retention dispatch recovery failed")
+			}
 			if err := s.recoverDatabaseBackupTransfers(remoteCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(remoteWarningAfter) {
 				slog.Warn("remote backup dispatch recovery failed")
 				remoteWarningAfter = time.Now().Add(time.Minute)
@@ -1735,6 +1746,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
+		return s.databaseBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		return s.databaseBackupTransferClaimAllowed(ctx, tx, run, runnerID)
 	}

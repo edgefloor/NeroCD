@@ -6,23 +6,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 )
 
 var ErrBackupRemoteCredentials = errors.New("remote backup credentials unavailable")
 
+const HostingDatabaseBackupRetentionCredentialPurpose = "hosting_postgresql_backup_retention_credentials.v1"
+
 type BackupRemoteCredentialRequest struct {
-	Authority      HostingAuthority `json:"authority"`
-	DeliveryID     string           `json:"delivery_id"`
-	PlanHash       string           `json:"plan_hash"`
-	TargetID       string           `json:"target_id"`
-	TargetRevision int64            `json:"target_revision"`
-	DaemonID       string           `json:"daemon_id"`
+	RetentionCopyID string           `json:"retention_copy_id,omitempty"`
+	Authority       HostingAuthority `json:"authority"`
+	DeliveryID      string           `json:"delivery_id"`
+	PlanHash        string           `json:"plan_hash"`
+	TargetID        string           `json:"target_id"`
+	TargetRevision  int64            `json:"target_revision"`
+	DaemonID        string           `json:"daemon_id"`
 }
 
 func (r BackupRemoteCredentialRequest) Validate() error {
+	if !validRuntimeReferenceID(r.TargetID) || r.TargetRevision < 1 {
+		return ErrBackupRemoteCredentials
+	}
+	if r.RetentionCopyID != "" {
+		a := r.Authority
+		if !validRuntimeReferenceID(r.RetentionCopyID) || !validRuntimeReferenceID(a.OperationID) || a.RunID != "db_retention_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(r.DeliveryID) || !imageSHA256.MatchString(r.PlanHash) || len(r.DaemonID) < 1 || len(r.DaemonID) > 256 {
+			return ErrBackupRemoteCredentials
+		}
+		return nil
+	}
 	check := HostingDatabaseBackupTransferMutation{HostingAuthority: r.Authority, ReceiptID: r.DeliveryID, PlanHash: r.PlanHash, Phase: "intent", DaemonID: r.DaemonID}
-	if check.Validate() != nil || !validRuntimeReferenceID(r.TargetID) || r.TargetRevision < 1 {
+	if check.Validate() != nil {
 		return ErrBackupRemoteCredentials
 	}
 	return nil
@@ -37,7 +51,11 @@ type BackupRemoteCredentialMetadata struct {
 }
 
 func (m BackupRemoteCredentialMetadata) Validate() error {
-	if m.Purpose != HostingDatabaseBackupRemoteCredentialPurpose || m.Request.Validate() != nil || !validRuntimeReferenceID(m.RunnerID) || m.RequestHash != HostingDocumentHash(struct {
+	expected := HostingDatabaseBackupRemoteCredentialPurpose
+	if m.Request.RetentionCopyID != "" {
+		expected = HostingDatabaseBackupRetentionCredentialPurpose
+	}
+	if m.Purpose != expected || m.Request.Validate() != nil || !validRuntimeReferenceID(m.RunnerID) || m.RequestHash != HostingDocumentHash(struct {
 		Runner  string
 		Request BackupRemoteCredentialRequest
 	}{m.RunnerID, m.Request}) || m.UseUntil.IsZero() {

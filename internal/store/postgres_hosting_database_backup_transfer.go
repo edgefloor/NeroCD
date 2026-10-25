@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
@@ -335,6 +336,9 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		if in.PlanHash != r.plan.Hash || r.daemon != "" && r.daemon != in.DaemonID {
 			return zero, ErrConflict
 		}
+		if in.LocalCopy != nil && r.view.Mode != "download" || in.RemoteCopy != nil && r.view.Mode != "upload" {
+			return zero, ErrConflict
+		}
 		state := r.view.State
 		switch in.Phase {
 		case "intent":
@@ -370,6 +374,30 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 				return zero, err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE run_leases SET status=$2,completed_at=clock_timestamp(),completion_key=$3 WHERE id=$1 AND status='active'`, in.LeaseID, status, in.ReceiptID); err != nil {
+				return zero, err
+			}
+		}
+		if err = backupRetentionRegisterRemote(ctx, tx, r, in); err != nil {
+			return zero, err
+		}
+		if r.view.Mode == "download" && in.Phase == "complete" && in.LocalCopy != nil {
+			backup, err := sqlcgen.New(tx).ReadDatabaseBackup(ctx, r.view.BackupID)
+			if err != nil || backup.RunnerID != r.plan.RunnerID {
+				return zero, ErrConflict
+			}
+			if err = backupRetentionRegisterLocalCopy(ctx, tx, backup, domain.HostingDatabaseBackupMutation{Phase: "complete", Blob: r.view.Blob, LocalCopy: in.LocalCopy}, "dbc_download_"+r.view.ID); err != nil {
+				return zero, err
+			}
+			if err = backupRetentionPublication(ctx, tx, backup.SourceResourceID, "download_local_"+r.view.ID); err != nil {
+				return zero, err
+			}
+		}
+		if r.view.Mode == "upload" && in.Phase == "complete" {
+			var resource string
+			if err = tx.QueryRow(ctx, `SELECT source_resource_id FROM hosting_database_backups WHERE id=$1`, r.view.BackupID).Scan(&resource); err != nil {
+				return zero, err
+			}
+			if err = backupRetentionPublication(ctx, tx, resource, "remote_"+r.view.ID); err != nil {
 				return zero, err
 			}
 		}
