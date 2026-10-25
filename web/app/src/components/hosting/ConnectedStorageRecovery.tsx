@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 const labels: Record<StorageRecoveryAction, string> = { resume_predecessor: "Resume previous application", complete_replacement: "Complete interrupted replacement" };
 const button = "h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words";
-export function ConnectedStorageRecovery({ scope, progress, paused, readUnavailable = false, authorize, onDenied, onUpdated }: { scope: DatabaseConnectionScope; progress: ConnectedProgress; paused: boolean; readUnavailable?: boolean; authorize: () => Promise<boolean>; onDenied: () => void; onUpdated: () => Promise<void> }) {
+export function ConnectedStorageRecovery({ scope, progress, paused, readUnavailable = false, authorize, onDenied, onSubmitting, onUpdated }: { scope: DatabaseConnectionScope; progress: ConnectedProgress; paused: boolean; readUnavailable?: boolean; authorize: () => Promise<boolean>; onDenied: () => void; onSubmitting: (operation: string) => void; onUpdated: () => Promise<void> }) {
   const client = useQueryClient();
   const active = useRef(true), sending = useRef(false), pending = useRef<AbortController | null>(null);
   const [intent, setIntent] = useState<ConnectionStorageRecoveryInput>();
@@ -36,6 +36,9 @@ export function ConnectedStorageRecovery({ scope, progress, paused, readUnavaila
         if (JSON.stringify(current) !== JSON.stringify(body)) throw new ApiError(409, "Recovery evidence changed", null);
       }
       if (!active.current || controller.signal.aborted || !await authorize()) return;
+      // Keep this operation selected even if settlement clears the connection's
+      // hold before the response arrives, or the acknowledgement is lost.
+      onSubmitting(body.operation_id);
       setAttempted(true);
       sent = true;
       await recoverConnectionStorage(scope, body, controller.signal);

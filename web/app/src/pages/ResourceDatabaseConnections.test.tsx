@@ -571,3 +571,92 @@ test.each(["unavailable", "forbidden", "owner_lost"] as const)("retained recover
   }
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(outcome === "unavailable" ? 2 : 1);
 });
+
+function recoverySetup(response: "accepted" | "lost" | "unknown" = "accepted") {
+  let cleared = false, revision = connection.membership_revision;
+  let recoveryState = "none";
+  const operation = (id: string) => ({ id, project_id: "project", resource_id: "app", state: id === "failed_B" ? "failed" : "succeeded", mutation_hold: id === "failed_B" && recoveryState !== "succeeded", restore_ownership_held: false,
+    application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: uploadOptions.storage_ref, hash: storageHash },
+    application_database_storage_state: { version: "application-database.storage.v1", phase: recoveryState === "succeeded" ? "resumed" : "replacement_failed", receipt_id: "receipt", state_hash: storageHash, previous_state_hash: storageHash, stage_hash: storageHash, candidate_hash: storageHash, recovery_actions: recoveryState === "none" && id === "failed_B" ? ["resume_predecessor"] : [], recovery_action: id === "failed_B" && recoveryState !== "none" ? "resume_predecessor" : "", recovery_state: id === "failed_B" ? recoveryState : "none" } });
+  const view = storageSetup((url, init) => {
+    if (url.endsWith("/database-connection")) return json({ ...connection, state: cleared ? "active" : "held", hold_operation_id: cleared ? "" : "failed_B", application_operation_id: "healthy_A", membership_revision: revision });
+    if (url.includes("/hosting-operations/")) return json(operation(url.split("/").at(-1)!));
+    if (url.endsWith("/database-connection/recovery") && init.method === "POST") {
+      cleared = true; recoveryState = "queued";
+      if (response === "lost") return Promise.reject(new TypeError("lost acknowledgement"));
+      return json({ id: response === "unknown" ? "unknown" : "failed_B", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+    }
+    if (url.endsWith("/database-connection/deployments") && init.method === "POST") return json({ id: "replacement_C", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+  });
+  return { ...view, advance: (state: string) => { recoveryState = state; revision++; } };
+}
+async function submitRecovery() {
+  fireEvent.click(await screen.findByRole("button", { name: "Review: Resume previous application" }));
+  fireEvent.click(await screen.findByLabelText("I acknowledge application interruption and retained data changes for this recovery."));
+  fireEvent.click(screen.getByRole("button", { name: "Resume previous application" }));
+}
+async function refreshRecovery() {
+  const refresh = screen.getByRole("button", { name: "Refresh database connection" });
+  await waitFor(() => expect((refresh as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(refresh);
+  await waitFor(() => expect((refresh as HTMLButtonElement).disabled).toBe(false));
+}
+test.each(["accepted", "lost", "unknown"] as const)("%s recovery retains failed B after the hold clears to healthy A", async (response) => {
+  const { fetch, advance } = recoverySetup(response);
+  await submitRecovery();
+  await screen.findByText(response === "accepted" ? /Recovery request accepted for failed_B/ : /No confirmed response/);
+  await refreshRecovery();
+  await screen.findByText(/Recovery status: queued/);
+  expect(screen.getByText("Application deployment failed_B: failed")).toBeTruthy();
+  expect(screen.getByText("healthy_A", { selector: "dd" })).toBeTruthy();
+  if (response !== "accepted") {
+    const retry = screen.getByRole("button", { name: "Retry identical storage recovery request" });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+    await screen.findByText(/No confirmed response/);
+    const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+    expect(bodies[0]).toBe(bodies[1]);
+    expect(JSON.parse(String(bodies[0])).operation_id).toBe("failed_B");
+  }
+  for (const state of ["running", "succeeded"]) {
+    advance(state); await refreshRecovery();
+    await screen.findByText(new RegExp(`Recovery status: ${state}`));
+    expect(screen.getByText("Application deployment failed_B: failed")).toBeTruthy();
+    expect(screen.getByText("healthy_A", { selector: "dd" })).toBeTruthy();
+  }
+  await refreshRecovery();
+  expect(screen.getByText(/Recovery status: succeeded/)).toBeTruthy();
+  expect(screen.getByText(/server recorded verified recovery settlement/)).toBeTruthy();
+  expect(screen.getByText("6", { selector: "dd" })).toBeTruthy();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(response === "accepted" ? 1 : 2);
+});
+test("a deliberate connected storage deployment replaces the retained recovery selection", async () => {
+  const { advance } = recoverySetup(); await submitRecovery();
+  await screen.findByText(/Recovery request accepted/);
+  advance("succeeded"); await refreshRecovery();
+  await screen.findByText(/Recovery status: succeeded/);
+  fireEvent.click(acknowledgeUpload());
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  const deploy = screen.getByRole("button", { name: "Redeploy connected application" });
+  await waitFor(() => expect((deploy as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(deploy);
+  await screen.findByText("Application deployment replacement_C: succeeded");
+  expect(screen.queryByText("Application deployment failed_B: failed")).toBeNull();
+});
+test.each(["actor", "project", "resource", "owner"] as const)("%s change clears retained recovery identity and request", async (change) => {
+  const { fetch, rerender } = recoverySetup("lost"); await submitRecovery();
+  await screen.findByText(/No confirmed response/); await refreshRecovery();
+  await screen.findByText(/Recovery status: queued/);
+  act(() => {
+    if (change === "actor") {
+      client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] });
+      client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "other", role: "owner" }]);
+    } else if (change === "owner") client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "actor", role: "viewer" }]);
+    else rerender(<QueryClientProvider client={client}><ResourceDatabaseConnections resource={{ ...resource, ...(change === "project" ? { project_id: "other" } : { id: "other" }) }} writable blocked={false} /></QueryClientProvider>);
+  });
+  await waitFor(() => expect(screen.queryByText("Application deployment failed_B: failed")).toBeNull());
+  expect(screen.queryByRole("button", { name: "Retry identical storage recovery request" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});

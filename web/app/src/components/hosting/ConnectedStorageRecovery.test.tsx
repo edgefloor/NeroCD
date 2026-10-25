@@ -21,9 +21,9 @@ function setup(actions: StorageRecoveryAction[] = ["resume_predecessor"], handle
   });
   vi.stubGlobal("fetch", fetch);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const authorize = vi.fn().mockResolvedValue(true), onDenied = vi.fn(), onUpdated = vi.fn().mockResolvedValue(undefined);
-  render(<QueryClientProvider client={client}><ConnectedStorageRecovery scope={scope} progress={progress} paused={false} authorize={authorize} onDenied={onDenied} onUpdated={onUpdated} /></QueryClientProvider>);
-  return { fetch, raw, authorize, onDenied, onUpdated };
+  const authorize = vi.fn().mockResolvedValue(true), onDenied = vi.fn(), onSubmitting = vi.fn(), onUpdated = vi.fn().mockResolvedValue(undefined);
+  render(<QueryClientProvider client={client}><ConnectedStorageRecovery scope={scope} progress={progress} paused={false} authorize={authorize} onDenied={onDenied} onSubmitting={onSubmitting} onUpdated={onUpdated} /></QueryClientProvider>);
+  return { fetch, raw, authorize, onDenied, onSubmitting, onUpdated };
 }
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
 async function review(label = "Resume previous application") {
@@ -38,22 +38,37 @@ test("phase alone offers no recovery action", () => {
   expect(screen.getByText(/No recovery action is offered/)).toBeTruthy();
 });
 test.each(["resume_predecessor", "complete_replacement"] as const)("explicit offered %s freezes correlation and interruption acknowledgement", async (action) => {
-  const { fetch, onUpdated } = setup([action]);
+  const { fetch, onSubmitting, onUpdated } = setup([action]);
   const label = action === "resume_predecessor" ? "Resume previous application" : "Complete interrupted replacement";
-  fireEvent.click(await review(label));
+  const submit = await review(label);
+  expect(onSubmitting).not.toHaveBeenCalled();
+  fireEvent.click(submit);
   await screen.findByText(/Recovery request accepted/);
   expect(onUpdated).toHaveBeenCalledOnce();
   const mutation = fetch.mock.calls.find(([, init]) => init.method === "POST")!;
+  expect(onSubmitting).toHaveBeenCalledExactlyOnceWith("operation");
+  const mutationIndex = fetch.mock.calls.indexOf(mutation);
+  expect(onSubmitting.mock.invocationCallOrder[0]).toBeLessThan(fetch.mock.invocationCallOrder[mutationIndex]!);
   expect(mutation[0]).toBe("/api/v1/resources/app/database-connection/recovery");
   expect(JSON.parse(String(mutation[1].body))).toEqual({ action, operation_id: "operation", stage_hash: stageHash, candidate_hash: candidateHash, expected_membership_revision: 7, idempotency_key: expect.any(String), storage_state_hash: hash, application_database_storage: { expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption: true } });
 });
 test("fresh recovery membership conflict prevents mutation and requires separate review", async () => {
   let changed = false;
-  const { fetch } = setup(undefined, (url) => changed && url.endsWith("/database-connection") ? json({ ...connection, membership_revision: 8 }) : undefined);
+  const { fetch, onSubmitting } = setup(undefined, (url) => changed && url.endsWith("/database-connection") ? json({ ...connection, membership_revision: 8 }) : undefined);
   const submit = await review(); changed = true; fireEvent.click(submit);
   await screen.findByText(/Recovery evidence changed. Nothing was resubmitted/);
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+  expect(onSubmitting).not.toHaveBeenCalled();
   expect((screen.getByRole("button", { name: "Resume previous application" }) as HTMLButtonElement).disabled).toBe(true);
+});
+test.each(["before evidence", "after evidence"])("authority loss %s cannot select recovery or send a request", async (stage) => {
+  const { fetch, authorize, onSubmitting } = setup();
+  const submit = await review();
+  if (stage === "after evidence") authorize.mockResolvedValueOnce(true);
+  authorize.mockResolvedValue(false); fireEvent.click(submit);
+  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+  expect(onSubmitting).not.toHaveBeenCalled();
+  expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
 });
 test("unconfirmed recovery retries the exact request even when fresh evidence is unavailable", async () => {
   let posted = false;
