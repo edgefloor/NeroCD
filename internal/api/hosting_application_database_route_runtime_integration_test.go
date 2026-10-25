@@ -1328,6 +1328,98 @@ func TestApplicationDatabaseRouteRuntimeReceiptReplay(t *testing.T) {
 	}
 }
 
+func applicationDatabaseRouteFailureObserved(scenario, phase string, exit databaseRunnerExit) bool {
+	// VerifyReady is read-only: its failure leaves the last acknowledged attached
+	// stage and exits the runner. A transient attached stage is not failure proof.
+	return scenario == "readiness" && phase == "attached" && exit.Exited && exit.Kind == "process_exit" && exit.Code == 1 || scenario == "cutover" && phase == "ready" && !exit.Exited
+}
+
+func applicationDatabaseRouteReadinessRejected(ctx context.Context, snapshot domain.HostingSnapshot, container string) error {
+	if snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || snapshot.Readiness.Path != "/never-ready" || len(container) != 64 || strings.Trim(container, "0123456789abcdef") != "" {
+		return errors.New("invalid fixture readiness rejection target")
+	}
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", snapshot.HostPort, snapshot.Readiness.Path), nil)
+	if err != nil {
+		return errors.New("fixture readiness rejection request invalid")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("fixture readiness rejection request failed")
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
+	defer clear(body)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || len(body) > 4096 || response.StatusCode != http.StatusNotFound || response.Header.Get("X-NeroCD-Fixture-Instance") != container[:12] {
+		return errors.New("fixture readiness rejection lacks exact non-ready candidate")
+	}
+	return nil
+}
+
+func TestApplicationDatabaseRouteRuntimeFailureStage(t *testing.T) {
+	failed := databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 1}
+	for _, test := range []struct {
+		name, scenario, phase string
+		exit                  databaseRunnerExit
+		want                  bool
+	}{
+		{"readiness failure retains attached", "readiness", "attached", failed, true},
+		{"transient attached is not failed readiness", "readiness", "attached", databaseRunnerExit{}, false},
+		{"mutation uncertainty is not failed readiness", "readiness", "uncertain", failed, false},
+		{"ready is not failed readiness", "readiness", "ready", failed, false},
+		{"clean exit is not failed readiness", "readiness", "attached", databaseRunnerExit{Exited: true, Kind: "success", Code: 0}, false},
+		{"unknown exit is not failed readiness", "readiness", "attached", databaseRunnerExit{Exited: true, Kind: "wait_error", Code: -1}, false},
+		{"cutover needs ready and live runner", "cutover", "ready", databaseRunnerExit{}, true},
+		{"cutover cannot use attached", "cutover", "attached", databaseRunnerExit{}, false},
+		{"cutover cannot use uncertainty", "cutover", "uncertain", databaseRunnerExit{}, false},
+		{"cutover cannot use failed runner", "cutover", "ready", failed, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := applicationDatabaseRouteFailureObserved(test.scenario, test.phase, test.exit); got != test.want {
+				t.Fatalf("observed=%t want=%t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeReadinessRejection(t *testing.T) {
+	container := strings.Repeat("a", 64)
+	for _, mode := range []string{"exact", "ready", "wrong_instance", "missing_instance", "redirect", "oversized"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/never-ready" {
+					t.Error("readiness probe changed method or followed a redirect")
+				}
+				if mode != "missing_instance" {
+					w.Header().Set("X-NeroCD-Fixture-Instance", container[:12])
+				}
+				if mode == "wrong_instance" {
+					w.Header().Set("X-NeroCD-Fixture-Instance", strings.Repeat("b", 12))
+				}
+				if mode == "redirect" {
+					http.Redirect(w, r, "/unexpected", http.StatusFound)
+					return
+				}
+				status := http.StatusNotFound
+				if mode == "ready" {
+					status = http.StatusOK
+				}
+				w.WriteHeader(status)
+				if mode == "oversized" {
+					_, _ = io.WriteString(w, strings.Repeat("x", 4097))
+				}
+			}))
+			t.Cleanup(server.Close)
+			snapshot := domain.HostingSnapshot{HostPort: server.Listener.Addr().(*net.TCPAddr).Port, Readiness: domain.HostingReadiness{Path: "/never-ready", TimeoutSeconds: 3}}
+			if err := applicationDatabaseRouteReadinessRejected(t.Context(), snapshot, container); (err == nil) != (mode == "exact") {
+				t.Fatal("readiness rejection accepted wrong candidate or ready response, or rejected exact404")
+			}
+		})
+	}
+}
+
 // Separate schemas keep a deliberate readiness or strict-switch failure from
 // supplying authority to a later success case. All cases share only owned DinD.
 func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
@@ -1385,10 +1477,11 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				var staged domain.HostingApplicationDatabaseStage
 				for {
 					row, err := sqlcgen.New(f.database).ReadApplicationDatabaseStage(t.Context(), candidate.ID)
-					if err == nil && json.Unmarshal(row.Stage, &staged) == nil && (failure == "readiness" && staged.Phase == "uncertain" || failure == "cutover" && staged.Phase == "ready") {
+					exit := f.process.status()
+					if err == nil && json.Unmarshal(row.Stage, &staged) == nil && applicationDatabaseRouteFailureObserved(failure, staged.Phase, exit) {
 						break
 					}
-					if time.Now().After(deadline) || f.process.status().Exited {
+					if time.Now().After(deadline) || exit.Exited {
 						t.Fatal("route failure candidate did not reach exact expected stage")
 					}
 					select {
@@ -1414,8 +1507,15 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 					}
 				}
 				op, err := f.operation(t.Context(), candidate.ID)
-				if err != nil || op.Plan == nil || op.Release == nil || staged.Candidate.ContainerID == "" {
+				if err != nil || op.Plan == nil || op.Release == nil || op.ApplicationDatabase == nil || staged.Candidate.ContainerID == "" || op.Result != nil || op.CompleteReceipt != nil {
 					t.Fatal("route failure exact candidate identity unavailable")
+				}
+				proof, err := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
+				if err != nil || staged.Validate(*op.Plan, proof) != nil {
+					t.Fatal("route failure stage does not match exact operation, plan and endpoint proof")
+				}
+				if failure == "readiness" && (op.ApplicationDatabaseYield != nil || applicationDatabaseRouteReadinessRejected(t.Context(), op.Snapshot, staged.Candidate.ContainerID) != nil) {
+					t.Fatal("readiness failure yielded or lacks exact candidate HTTP rejection")
 				}
 				if failure == "cutover" {
 					// Recheck exact create labels and image before the deliberate stop.
