@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -25,6 +26,116 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/web"
 )
+
+// Only exact fixed terminal messages become classes. Never export a log line,
+// even when it contains a recognized phrase or passes the fixture canary scan.
+func databaseBackupTerminalClass(raw []byte) string {
+	if len(raw) > 1<<20 {
+		return "unknown"
+	}
+	lines := bytes.Split(raw, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSuffix(lines[i], []byte("\r"))
+		if len(line) == 0 || json.Valid(line) || bytes.HasPrefix(line, []byte("time=")) {
+			continue // Structured runner events and the fixture's server logger.
+		}
+		switch string(line) {
+		case "invalid or unconfigured database backup task":
+			return "claim_configuration"
+		case "database backup authority unavailable":
+			return "plan_authority"
+		case "invalid database backup plan response":
+			return "plan_response"
+		case "invalid hosted PostgreSQL backup request":
+			return "request_validation"
+		case "database backup or restore remains held; execution evidence requires reconciliation":
+			return "backup_evidence_held"
+		case "database backup receipt request failed":
+			return "receipt_transport"
+		case "invalid database backup receipt response":
+			return "receipt_response"
+		case "hosting execution cannot enter the generic runtime":
+			return "generic_guard"
+		case "context canceled":
+			return "canceled"
+		case "context deadline exceeded":
+			return "deadline"
+		default:
+			return "unknown"
+		}
+	}
+	return "unknown"
+}
+
+type databaseBackupFailureEvidence struct {
+	Mode, State, OwnershipHeld, IntentReceipt, TerminalReceipt, LeaseStatus string
+	TerminalClass, Requests                                                 string
+	RunnerExited                                                            bool
+	RunnerCode                                                              int
+}
+
+func databaseBackupFailureProjection(observed bool, mode, state string, hold, intent, terminal bool, lease string, raw []byte, exit databaseRunnerExit, counts *databaseRunnerAPICounts) databaseBackupFailureEvidence {
+	out := databaseBackupFailureEvidence{Mode: "unknown", State: "unknown", OwnershipHeld: "unknown", IntentReceipt: "unknown", TerminalReceipt: "unknown", LeaseStatus: "unknown", TerminalClass: databaseBackupTerminalClass(raw), Requests: counts.summary(), RunnerExited: exit.Exited, RunnerCode: -1}
+	if exit.Exited && exit.Code >= 0 && exit.Code <= 255 {
+		out.RunnerCode = exit.Code
+	}
+	if !observed {
+		return out
+	}
+	switch mode {
+	case "backup", "restore":
+		out.Mode = mode
+	}
+	switch state {
+	case "queued", "waiting_target", "dispatched", "applying", "succeeded", "failed", "uncertain":
+		out.State = state
+	}
+	out.OwnershipHeld = fmt.Sprint(hold)
+	out.IntentReceipt, out.TerminalReceipt = "absent", "absent"
+	if intent {
+		out.IntentReceipt = "present"
+	}
+	if terminal {
+		out.TerminalReceipt = "present"
+	}
+	switch lease {
+	case "none", "active", "succeeded", "failed", "canceled", "expired":
+		out.LeaseStatus = lease
+	}
+	return out
+}
+
+func (f *databaseRunnerFixture) reportDatabaseBackupFailure(id string) {
+	// Deferred by the physical test, before testing cleanup can remove the
+	// runner log, controller schema or root. This observes; it never retries work.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var mode, state, lease string
+	var hold, intent, terminal bool
+	observed := false
+	if id != "" && f.database != nil {
+		observed = f.database.QueryRow(ctx, `SELECT b.mode,b.state,b.ownership_held,
+ EXISTS(SELECT 1 FROM hosting_database_backup_receipts r WHERE r.operation_id=b.id AND r.phase='intent'),
+ EXISTS(SELECT 1 FROM hosting_database_backup_receipts r WHERE r.operation_id=b.id AND r.phase IN ('complete','failed','uncertain')),
+ COALESCE((SELECT l.status FROM run_leases l WHERE l.run_id=b.run_id ORDER BY l.attempt DESC LIMIT 1),'none')
+ FROM hosting_database_backups b WHERE b.id=$1`, id).Scan(&mode, &state, &hold, &intent, &terminal, &lease) == nil
+	}
+	data := databaseBackupFailureProjection(observed, mode, state, hold, intent, terminal, lease, f.logs.snapshot(), f.failureRunnerStatus(), &f.apiCounts)
+	output := f.failureOutput
+	if output == nil {
+		output = os.Stdout
+	}
+	raw, err := json.Marshal(data)
+	if err == nil {
+		_, _ = fmt.Fprintf(output, "DATABASE_BACKUP_FAILURE_EVIDENCE %s\n", raw)
+	}
+}
+
+func (f *databaseRunnerFixture) reportDatabaseBackupFailureIfFailed(id *string) {
+	if f.t.Failed() {
+		f.reportDatabaseBackupFailure(*id)
+	}
+}
 
 func backupRuntimeAwait(f *databaseRunnerFixture, id string) domain.HostingDatabaseBackupOperation {
 	f.t.Helper()
@@ -82,6 +193,8 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 		t.Fatal("native Linux arm64 required")
 	}
 	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+	diagnosticID := ""
+	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
 	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
 	f.registerRouteDatabaseCleanup(source.Resource.ID)
 	requested := f.deploy(source, "backup_source")
@@ -97,6 +210,7 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.backupWire.Store(wire)
 	browser := startDatabaseBackupBrowser(f, source)
 	backupID := browser.await("backup")
+	diagnosticID = backupID
 	select {
 	case <-wire.entered:
 	case <-time.After(90 * time.Second):
@@ -116,6 +230,7 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.backupWire.Store(wire)
 	browser.setPhase("restore", backup.ID)
 	restoreID := browser.await("restore")
+	diagnosticID = restoreID
 	select {
 	case <-wire.entered:
 	case <-time.After(90 * time.Second):
@@ -386,12 +501,15 @@ func (w *databaseBackupRuntimeWire) serve(out http.ResponseWriter, r *http.Reque
 	return true
 }
 func backupRuntimeFailureCases(f *databaseRunnerFixture, source domain.HostingDatabase, sourceOp, application domain.HostingOperation, backup domain.HostingDatabaseBackupOperation) {
+	diagnosticID := backup.ID
+	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
 	f.t.Helper()
 	// Pause the exact fresh restore plan before any effect, install a target-only
 	// event trigger to force a genuine guest pg_restore deadline, then release it.
 	wire := &databaseBackupRuntimeWire{mode: "restore", pause: true, entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
 	req := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/database-backups/"+backup.ID+"/restores", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore_guest_timeout", Name: "Timeout private target"}, 202)
+	diagnosticID = req.ID
 	select {
 	case <-wire.entered:
 	case <-time.After(90 * time.Second):
@@ -489,6 +607,8 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 	for _, kind := range []string{"corrupt", "truncated", "revoked"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+			diagnosticID := ""
+			defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
 			source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
 			f.registerRouteDatabaseCleanup(source.Resource.ID)
 			requested := f.deploy(source, "backup_negative_source")
@@ -498,6 +618,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 			path := "/api/v1/resources/" + source.Resource.ID + "/database-backups"
 			databaseRunnerJSON[json.RawMessage](f, f.token, "POST", path, domain.HostingDatabaseBackupInput{RequestID: "stale_backup", ExpectedResourceGeneration: source.Resource.Generation + 1}, 409)
 			b := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", path, domain.HostingDatabaseBackupInput{RequestID: "negative_backup", ExpectedResourceGeneration: source.Resource.Generation}, 202)
+			diagnosticID = b.ID
 			b = backupRuntimeAwait(f, b.ID)
 			f.stop()
 			if kind != "revoked" {
@@ -521,6 +642,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 				f.backupWire.Store(wire)
 			}
 			restore := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/database-backups/"+b.ID+"/restores", domain.HostingDatabaseBackupRestoreInput{RequestID: "negative_restore", Name: "Rejected private restore"}, 202)
+			diagnosticID = restore.ID
 			f.registerRouteDatabaseCleanup(restore.TargetResourceID)
 			f.start()
 			if kind == "revoked" {
@@ -636,5 +758,77 @@ func TestDatabaseBackupRuntimeFixtureCreationIdentities(t *testing.T) {
 		if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != in {
 			t.Fatal("creation input violates closed wire contract", phase)
 		}
+	}
+}
+
+func TestDatabaseBackupDiagnosticTerminalClassesAndRedaction(t *testing.T) {
+	for message, want := range map[string]string{
+		"invalid or unconfigured database backup task":                                        "claim_configuration",
+		"database backup authority unavailable":                                               "plan_authority",
+		"invalid database backup plan response":                                               "plan_response",
+		"invalid hosted PostgreSQL backup request":                                            "request_validation",
+		"database backup or restore remains held; execution evidence requires reconciliation": "backup_evidence_held",
+		"database backup receipt request failed":                                              "receipt_transport",
+		"invalid database backup receipt response":                                            "receipt_response",
+		"hosting execution cannot enter the generic runtime":                                  "generic_guard",
+		"context canceled":          "canceled",
+		"context deadline exceeded": "deadline",
+	} {
+		if got := databaseBackupTerminalClass([]byte("{\"event\":\"claimed_run\"}\n" + message + "\ntime=fixture level=INFO msg=probe\n")); got != want {
+			t.Fatalf("known terminal boundary was not retained: %s", want)
+		}
+	}
+	canary := "ncr_diagnostic_canary_private_value"
+	for _, raw := range []string{canary, "invalid database backup plan response: " + canary, "invalid database backup plan response\n" + canary, "{" + canary, strings.Repeat("x", (1<<20)+1)} {
+		if got := databaseBackupTerminalClass([]byte(raw)); got != "unknown" {
+			t.Fatal("unknown or canary-bearing terminal content became evidence")
+		}
+	}
+	counts := &databaseRunnerAPICounts{}
+	counts.record("POST", "/api/v1/runners/hosting/database-backup/plan", 200)
+	counts.record("POST", "/api/v1/runners/hosting/database-backup/mutation", 409)
+	counts.record("POST", "/api/v1/runners/hosting/database-backup/plan?token="+canary, 200)
+	projection := databaseBackupFailureProjection(true, canary, canary, true, false, false, canary, []byte(canary), databaseRunnerExit{Exited: true, Kind: canary, Code: 1}, counts)
+	raw, err := json.Marshal(projection)
+	if err != nil || bytes.Contains(raw, []byte(canary)) || projection.Mode != "unknown" || projection.State != "unknown" || projection.LeaseStatus != "unknown" || projection.TerminalClass != "unknown" || projection.OwnershipHeld != "true" || projection.IntentReceipt != "absent" {
+		t.Fatal("diagnostic projection emitted arbitrary state or log values")
+	}
+	if projection.Requests != "POST /api/v1/runners/hosting/database-backup/plan 200=1,POST /api/v1/runners/hosting/database-backup/mutation 409=1" {
+		t.Fatal("backup endpoint counts lost their exact safe route identity")
+	}
+	projection = databaseBackupFailureProjection(true, "backup", "dispatched", true, false, false, "active", []byte("database backup authority unavailable\n"), databaseRunnerExit{Exited: true, Code: 1}, counts)
+	if projection.Mode != "backup" || projection.State != "dispatched" || projection.OwnershipHeld != "true" || projection.IntentReceipt != "absent" || projection.TerminalReceipt != "absent" || projection.LeaseStatus != "active" || projection.TerminalClass != "plan_authority" || !projection.RunnerExited || projection.RunnerCode != 1 {
+		t.Fatal("safe diagnostic lost the boundary between claim and execution intent")
+	}
+	projection = databaseBackupFailureProjection(false, "backup", "succeeded", false, true, true, "succeeded", nil, databaseRunnerExit{}, counts)
+	if projection.State != "unknown" || projection.OwnershipHeld != "unknown" || projection.IntentReceipt != "unknown" || projection.LeaseStatus != "unknown" {
+		t.Fatal("failed observation fabricated settled state")
+	}
+}
+
+func TestDatabaseBackupDiagnosticDeferredChild(t *testing.T) {
+	if os.Getenv("NEROCD_DATABASE_BACKUP_DIAGNOSTIC_CHILD") != "1" {
+		return
+	}
+	f := &databaseRunnerFixture{t: t, logs: &databaseRunnerLog{}, lastExit: databaseRunnerExit{Exited: true, Kind: "process_exit", Code: 1}}
+	_, _ = f.logs.Write([]byte("invalid database backup plan response\n"))
+	t.Cleanup(func() { fmt.Println("DATABASE_BACKUP_DIAGNOSTIC_CLEANUP") })
+	id := ""
+	defer f.reportDatabaseBackupFailureIfFailed(&id)
+	t.Fatal("intentional diagnostic child failure")
+}
+
+func TestDatabaseBackupDiagnosticSurvivesFatalBeforeCleanup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDatabaseBackupDiagnosticDeferredChild$")
+	cmd.Env = append(os.Environ(), "NEROCD_DATABASE_BACKUP_DIAGNOSTIC_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil || ctx.Err() != nil {
+		t.Fatal("diagnostic child did not terminate with its intended failure")
+	}
+	start, cleanup := bytes.Index(out, []byte("DATABASE_BACKUP_FAILURE_EVIDENCE ")), bytes.Index(out, []byte("DATABASE_BACKUP_DIAGNOSTIC_CLEANUP"))
+	if start < 0 || cleanup <= start || !bytes.Contains(out, []byte(`"TerminalClass":"plan_response"`)) || !bytes.Contains(out, []byte(`"State":"unknown"`)) || !bytes.Contains(out, []byte(`"RunnerExited":true`)) {
+		t.Fatal("fatal path lost safe evidence before fixture cleanup")
 	}
 }

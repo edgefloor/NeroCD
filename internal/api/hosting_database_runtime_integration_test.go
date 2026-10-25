@@ -139,6 +139,8 @@ var databaseRunnerDiagnosticRoutes = [...]struct{ method, path string }{
 	{"POST", "/api/v1/runners/hosting/database-binding/stage"},
 	{"POST", "/api/v1/runners/hosting/database-binding/storage/writer"},
 	{"POST", "/api/v1/runners/hosting/database-binding/storage/authorize"},
+	{"POST", "/api/v1/runners/hosting/database-backup/plan"},
+	{"POST", "/api/v1/runners/hosting/database-backup/mutation"},
 	{"POST", "/api/v1/runners/proxy/plan"},
 	{"POST", "/api/v1/runners/proxy/prepared"},
 	{"POST", "/api/v1/runners/proxy/apply-begin"},
