@@ -624,6 +624,22 @@ test("remote storage, upload retry, explicit restore and viewer controls at four
       .getByLabel("S3 secret key", { exact: true })
       .fill("secret_canary");
     await destinations
+      .getByLabel("S3 access key", { exact: true })
+      .fill(" access_canary ");
+    await expect(
+      destinations.getByRole("button", {
+        name: "Create backup destination",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await expect(
+      destinations.getByLabel("S3 access key", { exact: true }),
+    ).toBeEnabled();
+    expect(targetRequests).toHaveLength(0);
+    await destinations
+      .getByLabel("S3 access key", { exact: true })
+      .fill("access_canary");
+    await destinations
       .getByRole("button", { name: "Create backup destination", exact: true })
       .click();
     await expect(

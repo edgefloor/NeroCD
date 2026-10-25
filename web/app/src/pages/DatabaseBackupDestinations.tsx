@@ -10,6 +10,8 @@ import {
   type HostingDatabase,
 } from "../api/hosting-databases";
 import {
+  DatabaseBackupTargetInputError,
+  validDatabaseBackupTargetCredentials,
   databaseBackupTargetsKey,
   databaseBackupValidationsKey,
   listDatabaseBackupTargets,
@@ -311,17 +313,24 @@ function DestinationPanel(props: Props) {
     } catch (cause) {
       if (!controller.signal.aborted) {
         setError(cause);
-        if (cause instanceof ApiError && [400, 404, 409].includes(cause.status))
+        if (
+          cause instanceof DatabaseBackupTargetInputError ||
+          (cause instanceof ApiError && [400, 404, 409].includes(cause.status))
+        )
           setAttempt(undefined);
       }
     } finally {
       if (!controller.signal.aborted) setPending(false);
     }
   }
-  const credentialsValid = editing.id
-    ? (!accessKey && !secretKey) ||
-      Boolean(accessKey.trim() && secretKey.trim())
-    : Boolean(accessKey.trim() && secretKey.trim());
+  const credentials =
+    accessKey || secretKey
+      ? { access_key: accessKey, secret_key: secretKey }
+      : undefined;
+  const credentialsValid = validDatabaseBackupTargetCredentials(
+    credentials,
+    !editing.id,
+  );
   return (
     <section
       aria-label="Database backup destinations"
@@ -401,6 +410,12 @@ function DestinationPanel(props: Props) {
               onChange={(e) => setSecretKey(e.target.value)}
             />
           </label>
+          {credentials && !credentialsValid ? (
+            <p role="alert">
+              Enter both keys without surrounding whitespace or control
+              characters.
+            </p>
+          ) : null}
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -442,14 +457,7 @@ function DestinationPanel(props: Props) {
                     bucket: bucket.trim(),
                     region: region.trim(),
                     enabled,
-                    ...(accessKey || secretKey
-                      ? {
-                          credentials: {
-                            access_key: accessKey,
-                            secret_key: secretKey,
-                          },
-                        }
-                      : {}),
+                    ...(credentials ? { credentials } : {}),
                   },
                 })
               }
@@ -479,10 +487,14 @@ function DestinationPanel(props: Props) {
       ) : null}
       {error ? (
         <p role="alert">
-          {databaseError(error)}{" "}
+          {error instanceof DatabaseBackupTargetInputError
+            ? "Correct the destination fields. This request was not sent."
+            : databaseError(error)}{" "}
           {attempt
             ? `Retained request ${attempt.input.request_id}.`
-            : "Refresh destinations and explicitly review the current revision before correcting a rejected request."}
+            : error instanceof DatabaseBackupTargetInputError
+              ? ""
+              : "Refresh destinations and explicitly review the current revision before correcting a rejected request."}
         </p>
       ) : null}
       {attempt && error && !pending && owner ? (

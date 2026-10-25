@@ -79,6 +79,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 function mount(owner = true) {
   const client = new QueryClient({
@@ -257,4 +258,102 @@ test("permission denial clears destination data and removes owner actions", asyn
   await screen.findByText("Backup destination access is unavailable.");
   await waitFor(() => expect(view.onDenied).toHaveBeenCalled());
   expect(screen.queryByLabelText("S3 secret key")).toBeNull();
+});
+
+async function useRealSaveHelper() {
+  const actual = await vi.importActual<
+    typeof import("../api/hosting-database-backup-targets")
+  >("../api/hosting-database-backup-targets");
+  vi.mocked(api.saveDatabaseBackupTarget).mockImplementation(
+    actual.saveDatabaseBackupTarget,
+  );
+  const fetch = vi.fn(
+    async (_url: RequestInfo | URL, _options?: RequestInit) => {
+      targets = [target];
+      return new Response(JSON.stringify(target), { status: 200 });
+    },
+  );
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+test("padded keys are rejected before submit and remain correctable through the real save helper", async () => {
+  const fetch = await useRealSaveHelper();
+  mount();
+  await fill();
+  fireEvent.change(screen.getByLabelText("S3 access key"), {
+    target: { value: " access_canary " },
+  });
+  const save = screen.getByRole("button", {
+    name: "Create backup destination",
+  }) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  expect(
+    (screen.getByLabelText("S3 access key") as HTMLInputElement).disabled,
+  ).toBe(false);
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("S3 access key"), {
+    target: { value: "access_canary" },
+  });
+  expect(save.disabled).toBe(false);
+  fireEvent.click(save);
+  await screen.findByText(/Saved destination Daily archive, revision 1/);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+test("never-sent preflight errors release the form without replaying an invalid request", async () => {
+  const fetch = await useRealSaveHelper();
+  mount();
+  await fill();
+  fireEvent.change(screen.getByLabelText("Destination name"), {
+    target: { value: "x".repeat(129) },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create backup destination" }),
+  );
+  await screen.findByText(
+    /Correct the destination fields. This request was not sent/,
+  );
+  expect(fetch).not.toHaveBeenCalled();
+  expect(
+    (screen.getByLabelText("Destination name") as HTMLInputElement).disabled,
+  ).toBe(false);
+  expect(
+    (screen.getByLabelText("S3 secret key") as HTMLInputElement).value,
+  ).toBe("secret_canary");
+  expect(
+    screen.queryByRole("button", {
+      name: "Retry the same destination request",
+    }),
+  ).toBeNull();
+  fireEvent.change(screen.getByLabelText("Destination name"), {
+    target: { value: "Daily archive" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create backup destination" }),
+  );
+  await screen.findByText(/Saved destination Daily archive, revision 1/);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+test("real helper preserves one sent request after transport loss", async () => {
+  const fetch = await useRealSaveHelper();
+  fetch.mockRejectedValueOnce(new TypeError("network"));
+  mount();
+  await fill();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create backup destination" }),
+  );
+  await screen.findByRole("button", {
+    name: "Retry the same destination request",
+  });
+  const first = fetch.mock.calls[0];
+  expect(
+    (screen.getByLabelText("S3 access key") as HTMLInputElement).disabled,
+  ).toBe(true);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry the same destination request" }),
+  );
+  await screen.findByText(/Saved destination Daily archive, revision 1/);
+  expect(fetch.mock.calls[1]?.[0]).toEqual(first?.[0]);
+  expect(fetch.mock.calls[1]?.[1]?.body).toEqual(first?.[1]?.body);
+  expect(fetch.mock.calls[1]?.[1]?.headers).toEqual(first?.[1]?.headers);
+  expect(fetch.mock.calls[1]?.[1]?.method).toEqual(first?.[1]?.method);
 });

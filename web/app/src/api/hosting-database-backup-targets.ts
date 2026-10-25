@@ -274,6 +274,20 @@ export async function listDatabaseBackupTargets(
   );
   return list(raw, (v) => parseDatabaseBackupTarget(v, scope));
 }
+export class DatabaseBackupTargetInputError extends Error {
+  constructor() {
+    super("Invalid backup destination input");
+    this.name = "DatabaseBackupTargetInputError";
+  }
+}
+export function validDatabaseBackupTargetCredentials(
+  credentials: DatabaseBackupTargetInput["credentials"],
+  required: boolean,
+) {
+  return credentials === undefined
+    ? !required
+    : text(credentials.access_key, 4096) && text(credentials.secret_key, 4096);
+}
 export async function saveDatabaseBackupTarget(
   scope: DatabaseScope,
   target: string,
@@ -290,11 +304,9 @@ export async function saveDatabaseBackupTarget(
     !text(input.bucket) ||
     !text(input.region, 128) ||
     typeof input.enabled !== "boolean" ||
-    (input.credentials &&
-      (!text(input.credentials.access_key, 4096) ||
-        !text(input.credentials.secret_key, 4096)))
+    !validDatabaseBackupTargetCredentials(input.credentials, !target)
   )
-    return fail();
+    throw new DatabaseBackupTargetInputError();
   const raw = await boundedDatabaseRequest(
     (s) =>
       request<unknown>(
