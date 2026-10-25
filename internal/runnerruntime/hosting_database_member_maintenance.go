@@ -64,13 +64,15 @@ func (e *imageEngine) databaseMemberNetwork(ctx context.Context, operation strin
 	if err != nil {
 		return n, err
 	}
-	app := &applicationDatabaseEngine{image: e, config: c}
 	for _, member := range plan.Database.Network.Members {
 		id := member.Endpoint.Target.ContainerID
 		proof, ok := m.proofs[id]
 		if !ok {
 			return n, errors.New("database member full proof unavailable")
 		}
+		// The validated full proof supplies this member's exact storage context.
+		// Keep inspectors local so a neighboring stateless member stays mount-free.
+		app := &applicationDatabaseEngine{image: e, config: c, storagePredecessor: &proof.ApplicationHealthy}
 		container, err := app.member(ctx, member, proof.Binding.ApplicationBindingID)
 		endpoint, present := n.Containers[id]
 		private := container.NetworkSettings.Networks[n.Name]
