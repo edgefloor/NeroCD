@@ -7,8 +7,12 @@ Prioritize R01–R68, A01–A37 and the declared hosting matrices. The broader
 revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Accepted application/source assessment:
+Historical accepted application/source assessment:
 `9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25, through migration 0072.
+Current bounded connected-application route qualification:
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, physically verified on 2026-10-25,
+through migration 0073. This qualification does not establish full hosting
+acceptance or parity.
 The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` is historical.
 
 ## Primary hosting journey

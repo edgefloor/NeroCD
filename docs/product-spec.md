@@ -5,7 +5,10 @@ Status: Adopted target specification; implementation status is recorded separate
 Date: 22 October 2026
 Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`. Accepted application/source assessment: `5ff5b7e114fc922e3c3f2a6e93670c133d205923`, reviewed on 2026-10-24. Native migrations extend through 0071. Unaccepted Task checkpoints are not current product support.
+Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
+Historical accepted application/source assessment: `5ff5b7e114fc922e3c3f2a6e93670c133d205923`, reviewed on 2026-10-24, through migration 0071.
+Current bounded connected-application route qualification: `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, physically verified on 2026-10-25, through migration 0073.
+This qualification does not establish full hosting acceptance or parity. Unaccepted Task checkpoints are not current product support.
 Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
 Repository path: `docs/product-spec.md`
 
