@@ -1420,6 +1420,49 @@ func TestApplicationDatabaseRouteRuntimeReadinessRejection(t *testing.T) {
 	}
 }
 
+func applicationDatabaseRouteFailureCreateInput(engine, scenario, environment, destination string) domain.HostingDatabaseCreateInput {
+	in := applicationDatabaseCreateInput(engine, environment, destination)
+	// SQL schema isolation does not isolate Docker's retained volume namespace.
+	// Resource/binding/storage identities derive from the project and request ID.
+	in.RequestID = domain.HostingDocumentHash(struct{ Fixture, Engine, Scenario, Environment, Destination string }{"connected_route_failure", engine, scenario, environment, destination})[7:39]
+	return in
+}
+
+func TestApplicationDatabaseRouteRuntimeFailureStorageIsolation(t *testing.T) {
+	volumeFor := func(in domain.HostingDatabaseCreateInput) string {
+		resource := domain.HostingDatabaseResourceID(in.ProjectID, in.RequestID)
+		_, volume := domain.HostingStorageIdentity("binding_db_" + strings.TrimPrefix(resource, "res_db_"))
+		return volume
+	}
+	seen := make(map[string]string)
+	for _, engine := range []string{"postgresql", "redis"} {
+		seen[volumeFor(applicationDatabaseCreateInput(engine, "env_success", "dest_success"))] = "success/" + engine
+	}
+	for _, environment := range []string{"env_first", "env_next"} {
+		for _, destination := range []string{"dest_first", "dest_next"} {
+			for _, engine := range []string{"postgresql", "redis"} {
+				for _, scenario := range []string{"readiness", "cutover"} {
+					name := environment + "/" + destination + "/" + engine + "/" + scenario
+					t.Run(name, func(t *testing.T) {
+						in := applicationDatabaseRouteFailureCreateInput(engine, scenario, environment, destination)
+						if err := in.Validate(); err != nil {
+							t.Fatal(err)
+						}
+						if again := applicationDatabaseRouteFailureCreateInput(engine, scenario, environment, destination); in != again {
+							t.Fatal("same-case database retry changed request identity")
+						}
+						volume := volumeFor(in)
+						if previous, exists := seen[volume]; exists {
+							t.Fatalf("independent database case reused retained volume from %s", previous)
+						}
+						seen[volume] = name
+					})
+				}
+			}
+		}
+	}
+}
+
 // Separate schemas keep a deliberate readiness or strict-switch failure from
 // supplying authority to a later success case. All cases share only owned DinD.
 func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
@@ -1435,7 +1478,7 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				applicationDatabaseRouteCapacity(t)
 				roots, public := newApplicationDatabaseRouteTrust(t)
 				f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
+				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseRouteFailureCreateInput(engine, failure, f.environment, f.destination), 201)
 				f.registerRouteDatabaseCleanup(view.Resource.ID)
 				f.stop()
 				source := f.deploy(view, "route_failure_source")
