@@ -79,9 +79,14 @@ PostgreSQL logical backup and restore into a new private database are accepted a
 application reads and new writes, completion replay and failure holds passed
 within the [backup qualification profile](hosting-database-backups.md#accepted-qualification-and-evidence).
 
-Continue H2 from the remaining recovery gaps. Scheduling, S3 publication,
-retention automation, other engines, cross-destination and in-place restore need
-their own frozen contracts and acceptance. Broader R42 profiles, rotation,
+Scheduled PostgreSQL backups and the guest `pg_dump` timeout are accepted at
+`60b86e47504533280170028cbc0b9b632c7b67db`, with physical source
+`c76019739ffbde0bcf7eb357c9740ddd35bf9a57` retained by exact source correspondence. See the [schedule qualification and limits](hosting-database-backup-schedules.md#physical-qualification-and-retained-evidence).
+
+Continue H2 from the remaining recovery gaps. Full upstream cron grammar, S3
+publication, retention automation, notifications, other engines,
+cross-destination and in-place restore need their own contracts and acceptance.
+Broader R42 profiles, rotation,
 production ACME and aggregate stateful hosting gates remain open. This accepted
 slice does not change the deferred workspace gates.
 

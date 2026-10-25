@@ -275,8 +275,19 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   failure holds. The final physical gate passed at source `c1f7b153a963609336851f94a16b2eac96f86e91`
   in 130.140 seconds, retained by exact relevant-source correspondence.
   This qualifies native Linux arm64, trusted classic-store Docker and PostgreSQL
-  17.11 on one destination. Scheduling, S3, retention automation, in-place and
-  cross-destination restore, other engines and full A25/A26/A37 remain open.
+  17.11 on one destination. Later scheduled-backup qualification is below. S3,
+  retention automation, in-place and cross-destination restore, other engines
+  and full A25/A26/A37 remain open.
+- [PostgreSQL backup schedules](docs/hosting-database-backup-schedules.md) are
+  accepted at `60b86e47504533280170028cbc0b9b632c7b67db`, with physical proof at
+  `c76019739ffbde0bcf7eb357c9740ddd35bf9a57` retained by exact source correspondence.
+  Owners create, edit and disable schedules with an explicit IANA timezone.
+  The real embedded UI and running controller prove scheduled dump admission,
+  exact retry and restart identity, new-target restore and application data.
+  The full 157.868-second gate also proves guest `pg_dump` timeout separately
+  from restore timeout. The supported cron subset excludes weekday `7` and
+  `L`/`W`/`#` forms. S3, retention, notifications and general scheduler parity
+  remain open within the existing PostgreSQL-only physical profile.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

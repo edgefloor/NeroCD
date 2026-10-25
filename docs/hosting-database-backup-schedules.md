@@ -128,12 +128,14 @@ restore replay limits documented in the linked guide.
 The scheduler adapts Coolify commit
 `b12d1386f3d458618b4c579babcd1e339c6c40b3`:
 
-- `ScheduledJobManager.php` newest-due selection, timezone and overlap checks;
-- `ScheduledJobDeliveryService.php` durable occurrence identity and conservative
+- `app/Jobs/ScheduledJobManager.php` newest-due selection, timezone and overlap checks;
+- `app/Services/ScheduledJobDeliveryService.php` durable occurrence identity and conservative
   stale-enqueue recovery;
-- `CreateScheduledBackup.php`, `BackupEdit.php` and `DatabasesController.php`
-  owner configuration and history;
-- `DatabaseBackupJob.php`, `Kernel.php` and `bootstrap/helpers/constants.php`
+- `app/Livewire/Project/Database/CreateScheduledBackup.php`,
+  `app/Livewire/Project/Database/BackupEdit.php` and
+  `app/Http/Controllers/Api/DatabasesController.php` owner configuration and history;
+- `app/Jobs/DatabaseBackupJob.php`, `app/Console/Kernel.php` and
+  `bootstrap/helpers/constants.php`
   logical-tool behavior and frequency aliases.
 
 Go replaces upstream SSH/cache coordination with PostgreSQL transactions,
@@ -152,3 +154,55 @@ retains uncertain source ownership. Its `DATABASE_BACKUP_GUEST_DUMP_TIMEOUT_PASS
 marker is distinct from the existing `pg_restore` timeout marker. Fixture code
 and unit tests alone do not qualify these runtime claims; exact-candidate
 physical execution and independent review are required.
+
+## Physical qualification and retained evidence
+
+Source `c76019739ffbde0bcf7eb357c9740ddd35bf9a57` passed the full physical gate
+on 2026-10-25. Accepted combined revision
+`60b86e47504533280170028cbc0b9b632c7b67db` retains all 38 feature blobs and
+modes exactly. Its only differences from that source are the six accepted
+immediate-backup documentation files. All 13 combined integration checks passed,
+and the Leader accepted this bounded feature. Acceptance does not upgrade the
+existing user UI process.
+
+The live embedded UI creates a schedule, retries its lost committed response,
+edits it, disables it, reads occurrence history and restores the resulting
+archive. The running hosting controller discovers the due occurrence. A real
+controller stop, join and restart plus runner replay preserve one admitted dump
+and its exact operation identity. A distinct application reads restored data
+and writes new data to a distinct database resource, binding, volume and
+credential identity. The original source retains its records and accepts new
+writes. Viewer denial and 320, 390, 430 and 1440-pixel layouts are checked.
+
+The dump-timeout proof is separate. A positively observed source-table DDL lock
+blocks the guest `pg_dump`. The fixture tracks that same Docker ExecID until
+it terminates with exit 124, with the guest process and PostgreSQL session absent
+while the blocking lock remains held. Those assertions run before `f.stop`, so
+fixture shutdown cannot satisfy the deadline proof. Restart leaves the uncertain
+source operation held. This closes the earlier bounded backup-timeout evidence
+gap without changing the historical restore-only timeout assessment.
+
+Receipts are under
+`/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/`:
+
+| Receipt | Result and retained boundary |
+| --- | --- |
+| `first-runtime/driver.json` and `runtime-summary.json` | Exit 0, full workflow pass in 157.868 seconds. Three top-level Go groups and three failure subtests passed without skips; both live UI scenarios and all nine required markers passed. |
+| `first-runtime/independent-cleanup.json` and `full-profile-preservation.json` | Existing 35-container inventory and 209-volume profile preserved. Owned outer containers and volumes absent. |
+| `integration/sourceproof.json` and `checks.json` | Accepted combined revision retains all 38 source blobs/modes from `c76019739ffbde0bcf7eb357c9740ddd35bf9a57`; changes outside those paths match the prior accepted documentation snapshot. All 13 integration checks passed, including focused race checks, vet, API generation, frontend/product builds and embedded artifact checks. |
+| `transaction-pg/round7-captured-tick.json` | Earlier focused PostgreSQL/store and domain race checks passed in 25.113 seconds. This remains labeled earlier evidence, rather than a new full physical run. |
+
+The physical schedule group took 43.31 seconds. The live immediate and scheduled
+browser scenarios took 17.4 and 17.0 seconds within the full gate. These nested
+measurements do not establish total delivery time, total review rounds, token
+usage or monetary cost. The existing user UI on port 18081 still runs its older
+`09a432407c41671517fa342d28c07e9c79978aea` binary. Qualification of the embedded
+fixture does not deploy this feature to that process.
+
+The [checklist](parity-checklist.json) appends two subsequent bounded assessments:
+R46-C02 gains supported scheduled-backup qualification, and R46-C06 gains actual
+`pg_dump` timeout qualification. The prior documentation snapshot, its nine
+validated outcomes and one partial timeout outcome remain historical. The
+933-outcome audit and all parent gates remain unchanged. The unsupported cron
+forms above, S3, retention, notifications, other engines and full R46/R62 or
+Coolify parity remain open.

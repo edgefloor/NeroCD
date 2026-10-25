@@ -93,8 +93,10 @@ administrative resolution for that crash window.
 
 ## Deliberate limits and upstream reference
 
-Scheduling, S3 publication, retention automation, other database engines, arbitrary
-SQL uploads or URLs, in-place replacement, cross-destination restore, and backup of
+[PostgreSQL schedules](hosting-database-backup-schedules.md) have subsequent
+physical qualification within their documented cron subset. S3 publication,
+retention automation, other database engines, arbitrary SQL uploads or URLs,
+in-place replacement, cross-destination restore, and backup of
 PostgreSQL roles are deferred. These gaps must remain visible when assessing full
 hosting parity. No A25/S3 qualification is implied.
 
@@ -168,12 +170,15 @@ race checks. These overlap or cover different scopes and must not be summed
 as total delivery time. Receipts do not establish total elapsed effort, a total
 review-round count, token use or monetary cost.
 
-The [machine-readable checklist](parity-checklist.json) records ten later
-bounded outcome assessments under `supplemental_assessments`. Nine are validated.
-R46-C06 remains partial: shared backup/restore timeout handling is implemented,
-but the physical fixture proves only `pg_restore` timeout. A forced `pg_dump`
-backup timeout remains unverified. Its historical
+At documentation snapshot `dcef270b692d368b1e110975cb4f6b5d9c8dcb31`, the
+[machine-readable checklist](parity-checklist.json) records ten later
+bounded outcome assessments under `supplemental_assessments`. Nine are validated
+at that snapshot. R46-C06 remains partial in that assessment. Shared timeout
+handling is implemented, but its physical fixture proves only `pg_restore`
+timeout. A forced `pg_dump` backup timeout remains unverified there. The historical
 `09a432407c41671517fa342d28c07e9c79978aea` audit and 933 eligible outcomes remain
 unchanged. The later assessments add no historical score or full requirement,
 acceptance or matrix gate. Scheduled PostgreSQL backup, S3 and retention remain
-open, as do in-place restore, cross-destination recovery and other engines.
+open at that snapshot, as do in-place restore, cross-destination recovery and
+other engines. The subsequent [schedule and dump-timeout qualification](hosting-database-backup-schedules.md#physical-qualification-and-retained-evidence)
+adds two separate assessments without rewriting this historical evidence.

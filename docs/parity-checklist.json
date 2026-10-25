@@ -40846,7 +40846,8 @@
     "Current09a full qualification: seven Go groups,14 named subtests, zero Go skips/fails,683.423 seconds; six serialized browser phases,30 passes and6 deliberate opposite-profile skips. All32 required markers and exact owned cleanup passed. Full handoff: /tmp/nerocd-operation-status-retry-integrated-full-handoff.json.",
     "Refresh19 affected historical receipts without shrinking dependencies. R33-C02 retains its563fb88 original receipt after equality of all4 declared dependencies. Ten bounded R38/R23 outcomes gain proof; R38-C10 presence becomes implemented. R21-C07 stays partial and R38-C08 evidence_unavailable; no aggregate gates or broader storage/recovery features gain acceptance.",
     "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed.",
-    "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit."
+    "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit.",
+    "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -45244,6 +45245,100 @@
         "R46-C16 S3 upload",
         "R47 remote upload and independent retention",
         "R48-C03 in-place replacement target",
+        "A25",
+        "A26",
+        "A37",
+        "DB01 full PostgreSQL matrix"
+      ]
+    },
+    {
+      "id": "postgresql-schedules-and-dump-timeout-20261025",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Subsequent physical qualification changes only the bounded R46-C02 and R46-C06 assessments. The dcef documentation snapshot retains its nine validated outcomes and partial backup timeout as historical. Combined feature60b86e47504533280170028cbc0b9b632c7b67db is accepted; no new overall score or parent gate is claimed.",
+      "outcomes": [
+        {
+          "criterion_id": "R46-C02",
+          "outcome": "Request scheduled backup",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "combined_candidate_sha": "60b86e47504533280170028cbc0b9b632c7b67db",
+            "physical_source_sha": "c76019739ffbde0bcf7eb357c9740ddd35bf9a57",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupScheduleCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backup-schedules-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/independent-cleanup.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/integration/checks.json"
+            ],
+            "limits": "PostgreSQL 17.11 local backups only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image client and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. Supported robfig/cron grammar only: weekday 7 and L/W/# forms remain unsupported. No S3, automated retention, notifications, other engines, in-place/cross-host restore or full R46/R62/A/matrix acceptance. Historical933 audit and prior supplemental assessment remain unchanged.",
+            "justification": "The real embedded UI creates a schedule, replays a lost response, edits and disables the same identity. The running hosting controller admits one dump; controller and runner restart preserve exact occurrence/operation identity. Its archive restores into a new private database with distinct application reads and writes. Validation is limited to the documented supported cron grammar and due-discovery policy.",
+            "accepted_sha": "60b86e47504533280170028cbc0b9b632c7b67db"
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C06",
+          "outcome": "Enforce backup timeout",
+          "prior_assessment": {
+            "subject_sha": "dcef270b692d368b1e110975cb4f6b5d9c8dcb31",
+            "classification": "partial",
+            "assessment_id": "postgresql-local-backup-20261025"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "combined_candidate_sha": "60b86e47504533280170028cbc0b9b632c7b67db",
+            "physical_source_sha": "c76019739ffbde0bcf7eb357c9740ddd35bf9a57",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupScheduleCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backup-schedules-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/first-runtime/independent-cleanup.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/integration/checks.json"
+            ],
+            "limits": "PostgreSQL 17.11 local backups only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image client and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. Supported robfig/cron grammar only: weekday 7 and L/W/# forms remain unsupported. No S3, automated retention, notifications, other engines, in-place/cross-host restore or full R46/R62/A/matrix acceptance. Historical933 audit and prior supplemental assessment remain unchanged.",
+            "justification": "A positively observed source-table DDL lock blocks the real guest pg_dump. The fixture follows the same Docker ExecID from the blocked session to terminal exit124, with pg_dump processes and sessions absent while the lock remains held, before f.stop. Uncertain source ownership survives restart. This separately qualifies backup timeout; the earlier pg_restore timeout proves restore timeout only.",
+            "accepted_sha": "60b86e47504533280170028cbc0b9b632c7b67db"
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "Upstream cron weekday7 and L/W/# calendar grammar",
+        "R46-C07 automatic retention",
+        "R46-C16 S3 upload",
+        "R47 independent remote publication/retention",
+        "R62 general scheduled-operation scope",
+        "Notifications",
+        "Other database engines",
+        "In-place/cross-host restore",
         "A25",
         "A26",
         "A37",
