@@ -102,11 +102,20 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
-		if err = s.saveBackupRemoteScheduleSelection(ctx, tx, actor, resource, id, saved.Revision, in.RemoteTarget); err != nil {
+		selection := in.RemoteTarget
+		if !in.Enabled && existingID != "" && selection == nil {
+			// Disabling is control over future discovery, not a request to
+			// erase the historical destination selected by this schedule.
+			selection, err = backupRemoteScheduleSelection(ctx, tx, id, saved.Revision-1)
+			if err != nil {
+				return zero, err
+			}
+		}
+		if err = s.saveBackupRemoteScheduleSelection(ctx, tx, actor, resource, id, saved.Revision, in.Enabled, selection); err != nil {
 			return zero, err
 		}
 		out := databaseBackupScheduleView(saved)
-		out.RemoteTarget = in.RemoteTarget
+		out.RemoteTarget = selection
 		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_requests(resource_id,request_id,actor_id,request_hash,schedule_id,revision,response) VALUES($1,$2,$3,$4,$5,$6,$7)`, resource, in.RequestID, actor, hash, id, saved.Revision, buildJSON(out))
 		if err != nil {
 			return zero, err
