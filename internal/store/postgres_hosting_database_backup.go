@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
@@ -550,6 +551,11 @@ func (s *PostgresStore) databaseBackupClaimAllowed(ctx context.Context, tx pgx.T
 		return false, nil
 	}
 	p, err := databaseBackupCurrent(ctx, tx, r)
+	// Denied current authority leaves unresolved ownership untouched, but
+	// must not prevent the cursor reaching independent eligible work.
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) {
+		return false, nil
+	}
 	return err == nil && p.Validate() == nil, err
 }
 func databaseBackupAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (sqlcgen.HostingDatabaseBackup, error) {
