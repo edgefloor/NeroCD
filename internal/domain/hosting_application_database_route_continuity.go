@@ -104,7 +104,14 @@ type HostingApplicationDatabaseYieldReceipt struct {
 }
 
 func (y HostingApplicationDatabaseYieldRequest) Receipt() HostingApplicationDatabaseYieldReceipt {
-	return HostingApplicationDatabaseYieldReceipt{y.Version, y.ReceiptID, y.PlanHash, y.StageHash, y.CandidateHash, y.ContinuationHash}
+	return HostingApplicationDatabaseYieldReceipt{
+		Version:          y.Version,
+		ReceiptID:        y.ReceiptID,
+		PlanHash:         y.PlanHash,
+		StageHash:        y.StageHash,
+		CandidateHash:    y.CandidateHash,
+		ContinuationHash: y.ContinuationHash,
+	}
 }
 
 // Validate checks only public correlation framing, never live effect authority.
