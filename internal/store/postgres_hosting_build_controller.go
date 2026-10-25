@@ -21,6 +21,10 @@ func (h deploymentOnlyHandler) PrepareDeployment(ctx context.Context, id string)
 	return h.store.PrepareDeployment(ctx, id)
 }
 
+func (h deploymentOnlyHandler) PrepareDatabaseBackup(ctx context.Context, id string) error {
+	return h.store.PrepareDatabaseBackup(ctx, id)
+}
+
 func (h deploymentOnlyHandler) PrepareStorageArchive(ctx context.Context, id string) error {
 	return h.store.PrepareStorageArchive(ctx, id)
 }

@@ -3,6 +3,13 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backups"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backups"},
+	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/database-backups/{id}/restores"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup/mutation"},
+
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connections"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-connection"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-connections/options"},
@@ -291,6 +298,16 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseConnectionAuthorize
 	case "/api/v1/runners/hosting/database-binding/state":
 		return s.runnerDatabaseConnectionState
+	case "/api/v1/resources/{id}/database-backups":
+		return s.hostingDatabaseBackups
+	case "/api/v1/database-backups/{id}":
+		return s.hostingDatabaseBackup
+	case "/api/v1/database-backups/{id}/restores":
+		return s.restoreHostingDatabaseBackup
+	case "/api/v1/runners/hosting/database-backup/plan":
+		return s.runnerDatabaseBackupPlan
+	case "/api/v1/runners/hosting/database-backup/mutation":
+		return s.runnerDatabaseBackupMutation
 	case "/api/v1/resources/{id}/storage-backups":
 		return s.hostingStorageBackups
 	case "/api/v1/storage-backups/{id}":

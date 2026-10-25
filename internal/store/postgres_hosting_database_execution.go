@@ -175,6 +175,24 @@ func databaseOperationAuthorityMode(ctx context.Context, tx pgx.Tx, op domain.Ho
 // RequestHostingDatabaseDeployment commits one private operation and River job.
 // Runtime support remains a separate qualification boundary.
 func (s *PostgresStore) RequestHostingDatabaseDeployment(ctx context.Context, id, resource, actor string, in domain.HostingDatabaseDeploymentInput, audit domain.AuditEvent) (domain.HostingOperation, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	defer storageDeploymentRollback(ctx, tx)
+	op, err := s.requestHostingDatabaseDeploymentTx(ctx, tx, id, resource, actor, in, audit)
+	if err != nil {
+		return domain.HostingOperation{}, err
+	}
+	if err = proxyCommitMutation(ctx, tx, actor); err != nil {
+		return domain.HostingOperation{}, hostingError(err)
+	}
+	return op, nil
+}
+
+func (s *PostgresStore) requestHostingDatabaseDeploymentTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, in domain.HostingDatabaseDeploymentInput, audit domain.AuditEvent) (domain.HostingOperation, error) {
 	var zero domain.HostingOperation
 	if s.hostingJobs == nil {
 		return zero, hostingjobs.ErrUnavailable
@@ -182,13 +200,7 @@ func (s *PostgresStore) RequestHostingDatabaseDeployment(ctx context.Context, id
 	if in.Validate() != nil || domain.ValidateDatabaseDeploymentTask(domain.TaskRun{ID: "run_" + id, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseDeploy, HostingOperationID: id, HostingMode: "deploy"}}) != nil {
 		return zero, fmt.Errorf("invalid database deployment identity: %w", ErrConflict)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return zero, fmt.Errorf("begin database deployment: %w", err)
-	}
-	defer storageDeploymentRollback(ctx, tx)
+	var err error
 	q := sqlcgen.New(tx)
 	if err = hostingDatabaseExecutionCompatible(ctx, q); err != nil {
 		return zero, err
@@ -292,9 +304,6 @@ func (s *PostgresStore) RequestHostingDatabaseDeployment(ctx context.Context, id
 	}
 	if err = hostingTargetGate(ctx, tx, target.ProjectID, snap, false); err != nil {
 		return zero, err
-	}
-	if err = proxyCommitMutation(ctx, tx, actor); err != nil {
-		return zero, fmt.Errorf("commit database deployment: %w", hostingError(err))
 	}
 	return op, nil
 }

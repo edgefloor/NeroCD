@@ -18,6 +18,7 @@ import (
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
+	databaseBackupLimits           *domain.HostingDatabaseBackupLimits
 	storageArchiveConfiguration    *storageArchiveConfiguration
 	serverBootstrapHandler         func(context.Context, string) error
 	hostingBuildPolicy             *domain.HostingBuildPolicy

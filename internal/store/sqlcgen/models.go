@@ -424,6 +424,42 @@ type HostingDatabase struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type HostingDatabaseBackup struct {
+	ID                    string          `json:"id"`
+	ProjectID             string          `json:"project_id"`
+	SourceResourceID      string          `json:"source_resource_id"`
+	SourceBindingID       string          `json:"source_binding_id"`
+	SourceGeneration      int64           `json:"source_generation"`
+	BackupID              string          `json:"backup_id"`
+	Mode                  string          `json:"mode"`
+	RequestID             string          `json:"request_id"`
+	RequestHash           string          `json:"request_hash"`
+	CreatedBy             string          `json:"created_by"`
+	State                 string          `json:"state"`
+	TargetResourceID      *string         `json:"target_resource_id"`
+	TargetBindingID       *string         `json:"target_binding_id"`
+	DeploymentOperationID *string         `json:"deployment_operation_id"`
+	RunID                 *string         `json:"run_id"`
+	RunnerID              string          `json:"runner_id"`
+	Plan                  json.RawMessage `json:"plan"`
+	PlanHash              string          `json:"plan_hash"`
+	Blob                  []byte          `json:"blob"`
+	FailureCode           string          `json:"failure_code"`
+	OwnershipHeld         bool            `json:"ownership_held"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+type HostingDatabaseBackupReceipt struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	Response    json.RawMessage `json:"response"`
+}
+
 type HostingDatabaseBinding struct {
 	ID                    string          `json:"id"`
 	ApplicationResourceID string          `json:"application_resource_id"`

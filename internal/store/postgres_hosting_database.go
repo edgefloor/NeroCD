@@ -77,6 +77,24 @@ func hostingDatabaseLoad(ctx context.Context, q *sqlcgen.Queries, resource strin
 // CreateHostingDatabase commits connected desired metadata and encrypted
 // credentials. It cannot queue deployment or claim engine qualification.
 func (s *PostgresStore) CreateHostingDatabase(ctx context.Context, actor string, in domain.HostingDatabaseCreateInput, credentials []HostingDatabaseCredentialRecord, event domain.AuditEvent) (domain.HostingDatabase, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.HostingDatabase{}, err
+	}
+	defer storageDeploymentRollback(ctx, tx)
+	view, err := s.createHostingDatabaseTx(ctx, tx, actor, in, credentials, event)
+	if err != nil {
+		return domain.HostingDatabase{}, err
+	}
+	if err = proxyCommitMutation(ctx, tx, actor); err != nil {
+		return domain.HostingDatabase{}, hostingError(err)
+	}
+	return view, nil
+}
+
+func (s *PostgresStore) createHostingDatabaseTx(ctx context.Context, tx pgx.Tx, actor string, in domain.HostingDatabaseCreateInput, credentials []HostingDatabaseCredentialRecord, event domain.AuditEvent) (domain.HostingDatabase, error) {
 	var zero domain.HostingDatabase
 	if in.Validate() != nil || actor == "" {
 		return zero, ErrConflict
@@ -85,13 +103,6 @@ func (s *PostgresStore) CreateHostingDatabase(ctx context.Context, actor string,
 	if err != nil {
 		return zero, ErrConflict
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return zero, fmt.Errorf("begin database creation: %w", err)
-	}
-	defer storageDeploymentRollback(ctx, tx)
 	q := sqlcgen.New(tx)
 	if err = hostingDatabaseCompatible(ctx, q); err != nil {
 		return zero, err
@@ -222,9 +233,6 @@ func (s *PostgresStore) CreateHostingDatabase(ctx context.Context, actor string,
 	view, err := hostingDatabaseLoad(ctx, q, resource)
 	if err != nil {
 		return zero, err
-	}
-	if err = proxyCommitMutation(ctx, tx, actor); err != nil {
-		return zero, hostingError(err)
 	}
 	return view, nil
 }

@@ -21,6 +21,366 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/resources/{id}/database-backups:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackups",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "requestHostingDatabaseBackup",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/database-backups/{id}:
+    {
+      "get": {
+        "operationId": "getHostingDatabaseBackup",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
+  /api/v1/database-backups/{id}/restores:
+    {
+      "post": {
+        "operationId": "restoreHostingDatabaseBackup",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupRestoreInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/database-backup/plan:
+    {
+      "post": {
+        "operationId": "getHostingDatabaseBackupPlan",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingAuthority"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/database-backup/mutation:
+    {
+      "post": {
+        "operationId": "recordHostingDatabaseBackupMutation",
+        "summary": "Hosted PostgreSQL logical backup or new private restore",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupMutation"
+              }
+            }
+          }
+        }
+      }
+    }
   /api/v1/runners/database-network-captures/claim:
     {
       "post": {
@@ -5537,6 +5897,311 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    HostingDatabaseBackupInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_resource_generation"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    HostingDatabaseBackupRestoreInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "name"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    HostingDatabaseBackupBlob:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "digest",
+          "bytes",
+          "format"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1073741824
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "postgresql_custom"
+            ]
+          }
+        }
+      }
+    HostingDatabaseBackupOperation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "max_bytes",
+          "timeout_seconds",
+          "id",
+          "version",
+          "project_id",
+          "source_resource_id",
+          "source_generation",
+          "backup_id",
+          "mode",
+          "state",
+          "consistency",
+          "ownership_held",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "max_bytes": {"type":"integer","minimum":5,"maximum":1073741824},
+          "timeout_seconds": {"type":"integer","minimum":1,"maximum":3600},
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "postgresql.logical-local.v1"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "source_resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "source_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "backup_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "backup",
+              "restore"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "waiting_target",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "target_resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "blob": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupBlob"
+          },
+          "consistency": {
+            "type": "string",
+            "enum": [
+              "logical_snapshot_source_writable"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "execution_failed",
+              "publication_failed",
+              "interrupted"
+            ]
+          },
+          "ownership_held": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    HostingDatabaseBackupPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "actor_id",
+          "runner_id",
+          "source",
+          "source_storage",
+          "source_plan",
+          "credentials",
+          "location_id",
+          "max_bytes",
+          "timeout_seconds",
+          "hash"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupOperation"
+          },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "source_storage": {
+            "$ref": "#/components/schemas/HostingStorage"
+          },
+          "source_plan": {
+            "$ref": "#/components/schemas/HostingApplyPlan"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostingDatabaseCredentialRef"
+            }
+          },
+          "target": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "target_storage": {
+            "$ref": "#/components/schemas/HostingStorage"
+          },
+          "target_plan": {
+            "$ref": "#/components/schemas/HostingApplyPlan"
+          },
+          "location_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1073741824
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    HostingDatabaseBackupMutation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "attempt",
+          "fence",
+          "receipt_id",
+          "plan_hash",
+          "phase"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fence": {
+            "type": "string"
+          },
+          "receipt_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "intent",
+              "complete",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "blob": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupBlob"
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "execution_failed",
+              "publication_failed",
+              "interrupted"
+            ]
+          }
+        }
+      }
     ServerBootstrapTarget:
       type: "object"
       additionalProperties: false

@@ -4,6 +4,110 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/database-backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        get: operations["listHostingDatabaseBackups"];
+        put?: never;
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        post: operations["requestHostingDatabaseBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        get: operations["getHostingDatabaseBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}/restores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        post: operations["restoreHostingDatabaseBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        post: operations["getHostingDatabaseBackupPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup/mutation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hosted PostgreSQL logical backup or new private restore
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         */
+        post: operations["recordHostingDatabaseBackupMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/database-network-captures/claim": {
         parameters: {
             query?: never;
@@ -3800,6 +3904,76 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingDatabaseBackupInput: {
+            request_id: string;
+            expected_resource_generation: number;
+        };
+        HostingDatabaseBackupRestoreInput: {
+            request_id: string;
+            name: string;
+        };
+        HostingDatabaseBackupBlob: {
+            digest: string;
+            bytes: number;
+            /** @enum {string} */
+            format: "postgresql_custom";
+        };
+        HostingDatabaseBackupOperation: {
+            max_bytes: number;
+            timeout_seconds: number;
+            id: string;
+            /** @enum {string} */
+            version: "postgresql.logical-local.v1";
+            project_id: string;
+            source_resource_id: string;
+            source_generation: number;
+            backup_id: string;
+            /** @enum {string} */
+            mode: "backup" | "restore";
+            /** @enum {string} */
+            state: "queued" | "waiting_target" | "dispatched" | "applying" | "succeeded" | "failed" | "uncertain";
+            target_resource_id?: string;
+            blob?: components["schemas"]["HostingDatabaseBackupBlob"];
+            /** @enum {string} */
+            consistency: "logical_snapshot_source_writable";
+            /** @enum {string} */
+            failure_code?: "execution_failed" | "publication_failed" | "interrupted";
+            ownership_held: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HostingDatabaseBackupPlan: {
+            operation: components["schemas"]["HostingDatabaseBackupOperation"];
+            actor_id: string;
+            runner_id: string;
+            source: components["schemas"]["HostingHealthy"];
+            source_storage: components["schemas"]["HostingStorage"];
+            source_plan: components["schemas"]["HostingApplyPlan"];
+            credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
+            target?: components["schemas"]["HostingHealthy"];
+            target_storage?: components["schemas"]["HostingStorage"];
+            target_plan?: components["schemas"]["HostingApplyPlan"];
+            location_id: string;
+            max_bytes: number;
+            timeout_seconds: number;
+            hash: string;
+        };
+        HostingDatabaseBackupMutation: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            attempt: number;
+            fence: string;
+            receipt_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "intent" | "complete" | "failed" | "uncertain";
+            blob?: components["schemas"]["HostingDatabaseBackupBlob"];
+            /** @enum {string} */
+            failure_code?: "execution_failed" | "publication_failed" | "interrupted";
+        };
         ServerBootstrapTarget: {
             ip: string;
             port: number;
@@ -7925,6 +8099,444 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listHostingDatabaseBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOperation"][];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    requestHostingDatabaseBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupInput"];
+            };
+        };
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOperation"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingDatabaseBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOperation"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    restoreHostingDatabaseBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupRestoreInput"];
+            };
+        };
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOperation"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingDatabaseBackupPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupPlan"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recordHostingDatabaseBackupMutation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupMutation"];
+            };
+        };
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOperation"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     claimHostingDatabaseNetworkCapture: {
         parameters: {
             query?: never;

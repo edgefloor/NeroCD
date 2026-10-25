@@ -1,0 +1,141 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/getkin/kin-openapi/openapi3"
+
+	"nerocd/internal/app"
+	"nerocd/internal/auth"
+	"nerocd/internal/domain"
+	"nerocd/internal/store"
+)
+
+type databaseBackupHTTPRepository struct {
+	*archiveHTTPRepository
+	store.HostingDatabaseRepository
+	value domain.HostingDatabaseBackupOperation
+	calls int
+}
+
+func (r *databaseBackupHTTPRepository) GetResource(ctx context.Context, id string) (domain.Resource, error) {
+	if id == r.resource.ID {
+		return r.resource, nil
+	}
+	return r.MemoryStore.GetResource(ctx, id)
+}
+func (r *databaseBackupHTTPRepository) RequestDatabaseBackup(ctx context.Context, id, resource, actor string, in domain.HostingDatabaseBackupInput, _ domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
+	r.calls++
+	if e := r.authorize(ctx, actor, domain.RoleOwner); e != nil {
+		return r.value, e
+	}
+	r.value.ID = id
+	r.value.BackupID = id
+	return r.value, nil
+}
+func (r *databaseBackupHTTPRepository) GetDatabaseBackup(ctx context.Context, actor, id string) (domain.HostingDatabaseBackupOperation, error) {
+	r.calls++
+	return r.value, r.authorize(ctx, actor, domain.RoleViewer)
+}
+func (r *databaseBackupHTTPRepository) ListDatabaseBackups(ctx context.Context, actor, id string) ([]domain.HostingDatabaseBackupOperation, error) {
+	r.calls++
+	return []domain.HostingDatabaseBackupOperation{r.value}, r.authorize(ctx, actor, domain.RoleViewer)
+}
+func (r *databaseBackupHTTPRepository) RequestDatabaseBackupRestore(context.Context, string, string, string, domain.HostingDatabaseBackupRestoreInput, domain.HostingDatabaseCreateInput, []store.HostingDatabaseCredentialRecord, domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
+	r.calls++
+	return r.value, store.ErrConflict
+}
+func (r *databaseBackupHTTPRepository) DatabaseBackupPlan(context.Context, string, domain.HostingAuthority) (domain.HostingDatabaseBackupPlan, error) {
+	r.calls++
+	return domain.HostingDatabaseBackupPlan{}, store.ErrConflict
+}
+func (r *databaseBackupHTTPRepository) DatabaseBackupMutation(context.Context, string, domain.HostingDatabaseBackupMutation) (domain.HostingDatabaseBackupOperation, error) {
+	r.calls++
+	return r.value, store.ErrConflict
+}
+func TestDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
+	server, original, owner, viewer, runner := archiveHTTPFixture(t)
+	original.resource.Kind = "database"
+	repo := &databaseBackupHTTPRepository{archiveHTTPRepository: original}
+	mem := repo.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	now := time.Now().UTC()
+	repo.value = domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, ID: "backup", Version: domain.HostingDatabaseBackupVersion, ProjectID: repo.resource.ProjectID, SourceResourceID: repo.resource.ID, SourceGeneration: 1, BackupID: "backup", Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
+	path := "/api/v1/resources/" + repo.resource.ID + "/database-backups"
+	body := `{"request_id":"backup","expected_resource_generation":1}`
+	archiveHTTPCall(t, server, "POST", path, "", body, "application/json", 401)
+	archiveHTTPCall(t, server, "POST", path, runner, body, "application/json", 401)
+	archiveHTTPCall(t, server, "POST", path, viewer, body, "application/json", 403)
+	before := repo.calls
+	for _, invalid := range []string{`{}`, `null`, body + `{}`, strings.Replace(body, `"request_id":"backup"`, `"request_id":"backup","request_id":"other"`, 1), strings.Replace(body, `}`, `,"path":"/private"}`, 1), strings.Replace(body, `}`, `,"password":"canary"}`, 1), strings.Replace(body, `"request_id"`, `"Request_ID"`, 1)} {
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+	}
+	if repo.calls != before {
+		t.Fatal("invalid JSON reached repository")
+	}
+	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 202)
+	response := archiveHTTPCall(t, server, "GET", path, viewer, "", "", 200)
+	for _, unsafe := range []string{"credentials", "source_plan", "fence", "/private", "canary"} {
+		if strings.Contains(response.Body.String(), unsafe) {
+			t.Fatal("public metadata leaked", unsafe)
+		}
+	}
+	archiveHTTPCall(t, server, "POST", "/api/v1/database-backups/backup/restores", viewer, `{"request_id":"restore","name":"Restored"}`, "application/json", 403)
+	for _, endpoint := range []string{"plan", "mutation"} {
+		archiveHTTPCall(t, server, "POST", "/api/v1/runners/hosting/database-backup/"+endpoint, owner, `{}`, "application/json", 401)
+	}
+}
+func TestDatabaseBackupSchemaMatchesTypedFields(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = doc.Validate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]any{"HostingDatabaseBackupInput": domain.HostingDatabaseBackupInput{}, "HostingDatabaseBackupRestoreInput": domain.HostingDatabaseBackupRestoreInput{}, "HostingDatabaseBackupBlob": domain.HostingDatabaseBackupBlob{}, "HostingDatabaseBackupOperation": domain.HostingDatabaseBackupOperation{}, "HostingDatabaseBackupPlan": domain.HostingDatabaseBackupPlan{}, "HostingDatabaseBackupMutation": domain.HostingDatabaseBackupMutation{}} {
+		schema := doc.Components.Schemas[name]
+		if schema == nil {
+			t.Fatal("missing schema", name)
+		}
+		fields := map[string]bool{}
+		var walk func(reflect.Type)
+		walk = func(v reflect.Type) {
+			for i := 0; i < v.NumField(); i++ {
+				f := v.Field(i)
+				if f.Anonymous {
+					walk(f.Type)
+					continue
+				}
+				tag := strings.Split(f.Tag.Get("json"), ",")[0]
+				if tag != "" && tag != "-" {
+					fields[tag] = true
+				}
+			}
+		}
+		walk(reflect.TypeOf(value))
+		if len(fields) != len(schema.Value.Properties) {
+			t.Fatalf("%s field count mismatch", name)
+		}
+		for key := range fields {
+			if schema.Value.Properties[key] == nil {
+				t.Fatalf("%s missing %s", name, key)
+			}
+		}
+	}
+	raw, _ := json.Marshal(domain.HostingDatabaseBackupInput{RequestID: "backup", ExpectedResourceGeneration: 1})
+	var value any
+	_ = json.Unmarshal(raw, &value)
+	if err = doc.Components.Schemas["HostingDatabaseBackupInput"].Value.VisitJSON(value); err != nil {
+		t.Fatal(err)
+	}
+}
