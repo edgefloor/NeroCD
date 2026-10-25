@@ -174,11 +174,11 @@ test("intercepted refreshed eligible routes require renewed approval before depl
 });
 
 for (const width of [320, 390, 430, 1440]) {
-  test(`intercepted connected upload storage review requires interruption approval at ${width}px`, async ({ page }) => {
+  test(`intercepted connected upload storage review requires interruption approval at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     const { panel, writes, lose } = await fixture(page, true);
     const hash = `sha256:${"a".repeat(64)}`;
-    await page.route("**/resources/app/storage-deployment-options", (route) => route.fulfill({ json: { resource_id: "app", resource_generation: 3, storage_ref: { storage_id: "storage", generation: 1, hash }, previous_healthy_operation_id: "application_fixture", host_port: 20000, container_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption_required: true } } }));
+    await page.route("**/resources/app/storage-deployment-options", (route) => route.fulfill({ json: { resource_id: "app", resource_generation: 3, storage_ref: { storage_id: "storage", generation: 1, hash }, previous_healthy_operation_id: "application_fixture", host_port: 20000, container_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 3, selected_release_operation_id: "application_fixture" }], storage_route_continuity: null, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption_required: true } } }));
     await page.route("**/resources/app/storage", (route) => route.fulfill({ json: { id: "storage", project_id: "p", resource_id: "app", binding_id: "binding", destination_id: "dest", generation: 1, hash, kind: "platform_managed", driver: "local", access_mode: "read_write", retention: "retain", volume_name: "ncd_uploads", mount_path: "/app/uploads" } }));
     await panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
     await expect(panel.getByText(/Saved upload mount: \/app\/uploads/)).toBeVisible();
@@ -199,6 +199,83 @@ for (const width of [320, 390, 430, 1440]) {
     expect(writes[0]).toBe(writes[1]);
     expect(JSON.parse(writes[1]).application_database_storage).toEqual({ expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption: true });
     expect(JSON.parse(writes[1]).application_database_route_continuity.routes).toHaveLength(1);
+    await panel.screenshot({ path: info.outputPath(`intercepted-connected-storage-${width}.png`), animations: "disabled" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+for (const action of ["resume_predecessor", "complete_replacement"] as const) {
+  test(`intercepted offered storage recovery ${action} requires separate review`, async ({ page }) => {
+    await page.clock.install();
+    await page.setViewportSize({ width: 390, height: 1000 });
+    const { panel } = await fixture(page, true);
+    const hash = `sha256:${"a".repeat(64)}`, stage = `sha256:${"b".repeat(64)}`, candidate = `sha256:${"c".repeat(64)}`;
+    await page.route("**/resources/app/database-connection", (route) => route.fulfill({ json: { id: "hcn_fixture", project_id: "p", application_resource_id: "app", database_resource_id: "db", binding_id: "binding", binding_hash: hash, state: "held", reason_code: "replacement_failed", capture_id: "capture_fixture", upgrade_operation_id: "upgrade_fixture", application_operation_id: "hop_fixture", hold_operation_id: "hop_fixture", membership_revision: 4, created_at: "", updated_at: "" } }));
+    const operation = { id: "hop_fixture", project_id: "p", resource_id: "app", state: "failed", mutation_hold: true, restore_ownership_held: false, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: { storage_id: "storage", generation: 1, hash }, hash }, application_database_storage_state: { version: "application-database.storage.v1", phase: "replacement_failed", receipt_id: "receipt", state_hash: hash, previous_state_hash: hash, candidate_hash: candidate, stage_hash: stage, recovery_actions: [action], recovery_action: "", recovery_state: "none" }, snapshot: { resource_id: "app" } };
+    await page.route("**/hosting-operations/hop_fixture", (route) => route.fulfill({ json: operation }));
+    const writes: string[] = [];
+    await page.route("**/resources/app/database-connection/recovery", (route) => { writes.push(route.request().postData()!); operation.application_database_storage_state.recovery_action = action; operation.application_database_storage_state.recovery_state = "queued"; operation.application_database_storage_state.recovery_actions = []; return route.fulfill({ status: 202, json: operation }); });
+    await panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+    const recovery = panel.getByRole("region", { name: "Connected storage recovery", exact: true });
+    const label = action === "resume_predecessor" ? "Resume previous application" : "Complete interrupted replacement";
+    await recovery.getByRole("button", { name: `Review: ${label}`, exact: true }).click();
+    const submit = recovery.getByRole("button", { name: label, exact: true }); await expect(submit).toBeDisabled();
+    const acknowledge = recovery.getByLabel("I acknowledge application interruption and retained data changes for this recovery.");
+    await acknowledge.focus(); await page.keyboard.press("Space");
+    await submit.focus(); await page.keyboard.press("Enter");
+    await expect(recovery.getByText(/Recovery request accepted/)).toBeVisible();
+    await expect(recovery.getByText(/Recovery status: queued/)).toBeVisible();
+    operation.application_database_storage_state.recovery_state = "succeeded";
+    await page.clock.fastForward(5001);
+    await expect(recovery.getByText(/server recorded verified recovery settlement/)).toBeVisible();
+    await expect(recovery.getByText(/Recovery request accepted/)).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0])).toMatchObject({ action, operation_id: "hop_fixture", stage_hash: stage, candidate_hash: candidate, expected_membership_revision: 4, storage_state_hash: hash, application_database_storage: { expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption: true } });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+async function pendingRecoveryFixture(page: Page) {
+  await page.clock.install();
+  const { panel } = await fixture(page, true);
+  const hash = `sha256:${"a".repeat(64)}`;
+  let reads = 0, state = "queued", unavailable = false;
+  await page.route("**/resources/app/database-connection", (route) => route.fulfill({ json: { id: "hcn_fixture", project_id: "p", application_resource_id: "app", database_resource_id: "db", binding_id: "binding", binding_hash: hash, state: "held", reason_code: "replacement_failed", capture_id: "capture_fixture", upgrade_operation_id: "upgrade_fixture", application_operation_id: "hop_fixture", hold_operation_id: "hop_fixture", membership_revision: 4, created_at: "", updated_at: "" } }));
+  await page.route("**/hosting-operations/hop_fixture", (route) => {
+    reads++;
+    return route.fulfill({ status: unavailable ? 503 : 200, json: unavailable ? {} : { id: "hop_fixture", project_id: "p", resource_id: "app", state: "failed", mutation_hold: state !== "succeeded", restore_ownership_held: false, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: { storage_id: "storage", generation: 1, hash }, hash }, application_database_storage_state: { version: "application-database.storage.v1", phase: "replacement_failed", receipt_id: "receipt", state_hash: hash, previous_state_hash: hash, stage_hash: hash, candidate_hash: hash, recovery_actions: [], recovery_action: "resume_predecessor", recovery_state: state } } });
+  });
+  await page.reload();
+  const hosting = page.getByRole("region", { name: "Project hosting", exact: true });
+  await hosting.getByLabel("Hosting project", { exact: true }).selectOption("p");
+  await hosting.getByRole("button", { name: "Fixture environment", exact: true }).click();
+  await expect(panel.getByText(/Recovery status: queued/)).toBeVisible();
+  return { panel, reads: () => reads, settle: () => { state = "succeeded"; }, unavailable: (value: boolean) => { unavailable = value; } };
+}
+test("intercepted fresh pending recovery polls a failed original until proof-derived settlement", async ({ page }) => {
+  const state = await pendingRecoveryFixture(page);
+  const before = state.reads(); await page.clock.fastForward(5001);
+  await expect.poll(state.reads).toBeGreaterThan(before);
+  await expect(state.panel.getByText(/Recovery remains pending, including when the original deployment is failed/)).toBeVisible();
+  state.settle(); await page.clock.fastForward(5001);
+  await expect(state.panel.getByText(/server recorded verified recovery settlement/)).toBeVisible();
+  const after = state.reads(); await page.clock.fastForward(10001); expect(state.reads()).toBe(after);
+});
+test("intercepted pending recovery polling stops at its bound and manual refresh restarts checks", async ({ page }) => {
+  const state = await pendingRecoveryFixture(page);
+  await page.clock.fastForward(120_001);
+  await expect(state.panel.getByText(/Automatic recovery checks paused after two minutes/)).toBeVisible();
+  const stopped = state.reads(); await page.clock.fastForward(10_001); expect(state.reads()).toBe(stopped);
+  await state.panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+  await expect.poll(state.reads).toBeGreaterThan(stopped);
+  const restarted = state.reads(); await page.clock.fastForward(5001);
+  await expect.poll(state.reads).toBeGreaterThan(restarted);
+});
+test("intercepted unreachable recovery preserves pending evidence and stops automatic reads", async ({ page }) => {
+  const state = await pendingRecoveryFixture(page);
+  state.unavailable(true); await page.clock.fastForward(5001);
+  await expect(state.panel.getByText(/Current progress read: unavailable, recorded evidence only/)).toBeVisible();
+  const stopped = state.reads(); await page.clock.fastForward(10001); expect(state.reads()).toBe(stopped);
+  state.unavailable(false); await state.panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+  await expect(state.panel.getByText(/Recovery status: queued/)).toBeVisible();
+});

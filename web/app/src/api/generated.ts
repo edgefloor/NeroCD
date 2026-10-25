@@ -3618,7 +3618,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. */
+        /** @description Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Observation is read-only. Explicit offered resume_predecessor or complete_replacement actions require fresh exact correlation and interruption acknowledgment. Process recovery does not undo database or upload changes, and does not guarantee data compatibility. */
         post: operations["requestHostingDatabaseConnectionRecovery"];
         delete?: never;
         options?: never;
@@ -3705,6 +3705,57 @@ export interface paths {
         put?: never;
         /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects. Stage/state/retirement receipts are historical evidence, not current effect permission; authorize is separate and lease-bounded. */
         post: operations["recordHostingApplicationDatabaseRetirement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/storage/writer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller. */
+        post: operations["recordHostingApplicationDatabaseStorageWriter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/storage/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller. */
+        post: operations["authorizeHostingApplicationDatabaseStorageEffect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-binding/storage/proxy-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller. */
+        post: operations["getHostingApplicationDatabaseStorageProxyPlan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4874,6 +4925,7 @@ export interface components {
             hash: string;
         };
         HostingStorageDeploymentOptions: {
+            application_database_storage: components["schemas"]["HostingApplicationDatabaseStorageReview"] | null;
             resource_id: components["schemas"]["HostingIdentifier"];
             /** Format: int64 */
             resource_generation: number;
@@ -4893,7 +4945,7 @@ export interface components {
                 version: number;
                 selected_release_operation_id: components["schemas"]["HostingIdentifier"];
             }[];
-            /** @description Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes. */
+            /** @description Generic storage replacement route selection. Connected database applications use application_database_route_continuity from the reviewed route choices instead. */
             storage_route_continuity: components["schemas"]["HostingStorageRouteContinuityInput"] | null;
         };
         HostingStorageRouteRecoveryInput: {
@@ -4981,6 +5033,7 @@ export interface components {
             }[];
         };
         HostingProxySnapshot: {
+            storage_switch?: components["schemas"]["HostingProxyStorageSwitch"];
             verified_switch?: components["schemas"]["HostingVerifiedSwitch"];
             proxy_id: string;
             server_id: string;
@@ -5142,7 +5195,208 @@ export interface components {
             attempt: number;
             fence: string;
         };
+        HostingApplicationDatabaseStorageWriterReceipt: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            receipt_id: components["schemas"]["HostingIdentifier"];
+            /** @enum {string} */
+            phase: "stop_intent" | "stopped" | "candidate_stopped" | "replacement_failed" | "resume_intent" | "resumed";
+            plan_hash: string;
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            previous_state_hash: string;
+            stage_hash: string;
+            candidate_hash: string;
+            predecessor_hash: string;
+            observation_hash: string;
+            hash: string;
+            predecessor_endpoint?: components["schemas"]["HostingDatabaseBindingEndpointObservation"] & {
+                /** @enum {unknown} */
+                present?: true;
+                endpoint?: unknown;
+            };
+        } & (({
+            /** @enum {unknown} */
+            stage_hash?: "";
+            /** @enum {unknown} */
+            candidate_hash?: "";
+        } | {
+            stage_hash?: string;
+            candidate_hash?: string;
+        }) & ({
+            /** @enum {unknown} */
+            phase?: "stop_intent" | "resume_intent";
+            /** @enum {unknown} */
+            observation_hash?: "";
+        } | {
+            /** @enum {unknown} */
+            phase?: "stopped" | "candidate_stopped" | "replacement_failed" | "resumed";
+            observation_hash?: string;
+        }) & ({
+            /** @enum {unknown} */
+            phase?: "resumed";
+        } | {
+            /** @enum {unknown} */
+            phase?: "stop_intent" | "stopped" | "candidate_stopped" | "replacement_failed" | "resume_intent";
+        }));
+        HostingApplicationDatabaseStorageWriterRequest: {
+            operation_id: components["schemas"]["HostingIdentifier"];
+            run_id: components["schemas"]["HostingIdentifier"];
+            lease_id: string;
+            fence: string;
+            /** Format: int32 */
+            attempt: number;
+            receipt: components["schemas"]["HostingApplicationDatabaseStorageWriterReceipt"];
+        };
+        HostingApplicationDatabaseStorageEffectRequest: {
+            operation_id: components["schemas"]["HostingIdentifier"];
+            run_id: components["schemas"]["HostingIdentifier"];
+            lease_id: string;
+            fence: string;
+            /** Format: int32 */
+            attempt: number;
+            authorization_id: string;
+            /** @enum {string} */
+            action: "stop_predecessor" | "stop_candidate" | "resume_predecessor";
+            state_hash: string;
+            stage_hash: string;
+        };
+        HostingApplicationDatabaseStorageRecoveryPlan: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            operation_id: components["schemas"]["HostingIdentifier"];
+            /** @enum {string} */
+            action: "resume_predecessor" | "complete_replacement";
+            run_id: components["schemas"]["HostingIdentifier"];
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            storage_state_hash: string;
+            request_hash: string;
+            hash: string;
+        };
+        HostingApplicationDatabaseStorageProxyPlan: {
+            operation: components["schemas"]["HostingOperation"];
+            stage: components["schemas"]["HostingApplicationDatabaseStage"];
+            storage: components["schemas"]["HostingStorageCreateAck"];
+        };
+        HostingApplicationDatabaseStorageEffectAuthorization: {
+            state_hash: string;
+            authorization_id: string;
+            operation_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            action: "stop_predecessor" | "stop_candidate" | "resume_predecessor";
+            stage_hash: string;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
+            lease_id: string;
+            /** Format: int32 */
+            attempt: number;
+            /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
+            fence: string;
+            /** Format: int64 */
+            membership_revision: number;
+            /** Format: date-time */
+            use_until: string;
+        };
+        HostingProxyStorageSwitch: {
+            /** @enum {string} */
+            version: "application-database.storage-proxy.v1";
+            /** @enum {string} */
+            action: "switch" | "complete_replacement";
+            operation_id: components["schemas"]["HostingIdentifier"];
+            continuation_hash: string;
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            storage_origin_hash: string;
+            writer_state_hash: string;
+            candidate_hash: string;
+            route_scope_hash: string;
+            /** Format: int64 */
+            prior_generation: number;
+            /** Format: int64 */
+            prior_previous_generation: number;
+            prior_engine_hash: string;
+            prior_required_route_ids: components["schemas"]["HostingIdentifier"][];
+            failed_proxy_operation_id?: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            failed_generation?: number;
+            failed_plan_hash?: string;
+            failed_engine_hash?: string;
+            hash: string;
+        } & ({
+            /** @enum {unknown} */
+            action?: "switch";
+        } | {
+            /** @enum {unknown} */
+            action?: "complete_replacement";
+        });
+        /** @description Explicit review of one current resource-owned upload volume. Replacement interrupts service so only one application release writes. Data changes are retained. */
+        HostingApplicationDatabaseStorageInput: {
+            /**
+             * Format: int64
+             * @enum {integer}
+             */
+            expected_storage_generation: 1;
+            expected_storage_hash: string;
+            /** @enum {boolean} */
+            acknowledge_interruption: true;
+        };
+        HostingApplicationDatabaseStorageReview: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            /** @enum {string} */
+            strategy: "replacement_with_interruption";
+            /**
+             * Format: int64
+             * @enum {integer}
+             */
+            expected_storage_generation: 1;
+            expected_storage_hash: string;
+            /** @enum {boolean} */
+            acknowledge_interruption_required: true;
+        };
+        HostingApplicationDatabaseStorage: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            /** @enum {string} */
+            strategy: "replacement_with_interruption";
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            hash: string;
+        };
+        /** @description Safe durable correlation and explicit recovery offers. Recovery state is independent of the original operation result. Only succeeded records verified recovery settlement; uncertainty retains ownership. No field grants runner authority. */
+        HostingApplicationDatabaseStorageState: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            /** @enum {string} */
+            phase: "stop_intent" | "stopped" | "candidate_stopped" | "replacement_failed" | "resume_intent" | "resumed";
+            receipt_id: components["schemas"]["HostingIdentifier"];
+            state_hash: string;
+            previous_state_hash: string;
+            stage_hash: string;
+            candidate_hash: string;
+            recovery_actions: ("resume_predecessor" | "complete_replacement")[];
+            /** @enum {string} */
+            recovery_action: "" | "resume_predecessor" | "complete_replacement";
+            /** @enum {string} */
+            recovery_state: "none" | "queued" | "running" | "succeeded" | "uncertain";
+        } & (({
+            /** @enum {unknown} */
+            stage_hash?: "";
+            /** @enum {unknown} */
+            candidate_hash?: "";
+        } | {
+            stage_hash?: unknown;
+            candidate_hash?: unknown;
+        }) & ({
+            /** @enum {unknown} */
+            recovery_action?: "";
+            /** @enum {unknown} */
+            recovery_state?: "none";
+        } | {
+            /** @enum {unknown} */
+            recovery_action?: "resume_predecessor" | "complete_replacement";
+            /** @enum {unknown} */
+            recovery_state?: "queued" | "running" | "succeeded" | "uncertain";
+        }));
         HostingDeploymentInput: {
+            application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorageInput"];
             application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuityInput"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             /**
@@ -5538,6 +5792,8 @@ export interface components {
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
             application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuity"];
+            application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorage"];
+            application_database_storage_state?: components["schemas"]["HostingApplicationDatabaseStorageState"];
             application_database_yield?: components["schemas"]["HostingApplicationDatabaseYieldReceipt"];
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
@@ -7288,7 +7544,7 @@ export interface components {
         };
         HostingDatabaseConnectionInput: {
             binding: components["schemas"]["HostingDatabaseBindingInput"];
-            deployment: components["schemas"]["HostingDeploymentInput"];
+            deployment: components["schemas"]["HostingDeploymentInput"] & unknown;
         };
         HostingDatabaseBindingInput: {
             database_resource_id: string;
@@ -7339,9 +7595,11 @@ export interface components {
             /** @description UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound. */
             idempotency_key: string;
         };
-        HostingDatabaseConnectionRecoveryInput: {
+        HostingDatabaseConnectionRecoveryInput: ({
+            storage_state_hash?: string;
+            application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorageInput"];
             /** @enum {string} */
-            action: "observe";
+            action: "observe" | "resume_predecessor" | "complete_replacement";
             operation_id: string;
             stage_hash: string;
             candidate_hash: string;
@@ -7357,6 +7615,12 @@ export interface components {
         } | {
             stage_hash?: string;
             candidate_hash?: string;
+        })) & ({
+            /** @enum {unknown} */
+            action?: "observe";
+        } | {
+            /** @enum {unknown} */
+            action?: "resume_predecessor" | "complete_replacement";
         });
         HostingApplicationDatabaseStageRequest: {
             operation_id: string;
@@ -7491,6 +7755,9 @@ export interface components {
             use_until: string;
         };
         HostingApplicationDatabaseExecutionState: {
+            storage?: components["schemas"]["HostingStorageCreateAck"];
+            storage_writer?: components["schemas"]["HostingApplicationDatabaseStorageWriterRequest"];
+            storage_recovery?: components["schemas"]["HostingApplicationDatabaseStorageRecoveryPlan"];
             operation_id: string;
             plan_hash: string;
             stage?: components["schemas"]["HostingApplicationDatabaseStage"];
@@ -7545,7 +7812,20 @@ export interface components {
             runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
             hash: string;
         };
+        HostingDatabaseNetworkResumeEvidence: {
+            /** @enum {string} */
+            version: "application-database.storage.v1";
+            operation_id: components["schemas"]["HostingIdentifier"];
+            /** Format: int64 */
+            membership_revision: number;
+            original_receipt_hash: string;
+            writer_receipt: components["schemas"]["HostingApplicationDatabaseStorageWriterReceipt"] & {
+                /** @enum {unknown} */
+                phase?: "resumed";
+            };
+        };
         HostingDatabaseNetworkMemberEvidence: {
+            resume?: components["schemas"]["HostingDatabaseNetworkResumeEvidence"];
             binding: components["schemas"]["HostingDatabaseBinding"];
             endpoint_plan: components["schemas"]["HostingDatabaseBindingEndpointPlan"];
             receipt: components["schemas"]["HostingDatabaseBindingEndpointReceipt"];
@@ -14671,6 +14951,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingApplicationDatabaseStorageWriter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseStorageWriterRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    authorizeHostingApplicationDatabaseStorageEffect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingApplicationDatabaseStorageEffectRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingApplicationDatabaseStorageEffectAuthorization"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingApplicationDatabaseStorageProxyPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Authorized metadata or accepted operation; do not cache */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingApplicationDatabaseStorageProxyPlan"];
                 };
             };
             400: components["responses"]["Error"];

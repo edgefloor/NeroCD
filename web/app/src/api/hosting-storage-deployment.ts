@@ -3,16 +3,11 @@ import { request } from "./client";
 import type { components } from "./generated";
 import { scopedStorage, type HostingStorage } from "./hosting-storage";
 
-export type StorageDeploymentOptions =
-  components["schemas"]["HostingStorageDeploymentOptions"] & {
-    application_database_storage?: {
-      version: "application-database.storage.v1";
-      strategy: "replacement_with_interruption";
-      expected_storage_generation: number;
-      expected_storage_hash: string;
-      acknowledge_interruption_required: true;
-    } | null;
-  };
+// Older controllers may omit the new review field. Missing evidence never
+// enables a connected storage deployment.
+export type StorageDeploymentOptions = Omit<components["schemas"]["HostingStorageDeploymentOptions"], "application_database_storage"> & {
+  application_database_storage?: components["schemas"]["HostingStorageDeploymentOptions"]["application_database_storage"];
+};
 export type StorageContinuityStatus =
   components["schemas"]["HostingStorageRouteContinuityStatus"];
 export type StorageDeploymentScope = {

@@ -61,7 +61,7 @@ test("operation storage evidence is closed and projected without authority or se
   const client = new QueryClient();
   const hash = `sha256:${"a".repeat(64)}`;
   const descriptor = { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: { storage_id: "storage", generation: 1, hash }, hash };
-  const state = { version: "application-database.storage.v1", phase: "stopped", receipt_id: "receipt", state_hash: hash, previous_state_hash: "", candidate_hash: "", recovery_actions: [] };
+  const state = { version: "application-database.storage.v1", phase: "stopped", receipt_id: "receipt", state_hash: hash, previous_state_hash: "", candidate_hash: "", stage_hash: "", recovery_actions: [], recovery_action: "", recovery_state: "none" };
   const base = { id: "hop", project_id: "project", resource_id: "app", state: "applying", mutation_hold: true, restore_ownership_held: false, application_database_storage: descriptor, application_database_storage_state: state, fence: "must_not_cache" };
   vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(base))).mockResolvedValueOnce(new Response(JSON.stringify({ ...base, application_database_storage: { ...descriptor, password: "must_not_cache" } }))).mockResolvedValueOnce(new Response(JSON.stringify({ ...base, application_database_storage_state: { ...state, phase: "unlock" } }))));
   const result = await client.fetchQuery(connectedProgressQuery(scope, "hop"));
@@ -69,5 +69,19 @@ test("operation storage evidence is closed and projected without authority or se
   expect(result.storagePhase).toBe("stopped"); expect(result).not.toHaveProperty("fence");
   await expect(client.fetchQuery(connectedProgressQuery(scope, "hop"))).rejects.toThrow("descriptor");
   await expect(client.fetchQuery(connectedProgressQuery(scope, "hop"))).rejects.toThrow("state");
+  client.clear();
+});
+
+test("missing recovery correlation and unknown offered actions fail closed", async () => {
+  const { connectedProgressQuery } = await import("./hosting-database-connections");
+  const { QueryClient } = await import("@tanstack/react-query");
+  const client = new QueryClient();
+  const hash = `sha256:${"a".repeat(64)}`;
+  const state = { version: "application-database.storage.v1", phase: "replacement_failed", receipt_id: "receipt", state_hash: hash, previous_state_hash: hash, candidate_hash: hash, stage_hash: hash, recovery_actions: ["resume_predecessor"], recovery_action: "", recovery_state: "none" };
+  const base = { id: "hop", project_id: "project", resource_id: "app", state: "failed", mutation_hold: true, restore_ownership_held: false, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: { storage_id: "storage", generation: 1, hash }, hash } };
+  const { stage_hash: omitted, ...missing } = state; void omitted;
+  const responses = [missing, { ...state, recovery_actions: ["unlock"] }, { ...state, stage_hash: "" }, { ...state, recovery_actions: ["resume_predecessor", "resume_predecessor"] }];
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...base, application_database_storage_state: responses.shift() }))));
+  for (let i = 0; i < 4; i++) await expect(client.fetchQuery(connectedProgressQuery(scope, "hop"))).rejects.toThrow("state");
   client.clear();
 });

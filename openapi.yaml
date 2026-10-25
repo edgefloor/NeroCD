@@ -5318,7 +5318,7 @@ paths:
   /api/v1/resources/{id}/database-connection/recovery:
     post:
       operationId: "requestHostingDatabaseConnectionRecovery"
-      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Recovery supports observation only; retained evidence does not authorize effects."
+      description: "Current project owner is required for mutations; viewer access permits reads. No query parameters. JSON requests are closed, reject null/duplicate/case-variant fields and are bounded to 32768 bytes. Cache-Control: no-store on all responses. A compatible controller backend is required; unsupported backends return 503. Observation is read-only. Explicit offered resume_predecessor or complete_replacement actions require fresh exact correlation and interruption acknowledgment. Process recovery does not undo database or upload changes, and does not guarantee data compatibility."
       responses:
         "202": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
         "400": {"$ref": "#/components/responses/Error"}
@@ -5411,6 +5411,54 @@ paths:
         "503": {"$ref": "#/components/responses/Error"}
       security: [{"bearerAuth": []}]
       requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseRetirementRequest"}}}}
+  /api/v1/runners/hosting/database-binding/storage/writer:
+    post:
+      operationId: "recordHostingApplicationDatabaseStorageWriter"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageWriterRequest"}}}}
+  /api/v1/runners/hosting/database-binding/storage/authorize:
+    post:
+      operationId: "authorizeHostingApplicationDatabaseStorageEffect"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageEffectAuthorization"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageEffectRequest"}}}}
+  /api/v1/runners/hosting/database-binding/storage/proxy-plan:
+    post:
+      operationId: "getHostingApplicationDatabaseStorageProxyPlan"
+      description: "Dedicated current runner bearer only; browser sessions and user tokens are rejected. Closed bounded requests, no query parameters, no-store responses, and fresh exact runner authority are required. Writer receipts record facts; effect authorization is separate and lease-bounded. Proxy plans derive the exact candidate, owned storage and route scope on the controller."
+      responses:
+        "200": {"description": "Authorized metadata or accepted operation; do not cache", "headers": {"Cache-Control": {"schema": {"type": "string", "enum": ["no-store"]}}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageProxyPlan"}}}}
+        "400": {"$ref": "#/components/responses/Error"}
+        "401": {"$ref": "#/components/responses/Error"}
+        "403": {"$ref": "#/components/responses/Error"}
+        "404": {"$ref": "#/components/responses/Error"}
+        "409": {"$ref": "#/components/responses/Error"}
+        "413": {"$ref": "#/components/responses/Error"}
+        "415": {"$ref": "#/components/responses/Error"}
+        "503": {"$ref": "#/components/responses/Error"}
+      security: [{"bearerAuth": []}]
+      requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingAuthority"}}}}
   /api/v1/runners/hosting/database-binding/authorize:
     post:
       operationId: "authorizeHostingApplicationDatabaseEffect"
@@ -6723,8 +6771,10 @@ components:
     HostingStorageDeploymentOptions:
       type: object
       additionalProperties: false
-      required: [resource_id, resource_generation, storage_ref, previous_healthy_operation_id, host_port, container_port, readiness, available, reason, routes, storage_route_continuity]
+      required: [resource_id, resource_generation, storage_ref, previous_healthy_operation_id, host_port, container_port, readiness, available, reason, routes, storage_route_continuity, application_database_storage]
       properties:
+        application_database_storage:
+          anyOf: [{$ref: "#/components/schemas/HostingApplicationDatabaseStorageReview"}, {type: "null"}]
         resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
         resource_generation: {type: integer, format: int64, minimum: 1}
         storage_ref:
@@ -6750,7 +6800,7 @@ components:
               version: {type: integer, format: int64, minimum: 1}
               selected_release_operation_id: {$ref: "#/components/schemas/HostingIdentifier"}
         storage_route_continuity:
-          description: Copy this existing accepted write field only when available. When available, null means an ordinary redeploy without own public routes.
+          description: Generic storage replacement route selection. Connected database applications use application_database_route_continuity from the reviewed route choices instead.
           anyOf: [{$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}, {type: "null"}]
     HostingStorageRouteRecoveryInput:
       type: object
@@ -6884,6 +6934,7 @@ components:
       additionalProperties: false
       required: ["proxy_id", "server_id", "destination_id", "runner_id", "generation", "configuration", "routes"]
       properties:
+        storage_switch: {$ref: "#/components/schemas/HostingProxyStorageSwitch"}
         verified_switch: {"$ref": "#/components/schemas/HostingVerifiedSwitch"}
         proxy_id:
           type: "string"
@@ -7307,6 +7358,600 @@ components:
           }
         }
       }
+    HostingApplicationDatabaseStorageWriterReceipt:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "receipt_id",
+          "phase",
+          "plan_hash",
+          "storage_ref",
+          "previous_state_hash",
+          "stage_hash",
+          "candidate_hash",
+          "predecessor_hash",
+          "observation_hash",
+          "hash"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.storage.v1"
+            ]
+          },
+          "receipt_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "stop_intent",
+              "stopped",
+              "candidate_stopped",
+              "replacement_failed",
+              "resume_intent",
+              "resumed"
+            ]
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "previous_state_hash": {
+            "type": "string",
+            "pattern": "^(|sha256:[a-f0-9]{64})$"
+          },
+          "stage_hash": {
+            "type": "string",
+            "pattern": "^(|sha256:[a-f0-9]{64})$"
+          },
+          "candidate_hash": {
+            "type": "string",
+            "pattern": "^(|sha256:[a-f0-9]{64})$"
+          },
+          "predecessor_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "observation_hash": {
+            "type": "string",
+            "pattern": "^(|sha256:[a-f0-9]{64})$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "predecessor_endpoint": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/HostingDatabaseBindingEndpointObservation"
+              },
+              {
+                "properties": {
+                  "present": {
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "endpoint": {
+                    "required": [
+                      "endpoint_id"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "stage_hash": {
+                    "enum": [
+                      ""
+                    ]
+                  },
+                  "candidate_hash": {
+                    "enum": [
+                      ""
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "stage_hash": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "candidate_hash": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "stop_intent",
+                      "resume_intent"
+                    ]
+                  },
+                  "observation_hash": {
+                    "enum": [
+                      ""
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "stopped",
+                      "candidate_stopped",
+                      "replacement_failed",
+                      "resumed"
+                    ]
+                  },
+                  "observation_hash": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "predecessor_endpoint"
+                ],
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "resumed"
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "predecessor_endpoint"
+                  ]
+                },
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "stop_intent",
+                      "stopped",
+                      "candidate_stopped",
+                      "replacement_failed",
+                      "resume_intent"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    HostingApplicationDatabaseStorageWriterRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt"
+        ],
+        "properties": {
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseStorageWriterReceipt"
+          }
+        }
+      }
+    HostingApplicationDatabaseStorageEffectRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "authorization_id",
+          "action",
+          "state_hash",
+          "stage_hash"
+        ],
+        "properties": {
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "lease_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "authorization_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "stop_predecessor",
+              "stop_candidate",
+              "resume_predecessor"
+            ]
+          },
+          "state_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "stage_hash": {
+            "type": "string",
+            "pattern": "^(|sha256:[a-f0-9]{64})$"
+          }
+        }
+      }
+    HostingApplicationDatabaseStorageRecoveryPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "operation_id",
+          "action",
+          "run_id",
+          "storage_ref",
+          "storage_state_hash",
+          "request_hash",
+          "hash"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.storage.v1"
+            ]
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "resume_predecessor",
+              "complete_replacement"
+            ]
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "storage_state_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    HostingApplicationDatabaseStorageProxyPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "stage",
+          "storage"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/HostingOperation"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseStage"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorageCreateAck"
+          }
+        }
+      }
+    HostingApplicationDatabaseStorageEffectAuthorization:
+      type: "object"
+      additionalProperties: false
+      required: ["authorization_id", "operation_id", "plan_hash", "action", "stage_hash", "lease_id", "attempt", "fence", "membership_revision", "use_until", "state_hash"]
+      properties:
+        state_hash: {type: string, pattern: "^sha256:[a-f0-9]{64}$"}
+        authorization_id: {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+        operation_id: {"type": "string"}
+        plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        action: {"type": "string", "enum": ["stop_predecessor", "stop_candidate", "resume_predecessor"]}
+        stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
+        lease_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
+        attempt: {"type": "integer", "format": "int32", "minimum": 1, "maximum": 2147483647}
+        fence: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        use_until: {"type": "string", "format": "date-time"}
+    HostingProxyStorageSwitch:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "action",
+          "operation_id",
+          "continuation_hash",
+          "storage_ref",
+          "storage_origin_hash",
+          "writer_state_hash",
+          "candidate_hash",
+          "route_scope_hash",
+          "prior_generation",
+          "prior_previous_generation",
+          "prior_engine_hash",
+          "prior_required_route_ids",
+          "hash"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "application-database.storage-proxy.v1"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "switch",
+              "complete_replacement"
+            ]
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "continuation_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "storage_ref": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "storage_origin_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "writer_state_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "candidate_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "route_scope_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "prior_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "prior_previous_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "prior_engine_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "prior_required_route_ids": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/HostingIdentifier"
+            }
+          },
+          "failed_proxy_operation_id": {
+            "$ref": "#/components/schemas/HostingIdentifier"
+          },
+          "failed_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "failed_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "failed_engine_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "action": {
+                "enum": [
+                  "switch"
+                ]
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "failed_proxy_operation_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "failed_generation"
+                  ]
+                },
+                {
+                  "required": [
+                    "failed_plan_hash"
+                  ]
+                },
+                {
+                  "required": [
+                    "failed_engine_hash"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "properties": {
+              "action": {
+                "enum": [
+                  "complete_replacement"
+                ]
+              }
+            },
+            "required": [
+              "failed_proxy_operation_id",
+              "failed_generation",
+              "failed_plan_hash",
+              "failed_engine_hash"
+            ]
+          }
+        ]
+      }
+    HostingApplicationDatabaseStorageInput:
+      type: object
+      additionalProperties: false
+      required: [expected_storage_generation, expected_storage_hash, acknowledge_interruption]
+      description: Explicit review of one current resource-owned upload volume. Replacement interrupts service so only one application release writes. Data changes are retained.
+      properties:
+        expected_storage_generation: {type: integer, format: int64, enum: [1]}
+        expected_storage_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        acknowledge_interruption: {type: boolean, enum: [true]}
+    HostingApplicationDatabaseStorageReview:
+      type: object
+      additionalProperties: false
+      required: [version, strategy, expected_storage_generation, expected_storage_hash, acknowledge_interruption_required]
+      properties:
+        version: {type: string, enum: [application-database.storage.v1]}
+        strategy: {type: string, enum: [replacement_with_interruption]}
+        expected_storage_generation: {type: integer, format: int64, enum: [1]}
+        expected_storage_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        acknowledge_interruption_required: {type: boolean, enum: [true]}
+    HostingApplicationDatabaseStorage:
+      type: object
+      additionalProperties: false
+      required: [version, strategy, storage_ref, hash]
+      properties:
+        version: {type: string, enum: [application-database.storage.v1]}
+        strategy: {type: string, enum: [replacement_with_interruption]}
+        storage_ref: {$ref: "#/components/schemas/HostingStorageRef"}
+        hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+    HostingApplicationDatabaseStorageState:
+      type: object
+      additionalProperties: false
+      required: [version, phase, receipt_id, state_hash, previous_state_hash, stage_hash, candidate_hash, recovery_actions, recovery_action, recovery_state]
+      description: Safe durable correlation and explicit recovery offers. Recovery state is independent of the original operation result. Only succeeded records verified recovery settlement; uncertainty retains ownership. No field grants runner authority.
+      properties:
+        version: {type: string, enum: [application-database.storage.v1]}
+        phase: {type: string, enum: [stop_intent, stopped, candidate_stopped, replacement_failed, resume_intent, resumed]}
+        receipt_id: {$ref: "#/components/schemas/HostingIdentifier"}
+        state_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        previous_state_hash: {type: string, pattern: '^(|sha256:[a-f0-9]{64})$'}
+        stage_hash: {type: string, pattern: '^(|sha256:[a-f0-9]{64})$'}
+        candidate_hash: {type: string, pattern: '^(|sha256:[a-f0-9]{64})$'}
+        recovery_actions:
+          type: array
+          maxItems: 1
+          uniqueItems: true
+          items: {type: string, enum: [resume_predecessor, complete_replacement]}
+        recovery_action: {type: string, enum: ['', resume_predecessor, complete_replacement]}
+        recovery_state: {type: string, enum: [none, queued, running, succeeded, uncertain]}
+      allOf:
+        - oneOf:
+            - properties: {stage_hash: {enum: ['']}, candidate_hash: {enum: ['']}}
+            - properties: {stage_hash: {pattern: '^sha256:[a-f0-9]{64}$'}, candidate_hash: {pattern: '^sha256:[a-f0-9]{64}$'}}
+        - oneOf:
+            - properties: {recovery_action: {enum: ['']}, recovery_state: {enum: [none]}}
+            - properties: {recovery_action: {enum: [resume_predecessor, complete_replacement]}, recovery_state: {enum: [queued, running, succeeded, uncertain]}}
     HostingDeploymentInput:
       type: object
       additionalProperties: false
@@ -7316,6 +7961,7 @@ components:
         - container_port
         - readiness
       properties:
+        application_database_storage: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageInput"}
         application_database_route_continuity: {$ref: "#/components/schemas/HostingApplicationDatabaseRouteContinuityInput"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}
         expected_runtime_configuration_generation:
@@ -8592,6 +9238,8 @@ components:
           "application_database_route_continuity": {
             "$ref": "#/components/schemas/HostingApplicationDatabaseRouteContinuity"
           },
+          "application_database_storage": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorage"},
+          "application_database_storage_state": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageState"},
           "application_database_yield": {
             "$ref": "#/components/schemas/HostingApplicationDatabaseYieldReceipt"
           }
@@ -12412,7 +13060,11 @@ components:
       required: ["binding", "deployment"]
       properties:
         binding: {"$ref": "#/components/schemas/HostingDatabaseBindingInput"}
-        deployment: {"$ref": "#/components/schemas/HostingDeploymentInput"}
+        deployment:
+          allOf:
+            - {$ref: "#/components/schemas/HostingDeploymentInput"}
+            - not:
+                anyOf: [{required: [application_database_storage]}, {required: [application_database_route_continuity]}, {required: [storage_route_continuity]}]
     HostingDatabaseBindingInput:
       type: "object"
       additionalProperties: false
@@ -12469,13 +13121,22 @@ components:
       additionalProperties: false
       required: ["action", "operation_id", "stage_hash", "candidate_hash", "expected_membership_revision", "idempotency_key"]
       properties:
-        action: {"type": "string", "enum": ["observe"]}
+        storage_state_hash: {type: string, pattern: "^sha256:[a-f0-9]{64}$"}
+        application_database_storage: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageInput"}
+        action: {"type": "string", "enum": ["observe", "resume_predecessor", "complete_replacement"]}
         operation_id: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"}
         stage_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
         candidate_hash: {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}
         expected_membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
         idempotency_key: {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\p{Cc}\\p{Z}]([^\\p{Cc}]*[^\\p{Cc}\\p{Z}])?$", "description": "UTF-8 reference of at most 128 bytes. Interior spaces are allowed; leading/trailing Unicode whitespace and control characters are rejected. The HTTP validator enforces the byte bound."}
-      oneOf: [{"properties": {"stage_hash": {"enum": [""]}, "candidate_hash": {"enum": [""]}}}, {"properties": {"stage_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "candidate_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}]
+      oneOf:
+        - properties: {action: {enum: [observe]}}
+          not:
+            anyOf: [{required: [storage_state_hash]}, {required: [application_database_storage]}]
+        - properties: {action: {enum: [resume_predecessor, complete_replacement]}}
+          required: [storage_state_hash, application_database_storage]
+      allOf:
+        - oneOf: [{"properties": {"stage_hash": {"enum": [""]}, "candidate_hash": {"enum": [""]}}}, {"properties": {"stage_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "candidate_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}]
     HostingApplicationDatabaseStageRequest:
       type: "object"
       additionalProperties: false
@@ -12617,6 +13278,9 @@ components:
       additionalProperties: false
       required: ["operation_id", "plan_hash", "membership_revision", "hold_operation_id"]
       properties:
+        storage: {$ref: "#/components/schemas/HostingStorageCreateAck"}
+        storage_writer: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageWriterRequest"}
+        storage_recovery: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageRecoveryPlan"}
         operation_id: {"type": "string"}
         plan_hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         stage: {"$ref": "#/components/schemas/HostingApplicationDatabaseStage"}
@@ -12669,11 +13333,26 @@ components:
         environment_names: {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 5, "uniqueItems": true}
         runtime_configuration: {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}
         hash: {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    HostingDatabaseNetworkResumeEvidence:
+      type: "object"
+      additionalProperties: false
+      required: ["version", "operation_id", "membership_revision", "original_receipt_hash", "writer_receipt"]
+      properties:
+        version: {"type": "string", "enum": ["application-database.storage.v1"]}
+        operation_id: {"$ref": "#/components/schemas/HostingIdentifier"}
+        membership_revision: {"type": "integer", "format": "int64", "minimum": 1}
+        original_receipt_hash: {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+        writer_receipt:
+          allOf:
+            - {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageWriterReceipt"}
+            - properties:
+                phase: {"enum": ["resumed"]}
     HostingDatabaseNetworkMemberEvidence:
       type: "object"
       additionalProperties: false
       required: ["binding", "endpoint_plan", "receipt", "application_healthy", "database_plan", "application_project_id", "database_project_id"]
       properties:
+        resume: {"$ref": "#/components/schemas/HostingDatabaseNetworkResumeEvidence"}
         binding: {"$ref": "#/components/schemas/HostingDatabaseBinding"}
         endpoint_plan: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointPlan"}
         receipt: {"$ref": "#/components/schemas/HostingDatabaseBindingEndpointReceipt"}

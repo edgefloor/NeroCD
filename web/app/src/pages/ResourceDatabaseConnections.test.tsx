@@ -102,7 +102,7 @@ test("cross-scope metadata and permission changes prevent mutation and clear ret
 });
 test("held status preserves hold and explains unavailable exact observation evidence", async () => {
   const { fetch } = setup((url) => url.endsWith("/database-connection") ? json({ ...connection, state: "held", hold_operation_id: "app_operation" }) : undefined as never);
-  await screen.findByText(/Observation is unavailable here/);
+  await screen.findByText(/Recovery is available only when the server provides/);
   expect(screen.queryByRole("button", { name: /recovery|unlock|observation/i })).toBeNull();
   expect(fetch.mock.calls.some(([url]) => /runners|recovery/.test(url))).toBe(false);
 });
@@ -504,4 +504,35 @@ test("storage denial clears sensitive requests and viewer cannot acknowledge or 
   await screen.findByText("Connection workflow completed");
   expect(screen.queryByLabelText(/I acknowledge application interruption/)).toBeNull();
   expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
+});
+
+test("routed upload storage requires explicit review of the same loaded route set", async () => {
+  const { fetch } = storageSetup((url) => url.endsWith("/storage-deployment-options") ? json({ ...uploadOptions, routes: loadedRoutes.routes }) : undefined);
+  await screen.findByText(/Saved upload mount/); fireEvent.click(acknowledgeUpload());
+  const approve = screen.getByLabelText("I reviewed the selected database and application settings and approve this request.");
+  fireEvent.click(approve);
+  expect((screen.getByRole("button", { name: "Redeploy connected application" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/Review and select all current public routes/)).toBeTruthy();
+  fireEvent.click(await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  fireEvent.click(approve); fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1));
+});
+test("initial database connection with attached storage is blocked with a connect-first explanation", async () => {
+  const { fetch } = storageSetup((url) => url.endsWith("/database-connection") ? json({}, 404) : undefined);
+  await screen.findByText(/Saved upload mount/);
+  await screen.findByRole("option", { name: "Data · postgresql · Available" });
+  expect(screen.getByText(/Connect the database first, then attach storage through Persistent storage/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Database to connect"), { target: { value: "db" } });
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  expect((screen.getByRole("button", { name: "Connect database and deploy application" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
+});
+
+test.each(["queued", "running", "uncertain"])("explicit recovery %s pauses separate mutations despite stale active connection metadata", async (state) => {
+  storageSetup((url) => url.includes("/hosting-operations/") ? json({ id: "app_operation", project_id: "project", resource_id: "app", state: "failed", mutation_hold: false, restore_ownership_held: false, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: uploadOptions.storage_ref, hash: storageHash }, application_database_storage_state: { version: "application-database.storage.v1", phase: "replacement_failed", receipt_id: "receipt", state_hash: storageHash, previous_state_hash: storageHash, stage_hash: storageHash, candidate_hash: storageHash, recovery_actions: [], recovery_action: "resume_predecessor", recovery_state: state } }) : undefined);
+  await screen.findByText(new RegExp(`Recovery status: ${state}`));
+  await screen.findByText(/Saved upload mount/); fireEvent.click(acknowledgeUpload());
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  expect((screen.getByRole("button", { name: "Redeploy connected application" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Redeploy connected database" }) as HTMLButtonElement).disabled).toBe(true);
 });

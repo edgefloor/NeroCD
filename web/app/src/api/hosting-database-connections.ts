@@ -12,7 +12,7 @@ export type DatabaseConnection = Schema<"HostingDatabaseConnection">;
 export type DatabaseConnectionInput = Schema<"HostingDatabaseConnectionInput">;
 export type DatabaseConnectionOptions = Schema<"HostingDatabaseConnectionOptions">;
 export type DatabaseConnectionScope = { actor: string; project: string; resource: string };
-export type ConnectedDeploymentInput = Schema<"HostingDeploymentInput"> & { application_database_storage?: { expected_storage_generation: number; expected_storage_hash: string; acknowledge_interruption: true } };
+export type ConnectedDeploymentInput = Schema<"HostingDeploymentInput">;
 export async function getConnectionStorageReview(scope: DatabaseConnectionScope, signal?: AbortSignal) {
   const options = await getStorageDeploymentOptions(scope, signal);
   if (!options.storage_ref) return { options, storage: null };
@@ -28,7 +28,9 @@ export function connectionRouteIntent(options: SwitchOptions): ConnectedDeployme
   if (!options.available || options.pending_operation_id || !options.loaded_generation || !options.loaded_proxy_operation_id || !healthy || !options.routes.length || options.routes.some((route) => route.selected_release_operation_id !== healthy.operation_id)) return undefined;
   return { expected_loaded_generation: options.loaded_generation, expected_loaded_proxy_operation_id: options.loaded_proxy_operation_id, routes: options.routes.map((route) => ({ route_id: route.id, expected_version: route.version, expected_selected_release_operation_id: route.selected_release_operation_id })) };
 }
-export type ConnectedProgress = { storage?: { strategy: "replacement_with_interruption"; storage_id: string; generation: number; hash: string }; storagePhase?: string; id: string; state: string; mutation_hold: boolean; restore_ownership_held: boolean; proxy_operation_id?: string; yielded: boolean };
+export type StorageRecoveryAction = "resume_predecessor" | "complete_replacement";
+export type ConnectionStorageRecoveryInput = Schema<"HostingDatabaseConnectionRecoveryInput"> & { action: StorageRecoveryAction; storage_state_hash: string; application_database_storage: Schema<"HostingApplicationDatabaseStorageInput"> };
+export type ConnectedProgress = { storageState?: { recovery_action: "" | StorageRecoveryAction; recovery_state: "none" | "queued" | "running" | "succeeded" | "uncertain"; phase: string; state_hash: string; stage_hash: string; candidate_hash: string; recovery_actions: StorageRecoveryAction[] }; storage?: { strategy: "replacement_with_interruption"; storage_id: string; generation: 1; hash: string }; storagePhase?: string; id: string; state: string; mutation_hold: boolean; restore_ownership_held: boolean; proxy_operation_id?: string; yielded: boolean };
 export const connectedProgressQuery = (scope: DatabaseConnectionScope, operation: string) => queryOptions({
   queryKey: [...connectionKey(scope), "operation", operation], retry: false, gcTime: 0, refetchOnWindowFocus: false,
   queryFn: async ({ signal }): Promise<ConnectedProgress> => {
@@ -50,16 +52,18 @@ export const connectedProgressQuery = (scope: DatabaseConnectionScope, operation
     if (descriptor !== undefined) {
       if (!closed(descriptor, ["version", "strategy", "storage_ref", "hash"])) throw new Error("Database storage descriptor is malformed");
       const d = descriptor as Record<string, unknown>, ref = d.storage_ref as Record<string, unknown>;
-      if (d.version !== "application-database.storage.v1" || d.strategy !== "replacement_with_interruption" || !hash(d.hash) || !closed(ref, ["storage_id", "generation", "hash"]) || !identifier(ref.storage_id) || !integer(ref.generation, 1) || !hash(ref.hash)) throw new Error("Database storage descriptor is malformed");
-      storage = { strategy: "replacement_with_interruption", storage_id: ref.storage_id, generation: Number(ref.generation), hash: String(ref.hash) };
+      if (d.version !== "application-database.storage.v1" || d.strategy !== "replacement_with_interruption" || !hash(d.hash) || !closed(ref, ["storage_id", "generation", "hash"]) || !identifier(ref.storage_id) || ref.generation !== 1 || !hash(ref.hash)) throw new Error("Database storage descriptor is malformed");
+      storage = { strategy: "replacement_with_interruption", storage_id: ref.storage_id, generation: 1, hash: String(ref.hash) };
     }
     let storagePhase: string | undefined;
+    let storageState: ConnectedProgress["storageState"];
     if (value.application_database_storage_state !== undefined) {
       const s = value.application_database_storage_state as Record<string, unknown>;
-      if (!storage || !closed(s, ["version", "phase", "receipt_id", "state_hash", "previous_state_hash", "candidate_hash", "recovery_actions"]) || s.version !== "application-database.storage.v1" || !["stop_intent", "stopped", "candidate_stopped", "replacement_failed", "resume_intent", "resumed"].includes(String(s.phase)) || !Array.isArray(s.recovery_actions) || s.recovery_actions.length > 2 || new Set(s.recovery_actions).size !== s.recovery_actions.length || s.recovery_actions.some((action) => !["resume_predecessor", "complete_replacement"].includes(String(action))) || !identifier(s.receipt_id) || !hash(s.state_hash) || s.previous_state_hash !== "" && !hash(s.previous_state_hash) || s.candidate_hash !== "" && !hash(s.candidate_hash)) throw new Error("Database storage state is malformed");
+      if (!storage || !closed(s, ["version", "phase", "receipt_id", "state_hash", "previous_state_hash", "candidate_hash", "stage_hash", "recovery_actions", "recovery_action", "recovery_state"]) || s.version !== "application-database.storage.v1" || !["stop_intent", "stopped", "candidate_stopped", "replacement_failed", "resume_intent", "resumed"].includes(String(s.phase)) || !["", "resume_predecessor", "complete_replacement"].includes(String(s.recovery_action)) || !["none", "queued", "running", "succeeded", "uncertain"].includes(String(s.recovery_state)) || (s.recovery_action === "") !== (s.recovery_state === "none") || !Array.isArray(s.recovery_actions) || s.recovery_actions.length > 1 || new Set(s.recovery_actions).size !== s.recovery_actions.length || s.recovery_actions.some((action) => !["resume_predecessor", "complete_replacement"].includes(String(action))) || !identifier(s.receipt_id) || !hash(s.state_hash) || s.previous_state_hash !== "" && !hash(s.previous_state_hash) || s.candidate_hash !== "" && !hash(s.candidate_hash) || s.stage_hash !== "" && !hash(s.stage_hash) || (s.stage_hash === "") !== (s.candidate_hash === "")) throw new Error("Database storage state is malformed");
       storagePhase = String(s.phase);
+      storageState = { recovery_action: s.recovery_action as "" | StorageRecoveryAction, recovery_state: s.recovery_state as NonNullable<ConnectedProgress["storageState"]>["recovery_state"], phase: storagePhase, state_hash: String(s.state_hash), stage_hash: String(s.stage_hash), candidate_hash: String(s.candidate_hash), recovery_actions: s.recovery_actions as StorageRecoveryAction[] };
     }
-    return { ...(storage ? { storage } : {}), ...(storagePhase ? { storagePhase } : {}), id: operation, state: value.state, mutation_hold: value.mutation_hold, restore_ownership_held: value.restore_ownership_held, proxy_operation_id: proxy, yielded: value.application_database_yield !== undefined };
+    return { ...(storageState ? { storageState } : {}), ...(storage ? { storage } : {}), ...(storagePhase ? { storagePhase } : {}), id: operation, state: value.state, mutation_hold: value.mutation_hold, restore_ownership_held: value.restore_ownership_held, proxy_operation_id: proxy, yielded: value.application_database_yield !== undefined };
   },
 });
 export type DatabaseMaintenanceInput = Schema<"HostingDatabaseMaintenanceInput">;
@@ -96,12 +100,21 @@ export const connectionOptionsQuery = (scope: DatabaseConnectionScope) => queryO
 export async function connectDatabase(scope: DatabaseConnectionScope, body: DatabaseConnectionInput, signal?: AbortSignal) {
   return validateConnection(await boundedDatabaseRequest((signal) => request<DatabaseConnection>(`${path(scope.resource)}/database-connections`, { method: "POST", body, signal, cache: "no-store" }), signal), scope, body.binding.database_resource_id);
 }
-async function operationMutation(scope: DatabaseConnectionScope, target: string, suffix: string, body: ConnectedDeploymentInput | DatabaseMaintenanceInput, signal?: AbortSignal) {
+async function operationMutation(scope: DatabaseConnectionScope, target: string, suffix: string, body: ConnectedDeploymentInput | DatabaseMaintenanceInput | ConnectionStorageRecoveryInput, signal?: AbortSignal) {
   const value = await boundedDatabaseRequest((signal) => request<Schema<"HostingOperation">>(`${path(target)}/${suffix}`, { method: "POST", body, signal, cache: "no-store" }), signal);
   if (!value || !identifier(value.id) || value.project_id !== scope.project || value.resource_id !== target || !value.snapshot || value.snapshot.resource_id !== target) throw new Error("Database operation scope mismatch");
   return value;
 }
 export const deployConnectedApplication = (scope: DatabaseConnectionScope, body: ConnectedDeploymentInput, signal?: AbortSignal) => operationMutation(scope, scope.resource, "database-connection/deployments", body, signal);
+export async function recoverConnectionStorage(scope: DatabaseConnectionScope, body: ConnectionStorageRecoveryInput, signal?: AbortSignal) {
+  const value = await operationMutation(scope, scope.resource, "database-connection/recovery", body, signal);
+  if (value.id !== body.operation_id) throw new Error("Recovery operation scope mismatch");
+  return value;
+}
+export function storageRecoveryInput(progress: ConnectedProgress, connection: DatabaseConnection, action: StorageRecoveryAction, key: string): ConnectionStorageRecoveryInput {
+  if (!progress.storage || !progress.storageState?.recovery_actions.includes(action) || connection.hold_operation_id !== progress.id || !integer(connection.membership_revision, 1)) throw new ApiError(409, "Recovery eligibility changed", null);
+  return { action, operation_id: progress.id, stage_hash: progress.storageState.stage_hash, candidate_hash: progress.storageState.candidate_hash, expected_membership_revision: connection.membership_revision, idempotency_key: key, storage_state_hash: progress.storageState.state_hash, application_database_storage: { expected_storage_generation: progress.storage.generation, expected_storage_hash: progress.storage.hash, acknowledge_interruption: true } };
+}
 export const maintainConnectedDatabase = (scope: DatabaseConnectionScope, database: string, body: DatabaseMaintenanceInput, signal?: AbortSignal) => operationMutation(scope, database, "database/maintenance", body, signal);
 export function connectionError(cause: unknown): string {
   if (!(cause instanceof ApiError)) return "No confirmed response. Keep the request and retry it identically to recover its result.";
