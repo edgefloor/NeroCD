@@ -169,6 +169,32 @@ func cleanupApplicationDatabaseRetained(ctx context.Context, op domain.HostingOp
 	return nil
 }
 
+// An interrupted database or ordinary-image operation may have created its sole
+// candidate before Complete supplies Result. Derive only its cleanup identity
+// from the exact operation inventory and retained plan/release, then enforce all
+// ownership checks. This does not write or invent controller completion state.
+func cleanupApplicationDatabasePreComplete(ctx context.Context, op domain.HostingOperation, docker func(context.Context, ...string) ([]byte, error), portsFree func(...int) error) error {
+	if op.ID == "" || op.Result != nil && op.Result.ContainerID != "" {
+		return errors.New("pre-Complete cleanup requires an exact incomplete operation")
+	}
+	raw, err := docker(ctx, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.operation="+op.ID)
+	ids := strings.Fields(string(raw))
+	if err != nil || len(ids) > 1 {
+		return errors.New("route cleanup candidate identity or absence unknown")
+	}
+	if len(ids) == 0 {
+		if op.Snapshot.HostPort >= 1024 {
+			return portsFree(op.Snapshot.HostPort)
+		}
+		return nil
+	}
+	if op.Plan == nil || op.Release == nil {
+		return errors.New("route cleanup candidate lacks retained plan and release")
+	}
+	op.Result = &domain.HostingResult{ContainerID: ids[0], PlanHash: op.Plan.Hash, ImageID: op.Release.ImageID, DaemonID: op.Release.DaemonID}
+	return cleanupApplicationDatabaseRetained(ctx, op, docker, portsFree)
+}
+
 func (f *databaseRunnerFixture) cleanupRouteOperation(id string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -196,23 +222,9 @@ func (f *databaseRunnerFixture) cleanupRouteOperation(id string) error {
 			}
 			op.Result = &domain.HostingResult{ContainerID: stage.Candidate.ContainerID, PlanHash: op.Plan.Hash, ImageID: op.Release.ImageID, DaemonID: op.Release.DaemonID}
 		} else {
-			raw, inventoryErr := databaseRunnerDocker(ctx, nil, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.operation="+id)
-			ids := strings.Fields(string(raw))
-			if inventoryErr != nil || len(ids) > 1 {
-				return errors.New("route cleanup candidate identity or absence unknown")
-			}
-			if len(ids) == 0 {
-				if op.Snapshot.HostPort >= 1024 {
-					return applicationDatabaseRoutePortsFree(op.Snapshot.HostPort)
-				}
-				return nil
-			}
-			if op.Plan == nil || op.Release == nil {
-				return errors.New("route cleanup candidate lacks retained plan and release")
-			}
-			// For database or ordinary-image interruption before Complete, inspect
-			// the sole operation candidate against every retained ownership label.
-			op.Result = &domain.HostingResult{ContainerID: ids[0], PlanHash: op.Plan.Hash, ImageID: op.Release.ImageID, DaemonID: op.Release.DaemonID}
+			return cleanupApplicationDatabasePreComplete(ctx, op, func(ctx context.Context, args ...string) ([]byte, error) {
+				return databaseRunnerDocker(ctx, nil, args...)
+			}, applicationDatabaseRoutePortsFree)
 		}
 	}
 	if err = cleanupApplicationDatabaseRetained(ctx, op, func(ctx context.Context, args ...string) ([]byte, error) {
@@ -904,11 +916,22 @@ func TestApplicationDatabaseRouteRuntimeRetirementPhases(t *testing.T) {
 }
 
 func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
-	for _, mode := range []string{"present", "retired", "retired_port_occupied", "foreign_daemon", "changed_daemon", "id_inventory_error", "operation_inventory_error", "extra_operation_container", "changed_operation_label", "inspect_error", "foreign_image", "remove_error", "residue"} {
+	for _, mode := range []string{"present", "retired", "retired_port_occupied", "foreign_daemon", "changed_daemon", "id_inventory_error", "operation_inventory_error", "extra_operation_container", "changed_operation_label", "inspect_error", "foreign_image", "remove_error", "residue", "pre_complete", "pre_complete_empty_result", "pre_complete_absent", "pre_complete_foreign_image", "pre_complete_extra_operation_container", "pre_complete_operation_inventory_error", "pre_complete_no_plan"} {
 		t.Run(mode, func(t *testing.T) {
 			id, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
 			op := domain.HostingOperation{ID: "owned", BindingID: "binding", Snapshot: domain.HostingSnapshot{HostPort: 20002}, Plan: &domain.HostingApplyPlan{Hash: "plan"}, Release: &domain.HostingRelease{Hash: "release", ImageID: "image", DaemonID: "daemon"}, Result: &domain.HostingResult{ContainerID: id, PlanHash: "plan", ImageID: "image", DaemonID: "daemon"}}
-			present := !strings.HasPrefix(mode, "retired")
+			preComplete := strings.HasPrefix(mode, "pre_complete")
+			if preComplete {
+				op.Result = nil
+			}
+			if mode == "pre_complete_empty_result" {
+				op.Result = &domain.HostingResult{}
+			}
+			if mode == "pre_complete_no_plan" {
+				op.Plan = nil
+			}
+			originalResult := op.Result
+			present := !strings.HasPrefix(mode, "retired") && mode != "pre_complete_absent"
 			removed, daemonChecks, portChecks := 0, 0, 0
 			docker := func(_ context.Context, args ...string) ([]byte, error) {
 				if reflect.DeepEqual(args, []string{"info", "--format", "{{.ID}}"}) {
@@ -929,10 +952,10 @@ func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
 						}
 						return nil, nil
 					case "label=io.nerocd.operation=owned":
-						if mode == "operation_inventory_error" {
+						if strings.HasSuffix(mode, "operation_inventory_error") {
 							return nil, errors.New("PRIVATE-CANARY")
 						}
-						if mode == "extra_operation_container" {
+						if strings.HasSuffix(mode, "extra_operation_container") {
 							return []byte(id + "\n" + other), nil
 						}
 						if present && mode != "changed_operation_label" {
@@ -946,7 +969,7 @@ func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
 						return nil, errors.New("PRIVATE-CANARY")
 					}
 					image := "image"
-					if mode == "foreign_image" {
+					if strings.HasSuffix(mode, "foreign_image") {
 						image = "foreign"
 					}
 					return json.Marshal(map[string]any{"Id": id, "Image": image, "Config": map[string]any{"Labels": map[string]string{"io.nerocd.binding": "binding", "io.nerocd.operation": "owned", "io.nerocd.plan": "plan", "io.nerocd.release": "release"}}})
@@ -974,8 +997,13 @@ func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
 				}
 				return nil
 			}
-			err := cleanupApplicationDatabaseRetained(t.Context(), op, docker, portsFree)
-			want := mode == "present" || mode == "retired"
+			var err error
+			if preComplete {
+				err = cleanupApplicationDatabasePreComplete(t.Context(), op, docker, portsFree)
+			} else {
+				err = cleanupApplicationDatabaseRetained(t.Context(), op, docker, portsFree)
+			}
+			want := mode == "present" || mode == "retired" || mode == "pre_complete" || mode == "pre_complete_empty_result" || mode == "pre_complete_absent"
 			if (err == nil) != want || err != nil && strings.Contains(err.Error(), "CANARY") {
 				t.Fatal("retained cleanup failed to preserve exact ownership and absence evidence")
 			}
@@ -984,6 +1012,17 @@ func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
 			}
 			if mode == "present" && (removed != 1 || present || portChecks != 1) {
 				t.Fatal("live fallback did not remove exactly once and release its port")
+			}
+			if preComplete && (op.Result != originalResult || op.CompleteReceipt != nil) {
+				t.Fatal("pre-Complete cleanup invented controller completion state")
+			}
+			if mode == "pre_complete" || mode == "pre_complete_empty_result" {
+				if removed != 1 || present || portChecks != 1 {
+					t.Fatal("pre-Complete abort leaked its exact owned candidate or allocated port")
+				}
+			}
+			if mode == "pre_complete_absent" && (removed != 0 || portChecks != 1) {
+				t.Fatal("pre-create abort did not prove absence and free capacity")
 			}
 			if !want && mode != "remove_error" && mode != "residue" && removed != 0 {
 				t.Fatal("cleanup mutated after missing or mismatched ownership evidence")
@@ -1124,7 +1163,11 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
 				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
 				f.registerRouteDatabaseCleanup(view.Resource.ID)
-				f.await(f.deploy(view, "route_failure_source").ID)
+				f.stop()
+				source := f.deploy(view, "route_failure_source")
+				f.registerRouteOperationCleanup(source.ID)
+				f.start()
+				f.await(source.ID)
 				resource := databaseRunnerJSON[domain.Resource](f, f.token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "route failure " + engine, Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")}}}, 201)
 				databaseRunnerJSON[domain.ResourceBinding](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destination}, 201)
 				namespace := "connected_" + engine
@@ -1134,6 +1177,7 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				deploy := domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: config.RuntimeGeneration, IdempotencyKey: "route_failure_a", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 10}}
 				f.stop()
 				connection := databaseRunnerJSON[domain.HostingDatabaseConnection](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connections", domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: view.Resource.ID, ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: config.RuntimeGeneration, ExpectedDatabaseGeneration: view.Resource.Generation, RequestID: strings.Repeat("b", 32)}, Deployment: deploy}, 202)
+				f.registerRouteOperationCleanup(connection.UpgradeOperationID)
 				f.registerRouteOperationCleanup(connection.ApplicationOperationID)
 				f.start()
 				active := f.activeConnection(resource.ID)
