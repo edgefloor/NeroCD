@@ -26,7 +26,7 @@ paths:
       "get": {
         "operationId": "listHostingDatabaseBackupSchedules",
         "summary": "Hosted PostgreSQL backup schedule",
-        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.",
         "parameters": [
           {
             "name": "id",
@@ -73,7 +73,7 @@ paths:
       "post": {
         "operationId": "createHostingDatabaseBackupSchedule",
         "summary": "Hosted PostgreSQL backup schedule",
-        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.",
         "parameters": [
           {
             "name": "id",
@@ -129,7 +129,7 @@ paths:
       "put": {
         "operationId": "updateHostingDatabaseBackupSchedule",
         "summary": "Hosted PostgreSQL backup schedule",
-        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.",
         "parameters": [
           {
             "name": "id",
@@ -194,7 +194,7 @@ paths:
       "get": {
         "operationId": "listHostingDatabaseBackupOccurrences",
         "summary": "Hosted PostgreSQL backup schedule",
-        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.",
         "parameters": [
           {
             "name": "id",
@@ -253,7 +253,7 @@ paths:
       "get": {
         "operationId": "listHostingDatabaseBackups",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -310,7 +310,7 @@ paths:
       "post": {
         "operationId": "requestHostingDatabaseBackup",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -377,7 +377,7 @@ paths:
       "get": {
         "operationId": "getHostingDatabaseBackup",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -434,7 +434,7 @@ paths:
       "post": {
         "operationId": "restoreHostingDatabaseBackup",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -501,7 +501,7 @@ paths:
       "post": {
         "operationId": "getHostingDatabaseBackupPlan",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -557,7 +557,7 @@ paths:
       "post": {
         "operationId": "recordHostingDatabaseBackupMutation",
         "summary": "Hosted PostgreSQL logical backup or new private restore",
-        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
+        "description": "Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.",
         "security": [
           {
             "bearerAuth": []
@@ -6078,6 +6078,646 @@ paths:
         "503": {"$ref": "#/components/responses/Error"}
       security: [{"bearerAuth": []}]
       requestBody: {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingAuthority"}}}}
+  /api/v1/projects/{project_id}/database-backup-targets:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackupTargets",
+        "summary": "listHostingDatabaseBackupTargets",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupTarget"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createHostingDatabaseBackupTarget",
+        "summary": "createHostingDatabaseBackupTarget",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTarget"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupTargetInput"
+                  },
+                  {
+                    "required": [
+                      "credentials"
+                    ],
+                    "type": "object",
+                    "properties": {
+                      "credentials": {
+                        "$ref": "#/components/schemas/HostingDatabaseBackupTargetCredentials"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/database-backup-targets/{target_id}:
+    {
+      "put": {
+        "operationId": "updateHostingDatabaseBackupTarget",
+        "summary": "updateHostingDatabaseBackupTarget",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTarget"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupTargetInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackupTargetValidations",
+        "summary": "listHostingDatabaseBackupTargetValidations",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "validateHostingDatabaseBackupTarget",
+        "summary": "validateHostingDatabaseBackupTarget",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "202": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupTargetValidationInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/database-backups/{id}/transfers:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackupTransfers",
+        "summary": "listHostingDatabaseBackupTransfers",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
+  /api/v1/database-backups/{id}/transfers/retry:
+    {
+      "post": {
+        "operationId": "retryHostingDatabaseBackupTransfer",
+        "summary": "retryHostingDatabaseBackupTransfer",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "202": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupTransferRetryInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/database-backup-transfers/{id}:
+    {
+      "get": {
+        "operationId": "getHostingDatabaseBackupTransfer",
+        "summary": "getHostingDatabaseBackupTransfer",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/database-backup-transfer/credentials:
+    {
+      "post": {
+        "operationId": "deliverBackupRemoteCredentials",
+        "summary": "deliverBackupRemoteCredentials",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRemoteCredentialsWire"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRemoteCredentialRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/database-backup-transfer/plan:
+    {
+      "post": {
+        "operationId": "getHostingDatabaseBackupTransferPlan",
+        "summary": "getHostingDatabaseBackupTransferPlan",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTransferPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingAuthority"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/database-backup-transfer/mutation:
+    {
+      "post": {
+        "operationId": "recordHostingDatabaseBackupTransferMutation",
+        "summary": "recordHostingDatabaseBackupTransferMutation",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupTransferMutation"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -6124,6 +6764,700 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    BackupTargetSelection:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "revision"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      }
+    BackupRemoteSource:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transfer_id",
+          "expected_target_revision"
+        ],
+        "properties": {
+          "transfer_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_target_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      }
+    HostingDatabaseBackupTargetCredentials:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "access_key",
+          "secret_key"
+        ],
+        "properties": {
+          "access_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "writeOnly": true
+          },
+          "secret_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "writeOnly": true
+          }
+        },
+        "description": "Exact credential strings; whitespace and bytes are preserved. Required when creating a target. Omit on update to retain credentials."
+      }
+    HostingDatabaseBackupTargetInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_revision",
+          "name",
+          "endpoint",
+          "bucket",
+          "region",
+          "enabled"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Exact HTTP(S) endpoint. No normalization, userinfo, query, fragment, or path other than an optional trailing slash. Stored and returned exactly as submitted."
+          },
+          "bucket": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 63,
+            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+            "description": "DNS-style bucket; IP literals, adjacent dots, dot-hyphen and hyphen-dot are rejected."
+          },
+          "region": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "credentials": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTargetCredentials"
+          }
+        },
+        "description": "Create uses expected_revision 0 and requires credentials. Update pins the current revision. Strings are validated without trimming or normalization; name rejects surrounding whitespace and control characters."
+      }
+    HostingDatabaseBackupTarget:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "revision",
+          "name",
+          "endpoint",
+          "bucket",
+          "region",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "postgresql.backup-target.v1"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "Exact HTTP(S) endpoint. No normalization, userinfo, query, fragment, or path other than an optional trailing slash. Stored and returned exactly as submitted."
+          },
+          "bucket": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 63,
+            "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+            "description": "DNS-style bucket; IP literals, adjacent dots, dot-hyphen and hyphen-dot are rejected."
+          },
+          "region": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    BackupRemoteCredentialRef:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "secret_id",
+          "version"
+        ],
+        "properties": {
+          "secret_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      }
+    HostingDatabaseBackupTargetSnapshot:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target",
+          "access",
+          "secret"
+        ],
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTarget"
+          },
+          "access": {
+            "$ref": "#/components/schemas/BackupRemoteCredentialRef"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/BackupRemoteCredentialRef"
+          }
+        }
+      }
+    HostingDatabaseBackupTargetValidationInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_revision",
+          "destination_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "destination_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          }
+        }
+      }
+    HostingDatabaseBackupTransferRetryInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_transfer_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_transfer_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          }
+        }
+      }
+    HostingDatabaseBackupTransfer:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "target_id",
+          "target_revision",
+          "destination_id",
+          "mode",
+          "state",
+          "failure_code",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "postgresql.logical-s3-transfer.v1"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "destination_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "validate",
+              "upload",
+              "download"
+            ]
+          },
+          "backup_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "restore_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "",
+              "access_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "archive_unavailable",
+              "interrupted",
+              "authority_denied"
+            ]
+          },
+          "blob": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupBlob"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Safe transfer metadata. Upload and download require backup_id and blob. Download also requires restore_operation_id. Validate omits all three; upload omits restore_operation_id.",
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "const": "validate"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "backup_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "blob"
+                  ]
+                },
+                {
+                  "required": [
+                    "restore_operation_id"
+                  ]
+                }
+              ]
+            },
+            "type": "object",
+            "required": [
+              "mode"
+            ]
+          },
+          {
+            "properties": {
+              "mode": {
+                "const": "upload"
+              },
+              "backup_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              },
+              "blob": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupBlob"
+              }
+            },
+            "required": [
+              "backup_id",
+              "blob",
+              "mode"
+            ],
+            "not": {
+              "required": [
+                "restore_operation_id"
+              ]
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "mode": {
+                "const": "download"
+              },
+              "backup_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              },
+              "blob": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupBlob"
+              },
+              "restore_operation_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              }
+            },
+            "required": [
+              "backup_id",
+              "blob",
+              "restore_operation_id",
+              "mode"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    HostingDatabaseBackupTransferPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "target",
+          "actor_id",
+          "runner_id",
+          "server_id",
+          "daemon_id",
+          "location_id",
+          "object_key",
+          "max_bytes",
+          "timeout_seconds",
+          "hash"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTransfer"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTargetSnapshot"
+          },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "server_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "daemon_id": {
+            "type": "string"
+          },
+          "location_id": {
+            "type": "string"
+          },
+          "object_key": {
+            "type": "string"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1073741824
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    HostingDatabaseBackupTransferMutation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt_id",
+          "plan_hash",
+          "phase",
+          "failure_code",
+          "daemon_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "intent",
+              "complete",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "",
+              "access_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "archive_unavailable",
+              "interrupted",
+              "authority_denied"
+            ]
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    BackupRemoteCredentialRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authority",
+          "delivery_id",
+          "plan_hash",
+          "target_id",
+          "target_revision",
+          "daemon_id"
+        ],
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/HostingAuthority"
+          },
+          "delivery_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "target_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+    BackupRemoteCredentialMetadata:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "purpose",
+          "request",
+          "runner_id",
+          "request_hash",
+          "use_until"
+        ],
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "hosting_postgresql_remote_backup_credentials.v1"
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/BackupRemoteCredentialRequest"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "use_until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    BackupRemoteCredentialsWire:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metadata",
+          "access_key",
+          "secret_key"
+        ],
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/BackupRemoteCredentialMetadata"
+          },
+          "access_key": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64 of the exact access key bytes, emitted only by the protected transport codec."
+          },
+          "secret_key": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64 of the exact secret key bytes, emitted only by the protected transport codec."
+          }
+        },
+        "description": "Explicit authenticated protected transport response. The ordinary credential holder serializes as an empty object and is not this wire representation. Cache-Control: no-store."
+      }
     HostingDatabaseBackupScheduleInput:
       {
         "type": "object",
@@ -6165,6 +7499,9 @@ components:
           },
           "enabled": {
             "type": "boolean"
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
           }
         }
       }
@@ -6232,6 +7569,9 @@ components:
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
           }
         }
       }
@@ -6350,6 +7690,9 @@ components:
           "expected_resource_generation": {
             "type": "integer",
             "minimum": 1
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
           }
         }
       }
@@ -6370,6 +7713,9 @@ components:
             "type": "string",
             "minLength": 1,
             "maxLength": 128
+          },
+          "remote_source": {
+            "$ref": "#/components/schemas/BackupRemoteSource"
           }
         }
       }
@@ -6421,8 +7767,16 @@ components:
           "updated_at"
         ],
         "properties": {
-          "max_bytes": {"type":"integer","minimum":5,"maximum":1073741824},
-          "timeout_seconds": {"type":"integer","minimum":1,"maximum":3600},
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1073741824
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
           "id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
@@ -6499,6 +7853,9 @@ components:
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
           }
         }
       }

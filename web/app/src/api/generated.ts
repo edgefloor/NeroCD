@@ -13,13 +13,13 @@ export interface paths {
         };
         /**
          * Hosted PostgreSQL backup schedule
-         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.
          */
         get: operations["listHostingDatabaseBackupSchedules"];
         put?: never;
         /**
          * Hosted PostgreSQL backup schedule
-         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.
          */
         post: operations["createHostingDatabaseBackupSchedule"];
         delete?: never;
@@ -38,7 +38,7 @@ export interface paths {
         get?: never;
         /**
          * Hosted PostgreSQL backup schedule
-         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.
          */
         put: operations["updateHostingDatabaseBackupSchedule"];
         post?: never;
@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * Hosted PostgreSQL backup schedule
-         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; retention and external notifications deferred. Cache-Control no-store.
          */
         get: operations["listHostingDatabaseBackupOccurrences"];
         put?: never;
@@ -77,13 +77,13 @@ export interface paths {
         };
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         get: operations["listHostingDatabaseBackups"];
         put?: never;
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         post: operations["requestHostingDatabaseBackup"];
         delete?: never;
@@ -101,7 +101,7 @@ export interface paths {
         };
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         get: operations["getHostingDatabaseBackup"];
         put?: never;
@@ -123,7 +123,7 @@ export interface paths {
         put?: never;
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         post: operations["restoreHostingDatabaseBackup"];
         delete?: never;
@@ -143,7 +143,7 @@ export interface paths {
         put?: never;
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         post: operations["getHostingDatabaseBackupPlan"];
         delete?: never;
@@ -163,7 +163,7 @@ export interface paths {
         put?: never;
         /**
          * Hosted PostgreSQL logical backup or new private restore
-         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads, credentials or schedules. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
+         * @description Owner requests effects; viewer reads nonsecret history. Source remains writable. PostgreSQL17.11 app database only, local artifact with optional pinned S3 transfer, same authorized destination. Restore creates a held independent database; unmatched import intent remains uncertain. No caller paths, SQL uploads or credentials. Remote restore selects a pinned transfer and target revision. Cache-Control no-store. Runner endpoints require exact current run/lease/attempt/fence; receipt replay is historical acknowledgment only.
          */
         post: operations["recordHostingDatabaseBackupMutation"];
         delete?: never;
@@ -3964,10 +3964,363 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/database-backup-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingDatabaseBackupTargets
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["listHostingDatabaseBackupTargets"];
+        put?: never;
+        /**
+         * createHostingDatabaseBackupTarget
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        post: operations["createHostingDatabaseBackupTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/database-backup-targets/{target_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * updateHostingDatabaseBackupTarget
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        put: operations["updateHostingDatabaseBackupTarget"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingDatabaseBackupTargetValidations
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["listHostingDatabaseBackupTargetValidations"];
+        put?: never;
+        /**
+         * validateHostingDatabaseBackupTarget
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        post: operations["validateHostingDatabaseBackupTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}/transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingDatabaseBackupTransfers
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["listHostingDatabaseBackupTransfers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}/transfers/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * retryHostingDatabaseBackupTransfer
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        post: operations["retryHostingDatabaseBackupTransfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backup-transfers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getHostingDatabaseBackupTransfer
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["getHostingDatabaseBackupTransfer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup-transfer/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * deliverBackupRemoteCredentials
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["deliverBackupRemoteCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup-transfer/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * getHostingDatabaseBackupTransferPlan
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["getHostingDatabaseBackupTransferPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup-transfer/mutation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * recordHostingDatabaseBackupTransferMutation
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["recordHostingDatabaseBackupTransferMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BackupTargetSelection: {
+            target_id: string;
+            /** Format: int64 */
+            revision: number;
+        };
+        BackupRemoteSource: {
+            transfer_id: string;
+            /** Format: int64 */
+            expected_target_revision: number;
+        };
+        /** @description Exact credential strings; whitespace and bytes are preserved. Required when creating a target. Omit on update to retain credentials. */
+        HostingDatabaseBackupTargetCredentials: {
+            access_key: string;
+            secret_key: string;
+        };
+        /** @description Create uses expected_revision 0 and requires credentials. Update pins the current revision. Strings are validated without trimming or normalization; name rejects surrounding whitespace and control characters. */
+        HostingDatabaseBackupTargetInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_revision: number;
+            name: string;
+            /** @description Exact HTTP(S) endpoint. No normalization, userinfo, query, fragment, or path other than an optional trailing slash. Stored and returned exactly as submitted. */
+            endpoint: string;
+            /** @description DNS-style bucket; IP literals, adjacent dots, dot-hyphen and hyphen-dot are rejected. */
+            bucket: string;
+            region: string;
+            enabled: boolean;
+            credentials?: components["schemas"]["HostingDatabaseBackupTargetCredentials"];
+        };
+        HostingDatabaseBackupTarget: {
+            id: string;
+            project_id: string;
+            /** @enum {string} */
+            version: "postgresql.backup-target.v1";
+            /** Format: int64 */
+            revision: number;
+            name: string;
+            /** @description Exact HTTP(S) endpoint. No normalization, userinfo, query, fragment, or path other than an optional trailing slash. Stored and returned exactly as submitted. */
+            endpoint: string;
+            /** @description DNS-style bucket; IP literals, adjacent dots, dot-hyphen and hyphen-dot are rejected. */
+            bucket: string;
+            region: string;
+            enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        BackupRemoteCredentialRef: {
+            secret_id: string;
+            /** Format: int64 */
+            version: number;
+        };
+        HostingDatabaseBackupTargetSnapshot: {
+            target: components["schemas"]["HostingDatabaseBackupTarget"];
+            access: components["schemas"]["BackupRemoteCredentialRef"];
+            secret: components["schemas"]["BackupRemoteCredentialRef"];
+        };
+        HostingDatabaseBackupTargetValidationInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_revision: number;
+            destination_id: string;
+        };
+        HostingDatabaseBackupTransferRetryInput: {
+            request_id: string;
+            expected_transfer_id: string;
+        };
+        /** @description Safe transfer metadata. Upload and download require backup_id and blob. Download also requires restore_operation_id. Validate omits all three; upload omits restore_operation_id. */
+        HostingDatabaseBackupTransfer: {
+            id: string;
+            /** @enum {string} */
+            version: "postgresql.logical-s3-transfer.v1";
+            project_id: string;
+            target_id: string;
+            /** Format: int64 */
+            target_revision: number;
+            destination_id: string;
+            /** @enum {string} */
+            mode: "validate" | "upload" | "download";
+            backup_id?: string;
+            restore_operation_id?: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "applying" | "succeeded" | "failed" | "uncertain";
+            /** @enum {string} */
+            failure_code: "" | "access_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "archive_unavailable" | "interrupted" | "authority_denied";
+            blob?: components["schemas"]["HostingDatabaseBackupBlob"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & ({
+            /** @constant */
+            mode: "validate";
+        } | {
+            /** @constant */
+            mode: "upload";
+            backup_id: string;
+            blob: components["schemas"]["HostingDatabaseBackupBlob"];
+        } | {
+            /** @constant */
+            mode: "download";
+            backup_id: string;
+            blob: components["schemas"]["HostingDatabaseBackupBlob"];
+            restore_operation_id: string;
+        });
+        HostingDatabaseBackupTransferPlan: {
+            operation: components["schemas"]["HostingDatabaseBackupTransfer"];
+            target: components["schemas"]["HostingDatabaseBackupTargetSnapshot"];
+            actor_id: string;
+            runner_id: string;
+            server_id: string;
+            daemon_id: string;
+            location_id: string;
+            object_key: string;
+            max_bytes: number;
+            timeout_seconds: number;
+            hash: string;
+        };
+        HostingDatabaseBackupTransferMutation: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "intent" | "complete" | "failed" | "uncertain";
+            /** @enum {string} */
+            failure_code: "" | "access_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "archive_unavailable" | "interrupted" | "authority_denied";
+            daemon_id: string;
+        };
+        BackupRemoteCredentialRequest: {
+            authority: components["schemas"]["HostingAuthority"];
+            delivery_id: string;
+            plan_hash: string;
+            target_id: string;
+            /** Format: int64 */
+            target_revision: number;
+            daemon_id: string;
+        };
+        BackupRemoteCredentialMetadata: {
+            /** @enum {string} */
+            purpose: "hosting_postgresql_remote_backup_credentials.v1";
+            request: components["schemas"]["BackupRemoteCredentialRequest"];
+            runner_id: string;
+            request_hash: string;
+            /** Format: date-time */
+            use_until: string;
+        };
+        /** @description Explicit authenticated protected transport response. The ordinary credential holder serializes as an empty object and is not this wire representation. Cache-Control: no-store. */
+        BackupRemoteCredentialsWire: {
+            metadata: components["schemas"]["BackupRemoteCredentialMetadata"];
+            /**
+             * Format: byte
+             * @description Base64 of the exact access key bytes, emitted only by the protected transport codec.
+             */
+            access_key: string;
+            /**
+             * Format: byte
+             * @description Base64 of the exact secret key bytes, emitted only by the protected transport codec.
+             */
+            secret_key: string;
+        };
         HostingDatabaseBackupScheduleInput: {
             request_id: string;
             /** Format: int64 */
@@ -3979,6 +4332,7 @@ export interface components {
             /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
             timezone: string;
             enabled: boolean;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupSchedule: {
             id: string;
@@ -3999,6 +4353,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupOccurrence: {
             id: string;
@@ -4025,10 +4380,12 @@ export interface components {
         HostingDatabaseBackupInput: {
             request_id: string;
             expected_resource_generation: number;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupRestoreInput: {
             request_id: string;
             name: string;
+            remote_source?: components["schemas"]["BackupRemoteSource"];
         };
         HostingDatabaseBackupBlob: {
             digest: string;
@@ -4061,6 +4418,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupPlan: {
             operation: components["schemas"]["HostingDatabaseBackupOperation"];
@@ -16093,6 +16451,341 @@ export interface operations {
             409: components["responses"]["Error"];
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingDatabaseBackupTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTarget"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    createHostingDatabaseBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTargetInput"] & {
+                    credentials: components["schemas"]["HostingDatabaseBackupTargetCredentials"];
+                };
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTarget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    updateHostingDatabaseBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTargetInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTarget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingDatabaseBackupTargetValidations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    validateHostingDatabaseBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTargetValidationInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingDatabaseBackupTransfers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    retryHostingDatabaseBackupTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTransferRetryInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingDatabaseBackupTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverBackupRemoteCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRemoteCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupRemoteCredentialsWire"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingDatabaseBackupTransferPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransferPlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingDatabaseBackupTransferMutation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTransferMutation"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
