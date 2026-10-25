@@ -12,11 +12,11 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "5277ab2ff5258ae6a4aee2fb642ed925d9a827cb"
+BASE = "09a432407c41671517fa342d28c07e9c79978aea"
 UPSTREAM = "b12d1386f3d458618b4c579babcd1e339c6c40b3"
 BASELINE_CRITERIA = 934
 BASELINE_ELIGIBLE = 933
-BASELINE_MANIFEST = '86c2cdd843ce78f2a9e33417f9fb59c64285e8f63308b778e0e651f56fd053a3'
+BASELINE_MANIFEST = '9121b5399e3804a045dc9f8a98b3925b5b4565908daaeaab6535d2cbc3c48b73'
 BASELINE_PARENT_MANIFEST = '61070857bb0fef33a0802f752afbf7e13f59f4381b0289785d141f7bc211efe7'
 COUNTS = {"requirement": 68, "acceptance": 37, "area": 19, "database": 9,
           "source": 10, "secret": 3, "builder": 7, "proxy": 4, "notification": 6}

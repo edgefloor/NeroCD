@@ -1,5 +1,53 @@
 # Connect an image application to PostgreSQL or Redis
 
+The connected image-application workflow with PostgreSQL or Redis and one owned
+upload volume is physically qualified at
+`09a432407c41671517fa342d28c07e9c79978aea`, tree
+`8f52ef4b6d8696b5fb184773e73f4170b32cf1e5`, through migration 0074 and
+journal format 17. First Connect deploys without application storage or routes.
+After it settles, attach one platform-managed named volume and explicitly approve
+replacement with interruption. Later routed replacements retain database records
+and uploads while enforcing one running volume writer.
+
+The full gate passed in 683.423 seconds on 2026-10-25. All seven Go groups and
+14 named subtests passed with zero Go skips or failures. Six serialized Chromium
+phases passed, with 30 passing tests and six explicit opposite-profile skips.
+The required readiness, proxy-failure recovery, later deployment C, HTTPS,
+capacity and cleanup markers all passed for both database engines. PostgreSQL
+resume and Redis forward completion also passed through the live owner recovery
+form, with viewer denial and keyboard review at the tested viewport sizes.
+
+The full receipt is
+`/tmp/nerocd-operation-status-retry-integrated-full-handoff.json`.
+Its exact profile is
+`/tmp/nerocd-operation-status-retry-integrated-physical-profile.json`.
+Named events and sanitized runtime output are retained in
+`/tmp/nerocd-operation-status-retry-integrated-full-group-events.json` and
+`/tmp/nerocd-operation-status-retry-integrated-full-runtime-redacted.log`.
+The receipt binds source objects, compiled binary hashes, the generated and
+served UI manifest, image identities, joined processes, and exact owned cleanup.
+The unrelated 35 containers and 209 volumes, root graph, generated UI bytes and
+independent user UI were preserved.
+
+Qualification covers one same-host native Linux arm64 trusted Docker classic-store
+fixture, PostgreSQL 17.11, Redis 8.2.10, and private fixture-CA HTTPS. The storage
+image runs as root to initialize the fresh volume. The fixture verifies bounded
+file UID/GID and modes. This does not qualify arbitrary nonroot image initialization
+or production ACME. Recovery preserves candidate-written database records and
+uploads. Resume does not undo those writes or establish compatibility with the
+previous app version. Backup/restore, disk loss, migration, cross-host or external
+storage, source builds, credential rotation, in-flight request draining and
+control-plane restart remain outside this qualification. Full R/A/matrix gates
+remain incomplete.
+
+The proxy-failure case deliberately pauses the exact owned proxy, interrupting
+unrelated fixture routes too. Their restoration is verified after unpause and
+recovery. Ordinary route preservation is checked separately without that fault.
+The earlier failed full run remains failed in
+`/tmp/nerocd-operation-snapshot-integrated-full-handoff.json`.
+
+## Historical storage-less qualification
+
 The connected public-image workflow is physically qualified at
 `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
 `a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
@@ -268,11 +316,13 @@ and a new approval. Do not turn an ambiguous result into a different request.
 
 Runtime journal replay recovers acknowledgments for the same retained attempt.
 It does not grant a new writer or bypass current authority. A held operation stays
-held. Recovery currently admits observation only through an exact original
+held. For a deployment without the connected storage policy, recovery admits
+observation only through an exact original
 operation, stage and candidate hashes, membership revision and idempotency key.
 The recovery body uses `action: "observe"`, `operation_id`, `stage_hash`,
 `candidate_hash`, `expected_membership_revision` and `idempotency_key`.
-The UI does not offer an unlock or effectful recovery action. Empty hashes are
+That observation action does not unlock effects. Connected storage can offer the
+separate reviewed recovery actions described below. Empty hashes are
 allowed only together for the explicitly unknown observation case. Observation
 does not reapply effects or relabel an unresolved candidate as successful.
 
@@ -291,7 +341,10 @@ unchanged-client compatibility claims.
 | [`StartPostgresql::handle` and `generate_environment_variables`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartPostgresql.php#L33), destination network and persistent storage | [Connection controller](../internal/store/postgres_hosting_database_connection.go), retained network-origin proof and native Go database engine |
 | [`StartRedis::handle` and password configuration](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartRedis.php#L33) | Exact managed-secret references and protected runner credential delivery |
 | [`ApplicationDeploymentJob`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L1726), runtime environment and destination networking | [Owner service](../internal/app/hosting_database_connection_service.go), transactional River work, fenced Go-agent execution and durable journal |
-| [`ApplicationDeploymentJob::rolling_update`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2658), start and health-check the candidate before retiring the predecessor | Immutable ready yield, separate strict proxy operation, and fresh finalize lease for the original connected deployment |
+| [`ApplicationDeploymentJob::rolling_update`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2658), rolling update and constrained interruption | Storage-less ready yield and strict proxy/finalize; owned-volume replacement stops the exact predecessor before starting the sole candidate writer |
+| [`ApplicationDeploymentJob::generate_local_persistent_volumes`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4347), named-volume generation | Immutable owned-volume metadata and materialization, exact physical labels and mount identity |
+| [`Application::persistentStorages`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L702) and [`destination`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L1189) | Exact resource/binding/destination references in storage admission and compiled plans |
+| [`LocalPersistentVolume`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/LocalPersistentVolume.php#L12) and [`Storages/All`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Shared/Storages/All.php#L18) | Public storage review and owner-authorized connected replacement; fresh fenced recovery receipts replace SSH mechanics |
 | [`generateLabelsApplication`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L1212), application hostname, port and HTTPS routing | Existing typed Traefik file snapshot and strict HTTP, HTTPS and certificate proof, with the complete unrelated route scope retained |
 | [`StandalonePostgresql`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandalonePostgresql.php#L322) and [`StandaloneRedis`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandaloneRedis.php#L308), internal connection details | Private deterministic alias, exact credential references and [connection UI](../web/app/src/pages/ResourceDatabaseConnections.tsx) without password disclosure |
 
@@ -315,9 +368,9 @@ full mandatory outcome separately; source presence alone earns no verified credi
 ## Redeploy with one connected upload volume
 
 Migration 0074 and journal format 17 add the separately versioned
-`application-database.storage.v1` contract. This implementation is a candidate;
-the historical physical qualification above covers the storage-less workflow.
-The combined storage UI/API/runtime physical gate remains required.
+`application-database.storage.v1` contract. The current `09a4324` physical qualification
+above covers its combined UI, API and runner workflow. The `5277ab2` qualification
+remains a separate historical storage-less pass.
 
 First connect and deploy the application without storage. Attach one
 platform-managed local volume to that resource after its initial deployment
@@ -369,6 +422,12 @@ correlations. The state includes `phase`, `receipt_id`, `state_hash`,
 has been recorded. Offered actions are read snapshots. An owner request must
 reauthorize the exact current operation, membership, storage and route state.
 
+In the UI, refresh the failed operation and review its offered recovery action,
+current route choices and storage interruption acknowledgement. Approve the
+selected action and submit it once. A submitted request is not settlement. Wait
+for the separate recovery state to succeed, then verify application reads and
+writes. Viewers can inspect progress but cannot submit recovery.
+
 Use the existing recovery endpoint only with an offered action. Preserve the
 operation ID, current stage/candidate hashes and membership revision, and include
 `storage_state_hash`, a new `idempotency_key`, and the same explicit
@@ -389,6 +448,12 @@ operation ID, current stage/candidate hashes and membership revision, and includ
   operation for the same original deployment and ready candidate. The failed P
   and original continuation stay immutable. Exact P2 HTTPS success permits the
   existing fresh finalizer to retire the stopped predecessor and settle holds.
+
+After successful `resume_predecessor`, refresh membership and route/storage
+reviews before requesting a new application deployment. The physical gate proves
+a fresh C can stop the recovered A, retire it exactly once, retain the original
+volume and candidate-written data, and accept new database records and uploads
+through trusted HTTPS. Resuming A does not reverse B's database writes or uploads.
 
 `recovery_state` is independent of the original deployment status. `queued` and
 `running` report the dedicated accepted task. `succeeded` requires durable effect
