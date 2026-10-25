@@ -19,6 +19,113 @@ import (
 	"nerocd/internal/runnerclient"
 )
 
+func TestPrepareApplicationStorageReauthorizesHeldCreation(t *testing.T) {
+	for _, kind := range []string{"postgresql", "redis"} {
+		for _, mode := range []string{"fresh", "revoked", "changed_origin", "changed_daemon", "changed_storage", "replayed_permission", "cancelled"} {
+			t.Run(kind+"/"+mode, func(t *testing.T) {
+				f := newConnectedExecutionFixture(t, kind, true)
+				in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*f.op.ApplicationDatabase)
+				if err != nil {
+					t.Fatal(err)
+				}
+				snapshot := f.op.Snapshot
+				id, name := domain.HostingStorageIdentity(snapshot.BindingID)
+				storage := domain.HostingStorage{ID: id, ProjectID: f.op.ProjectID, ResourceID: snapshot.ResourceID, BindingID: snapshot.BindingID, DestinationID: snapshot.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: name, MountPath: "/data/uploads", AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: "actor", CreatedAt: time.Now().UTC()}
+				storage.Hash = storage.DocumentHash()
+				snapshot.Storage = storage.Reference()
+				snapshot.PolicyVersion = domain.HostingApplicationDatabaseStoragePolicyVersion
+				descriptor := domain.HostingStoragePlan{Reference: snapshot.Storage, VolumeName: name, MountPath: storage.MountPath, CreationOperationID: f.op.ID, CreationNonce: domain.HostingStorageCreationNonce(snapshot.Storage, f.op.ID, f.op.Release.DaemonID), DaemonID: f.op.Release.DaemonID}
+				plan, err := domain.CompileHostingApplicationDatabaseStoragePlan(snapshot, *f.op.Release, f.op.Plan.PreviousHealthy, nil, in, descriptor)
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof := domain.NewHostingApplicationDatabaseStorage(snapshot.Storage)
+				f.op.Plan, f.op.Snapshot, f.op.ApplicationDatabaseStorage = &plan, snapshot, &proof
+				origin := domain.HostingStorageMaterialization{StorageRef: storage.Reference(), State: "create_admitted", CreationOperationID: f.op.ID, CreationPlanHash: plan.Hash, CreationNonce: descriptor.CreationNonce, DaemonID: descriptor.DaemonID}
+				origin.Labels = domain.ExpectedHostingStorageLabels(storage, origin)
+				ack := domain.HostingStorageCreateAck{Storage: storage, Materialization: origin, CreatePermitted: mode != "replayed_permission"}
+				volume, err := storageVolumeRequest(f.op, ack)
+				if err != nil {
+					t.Fatal(err)
+				}
+				image := testImageEngine(t)
+				docker := &ownedVolumeFake{req: volume}
+				docker.install(t, image)
+				engine := &applicationDatabaseEngine{image: image}
+				ctx, cancel := context.WithCancel(runnerclient.WithDatabaseTransport(t.Context(), runnerclient.DatabaseTransport{TrustedLoopbackHTTP: true}))
+				defer cancel()
+				s := newAttemptSupervisorFrom(ctx, f.lease)
+				defer s.Close()
+				admissions, materialized, plans := 0, 0, 0
+				create := domain.HostingStorageCreateRequest{HostingAuthority: f.a, PlanHash: plan.Hash, StorageRef: snapshot.Storage, CreationNonce: descriptor.CreationNonce}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/v1/runners/hosting/storage-create-begin":
+						var request domain.HostingStorageCreateRequest
+						if json.NewDecoder(r.Body).Decode(&request) != nil || request != create || !f.has("storage_create_intent") {
+							t.Error("creation admission lost exact journaled authority")
+							w.WriteHeader(http.StatusConflict)
+							return
+						}
+						admissions++
+						response := ack
+						if admissions > 1 {
+							response.CreatePermitted = false
+							switch mode {
+							case "revoked":
+								w.WriteHeader(http.StatusConflict)
+								return
+							case "changed_origin":
+								response.Materialization.CreationOperationID = "foreign_origin"
+							case "changed_daemon":
+								response.Materialization.DaemonID = "foreign_daemon"
+							case "changed_storage":
+								response.Storage.CreatedBy = "different_actor"
+							case "cancelled":
+								cancel()
+							}
+						}
+						// Admission holds the operation. Ordinary Plan must remain denied.
+						f.op.MutationHold = true
+						_ = json.NewEncoder(w).Encode(response)
+					case "/api/v1/runners/hosting/plan":
+						plans++
+						w.WriteHeader(http.StatusConflict)
+					case "/api/v1/runners/hosting/storage-materialized":
+						var request domain.HostingStorageMaterializedRequest
+						if json.NewDecoder(r.Body).Decode(&request) != nil || request.HostingAuthority != f.a || request.Matches(storage, origin) != nil || !f.has("storage_materialized") || docker.creates != 1 {
+							t.Error("materialization preceded exact durable evidence or volume creation")
+							w.WriteHeader(http.StatusConflict)
+							return
+						}
+						materialized++
+						receipt := domain.HostingReceipt{ID: request.ReceiptID, BodyHash: domain.HostingDocumentHash(request), CreatedAt: time.Now().UTC()}
+						m := origin
+						m.State, m.MaterializedReceipt = "materialized", &receipt
+						_ = json.NewEncoder(w).Encode(domain.HostingStorageMaterializedAck{Materialization: m, Receipt: receipt})
+					default:
+						t.Errorf("unexpected storage preparation request %s", r.URL.Path)
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}))
+				defer server.Close()
+				x := applicationDatabaseExchange{s: s, j: f.j, c: runnerclient.New(server.URL, "fixture"), e: engine, a: f.a, lease: f.lease, op: f.op, in: applicationDatabaseEngineInput{Plan: plan, Proof: in}}
+				err = prepareApplicationStorage(&x)
+				if mode == "fresh" {
+					if err != nil || admissions != 2 || materialized != 1 || docker.creates != 1 || !docker.present || engine.storage == nil || engine.storage.CreatePermitted {
+						t.Fatalf("first volume did not materialize under held admission: err=%v admissions=%d materialized=%d creates=%d", err, admissions, materialized, docker.creates)
+					}
+				} else if err == nil || docker.creates != 0 || docker.present || materialized != 0 || engine.storage != nil {
+					t.Fatalf("changed/revoked/replayed authority created or materialized storage: err=%v creates=%d materialized=%d", err, docker.creates, materialized)
+				}
+				if plans != 0 {
+					t.Fatalf("held creation used ordinary Plan (%d calls)", plans)
+				}
+			})
+		}
+	}
+}
+
 type storageWriterEngine struct {
 	*connectedExecutionEngine
 	stops, removals, resumes int

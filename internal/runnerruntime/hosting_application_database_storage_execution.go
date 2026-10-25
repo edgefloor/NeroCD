@@ -106,8 +106,19 @@ func prepareApplicationStorage(x *applicationDatabaseExchange) error {
 		return err
 	}
 	evidence, err := concrete.image.ensureOwnedVolumeWithAuthority(x.s.Context(), volume, func(ctx context.Context) error {
-		current, e := x.c.HostingPlan(ctx, x.a)
-		if e != nil || !applicationDatabaseSame(x.op, current) || current.State != "prepared" || current.Result != nil {
+		if ctx.Err() != nil || x.s.Context().Err() != nil {
+			return errLeaseAuthorityLost
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		// Creation admission holds the operation, so ordinary Plan is denied.
+		// Recheck that exact admission immediately before Docker create, keeping
+		// the original ephemeral permission rather than using the replay's flag.
+		current, e := x.c.HostingStorageCreateBegin(ctx, create)
+		if e != nil {
+			return errApplicationDatabaseExecution
+		}
+		if _, e = storageVolumeRequest(x.op, current); e != nil || current.Storage != ack.Storage || domain.HostingDocumentHash(current.Materialization) != domain.HostingDocumentHash(ack.Materialization) || x.s.Context().Err() != nil {
 			return errApplicationDatabaseExecution
 		}
 		return ctx.Err()

@@ -70,6 +70,16 @@ func (f connectedStorageFixture) prepare(t *testing.T) connectedStorageFixture {
 	if err != nil {
 		t.Fatal("composed materialization begin", err)
 	}
+	if !ack.CreatePermitted {
+		t.Fatal("fresh admission did not grant the sole creation permission")
+	}
+	if _, err = f.pg.HostingRunnerPlan(f.runnerContext, f.runner, f.appAuthority); err == nil {
+		t.Fatal("ordinary Plan bypassed the admitted storage hold")
+	}
+	replay, err := f.pg.HostingStorageCreateBegin(f.runnerContext, f.runner, m.request())
+	if err != nil || replay.CreatePermitted || replay.Storage != ack.Storage || domain.HostingDocumentHash(replay.Materialization) != domain.HostingDocumentHash(ack.Materialization) {
+		t.Fatal("exact held admission did not reauthorize without renewing creation permission", err)
+	}
 	proof := m.proof(ack)
 	proof.ReceiptID = "storage_materialized_" + f.appOperation.ID
 	if _, err = f.pg.HostingStorageMaterialized(f.runnerContext, f.runner, proof); err != nil {
@@ -80,6 +90,17 @@ func (f connectedStorageFixture) prepare(t *testing.T) connectedStorageFixture {
 		t.Fatal("composed apply admission", err)
 	}
 	return f
+}
+
+func TestPostgresApplicationDatabaseStorageCreationAdmissionHeldPlan(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f := newConnectedStorageFixture(t, engine).prepare(t)
+			if f.appOperation.State != "applying" || !f.appOperation.MutationHold {
+				t.Fatal("exact materialization did not advance to held writer admission")
+			}
+		})
+	}
 }
 func (f connectedStorageFixture) effect(t *testing.T, action string) {
 	t.Helper()
