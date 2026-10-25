@@ -1,3 +1,5 @@
+import historyFixture from "@/api/fixtures/database-upgrade-history.json";
+import { DatabaseDeployments } from "./DatabaseDeployments";
 import {
   act,
   cleanup,
@@ -5,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -725,4 +728,138 @@ test("metadata and resource-list refreshes cannot replace an uncertain original 
   expect(
     fetch.mock.calls.filter(([, init]) => init.method === "POST")[1]![1].body,
   ).toBe(body);
+});
+
+test.each(Object.entries(historyFixture.cases))(
+  "%s actual V2 history and selected status remain usable before a fresh authorized deployment",
+  async (_name, saved) => {
+    const database = saved.database as HostingDatabase;
+    const scope = {
+      actor: "owner",
+      project: database.resource.project_id,
+      environment: "env",
+    };
+    const accepted: any = structuredClone(saved.operation);
+    accepted.id += "_next";
+    accepted.state = "queued";
+    accepted.mutation_hold = true;
+    for (const key of [
+      "plan",
+      "release",
+      "prepared_receipt",
+      "complete_receipt",
+      "result",
+    ])
+      delete accepted[key];
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === "POST") return json(accepted, 202);
+      if (url.includes("/deployments?"))
+        return json({
+          items: [saved.operation],
+          count: 1,
+          total: 1,
+          limit: 20,
+          offset: 0,
+        });
+      if (url.endsWith(accepted.id)) return json(accepted);
+      return json(saved.operation);
+    });
+    vi.stubGlobal("fetch", fetch);
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DatabaseDeployments
+          database={database}
+          scope={scope}
+          maintainer
+          blocked={false}
+          onDenied={vi.fn()}
+          onRefresh={async () => true}
+        />
+      </QueryClientProvider>,
+    );
+    const history = await screen.findByRole("button", {
+      name: new RegExp(saved.operation.id + " · generation"),
+    });
+    fireEvent.click(history);
+    await screen.findByRole("region", { name: "Recorded database operation" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    const deploy = screen.getByRole("button", { name: "Deploy again" });
+    await waitFor(() => expect(deploy.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(deploy);
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.filter(([, init]) => init.method === "POST"),
+      ).toHaveLength(1),
+    );
+    await screen.findByText(accepted.id, { exact: true });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      JSON.parse(
+        fetch.mock.calls.find(([, init]) => init.method === "POST")![1]
+          .body as string,
+      ),
+    ).toMatchObject({
+      expected_generation: database.resource.generation,
+      idempotency_key: expect.stringMatching(/^[a-f0-9]{32}$/),
+    });
+  },
+);
+test("incomplete V2 terminal evidence stays visible and blocks a new deployment", async () => {
+  const saved = historyFixture.cases.postgresql_upgrade,
+    database = saved.database as HostingDatabase;
+  const operation: any = structuredClone(saved.operation);
+  operation.state = "failed";
+  delete operation.result;
+  delete operation.complete_receipt;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      json({ items: [operation], count: 1, total: 1, limit: 20, offset: 0 }),
+    ),
+  );
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <DatabaseDeployments
+        database={database}
+        scope={{
+          actor: "owner",
+          project: database.resource.project_id,
+          environment: "env",
+        }}
+        maintainer
+        blocked={false}
+        onDenied={vi.fn()}
+        onRefresh={async () => true}
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", {
+    name: new RegExp(operation.id + " · generation"),
+  });
+  await screen.findByText(
+    "A known operation is active or holds mutations. Review its recorded status before deploying again.",
+  );
+  expect(
+    screen
+      .getByRole("button", { name: "Deploy again" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("database backup region is a sibling of metadata under the exact database detail", async () => {
+  setup();
+  const detail = await screen.findByRole("region", {
+    name: "Database detail for Data",
+  });
+  const metadata = await within(detail).findByRole("region", {
+    name: "Database metadata for Data",
+  });
+  const backups = await within(detail).findByRole("region", {
+    name: "Database backups",
+  });
+  expect(detail.contains(backups)).toBe(true);
+  expect(metadata.contains(backups)).toBe(false);
 });

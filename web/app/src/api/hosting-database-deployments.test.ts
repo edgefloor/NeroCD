@@ -1,3 +1,4 @@
+import historyFixture from "./fixtures/database-upgrade-history.json";
 import { afterEach, expect, test, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { databaseRecipes, type HostingDatabase } from "./hosting-databases";
@@ -6,6 +7,8 @@ import {
   databaseOperationQuery,
   deployDatabase,
   validateDatabaseOperation,
+  validateDatabaseHistoryOperation,
+  databaseOperationHeld,
 } from "./hosting-database-deployments";
 
 const digest = "sha256:" + "a".repeat(64);
@@ -360,4 +363,226 @@ test("a stalled deployment is bounded at thirty seconds without automatic retry"
   await vi.advanceTimersByTimeAsync(30_000);
   await rejection;
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+// Generated through the de18fae domain test overlay, never from a live controller.
+test.each(Object.entries(historyFixture.cases))(
+  "%s domain V2 history is a safe read projection for list and selected GET, separate from V1 authority",
+  async (_name, saved) => {
+    const database = saved.database as HostingDatabase;
+    const readScope = { ...scope, project: database.resource.project_id };
+    const operation = structuredClone(saved.operation);
+    const fetch = vi.fn(async (url: string) =>
+      json(
+        url.includes("/deployments?")
+          ? { items: [operation], count: 1, total: 1, limit: 20, offset: 0 }
+          : operation,
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const client = new QueryClient();
+    try {
+      const list = await client.fetchQuery(
+        databaseDeploymentsQuery(database, readScope),
+      );
+      const selected = await client.fetchQuery(
+        databaseOperationQuery(database, readScope, operation.id),
+      );
+      expect(selected).toEqual(list.items[0]);
+      expect(selected).toMatchObject({
+        id: operation.id,
+        state: "succeeded",
+        plan_hash: operation.plan.hash,
+      });
+      expect(selected).not.toHaveProperty("plan");
+      expect(selected).not.toHaveProperty("database_upgrade");
+      expect(selected).not.toHaveProperty("database_maintenance");
+      expect(selected).not.toHaveProperty("observation_lease");
+      expect(() =>
+        validateDatabaseOperation(operation, database, readScope),
+      ).toThrow();
+    } finally {
+      client.clear();
+    }
+  },
+);
+
+test.each(Object.entries(historyFixture.cases))(
+  "%s matching V2 admission response remains usable with exact generation and unchanged request",
+  async (_name, saved) => {
+    const database = saved.database as HostingDatabase;
+    const readScope = { ...scope, project: database.resource.project_id };
+    const operation: Record<string, unknown> = structuredClone(saved.operation);
+    operation.state = "queued";
+    operation.mutation_hold = true;
+    for (const key of [
+      "plan",
+      "release",
+      "prepared_receipt",
+      "complete_receipt",
+      "result",
+    ])
+      delete operation[key];
+    const fetch = vi.fn(async () => json(operation, 202));
+    vi.stubGlobal("fetch", fetch);
+    const body = {
+      expected_generation: database.resource.generation,
+      idempotency_key: "b".repeat(32),
+    };
+    const admitted = await deployDatabase(database, readScope, body);
+    expect(admitted).toMatchObject({
+      id: operation.id,
+      state: "queued",
+      mutation_hold: true,
+      evidence_incomplete: true,
+    });
+    expect(databaseOperationHeld(admitted)).toBe(true);
+    expect(fetch.mock.calls[0]).toMatchObject([
+      expect.stringContaining("/database/deployments"),
+      { body: JSON.stringify(body) },
+    ]);
+    operation.snapshot = {
+      ...(operation.snapshot as object),
+      resource_generation: database.resource.generation + 1,
+    };
+    await expect(deployDatabase(database, readScope, body)).rejects.toThrow();
+  },
+);
+const v2Changes: Record<string, (op: any) => void> = {
+  project: (op) => {
+    op.project_id = "foreign";
+  },
+  resource: (op) => {
+    op.resource_id = "foreign";
+  },
+  binding: (op) => {
+    op.binding_id = "foreign";
+  },
+  destination: (op) => {
+    op.snapshot.destination_id = "foreign";
+  },
+  missingHold: (op) => {
+    delete op.mutation_hold;
+  },
+  missingRestoreHold: (op) => {
+    delete op.restore_ownership_held;
+  },
+  missingUncertainty: (op) => {
+    delete op.result.uncertain;
+  },
+  malformedHold: (op) => {
+    op.mutation_hold = "false";
+  },
+  result: (op) => {
+    op.result.plan_hash = digest;
+  },
+  image: (op) => {
+    op.result.image_id = digest;
+  },
+  release: (op) => {
+    op.release.daemon_id = "foreign";
+  },
+  notReady: (op) => {
+    op.result.ready = false;
+  },
+  uncertain: (op) => {
+    op.result.uncertain = true;
+  },
+  missingResult: (op) => {
+    delete op.result;
+  },
+  missingProof: (op) => {
+    delete op.database_upgrade;
+  },
+  missingPlan: (op) => {
+    delete op.plan;
+  },
+  compiler: (op) => {
+    op.plan.compiler_version = "foreign";
+  },
+  version: (op) => {
+    op.database_upgrade.version = "foreign";
+  },
+  digest: (op) => {
+    op.database_upgrade.hash = "foreign";
+  },
+  state: (op) => {
+    op.state = "foreign";
+  },
+  mixed: (op) => {
+    op.database_maintenance =
+      historyFixture.cases.postgresql_maintenance.operation.database_maintenance;
+  },
+  openOperation: (op) => {
+    op.command = [];
+  },
+  openProof: (op) => {
+    op.database_upgrade.command = [];
+  },
+  openPlan: (op) => {
+    op.plan.command = [];
+  },
+};
+test.each(Object.entries(v2Changes))(
+  "V2 history rejects %s evidence in list and selected reads",
+  async (_name, change) => {
+    const saved = historyFixture.cases.postgresql_upgrade;
+    const operation = structuredClone(saved.operation);
+    change(operation);
+    const database = saved.database as HostingDatabase;
+    const readScope = { ...scope, project: database.resource.project_id };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(
+          url.includes("/deployments?")
+            ? { items: [operation], count: 1, total: 1, offset: 0, limit: 20 }
+            : operation,
+        ),
+      ),
+    );
+    const client = new QueryClient();
+    try {
+      await expect(
+        client.fetchQuery(databaseDeploymentsQuery(database, readScope)),
+      ).rejects.toThrow();
+      await expect(
+        client.fetchQuery(
+          databaseOperationQuery(database, readScope, operation.id),
+        ),
+      ).rejects.toThrow();
+    } finally {
+      client.clear();
+    }
+  },
+);
+test("incomplete and uncertain V2 history remains held without overwriting recorded state or holds", () => {
+  const saved = historyFixture.cases.postgresql_upgrade,
+    database = saved.database as HostingDatabase;
+  const readScope = { ...scope, project: database.resource.project_id };
+  const operation: any = structuredClone(saved.operation);
+  operation.state = "failed";
+  operation.result.outcome = "failed";
+  operation.result.ready = false;
+  operation.result.uncertain = true;
+  let projection = validateDatabaseHistoryOperation(
+    operation,
+    database,
+    readScope,
+  );
+  expect(projection).toMatchObject({
+    state: "failed",
+    mutation_hold: false,
+    result: { uncertain: true },
+  });
+  expect(databaseOperationHeld(projection)).toBe(true);
+  delete operation.result;
+  delete operation.complete_receipt;
+  projection = validateDatabaseHistoryOperation(operation, database, readScope);
+  expect(projection).toMatchObject({
+    state: "failed",
+    mutation_hold: false,
+    evidence_incomplete: true,
+  });
+  expect(databaseOperationHeld(projection)).toBe(true);
 });

@@ -1,0 +1,3202 @@
+{
+  "source": "de18faef3f3391f74980e42660386286662716b5:internal/domain/hosting_database_{upgrade_execution,maintenance}_test.go",
+  "cases": {
+    "postgresql_maintenance": {
+      "database": {
+        "resource": {
+          "id": "resource_database",
+          "project_id": "project",
+          "project_environment_id": "env",
+          "name": "Data",
+          "kind": "database",
+          "source": {
+            "kind": "image",
+            "image": {
+              "reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27"
+            }
+          },
+          "generation": 3,
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z",
+          "updated_at": "2026-10-25T00:01:00Z"
+        },
+        "binding": {
+          "id": "binding_database",
+          "resource_id": "resource_database",
+          "destination_id": "destination_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "storage_ref": {
+          "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+          "generation": 1,
+          "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+        },
+        "engine": "postgresql",
+        "recipe_version": "postgresql-17.11-bookworm.v1",
+        "credentials": [
+          {
+            "role": "admin",
+            "username": "postgres",
+            "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+            "version": 1
+          },
+          {
+            "role": "app",
+            "username": "ncd_app",
+            "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+            "version": 2
+          }
+        ],
+        "runtime_state": "adapter_unqualified"
+      },
+      "operation": {
+        "database_maintenance": {
+          "version": "database-network.maintenance.v1",
+          "capture_plan": {
+            "version": "database-network.capture.v1",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "project_id": "project",
+            "resource_id": "resource_database",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "source_plan": {
+              "database": {
+                "reference": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "credentials": [
+                  {
+                    "role": "admin",
+                    "username": "postgres",
+                    "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                    "version": 1
+                  },
+                  {
+                    "role": "app",
+                    "username": "ncd_app",
+                    "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                    "version": 2
+                  }
+                ]
+              },
+              "storage": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 5432,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "release": {
+                "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+              },
+              "compiler_version": "database-hosting.private.owned-storage.v1",
+              "hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "source_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/var/lib/postgresql/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 5432,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "hop_database_origin",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+              },
+              "plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "storage": {
+              "id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "project_id": "project",
+              "resource_id": "resource_database",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "kind": "platform_managed",
+              "driver": "local",
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/var/lib/postgresql/data",
+              "access_mode": "read_write",
+              "retention": "retain",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+              "created_by": "owner",
+              "created_at": "2026-10-24T00:00:00Z"
+            },
+            "materialization": {
+              "storage_ref": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "state": "materialized",
+              "creation_operation_id": "hop_database_origin",
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+              "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "daemon_id": "daemon_database",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "materialized_receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              }
+            },
+            "creation": {
+              "receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "driver": "local",
+              "scope": "local",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "options": {}
+            },
+            "hash": "sha256:2f7b30771e35078ae157a8bba46a5567d666a1ea26cdbd1a0615151113feec63"
+          },
+          "origin_receipt": {
+            "id": "origin_receipt",
+            "body_hash": "sha256:0383b4292808fc76d2e08c82541c956cdfd173b119a19914ba3fb7bfdfd1d2b2",
+            "created_at": "2026-10-24T00:00:00Z",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "plan_hash": "sha256:2f7b30771e35078ae157a8bba46a5567d666a1ea26cdbd1a0615151113feec63",
+            "origin_hash": "sha256:dbc8ced9e55203567b4764bca812e6fc477485b7b929743269172391d591b482",
+            "origin": {
+              "version": 1,
+              "binding": "binding_database",
+              "destination": "destination_database",
+              "daemon": "daemon_database",
+              "configuration": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41",
+              "origin_operation": "hop_database_origin",
+              "origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+              "nonce": "cccccccccccccccccccccccccccccccc",
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "volume_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "volume_created_at": "2026-10-24T00:00:00Z",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "init_ready": true
+            },
+            "observed_at": "2026-10-24T00:00:00Z",
+            "runner_id": "runner_database"
+          },
+          "previous_plan": {
+            "database": {
+              "reference": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "credentials": [
+                {
+                  "role": "admin",
+                  "username": "postgres",
+                  "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                  "version": 1
+                },
+                {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 2
+                }
+              ],
+              "network": {
+                "version": "database-network.private.membership.v2",
+                "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "origin_hash": "sha256:dbc8ced9e55203567b4764bca812e6fc477485b7b929743269172391d591b482",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+                "membership_revision": 2,
+                "members": [
+                  {
+                    "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                    "binding_hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae",
+                    "endpoint_plan_hash": "sha256:4e566cbfef8d1da77aed737809487a03bf154a2a3bad51119d96886b33dabba3",
+                    "receipt_id": "receipt_attached_application_first",
+                    "receipt_hash": "sha256:872f05445b0b1ddc139b6beeb3b101db9341117c23dc94c6b0c4c8074cf669f2",
+                    "endpoint": {
+                      "target": {
+                        "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                        "container_operation_id": "application_first",
+                        "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                        "container_plan_hash": "sha256:e92e84f3e102931c82151db873baa26e255c4e80497717668c9bdda596949066",
+                        "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                        "daemon_id": "daemon_database"
+                      },
+                      "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                    }
+                  }
+                ],
+                "predecessor": {
+                  "compiler_version": "database-hosting.private.membership.v2",
+                  "plan_hash": "sha256:9b2be62d08f3560053782ae412a87e4080f7c29c7a207cdf5f57f1c30c58b861",
+                  "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106"
+                },
+                "hash": "sha256:379fe4d74f242e48badd04732eb87f3e7d5bd0967e0121ff0aaa1465b3e5fa75"
+              }
+            },
+            "storage": {
+              "reference": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/var/lib/postgresql/data",
+              "creation_operation_id": "hop_database_origin",
+              "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "daemon_id": "daemon_database"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "previous_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/var/lib/postgresql/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 5432,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "database_upgraded",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+              },
+              "plan_hash": "sha256:9b2be62d08f3560053782ae412a87e4080f7c29c7a207cdf5f57f1c30c58b861"
+            },
+            "compiler_version": "database-hosting.private.membership.v2",
+            "hash": "sha256:93bd63c6782da8249153f05e009b5bcb9f06f8e213fc3b5c59d640b532d91d1e"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "database_current",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "plan_hash": "sha256:93bd63c6782da8249153f05e009b5bcb9f06f8e213fc3b5c59d640b532d91d1e"
+          },
+          "membership_revision": 2,
+          "members": [
+            {
+              "binding": {
+                "version": "database-binding.private.v1",
+                "id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                "generation": 1,
+                "application_resource_id": "app",
+                "application_resource_generation": 3,
+                "application_binding_id": "app_binding",
+                "database_resource_id": "resource_database",
+                "database_resource_generation": 1,
+                "database_binding_id": "binding_database",
+                "project_id": "project",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "credential": {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 2
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+                "environment_names": [
+                  "PGDATABASE",
+                  "PGHOST",
+                  "PGPASSWORD",
+                  "PGPORT",
+                  "PGUSER"
+                ],
+                "runtime_configuration": {
+                  "generation": 2,
+                  "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                },
+                "hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae"
+              },
+              "endpoint_plan": {
+                "version": "database-binding.private.v1",
+                "operation_id": "application_first",
+                "binding_hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae",
+                "membership_revision": 2,
+                "action": "attach",
+                "target": {
+                  "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                  "container_operation_id": "application_first",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                  "container_plan_hash": "sha256:e92e84f3e102931c82151db873baa26e255c4e80497717668c9bdda596949066",
+                  "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                  "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "daemon_id": "daemon_database"
+                },
+                "hash": "sha256:4e566cbfef8d1da77aed737809487a03bf154a2a3bad51119d96886b33dabba3"
+              },
+              "receipt": {
+                "version": "database-binding.private.v1",
+                "receipt_id": "receipt_attached_application_first",
+                "operation_id": "application_first",
+                "plan_hash": "sha256:4e566cbfef8d1da77aed737809487a03bf154a2a3bad51119d96886b33dabba3",
+                "binding_hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae",
+                "membership_revision": 2,
+                "phase": "attached",
+                "observation": {
+                  "endpoint": {
+                    "target": {
+                      "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                      "container_operation_id": "application_first",
+                      "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                      "container_plan_hash": "sha256:e92e84f3e102931c82151db873baa26e255c4e80497717668c9bdda596949066",
+                      "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                      "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                      "daemon_id": "daemon_database"
+                    },
+                    "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                  },
+                  "present": true
+                },
+                "hash": "sha256:872f05445b0b1ddc139b6beeb3b101db9341117c23dc94c6b0c4c8074cf669f2"
+              },
+              "application_healthy": {
+                "snapshot": {
+                  "resource_id": "app",
+                  "resource_generation": 3,
+                  "image_reference": "",
+                  "binding_id": "app_binding",
+                  "destination_id": "destination_database",
+                  "server_id": "server_database",
+                  "runner_id": "runner_database",
+                  "runtime_namespace": "",
+                  "container_port": 0,
+                  "host_port": 21002,
+                  "readiness": {
+                    "path": "",
+                    "timeout_seconds": 0
+                  },
+                  "policy_version": "public-image.runtime-env.database.release-ports.v1",
+                  "runtime_configuration": {
+                    "generation": 2,
+                    "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                  },
+                  "application_database": {
+                    "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                    "binding_hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae"
+                  }
+                },
+                "operation_id": "application_first",
+                "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                "release": {
+                  "canonical_image": "docker.io/library/nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "os": "linux",
+                  "architecture": "arm64",
+                  "daemon_id": "daemon_database",
+                  "hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd"
+                },
+                "plan_hash": "sha256:e92e84f3e102931c82151db873baa26e255c4e80497717668c9bdda596949066"
+              },
+              "database_plan": {
+                "database": {
+                  "reference": {
+                    "engine": "postgresql",
+                    "recipe_version": "postgresql-17.11-bookworm.v1",
+                    "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                  },
+                  "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "credentials": [
+                    {
+                      "role": "admin",
+                      "username": "postgres",
+                      "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                      "version": 1
+                    },
+                    {
+                      "role": "app",
+                      "username": "ncd_app",
+                      "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                      "version": 2
+                    }
+                  ]
+                },
+                "storage": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/var/lib/postgresql/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                  "daemon_id": "daemon_database"
+                },
+                "snapshot": {
+                  "database": {
+                    "engine": "postgresql",
+                    "recipe_version": "postgresql-17.11-bookworm.v1",
+                    "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                  },
+                  "storage": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                  },
+                  "resource_id": "resource_database",
+                  "resource_generation": 1,
+                  "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                  "binding_id": "binding_database",
+                  "destination_id": "destination_database",
+                  "server_id": "server_database",
+                  "runner_id": "runner_database",
+                  "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "container_port": 5432,
+                  "host_port": 0,
+                  "readiness": {
+                    "path": "",
+                    "timeout_seconds": 0
+                  },
+                  "policy_version": "database.private.owned-storage.v1"
+                },
+                "release": {
+                  "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "os": "linux",
+                  "architecture": "arm64",
+                  "variant": "v8",
+                  "daemon_id": "daemon_database",
+                  "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+                },
+                "compiler_version": "database-hosting.private.owned-storage.v1",
+                "hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+              },
+              "application_project_id": "project",
+              "database_project_id": "project"
+            }
+          ],
+          "retired": [],
+          "hash": "sha256:51ef3ee3ecbd931982126f06c889100f5207bfed286aa2e950df5207ca94c9aa"
+        },
+        "task_mode": "deploy",
+        "id": "database_maintenance",
+        "project_id": "project",
+        "resource_id": "resource_database",
+        "binding_id": "binding_database",
+        "state": "succeeded",
+        "snapshot": {
+          "database": {
+            "engine": "postgresql",
+            "recipe_version": "postgresql-17.11-bookworm.v1",
+            "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+          },
+          "storage": {
+            "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "generation": 1,
+            "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+          },
+          "resource_id": "resource_database",
+          "resource_generation": 3,
+          "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+          "binding_id": "binding_database",
+          "destination_id": "destination_database",
+          "server_id": "server_database",
+          "runner_id": "runner_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "container_port": 5432,
+          "host_port": 0,
+          "readiness": {
+            "path": "",
+            "timeout_seconds": 0
+          },
+          "policy_version": "database.private.owned-storage.v1"
+        },
+        "release": {
+          "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "os": "linux",
+          "architecture": "arm64",
+          "variant": "v8",
+          "daemon_id": "daemon_database",
+          "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+        },
+        "plan": {
+          "database": {
+            "reference": {
+              "engine": "postgresql",
+              "recipe_version": "postgresql-17.11-bookworm.v1",
+              "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+            },
+            "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "credentials": [
+              {
+                "role": "admin",
+                "username": "postgres",
+                "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                "version": 1
+              },
+              {
+                "role": "app",
+                "username": "ncd_app",
+                "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                "version": 2
+              }
+            ],
+            "network": {
+              "version": "database-network.private.membership.v2",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "origin_hash": "sha256:dbc8ced9e55203567b4764bca812e6fc477485b7b929743269172391d591b482",
+              "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+              "membership_revision": 2,
+              "members": [
+                {
+                  "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                  "binding_hash": "sha256:a918af38693cb779a042bb8fb1a357054124e527171c4534e0f6b006d9573aae",
+                  "endpoint_plan_hash": "sha256:4e566cbfef8d1da77aed737809487a03bf154a2a3bad51119d96886b33dabba3",
+                  "receipt_id": "receipt_attached_application_first",
+                  "receipt_hash": "sha256:872f05445b0b1ddc139b6beeb3b101db9341117c23dc94c6b0c4c8074cf669f2",
+                  "endpoint": {
+                    "target": {
+                      "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                      "container_operation_id": "application_first",
+                      "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                      "container_plan_hash": "sha256:e92e84f3e102931c82151db873baa26e255c4e80497717668c9bdda596949066",
+                      "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                      "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                      "daemon_id": "daemon_database"
+                    },
+                    "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                  }
+                }
+              ],
+              "predecessor": {
+                "compiler_version": "database-hosting.private.membership.v2",
+                "plan_hash": "sha256:93bd63c6782da8249153f05e009b5bcb9f06f8e213fc3b5c59d640b532d91d1e",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106"
+              },
+              "hash": "sha256:b11ad27ed20d48931af9a1cda3590dae4a8b1e9a1b51b487b1879b5879e15b48"
+            }
+          },
+          "storage": {
+            "reference": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+            },
+            "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "mount_path": "/var/lib/postgresql/data",
+            "creation_operation_id": "hop_database_origin",
+            "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+            "daemon_id": "daemon_database"
+          },
+          "snapshot": {
+            "database": {
+              "engine": "postgresql",
+              "recipe_version": "postgresql-17.11-bookworm.v1",
+              "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+            },
+            "storage": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+            },
+            "resource_id": "resource_database",
+            "resource_generation": 3,
+            "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "container_port": 5432,
+            "host_port": 0,
+            "readiness": {
+              "path": "",
+              "timeout_seconds": 0
+            },
+            "policy_version": "database.private.owned-storage.v1"
+          },
+          "release": {
+            "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+            "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "os": "linux",
+            "architecture": "arm64",
+            "variant": "v8",
+            "daemon_id": "daemon_database",
+            "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "database_current",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "plan_hash": "sha256:93bd63c6782da8249153f05e009b5bcb9f06f8e213fc3b5c59d640b532d91d1e"
+          },
+          "compiler_version": "database-hosting.private.membership.v2",
+          "hash": "sha256:ac51f50a925d891c3b80a5db96298cf891a8f4ac1e7e040992b744e1f53a63a1"
+        },
+        "prepared_receipt": {
+          "id": "prepared_history",
+          "body_hash": "sha256:9b2a2c61c5907b47087f941695023532fecdcd316dd6e98e4f680889c77ab43f",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "complete_receipt": {
+          "id": "complete_history",
+          "body_hash": "sha256:9b2a2c61c5907b47087f941695023532fecdcd316dd6e98e4f680889c77ab43f",
+          "created_at": "2026-10-25T00:01:00Z"
+        },
+        "result": {
+          "outcome": "succeeded",
+          "container_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "daemon_id": "daemon_database",
+          "plan_hash": "sha256:ac51f50a925d891c3b80a5db96298cf891a8f4ac1e7e040992b744e1f53a63a1",
+          "ready": true,
+          "restored": false,
+          "uncertain": false
+        },
+        "restore_ownership_held": false,
+        "mutation_hold": false,
+        "reconcile_requested": false,
+        "created_by": "owner",
+        "created_at": "2026-10-25T00:00:00Z",
+        "updated_at": "2026-10-25T00:01:00Z"
+      }
+    },
+    "postgresql_upgrade": {
+      "database": {
+        "resource": {
+          "id": "resource_database",
+          "project_id": "project",
+          "project_environment_id": "env",
+          "name": "Data",
+          "kind": "database",
+          "source": {
+            "kind": "image",
+            "image": {
+              "reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27"
+            }
+          },
+          "generation": 1,
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z",
+          "updated_at": "2026-10-25T00:01:00Z"
+        },
+        "binding": {
+          "id": "binding_database",
+          "resource_id": "resource_database",
+          "destination_id": "destination_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "storage_ref": {
+          "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+          "generation": 1,
+          "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+        },
+        "engine": "postgresql",
+        "recipe_version": "postgresql-17.11-bookworm.v1",
+        "credentials": [
+          {
+            "role": "admin",
+            "username": "postgres",
+            "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+            "version": 1
+          },
+          {
+            "role": "app",
+            "username": "ncd_app",
+            "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+            "version": 2
+          }
+        ],
+        "runtime_state": "adapter_unqualified"
+      },
+      "operation": {
+        "database_upgrade": {
+          "version": "database-network.empty-upgrade.v1",
+          "capture_plan": {
+            "version": "database-network.capture.v1",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "project_id": "project",
+            "resource_id": "resource_database",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "source_plan": {
+              "database": {
+                "reference": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "credentials": [
+                  {
+                    "role": "admin",
+                    "username": "postgres",
+                    "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                    "version": 1
+                  },
+                  {
+                    "role": "app",
+                    "username": "ncd_app",
+                    "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                    "version": 2
+                  }
+                ]
+              },
+              "storage": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 5432,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "release": {
+                "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+              },
+              "compiler_version": "database-hosting.private.owned-storage.v1",
+              "hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "source_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/var/lib/postgresql/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "postgresql",
+                  "recipe_version": "postgresql-17.11-bookworm.v1",
+                  "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 5432,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "hop_database_origin",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+              },
+              "plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "storage": {
+              "id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "project_id": "project",
+              "resource_id": "resource_database",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "kind": "platform_managed",
+              "driver": "local",
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/var/lib/postgresql/data",
+              "access_mode": "read_write",
+              "retention": "retain",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+              "created_by": "owner",
+              "created_at": "2026-10-24T00:00:00Z"
+            },
+            "materialization": {
+              "storage_ref": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "state": "materialized",
+              "creation_operation_id": "hop_database_origin",
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+              "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "daemon_id": "daemon_database",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "materialized_receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              }
+            },
+            "creation": {
+              "receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "driver": "local",
+              "scope": "local",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "options": {}
+            },
+            "hash": "sha256:2f7b30771e35078ae157a8bba46a5567d666a1ea26cdbd1a0615151113feec63"
+          },
+          "origin_receipt": {
+            "id": "origin_receipt",
+            "body_hash": "sha256:0383b4292808fc76d2e08c82541c956cdfd173b119a19914ba3fb7bfdfd1d2b2",
+            "created_at": "2026-10-24T00:00:00Z",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "plan_hash": "sha256:2f7b30771e35078ae157a8bba46a5567d666a1ea26cdbd1a0615151113feec63",
+            "origin_hash": "sha256:dbc8ced9e55203567b4764bca812e6fc477485b7b929743269172391d591b482",
+            "origin": {
+              "version": 1,
+              "binding": "binding_database",
+              "destination": "destination_database",
+              "daemon": "daemon_database",
+              "configuration": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41",
+              "origin_operation": "hop_database_origin",
+              "origin_plan": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13",
+              "nonce": "cccccccccccccccccccccccccccccccc",
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "volume_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "volume_created_at": "2026-10-24T00:00:00Z",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "init_ready": true
+            },
+            "observed_at": "2026-10-24T00:00:00Z",
+            "runner_id": "runner_database"
+          },
+          "previous_plan": {
+            "database": {
+              "reference": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "credentials": [
+                {
+                  "role": "admin",
+                  "username": "postgres",
+                  "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                  "version": 1
+                },
+                {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 2
+                }
+              ]
+            },
+            "storage": {
+              "reference": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/var/lib/postgresql/data",
+              "creation_operation_id": "hop_database_origin",
+              "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+              "daemon_id": "daemon_database"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "compiler_version": "database-hosting.private.owned-storage.v1",
+            "hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "hop_database_origin",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+          },
+          "hash": "sha256:87981de0c8e7f8f214bd6566c60e7ab750dea9cbb8d2b8f9218ce1abac4812db"
+        },
+        "task_mode": "deploy",
+        "id": "hop_upgrade",
+        "project_id": "project",
+        "resource_id": "resource_database",
+        "binding_id": "binding_database",
+        "state": "succeeded",
+        "snapshot": {
+          "database": {
+            "engine": "postgresql",
+            "recipe_version": "postgresql-17.11-bookworm.v1",
+            "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+          },
+          "storage": {
+            "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "generation": 1,
+            "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+          },
+          "resource_id": "resource_database",
+          "resource_generation": 1,
+          "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+          "binding_id": "binding_database",
+          "destination_id": "destination_database",
+          "server_id": "server_database",
+          "runner_id": "runner_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "container_port": 5432,
+          "host_port": 0,
+          "readiness": {
+            "path": "",
+            "timeout_seconds": 0
+          },
+          "policy_version": "database.private.owned-storage.v1"
+        },
+        "release": {
+          "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "os": "linux",
+          "architecture": "arm64",
+          "variant": "v8",
+          "daemon_id": "daemon_database",
+          "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+        },
+        "plan": {
+          "database": {
+            "reference": {
+              "engine": "postgresql",
+              "recipe_version": "postgresql-17.11-bookworm.v1",
+              "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+            },
+            "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "credentials": [
+              {
+                "role": "admin",
+                "username": "postgres",
+                "secret_id": "msec_db_0a97d057027f1fabd07f6edf152fc5ea",
+                "version": 1
+              },
+              {
+                "role": "app",
+                "username": "ncd_app",
+                "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                "version": 2
+              }
+            ],
+            "network": {
+              "version": "database-network.private.membership.v2",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "origin_hash": "sha256:dbc8ced9e55203567b4764bca812e6fc477485b7b929743269172391d591b482",
+              "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+              "membership_revision": 1,
+              "members": [],
+              "predecessor": {
+                "compiler_version": "database-hosting.private.owned-storage.v1",
+                "plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+              },
+              "hash": "sha256:e30f3bb807857c9517d553157793bf924f24fa4156606371fe6f383029a1ed7b"
+            }
+          },
+          "storage": {
+            "reference": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+            },
+            "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "mount_path": "/var/lib/postgresql/data",
+            "creation_operation_id": "hop_database_origin",
+            "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+            "daemon_id": "daemon_database"
+          },
+          "snapshot": {
+            "database": {
+              "engine": "postgresql",
+              "recipe_version": "postgresql-17.11-bookworm.v1",
+              "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+            },
+            "storage": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+            },
+            "resource_id": "resource_database",
+            "resource_generation": 1,
+            "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "container_port": 5432,
+            "host_port": 0,
+            "readiness": {
+              "path": "",
+              "timeout_seconds": 0
+            },
+            "policy_version": "database.private.owned-storage.v1"
+          },
+          "release": {
+            "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+            "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "os": "linux",
+            "architecture": "arm64",
+            "variant": "v8",
+            "daemon_id": "daemon_database",
+            "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/var/lib/postgresql/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "2efcf1b12b2f549b791179017c96a887",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "postgresql",
+                "recipe_version": "postgresql-17.11-bookworm.v1",
+                "configuration_hash": "sha256:d0856c7133fdb6f4b84900c40418b88607591e6606f46187bfd60b8cb785ef41"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:3d32506741e4343fcb556eff6252d52a09aba7422a1741862922b17ccee26f35"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 5432,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "hop_database_origin",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/postgres@sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:cc67bfda1cb3c718ce8503857371fb56fa802c2afc5cc628b386971dc0363860"
+            },
+            "plan_hash": "sha256:733001bcc84a48f58183feb1521cfbb520ded2ba49a3736b68d7058fd849da13"
+          },
+          "compiler_version": "database-hosting.private.membership.v2",
+          "hash": "sha256:9b2be62d08f3560053782ae412a87e4080f7c29c7a207cdf5f57f1c30c58b861"
+        },
+        "prepared_receipt": {
+          "id": "prepared_history",
+          "body_hash": "sha256:ed5c11cef950e1530e4892b33fea7317cd5d6a55385696657f7484285350883b",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "complete_receipt": {
+          "id": "complete_history",
+          "body_hash": "sha256:ed5c11cef950e1530e4892b33fea7317cd5d6a55385696657f7484285350883b",
+          "created_at": "2026-10-25T00:01:00Z"
+        },
+        "result": {
+          "outcome": "succeeded",
+          "container_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "daemon_id": "daemon_database",
+          "plan_hash": "sha256:9b2be62d08f3560053782ae412a87e4080f7c29c7a207cdf5f57f1c30c58b861",
+          "ready": true,
+          "restored": false,
+          "uncertain": false
+        },
+        "restore_ownership_held": false,
+        "mutation_hold": false,
+        "reconcile_requested": false,
+        "created_by": "owner",
+        "created_at": "2026-10-25T00:00:00Z",
+        "updated_at": "2026-10-25T00:01:00Z"
+      }
+    },
+    "redis_maintenance": {
+      "database": {
+        "resource": {
+          "id": "resource_database",
+          "project_id": "project",
+          "project_environment_id": "env",
+          "name": "Data",
+          "kind": "database",
+          "source": {
+            "kind": "image",
+            "image": {
+              "reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0"
+            }
+          },
+          "generation": 3,
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z",
+          "updated_at": "2026-10-25T00:01:00Z"
+        },
+        "binding": {
+          "id": "binding_database",
+          "resource_id": "resource_database",
+          "destination_id": "destination_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "storage_ref": {
+          "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+          "generation": 1,
+          "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+        },
+        "engine": "redis",
+        "recipe_version": "redis-8.2.10-bookworm.v1",
+        "credentials": [
+          {
+            "role": "app",
+            "username": "ncd_app",
+            "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+            "version": 1
+          },
+          {
+            "role": "probe",
+            "username": "ncd_probe",
+            "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+            "version": 2
+          }
+        ],
+        "runtime_state": "adapter_unqualified"
+      },
+      "operation": {
+        "database_maintenance": {
+          "version": "database-network.maintenance.v1",
+          "capture_plan": {
+            "version": "database-network.capture.v1",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "project_id": "project",
+            "resource_id": "resource_database",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "source_plan": {
+              "database": {
+                "reference": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "credentials": [
+                  {
+                    "role": "app",
+                    "username": "ncd_app",
+                    "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                    "version": 1
+                  },
+                  {
+                    "role": "probe",
+                    "username": "ncd_probe",
+                    "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                    "version": 2
+                  }
+                ]
+              },
+              "storage": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 6379,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "release": {
+                "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+              },
+              "compiler_version": "database-hosting.private.owned-storage.v1",
+              "hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "source_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 6379,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "hop_database_origin",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+              },
+              "plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "storage": {
+              "id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "project_id": "project",
+              "resource_id": "resource_database",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "kind": "platform_managed",
+              "driver": "local",
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/data",
+              "access_mode": "read_write",
+              "retention": "retain",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+              "created_by": "owner",
+              "created_at": "2026-10-24T00:00:00Z"
+            },
+            "materialization": {
+              "storage_ref": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "state": "materialized",
+              "creation_operation_id": "hop_database_origin",
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+              "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "daemon_id": "daemon_database",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "materialized_receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              }
+            },
+            "creation": {
+              "receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "driver": "local",
+              "scope": "local",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "options": {}
+            },
+            "hash": "sha256:33279ed3a4977c44427701c191603073945a214fe541ba79e5c7ad66dd3f267d"
+          },
+          "origin_receipt": {
+            "id": "origin_receipt",
+            "body_hash": "sha256:0d580923898510094a522c1289761e9506283f1c78ad63110581c140b3b809b3",
+            "created_at": "2026-10-24T00:00:00Z",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "plan_hash": "sha256:33279ed3a4977c44427701c191603073945a214fe541ba79e5c7ad66dd3f267d",
+            "origin_hash": "sha256:694ea5c46e08e3dfb0aaf0a851948e8edf4f654be3066bf4f6a497185bdffc82",
+            "origin": {
+              "version": 1,
+              "binding": "binding_database",
+              "destination": "destination_database",
+              "daemon": "daemon_database",
+              "configuration": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba",
+              "origin_operation": "hop_database_origin",
+              "origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+              "nonce": "cccccccccccccccccccccccccccccccc",
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "volume_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "volume_created_at": "2026-10-24T00:00:00Z",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "init_ready": true
+            },
+            "observed_at": "2026-10-24T00:00:00Z",
+            "runner_id": "runner_database"
+          },
+          "previous_plan": {
+            "database": {
+              "reference": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "credentials": [
+                {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 1
+                },
+                {
+                  "role": "probe",
+                  "username": "ncd_probe",
+                  "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                  "version": 2
+                }
+              ],
+              "network": {
+                "version": "database-network.private.membership.v2",
+                "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "origin_hash": "sha256:694ea5c46e08e3dfb0aaf0a851948e8edf4f654be3066bf4f6a497185bdffc82",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+                "membership_revision": 2,
+                "members": [
+                  {
+                    "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                    "binding_hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0",
+                    "endpoint_plan_hash": "sha256:17047b38d9f47c012b29ebee981a9570c61c68939121fa4ac1368551c358b6be",
+                    "receipt_id": "receipt_attached_application_first",
+                    "receipt_hash": "sha256:a28bcd8a3b3e1ddcee6186601af073928dbf0f81f654cb0a287f7206590fb499",
+                    "endpoint": {
+                      "target": {
+                        "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                        "container_operation_id": "application_first",
+                        "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                        "container_plan_hash": "sha256:f8db0953f84580cd22495300bb8a0463c880237a79f6a9a48b6c55a098294560",
+                        "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                        "daemon_id": "daemon_database"
+                      },
+                      "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                    }
+                  }
+                ],
+                "predecessor": {
+                  "compiler_version": "database-hosting.private.membership.v2",
+                  "plan_hash": "sha256:f6563ea9771666dd68ad6c8deb7a9b0e5302e7d58e5f98209d040a1b8e4e3bf5",
+                  "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106"
+                },
+                "hash": "sha256:c4b637dc9e7917e75ba3478f6319fdbe67ed3ff01578ef3d95ee91bf875bb9dc"
+              }
+            },
+            "storage": {
+              "reference": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/data",
+              "creation_operation_id": "hop_database_origin",
+              "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "daemon_id": "daemon_database"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "previous_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 6379,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "database_upgraded",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+              },
+              "plan_hash": "sha256:f6563ea9771666dd68ad6c8deb7a9b0e5302e7d58e5f98209d040a1b8e4e3bf5"
+            },
+            "compiler_version": "database-hosting.private.membership.v2",
+            "hash": "sha256:b3005a2b97b0c0b4c0d509a1cd514b1277fe0c51061662545c466b493b91269b"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "database_current",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "plan_hash": "sha256:b3005a2b97b0c0b4c0d509a1cd514b1277fe0c51061662545c466b493b91269b"
+          },
+          "membership_revision": 2,
+          "members": [
+            {
+              "binding": {
+                "version": "database-binding.private.v1",
+                "id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                "generation": 1,
+                "application_resource_id": "app",
+                "application_resource_generation": 3,
+                "application_binding_id": "app_binding",
+                "database_resource_id": "resource_database",
+                "database_resource_generation": 1,
+                "database_binding_id": "binding_database",
+                "project_id": "project",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "credential": {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 1
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+                "environment_names": [
+                  "REDIS_HOST",
+                  "REDIS_PASSWORD",
+                  "REDIS_PORT",
+                  "REDIS_USERNAME"
+                ],
+                "runtime_configuration": {
+                  "generation": 2,
+                  "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                },
+                "hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0"
+              },
+              "endpoint_plan": {
+                "version": "database-binding.private.v1",
+                "operation_id": "application_first",
+                "binding_hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0",
+                "membership_revision": 2,
+                "action": "attach",
+                "target": {
+                  "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                  "container_operation_id": "application_first",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                  "container_plan_hash": "sha256:f8db0953f84580cd22495300bb8a0463c880237a79f6a9a48b6c55a098294560",
+                  "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                  "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "daemon_id": "daemon_database"
+                },
+                "hash": "sha256:17047b38d9f47c012b29ebee981a9570c61c68939121fa4ac1368551c358b6be"
+              },
+              "receipt": {
+                "version": "database-binding.private.v1",
+                "receipt_id": "receipt_attached_application_first",
+                "operation_id": "application_first",
+                "plan_hash": "sha256:17047b38d9f47c012b29ebee981a9570c61c68939121fa4ac1368551c358b6be",
+                "binding_hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0",
+                "membership_revision": 2,
+                "phase": "attached",
+                "observation": {
+                  "endpoint": {
+                    "target": {
+                      "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                      "container_operation_id": "application_first",
+                      "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                      "container_plan_hash": "sha256:f8db0953f84580cd22495300bb8a0463c880237a79f6a9a48b6c55a098294560",
+                      "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                      "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                      "daemon_id": "daemon_database"
+                    },
+                    "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                  },
+                  "present": true
+                },
+                "hash": "sha256:a28bcd8a3b3e1ddcee6186601af073928dbf0f81f654cb0a287f7206590fb499"
+              },
+              "application_healthy": {
+                "snapshot": {
+                  "resource_id": "app",
+                  "resource_generation": 3,
+                  "image_reference": "",
+                  "binding_id": "app_binding",
+                  "destination_id": "destination_database",
+                  "server_id": "server_database",
+                  "runner_id": "runner_database",
+                  "runtime_namespace": "",
+                  "container_port": 0,
+                  "host_port": 21002,
+                  "readiness": {
+                    "path": "",
+                    "timeout_seconds": 0
+                  },
+                  "policy_version": "public-image.runtime-env.database.release-ports.v1",
+                  "runtime_configuration": {
+                    "generation": 2,
+                    "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                  },
+                  "application_database": {
+                    "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                    "binding_hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0"
+                  }
+                },
+                "operation_id": "application_first",
+                "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                "release": {
+                  "canonical_image": "docker.io/library/nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "os": "linux",
+                  "architecture": "arm64",
+                  "daemon_id": "daemon_database",
+                  "hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd"
+                },
+                "plan_hash": "sha256:f8db0953f84580cd22495300bb8a0463c880237a79f6a9a48b6c55a098294560"
+              },
+              "database_plan": {
+                "database": {
+                  "reference": {
+                    "engine": "redis",
+                    "recipe_version": "redis-8.2.10-bookworm.v1",
+                    "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                  },
+                  "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "credentials": [
+                    {
+                      "role": "app",
+                      "username": "ncd_app",
+                      "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                      "version": 1
+                    },
+                    {
+                      "role": "probe",
+                      "username": "ncd_probe",
+                      "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                      "version": 2
+                    }
+                  ]
+                },
+                "storage": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                  "daemon_id": "daemon_database"
+                },
+                "snapshot": {
+                  "database": {
+                    "engine": "redis",
+                    "recipe_version": "redis-8.2.10-bookworm.v1",
+                    "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                  },
+                  "storage": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                  },
+                  "resource_id": "resource_database",
+                  "resource_generation": 1,
+                  "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                  "binding_id": "binding_database",
+                  "destination_id": "destination_database",
+                  "server_id": "server_database",
+                  "runner_id": "runner_database",
+                  "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "container_port": 6379,
+                  "host_port": 0,
+                  "readiness": {
+                    "path": "",
+                    "timeout_seconds": 0
+                  },
+                  "policy_version": "database.private.owned-storage.v1"
+                },
+                "release": {
+                  "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                  "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "os": "linux",
+                  "architecture": "arm64",
+                  "variant": "v8",
+                  "daemon_id": "daemon_database",
+                  "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+                },
+                "compiler_version": "database-hosting.private.owned-storage.v1",
+                "hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+              },
+              "application_project_id": "project",
+              "database_project_id": "project"
+            }
+          ],
+          "retired": [],
+          "hash": "sha256:0b1eea1a5274db3710f1f43e28e0a64b375824abb565676d5277d9f06ceb0866"
+        },
+        "task_mode": "deploy",
+        "id": "database_maintenance",
+        "project_id": "project",
+        "resource_id": "resource_database",
+        "binding_id": "binding_database",
+        "state": "succeeded",
+        "snapshot": {
+          "database": {
+            "engine": "redis",
+            "recipe_version": "redis-8.2.10-bookworm.v1",
+            "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+          },
+          "storage": {
+            "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "generation": 1,
+            "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+          },
+          "resource_id": "resource_database",
+          "resource_generation": 3,
+          "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+          "binding_id": "binding_database",
+          "destination_id": "destination_database",
+          "server_id": "server_database",
+          "runner_id": "runner_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "container_port": 6379,
+          "host_port": 0,
+          "readiness": {
+            "path": "",
+            "timeout_seconds": 0
+          },
+          "policy_version": "database.private.owned-storage.v1"
+        },
+        "release": {
+          "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "os": "linux",
+          "architecture": "arm64",
+          "variant": "v8",
+          "daemon_id": "daemon_database",
+          "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+        },
+        "plan": {
+          "database": {
+            "reference": {
+              "engine": "redis",
+              "recipe_version": "redis-8.2.10-bookworm.v1",
+              "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+            },
+            "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "credentials": [
+              {
+                "role": "app",
+                "username": "ncd_app",
+                "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                "version": 1
+              },
+              {
+                "role": "probe",
+                "username": "ncd_probe",
+                "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                "version": 2
+              }
+            ],
+            "network": {
+              "version": "database-network.private.membership.v2",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "origin_hash": "sha256:694ea5c46e08e3dfb0aaf0a851948e8edf4f654be3066bf4f6a497185bdffc82",
+              "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+              "membership_revision": 2,
+              "members": [
+                {
+                  "binding_id": "hdb_5b5a55578cb010e670bc1170d5d05a1d",
+                  "binding_hash": "sha256:6625e4a8e04eba20241140bd08712e1c298820c2b4d3fa54120b140f6229b7a0",
+                  "endpoint_plan_hash": "sha256:17047b38d9f47c012b29ebee981a9570c61c68939121fa4ac1368551c358b6be",
+                  "receipt_id": "receipt_attached_application_first",
+                  "receipt_hash": "sha256:a28bcd8a3b3e1ddcee6186601af073928dbf0f81f654cb0a287f7206590fb499",
+                  "endpoint": {
+                    "target": {
+                      "container_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                      "container_operation_id": "application_first",
+                      "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "release_hash": "sha256:ef00f968fa2c70c8bd05b64055ef1c04ddfd135199861845efe6b7450160cddd",
+                      "container_plan_hash": "sha256:f8db0953f84580cd22495300bb8a0463c880237a79f6a9a48b6c55a098294560",
+                      "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                      "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                      "daemon_id": "daemon_database"
+                    },
+                    "endpoint_id": "8888888888888888888888888888888888888888888888888888888888888888"
+                  }
+                }
+              ],
+              "predecessor": {
+                "compiler_version": "database-hosting.private.membership.v2",
+                "plan_hash": "sha256:b3005a2b97b0c0b4c0d509a1cd514b1277fe0c51061662545c466b493b91269b",
+                "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106"
+              },
+              "hash": "sha256:ab39f3e04c1dc780b3b627dac58a096dc9f71d21cd05032d780391820cacdab8"
+            }
+          },
+          "storage": {
+            "reference": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+            },
+            "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "mount_path": "/data",
+            "creation_operation_id": "hop_database_origin",
+            "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+            "daemon_id": "daemon_database"
+          },
+          "snapshot": {
+            "database": {
+              "engine": "redis",
+              "recipe_version": "redis-8.2.10-bookworm.v1",
+              "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+            },
+            "storage": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+            },
+            "resource_id": "resource_database",
+            "resource_generation": 3,
+            "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "container_port": 6379,
+            "host_port": 0,
+            "readiness": {
+              "path": "",
+              "timeout_seconds": 0
+            },
+            "policy_version": "database.private.owned-storage.v1"
+          },
+          "release": {
+            "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+            "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "os": "linux",
+            "architecture": "arm64",
+            "variant": "v8",
+            "daemon_id": "daemon_database",
+            "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 2,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "database_current",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "plan_hash": "sha256:b3005a2b97b0c0b4c0d509a1cd514b1277fe0c51061662545c466b493b91269b"
+          },
+          "compiler_version": "database-hosting.private.membership.v2",
+          "hash": "sha256:b7b6ad16bc9efbe3763336b1ef192265b455bb77c4581641afd6453c15f02def"
+        },
+        "prepared_receipt": {
+          "id": "prepared_history",
+          "body_hash": "sha256:110d08783b89005e433ad0aad1fb1002dd6789d46020ddf5990f1d84f1bbc76b",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "complete_receipt": {
+          "id": "complete_history",
+          "body_hash": "sha256:110d08783b89005e433ad0aad1fb1002dd6789d46020ddf5990f1d84f1bbc76b",
+          "created_at": "2026-10-25T00:01:00Z"
+        },
+        "result": {
+          "outcome": "succeeded",
+          "container_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "daemon_id": "daemon_database",
+          "plan_hash": "sha256:b7b6ad16bc9efbe3763336b1ef192265b455bb77c4581641afd6453c15f02def",
+          "ready": true,
+          "restored": false,
+          "uncertain": false
+        },
+        "restore_ownership_held": false,
+        "mutation_hold": false,
+        "reconcile_requested": false,
+        "created_by": "owner",
+        "created_at": "2026-10-25T00:00:00Z",
+        "updated_at": "2026-10-25T00:01:00Z"
+      }
+    },
+    "redis_upgrade": {
+      "database": {
+        "resource": {
+          "id": "resource_database",
+          "project_id": "project",
+          "project_environment_id": "env",
+          "name": "Data",
+          "kind": "database",
+          "source": {
+            "kind": "image",
+            "image": {
+              "reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0"
+            }
+          },
+          "generation": 1,
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z",
+          "updated_at": "2026-10-25T00:01:00Z"
+        },
+        "binding": {
+          "id": "binding_database",
+          "resource_id": "resource_database",
+          "destination_id": "destination_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created_by": "owner",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "storage_ref": {
+          "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+          "generation": 1,
+          "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+        },
+        "engine": "redis",
+        "recipe_version": "redis-8.2.10-bookworm.v1",
+        "credentials": [
+          {
+            "role": "app",
+            "username": "ncd_app",
+            "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+            "version": 1
+          },
+          {
+            "role": "probe",
+            "username": "ncd_probe",
+            "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+            "version": 2
+          }
+        ],
+        "runtime_state": "adapter_unqualified"
+      },
+      "operation": {
+        "database_upgrade": {
+          "version": "database-network.empty-upgrade.v1",
+          "capture_plan": {
+            "version": "database-network.capture.v1",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "project_id": "project",
+            "resource_id": "resource_database",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "source_plan": {
+              "database": {
+                "reference": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "credentials": [
+                  {
+                    "role": "app",
+                    "username": "ncd_app",
+                    "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                    "version": 1
+                  },
+                  {
+                    "role": "probe",
+                    "username": "ncd_probe",
+                    "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                    "version": 2
+                  }
+                ]
+              },
+              "storage": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 6379,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "release": {
+                "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+              },
+              "compiler_version": "database-hosting.private.owned-storage.v1",
+              "hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "source_healthy": {
+              "storage": {
+                "plan": {
+                  "reference": {
+                    "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                    "generation": 1,
+                    "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                  },
+                  "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "mount_path": "/data",
+                  "creation_operation_id": "hop_database_origin",
+                  "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                  "daemon_id": "daemon_database"
+                },
+                "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+              },
+              "snapshot": {
+                "database": {
+                  "engine": "redis",
+                  "recipe_version": "redis-8.2.10-bookworm.v1",
+                  "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+                },
+                "storage": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "resource_id": "resource_database",
+                "resource_generation": 1,
+                "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+                "binding_id": "binding_database",
+                "destination_id": "destination_database",
+                "server_id": "server_database",
+                "runner_id": "runner_database",
+                "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "container_port": 6379,
+                "host_port": 0,
+                "readiness": {
+                  "path": "",
+                  "timeout_seconds": 0
+                },
+                "policy_version": "database.private.owned-storage.v1"
+              },
+              "operation_id": "hop_database_origin",
+              "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "release": {
+                "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+                "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "os": "linux",
+                "architecture": "arm64",
+                "variant": "v8",
+                "daemon_id": "daemon_database",
+                "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+              },
+              "plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "storage": {
+              "id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "project_id": "project",
+              "resource_id": "resource_database",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "kind": "platform_managed",
+              "driver": "local",
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/data",
+              "access_mode": "read_write",
+              "retention": "retain",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+              "created_by": "owner",
+              "created_at": "2026-10-24T00:00:00Z"
+            },
+            "materialization": {
+              "storage_ref": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "state": "materialized",
+              "creation_operation_id": "hop_database_origin",
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+              "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "daemon_id": "daemon_database",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "materialized_receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              }
+            },
+            "creation": {
+              "receipt": {
+                "id": "materialized",
+                "body_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "created_at": "2026-10-24T00:00:00Z"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "driver": "local",
+              "scope": "local",
+              "labels": {
+                "io.nerocd.binding": "binding_database",
+                "io.nerocd.storage.creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "io.nerocd.storage.daemon": "daemon_database",
+                "io.nerocd.storage.destination": "destination_database",
+                "io.nerocd.storage.generation": "1",
+                "io.nerocd.storage.hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6",
+                "io.nerocd.storage.id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "io.nerocd.storage.origin_operation": "hop_database_origin",
+                "io.nerocd.storage.origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+                "io.nerocd.storage.project": "project",
+                "io.nerocd.storage.resource": "resource_database"
+              },
+              "options": {}
+            },
+            "hash": "sha256:33279ed3a4977c44427701c191603073945a214fe541ba79e5c7ad66dd3f267d"
+          },
+          "origin_receipt": {
+            "id": "origin_receipt",
+            "body_hash": "sha256:0d580923898510094a522c1289761e9506283f1c78ad63110581c140b3b809b3",
+            "created_at": "2026-10-24T00:00:00Z",
+            "operation_id": "hnc_419e188112175de4a6387de279ec6846",
+            "source_operation_id": "hop_database_origin",
+            "plan_hash": "sha256:33279ed3a4977c44427701c191603073945a214fe541ba79e5c7ad66dd3f267d",
+            "origin_hash": "sha256:694ea5c46e08e3dfb0aaf0a851948e8edf4f654be3066bf4f6a497185bdffc82",
+            "origin": {
+              "version": 1,
+              "binding": "binding_database",
+              "destination": "destination_database",
+              "daemon": "daemon_database",
+              "configuration": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba",
+              "origin_operation": "hop_database_origin",
+              "origin_plan": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca",
+              "nonce": "cccccccccccccccccccccccccccccccc",
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "volume_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "volume_created_at": "2026-10-24T00:00:00Z",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "init_ready": true
+            },
+            "observed_at": "2026-10-24T00:00:00Z",
+            "runner_id": "runner_database"
+          },
+          "previous_plan": {
+            "database": {
+              "reference": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "credentials": [
+                {
+                  "role": "app",
+                  "username": "ncd_app",
+                  "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                  "version": 1
+                },
+                {
+                  "role": "probe",
+                  "username": "ncd_probe",
+                  "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                  "version": 2
+                }
+              ]
+            },
+            "storage": {
+              "reference": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "mount_path": "/data",
+              "creation_operation_id": "hop_database_origin",
+              "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+              "daemon_id": "daemon_database"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "compiler_version": "database-hosting.private.owned-storage.v1",
+            "hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "hop_database_origin",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+          },
+          "hash": "sha256:eb656e42ade256d8e8eb01645b31173088351f97c087fb48e81f422c939394ac"
+        },
+        "task_mode": "deploy",
+        "id": "hop_upgrade",
+        "project_id": "project",
+        "resource_id": "resource_database",
+        "binding_id": "binding_database",
+        "state": "succeeded",
+        "snapshot": {
+          "database": {
+            "engine": "redis",
+            "recipe_version": "redis-8.2.10-bookworm.v1",
+            "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+          },
+          "storage": {
+            "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "generation": 1,
+            "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+          },
+          "resource_id": "resource_database",
+          "resource_generation": 1,
+          "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+          "binding_id": "binding_database",
+          "destination_id": "destination_database",
+          "server_id": "server_database",
+          "runner_id": "runner_database",
+          "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "container_port": 6379,
+          "host_port": 0,
+          "readiness": {
+            "path": "",
+            "timeout_seconds": 0
+          },
+          "policy_version": "database.private.owned-storage.v1"
+        },
+        "release": {
+          "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "os": "linux",
+          "architecture": "arm64",
+          "variant": "v8",
+          "daemon_id": "daemon_database",
+          "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+        },
+        "plan": {
+          "database": {
+            "reference": {
+              "engine": "redis",
+              "recipe_version": "redis-8.2.10-bookworm.v1",
+              "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+            },
+            "network_name": "ncdn_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "credentials": [
+              {
+                "role": "app",
+                "username": "ncd_app",
+                "secret_id": "msec_db_e95e9af44c4872f5a67e77300d3034b0",
+                "version": 1
+              },
+              {
+                "role": "probe",
+                "username": "ncd_probe",
+                "secret_id": "msec_db_35ff045c1122f54bdb9c6196753ca44b",
+                "version": 2
+              }
+            ],
+            "network": {
+              "version": "database-network.private.membership.v2",
+              "network_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "origin_hash": "sha256:694ea5c46e08e3dfb0aaf0a851948e8edf4f654be3066bf4f6a497185bdffc82",
+              "alias": "ncdb-c228ac7f580003d0bc65d8c6377cf106",
+              "membership_revision": 1,
+              "members": [],
+              "predecessor": {
+                "compiler_version": "database-hosting.private.owned-storage.v1",
+                "plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+              },
+              "hash": "sha256:b4fed3c63676bb4ddbacf0d871ea30e91216cf04d296478710f3811be080d36f"
+            }
+          },
+          "storage": {
+            "reference": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+            },
+            "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+            "mount_path": "/data",
+            "creation_operation_id": "hop_database_origin",
+            "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+            "daemon_id": "daemon_database"
+          },
+          "snapshot": {
+            "database": {
+              "engine": "redis",
+              "recipe_version": "redis-8.2.10-bookworm.v1",
+              "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+            },
+            "storage": {
+              "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+              "generation": 1,
+              "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+            },
+            "resource_id": "resource_database",
+            "resource_generation": 1,
+            "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+            "binding_id": "binding_database",
+            "destination_id": "destination_database",
+            "server_id": "server_database",
+            "runner_id": "runner_database",
+            "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "container_port": 6379,
+            "host_port": 0,
+            "readiness": {
+              "path": "",
+              "timeout_seconds": 0
+            },
+            "policy_version": "database.private.owned-storage.v1"
+          },
+          "release": {
+            "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+            "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "os": "linux",
+            "architecture": "arm64",
+            "variant": "v8",
+            "daemon_id": "daemon_database",
+            "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+          },
+          "previous_healthy": {
+            "storage": {
+              "plan": {
+                "reference": {
+                  "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                  "generation": 1,
+                  "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+                },
+                "volume_name": "ncdv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "mount_path": "/data",
+                "creation_operation_id": "hop_database_origin",
+                "creation_nonce": "6e14b09bf7f9ff67fa3d9c81faa331b3",
+                "daemon_id": "daemon_database"
+              },
+              "creation_plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+            },
+            "snapshot": {
+              "database": {
+                "engine": "redis",
+                "recipe_version": "redis-8.2.10-bookworm.v1",
+                "configuration_hash": "sha256:da0d9297efcb139126aab3d7f096d12b1ea6470c608f93dbfdaa7781294b44ba"
+              },
+              "storage": {
+                "storage_id": "hsv_f46d858ef3e66aacc1c5dfc65a4cb1c7",
+                "generation": 1,
+                "hash": "sha256:7a8d4939098b8a5760c1f794afe87ad1c89a9e761dd3574a2c1cf04b4c66aef6"
+              },
+              "resource_id": "resource_database",
+              "resource_generation": 1,
+              "image_reference": "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0",
+              "binding_id": "binding_database",
+              "destination_id": "destination_database",
+              "server_id": "server_database",
+              "runner_id": "runner_database",
+              "runtime_namespace": "ncd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "container_port": 6379,
+              "host_port": 0,
+              "readiness": {
+                "path": "",
+                "timeout_seconds": 0
+              },
+              "policy_version": "database.private.owned-storage.v1"
+            },
+            "operation_id": "hop_database_origin",
+            "container_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "release": {
+              "canonical_image": "docker.io/library/redis@sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03",
+              "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "os": "linux",
+              "architecture": "arm64",
+              "variant": "v8",
+              "daemon_id": "daemon_database",
+              "hash": "sha256:c1844c790927a1b398350c03581ded533e968d8eaacd625519352e286340f5eb"
+            },
+            "plan_hash": "sha256:3f6b38daa83c0a025554109071d772445abbe67ff911a329f10b2c3a4cd647ca"
+          },
+          "compiler_version": "database-hosting.private.membership.v2",
+          "hash": "sha256:f6563ea9771666dd68ad6c8deb7a9b0e5302e7d58e5f98209d040a1b8e4e3bf5"
+        },
+        "prepared_receipt": {
+          "id": "prepared_history",
+          "body_hash": "sha256:3adfd3c80980d02a69e23a767de18d088b7ded6d124d523b8bfe0ca941bc8af0",
+          "created_at": "2026-10-25T00:00:00Z"
+        },
+        "complete_receipt": {
+          "id": "complete_history",
+          "body_hash": "sha256:3adfd3c80980d02a69e23a767de18d088b7ded6d124d523b8bfe0ca941bc8af0",
+          "created_at": "2026-10-25T00:01:00Z"
+        },
+        "result": {
+          "outcome": "succeeded",
+          "container_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "daemon_id": "daemon_database",
+          "plan_hash": "sha256:f6563ea9771666dd68ad6c8deb7a9b0e5302e7d58e5f98209d040a1b8e4e3bf5",
+          "ready": true,
+          "restored": false,
+          "uncertain": false
+        },
+        "restore_ownership_held": false,
+        "mutation_hold": false,
+        "reconcile_requested": false,
+        "created_by": "owner",
+        "created_at": "2026-10-25T00:00:00Z",
+        "updated_at": "2026-10-25T00:01:00Z"
+      }
+    }
+  }
+}

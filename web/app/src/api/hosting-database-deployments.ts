@@ -25,7 +25,7 @@ export type DatabaseOperation = Pick<
   | "snapshot"
   | "release"
   | "result"
-> & { plan_hash?: string };
+> & { plan_hash?: string; evidence_incomplete?: boolean };
 export type DatabaseDeploymentPage = {
   items: DatabaseOperation[];
   count: number;
@@ -245,6 +245,7 @@ const states = [
   "reconciliation_required",
 ];
 export const databaseOperationHeld = (operation: DatabaseOperation) =>
+  operation.evidence_incomplete === true ||
   operation.mutation_hold ||
   operation.restore_ownership_held ||
   !["succeeded", "failed", "canceled"].includes(operation.state) ||
@@ -436,6 +437,222 @@ export function validateDatabaseOperation(
     plan_hash: planHash,
   };
 }
+// Execution proofs remain controller authority. V2 readers retain only the
+// fields displayed or used to gate another explicit, server-authorized request.
+// Never cast a V2 plan/proof into the V1 mutation-authority type.
+export function validateDatabaseHistoryOperation(
+  raw: unknown,
+  database: HostingDatabase,
+  scope: DatabaseScope,
+  expected?: { id?: string; generation?: number },
+): DatabaseOperation {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) invalid();
+  const value = raw as Record<string, unknown>;
+  if (
+    value.database_upgrade === undefined &&
+    value.database_maintenance === undefined
+  )
+    return validateDatabaseOperation(raw, database, scope, expected);
+  fields(
+    value,
+    [
+      "id",
+      "project_id",
+      "resource_id",
+      "binding_id",
+      "created_by",
+      "state",
+      "snapshot",
+      "restore_ownership_held",
+      "mutation_hold",
+      "reconcile_requested",
+      "created_at",
+      "updated_at",
+    ],
+    [
+      "run_id",
+      "reconciliation_run_id",
+      "release",
+      "plan",
+      "prepared_receipt",
+      "complete_receipt",
+      "result",
+      "task_mode",
+      "observation_lease",
+      "reconciliation_healthy",
+      "database_upgrade",
+      "database_maintenance",
+    ],
+  );
+  if (
+    database.resource.project_id !== scope.project ||
+    database.resource.project_environment_id !== scope.environment ||
+    value.project_id !== scope.project ||
+    value.resource_id !== database.resource.id ||
+    value.binding_id !== database.binding.id ||
+    !id(value.id) ||
+    (expected?.id !== undefined && value.id !== expected.id) ||
+    !states.includes(String(value.state)) ||
+    typeof value.mutation_hold !== "boolean" ||
+    typeof value.restore_ownership_held !== "boolean" ||
+    typeof value.reconcile_requested !== "boolean" ||
+    !safeText(value.created_at, 64) ||
+    !Number.isFinite(Date.parse(String(value.created_at))) ||
+    !safeText(value.updated_at, 64) ||
+    !Number.isFinite(Date.parse(String(value.updated_at))) ||
+    (value.task_mode !== undefined &&
+      !["deploy", "observe"].includes(String(value.task_mode)))
+  )
+    invalid();
+  if (
+    (value.database_upgrade !== undefined) ===
+    (value.database_maintenance !== undefined)
+  )
+    invalid();
+  const maintenance = value.database_maintenance !== undefined;
+  const proof = maintenance
+    ? value.database_maintenance
+    : value.database_upgrade;
+  fields(proof, [
+    "version",
+    "capture_plan",
+    "origin_receipt",
+    "previous_plan",
+    "previous_healthy",
+    "hash",
+    ...(maintenance ? ["membership_revision", "members", "retired"] : []),
+  ]);
+  if (
+    proof.version !==
+      (maintenance
+        ? "database-network.maintenance.v1"
+        : "database-network.empty-upgrade.v1") ||
+    !hash(proof.hash)
+  )
+    invalid();
+  const snapshot = validateSnapshot(
+    value.snapshot,
+    database,
+    expected?.generation,
+  );
+  const release =
+    value.release === undefined
+      ? undefined
+      : validateRelease(value.release, database.engine);
+  let planHash: string | undefined;
+  if (value.plan !== undefined) {
+    fields(
+      value.plan,
+      [
+        "snapshot",
+        "release",
+        "compiler_version",
+        "hash",
+        "storage",
+        "database",
+        "previous_healthy",
+      ],
+      ["retain_previous", "retained_releases"],
+    );
+    const planSnapshot = validateSnapshot(value.plan.snapshot, database);
+    const planRelease = validateRelease(value.plan.release, database.engine);
+    if (
+      value.plan.compiler_version !==
+        "database-hosting.private.membership.v2" ||
+      !hash(value.plan.hash) ||
+      !sameSnapshot(snapshot, planSnapshot) ||
+      !release ||
+      !Object.keys(planRelease).every(
+        (key) =>
+          planRelease[key as keyof Release] === release[key as keyof Release],
+      )
+    )
+      invalid();
+    planHash = value.plan.hash as string;
+  } else if (
+    release !== undefined ||
+    value.prepared_receipt !== undefined ||
+    value.result !== undefined
+  )
+    invalid();
+  let result: Operation["result"];
+  if (value.result !== undefined) {
+    fields(
+      value.result,
+      ["outcome", "ready", "restored", "uncertain"],
+      [
+        "container_id",
+        "previous_container_id",
+        "image_id",
+        "daemon_id",
+        "plan_hash",
+      ],
+    );
+    if (
+      !["succeeded", "failed"].includes(String(value.result.outcome)) ||
+      [value.result.ready, value.result.restored, value.result.uncertain].some(
+        (v) => typeof v !== "boolean",
+      ) ||
+      !planHash ||
+      value.result.plan_hash !== planHash ||
+      (value.result.container_id !== undefined &&
+        !id(value.result.container_id)) ||
+      (value.result.previous_container_id !== undefined &&
+        !id(value.result.previous_container_id)) ||
+      (value.result.image_id !== undefined &&
+        value.result.image_id !== release?.image_id) ||
+      (value.result.daemon_id !== undefined &&
+        value.result.daemon_id !== release?.daemon_id)
+    )
+      invalid();
+    result = {
+      outcome: value.result.outcome,
+      ready: value.result.ready,
+      restored: value.result.restored,
+      uncertain: value.result.uncertain,
+      ...(value.result.container_id
+        ? { container_id: value.result.container_id }
+        : {}),
+      plan_hash: planHash,
+    } as Operation["result"];
+  }
+  for (const receipt of [value.prepared_receipt, value.complete_receipt]) {
+    if (receipt === undefined) continue;
+    fields(receipt, ["id", "body_hash", "created_at"]);
+    if (
+      !id(receipt.id) ||
+      !hash(receipt.body_hash) ||
+      !safeText(receipt.created_at, 64) ||
+      !Number.isFinite(Date.parse(String(receipt.created_at)))
+    )
+      invalid();
+  }
+  if (
+    value.state === "succeeded" &&
+    (result?.outcome !== "succeeded" ||
+      !result.ready ||
+      result.restored ||
+      result.uncertain ||
+      value.mutation_hold ||
+      value.restore_ownership_held ||
+      value.complete_receipt === undefined)
+  )
+    invalid();
+  return {
+    id: value.id as string,
+    state: value.state as Operation["state"],
+    created_at: value.created_at as string,
+    updated_at: value.updated_at as string,
+    mutation_hold: value.mutation_hold as boolean,
+    restore_ownership_held: value.restore_ownership_held as boolean,
+    snapshot,
+    release,
+    result,
+    plan_hash: planHash,
+    evidence_incomplete:
+      result === undefined || value.complete_receipt === undefined,
+  };
+}
 export const databaseDeploymentKey = (scope: DatabaseScope, resource: string) =>
   [
     "databaseDeployments",
@@ -498,7 +715,7 @@ export async function deployDatabase(
     if (response.status !== 202) invalid();
     return response.json() as Promise<unknown>;
   }, signal);
-  return validateDatabaseOperation(raw, database, scope, {
+  return validateDatabaseHistoryOperation(raw, database, scope, {
     generation: body.expected_generation as number,
   });
 }
@@ -534,7 +751,7 @@ export const databaseDeploymentsQuery = (
       )
         invalid();
       const items = (raw.items as unknown[]).map((value) =>
-        validateDatabaseOperation(value, database, scope),
+        validateDatabaseHistoryOperation(value, database, scope),
       );
       if (new Set(items.map((value) => value.id)).size !== items.length)
         invalid();
@@ -558,7 +775,7 @@ export const databaseOperationQuery = (
     gcTime: 0,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }) =>
-      validateDatabaseOperation(
+      validateDatabaseHistoryOperation(
         await boundedDatabaseRequest(
           (signal) =>
             request(

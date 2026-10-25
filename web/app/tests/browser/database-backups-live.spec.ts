@@ -52,12 +52,16 @@ test("real hosted PostgreSQL backup and new-database restore through embedded UI
   await hosting
     .getByRole("button", { name: m.environment, exact: true })
     .click();
-  const metadata = hosting.getByRole("region", {
+  const detail = hosting.getByRole("region", {
+    name: `Database detail for ${m.application_name}`,
+    exact: true,
+  });
+  const metadata = detail.getByRole("region", {
     name: `Database metadata for ${m.application_name}`,
     exact: true,
   });
   await expect(metadata).toBeVisible();
-  const panel = metadata.getByRole("region", {
+  const panel = detail.getByRole("region", {
     name: "Database backups",
     exact: true,
   });
