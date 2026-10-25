@@ -90,6 +90,9 @@ browser_origin = ""
 browser_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_BROWSER", "0")
 routes_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_ROUTES", "0")
 storage_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_STORAGE", "0")
+gate_mode = os.environ.get("NEROCD_DATABASE_RUNNER_MODE", "full")
+STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR = "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$/^postgresql$/^cutover$"
+full_workflow_pass = diagnostic_pass = False
 PEBBLE_IMAGE = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
 
 
@@ -381,13 +384,19 @@ def provision_procps():
 
 
 def main():
-    global head, tree, image, volume_attempted, outer_attempted, outer
+    global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass
     if browser_mode not in ("0", "1"):
         raise Failure("invalid browser mode")
     if routes_mode not in ("0", "1"):
         raise Failure("invalid route mode")
     if storage_mode not in ("0", "1") or storage_mode == "1" and (routes_mode != "1" or browser_mode != "1"):
         raise Failure("storage mode requires reviewed route and live browser profiles")
+    if gate_mode not in ("full", "storage-cutover-diagnostic"):
+        raise Failure("invalid fixed runtime mode")
+    if gate_mode == "storage-cutover-diagnostic" and storage_mode != "1":
+        raise Failure("cutover diagnostic requires the reviewed storage profile")
+    if gate_mode == "storage-cutover-diagnostic":
+        say("diagnostic-only PostgreSQL cutover; full workflow qualification disabled")
     if not Path("internal/api/hosting_database_runtime_integration_test.go").is_file():
         raise Failure("run from the assigned repository root")
     if run(["git", "status", "--porcelain"]).strip():
@@ -628,15 +637,35 @@ def main():
         pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner)$"
     if storage_mode == "1":
         pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner|ApplicationDatabaseStorageCompiledRunner|ApplicationDatabaseStorageFailuresCompiledRunner)$"
+    if gate_mode == "storage-cutover-diagnostic":
+        pattern = STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
-    if browser_mode == "1":
+    if browser_mode == "1" and gate_mode == "full":
         runtime_output = run(["node", "acceptance/runtime-hosting-database-runner/browser-driver.mjs", browser_origin,
                               str(evidence / "browser-results"), "--", *runtime_args], timeout=2410, output="runtime-test")
     else:
         runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
+    if gate_mode == "storage-cutover-diagnostic":
+        required = {"TestHostingApplicationDatabaseStorageFailuresCompiledRunner",
+                    "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql",
+                    "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover"}
+        passed = re.findall(r"^\s*--- PASS: ([^ ]+) ", runtime_output, re.MULTILINE)
+        if set(passed) != required or len(passed) != len(required) or re.search(r"^\s*--- (?:SKIP|FAIL): ", runtime_output, re.MULTILINE):
+            raise Failure("required diagnostic cutover case did not pass exclusively")
+        for marker in ("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover",
+                       "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover"):
+            if runtime_output.splitlines().count(marker) != 1:
+                raise Failure("required diagnostic cutover result or cleanup proof missing or repeated")
+        allowed = {"DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover",
+                   "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover"}
+        if any(line.startswith("DATABASE_CONNECTION_") and line not in allowed for line in runtime_output.splitlines()):
+            raise Failure("diagnostic output contains unrelated qualification markers")
+        diagnostic_pass = True
+        say("DATABASE_CONNECTION_STORAGE_CUTOVER_DIAGNOSTIC_PASS postgresql")
+        return
     required = ["TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"]
     if routes_mode == "1":
         required.append("TestHostingApplicationDatabaseRouteFailuresCompiledRunner")
@@ -678,6 +707,7 @@ def main():
             for case in ("success", "readiness", "cutover"):
                 if runtime_output.splitlines().count("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + case) != 1:
                     raise Failure("required post-cleanup route capacity proof missing or repeated: " + engine + " " + case)
+    full_workflow_pass = True
     say("compiled database, capture, upgrade and connected HTTP app runners / authenticated API / River / private PostgreSQL and Redis gate passed")
 
 
@@ -770,9 +800,13 @@ finally:
     except Exception as error:
         say("final inventory/check failed: " + str(error))
         status = status or 1
-    (evidence / "result").write_text("gate_exit=" + str(status) + "\nouter_id=" + outer +
+    receipt_mode = gate_mode if gate_mode in ("full", "storage-cutover-diagnostic") else "invalid"
+    result_name, exit_key = ("result", "gate_exit") if gate_mode == "full" else ("diagnostic-result", "diagnostic_exit")
+    (evidence / result_name).write_text(exit_key + "=" + str(status) + "\ngate_mode=" + receipt_mode +
+                                   "\nfull_workflow_pass=" + str(int(full_workflow_pass and status == 0)) +
+                                   "\ndiagnostic_pass=" + str(int(diagnostic_pass and status == 0)) + "\nouter_id=" + outer +
                                    "\nouter_volume=" + VOLUME + "\ncleanup_failure=" + cleanup_failure + "\n")
-    say("gate exit=" + str(status) + " evidence=" + str(evidence))
+    say(("gate exit=" if gate_mode == "full" else "diagnostic exit=") + str(status) + " evidence=" + str(evidence))
     log.close()
 sys.exit(status)
 PY

@@ -158,6 +158,12 @@ elif tool == "node":
     assert args[1] == "http://127.0.0.1:35002"
     assert "NEROCD_DATABASE_CONNECTION_BROWSER=1" in args
     assert "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=http://127.0.0.1:35002" in args
+    if case == "full_receipt_from_diagnostic":
+        parent="TestHostingApplicationDatabaseStorageFailuresCompiledRunner"
+        for name in (parent,parent+"/postgresql",parent+"/postgresql/cutover"): print("--- PASS: "+name+" (0.01s)")
+        print("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover")
+        print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover")
+        sys.exit(0)
     for name in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
         print("--- PASS: " + name + " (0.01s)")
     print("DATABASE_CONNECTION_BROWSER_PASS postgresql")
@@ -323,6 +329,16 @@ elif tool == "docker":
             if case == "guest_join_failure":
                 sys.exit(26)
         elif "/fixture/api.test" in args:
+            if case.startswith("cutover_diagnostic"):
+                assert args[args.index("-test.run")+1] == "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$/^postgresql$/^cutover$"
+                parent="TestHostingApplicationDatabaseStorageFailuresCompiledRunner"
+                print("--- PASS: "+parent+" (0.01s)")
+                print("    --- PASS: "+parent+"/postgresql (0.01s)")
+                if case != "cutover_diagnostic_missing_case": print("        --- PASS: "+parent+"/postgresql/cutover (0.01s)")
+                print("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover")
+                if case != "cutover_diagnostic_missing_capacity": print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover")
+                if case == "cutover_diagnostic_foreign_result": print("DATABASE_CONNECTION_STORAGE_PASS redis")
+                sys.exit(0)
             if case == "runtime_sigterm":
                 block()
             if case == "runtime_failure":
@@ -416,7 +432,7 @@ class SourceManifestTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
-    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False):
+    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False, mode="full"):
         self.installed_closure = None
         gate = Path(os.environ.get("DATABASE_GATE_UNDER_TEST", Path(__file__).with_name("gate.sh"))).resolve()
         with tempfile.TemporaryDirectory(prefix="nerocd-database-gate-test-") as temporary:
@@ -452,6 +468,7 @@ class GateTest(unittest.TestCase):
             environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], TMPDIR=str(root),
                                DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0", NEROCD_DATABASE_CONNECTION_ROUTES="bad" if case=="route_bad_mode" else "1" if routes else "0")
             environment["NEROCD_DATABASE_CONNECTION_STORAGE"] = "bad" if case == "storage_bad_mode" else "1" if storage else "0"
+            environment["NEROCD_DATABASE_RUNNER_MODE"] = mode
             process = subprocess.Popen(["bash", str(gate)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -472,8 +489,12 @@ class GateTest(unittest.TestCase):
                 self.assertEqual(process.returncode, expected, output)
                 evidence = Path(next(line.removeprefix("evidence=") for line in output.splitlines()
                                      if line.startswith("evidence=")))
-                self.assertIn(f"gate_exit={expected}\n", (evidence / "result").read_text())
-                self.assertEqual(output.count("gate exit="), 1, output)
+                result_name, exit_key = ("result", "gate_exit") if mode == "full" else ("diagnostic-result", "diagnostic_exit")
+                receipt = (evidence / result_name).read_text()
+                self.assertIn(f"{exit_key}={expected}\n", receipt)
+                self.receipt = receipt
+                self.assertEqual(output.count("gate exit=" if mode == "full" else "diagnostic exit="), 1, output)
+                if mode != "full": self.assertFalse((evidence / "result").exists())
                 for pid in blocked:
                     with self.assertRaises(ProcessLookupError, msg=output):
                         os.kill(pid, 0)
@@ -798,6 +819,36 @@ class GateTest(unittest.TestCase):
                 self.assertFalse(any("/fixture/api.test" in args for args in commands))
         state,_,_=self.run_gate("outer_unexpected_port",1)
         self.assertIn("outer",state)
+
+    def test_cutover_diagnostic_is_fixed_and_has_no_full_receipt(self):
+        state, commands, output = self.run_gate("cutover_diagnostic_success", 0, browser=True, routes=True, storage=True, mode="storage-cutover-diagnostic")
+        self.assertEqual(state, {})
+        runtime = next(args for args in commands if "/fixture/api.test" in args)
+        self.assertEqual(runtime[runtime.index("-test.run")+1], "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$/^postgresql$/^cutover$")
+        self.assertFalse(any(args[:1] == ["acceptance/runtime-hosting-database-runner/browser-driver.mjs"] for args in self.all_commands))
+        self.assertIn("full_workflow_pass=0\ndiagnostic_pass=1", self.receipt)
+        self.assertIn("diagnostic-only", output)
+        self.assertNotIn("private PostgreSQL and Redis gate passed", output)
+
+    def test_cutover_diagnostic_requires_exact_case_and_cleanup(self):
+        for case in ("cutover_diagnostic_missing_case", "cutover_diagnostic_missing_capacity", "cutover_diagnostic_foreign_result"):
+            with self.subTest(case=case):
+                state, _, _ = self.run_gate(case, 1, browser=True, routes=True, storage=True, mode="storage-cutover-diagnostic")
+                self.assertEqual(state, {})
+                self.assertIn("full_workflow_pass=0\ndiagnostic_pass=0", self.receipt)
+
+    def test_cutover_diagnostic_rejects_arbitrary_selectors_and_missing_profile(self):
+        for mode in ("^Test.*", "storage-cutover-diagnostic;other", ""):
+            with self.subTest(mode=mode):
+                _, commands, _ = self.run_gate("cutover_diagnostic_success", 1, browser=True, routes=True, storage=True, mode=mode)
+                self.assert_no_creation(commands)
+        _, commands, _ = self.run_gate("cutover_diagnostic_success", 1, mode="storage-cutover-diagnostic")
+        self.assert_no_creation(commands)
+
+    def test_full_mode_does_not_accept_diagnostic_only_results(self):
+        state, _, _ = self.run_gate("full_receipt_from_diagnostic", 1, browser=True, routes=True, storage=True)
+        self.assertEqual(state, {})
+        self.assertIn("full_workflow_pass=0\ndiagnostic_pass=0", self.receipt)
 
     def test_storage_profile_builds_distinct_root_fixture_and_preserves_ports(self):
         state, commands, output = self.run_gate("storage_success", 0, browser=True, routes=True, storage=True)

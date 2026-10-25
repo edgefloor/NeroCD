@@ -25,6 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"nerocd/db"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
@@ -267,8 +270,307 @@ func TestApplicationDatabaseStorageResumedReplacementAdmission(t *testing.T) {
 	}
 }
 
+func applicationDatabaseStorageRecoveryWaitFailure(state string, deadline bool, process databaseRunnerExit) string {
+	if state != "queued" && state != "running" && state != "succeeded" {
+		return "unexpected_recovery_state"
+	}
+	if deadline {
+		return "settlement_deadline"
+	}
+	if process.Exited {
+		return "runner_exited"
+	}
+	return ""
+}
+
+func applicationDatabaseStorageCaptureOnFailure(failed func() bool, capture func()) func() {
+	return func() {
+		if failed() {
+			capture()
+		}
+	}
+}
+
+type applicationDatabaseStorageProxySnapshot struct {
+	Present          bool   `json:"present"`
+	State            string `json:"state"`
+	Outcome          string `json:"outcome"`
+	Generation       int64  `json:"generation"`
+	LoadedGeneration int64  `json:"loaded_generation"`
+	Hold             bool   `json:"hold"`
+	Conflict         bool   `json:"conflict"`
+	Complete         bool   `json:"complete"`
+	ProxyMatches     bool   `json:"proxy_matches"`
+}
+
+type applicationDatabaseStorageTaskSnapshot struct {
+	Present       bool   `json:"present"`
+	State         string `json:"state"`
+	LeaseState    string `json:"lease_state"`
+	Live          bool   `json:"live"`
+	Fresh         bool   `json:"fresh"`
+	TargetMatches bool   `json:"target_matches"`
+}
+
+type applicationDatabaseStorageRecoverySnapshot struct {
+	Phase              string `json:"phase"`
+	Failure            string `json:"failure"`
+	Read               string `json:"read"`
+	OperationID        string `json:"operation_id"`
+	ProxyOperationID   string `json:"proxy_operation_id"`
+	ReplacementProxyID string `json:"replacement_proxy_id"`
+	RecoveryRunID      string `json:"recovery_run_id"`
+	FinalizeRunID      string `json:"finalize_run_id"`
+	ProjectedState     string `json:"projected_state"`
+	UnexpectedState    bool   `json:"unexpected_state"`
+	Deadline           bool   `json:"deadline"`
+	RunnerExited       bool   `json:"runner_exited"`
+	RunnerKind         string `json:"runner_kind"`
+	RunnerCode         int    `json:"runner_code"`
+	Original           *struct {
+		State           string `json:"state"`
+		ProjectMatches  bool   `json:"project_matches"`
+		ResourceMatches bool   `json:"resource_matches"`
+		Hold            bool   `json:"hold"`
+		NetworkHold     bool   `json:"network_hold"`
+		Result          bool   `json:"result"`
+		Complete        bool   `json:"complete"`
+		Ready           bool   `json:"ready"`
+	} `json:"original"`
+	Association *struct {
+		Action       string `json:"action"`
+		RunMatches   bool   `json:"run_matches"`
+		ProxyMatches bool   `json:"proxy_matches"`
+	} `json:"association"`
+	Proxy            applicationDatabaseStorageProxySnapshot `json:"proxy"`
+	ReplacementProxy applicationDatabaseStorageProxySnapshot `json:"replacement_proxy"`
+	RecoveryTask     applicationDatabaseStorageTaskSnapshot  `json:"recovery_task"`
+	FinalizeTask     applicationDatabaseStorageTaskSnapshot  `json:"finalize_task"`
+}
+
+// One read-only statement keeps correlation and status observations together.
+// It selects no authority values, raw results, configuration, or error text.
+const applicationDatabaseStorageRecoverySnapshotSQL = `
+WITH expected_proxy(role,id) AS (VALUES ('proxy',$2::text),('replacement_proxy',$3::text)),
+proxy_observation AS (
+ SELECT jsonb_object_agg(e.role,jsonb_build_object('present',p.id IS NOT NULL,'state',coalesce(p.state,'missing'),
+ 'outcome',coalesce((SELECT body->>'outcome' FROM hosting_proxy_receipts WHERE operation_id=p.id AND phase='complete'),'missing'),
+ 'generation',coalesce(p.generation,0),'loaded_generation',coalesce((SELECT (body->>'loaded_generation')::bigint FROM hosting_proxy_receipts WHERE operation_id=p.id AND phase='complete'),0),
+ 'hold',EXISTS(SELECT 1 FROM hosting_proxies WHERE hold_operation_id=p.id),
+ 'conflict',EXISTS(SELECT 1 FROM audit_events WHERE target_id=p.id AND action='hosting.route_switch_metadata_conflict') AND NOT EXISTS(SELECT 1 FROM hosting_proxy_recovery_resolutions WHERE operation_id=p.id),
+ 'complete',EXISTS(SELECT 1 FROM hosting_proxy_receipts WHERE operation_id=p.id AND phase='complete'),'proxy_matches',coalesce(p.proxy_id=$9,false))) AS body
+ FROM expected_proxy e LEFT JOIN hosting_proxy_operations p ON p.id=e.id),
+expected_task(role,id) AS (VALUES ('recovery_task',$4::text),('finalize_task',$5::text)),
+task_observation AS (
+ SELECT jsonb_object_agg(e.role,jsonb_build_object('present',t.id IS NOT NULL,'state',coalesce(t.status,'missing'),
+ 'lease_state',coalesce((SELECT status FROM run_leases WHERE run_id=t.id ORDER BY attempt DESC,created_at DESC LIMIT 1),'missing'),
+ 'live',EXISTS(SELECT 1 FROM run_leases WHERE run_id=t.id AND status='active' AND expires_at>clock_timestamp()),
+ 'fresh',coalesce(t.next_attempt=1 AND NOT EXISTS(SELECT 1 FROM run_leases WHERE run_id=t.id),false),
+ 'target_matches',EXISTS(SELECT 1 FROM hosting_task_targets x WHERE x.run_id=t.id AND x.operation_id=$1 AND x.binding_id=$7 AND x.runner_id=$8 AND x.mode=CASE WHEN e.role='finalize_task' THEN 'finalize' ELSE 'storage_recover' END)
+ OR (e.role='recovery_task' AND EXISTS(SELECT 1 FROM hosting_proxy_task_targets x WHERE x.run_id=t.id AND x.operation_id=$3 AND x.proxy_id=$9 AND x.runner_id=$8 AND x.mode='apply')))) AS body
+ FROM expected_task e LEFT JOIN task_runs t ON t.id=e.id)
+SELECT jsonb_build_object(
+ 'original',(SELECT jsonb_build_object('state',o.state,'project_matches',o.project_id=$6,'resource_matches',o.resource_id=$10,
+ 'hold',EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=o.id),
+ 'network_hold',EXISTS(SELECT 1 FROM hosting_database_network_holds WHERE operation_id=o.id),
+ 'result',EXISTS(SELECT 1 FROM hosting_receipts WHERE operation_id=o.id AND phase='complete'),
+ 'complete',EXISTS(SELECT 1 FROM hosting_receipts WHERE operation_id=o.id AND phase='complete'),
+ 'ready',coalesce((SELECT body->>'ready'='true' FROM hosting_receipts WHERE operation_id=o.id AND phase='complete'),false)) FROM hosting_operations o WHERE o.id=$1),
+ 'association',(SELECT jsonb_build_object('action',action,'run_matches',run_id=$4,'proxy_matches',coalesce(proxy_operation_id,'')=$11) FROM hosting_application_database_storage_recoveries WHERE operation_id=$1)
+) || proxy_observation.body || task_observation.body FROM proxy_observation,task_observation`
+
+func applicationDatabaseStorageRecoveryCapture(ctx context.Context, op domain.HostingOperation, action, phase, failure, state string, deadline bool, process databaseRunnerExit, query func(context.Context, string, ...any) ([]byte, error)) applicationDatabaseStorageRecoverySnapshot {
+	p, p2, run, finalize := "appdb_proxy_"+op.ID, "appdb_storage_proxy_"+op.ID, "storage_recover_"+op.ID, "finalize_"+op.ID
+	associatedProxy := ""
+	if action == "complete_replacement" {
+		run = "proxy_" + p2
+		associatedProxy = p2
+	}
+	proxyID := ""
+	if op.ApplicationDatabaseRouteContinuity != nil {
+		proxyID = op.ApplicationDatabaseRouteContinuity.ProxyID
+	}
+	raw, err := query(ctx, applicationDatabaseStorageRecoverySnapshotSQL, op.ID, p, p2, run, finalize, op.ProjectID, op.BindingID, op.Snapshot.RunnerID, proxyID, op.ResourceID, associatedProxy)
+	var result applicationDatabaseStorageRecoverySnapshot
+	if err != nil || len(raw) > 32768 || json.Unmarshal(raw, &result) != nil {
+		result = applicationDatabaseStorageRecoverySnapshot{Read: "unknown"}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			result.Read = "read_timeout"
+		}
+	} else {
+		result.Read = "ok"
+	}
+	if result.Read == "ok" && result.Original == nil {
+		result.Read = "missing"
+	}
+	if applicationDatabaseRouteDiagnosticID(op.ID) == "invalid" {
+		op.ID = "invalid"
+		p = "invalid"
+		p2 = "invalid"
+		run = "invalid"
+		finalize = "invalid"
+	}
+	result.OperationID, result.ProxyOperationID, result.ReplacementProxyID, result.RecoveryRunID, result.FinalizeRunID = op.ID, p, p2, run, finalize
+	result.Phase = applicationDatabaseRouteDiagnosticEnum(phase, "recovery_entry", "fault_injection", "admission", "settlement_wait", "runtime_validation", "authority_validation", "browser_validation", "resume_redeploy")
+	result.Failure = applicationDatabaseRouteDiagnosticEnum(failure, "invariant_failure", "unexpected_recovery_state", "settlement_deadline", "runner_exited", "recovery_action_changed", "wait_canceled")
+	result.ProjectedState = applicationDatabaseRouteDiagnosticEnum(state, "none", "queued", "running", "succeeded", "uncertain")
+	result.UnexpectedState = state != "queued" && state != "running" && state != "succeeded"
+	result.Deadline, result.RunnerExited = deadline, process.Exited
+	result.RunnerKind = applicationDatabaseRouteDiagnosticEnum(process.Kind, "running", "success", "process_exit", "wait_error")
+	result.RunnerCode = process.Code
+	if result.RunnerCode < -1 || result.RunnerCode > 255 {
+		result.RunnerCode = -1
+	}
+	if result.Original != nil {
+		result.Original.State = applicationDatabaseRouteDiagnosticEnum(result.Original.State, "queued", "applying", "verifying", "succeeded", "failed", "canceled")
+	}
+	if result.Association != nil {
+		result.Association.Action = applicationDatabaseRouteDiagnosticEnum(result.Association.Action, "resume_predecessor", "complete_replacement")
+	}
+	for _, proxy := range []*applicationDatabaseStorageProxySnapshot{&result.Proxy, &result.ReplacementProxy} {
+		proxy.State = applicationDatabaseRouteDiagnosticEnum(proxy.State, "missing", "queued", "dispatched", "prepared", "applying", "applied", "rolled_back", "refused", "uncertain", "failed", "canceled")
+		proxy.Outcome = applicationDatabaseRouteDiagnosticEnum(proxy.Outcome, "missing", "applied", "rolled_back", "refused", "uncertain")
+	}
+	for _, task := range []*applicationDatabaseStorageTaskSnapshot{&result.RecoveryTask, &result.FinalizeTask} {
+		task.State = applicationDatabaseRouteDiagnosticEnum(task.State, "missing", "queued", "running", "succeeded", "failed", "canceled")
+		task.LeaseState = applicationDatabaseRouteDiagnosticEnum(task.LeaseState, "missing", "active", "succeeded", "failed", "expired", "canceled")
+	}
+	return result
+}
+
+func TestApplicationDatabaseStorageRecoveryFailureSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		state            string
+		deadline, exited bool
+		want             string
+	}{{"uncertain", true, true, "unexpected_recovery_state"}, {"running", true, true, "settlement_deadline"}, {"queued", false, true, "runner_exited"}, {"running", false, false, ""}} {
+		if applicationDatabaseStorageRecoveryWaitFailure(test.state, test.deadline, databaseRunnerExit{Exited: test.exited}) != test.want {
+			t.Fatal("settlement failure branch lost precedence or predicate")
+		}
+	}
+	id := "hop_" + strings.Repeat("a", 16)
+	op := domain.HostingOperation{ID: id, ProjectID: "project", ResourceID: "resource", BindingID: "binding", Snapshot: domain.HostingSnapshot{RunnerID: "runner"}, ApplicationDatabaseRouteContinuity: &domain.HostingApplicationDatabaseRouteContinuity{ProxyID: "proxy"}}
+	canary := "PRIVATE-CANARY-credentials-fence-config"
+	query := func(_ context.Context, sql string, args ...any) ([]byte, error) {
+		if sql != applicationDatabaseStorageRecoverySnapshotSQL || len(args) != 11 || args[0] != id || args[1] != "appdb_proxy_"+id || args[2] != "appdb_storage_proxy_"+id || args[3] != "proxy_appdb_storage_proxy_"+id || args[4] != "finalize_"+id || args[10] != args[2] {
+			t.Fatal("snapshot lost immutable O/P/P2/task correlation")
+		}
+		return json.Marshal(map[string]any{"read": canary, "original": map[string]any{"state": canary, "project_matches": true}, "association": map[string]any{"action": canary, "run_matches": false, "proxy_matches": false}, "proxy": map[string]any{"state": canary, "outcome": canary, "configuration": canary}, "replacement_proxy": map[string]any{"state": "applied", "outcome": "applied", "present": true, "generation": 4, "loaded_generation": 4, "complete": true, "proxy_matches": true}, "recovery_task": map[string]any{"state": "succeeded", "lease_state": canary, "target_matches": true}, "finalize_task": map[string]any{"state": "failed", "lease_state": "expired", "live": false, "target_matches": true}, "authority": canary})
+	}
+	snapshot := applicationDatabaseStorageRecoveryCapture(t.Context(), op, "complete_replacement", "settlement_wait", "unexpected_recovery_state", "uncertain", true, databaseRunnerExit{Exited: true, Kind: canary, Code: 1}, query)
+	raw, err := json.Marshal(snapshot)
+	if err != nil || len(raw) > 8192 || bytes.Contains(raw, []byte("CANARY")) || snapshot.Read != "ok" || !snapshot.UnexpectedState || !snapshot.Deadline || !snapshot.RunnerExited || snapshot.ReplacementProxy.State != "applied" || snapshot.FinalizeTask.State != "failed" || snapshot.Association.RunMatches {
+		t.Fatal("snapshot leaked free text or lost failure/settlement evidence")
+	}
+	for _, test := range []struct {
+		err  error
+		raw  string
+		want string
+	}{{context.DeadlineExceeded, "", "read_timeout"}, {errors.New(canary), "", "unknown"}, {nil, `{}`, "missing"}, {nil, `{`, "unknown"}} {
+		got := applicationDatabaseStorageRecoveryCapture(t.Context(), op, "complete_replacement", "settlement_wait", "invariant_failure", "unknown", false, databaseRunnerExit{}, func(context.Context, string, ...any) ([]byte, error) { return []byte(test.raw), test.err })
+		if got.Read != test.want {
+			t.Fatal("snapshot read failure inferred success or exposed error")
+		}
+	}
+	for _, failed := range []bool{false, true} {
+		var order []string
+		func() {
+			defer applicationDatabaseStorageCaptureOnFailure(func() bool { return failed }, func() { order = append(order, "capture") })()
+			order = append(order, "effect")
+		}()
+		order = append(order, "cleanup")
+		want := []string{"effect", "cleanup"}
+		if failed {
+			want = []string{"effect", "capture", "cleanup"}
+		}
+		if !slices.Equal(order, want) {
+			t.Fatal("failure snapshot did not precede teardown or captured successful case")
+		}
+	}
+}
+
+// This test runs only in the separately authorized disposable PostgreSQL target.
+// It applies real embedded migrations and executes the exact diagnostic query.
+func TestApplicationDatabaseStorageRecoverySnapshotSchema(t *testing.T) {
+	if os.Getenv("NEROCD_STORAGE_CUTOVER_QUERY_TEST") != "owned-isolated-postgres" || os.Getenv("NEROCD_TEST_DATABASE_URL") == "" {
+		t.Skip("requires exact owned isolated query target")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	config, err := pgxpool.ParseConfig(os.Getenv("NEROCD_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal("query fixture configuration invalid")
+	}
+	config.MaxConns = 1
+	config.ConnConfig.RuntimeParams["search_path"] = "nerocd_storage_cutover_query"
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal("query fixture connection unavailable")
+	}
+	defer pool.Close()
+	if _, err = pool.Exec(ctx, `CREATE SCHEMA nerocd_storage_cutover_query`); err != nil {
+		t.Fatal("query fixture schema collision or create failure")
+	}
+	defer func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := pool.Exec(cleanup, `DROP SCHEMA nerocd_storage_cutover_query CASCADE`); err != nil {
+			t.Error("owned query schema cleanup failed")
+		}
+	}()
+	entries, err := db.Files.ReadDir("migrations")
+	if err != nil {
+		t.Fatal("query migrations unavailable")
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			body, err := db.Files.ReadFile("migrations/" + entry.Name())
+			if err != nil {
+				t.Fatal("query migration read failed")
+			}
+			if _, err = pool.Exec(ctx, string(body)); err != nil {
+				t.Fatalf("query migration failed name=%s", entry.Name())
+			}
+		}
+	}
+	op := domain.HostingOperation{ID: "hop_" + strings.Repeat("a", 16), ProjectID: "missing_project", ResourceID: "missing_resource", BindingID: "missing_binding", Snapshot: domain.HostingSnapshot{RunnerID: "missing_runner"}, ApplicationDatabaseRouteContinuity: &domain.HostingApplicationDatabaseRouteContinuity{ProxyID: "missing_proxy"}}
+	got := applicationDatabaseStorageRecoveryCapture(ctx, op, "complete_replacement", "settlement_wait", "invariant_failure", "unknown", false, databaseRunnerExit{}, func(ctx context.Context, sql string, args ...any) ([]byte, error) {
+		var raw []byte
+		err := pool.QueryRow(ctx, sql, args...).Scan(&raw)
+		if err != nil {
+			t.Error("exact diagnostic SQL execution failed")
+		}
+		return raw, err
+	})
+	if got.Read != "missing" || got.Proxy.Present || got.ReplacementProxy.Present || got.RecoveryTask.Present || got.FinalizeTask.Present {
+		t.Fatal("migrated query did not preserve explicit missing evidence")
+	}
+	t.Log("exact snapshot SQL executed against real migrated PostgreSQL; absent rows remain missing")
+}
+
 func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixture, engine, failure string, resource domain.Resource, database domain.HostingDatabase, previous, op domain.HostingOperation, stage domain.HostingApplicationDatabaseStage, active domain.HostingDatabaseConnection, wire *applicationDatabaseRouteYieldWire) {
 	f.t.Helper()
+	phase, failureReason, projectedState := "recovery_entry", "invariant_failure", "unknown"
+	waitExpired := false
+	defer applicationDatabaseStorageCaptureOnFailure(f.t.Failed, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		action := "resume_predecessor"
+		if failure == "cutover" {
+			action = "complete_replacement"
+		}
+		observation := applicationDatabaseStorageRecoveryCapture(ctx, op, action, phase, failureReason, projectedState, waitExpired, f.process.status(), func(ctx context.Context, sql string, args ...any) ([]byte, error) {
+			var raw []byte
+			err := f.database.QueryRow(ctx, sql, args...).Scan(&raw)
+			return raw, err
+		})
+		encoded, err := json.Marshal(observation)
+		if err != nil || len(encoded) > 8192 {
+			f.t.Log("CONNECTED_STORAGE_RECOVERY_FAILURE capture_encoding_failed")
+			return
+		}
+		f.t.Logf("CONNECTED_STORAGE_RECOVERY_FAILURE %s", encoded)
+	})()
 	r := f.routes
 	candidate := op
 	candidate.Result = &domain.HostingResult{ContainerID: stage.Candidate.ContainerID}
@@ -288,6 +590,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	action := "resume_predecessor"
 	var failedProxy domain.HostingProxyOperationView
 	if failure == "cutover" {
+		phase = "fault_injection"
 		action = "complete_replacement"
 		r.awaitYieldedRoute(op)
 		id := strings.TrimSpace(string(f.docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "name=^/nerocd-proxy-"+r.proxy.ID+"$")))
@@ -363,6 +666,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		f.t.Fatal("public recovery stage/candidate differ from actual retained candidate")
 	}
 	input := map[string]any{"action": action, "operation_id": op.ID, "stage_hash": state.StageHash, "candidate_hash": state.CandidateHash, "expected_membership_revision": active.MembershipRevision, "idempotency_key": "storage_" + failure + "_recovery", "storage_state_hash": state.StateHash, "application_database_storage": applicationDatabaseStorageAck{s.Metadata.Generation, s.Metadata.Hash, true}}
+	phase = "admission"
 	path := "/api/v1/resources/" + op.ResourceID + "/database-connection/recovery"
 	databaseRunnerJSON[json.RawMessage](f, "", "POST", path, input, 401)
 	for _, key := range []string{"stage_hash", "candidate_hash", "storage_state_hash"} {
@@ -411,24 +715,31 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	}
 	f.start()
 	deadline = time.Now().Add(180 * time.Second)
+	phase = "settlement_wait"
 	for {
 		current := s.public(f, op.ID)
+		projectedState = current.StorageState.RecoveryState
 		if current.StorageState.RecoveryAction != action {
+			failureReason = "recovery_action_changed"
 			f.t.Fatal("recovery progress lost immutable action")
 		}
 		if current.StorageState.RecoveryState == "succeeded" {
 			break
 		}
-		if current.StorageState.RecoveryState != "queued" && current.StorageState.RecoveryState != "running" || time.Now().After(deadline) || f.process.status().Exited {
-			f.t.Fatal("storage recovery did not independently prove successful settlement")
+		waitExpired = time.Now().After(deadline)
+		if reason := applicationDatabaseStorageRecoveryWaitFailure(projectedState, waitExpired, f.process.status()); reason != "" {
+			failureReason = reason
+			f.t.Fatal("storage recovery did not independently prove successful settlement: " + reason)
 		}
 		select {
 		case <-f.t.Context().Done():
+			failureReason = "wait_canceled"
 			f.t.Fatal("storage recovery wait canceled")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	f.stop()
+	phase = "runtime_validation"
 	selected := previous
 	var maintained domain.HostingOperation
 	if action == "resume_predecessor" {
@@ -505,6 +816,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		f.assertApplicationDatabaseRetirement(current, previous)
 		selected = current
 	}
+	phase = "authority_validation"
 	var leases, targets int
 	if f.database.QueryRow(f.t.Context(), `SELECT count(*) FROM run_leases l JOIN task_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.status='succeeded' AND l.attempt=1 AND l.completed_at IS NOT NULL AND r.status='succeeded' AND r.finished_at IS NOT NULL AND l.runner_id=$2 AND NOT EXISTS(SELECT 1 FROM run_leases original WHERE original.run_id=$3 AND (original.id=l.id OR original.fence=l.fence))`, run, op.Snapshot.RunnerID, op.RunID).Scan(&leases) != nil || leases != 1 {
 		f.t.Fatal("storage recovery lacks exact fresh succeeded run/lease/fence independent of original prepare authority")
@@ -518,6 +830,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	}
 	r.assertUnrelated()
 	if browser != nil {
+		phase = "browser_validation"
 		browser.advance("finish", f.connection(op.ResourceID).MembershipRevision, selected, map[string]string{"a": "retained_a", "candidate_write": "retained_candidate_before_recovery"})
 		browser.awaitFinished()
 		fmt.Println("DATABASE_CONNECTION_STORAGE_RECOVERY_UI_PASS " + engine + " " + action)
@@ -525,6 +838,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	if action == "resume_predecessor" {
 		// Recovery UI observes the resumed A first. A fresh API deployment then
 		// proves the recovered membership can retire A and settle new C normally.
+		phase = "resume_redeploy"
 		request := s.requestResumedReplacement(f, resource, previous)
 		f.registerRouteOperationCleanup(request.ID)
 		revision := f.connection(resource.ID).MembershipRevision
