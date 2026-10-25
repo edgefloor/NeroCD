@@ -38,6 +38,7 @@ import (
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
 	"nerocd/internal/secretcrypto"
+	"nerocd/internal/store"
 	"nerocd/web"
 )
 
@@ -293,6 +294,8 @@ type databaseRunnerFixture struct {
 	process                               *databaseRunnerProcess
 	processMu                             sync.Mutex
 	lastExit                              databaseRunnerExit
+	hostingStop                           func(context.Context) error
+	hostingStore                          *store.PostgresStore
 	apiCounts                             databaseRunnerAPICounts
 	logs                                  *databaseRunnerLog
 	failureOutput                         io.Writer // Private test sink; physical fixture defaults to stdout.
@@ -561,6 +564,8 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	if err != nil {
 		t.Fatal("River startup failed")
 	}
+	f.hostingStop = stop
+	f.hostingStore = pg
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

@@ -75,3 +75,28 @@ func TestDatabaseBackupScheduleCapturedMinuteBoundary(t *testing.T) {
 		t.Fatal("next pass did not advance its own captured tick", due, err)
 	}
 }
+
+// The pinned Go parser deliberately implements a smaller calendar syntax than
+// Coolify's dragonmantank/cron-expression v3.6.0. Do not silently accept special
+// calendar tokens with a different meaning.
+func TestDatabaseBackupScheduleCronSubset(t *testing.T) {
+	for _, frequency := range []string{"0 0 * * 0", "0 0 * * SUN", "0 0 * * sun", "*/15 8-17 * JAN,MAR MON-FRI", "0 0 ? * SUN"} {
+		in := HostingDatabaseBackupScheduleInput{RequestID: "subset", ExpectedResourceGeneration: 1, Frequency: frequency, Timezone: "UTC"}
+		if err := in.Validate(); err != nil {
+			t.Fatal("supported cron subset rejected", frequency, err)
+		}
+	}
+	for _, frequency := range []string{"0 0 * * 7", "0 0 * * 1-7", "0 0 L * *", "0 0 15W * *", "0 0 * * 5L", "0 0 * * MON#2"} {
+		in := HostingDatabaseBackupScheduleInput{RequestID: "subset", ExpectedResourceGeneration: 1, Frequency: frequency, Timezone: "UTC"}
+		if in.Validate() == nil {
+			t.Fatal("unsupported calendar token admitted", frequency)
+		}
+	}
+	now := scheduleTime(t, "2026-10-25T00:00:00Z")
+	for _, frequency := range []string{"0 0 * * 0", "0 0 * * SUN"} {
+		due, ok, err := NewestHostingDatabaseBackupOccurrence(frequency, "UTC", now, nil)
+		if err != nil || !ok || !due.Equal(now) {
+			t.Fatal("Sunday identity changed", frequency, due, err)
+		}
+	}
+}

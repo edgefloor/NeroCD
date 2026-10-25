@@ -353,6 +353,251 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	fmt.Println("DATABASE_BACKUP_RESTORE_APP_PASS postgresql")
 }
 
+func (b *databaseBackupBrowserFixture) awaitSchedule() domain.HostingDatabaseBackupSchedule {
+	b.f.t.Helper()
+	select {
+	case schedule := <-b.schedules:
+		return schedule
+	case <-time.After(120 * time.Second):
+		b.f.t.Fatal("live schedule UI did not admit exact revision")
+	}
+	return domain.HostingDatabaseBackupSchedule{}
+}
+func backupRuntimeRestartController(f *databaseRunnerFixture) {
+	f.t.Helper()
+	if f.hostingStop == nil {
+		f.t.Fatal("owned controller stop authority missing")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := f.hostingStop(ctx)
+	cancel()
+	if err != nil {
+		f.t.Fatal("owned controller did not join")
+	}
+	stop, err := f.hostingStore.StartHostingExecution(f.t.Context())
+	if err != nil {
+		f.t.Fatal("owned controller restart failed")
+	}
+	f.hostingStop = stop
+	f.t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if stop(ctx) != nil {
+			f.t.Error("restarted controller did not join")
+		}
+	})
+}
+
+func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
+	if os.Getenv("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME") != "1" || os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" {
+		t.Skip("requires exact authorized schedule runtime gate")
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
+		t.Fatal("native Linux arm64 required")
+	}
+	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+	diagnosticID := ""
+	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
+	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
+	f.registerRouteDatabaseCleanup(source.Resource.ID)
+	requested := f.deploy(source, "schedule_source")
+	f.registerRouteOperationCleanup(requested.ID)
+	f.await(requested.ID)
+	application := backupRuntimeApplication(f, source, "scheduled_source")
+	f.appRecord(application, "PUT", "before", "application_origin")
+	connection := f.connection(application.ResourceID)
+	sourceOp := f.await(connection.UpgradeOperationID)
+	f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; CREATE TABLE public.backup_sequence(id bigserial PRIMARY KEY,value text); INSERT INTO public.backup_sequence(value) VALUES ('before');")
+	wire := &databaseBackupRuntimeWire{mode: "backup", entered: make(chan struct{}), release: make(chan struct{})}
+	f.backupWire.Store(wire)
+	browser := startDatabaseBackupBrowserProfile(f, source, "backup_schedule")
+	created := browser.awaitSchedule()
+	if created.Revision != 1 || !created.Enabled || created.Frequency != "every_minute" || created.Timezone != "UTC" {
+		t.Fatal("live schedule creation lost reviewed configuration")
+	}
+	// Discovery must come from the running hosting controller, not a manual
+	// test tick that could conceal a missing StartHostingExecution hookup.
+	var backupID string
+	discoveryDeadline := time.Now().Add(90 * time.Second)
+	for {
+		err := f.database.QueryRow(t.Context(), `SELECT operation_id FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1 AND operation_id IS NOT NULL`, created.ID).Scan(&backupID)
+		if err == nil && backupID != "" {
+			break
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) || time.Now().After(discoveryDeadline) {
+			t.Fatal("running schedule controller did not admit exact operation")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	diagnosticID = backupID
+	browser.setPhase("backup", backupID)
+	edited := browser.awaitSchedule()
+	disabled := browser.awaitSchedule()
+	if edited.ID != created.ID || edited.Revision != 2 || edited.Frequency != "* * * * *" || edited.Timezone != "Etc/UTC" || !edited.Enabled || disabled.ID != created.ID || disabled.Revision != 3 || disabled.Enabled {
+		t.Fatal("live schedule edit/disable changed identity or revisions")
+	}
+	select {
+	case <-wire.entered:
+	case <-time.After(90 * time.Second):
+		t.Fatal("scheduled backup receipt loss not reached")
+	}
+	f.stop()
+	close(wire.release)
+	backupRuntimeRestartController(f)
+	f.start()
+	backupRuntimeWaitReplay(f, wire)
+	backup := backupRuntimeAwait(f, backupID)
+	f.backupWire.Store(nil)
+	if f.hostingStore.ReconcileDatabaseBackupSchedules(t.Context()) != nil {
+		t.Fatal("restarted schedule controller failed")
+	}
+	var occurrences, minutes, operations int
+	if f.database.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT scheduled_at),count(operation_id) FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1`, created.ID).Scan(&occurrences, &minutes, &operations) != nil || occurrences < 1 || minutes != occurrences || operations != 1 {
+		t.Fatal("controller restart duplicated schedule occurrence")
+	}
+	var configs, requests int
+	if f.database.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_database_backup_schedule_versions WHERE schedule_id=$1),(SELECT count(*) FROM hosting_database_backup_schedule_requests WHERE schedule_id=$1)`, created.ID).Scan(&configs, &requests) != nil || configs != 3 || requests != 3 {
+		t.Fatal("lost schedule ACK created duplicate versions or requests")
+	}
+	f.appRecord(application, "PUT", "after_snapshot", "source_still_writable")
+	f.docker("container", "stop", sourceOp.Result.ContainerID)
+	backupRuntimeRegisterSourceRestartCleanup(t, sourceOp.Result.ContainerID, func(ctx context.Context, id string) error {
+		raw, err := databaseRunnerDocker(ctx, nil, "container", "start", id)
+		clear(raw)
+		return err
+	})
+	wire = &databaseBackupRuntimeWire{mode: "restore", entered: make(chan struct{}), release: make(chan struct{})}
+	f.backupWire.Store(wire)
+	browser.setPhase("restore", backup.ID)
+	restoreID := browser.await("restore")
+	diagnosticID = restoreID
+	select {
+	case <-wire.entered:
+	case <-time.After(90 * time.Second):
+		t.Fatal("scheduled restore receipt loss not reached")
+	}
+	f.stop()
+	close(wire.release)
+	f.start()
+	backupRuntimeWaitReplay(f, wire)
+	f.backupWire.Store(nil)
+	restored := backupRuntimeAwait(f, restoreID)
+	target := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
+	f.registerRouteDatabaseCleanup(target.Resource.ID)
+	if target.Resource.ID == source.Resource.ID || target.Binding.ID == source.Binding.ID || target.StorageRef == source.StorageRef || target.Credentials[0].SecretID == source.Credentials[0].SecretID || restored.BackupID != backup.ID || restored.Blob.Digest != backup.Blob.Digest {
+		t.Fatal("scheduled restore reused source identity or changed archive")
+	}
+	consumer := backupRuntimeApplicationObserved(f, target, "scheduled_target", browser.recordProgress)
+	f.appRecord(consumer, "GET", "before", "application_origin")
+	f.appRecord(consumer, "PUT", "restored_new", "restored_new_write")
+	upgraded := f.connection(consumer.ResourceID)
+	targetOp := f.await(upgraded.UpgradeOperationID)
+	sequence := string(f.docker("exec", "--user", "postgres", targetOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; INSERT INTO public.backup_sequence(value) VALUES ('new'); SELECT max(id),pg_get_userbyid(c.relowner) FROM public.backup_sequence,pg_class c WHERE c.oid='public.backup_sequence'::regclass GROUP BY c.relowner;"))
+	if !strings.Contains(sequence, "2") || !strings.Contains(sequence, "ncd_app") {
+		t.Fatal("scheduled restore lost sequence ownership")
+	}
+	f.docker("container", "start", sourceOp.Result.ContainerID)
+	if backupRuntimeWaitApplicationReady(t.Context(), application) != nil {
+		t.Fatal("scheduled source did not regain exact readiness")
+	}
+	f.appRecord(application, "GET", "before", "application_origin")
+	f.appRecord(application, "GET", "after_snapshot", "source_still_writable")
+	f.appRecord(application, "PUT", "source_new", "source_new_write")
+	browser.setPhase("complete", restored.ID)
+	browser.finished()
+	backupRuntimeGuestDumpTimeout(f, source, sourceOp, application)
+	fmt.Println("DATABASE_BACKUP_SCHEDULE_PASS postgresql")
+}
+
+// This is a pg_dump failure, separate from the existing pg_restore deadline.
+// A positively observed source-table DDL lock stalls the real pinned dump tool.
+func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.HostingDatabase, sourceOp, application domain.HostingOperation) {
+	f.t.Helper()
+	diagnosticID := ""
+	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), 40*time.Second)
+	lockDone := make(chan struct{}, 1)
+	go func() {
+		raw, _ := databaseRunnerDocker(lockCtx, nil, "exec", "--env", "PGAPPNAME=fixture_backup_dump_lock", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "SET statement_timeout='25s'; BEGIN; LOCK TABLE public.backup_sequence IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(30);")
+		clear(raw)
+		lockDone <- struct{}{}
+	}()
+	release := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		raw, err := databaseRunnerDocker(ctx, nil, "exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='fixture_backup_dump_lock' AND usename='postgres';")
+		clear(raw)
+		if err != nil {
+			f.t.Error("owned dump-lock cleanup failed")
+		}
+		cancelLock()
+		select {
+		case <-lockDone:
+		case <-ctx.Done():
+			f.t.Error("owned dump-lock process did not join")
+		}
+	}
+	defer release()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw := f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT a.pid FROM pg_stat_activity a WHERE a.application_name='fixture_backup_dump_lock' AND a.usename='postgres' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.mode='AccessExclusiveLock' AND l.granted AND l.relation='public.backup_sequence'::regclass);")
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		clear(raw)
+		if err == nil && pid > 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatal("owned source lock was not observed")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	requested := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: "genuine_guest_dump_timeout", ExpectedResourceGeneration: source.Resource.Generation}, 202)
+	diagnosticID = requested.ID
+	if requested.TimeoutSeconds != 10 {
+		f.t.Fatal("saved dump timeout policy mismatch")
+	}
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		op := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/database-backups/"+requested.ID, nil, 200)
+		if op.State == "uncertain" {
+			if !op.OwnershipHeld || op.Blob != nil {
+				f.t.Fatal("dump timeout released source or published archive")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatal("guest dump did not reach bounded uncertainty")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.stop()
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		top := string(f.docker("container", "top", sourceOp.Result.ContainerID, "-eo", "pid,comm"))
+		if !strings.Contains(top, "pg_dump") {
+			break
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatal("guest dump survived bounded deadline")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	f.appRecord(application, "GET", "before", "application_origin")
+	f.appRecord(application, "PUT", "after_dump_timeout", "source_usable")
+	f.start()
+	select {
+	case <-f.process.done:
+	case <-time.After(15 * time.Second):
+		f.t.Fatal("uncertain dump unexpectedly resumed")
+	}
+	f.stop()
+	current := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/database-backups/"+requested.ID, nil, 200)
+	if current.State != "uncertain" || !current.OwnershipHeld {
+		f.t.Fatal("dump restart changed uncertain ownership")
+	}
+	fmt.Println("DATABASE_BACKUP_GUEST_DUMP_TIMEOUT_PASS postgresql")
+}
+
 type databaseBackupBrowserFixture struct {
 	f                                 *databaseRunnerFixture
 	mu                                sync.Mutex
@@ -362,6 +607,8 @@ type databaseBackupBrowserFixture struct {
 	once                              sync.Once
 	stage, connectionID, lastProgress string
 	progressOutput                    io.Writer // Protected by mu; separate from the failure reporter's writer.
+	schedules                         chan domain.HostingDatabaseBackupSchedule
+	scheduleSeen                      map[string]bool
 }
 
 type databaseBackupProgressEvidence struct {
@@ -480,7 +727,14 @@ func (b *databaseBackupBrowserFixture) finished() {
 	}
 }
 func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingDatabase) *databaseBackupBrowserFixture {
+	return startDatabaseBackupBrowserProfile(f, source, "backup")
+}
+
+func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.HostingDatabase, profile string) *databaseBackupBrowserFixture {
 	f.t.Helper()
+	if profile != "backup" && profile != "backup_schedule" {
+		f.t.Fatal("closed backup browser profile required")
+	}
 	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
 	if !applicationDatabaseBrowserOrigin(origin) {
 		f.t.Fatal("owned browser origin required")
@@ -497,7 +751,7 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 		f.t.Fatal("browser owner demotion failed")
 	}
 	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
-	b := &databaseBackupBrowserFixture{f: f, phase: "backup", admitted: make(chan domain.HostingDatabaseBackupOperation, 2), done: make(chan struct{})}
+	b := &databaseBackupBrowserFixture{f: f, phase: "backup", admitted: make(chan domain.HostingDatabaseBackupOperation, 2), done: make(chan struct{}), schedules: make(chan domain.HostingDatabaseBackupSchedule, 4), scheduleSeen: make(map[string]bool)}
 	control := "/api/v1/fixture/database-backup/" + strings.Repeat("b", 32)
 	owner := applicationDatabaseBrowserOwner(api, source.Resource.ProjectID, origin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -518,6 +772,43 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, control) {
 			owner.ServeHTTP(w, r)
+			return
+		}
+		if profile == "backup_schedule" && (r.Method == http.MethodPost || r.Method == http.MethodPut) && strings.Contains(r.URL.Path, "/database-backup-schedules") {
+			rec := httptest.NewRecorder()
+			api.ServeHTTP(rec, r)
+			if rec.Code == 200 {
+				var schedule domain.HostingDatabaseBackupSchedule
+				if json.Unmarshal(rec.Body.Bytes(), &schedule) != nil || schedule.ID == "" || schedule.Revision < 1 || schedule.ResourceID != source.Resource.ID || schedule.ProjectID != source.Resource.ProjectID {
+					f.t.Error("invalid browser schedule admission")
+				} else {
+					key := schedule.ID + ":" + strconv.FormatInt(schedule.Revision, 10)
+					b.mu.Lock()
+					seen := b.scheduleSeen[key]
+					b.scheduleSeen[key] = true
+					b.mu.Unlock()
+					if !seen {
+						select {
+						case b.schedules <- schedule:
+						default:
+							f.t.Error("duplicate browser schedule admission")
+						}
+					}
+					// Lose only the first committed create response. No request body
+					// is consumed or rewritten; explicit UI replay retains its ID.
+					if !seen && schedule.Revision == 1 && r.Method == http.MethodPost {
+						if backupRuntimeLoseScheduleACK(w, rec.Body.Bytes()) != nil {
+							f.t.Error("schedule ACK fault unavailable")
+						}
+						return
+					}
+				}
+			}
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
 			return
 		}
 		if r.Method == "POST" && (r.URL.Path == "/api/v1/resources/"+source.Resource.ID+"/database-backups" || strings.HasSuffix(r.URL.Path, "/restores")) {
@@ -561,10 +852,71 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 			f.t.Error("browser server did not join")
 		}
 	})
-	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": "postgresql", "profile": "backup", "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
+	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": "postgresql", "profile": profile, "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
 	raw, _ := json.Marshal(meta)
 	fmt.Println("DATABASE_BACKUP_BROWSER_READY " + string(raw))
 	return b
+}
+
+func backupRuntimeLoseScheduleACK(w http.ResponseWriter, body []byte) error {
+	hijacker, ok := w.(http.Hijacker)
+	flusher, flushOK := w.(http.Flusher)
+	if !ok || !flushOK || len(body) < 2 {
+		return errors.New("schedule ACK fault unavailable")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write(body[:len(body)/2])
+	if err != nil {
+		return errors.New("schedule ACK fault unavailable")
+	}
+	flusher.Flush()
+	connection, _, err := hijacker.Hijack()
+	if err != nil {
+		return errors.New("schedule ACK fault unavailable")
+	}
+	if connection.Close() != nil {
+		return errors.New("schedule ACK fault unavailable")
+	}
+	return nil
+}
+
+func TestDatabaseBackupScheduleCreateACKFault(t *testing.T) {
+	body := []byte(`{"id":"schedule_owned","revision":1}`)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			if backupRuntimeLoseScheduleACK(w, body) != nil {
+				t.Error("owned ACK fault failed")
+			}
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = time.Second
+	response, err := client.Post(server.URL, "application/json", strings.NewReader(`{"request_id":"same_request"}`))
+	if err != nil {
+		t.Fatal("owned first response headers missing")
+	}
+	partial, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !errors.Is(readErr, io.ErrUnexpectedEOF) || len(partial) >= len(body) {
+		t.Fatal("fixture did not lose a committed response body")
+	}
+	response, err = client.Post(server.URL, "application/json", strings.NewReader(`{"request_id":"same_request"}`))
+	if err != nil {
+		t.Fatal("owned replay transport failed")
+	}
+	complete, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || !bytes.Equal(complete, body) || calls != 2 {
+		t.Fatal("owned replay did not preserve response")
+	}
 }
 
 // The repository stands in for persistence; requests still cross the real
