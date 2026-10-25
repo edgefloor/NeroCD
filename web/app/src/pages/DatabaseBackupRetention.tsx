@@ -276,9 +276,10 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
       <p>
         Preview lists owned copies and protection reasons. Each execution
         deletes only the selected batch, up to 100 copies from an inventory of
-        up to 1,000. A later batch always needs a new explicit preview and
-        confirmation. Runner support and current destination authorization are
-        checked by the server.
+        up to 1,000. Every manual batch needs a new explicit preview and
+        confirmation. Automatic cleanup acts under the saved enabled policy
+        authorization when automatic retention is enabled. Runner support and
+        current destination authorization are checked by the server.
       </p>
       {!owner ? (
         <p>
@@ -355,9 +356,9 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
             Automatic retention
           </label>
           <p>
-            Automatic retention applies the saved policy when supported by the
-            runner. Manual deletion always requires the exact preview
-            confirmation below.
+            When enabled, automatic retention authorizes cleanup under the saved
+            enabled policy when supported by the runner. Each manual batch
+            requires the exact preview confirmation below.
           </p>
           {(["local", "remote"] as const).map((location) => (
             <fieldset

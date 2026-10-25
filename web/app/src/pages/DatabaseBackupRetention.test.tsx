@@ -454,3 +454,24 @@ test("all-protected previews cannot execute and Redis does not request retention
   expect(api.getRetentionPolicy).not.toHaveBeenCalled();
   expect(api.listRetentionExecutions).not.toHaveBeenCalled();
 });
+
+test("manual batches require confirmation while automatic cleanup uses saved policy authorization", async () => {
+  mount();
+  await button("Save retention policy");
+  expect(
+    screen.getByText(
+      /Every manual batch needs a new explicit preview and confirmation\./,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Automatic cleanup acts under the saved enabled policy authorization when automatic retention is enabled\./,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      /When enabled, automatic retention authorizes cleanup under the saved enabled policy when supported by the runner\./,
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText(/A later batch always needs/)).toBeNull();
+});
