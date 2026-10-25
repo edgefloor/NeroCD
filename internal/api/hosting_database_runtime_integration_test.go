@@ -137,6 +137,11 @@ var databaseRunnerDiagnosticRoutes = [...]struct{ method, path string }{
 	{"POST", "/api/v1/runners/hosting/database-binding/state"},
 	{"POST", "/api/v1/runners/hosting/database-binding/authorize"},
 	{"POST", "/api/v1/runners/hosting/database-binding/stage"},
+	{"POST", "/api/v1/runners/proxy/plan"},
+	{"POST", "/api/v1/runners/proxy/prepared"},
+	{"POST", "/api/v1/runners/proxy/apply-begin"},
+	{"POST", "/api/v1/runners/proxy/status"},
+	{"POST", "/api/v1/runners/proxy/complete"},
 	{"GET", "/api/v1/hosting-operations/{id}"},
 }
 
@@ -1677,6 +1682,21 @@ func TestDatabaseRunnerDiagnosticWhitelistRedaction(t *testing.T) {
 	w.WriteHeader(500)
 	if w.status != 200 || rec.Code != 200 || rec.Body.String() != secret {
 		t.Fatal("status observer changed API response semantics")
+	}
+}
+
+func TestDatabaseRunnerProxyDiagnosticWhitelist(t *testing.T) {
+	var counts databaseRunnerAPICounts
+	var want []string
+	for _, phase := range []string{"plan", "prepared", "apply-begin", "status", "complete"} {
+		path := "/api/v1/runners/proxy/" + phase
+		counts.record("POST", path, 200)
+		counts.record("POST", path+"?token=ncr_private", 200)
+		want = append(want, "POST "+path+" 200=1")
+	}
+	counts.record("POST", "/api/v1/runners/proxy/ncr_private", 200)
+	if got := counts.summary(); got != strings.Join(want, ",") || strings.Contains(got, "ncr_private") {
+		t.Fatal("proxy diagnostics omitted a fixed phase or included private request text")
 	}
 }
 

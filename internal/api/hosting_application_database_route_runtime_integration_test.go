@@ -462,8 +462,41 @@ func (v *applicationDatabaseRouteYieldWire) serve(w http.ResponseWriter, r *http
 	return true
 }
 
+func applicationDatabaseRouteProxySettled(p, expected domain.HostingProxy, daemon string) bool {
+	return expected.ID != "" && daemon != "" && p.ID == expected.ID && p.ServerID == expected.ServerID && p.DestinationID == expected.DestinationID && p.RunnerID == expected.RunnerID && p.ControlProjectID == expected.ControlProjectID && reflect.DeepEqual(p.Configuration, expected.Configuration) && p.Enabled && p.DaemonID == daemon && p.LoadedGeneration == p.DesiredGeneration && p.LoadedGeneration > 0 && p.ActiveOperationID == "" && p.HoldOperationID == "" && !p.RestoreOwnershipHeld
+}
+
+func applicationDatabaseRouteContinuity(p domain.HostingProxy, route domain.HostingRoute, options domain.HostingRouteSwitchOptions) (domain.HostingApplicationDatabaseRouteContinuityInput, error) {
+	var zero domain.HostingApplicationDatabaseRouteContinuityInput
+	if !applicationDatabaseRouteProxySettled(p, p, p.DaemonID) || !route.Enabled || !options.Available || options.Reason != "available" || options.PendingOperationID != "" || options.ResourceID != route.ResourceID || options.LoadedGeneration == nil || *options.LoadedGeneration != p.LoadedGeneration || options.LoadedProxyOperationID == nil || len(options.Routes) != 1 {
+		return zero, errors.New("public route continuation options do not match settled proxy")
+	}
+	selected := options.Routes[0]
+	if selected.ID != route.ID || selected.Version != route.Version || selected.SelectedReleaseOperationID != route.SelectedReleaseOperationID || selected.Hostname != route.Hostname || selected.PathPrefix != route.PathPrefix {
+		return zero, errors.New("public route continuation selection changed")
+	}
+	healthy := false
+	for _, target := range options.Targets {
+		if target.Kind == "current_healthy" {
+			if healthy || target.OperationID != route.SelectedReleaseOperationID {
+				return zero, errors.New("public route continuation healthy predecessor changed")
+			}
+			healthy = true
+		}
+	}
+	if !healthy {
+		return zero, errors.New("public route continuation lacks healthy predecessor")
+	}
+	return domain.CanonicalHostingApplicationDatabaseRouteContinuityInput(domain.HostingApplicationDatabaseRouteContinuityInput{ExpectedLoadedGeneration: *options.LoadedGeneration, ExpectedLoadedProxyOperationID: *options.LoadedProxyOperationID, Routes: []domain.HostingRouteSwitchSelection{{RouteID: selected.ID, ExpectedVersion: selected.Version, ExpectedSelectedReleaseOperationID: selected.SelectedReleaseOperationID}}})
+}
+
 func (r *applicationDatabaseRouteFixture) deployment(in domain.HostingDeploymentInput) any {
 	r.awaitProxy()
+	options := databaseRunnerJSON[domain.HostingRouteSwitchOptions](r.f, r.f.token, "GET", "/api/v1/resources/"+r.route.ResourceID+"/route-switches", nil, 200)
+	continuity, err := applicationDatabaseRouteContinuity(r.proxy, r.route, options)
+	if err != nil {
+		r.f.t.Fatal(err)
+	}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		r.f.t.Fatal("route deployment input unavailable")
@@ -472,7 +505,7 @@ func (r *applicationDatabaseRouteFixture) deployment(in domain.HostingDeployment
 	if json.Unmarshal(raw, &out) != nil {
 		r.f.t.Fatal("route deployment input malformed")
 	}
-	out["application_database_route_continuity"] = map[string]any{"expected_loaded_generation": r.proxy.LoadedGeneration, "expected_loaded_proxy_operation_id": r.proxy.ActiveOperationID, "routes": []domain.HostingRouteSwitchSelection{{RouteID: r.route.ID, ExpectedVersion: r.route.Version, ExpectedSelectedReleaseOperationID: r.route.SelectedReleaseOperationID}}}
+	out["application_database_route_continuity"] = continuity
 	return out
 }
 
@@ -716,12 +749,12 @@ func (r *applicationDatabaseRouteFixture) awaitProxy() {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		p := databaseRunnerJSON[domain.HostingProxy](f, f.adminToken, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
-		if p.LoadedGeneration == p.DesiredGeneration && p.LoadedGeneration > 0 && p.ActiveOperationID != "" && p.HoldOperationID == "" && !p.RestoreOwnershipHeld {
+		if applicationDatabaseRouteProxySettled(p, r.proxy, r.daemonID) {
 			r.proxy = p
 			return
 		}
 		if time.Now().After(deadline) || f.process.status().Exited {
-			f.t.Fatal("managed route generation failed to load")
+			f.t.Fatalf("managed route generation failed to load: loaded=%d desired=%d active=%t held=%t restore_held=%t identity_match=%t daemon_match=%t", p.LoadedGeneration, p.DesiredGeneration, p.ActiveOperationID != "", p.HoldOperationID != "", p.RestoreOwnershipHeld, p.ID == r.proxy.ID && p.ServerID == r.proxy.ServerID && p.DestinationID == r.proxy.DestinationID && p.RunnerID == r.proxy.RunnerID, p.DaemonID == r.daemonID)
 		}
 		select {
 		case <-f.t.Context().Done():
@@ -835,6 +868,155 @@ func (r *applicationDatabaseRouteFixture) cleanup() {
 		f.t.Error(err)
 	} else {
 		f.t.Log("exact managed proxy absent and proxy listener ports free")
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeSettledProxy(t *testing.T) {
+	expected := domain.HostingProxy{ID: "proxy_fixture", ServerID: "server_fixture", DestinationID: "destination_fixture", RunnerID: "runner_fixture", ControlProjectID: "proj_fixture", Enabled: true, DaemonID: "daemon_fixture", LoadedGeneration: 3, DesiredGeneration: 3}
+	for _, test := range []struct {
+		name   string
+		change func(*domain.HostingProxy)
+		want   bool
+	}{
+		{"settled", func(*domain.HostingProxy) {}, true},
+		{"active", func(p *domain.HostingProxy) { p.ActiveOperationID = "pop_running" }, false},
+		{"held", func(p *domain.HostingProxy) { p.HoldOperationID = "pop_held" }, false},
+		{"restore held", func(p *domain.HostingProxy) { p.RestoreOwnershipHeld = true }, false},
+		{"unloaded", func(p *domain.HostingProxy) { p.LoadedGeneration = 0; p.DesiredGeneration = 0 }, false},
+		{"pending generation", func(p *domain.HostingProxy) { p.DesiredGeneration++ }, false},
+		{"proxy identity", func(p *domain.HostingProxy) { p.ID = "proxy_other" }, false},
+		{"server identity", func(p *domain.HostingProxy) { p.ServerID = "server_other" }, false},
+		{"destination identity", func(p *domain.HostingProxy) { p.DestinationID = "destination_other" }, false},
+		{"runner identity", func(p *domain.HostingProxy) { p.RunnerID = "runner_other" }, false},
+		{"project identity", func(p *domain.HostingProxy) { p.ControlProjectID = "proj_other" }, false},
+		{"daemon identity", func(p *domain.HostingProxy) { p.DaemonID = "daemon_other" }, false},
+		{"disabled", func(p *domain.HostingProxy) { p.Enabled = false }, false},
+		{"configuration", func(p *domain.HostingProxy) { p.Configuration.ManagementPort = 19081 }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p := expected
+			test.change(&p)
+			if got := applicationDatabaseRouteProxySettled(p, expected, expected.DaemonID); got != test.want {
+				t.Fatalf("settled=%t want=%t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeLoadedPredecessor(t *testing.T) {
+	p := domain.HostingProxy{ID: "proxy_fixture", Enabled: true, DaemonID: "daemon_fixture", LoadedGeneration: 3, DesiredGeneration: 3}
+	route := domain.HostingRoute{ID: "route_fixture", ResourceID: "resource_fixture", Version: 2, SelectedReleaseOperationID: "hop_previous", Hostname: "connected-postgresql.example.test", PathPrefix: "/", Enabled: true}
+	valid := func() domain.HostingRouteSwitchOptions {
+		generation, operation := p.LoadedGeneration, "pop_loaded"
+		return domain.HostingRouteSwitchOptions{ResourceID: route.ResourceID, LoadedGeneration: &generation, LoadedProxyOperationID: &operation, Available: true, Reason: "available", Routes: []domain.HostingRouteSwitchRoute{{ID: route.ID, Version: route.Version, SelectedReleaseOperationID: route.SelectedReleaseOperationID, Hostname: route.Hostname, PathPrefix: route.PathPrefix}}, Targets: []domain.HostingRouteSwitchTarget{{OperationID: route.SelectedReleaseOperationID, Kind: "current_healthy"}}}
+	}
+	t.Run("public loaded predecessor", func(t *testing.T) {
+		options := valid()
+		wire, err := json.Marshal(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded domain.HostingRouteSwitchOptions
+		if err := json.Unmarshal(wire, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		in, err := applicationDatabaseRouteContinuity(p, route, decoded)
+		if err != nil || in.ExpectedLoadedProxyOperationID != "pop_loaded" || in.ExpectedLoadedGeneration != 3 || len(in.Routes) != 1 || in.Routes[0] != (domain.HostingRouteSwitchSelection{RouteID: route.ID, ExpectedVersion: 2, ExpectedSelectedReleaseOperationID: "hop_previous"}) {
+			t.Fatal("continuity did not use the exact public loaded predecessor and route")
+		}
+	})
+	for _, test := range []struct {
+		name   string
+		change func(*domain.HostingRouteSwitchOptions)
+	}{
+		{"unavailable", func(o *domain.HostingRouteSwitchOptions) { o.Available = false }},
+		{"busy reason", func(o *domain.HostingRouteSwitchOptions) { o.Reason = "busy" }},
+		{"pending", func(o *domain.HostingRouteSwitchOptions) { o.PendingOperationID = "pop_pending" }},
+		{"cross resource", func(o *domain.HostingRouteSwitchOptions) { o.ResourceID = "resource_other" }},
+		{"no generation", func(o *domain.HostingRouteSwitchOptions) { o.LoadedGeneration = nil }},
+		{"stale generation", func(o *domain.HostingRouteSwitchOptions) { *o.LoadedGeneration-- }},
+		{"no predecessor", func(o *domain.HostingRouteSwitchOptions) { o.LoadedProxyOperationID = nil }},
+		{"empty predecessor", func(o *domain.HostingRouteSwitchOptions) { *o.LoadedProxyOperationID = "" }},
+		{"malformed predecessor", func(o *domain.HostingRouteSwitchOptions) { *o.LoadedProxyOperationID = "../foreign" }},
+		{"no route", func(o *domain.HostingRouteSwitchOptions) { o.Routes = nil }},
+		{"extra route", func(o *domain.HostingRouteSwitchOptions) { o.Routes = append(o.Routes, o.Routes[0]) }},
+		{"route identity", func(o *domain.HostingRouteSwitchOptions) { o.Routes[0].ID = "route_other" }},
+		{"route version", func(o *domain.HostingRouteSwitchOptions) { o.Routes[0].Version++ }},
+		{"route predecessor", func(o *domain.HostingRouteSwitchOptions) { o.Routes[0].SelectedReleaseOperationID = "hop_other" }},
+		{"hostname", func(o *domain.HostingRouteSwitchOptions) { o.Routes[0].Hostname = "other.example.test" }},
+		{"path", func(o *domain.HostingRouteSwitchOptions) { o.Routes[0].PathPrefix = "/other" }},
+		{"missing healthy", func(o *domain.HostingRouteSwitchOptions) { o.Targets = nil }},
+		{"retained target", func(o *domain.HostingRouteSwitchOptions) { o.Targets[0].Kind = "retained" }},
+		{"other healthy", func(o *domain.HostingRouteSwitchOptions) { o.Targets[0].OperationID = "hop_other" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options := valid()
+			test.change(&options)
+			if _, err := applicationDatabaseRouteContinuity(p, route, options); err == nil {
+				t.Fatal("mismatched public route choices accepted")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeDeploymentPublicProjection(t *testing.T) {
+	p := domain.HostingProxy{ID: "proxy_fixture", ServerID: "server_fixture", DestinationID: "destination_fixture", RunnerID: "runner_fixture", ControlProjectID: "proj_fixture", Enabled: true, DaemonID: "daemon_fixture", LoadedGeneration: 3, DesiredGeneration: 3}
+	route := domain.HostingRoute{ID: "route_fixture", ResourceID: "resource_fixture", Version: 2, SelectedReleaseOperationID: "hop_previous", Hostname: "connected-postgresql.example.test", PathPrefix: "/", Enabled: true}
+	loaded := "pop_loaded"
+	options := domain.HostingRouteSwitchOptions{ResourceID: route.ResourceID, LoadedGeneration: &p.LoadedGeneration, LoadedProxyOperationID: &loaded, Available: true, Reason: "available", Routes: []domain.HostingRouteSwitchRoute{{ID: route.ID, Version: route.Version, SelectedReleaseOperationID: route.SelectedReleaseOperationID, Hostname: route.Hostname, PathPrefix: route.PathPrefix}}, Targets: []domain.HostingRouteSwitchTarget{{OperationID: route.SelectedReleaseOperationID, Kind: "current_healthy"}}}
+	requests := make(chan string, 2)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body any
+		switch r.URL.Path {
+		case "/api/v1/servers/server_fixture/proxy":
+			if r.Header.Get("Authorization") != "Bearer fixture_admin" {
+				t.Error("proxy read lost admin authentication")
+			}
+			body = p
+		case "/api/v1/resources/resource_fixture/route-switches":
+			if r.Header.Get("Authorization") != "Bearer fixture_owner" {
+				t.Error("route options lost owner authentication")
+			}
+			body = options
+		default:
+			t.Error("unexpected fixture request")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodGet {
+			t.Error("route projection read mutated state")
+		}
+		requests <- r.URL.Path
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), token: "fixture_owner", adminToken: "fixture_admin", serverID: p.ServerID}
+	r := &applicationDatabaseRouteFixture{f: f, proxy: p, route: route, daemonID: p.DaemonID}
+	input := domain.HostingDeploymentInput{ExpectedGeneration: 9, IdempotencyKey: "redeploy_fixture", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 10}}
+	wire, err := json.Marshal(r.deployment(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got domain.HostingDeploymentInput
+	if err := json.Unmarshal(wire, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := input
+	want.ApplicationDatabaseRouteContinuity = &domain.HostingApplicationDatabaseRouteContinuityInput{ExpectedLoadedGeneration: 3, ExpectedLoadedProxyOperationID: loaded, Routes: []domain.HostingRouteSwitchSelection{{RouteID: route.ID, ExpectedVersion: 2, ExpectedSelectedReleaseOperationID: route.SelectedReleaseOperationID}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("deployment lost reviewed public predecessor or existing deployment settings")
+	}
+	for _, path := range []string{"/api/v1/servers/server_fixture/proxy", "/api/v1/resources/resource_fixture/route-switches"} {
+		select {
+		case got := <-requests:
+			if got != path {
+				t.Fatal("deployment did not read public proxy and resource projection in order")
+			}
+		default:
+			t.Fatal("deployment skipped public projection")
+		}
 	}
 }
 
