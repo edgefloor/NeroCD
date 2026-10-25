@@ -44,19 +44,27 @@ type runtimeConfig struct {
 	hostingGitHosts             []string
 	hostingBuildPolicy          *domain.HostingBuildPolicy
 	hostingStorageArchivePolicy *hostingStorageArchivePolicy
+	databaseBackupLimits        *domain.HostingDatabaseBackupLimits
 }
 
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
+	backupBytes := fs.Int64("database-backup-max-bytes", domain.HostingDatabaseBackupMaxBytes, "operator limit for each local hosted PostgreSQL logical dump")
+	backupTimeout := fs.Int("database-backup-timeout-seconds", 900, "operator timeout for each hosted PostgreSQL dump or restore, including guest tools")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	limits := domain.HostingDatabaseBackupLimits{MaxBytes: *backupBytes, TimeoutSeconds: *backupTimeout}
+	if limits.Validate() != nil {
+		return errors.New("database backup limits require 5 bytes through 1 GiB and 1 through 3600 seconds")
 	}
 	cfg, err := loadRuntimeConfig(*addr)
 	if err != nil {
 		return err
 	}
 
+	cfg.databaseBackupLimits = &limits
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	service, closeStore, err := newService(context.Background(), cfg)
 	if err != nil {
@@ -232,6 +240,9 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 }
 
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
+	if cfg.databaseBackupLimits != nil && cfg.databaseBackupLimits.Validate() != nil {
+		return nil, nil, domain.ErrInvalidDatabaseBackup
+	}
 	if cfg.hostingStorageArchivePolicy != nil && cfg.databaseURL == "" {
 		return nil, nil, errors.New("hosting storage archive controller requires PostgreSQL")
 	}
@@ -239,6 +250,12 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 		pg, err := store.OpenPostgres(ctx, cfg.databaseURL)
 		if err != nil {
 			return nil, nil, err
+		}
+		if cfg.databaseBackupLimits != nil {
+			if err := pg.ConfigureDatabaseBackupLimits(*cfg.databaseBackupLimits); err != nil {
+				_ = pg.Close()
+				return nil, nil, err
+			}
 		}
 		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: cfg.secretKeyring, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})
 		if err != nil {

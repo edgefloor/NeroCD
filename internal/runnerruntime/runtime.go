@@ -308,6 +308,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, proxyReplayConfig, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
+	if err := reconcileDatabaseBackupJournal(ctx, config, journal); err != nil {
+		return err
+	}
 	if err := reconcileStorageArchiveJournal(ctx, config, journal); err != nil {
 		return err
 	}
@@ -492,7 +495,11 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup {
+		if options.database == nil || !options.database.LogicalBackups || domain.ValidateDatabaseBackupTask(claim.Run) != nil {
+			return errors.New("invalid or unconfigured database backup task")
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
 		if options.storageArchive == nil || domain.ValidateStorageArchiveTask(claim.Run) != nil {
 			return errors.New("invalid or unconfigured storage archive task")
 		}
@@ -569,7 +576,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -588,6 +595,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup {
+		return executeDatabaseBackupClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
 		return executeStorageArchiveClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.storageArchive)
 	}

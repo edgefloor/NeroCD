@@ -19,6 +19,7 @@ type DatabaseExecutionConfig struct {
 	RouteContinuity       bool
 	ApplicationStorage    bool
 	MembershipMaintenance bool
+	LogicalBackups        bool
 }
 
 // Format redacts protected host paths for every formatting verb.
