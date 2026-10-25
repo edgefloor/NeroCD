@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -179,6 +180,46 @@ func backupRuntimeApplication(f *databaseRunnerFixture, db domain.HostingDatabas
 	return backupRuntimeApplicationObserved(f, db, suffix, nil)
 }
 
+// Docker start acknowledges the process, not PostgreSQL readiness. Probe the
+// original application, whose /ready opens a fresh authenticated DB connection,
+// before retaining the existing single-attempt source data assertions.
+func backupRuntimeWaitApplicationReady(parent context.Context, op domain.HostingOperation) error {
+	if op.Result == nil || len(op.Result.ContainerID) != 64 || strings.Trim(op.Result.ContainerID, "0123456789abcdef") != "" || op.Snapshot.HostPort < 1024 || op.Snapshot.HostPort > 65535 || op.Snapshot.Readiness.Path != "/ready" || op.Snapshot.Readiness.TimeoutSeconds < 1 || op.Snapshot.Readiness.TimeoutSeconds > 30 {
+		return errors.New("source application readiness target invalid")
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(op.Snapshot.Readiness.TimeoutSeconds)*time.Second)
+	defer cancel()
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, MaxResponseHeaderBytes: 4096, ResponseHeaderTimeout: 2 * time.Second}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort)+"/ready", nil)
+		if err != nil {
+			return errors.New("source application readiness request invalid")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			raw, readErr := io.ReadAll(io.LimitReader(response.Body, 65))
+			closeErr := response.Body.Close()
+			ready := readErr == nil && closeErr == nil && response.StatusCode == http.StatusOK && response.Header.Get("X-NeroCD-Fixture-Instance") == op.Result.ContainerID[:12] && string(raw) == "ready"
+			clear(raw)
+			if ready && ctx.Err() == nil {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.HostingDatabase, suffix string, observe func(string, string)) domain.HostingOperation {
 	f.t.Helper()
 	progress := func(stage, connection string) {
@@ -295,6 +336,9 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	}
 	browser.recordProgress("target_data_verified", "")
 	f.docker("container", "start", sourceOp.Result.ContainerID)
+	if backupRuntimeWaitApplicationReady(f.t.Context(), a) != nil {
+		t.Fatal("source application did not regain exact-instance database readiness")
+	}
 	f.appRecord(a, "GET", "before", "application_origin")
 	f.appRecord(a, "GET", "after_snapshot", "source_still_writable")
 	f.appRecord(a, "PUT", "source_new", "source_new_write")
@@ -1124,6 +1168,145 @@ func TestDatabaseBackupProgressEmitsBeforeBrowserFailure(t *testing.T) {
 	b.recordProgress("ncr_progress_canary_private", "")
 	if strings.Contains(output.String(), "ncr_progress_canary_private") || !strings.Contains(output.String(), `"Stage":"unknown"`) {
 		t.Fatal("live progress bypassed the closed projection")
+	}
+}
+
+func backupReadinessTestOperation(t *testing.T, server *httptest.Server) domain.HostingOperation {
+	t.Helper()
+	_, textPort, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(textPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return domain.HostingOperation{Snapshot: domain.HostingSnapshot{HostPort: port, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 1}}, Result: &domain.HostingResult{ContainerID: strings.Repeat("a", 64)}}
+}
+
+func TestDatabaseBackupSourceRestartReadiness(t *testing.T) {
+	var mu sync.Mutex
+	probes, ready := 0, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("X-NeroCD-Fixture-Instance", strings.Repeat("a", 12))
+		if r.Method == http.MethodGet && r.URL.Path == "/ready" {
+			probes++
+			ready = probes >= 2
+			if ready {
+				_, _ = io.WriteString(w, "ready")
+				return
+			}
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/records/before" && ready {
+			_, _ = io.WriteString(w, "saved_application_record")
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	read := func() (int, string) {
+		t.Helper()
+		client := &http.Client{Timeout: time.Second}
+		response, err := client.Get(server.URL + "/records/before")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, string(raw)
+	}
+	if status, _ := read(); status != http.StatusServiceUnavailable {
+		t.Fatal("immediate post-start read did not reproduce unavailable database")
+	}
+	if err := backupRuntimeWaitApplicationReady(t.Context(), backupReadinessTestOperation(t, server)); err != nil {
+		t.Fatal("source did not become ready", err)
+	}
+	if status, body := read(); status != http.StatusOK || body != "saved_application_record" {
+		t.Fatal("single source data assertion did not follow readiness")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if probes != 2 {
+		t.Fatal("readiness did not observe the controlled unavailable-to-ready transition")
+	}
+}
+
+func TestDatabaseBackupSourceReadinessRejectsWrongEvidenceAndCancellation(t *testing.T) {
+	for _, kind := range []string{"instance", "body"} {
+		t.Run(kind, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-NeroCD-Fixture-Instance", strings.Repeat("a", 12))
+				body := "ready"
+				if kind == "instance" {
+					w.Header().Set("X-NeroCD-Fixture-Instance", strings.Repeat("b", 12))
+				} else {
+					body = "ncr_source_readiness_canary"
+				}
+				_, _ = io.WriteString(w, body)
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			err := backupRuntimeWaitApplicationReady(ctx, backupReadinessTestOperation(t, server))
+			if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "ncr_source_readiness_canary") {
+				t.Fatal("wrong readiness evidence was accepted or leaked")
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("canceled readiness started a request") }))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := backupRuntimeWaitApplicationReady(ctx, backupReadinessTestOperation(t, server)); !errors.Is(err, context.Canceled) {
+		t.Fatal("readiness ignored caller cancellation")
+	}
+	started, handlerDone := make(chan struct{}), make(chan struct{})
+	inflight := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(handlerDone)
+	}))
+	defer inflight.Close()
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	op := backupReadinessTestOperation(t, inflight)
+	go func() { done <- backupRuntimeWaitApplicationReady(ctx, op) }()
+	joined := false
+	defer func() {
+		cancel()
+		if !joined {
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Error("readiness worker did not join during cleanup")
+			}
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("readiness request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		joined = true
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("in-flight readiness ignored caller cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("readiness request did not join after cancellation")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("canceled readiness transport retained its request")
 	}
 }
 
