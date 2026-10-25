@@ -23,6 +23,13 @@ Access and secret keys use the existing envelope encryption and operator key
 recovery configuration. Ordinary project API responses, task arguments,
 execution plans and journal records contain no plaintext S3 credentials.
 Transfer plans contain opaque credential references and a saved target revision.
+Each protected credential delivery expires within one minute. Signing and active
+HTTP bodies remain bound to that grant. Longer transfers obtain fresh protected
+deliveries before expiry using the same immutable references, plan and full
+attempt authority; the returned key bytes must match. Only a server-issued
+`use_until` can renew that use. Revocation, a late refresh or caller cancellation
+cancels the active request and forbids later signing. The original operation
+timeout remains the outer bound; renewal never extends it.
 The protected delivery response binds the purpose, target revision, plan hash,
 runner, full attempt authority and deadline. Buffers owned by NeroCD are cleared;
 the standard Go JSON and SDK signing implementations also create temporary

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -47,7 +48,19 @@ func backupRemoteFailure(err error) error {
 	return backupRemoteError("remote_unavailable")
 }
 
+// A refresh is a fresh protected delivery for the same immutable references.
+// It must finish under the preceding grant; it cannot resurrect expired use.
+type backupRemoteGrant struct {
+	useUntil time.Time
+	refresh  func(context.Context, []byte, []byte) (time.Time, error)
+}
+
 type backupRemoteS3 struct {
+	lifetime  context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	grantMu   sync.Mutex
+	useUntil  time.Time
 	client    *s3.Client
 	transport *backupRemoteTransport
 	access    []byte
@@ -57,32 +70,111 @@ type backupRemoteS3 struct {
 // Credentials are owned copies, cleared at Close, never environment-derived or
 // cached by an SDK credential cache. Signing necessarily creates temporary Go
 // strings inside the maintained SDK; those cannot be erased by this caller.
-func newBackupRemoteS3(ctx context.Context, target domain.HostingDatabaseBackupTarget, access, secret []byte, policy backupRemoteNetworkPolicy, timeout time.Duration) (*backupRemoteS3, error) {
-	if target.Validate() != nil || len(access) < 1 || len(access) > 256 || len(secret) < 1 || len(secret) > 4096 || timeout < time.Second || timeout > time.Hour {
+func newBackupRemoteS3(ctx context.Context, target domain.HostingDatabaseBackupTarget, access, secret []byte, policy backupRemoteNetworkPolicy, timeout time.Duration, grant backupRemoteGrant) (*backupRemoteS3, error) {
+	if target.Validate() != nil || len(access) < 1 || len(access) > 256 || len(secret) < 1 || len(secret) > 4096 || timeout < time.Second || timeout > time.Hour || !time.Now().Before(grant.useUntil) {
 		return nil, backupRemoteError("authority_denied")
 	}
-	transport, err := newBackupRemoteTransport(ctx, target.Endpoint, policy)
+	opening, stopOpening := context.WithDeadline(ctx, grant.useUntil)
+	defer stopOpening()
+	transport, err := newBackupRemoteTransport(opening, target.Endpoint, policy)
 	if err != nil {
 		return nil, backupRemoteFailure(err)
 	}
-	c := &backupRemoteS3{transport: transport, access: append([]byte(nil), access...), secret: append([]byte(nil), secret...)}
+	lifetime, cancel := context.WithCancel(ctx)
+	c := &backupRemoteS3{lifetime: lifetime, cancel: cancel, done: make(chan struct{}), useUntil: grant.useUntil, transport: transport, access: append([]byte(nil), access...), secret: append([]byte(nil), secret...)}
 	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return errBackupRemoteNetwork }}
 	c.client = s3.New(s3.Options{
 		Region: target.Region, BaseEndpoint: aws.String(target.Endpoint), UsePathStyle: true,
 		Credentials: aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-			if ctx.Err() != nil || len(c.access) == 0 || len(c.secret) == 0 {
+			if ctx.Err() != nil || c.lifetime.Err() != nil || !time.Now().Before(c.grantDeadline()) || len(c.access) == 0 || len(c.secret) == 0 {
 				return aws.Credentials{}, backupRemoteError("authority_denied")
 			}
-			return aws.Credentials{AccessKeyID: string(c.access), SecretAccessKey: string(c.secret), Source: "nerocd-scoped-backup-delivery"}, nil
+			return aws.Credentials{AccessKeyID: string(c.access), SecretAccessKey: string(c.secret), Source: "nerocd-scoped-backup-delivery", CanExpire: true, Expires: c.grantDeadline()}, nil
 		}),
 		HTTPClient: client, RetryMaxAttempts: 1,
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
+	go c.maintainGrant(grant.refresh)
 	return c, nil
 }
 
+func (c *backupRemoteS3) grantDeadline() time.Time {
+	c.grantMu.Lock()
+	defer c.grantMu.Unlock()
+	return c.useUntil
+}
+
+// One owned watcher cancels active requests on revocation, expiry or shutdown.
+// The expiry callback remains armed while refresh waits for the controller.
+func (c *backupRemoteS3) maintainGrant(refresh func(context.Context, []byte, []byte) (time.Time, error)) {
+	defer close(c.done)
+	for {
+		until := c.grantDeadline()
+		grantCtx, stopGrant := context.WithDeadline(c.lifetime, until)
+		expired := make(chan struct{})
+		stopExpiry := context.AfterFunc(grantCtx, func() { c.cancel(); close(expired) })
+		finish := func() bool {
+			stopped := stopExpiry()
+			if !stopped {
+				<-expired
+			}
+			stopGrant()
+			return stopped
+		}
+		wait := time.Until(until)
+		if refresh != nil {
+			wait /= 2
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-c.lifetime.Done():
+			timer.Stop()
+			finish()
+			return
+		case <-timer.C:
+		}
+		if refresh == nil {
+			finish()
+			c.cancel()
+			return
+		}
+		next, err := refresh(grantCtx, c.access, c.secret)
+		valid := err == nil && grantCtx.Err() == nil && time.Now().Before(until) && next.After(until)
+		stopped := finish()
+		if !valid || !stopped {
+			c.cancel()
+			return
+		}
+		c.grantMu.Lock()
+		if c.lifetime.Err() != nil || !time.Now().Before(until) {
+			c.grantMu.Unlock()
+			c.cancel()
+			return
+		}
+		c.useUntil = next
+		c.grantMu.Unlock()
+	}
+}
+
+func (c *backupRemoteS3) requestContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	joined := make(chan struct{})
+	stop := context.AfterFunc(c.lifetime, func() { cancel(); close(joined) })
+	if c.lifetime.Err() != nil || !time.Now().Before(c.grantDeadline()) {
+		cancel()
+	}
+	return ctx, func() {
+		if !stop() {
+			<-joined
+		}
+		cancel()
+	}
+}
+
 func (c *backupRemoteS3) Close() {
+	c.cancel()
+	<-c.done
 	clear(c.access)
 	clear(c.secret)
 	c.access = nil
@@ -91,6 +183,8 @@ func (c *backupRemoteS3) Close() {
 }
 
 func (c *backupRemoteS3) validate(ctx context.Context, bucket string) error {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
 	_, err := c.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket), MaxKeys: aws.Int32(1)})
 	return backupRemoteFailure(err)
 }
@@ -98,6 +192,8 @@ func (c *backupRemoteS3) validate(ctx context.Context, bucket string) error {
 // download always reads and verifies the remote object, even if a valid local
 // archive exists. The caller must write into a protected unpublished staging file.
 func (c *backupRemoteS3) download(ctx context.Context, bucket, key string, blob domain.HostingDatabaseBackupBlob, dst io.Writer) error {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
 	if blob.Validate() != nil || dst == nil {
 		return backupRemoteError("object_mismatch")
 	}
@@ -135,6 +231,8 @@ func remoteObjectMissing(err error) bool {
 }
 
 func (c *backupRemoteS3) upload(ctx context.Context, bucket, key string, blob domain.HostingDatabaseBackupBlob, src io.ReadSeeker) error {
+	ctx, cancel := c.requestContext(ctx)
+	defer cancel()
 	if blob.Validate() != nil || src == nil {
 		return backupRemoteError("archive_unavailable")
 	}

@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func remoteS3Fixture(t *testing.T, handler http.HandlerFunc) (*backupRemoteS3, d
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	target := domain.HostingDatabaseBackupTarget{ID: "target", ProjectID: "project", Version: domain.HostingDatabaseBackupTargetVersion, Revision: 1, Name: "fixture", Endpoint: server.URL, Bucket: "fixture-backups", Region: "us-east-1", Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	client, err := newBackupRemoteS3(t.Context(), target, []byte("fixture-access-canary"), []byte("fixture-secret-canary"), backupRemoteNetworkPolicy{fixtureOrigin: server.URL}, time.Second)
+	client, err := newBackupRemoteS3(t.Context(), target, []byte("fixture-access-canary"), []byte("fixture-secret-canary"), backupRemoteNetworkPolicy{fixtureOrigin: server.URL}, time.Second, backupRemoteGrant{useUntil: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,5 +176,168 @@ func TestBackupRemoteNetworkPolicyAndRebinding(t *testing.T) {
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://object.example/bucket", nil)
 	if _, err = transport.RoundTrip(req); err != errBackupRemoteNetwork {
 		t.Fatal("DNS rebinding was not rejected before dial")
+	}
+}
+
+func TestBackupRemoteS3RefreshesGrantDuringLongBody(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	data := []byte("PGDMPa body spanning several independent credential grants")
+	sum := sha256.Sum256(data)
+	blob := domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%x", sum), Bytes: int64(len(data)), Format: "postgresql_custom"}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		_, _ = w.Write(data[:5])
+		w.(http.Flusher).Flush()
+		close(started)
+		select {
+		case <-release:
+			_, _ = w.Write(data[5:])
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	target := domain.HostingDatabaseBackupTarget{ID: "target", ProjectID: "project", Version: domain.HostingDatabaseBackupTargetVersion, Revision: 1, Name: "fixture", Endpoint: server.URL, Bucket: "fixture-backups", Region: "us-east-1", Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	grants := make(chan struct{}, 8)
+	firstUntil := time.Now().Add(300 * time.Millisecond)
+	grant := backupRemoteGrant{useUntil: firstUntil, refresh: func(ctx context.Context, access, secret []byte) (time.Time, error) {
+		if ctx.Err() != nil || !bytes.Equal(access, []byte("access")) || !bytes.Equal(secret, []byte("secret")) {
+			return time.Time{}, backupRemoteError("authority_denied")
+		}
+		grants <- struct{}{}
+		return time.Now().Add(300 * time.Millisecond), nil
+	}}
+	client, err := newBackupRemoteS3(ctx, target, []byte("access"), []byte("secret"), backupRemoteNetworkPolicy{fixtureOrigin: server.URL}, 4*time.Second, grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	done := make(chan error, 1)
+	var body bytes.Buffer
+	go func() { done <- client.download(ctx, target.Bucket, "archive", blob, &body) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("body did not start")
+	}
+	for range 3 {
+		select {
+		case <-grants:
+		case <-ctx.Done():
+			t.Fatal("fresh grant not obtained")
+		}
+	}
+	if time.Now().Before(firstUntil) {
+		t.Fatal("fixture did not cross the first grant deadline")
+	}
+	close(release)
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		t.Fatal("long body did not join")
+	}
+	if err != nil || !bytes.Equal(body.Bytes(), data) {
+		t.Fatal("fresh authorized grants failed to preserve long transfer", err)
+	}
+}
+
+func TestBackupRemoteS3GrantFailureCancelsActiveBodyAndLaterSigning(t *testing.T) {
+	for _, kind := range []string{"no_refresh", "denied", "late_refresh", "caller_cancel"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+			defer cancel()
+			data := []byte("PGDMPblocked body")
+			sum := sha256.Sum256(data)
+			blob := domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%x", sum), Bytes: int64(len(data)), Format: "postgresql_custom"}
+			started := make(chan struct{})
+			canceled := make(chan struct{})
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+				_, _ = w.Write(data[:5])
+				w.(http.Flusher).Flush()
+				close(started)
+				<-r.Context().Done()
+				close(canceled)
+			}))
+			defer server.Close()
+			target := domain.HostingDatabaseBackupTarget{ID: "target", ProjectID: "project", Version: domain.HostingDatabaseBackupTargetVersion, Revision: 1, Name: "fixture", Endpoint: server.URL, Bucket: "fixture-backups", Region: "us-east-1", Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			lateReturn := make(chan struct{})
+			refreshJoined := make(chan struct{})
+			grant := backupRemoteGrant{useUntil: time.Now().Add(300 * time.Millisecond)}
+			switch kind {
+			case "denied":
+				grant.refresh = func(context.Context, []byte, []byte) (time.Time, error) {
+					defer close(refreshJoined)
+					return time.Time{}, backupRemoteError("authority_denied")
+				}
+			case "late_refresh":
+				grant.refresh = func(ctx context.Context, _, _ []byte) (time.Time, error) {
+					defer close(refreshJoined)
+					<-ctx.Done()
+					<-lateReturn
+					return time.Now().Add(time.Minute), nil
+				}
+			}
+			client, err := newBackupRemoteS3(ctx, target, []byte("access"), []byte("secret"), backupRemoteNetworkPolicy{fixtureOrigin: server.URL}, 3*time.Second, grant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Release a deliberately late refresh before closing its owning client.
+			defer client.Close()
+			if kind == "late_refresh" {
+				defer func() {
+					select {
+					case <-lateReturn:
+					default:
+						close(lateReturn)
+					}
+				}()
+			}
+			done := make(chan error, 1)
+			go func() { done <- client.download(ctx, target.Bucket, "archive", blob, io.Discard) }()
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal("body did not start")
+			}
+			if kind == "caller_cancel" {
+				cancel()
+			}
+			select {
+			case <-canceled:
+			case <-ctx.Done():
+				if kind != "caller_cancel" {
+					t.Fatal("grant failed to cancel in-flight body")
+				}
+				select {
+				case <-canceled:
+				case <-time.After(time.Second):
+					t.Fatal("caller cancellation failed to join HTTP")
+				}
+			}
+			if kind == "late_refresh" {
+				close(lateReturn)
+				select {
+				case <-refreshJoined:
+				case <-ctx.Done():
+					t.Fatal("late refresh did not join")
+				}
+			}
+			select {
+			case err = <-done:
+			case <-time.After(time.Second):
+				t.Fatal("body request did not join")
+			}
+			if err == nil {
+				t.Fatal("expired or denied grant accepted body")
+			}
+			if err = client.validate(t.Context(), target.Bucket); err == nil || requests.Load() != 1 {
+				t.Fatal("expired grant signed another request")
+			}
+		})
 	}
 }

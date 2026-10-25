@@ -4,9 +4,11 @@ package runnerruntime
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -87,10 +89,34 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 		return err
 	}
 	defer credentials.Close()
+	deliverySequence := 0
+	grant := backupRemoteGrant{useUntil: credentials.Metadata().UseUntil}
+	grant.refresh = func(refreshCtx context.Context, access, secret []byte) (time.Time, error) {
+		if err := before(refreshCtx); err != nil {
+			return time.Time{}, err
+		}
+		deliverySequence++
+		freshRequest := request
+		freshRequest.DeliveryID = attemptMutationKey("dbremotecredentials", a.LeaseID, a.Attempt, "renew_"+strconv.Itoa(deliverySequence))
+		fresh, err := c.HostingBackupRemoteCredentials(refreshCtx, p.RunnerID, freshRequest, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: config.TrustedLoopbackHTTP})
+		if err != nil {
+			return time.Time{}, err
+		}
+		defer fresh.Close()
+		if err = fresh.Use(func(nextAccess, nextSecret []byte) error {
+			if subtle.ConstantTimeCompare(access, nextAccess) != 1 || subtle.ConstantTimeCompare(secret, nextSecret) != 1 {
+				return errBackupRemoteHeld
+			}
+			return nil
+		}); err != nil {
+			return time.Time{}, err
+		}
+		return fresh.Metadata().UseUntil, nil
+	}
 	var remote *backupRemoteS3
 	err = credentials.Use(func(access, secret []byte) error {
 		var e error
-		remote, e = newBackupRemoteS3(ctx, p.Target.Target, access, secret, policy, time.Duration(p.TimeoutSeconds)*time.Second)
+		remote, e = newBackupRemoteS3(ctx, p.Target.Target, access, secret, policy, time.Duration(p.TimeoutSeconds)*time.Second, grant)
 		return e
 	})
 	if err != nil {
