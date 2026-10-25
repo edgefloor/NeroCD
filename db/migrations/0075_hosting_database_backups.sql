@@ -45,8 +45,20 @@ CREATE TABLE hosting_database_backup_receipts (
 );
 CREATE TRIGGER hosting_database_backup_receipts_immutable BEFORE UPDATE OR DELETE ON hosting_database_backup_receipts FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
 CREATE FUNCTION nerocd_database_backup_admission() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE original hosting_database_backups; child hosting_operations; source hosting_operations;
+DECLARE original hosting_database_backups; child hosting_operations; source hosting_operations; destination_key text;
 BEGIN
+ -- Use the existing destination admission lock before the stable role binding
+ -- row. Both role admissions serialize even when issued as direct SQL. The
+ -- following reads therefore see a competing admission after its commit.
+ FOR destination_key IN SELECT DISTINCT destination_id FROM resource_bindings WHERE id IN (NEW.source_binding_id,NEW.target_binding_id) ORDER BY destination_id LOOP
+  PERFORM pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||destination_key,0));
+ END LOOP;
+ PERFORM 1 FROM hosting_binding_state WHERE binding_id=CASE WHEN NEW.mode='backup' THEN NEW.source_binding_id ELSE NEW.target_binding_id END FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'database backup role binding unavailable' USING ERRCODE='23514'; END IF;
+ IF (NEW.mode='backup' AND EXISTS(SELECT 1 FROM hosting_database_backups b WHERE b.ownership_held AND b.target_binding_id=NEW.source_binding_id)) OR
+    (NEW.mode='restore' AND EXISTS(SELECT 1 FROM hosting_database_backups b WHERE b.ownership_held AND b.mode='backup' AND b.source_binding_id=NEW.target_binding_id)) THEN
+  RAISE EXCEPTION 'database backup binding role already owned' USING ERRCODE='23514';
+ END IF;
  SELECT * INTO source FROM hosting_operations WHERE id=NEW.plan->'source'->>'operation_id';
  IF source.id IS NULL OR source.resource_id<>NEW.source_resource_id OR source.binding_id<>NEW.source_binding_id OR source.project_id<>NEW.project_id OR NEW.plan->>'actor_id' IS DISTINCT FROM NEW.created_by OR NEW.plan->>'runner_id' IS DISTINCT FROM NEW.runner_id OR NEW.plan->'operation'->>'id' IS DISTINCT FROM NEW.id OR NEW.plan->'operation'->>'backup_id' IS DISTINCT FROM NEW.backup_id OR NEW.plan->'operation'->>'mode' IS DISTINCT FROM NEW.mode OR NEW.plan->'source'->'snapshot'->>'resource_generation' IS DISTINCT FROM NEW.source_generation::text OR NEW.plan->>'location_id' IS DISTINCT FROM NEW.backup_id OR NEW.plan->>'hash' IS DISTINCT FROM NEW.plan_hash OR NEW.run_id IS NOT NULL OR NOT NEW.ownership_held OR NOT EXISTS(SELECT 1 FROM hosting_apply_plans p WHERE p.operation_id=source.id AND p.body=NEW.plan->'source_plan' AND p.body_hash=NEW.plan->'source'->>'plan_hash') THEN RAISE EXCEPTION 'database backup admission identity mismatch' USING ERRCODE='23514'; END IF;
  IF NEW.mode='backup' THEN

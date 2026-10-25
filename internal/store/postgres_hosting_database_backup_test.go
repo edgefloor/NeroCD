@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
@@ -289,7 +292,7 @@ func TestPostgresDatabaseBackupRejectsRedis(t *testing.T) {
 	}
 }
 
-func prepareBackupRestoreChild(t *testing.T, f networkCaptureFixture, restored domain.HostingDatabaseBackupOperation, target domain.HostingDatabase) {
+func prepareBackupRestoreChild(t *testing.T, f networkCaptureFixture, restored domain.HostingDatabaseBackupOperation, target domain.HostingDatabase) (domain.HostingOperation, domain.HostingStorage) {
 	t.Helper()
 	var err error
 	var child string
@@ -319,9 +322,11 @@ func prepareBackupRestoreChild(t *testing.T, f networkCaptureFixture, restored d
 		t.Fatal(err)
 	}
 	result := domain.HostingCompleteRequest{HostingAuthority: tf.authority, ReceiptID: "restore_target_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: strings.Repeat("b", 64), ImageID: tf.op.Release.ImageID, DaemonID: tf.op.Release.DaemonID, PlanHash: tf.op.Plan.Hash}}
-	if _, err = tf.pg.HostingComplete(f.ctx, f.runner, result); err != nil {
+	settled, err := tf.pg.HostingComplete(f.ctx, f.runner, result)
+	if err != nil {
 		t.Fatal("private target child completion", err)
 	}
+	return settled, tf.storage
 }
 
 func TestPostgresDatabaseBackupUncertainRestoreDoesNotOwnSource(t *testing.T) {
@@ -422,5 +427,232 @@ func TestPostgresDatabaseBackupSavedLimitsSurviveNewOperatorPolicy(t *testing.T)
 	read, err := replacement.GetDatabaseBackup(f.ctx, "usr_bootstrap", b.ID)
 	if err != nil || read.MaxBytes != b.MaxBytes || read.TimeoutSeconds != b.TimeoutSeconds {
 		t.Fatal("new configuration rewrote an admitted limit", err)
+	}
+}
+
+func TestPostgresDatabaseBackupHeldRestoreTarget(t *testing.T) {
+	for _, phase := range []string{"waiting_target", "applying", "failed", "uncertain", "succeeded"} {
+		t.Run(phase, func(t *testing.T) {
+			f := backupFixture(t)
+			original, err := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "original", ExpectedResourceGeneration: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			original = completeBackup(t, f, original.ID)
+			restored, err := f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", Name: "Held restore target"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := f.service.GetHostingDatabase(f.ctx, restored.TargetResourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepareBackupRestoreChild(t, f, restored, target)
+			if phase != "waiting_target" {
+				a, p := claimBackup(t, f, restored.ID)
+				in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "restore_intent", PlanHash: p.Hash, Phase: "intent"}
+				if phase != "failed" {
+					if _, err = f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); err != nil {
+						t.Fatal(err)
+					}
+				}
+				switch phase {
+				case "failed":
+					in.Phase = "failed"
+					in.FailureCode = "execution_failed"
+				case "uncertain":
+					in.Phase = "uncertain"
+					in.FailureCode = "interrupted"
+				case "succeeded":
+					in.Phase = "complete"
+					in.Blob = original.Blob
+				}
+				if phase != "applying" {
+					in.ReceiptID = "restore_" + phase
+					if _, err = f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			var before int
+			if f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_database_backups`).Scan(&before) != nil {
+				t.Fatal("count")
+			}
+			_, err = f.service.RequestDatabaseBackup(f.ctx, target.Resource.ID, domain.HostingDatabaseBackupInput{RequestID: "target_backup", ExpectedResourceGeneration: 1})
+			if phase == "succeeded" {
+				if err != nil {
+					t.Fatal("settled restored database cannot be backed up", err)
+				}
+			} else {
+				if !errors.Is(err, store.ErrConflict) {
+					t.Fatalf("restore-held target backup accepted phase=%s err=%v", phase, err)
+				}
+				var after int
+				if f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_database_backups`).Scan(&after) != nil || after != before {
+					t.Fatal("denied backup admitted rows")
+				}
+				replay, e := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "original", ExpectedResourceGeneration: 1})
+				if e != nil || replay.ID != original.ID {
+					t.Fatal("original accepted backup replay blocked", e)
+				}
+				_, e = f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "live_source", ExpectedResourceGeneration: 1})
+				if e != nil {
+					t.Fatal("held restore incorrectly owns original source", e)
+				}
+			}
+		})
+	}
+}
+
+func TestPostgresDatabaseBackupHeldTargetDatabaseBoundarySerializes(t *testing.T) {
+	f := backupFixture(t)
+	original, err := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "original", ExpectedResourceGeneration: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original = completeBackup(t, f, original.ID)
+	restored, err := f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", Name: "Held target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := f.service.GetHostingDatabase(f.ctx, restored.TargetResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, storage := prepareBackupRestoreChild(t, f, restored, target)
+	var raw []byte
+	var healthy domain.HostingHealthy
+	if f.db.QueryRow(f.ctx, `SELECT healthy FROM hosting_binding_state WHERE binding_id=$1`, target.Binding.ID).Scan(&raw) != nil || json.Unmarshal(raw, &healthy) != nil {
+		t.Fatal("exact target healthy")
+	}
+	now := time.Now().UTC()
+	limits := domain.DefaultHostingDatabaseBackupLimits()
+	p := domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{ID: "direct_target_backup", Version: domain.HostingDatabaseBackupVersion, ProjectID: target.Resource.ProjectID, SourceResourceID: target.Resource.ID, SourceGeneration: 1, BackupID: "direct_target_backup", Mode: "backup", State: "queued", OwnershipHeld: true, Consistency: "logical_snapshot_source_writable", MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, CreatedAt: now, UpdatedAt: now}, ActorID: target.Resource.CreatedBy, RunnerID: f.runner, Source: healthy, SourcePlan: *child.Plan, SourceStorage: storage, Credentials: child.Plan.Database.Credentials, LocationID: "direct_target_backup", MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
+	p.Hash = domain.HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("invalid exact direct admission fixture")
+	}
+	body, _ := json.Marshal(p)
+	insert := `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,runner_id,plan,plan_hash) VALUES($1,$2,$3,$4,1,$1,'backup','direct_request',$5,$6,'queued',$7,$8,$9)`
+	args := []any{p.Operation.ID, p.Operation.ProjectID, p.Operation.SourceResourceID, p.Source.Snapshot.BindingID, domain.HostingDocumentHash(struct {
+		Actor string
+		Input domain.HostingDatabaseBackupInput
+	}{p.ActorID, domain.HostingDatabaseBackupInput{RequestID: "direct_request", ExpectedResourceGeneration: 1}}), p.ActorID, p.RunnerID, body, p.Hash}
+	locker, err := f.db.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Rollback(f.ctx) }()
+	var pid int
+	if locker.QueryRow(f.ctx, `SELECT pg_backend_pid()`).Scan(&pid) != nil {
+		t.Fatal("locker pid")
+	}
+	if _, err = locker.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-hosting-destination:'||$1::text,0))`, target.Binding.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	joined := make(chan error, 1)
+	insertCtx, stopInsert := context.WithTimeout(f.ctx, 15*time.Second)
+	received := false
+	defer func() {
+		stopInsert()
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = locker.Rollback(cleanup)
+		if !received {
+			select {
+			case <-joined:
+			case <-cleanup.Done():
+				t.Error("direct admission goroutine did not join")
+			}
+		}
+	}()
+	go func() { _, e := f.db.Exec(insertCtx, insert, args...); joined <- e }()
+	blocked := false
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for !blocked {
+		select {
+		case e := <-joined:
+			received = true
+			t.Fatalf("DB admission bypassed destination serialization: %v", e)
+		case <-deadline.C:
+			t.Fatal("direct admission did not wait on stable destination lock")
+		case <-tick.C:
+			if f.db.QueryRow(f.ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked) != nil {
+				t.Fatal("lock observation")
+			}
+		}
+	}
+	if err = locker.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-joined:
+		received = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("direct admission did not join")
+	}
+	var pgerr *pgconn.PgError
+	if !errors.As(err, &pgerr) || pgerr.Code != "23514" || !strings.Contains(pgerr.Message, "binding role already owned") {
+		t.Fatalf("DB boundary accepted cross-role ownership: %v", err)
+	}
+	// The exact same complete input becomes legal only after the restore receipt
+	// atomically releases its target. This distinguishes the role guard from a
+	// malformed test plan or a generally unusable restored database.
+	completeBackup(t, f, restored.ID)
+	if _, err = f.db.Exec(f.ctx, insert, args...); err != nil {
+		t.Fatal("settled target DB admission rejected", err)
+	}
+	a, plan := claimBackup(t, f, p.Operation.ID)
+	// Controlled private-schema corruption models a row admitted by the prior
+	// unqualified draft. Re-enable its guard before testing every execution read.
+	tx, err := f.db.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(f.ctx) }()
+	if _, err = tx.Exec(f.ctx, `ALTER TABLE hosting_database_backups DISABLE TRIGGER hosting_database_backup_admission`); err != nil {
+		t.Fatal(err)
+	}
+	var parent domain.HostingDatabaseBackupPlan
+	var parentRaw []byte
+	if tx.QueryRow(f.ctx, `SELECT plan FROM hosting_database_backups WHERE id=$1`, restored.ID).Scan(&parentRaw) != nil || json.Unmarshal(parentRaw, &parent) != nil {
+		t.Fatal("parent plan")
+	}
+	parent.Operation.ID = "conflicting_restore"
+	parent.Operation.State = "waiting_target"
+	parent.Operation.OwnershipHeld = true
+	parent.Hash = ""
+	parent.Hash = domain.HostingDocumentHash(parent)
+	parentRaw, _ = json.Marshal(parent)
+	_, err = tx.Exec(f.ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,target_resource_id,target_binding_id,deployment_operation_id,runner_id,plan,plan_hash,blob) SELECT 'conflicting_restore',project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,'conflict',request_hash,created_by,'waiting_target',target_resource_id,target_binding_id,deployment_operation_id,runner_id,$2,$3,blob FROM hosting_database_backups WHERE id=$1`, restored.ID, parentRaw, parent.Hash)
+	if err != nil {
+		t.Fatal("private conflicting fixture", err)
+	}
+	if _, err = tx.Exec(f.ctx, `SET CONSTRAINTS ALL IMMEDIATE`); err != nil {
+		t.Fatal("conflicting fixture integrity", err)
+	}
+	if _, err = tx.Exec(f.ctx, `ALTER TABLE hosting_database_backups ENABLE TRIGGER hosting_database_backup_admission`); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	replay, e := f.service.RequestDatabaseBackup(f.ctx, target.Resource.ID, domain.HostingDatabaseBackupInput{RequestID: "direct_request", ExpectedResourceGeneration: 1})
+	if e != nil || replay.ID != p.Operation.ID {
+		t.Fatal("accepted request replay was changed by later ownership", e)
+	}
+	if _, err = f.pg.DatabaseBackupPlan(f.ctx, f.runner, a); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("current plan skipped target ownership", err)
+	}
+	intent := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "denied_intent", PlanHash: plan.Hash, Phase: "intent"}
+	if _, err = f.pg.DatabaseBackupMutation(f.ctx, f.runner, intent); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("current intent skipped target ownership", err)
+	}
+	var receipts int
+	if f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_database_backup_receipts WHERE operation_id=$1`, a.OperationID).Scan(&receipts) != nil || receipts != 0 {
+		t.Fatal("denied effect recorded a receipt")
 	}
 }

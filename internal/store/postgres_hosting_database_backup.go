@@ -156,6 +156,9 @@ func databaseBackupCurrent(ctx context.Context, tx pgx.Tx, r sqlcgen.HostingData
 		if err != nil {
 			return p, err
 		}
+		if err = databaseBackupSourceRole(ctx, tx, h.Snapshot.BindingID); err != nil {
+			return p, err
+		}
 		if domain.HostingDocumentHash(h) != domain.HostingDocumentHash(p.Source) || op.Plan == nil || op.Plan.Hash != p.SourcePlan.Hash || domain.HostingDocumentHash(v.Credentials) != domain.HostingDocumentHash(p.Credentials) {
 			return p, ErrConflict
 		}
@@ -173,6 +176,21 @@ func databaseBackupCurrent(ctx context.Context, tx pgx.Tx, r sqlcgen.HostingData
 		}
 	}
 	return p, proxyCheckLegacyToken(ctx, tx, r.CreatedBy)
+}
+
+// The caller already owns the destination admission lock. Restore insertion
+// takes that same lock at the database boundary, so this read cannot race a
+// competing target ownership admission. The exact restore may inspect its own
+// target; a separate live backup may not use it until import settles.
+func databaseBackupSourceRole(ctx context.Context, tx pgx.Tx, binding string) error {
+	var held bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backups WHERE target_binding_id=$1 AND ownership_held)`, binding).Scan(&held); err != nil {
+		return err
+	}
+	if held {
+		return ErrConflict
+	}
+	return nil
 }
 func databaseBackupFinalizeActor(ctx context.Context, tx pgx.Tx, actor string) error {
 	if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
@@ -221,6 +239,9 @@ func (s *PostgresStore) RequestDatabaseBackup(ctx context.Context, id, resource,
 		}
 		if in.ExpectedResourceGeneration != v.Resource.Generation {
 			return zero, ErrConflict
+		}
+		if err = databaseBackupSourceRole(ctx, tx, h.Snapshot.BindingID); err != nil {
+			return zero, err
 		}
 		state, e := q.LockHostingAdmissionState(ctx, h.Snapshot.BindingID)
 		if e != nil {
