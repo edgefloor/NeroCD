@@ -296,7 +296,11 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.appRecord(a, "PUT", "after_snapshot", "source_still_writable")
 	// Restoration must not inspect or require the original source running.
 	f.docker("container", "stop", sourceOp.Result.ContainerID)
-	t.Cleanup(func() { f.docker("container", "start", sourceOp.Result.ContainerID) })
+	backupRuntimeRegisterSourceRestartCleanup(t, sourceOp.Result.ContainerID, func(ctx context.Context, id string) error {
+		raw, err := databaseRunnerDocker(ctx, nil, "container", "start", id)
+		clear(raw)
+		return err
+	})
 	wire = &databaseBackupRuntimeWire{mode: "restore", entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
 	browser.setPhase("restore", backup.ID)
@@ -875,6 +879,17 @@ func backupRuntimeHeldTargetDeploymentInput() domain.HostingDatabaseDeploymentIn
 	return domain.HostingDatabaseDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "denied_held_target"}
 }
 
+func backupRuntimeRegisterSourceRestartCleanup(t *testing.T, containerID string, restart func(context.Context, string) error) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if err := restart(ctx, containerID); err != nil {
+			t.Error("owned fixture Docker action failed")
+		}
+	})
+}
+
 func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string) {
 	f.t.Helper()
 	f.t.Cleanup(func() {
@@ -1086,6 +1101,31 @@ func TestDatabaseBackupHeldTargetDeploymentRequestContract(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("held-target fixture request failed closed decoding: status=%d", response.StatusCode)
+	}
+}
+
+func TestDatabaseBackupSourceRestartCleanupAfterCanceledTestContext(t *testing.T) {
+	const containerID = "exact_owned_source_container"
+	calls := 0
+	var cleanupContext context.Context
+	if !t.Run("owned_cleanup", func(child *testing.T) {
+		backupRuntimeRegisterSourceRestartCleanup(child, containerID, func(ctx context.Context, id string) error {
+			calls++
+			cleanupContext = ctx
+			if child.Context().Err() != context.Canceled {
+				child.Error("restart seam did not run after test context cancellation")
+			}
+			deadline, bounded := ctx.Deadline()
+			if id != containerID || ctx.Err() != nil || !bounded || time.Until(deadline) <= 0 || time.Until(deadline) > 45*time.Second {
+				child.Error("restart lost its exact identity or independent bounded lifetime")
+			}
+			return ctx.Err()
+		})
+	}) {
+		t.Fatal("source restart cleanup used the canceled test lifetime")
+	}
+	if calls != 1 || cleanupContext == nil || cleanupContext.Err() != context.Canceled {
+		t.Fatal("source restart cleanup did not finish exactly once and cancel its own lifetime")
 	}
 }
 
