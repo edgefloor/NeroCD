@@ -282,6 +282,7 @@ type databaseRunnerFixture struct {
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	backupWire                            atomic.Pointer[databaseBackupRuntimeWire]
 	remoteBackupWire                      atomic.Pointer[databaseRemoteBackupWire]
+	retentionWire                         atomic.Pointer[databaseRetentionWire]
 	upgrade                               bool
 	connected                             bool
 	storage                               *applicationDatabaseStorageFixture
@@ -418,6 +419,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
 		defer func() { f.apiCounts.record(r.Method, r.URL.Path, observed.status) }()
 		w = observed
+		if wire := f.retentionWire.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
 		if wire := f.remoteBackupWire.Load(); wire != nil && wire.serve(w, r, handler) {
 			return
 		}
@@ -507,6 +511,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
+			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
+				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1")
+			}
 		}
 	}
 	if capture {
@@ -605,6 +612,9 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 		args = append(args, "--hosting-database-backups")
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			args = append(args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000")
+			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
+				args = append(args, "--hosting-database-backup-retention")
+			}
 		}
 	}
 	if f.upgrade {
@@ -1612,6 +1622,9 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
+			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
+				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1")
+			}
 		}
 	}
 	created := post("/api/v1/runner-enrollments", token, app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, http.StatusCreated)

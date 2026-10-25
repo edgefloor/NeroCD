@@ -18,6 +18,7 @@ import time
 backup_mode = os.environ.get("NEROCD_DATABASE_BACKUP_RUNTIME", "0")
 schedule_mode = os.environ.get("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME", "0")
 remote_mode = os.environ.get("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME", "0")
+retention_mode = os.environ.get("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME", "0")
 SILO_IMAGE = "pgsty/silo@sha256:87585bb783b7822318b3e1bcc4497c8427c98e2b021826d20b5f888713299f95"
 OWNER = "nerocd-postgresql-backup-runtime-20261025-pbr7319" if backup_mode == "1" else "nerocd-database-runner-20261024-dbr7319"
 LABEL = "io.nerocd.postgresql-backup-runtime.owner" if backup_mode == "1" else "io.nerocd.database-runner.owner"
@@ -431,8 +432,8 @@ def provision_procps():
     say("numeric PID/UID process preflight passed")
 
 
-def backup_runtime_profile(schedule, remote="0"):
-    if schedule not in ("0", "1") or remote not in ("0", "1"):
+def backup_runtime_profile(schedule, remote="0", retention="0"):
+    if schedule not in ("0", "1") or remote not in ("0", "1") or retention not in ("0", "1") or retention == "1" and remote != "1":
         raise Failure("invalid backup schedule profile")
     names = ["TestHostingDatabaseBackupCompiledRunner", "TestHostingDatabaseBackupFailuresCompiledRunner"]
     markers = ["DATABASE_BACKUP_RESTORE_APP_PASS postgresql", "DATABASE_BACKUP_BROWSER_PASS postgresql", "DATABASE_BACKUP_GUEST_TIMEOUT_PASS postgresql", "DATABASE_BACKUP_FAILURE_PASS postgresql corrupt", "DATABASE_BACKUP_FAILURE_PASS postgresql truncated", "DATABASE_BACKUP_FAILURE_PASS postgresql revoked"]
@@ -442,11 +443,14 @@ def backup_runtime_profile(schedule, remote="0"):
     if remote == "1":
         names.append("TestHostingDatabaseBackupRemoteCompiledRunner")
         markers += ["DATABASE_BACKUP_REMOTE_PASS postgresql", "DATABASE_BACKUP_REMOTE_REPLAY_PASS postgresql", "DATABASE_BACKUP_REMOTE_GET_RESTORE_APP_PASS postgresql", "DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql"]
+    if retention == "1":
+        names += ["TestHostingDatabaseBackupRetentionCompiledRunner", "TestHostingDatabaseBackupRetentionReplayCompiledRunner", "TestHostingDatabaseBackupRetentionFailuresCompiledRunner", "TestHostingDatabaseBackupRetentionProtectionsCompiledRunner", "TestHostingDatabaseBackupRetentionUnknownDeleteCompiledRunner"]
+        markers += ["DATABASE_BACKUP_RETENTION_PASS postgresql", "DATABASE_BACKUP_RETENTION_BROWSER_PASS postgresql", "DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS postgresql", "DATABASE_BACKUP_RETENTION_RECOVERY_PASS postgresql", "DATABASE_BACKUP_RETENTION_STALE_AUTHORITY_PASS postgresql", "DATABASE_BACKUP_RETENTION_RESTORE_APP_PASS postgresql", "DATABASE_BACKUP_RETENTION_REPLAY_PASS postgresql", "DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql delete_denied", "DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql conditional_unsupported", "DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql authorization_revoked", "DATABASE_BACKUP_RETENTION_PROTECTION_PASS postgresql newest_shared_active_failed_upload_external", "DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS postgresql", "DATABASE_BACKUP_RETENTION_UNKNOWN_DELETE_HELD_PASS postgresql"]
     return "^(?:" + "|".join(names) + ")$", names, markers
 
 
-def verify_backup_runtime_output(output, schedule, remote="0"):
-    _, names, markers = backup_runtime_profile(schedule, remote)
+def verify_backup_runtime_output(output, schedule, remote="0", retention="0"):
+    _, names, markers = backup_runtime_profile(schedule, remote, retention)
     for marker in markers:
         if output.splitlines().count(marker) != 1:
             raise Failure("required real backup restore proof missing: " + marker)
@@ -459,6 +463,8 @@ def verify_backup_runtime_output(output, schedule, remote="0"):
 
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
+    if retention_mode not in ("0", "1") or retention_mode == "1" and remote_mode != "1":
+        raise Failure("retention mode requires the reviewed remote backup profile")
     if remote_mode not in ("0", "1") or remote_mode == "1" and backup_mode != "1":
         raise Failure("remote mode requires the reviewed backup profile")
     if schedule_mode not in ("0", "1") or schedule_mode == "1" and backup_mode != "1":
@@ -713,6 +719,8 @@ def main():
         runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_RUNTIME=1"]
         if remote_mode == "1":
             runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME=1"]
+        if retention_mode == "1":
+            runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME=1"]
         if schedule_mode == "1":
             runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME=1"]
     if browser_mode == "1":
@@ -732,7 +740,7 @@ def main():
     if gate_mode == "storage-cutover-diagnostic":
         pattern = STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR
     if backup_mode == "1":
-        pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode)
+        pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode, retention_mode)
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
@@ -743,7 +751,7 @@ def main():
         runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
     if backup_mode == "1":
-        verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode)
+        verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode)
         full_workflow_pass = True
         say("hosted PostgreSQL logical backup and new-database restore fixture passed")
         return
