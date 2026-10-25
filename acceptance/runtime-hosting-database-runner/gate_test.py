@@ -1,6 +1,7 @@
 """Exercise the real fixed-target launcher with harmless stateful CLI stubs."""
 
 import ast
+import functools
 import hashlib
 import io
 import json
@@ -30,6 +31,66 @@ EXPECTED_PROCPS_PACKAGES = (
     ("skalibs-libs", "2.14.4.0-r0", "f1c33c73d842c98d99033833eaf681819b0f5b51310a6e286c2eb88b9a88ed97"),
     ("utmps-libs", "0.1.3.1-r0", "dbaa260e4328738d51b2ec77fdda9037cdbd67047465de5b2a30dce9a66f8fff"),
 )
+
+
+@functools.lru_cache(maxsize=4)
+def storage_selection_output(selection="selected", outcome="success"):
+    """Run real Go selection with the route fixture's exact loop bookkeeping."""
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "internal/api/hosting_application_database_route_runtime_integration_test.go").read_text()
+    function = source.split("func testHostingApplicationDatabaseRouteFailuresCompiledRunner(", 1)[1]
+    loop = function[function.index('\tfor _, engine := range []string{"postgresql", "redis"}') :]
+    before, body = loop.split('\t\t\t\tapplicationDatabaseRouteCapacity(t)', 1)
+    _, after = body.rsplit('\n\t\t\t}) {', 1)
+    # Keep the real t.Run name, completion guard, capacity check and marker
+    # emission. Replace only the privileged callback body with harmless work.
+    code = 'package selection\nimport ("fmt"; "testing")\n'
+    code += 'func applicationDatabaseRouteCapacity(t *testing.T) {}\n'
+    code += 'func TestHostingApplicationDatabaseStorageFailuresCompiledRunner(t *testing.T) {\nstorage := true\n'
+    code += before
+    if outcome == "skip":
+        code += '\n t.Skip("isolated selected skip")\n'
+    elif outcome == "fail":
+        code += '\n t.Fatal("isolated selected failure")\n'
+    else:
+        code += '\n fmt.Println("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS " + engine + " " + failure)\n'
+    code += '\n\t\t\t}) {' + after
+    pattern = "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$"
+    if selection == "selected":
+        pattern += "/^postgresql$/^cutover$"
+    with tempfile.TemporaryDirectory(prefix="nerocd-storage-selection-") as temporary:
+        fixture = Path(temporary) / "selection_test.go"
+        fixture.write_text(code)
+        result = subprocess.run(["go", "test", "-v", "-count=1", "-run", pattern, str(fixture)],
+                                cwd=root, capture_output=True, text=True, timeout=30)
+    if result.returncode != (1 if outcome == "fail" else 0):
+        raise AssertionError("isolated Go selection failed: " + result.stdout + result.stderr)
+    return result.stdout
+
+
+class SelectionOutputTest(unittest.TestCase):
+    def test_only_selected_completed_case_emits_capacity(self):
+        output = storage_selection_output()
+        markers = [line for line in output.splitlines() if line.startswith("DATABASE_CONNECTION_")]
+        self.assertEqual(markers, ["DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover",
+                                   "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover"], output)
+        passed = [line.strip().split(" ")[2] for line in output.splitlines() if line.strip().startswith("--- PASS: ")]
+        self.assertEqual(set(passed), {"TestHostingApplicationDatabaseStorageFailuresCompiledRunner",
+                                      "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover"}, output)
+        self.assertEqual(len(passed), 2, output)
+
+    def test_full_selection_keeps_every_capacity_marker(self):
+        output = storage_selection_output("full")
+        for engine in ("postgresql", "redis"):
+            for failure in ("readiness", "cutover"):
+                self.assertEqual(output.splitlines().count("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " " + failure), 1, output)
+
+    def test_skipped_or_failed_case_has_no_capacity_marker(self):
+        for outcome in ("skip", "fail"):
+            with self.subTest(outcome=outcome):
+                output = storage_selection_output(outcome=outcome)
+                self.assertNotIn("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS", output)
+
 
 def download_source():
     gate = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n", 1)[1].rsplit("\nPY\n", 1)[0]
@@ -159,10 +220,7 @@ elif tool == "node":
     assert "NEROCD_DATABASE_CONNECTION_BROWSER=1" in args
     assert "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=http://127.0.0.1:35002" in args
     if case == "full_receipt_from_diagnostic":
-        parent="TestHostingApplicationDatabaseStorageFailuresCompiledRunner"
-        for name in (parent,parent+"/postgresql",parent+"/postgresql/cutover"): print("--- PASS: "+name+" (0.01s)")
-        print("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover")
-        print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover")
+        print((root/"selection-output").read_text())
         sys.exit(0)
     for name in ("TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"):
         print("--- PASS: " + name + " (0.01s)")
@@ -331,13 +389,13 @@ elif tool == "docker":
         elif "/fixture/api.test" in args:
             if case.startswith("cutover_diagnostic"):
                 assert args[args.index("-test.run")+1] == "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$/^postgresql$/^cutover$"
-                parent="TestHostingApplicationDatabaseStorageFailuresCompiledRunner"
-                print("--- PASS: "+parent+" (0.01s)")
-                print("    --- PASS: "+parent+"/postgresql (0.01s)")
-                if case != "cutover_diagnostic_missing_case": print("        --- PASS: "+parent+"/postgresql/cutover (0.01s)")
-                print("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS postgresql cutover")
-                if case != "cutover_diagnostic_missing_capacity": print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover")
+                output=(root/"selection-output").read_text()
+                if case == "cutover_diagnostic_missing_case": output="\n".join(line for line in output.splitlines() if "--- PASS: TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover " not in line)
+                if case == "cutover_diagnostic_missing_capacity": output=output.replace("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS postgresql cutover", "")
+                print(output)
                 if case == "cutover_diagnostic_foreign_result": print("DATABASE_CONNECTION_STORAGE_PASS redis")
+                if case == "cutover_diagnostic_duplicate_case": print("--- PASS: TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover (0.01s)")
+                if case == "cutover_diagnostic_skipped_case": print("--- SKIP: TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover (0.01s)")
                 sys.exit(0)
             if case == "runtime_sigterm":
                 block()
@@ -459,6 +517,8 @@ class GateTest(unittest.TestCase):
                 initial["outer"] = {"Id": IDENTITY, "Name": "/" + NAME}
             (root / "state").write_text(json.dumps(initial))
             (root / "case").write_text(case)
+            if case.startswith("cutover_diagnostic") or case == "full_receipt_from_diagnostic":
+                (root / "selection-output").write_text(storage_selection_output())
             binary = root / "bin"
             binary.mkdir()
             for name in ("git", "go", "docker", "python3", "bun", "node"):
@@ -831,7 +891,7 @@ class GateTest(unittest.TestCase):
         self.assertNotIn("private PostgreSQL and Redis gate passed", output)
 
     def test_cutover_diagnostic_requires_exact_case_and_cleanup(self):
-        for case in ("cutover_diagnostic_missing_case", "cutover_diagnostic_missing_capacity", "cutover_diagnostic_foreign_result"):
+        for case in ("cutover_diagnostic_missing_case", "cutover_diagnostic_missing_capacity", "cutover_diagnostic_foreign_result", "cutover_diagnostic_duplicate_case", "cutover_diagnostic_skipped_case"):
             with self.subTest(case=case):
                 state, _, _ = self.run_gate(case, 1, browser=True, routes=True, storage=True, mode="storage-cutover-diagnostic")
                 self.assertEqual(state, {})

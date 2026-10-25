@@ -2171,7 +2171,10 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 	}
 	for _, engine := range []string{"postgresql", "redis"} {
 		for _, failure := range []string{"readiness", "cutover"} {
+			// t.Run also returns true for names excluded by -test.run.
+			completed := false
 			if !t.Run(engine+"/"+failure, func(t *testing.T) {
+				defer func() { completed = !t.Failed() && !t.Skipped() }()
 				applicationDatabaseRouteCapacity(t)
 				roots, public := newApplicationDatabaseRouteTrust(t)
 				f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, storage)
@@ -2346,6 +2349,9 @@ func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, sto
 				fmt.Println("DATABASE_CONNECTION_ROUTE_FAILURE_PASS " + engine + " " + failure)
 			}) {
 				return
+			}
+			if !completed {
+				continue
 			}
 			applicationDatabaseRouteCapacity(t)
 			if storage {

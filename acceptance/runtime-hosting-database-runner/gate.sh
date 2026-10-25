@@ -650,7 +650,6 @@ def main():
     say(runtime_output)
     if gate_mode == "storage-cutover-diagnostic":
         required = {"TestHostingApplicationDatabaseStorageFailuresCompiledRunner",
-                    "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql",
                     "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover"}
         passed = re.findall(r"^\s*--- PASS: ([^ ]+) ", runtime_output, re.MULTILINE)
         if set(passed) != required or len(passed) != len(required) or re.search(r"^\s*--- (?:SKIP|FAIL): ", runtime_output, re.MULTILINE):
