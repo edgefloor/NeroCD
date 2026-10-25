@@ -40,7 +40,9 @@ func (c HostingApplicationDatabaseRouteContinuity) DocumentHash() string {
 	return HostingDocumentHash(c)
 }
 func (c HostingApplicationDatabaseRouteContinuity) Validate(op HostingOperation) error {
-	if c.Version != HostingApplicationDatabaseRouteContinuityVersion || c.OperationID != op.ID || c.ProxyOperationID != "appdb_proxy_"+op.ID || c.FinalizeRunID != "finalize_"+op.ID || !hostingProxyID.MatchString(c.ProxyOperationID) || !hostingProxyID.MatchString(c.FinalizeRunID) || !hostingProxyID.MatchString(c.ProxyID) || op.RunID != "" && op.RunID != "run_"+op.ID || !imageSHA256.MatchString(c.LoadedSnapshotHash) || c.Hash != c.DocumentHash() || op.ApplicationDatabase == nil || len(op.ApplicationDatabase.Members) != 1 || c.PreviousHealthy != op.ApplicationDatabase.Members[0].ApplicationHealthy || c.PreviousHealthy.Snapshot.HostPort == op.Snapshot.HostPort {
+	// Binding state and membership evidence are decoded independently. Compare
+	// the complete persisted document, including nested storage provenance.
+	if c.Version != HostingApplicationDatabaseRouteContinuityVersion || c.OperationID != op.ID || c.ProxyOperationID != "appdb_proxy_"+op.ID || c.FinalizeRunID != "finalize_"+op.ID || !hostingProxyID.MatchString(c.ProxyOperationID) || !hostingProxyID.MatchString(c.FinalizeRunID) || !hostingProxyID.MatchString(c.ProxyID) || op.RunID != "" && op.RunID != "run_"+op.ID || !imageSHA256.MatchString(c.LoadedSnapshotHash) || c.Hash != c.DocumentHash() || op.ApplicationDatabase == nil || len(op.ApplicationDatabase.Members) != 1 || HostingDocumentHash(c.PreviousHealthy) != HostingDocumentHash(op.ApplicationDatabase.Members[0].ApplicationHealthy) || c.PreviousHealthy.Snapshot.HostPort == op.Snapshot.HostPort {
 		return errors.New("invalid application database route continuation")
 	}
 	canonical, err := CanonicalHostingApplicationDatabaseRouteContinuityInput(c.Request)

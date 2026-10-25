@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -9,6 +10,134 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 )
+
+func TestPostgresApplicationDatabaseStorageRoutedRedeployAfterHealthyStorage(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			// Settle the real A0 -> attached-volume A bootstrap before routing A.
+			f := newConnectedStorageFixture(t, engine).prepare(t).write(t, "stop_intent", nil)
+			f.effect(t, "stop_predecessor")
+			f = f.write(t, "stopped", nil)
+			f.connectionFixture = f.connectionFixture.ready(t).retire(t).complete(t)
+			previous := f.appOperation
+			intent := loadedHealthyStorageRoutes(t, f.connectionFixture)
+			storageOptions, err := f.service.HostingStorageDeploymentOptions(f.ctx, f.application.ID)
+			if err != nil || !storageOptions.Available || storageOptions.ApplicationDatabaseStorage == nil || storageOptions.StorageRef == nil || *storageOptions.StorageRef != f.storage.Reference() {
+				t.Fatal("public connected storage review unavailable", err)
+			}
+			routeOptions, err := f.service.HostingRouteSwitchOptions(f.ctx, f.application.ID, "")
+			if err != nil || !routeOptions.Available || routeOptions.LoadedGeneration == nil || *routeOptions.LoadedGeneration != intent.ExpectedLoadedGeneration || routeOptions.LoadedProxyOperationID == nil || *routeOptions.LoadedProxyOperationID != intent.ExpectedLoadedProxyOperationID || len(routeOptions.Routes) != len(intent.Routes) {
+				t.Fatal("public all-route review unavailable", err)
+			}
+			in := f.input.Deployment
+			in.IdempotencyKey = "healthy_storage_routed_replace"
+			in.HostPort = 0
+			in.ExpectedRuntimeConfigurationGeneration = previous.Snapshot.RuntimeConfiguration.Generation
+			in.ApplicationDatabaseRouteContinuity = &intent
+			in.ApplicationDatabaseStorage = &domain.HostingApplicationDatabaseStorageInput{ExpectedStorageGeneration: storageOptions.ApplicationDatabaseStorage.ExpectedStorageGeneration, ExpectedStorageHash: storageOptions.ApplicationDatabaseStorage.ExpectedStorageHash, AcknowledgeInterruption: true}
+			counts := func() string {
+				var result string
+				if err := f.db.QueryRow(f.ctx, `SELECT jsonb_build_array((SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_task_targets),(SELECT count(*) FROM hosting_database_connection_executions),(SELECT count(*) FROM hosting_application_database_route_continuations),(SELECT count(*) FROM hosting_proxy_operations),(SELECT count(*) FROM audit_events))::text`).Scan(&result); err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			before := counts()
+			for _, mode := range []string{"storage_hash", "storage_generation", "missing_ack", "loaded_generation", "loaded_proxy", "route_version", "route_predecessor", "missing_route"} {
+				bad := in
+				bad.IdempotencyKey = "stale_storage_route_" + mode
+				ack := *in.ApplicationDatabaseStorage
+				routes := intent
+				routes.Routes = append([]domain.HostingRouteSwitchSelection(nil), intent.Routes...)
+				bad.ApplicationDatabaseStorage, bad.ApplicationDatabaseRouteContinuity = &ack, &routes
+				switch mode {
+				case "storage_hash":
+					ack.ExpectedStorageHash = domain.HostingDocumentHash("foreign storage")
+				case "storage_generation":
+					ack.ExpectedStorageGeneration++
+				case "missing_ack":
+					bad.ApplicationDatabaseStorage = nil
+				case "loaded_generation":
+					routes.ExpectedLoadedGeneration++
+				case "loaded_proxy":
+					routes.ExpectedLoadedProxyOperationID = "foreign_proxy"
+				case "route_version":
+					routes.Routes[0].ExpectedVersion++
+				case "route_predecessor":
+					routes.Routes[0].ExpectedSelectedReleaseOperationID = "foreign_predecessor"
+				case "missing_route":
+					routes.Routes = routes.Routes[:1]
+				}
+				if _, err := f.service.RequestHostingApplicationDatabaseDeployment(f.ctx, f.application.ID, bad); err == nil || counts() != before {
+					t.Fatal("stale storage/route review admitted extra state", mode, err)
+				}
+			}
+			op, err := f.service.RequestHostingApplicationDatabaseDeployment(f.ctx, f.application.ID, in)
+			if err != nil {
+				t.Fatal("public routed redeploy from healthy storage A", err)
+			}
+			op = awaitHostingDispatch(t, f.pg, op.ID)
+			if op.ApplicationDatabaseRouteContinuity == nil || op.ApplicationDatabase == nil || len(op.ApplicationDatabase.Members) != 1 || op.ApplicationDatabaseRouteContinuity.PreviousHealthy.Storage == nil || op.ApplicationDatabase.Members[0].ApplicationHealthy.Storage == nil || op.ApplicationDatabaseRouteContinuity.Validate(op) != nil {
+				t.Fatal("admitted storage continuation does not validate after readback")
+			}
+			var bindingHealthy, membershipHealthy domain.HostingHealthy
+			for _, target := range []struct {
+				value domain.HostingHealthy
+				out   *domain.HostingHealthy
+			}{{op.ApplicationDatabaseRouteContinuity.PreviousHealthy, &bindingHealthy}, {op.ApplicationDatabase.Members[0].ApplicationHealthy, &membershipHealthy}} {
+				raw, err := json.Marshal(target.value)
+				if err != nil || json.Unmarshal(raw, target.out) != nil {
+					t.Fatal("decode independent admitted healthy evidence", err)
+				}
+			}
+			if bindingHealthy.Storage == membershipHealthy.Storage || domain.HostingDocumentHash(bindingHealthy) != domain.HostingDocumentHash(membershipHealthy) || bindingHealthy.OperationID != previous.ID {
+				t.Fatal("admission lost independently persisted healthy value identity")
+			}
+			after := counts()
+			replayed, err := f.service.RequestHostingApplicationDatabaseDeployment(f.ctx, f.application.ID, in)
+			if err != nil || replayed.ID != op.ID || counts() != after {
+				t.Fatal("exact public admission replay created another operation", err)
+			}
+		})
+	}
+}
+
+func loadedHealthyStorageRoutes(t *testing.T, f connectionFixture) domain.HostingApplicationDatabaseRouteContinuityInput {
+	t.Helper()
+	caps := []string{domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingApplicationDatabaseRouteContinuityCapability}
+	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, f.runner, caps); err != nil {
+		t.Fatal(err)
+	}
+	proxy := "proxy_healthy_storage"
+	config := domain.HostingProxyInput{ControlProjectID: f.application.ProjectID, Configuration: domain.HostingProxyConfiguration{Email: "operator@nerocd.invalid", CA: "letsencrypt-staging", ManagementPort: 19080}, IdempotencyKey: "healthy_storage_proxy"}
+	if _, err := f.pg.ConfigureHostingProxy(f.ctx, proxy, f.appOperation.Snapshot.ServerID, "usr_bootstrap", config, destinationEvent("healthy_storage_proxy")); err != nil {
+		t.Fatal(err)
+	}
+	var initial string
+	if err := f.db.QueryRow(f.ctx, `SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation=1`, proxy).Scan(&initial); err != nil {
+		t.Fatal(err)
+	}
+	loaded := settleProxyGeneration(t, f.pg, initial, f.runner, f.appOperation.Release.DaemonID)
+	if _, err := f.pg.GrantHostingHostname(f.ctx, proxy, "healthy_storage_hostname", "usr_bootstrap", domain.HostingHostnameGrantInput{ProjectID: f.application.ProjectID, Hostname: "storage.apps.nerocd.invalid"}, destinationEvent("healthy_storage_hostname")); err != nil {
+		t.Fatal(err)
+	}
+	intent := domain.HostingApplicationDatabaseRouteContinuityInput{}
+	for _, path := range []string{"/", "/api"} {
+		id := "healthy_storage_route_" + domain.HostingDocumentHash(path)[7:23]
+		route, err := f.pg.RequestHostingRoute(f.ctx, f.application.ID, "", id, "usr_bootstrap", domain.HostingRouteInput{Hostname: "storage.apps.nerocd.invalid", PathPrefix: path, ExpectedHealthyOperationID: f.appOperation.ID, IdempotencyKey: id}, destinationEvent(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded = settleProxyGeneration(t, f.pg, id, f.runner, f.appOperation.Release.DaemonID)
+		intent.Routes = append(intent.Routes, domain.HostingRouteSwitchSelection{RouteID: route.ID, ExpectedVersion: route.Version, ExpectedSelectedReleaseOperationID: f.appOperation.ID})
+	}
+	intent.ExpectedLoadedGeneration, intent.ExpectedLoadedProxyOperationID = loaded.Generation, loaded.ID
+	intent, err := domain.CanonicalHostingApplicationDatabaseRouteContinuityInput(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return intent
+}
 
 func TestPostgresApplicationDatabaseStorageFailedProxyForwardRecovery(t *testing.T) {
 	for _, engine := range []string{"postgresql", "redis"} {
