@@ -460,6 +460,64 @@ type HostingDatabaseBackupReceipt struct {
 	Response    json.RawMessage `json:"response"`
 }
 
+type HostingDatabaseBackupSchedule struct {
+	ID              string     `json:"id"`
+	ProjectID       string     `json:"project_id"`
+	ResourceID      string     `json:"resource_id"`
+	BindingID       string     `json:"binding_id"`
+	DestinationID   string     `json:"destination_id"`
+	ActorID         string     `json:"actor_id"`
+	Revision        int64      `json:"revision"`
+	Frequency       string     `json:"frequency"`
+	Timezone        string     `json:"timezone"`
+	Enabled         bool       `json:"enabled"`
+	LastScheduledAt *time.Time `json:"last_scheduled_at"`
+	CheckedAt       time.Time  `json:"checked_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type HostingDatabaseBackupScheduleOccurrence struct {
+	ID               string    `json:"id"`
+	ScheduleID       string    `json:"schedule_id"`
+	ScheduleRevision int64     `json:"schedule_revision"`
+	ScheduledAt      time.Time `json:"scheduled_at"`
+	OperationID      *string   `json:"operation_id"`
+	State            string    `json:"state"`
+	Reason           string    `json:"reason"`
+	EnqueuedAt       time.Time `json:"enqueued_at"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type HostingDatabaseBackupScheduleRequest struct {
+	ResourceID  string          `json:"resource_id"`
+	RequestID   string          `json:"request_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestHash string          `json:"request_hash"`
+	ScheduleID  string          `json:"schedule_id"`
+	Revision    int64           `json:"revision"`
+	Response    json.RawMessage `json:"response"`
+}
+
+type HostingDatabaseBackupScheduleRetirement struct {
+	OperationID   string    `json:"operation_id"`
+	OccurrenceID  string    `json:"occurrence_id"`
+	PlanHash      string    `json:"plan_hash"`
+	Reason        string    `json:"reason"`
+	OwnershipHeld bool      `json:"ownership_held"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type HostingDatabaseBackupScheduleVersion struct {
+	ScheduleID                 string `json:"schedule_id"`
+	Revision                   int64  `json:"revision"`
+	ActorID                    string `json:"actor_id"`
+	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	Frequency                  string `json:"frequency"`
+	Timezone                   string `json:"timezone"`
+	Enabled                    bool   `json:"enabled"`
+}
+
 type HostingDatabaseBinding struct {
 	ID                    string          `json:"id"`
 	ApplicationResourceID string          `json:"application_resource_id"`

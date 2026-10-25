@@ -206,88 +206,94 @@ func (s *PostgresStore) RequestDatabaseBackup(ctx context.Context, id, resource,
 		return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupOperation, error) {
-		var zero domain.HostingDatabaseBackupOperation
-		q := sqlcgen.New(tx)
-		if s.hostingJobs == nil || !s.hostingJobs.DatabaseBackupEnabled() {
-			return zero, hostingjobs.ErrUnavailable
-		}
-		if err := databaseBackupSchema(ctx, q); err != nil {
-			return zero, err
-		}
-		v, h, op, err := databaseBackupSource(ctx, tx, actor, resource)
-		if err != nil {
-			return zero, err
-		}
-		hash := domain.HostingDocumentHash(struct {
-			Actor string
-			Input domain.HostingDatabaseBackupInput
-		}{actor, in})
-		var existing string
-		err = tx.QueryRow(ctx, `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND request_id=$2`, resource, in.RequestID).Scan(&existing)
-		if err == nil {
-			r, e := q.ReadDatabaseBackup(ctx, existing)
-			if e != nil {
-				return zero, e
-			}
-			if r.RequestHash != hash || r.CreatedBy != actor {
-				return zero, ErrConflict
-			}
-			return databaseBackupView(r)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return zero, err
-		}
-		if in.ExpectedResourceGeneration != v.Resource.Generation {
-			return zero, ErrConflict
-		}
-		if err = databaseBackupSourceRole(ctx, tx, h.Snapshot.BindingID); err != nil {
-			return zero, err
-		}
-		state, e := q.LockHostingAdmissionState(ctx, h.Snapshot.BindingID)
-		if e != nil {
-			return zero, e
-		}
-		if state.HoldOperationID != nil || !state.RestoreAdmitted {
-			return zero, ErrConflict
-		}
-		limits := s.databaseBackupPolicy()
-		now := time.Now().UTC()
-		view := domain.HostingDatabaseBackupOperation{MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, ID: id, Version: domain.HostingDatabaseBackupVersion, ProjectID: v.Resource.ProjectID, SourceResourceID: resource, SourceGeneration: in.ExpectedResourceGeneration, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
-		p := domain.HostingDatabaseBackupPlan{Operation: view, ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: *op.Plan, Credentials: v.Credentials, LocationID: id, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
-		storageRow, e := q.ReadHostingStorage(ctx, resource)
-		if e != nil {
-			return zero, e
-		}
-		p.SourceStorage, e = hostingStorageFromSQL(storageRow)
-		if e != nil {
-			return zero, e
-		}
-		p.Hash = domain.HostingDocumentHash(p)
-		if p.Validate() != nil {
-			return zero, ErrConflict
-		}
-		if err = databaseBackupAgent(ctx, tx, p); err != nil {
-			return zero, err
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,runner_id,plan,plan_hash) VALUES($1,$2,$3,$4,$5,$1,'backup',$6,$7,$8,'queued',$9,$10,$11)`, id, view.ProjectID, resource, h.Snapshot.BindingID, view.SourceGeneration, in.RequestID, hash, actor, p.RunnerID, buildJSON(p), p.Hash)
-		if err != nil {
-			return zero, hostingError(err)
-		}
-		if err = databaseBackupAudit(ctx, tx, actor, id, "requested", view.ProjectID); err != nil {
-			return zero, err
-		}
-		if _, err = s.hostingJobs.EnqueueDatabaseBackupTx(ctx, tx, hostingjobs.DatabaseBackupArgs{OperationID: id}); err != nil {
-			return zero, err
-		}
-		saved, err := q.ReadDatabaseBackup(ctx, id)
-		if err != nil {
-			return zero, err
-		}
-		if _, err = databaseBackupCurrent(ctx, tx, saved); err != nil {
-			return zero, err
-		}
-		return view, databaseBackupFinalizeActor(ctx, tx, actor)
+		return s.requestDatabaseBackupTx(ctx, tx, id, resource, actor, in)
 	})
+}
+
+// requestDatabaseBackupTx shares the exact immediate admission and River enqueue
+// with schedule occurrences; its caller owns the surrounding transaction.
+func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, in domain.HostingDatabaseBackupInput) (domain.HostingDatabaseBackupOperation, error) {
+	var zero domain.HostingDatabaseBackupOperation
+	q := sqlcgen.New(tx)
+	if s.hostingJobs == nil || !s.hostingJobs.DatabaseBackupEnabled() {
+		return zero, hostingjobs.ErrUnavailable
+	}
+	if err := databaseBackupSchema(ctx, q); err != nil {
+		return zero, err
+	}
+	v, h, op, err := databaseBackupSource(ctx, tx, actor, resource)
+	if err != nil {
+		return zero, err
+	}
+	hash := domain.HostingDocumentHash(struct {
+		Actor string
+		Input domain.HostingDatabaseBackupInput
+	}{actor, in})
+	var existing string
+	err = tx.QueryRow(ctx, `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND request_id=$2`, resource, in.RequestID).Scan(&existing)
+	if err == nil {
+		r, e := q.ReadDatabaseBackup(ctx, existing)
+		if e != nil {
+			return zero, e
+		}
+		if r.RequestHash != hash || r.CreatedBy != actor {
+			return zero, ErrConflict
+		}
+		return databaseBackupView(r)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return zero, err
+	}
+	if in.ExpectedResourceGeneration != v.Resource.Generation {
+		return zero, ErrConflict
+	}
+	if err = databaseBackupSourceRole(ctx, tx, h.Snapshot.BindingID); err != nil {
+		return zero, err
+	}
+	state, e := q.LockHostingAdmissionState(ctx, h.Snapshot.BindingID)
+	if e != nil {
+		return zero, e
+	}
+	if state.HoldOperationID != nil || !state.RestoreAdmitted {
+		return zero, ErrConflict
+	}
+	limits := s.databaseBackupPolicy()
+	now := time.Now().UTC()
+	view := domain.HostingDatabaseBackupOperation{MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, ID: id, Version: domain.HostingDatabaseBackupVersion, ProjectID: v.Resource.ProjectID, SourceResourceID: resource, SourceGeneration: in.ExpectedResourceGeneration, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
+	p := domain.HostingDatabaseBackupPlan{Operation: view, ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: *op.Plan, Credentials: v.Credentials, LocationID: id, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
+	storageRow, e := q.ReadHostingStorage(ctx, resource)
+	if e != nil {
+		return zero, e
+	}
+	p.SourceStorage, e = hostingStorageFromSQL(storageRow)
+	if e != nil {
+		return zero, e
+	}
+	p.Hash = domain.HostingDocumentHash(p)
+	if p.Validate() != nil {
+		return zero, ErrConflict
+	}
+	if err = databaseBackupAgent(ctx, tx, p); err != nil {
+		return zero, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,runner_id,plan,plan_hash) VALUES($1,$2,$3,$4,$5,$1,'backup',$6,$7,$8,'queued',$9,$10,$11)`, id, view.ProjectID, resource, h.Snapshot.BindingID, view.SourceGeneration, in.RequestID, hash, actor, p.RunnerID, buildJSON(p), p.Hash)
+	if err != nil {
+		return zero, hostingError(err)
+	}
+	if err = databaseBackupAudit(ctx, tx, actor, id, "requested", view.ProjectID); err != nil {
+		return zero, err
+	}
+	if _, err = s.hostingJobs.EnqueueDatabaseBackupTx(ctx, tx, hostingjobs.DatabaseBackupArgs{OperationID: id}); err != nil {
+		return zero, err
+	}
+	saved, err := q.ReadDatabaseBackup(ctx, id)
+	if err != nil {
+		return zero, err
+	}
+	if _, err = databaseBackupCurrent(ctx, tx, saved); err != nil {
+		return zero, err
+	}
+	return view, databaseBackupFinalizeActor(ctx, tx, actor)
 }
 
 func (s *PostgresStore) GetDatabaseBackup(ctx context.Context, actor, id string) (domain.HostingDatabaseBackupOperation, error) {
