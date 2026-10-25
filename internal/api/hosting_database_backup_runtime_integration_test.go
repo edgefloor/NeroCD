@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -558,7 +559,6 @@ func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.Hosti
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	started := time.Now()
 	requested := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: "genuine_guest_dump_timeout", ExpectedResourceGeneration: source.Resource.Generation}, 202)
 	diagnosticID = requested.ID
 	if requested.TimeoutSeconds != 10 {
@@ -569,12 +569,12 @@ func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.Hosti
 	var proof backupRuntimeDumpDeadlineProof
 	for {
 		ctx, cancel := context.WithTimeout(proofCtx, 3*time.Second)
-		sample, err := backupRuntimeObserveGuestDump(ctx, f, sourceOp.Result.ContainerID, requested.ID, lockPID)
+		sample, err := backupRuntimeObserveGuestDump(ctx, f, sourceOp.Result.ContainerID, requested.ID, lockPID, requested.TimeoutSeconds, proof.execID)
 		cancel()
 		if err != nil {
 			f.t.Fatal("guest dump deadline observation failed")
 		}
-		done, err := proof.advance(sample, time.Since(started), time.Duration(requested.TimeoutSeconds)*time.Second)
+		done, err := proof.advance(sample)
 		if err != nil {
 			f.t.Fatal("guest dump deadline proof rejected")
 		}
@@ -613,11 +613,17 @@ type backupRuntimeDumpSample struct {
 	BlockedPID            int  `json:"blocked_pid"`
 	Sessions              int  `json:"sessions"`
 	Processes             int
+	ExecID                string
+	ExecRunning           bool
+	ExecExitCode, ExecPID int
 	Uncertain, Held, Blob bool
 }
-type backupRuntimeDumpDeadlineProof struct{ blockedPID int }
+type backupRuntimeDumpDeadlineProof struct {
+	blockedPID int
+	execID     string
+}
 
-func (p *backupRuntimeDumpDeadlineProof) advance(s backupRuntimeDumpSample, elapsed, timeout time.Duration) (bool, error) {
+func (p *backupRuntimeDumpDeadlineProof) advance(s backupRuntimeDumpSample) (bool, error) {
 	invalid := errors.New("guest dump deadline proof rejected")
 	if !s.LockHeld || s.Sessions < 0 || s.Sessions > 1 || s.Processes < 0 || s.Processes > 1 || s.BlockedPID < 0 || s.Uncertain && (!s.Held || s.Blob) {
 		return false, invalid
@@ -630,7 +636,10 @@ func (p *backupRuntimeDumpDeadlineProof) advance(s backupRuntimeDumpSample, elap
 			if s.Sessions != 1 || s.Processes != 1 {
 				return false, invalid
 			}
-			p.blockedPID = s.BlockedPID
+			if s.ExecID != "" && s.ExecRunning && s.ExecPID > 1 {
+				p.blockedPID = s.BlockedPID
+				p.execID = s.ExecID
+			}
 		}
 		// SQL and docker top are separate reads. Once the exact blocked
 		// guest was proved, expiry may occur between them. A late mixed
@@ -639,13 +648,18 @@ func (p *backupRuntimeDumpDeadlineProof) advance(s backupRuntimeDumpSample, elap
 	if s.Uncertain && p.blockedPID == 0 {
 		return false, invalid
 	}
-	if p.blockedPID != 0 && s.Processes == 0 && elapsed < timeout {
+	if s.ExecID != "" && !backupRuntimeValidExecID(s.ExecID) || p.execID != "" && s.ExecID != p.execID {
 		return false, invalid
 	}
-	return p.blockedPID != 0 && s.Uncertain && s.Processes == 0 && s.Sessions == 0 && s.BlockedPID == 0 && elapsed >= timeout, nil
+	if p.execID != "" && !s.ExecRunning && s.ExecExitCode != 124 {
+		return false, invalid
+	}
+	// The exact GNU timeout exec must itself report timeout termination. Request
+	// age, queue delay and when polling first noticed the guest are irrelevant.
+	return p.blockedPID != 0 && p.execID != "" && !s.ExecRunning && s.ExecExitCode == 124 && s.Uncertain && s.Processes == 0 && s.Sessions == 0 && s.BlockedPID == 0, nil
 }
 
-func backupRuntimeObserveGuestDump(ctx context.Context, f *databaseRunnerFixture, container, operation string, lockPID int) (backupRuntimeDumpSample, error) {
+func backupRuntimeObserveGuestDump(ctx context.Context, f *databaseRunnerFixture, container, operation string, lockPID, seconds int, execID string) (backupRuntimeDumpSample, error) {
 	var sample backupRuntimeDumpSample
 	invalid := errors.New("guest dump observation unavailable")
 	if lockPID <= 1 {
@@ -675,11 +689,107 @@ func backupRuntimeObserveGuestDump(ctx context.Context, f *databaseRunnerFixture
 		return sample, invalid
 	}
 	sample.Processes = processes
+	guest, err := backupRuntimeGuestDumpExec(ctx, container, seconds, execID)
+	if err != nil {
+		return sample, invalid
+	}
+	if guest != nil {
+		sample.ExecID = guest.ID
+		sample.ExecRunning = guest.Running
+		sample.ExecPID = guest.Pid
+		if guest.ExitCode != nil {
+			sample.ExecExitCode = *guest.ExitCode
+		}
+	}
 	err = f.database.QueryRow(ctx, `SELECT state='uncertain',ownership_held,blob IS NOT NULL FROM hosting_database_backups WHERE id=$1 AND mode='backup'`, operation).Scan(&sample.Uncertain, &sample.Held, &sample.Blob)
 	if err != nil {
 		return sample, invalid
 	}
 	return sample, nil
+}
+
+// Exec inspection reads only the fixed owned Docker socket. It neither starts
+// an exec nor changes its lifetime. The completed ID remains the proof even
+// after it disappears from the container's active ExecIDs collection.
+type backupRuntimeGuestExec struct {
+	ID, ContainerID string
+	Running         bool
+	ExitCode        *int
+	Pid             int
+	ProcessConfig   struct {
+		Entrypoint      string   `json:"entrypoint"`
+		Arguments       []string `json:"arguments"`
+		User            string   `json:"user"`
+		Privileged, Tty bool
+	}
+}
+
+func backupRuntimeValidExecID(id string) bool {
+	return len(id) == 64 && strings.Trim(id, "0123456789abcdef") == ""
+}
+func backupRuntimeGuestDumpExecMatches(v backupRuntimeGuestExec, container string, seconds int) bool {
+	expected := []string{"--signal=TERM", "--kill-after=5s", strconv.Itoa(seconds) + "s", "pg_dump", "--username=postgres", "--dbname=app", "--format=custom", "--no-owner", "--no-acl"}
+	return backupRuntimeValidExecID(v.ID) && v.ContainerID == container && v.ProcessConfig.Entrypoint == "timeout" && v.ProcessConfig.User == "postgres" && !v.ProcessConfig.Privileged && !v.ProcessConfig.Tty && slices.Equal(v.ProcessConfig.Arguments, expected) && (v.Running && v.Pid > 1 || !v.Running && v.ExitCode != nil)
+}
+func backupRuntimeReadGuestExec(ctx context.Context, client *http.Client, id string) (backupRuntimeGuestExec, error) {
+	var value backupRuntimeGuestExec
+	invalid := errors.New("guest exec inspection unavailable")
+	if !backupRuntimeValidExecID(id) {
+		return value, invalid
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v1.54/exec/"+id+"/json", nil)
+	if err != nil {
+		return value, invalid
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return value, invalid
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<10)+1))
+	defer clear(raw)
+	if err != nil || response.StatusCode != http.StatusOK || len(raw) > 16<<10 || json.Unmarshal(raw, &value) != nil || value.ID != id {
+		return value, invalid
+	}
+	return value, nil
+}
+func backupRuntimeGuestDumpExec(ctx context.Context, container string, seconds int, known string) (*backupRuntimeGuestExec, error) {
+	invalid := errors.New("guest exec observation unavailable")
+	if !backupRuntimeValidExecID(container) || seconds < 1 || seconds > 3600 {
+		return nil, invalid
+	}
+	ids := []string{known}
+	if known == "" {
+		raw, err := databaseRunnerDocker(ctx, nil, "container", "inspect", container, "--format", "{{json .ExecIDs}}")
+		if err != nil {
+			return nil, invalid
+		}
+		defer clear(raw)
+		if len(raw) > 2048 || json.Unmarshal(raw, &ids) != nil || len(ids) > 16 {
+			return nil, invalid
+		}
+	}
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: time.Second, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", "/var/run/docker.sock")
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	var matched *backupRuntimeGuestExec
+	for _, id := range ids {
+		value, err := backupRuntimeReadGuestExec(ctx, client, id)
+		if err != nil {
+			return nil, invalid
+		}
+		if backupRuntimeGuestDumpExecMatches(value, container, seconds) {
+			if matched != nil {
+				return nil, invalid
+			}
+			matched = &value
+		} else if known != "" {
+			return nil, invalid
+		}
+	}
+	return matched, nil
 }
 
 func backupRuntimeDumpProcesses(raw []byte) (int, error) {
@@ -709,56 +819,71 @@ func backupRuntimeDumpProcesses(raw []byte) (int, error) {
 }
 
 func TestDatabaseBackupGuestDumpDeadlineProofRejectsFalsePositives(t *testing.T) {
-	blocked := backupRuntimeDumpSample{LockHeld: true, BlockedPID: 42, Sessions: 1, Processes: 1, Held: true}
-	absent := backupRuntimeDumpSample{LockHeld: true, Uncertain: true, Held: true}
+	id := strings.Repeat("e", 64)
+	blocked := backupRuntimeDumpSample{LockHeld: true, BlockedPID: 42, Sessions: 1, Processes: 1, Held: true, ExecID: id, ExecRunning: true, ExecPID: 123}
+	absent := backupRuntimeDumpSample{LockHeld: true, Uncertain: true, Held: true, ExecID: id, ExecExitCode: 124}
 	var proof backupRuntimeDumpDeadlineProof
-	if done, err := proof.advance(absent, 11*time.Second, 10*time.Second); err == nil || done {
+	if done, err := proof.advance(absent); err == nil || done {
 		t.Fatal("uncertainty without observed blocked guest accepted")
 	}
 	proof = backupRuntimeDumpDeadlineProof{}
 	unproved := blocked
 	unproved.Processes = 0
-	if done, err := proof.advance(unproved, 11*time.Second, 10*time.Second); err == nil || done {
+	if done, err := proof.advance(unproved); err == nil || done {
 		t.Fatal("initial process proof omitted")
 	}
 	proof = backupRuntimeDumpDeadlineProof{}
-	if done, err := proof.advance(blocked, time.Second, 10*time.Second); err != nil || done {
+	if done, err := proof.advance(blocked); err != nil || done {
 		t.Fatal("valid blocked guest rejected")
 	}
 	transition := blocked
 	transition.Processes = 0
+	transition.ExecRunning = false
+	transition.ExecExitCode = 124
 	transition.Uncertain = true
-	if done, err := proof.advance(transition, 11*time.Second, 10*time.Second); err != nil || done {
+	if done, err := proof.advance(transition); err != nil || done {
 		t.Fatal("expiry between SQL and process observations was not retried")
 	}
-	if done, err := proof.advance(absent, 11*time.Second, 10*time.Second); err != nil || !done {
-		t.Fatal("valid deadline disappearance rejected")
+	if done, err := proof.advance(absent); err != nil || !done {
+		t.Fatal("exact timeout termination rejected")
 	}
 	for _, tc := range []struct {
-		name    string
-		sample  backupRuntimeDumpSample
-		elapsed time.Duration
+		name   string
+		change func(*backupRuntimeDumpSample)
 	}{
-		{"premature_disappearance", absent, 2 * time.Second},
-		{"lock_released", backupRuntimeDumpSample{Uncertain: true, Held: true}, 11 * time.Second},
-		{"changed_backend", backupRuntimeDumpSample{LockHeld: true, BlockedPID: 43, Sessions: 1, Processes: 1, Held: true}, 11 * time.Second},
-		{"released_hold", backupRuntimeDumpSample{LockHeld: true, Uncertain: true}, 11 * time.Second},
-		{"published_blob", backupRuntimeDumpSample{LockHeld: true, Uncertain: true, Held: true, Blob: true}, 11 * time.Second},
-		{"extra_guest", backupRuntimeDumpSample{LockHeld: true, Sessions: 2, Processes: 2}, 11 * time.Second},
+		{"delayed_admission_early_guest_failure", func(s *backupRuntimeDumpSample) { s.ExecExitCode = 1 }},
+		{"normal_exit_without_timeout", func(s *backupRuntimeDumpSample) { s.ExecExitCode = 0 }},
+		{"unexplained_kill", func(s *backupRuntimeDumpSample) { s.ExecExitCode = 137 }},
+		{"foreign_exec", func(s *backupRuntimeDumpSample) { s.ExecID = strings.Repeat("f", 64) }},
+		{"missing_exec", func(s *backupRuntimeDumpSample) { s.ExecID = "" }},
+		{"lock_released", func(s *backupRuntimeDumpSample) { s.LockHeld = false }},
+		{"released_hold", func(s *backupRuntimeDumpSample) { s.Held = false }},
+		{"published_blob", func(s *backupRuntimeDumpSample) { s.Blob = true }},
+		{"extra_guest", func(s *backupRuntimeDumpSample) { s.Sessions = 2; s.Processes = 2 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := backupRuntimeDumpDeadlineProof{blockedPID: 42}
-			if done, err := p.advance(tc.sample, tc.elapsed, 10*time.Second); err == nil || done {
+			// Even if admission took eleven seconds and the guest then failed after one
+			// second, request age cannot turn its non-timeout exit into timeout proof.
+			p := backupRuntimeDumpDeadlineProof{blockedPID: 42, execID: id}
+			sample := absent
+			tc.change(&sample)
+			if done, err := p.advance(sample); err == nil || done {
 				t.Fatal("false deadline proof accepted")
 			}
 		})
 	}
-	p := backupRuntimeDumpDeadlineProof{blockedPID: 42}
+	p := backupRuntimeDumpDeadlineProof{blockedPID: 42, execID: id}
+	changed := blocked
+	changed.BlockedPID = 43
+	if done, err := p.advance(changed); err == nil || done {
+		t.Fatal("changed backend accepted")
+	}
 	pending := absent
 	pending.Processes = 1
-	if done, err := p.advance(pending, 11*time.Second, 10*time.Second); err != nil || done {
+	if done, err := p.advance(pending); err != nil || done {
 		t.Fatal("live guest treated as absent")
 	}
+
 	for _, raw := range []string{"", "CANARY_PRIVATE", "PID COMMAND\nnot-a-pid pg_dump", "PID COMMAND\n1 pg_dump extra"} {
 		if _, err := backupRuntimeDumpProcesses([]byte(raw)); err == nil {
 			t.Fatal("malformed process output accepted")
@@ -771,6 +896,88 @@ func TestDatabaseBackupGuestDumpDeadlineProofRejectsFalsePositives(t *testing.T)
 		if n, err := backupRuntimeDumpProcesses([]byte(tc.raw)); err != nil || n != tc.want {
 			t.Fatal("guest process identity weakened")
 		}
+	}
+}
+
+func TestDatabaseBackupGuestExecInspection(t *testing.T) {
+	id, container := strings.Repeat("e", 64), strings.Repeat("c", 64)
+	valid := func() backupRuntimeGuestExec {
+		v := backupRuntimeGuestExec{ID: id, ContainerID: container, Running: true, Pid: 123}
+		v.ProcessConfig.Entrypoint = "timeout"
+		v.ProcessConfig.User = "postgres"
+		v.ProcessConfig.Arguments = []string{"--signal=TERM", "--kill-after=5s", "10s", "pg_dump", "--username=postgres", "--dbname=app", "--format=custom", "--no-owner", "--no-acl"}
+		return v
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*backupRuntimeGuestExec)
+		want   bool
+	}{
+		{"running", func(*backupRuntimeGuestExec) {}, true},
+		{"completed_timeout", func(v *backupRuntimeGuestExec) { v.Running = false; code := 124; v.ExitCode = &code }, true},
+		{"foreign_container", func(v *backupRuntimeGuestExec) { v.ContainerID = strings.Repeat("a", 64) }, false},
+		{"foreign_user", func(v *backupRuntimeGuestExec) { v.ProcessConfig.User = "CANARY_PRIVATE" }, false},
+		{"altered_deadline", func(v *backupRuntimeGuestExec) { v.ProcessConfig.Arguments[2] = "1s" }, false},
+		{"altered_tool", func(v *backupRuntimeGuestExec) { v.ProcessConfig.Arguments[3] = "pg_restore" }, false},
+		{"extra_argument", func(v *backupRuntimeGuestExec) {
+			v.ProcessConfig.Arguments = append(v.ProcessConfig.Arguments, "CANARY_PRIVATE")
+		}, false},
+		{"shell_wrapper", func(v *backupRuntimeGuestExec) { v.ProcessConfig.Entrypoint = "sh" }, false},
+		{"privileged", func(v *backupRuntimeGuestExec) { v.ProcessConfig.Privileged = true }, false},
+		{"tty", func(v *backupRuntimeGuestExec) { v.ProcessConfig.Tty = true }, false},
+		{"missing_exit", func(v *backupRuntimeGuestExec) { v.Running = false }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := valid()
+			tc.change(&v)
+			if backupRuntimeGuestDumpExecMatches(v, container, 10) != tc.want {
+				t.Fatal("guest exec qualification mismatch")
+			}
+		})
+	}
+	v := valid()
+	raw, _ := json.Marshal(v)
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   []byte
+		want   bool
+	}{
+		{"exact", 200, raw, true},
+		{"missing", 404, []byte("CANARY_PRIVATE"), false},
+		{"malformed", 200, []byte("CANARY_PRIVATE"), false},
+		{"foreign_id", 200, bytes.Replace(raw, []byte(id), []byte(strings.Repeat("f", 64)), 1), false},
+		{"oversized", 200, bytes.Repeat([]byte("x"), (16<<10)+1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1.54/exec/"+id+"/json" || r.URL.RawQuery != "" {
+					t.Error("unexpected guest observation request")
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write(tc.body)
+			}))
+			defer server.Close()
+			transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
+			}}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport, Timeout: time.Second}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			value, err := backupRuntimeReadGuestExec(ctx, client, id)
+			if (err == nil) != tc.want || err != nil && strings.Contains(err.Error(), "CANARY_PRIVATE") {
+				t.Fatal("unsafe or incorrect exec response handling")
+			}
+			if tc.want && !backupRuntimeGuestDumpExecMatches(value, container, 10) {
+				t.Fatal("exact HTTP exec proof lost")
+			}
+			canceled, stop := context.WithCancel(t.Context())
+			stop()
+			if _, err := backupRuntimeReadGuestExec(canceled, client, id); err == nil {
+				t.Fatal("canceled guest observation succeeded")
+			}
+		})
 	}
 }
 
