@@ -68,9 +68,11 @@ function setup(
     handler ??
       (async (url: string) =>
         json(
-          url.includes("/deployments")
-            ? { items: [], count: 0, limit: 20, offset: 0, total: 0 }
-            : database,
+          url.includes("/database-backups")
+            ? []
+            : url.includes("/deployments")
+              ? { items: [], count: 0, limit: 20, offset: 0, total: 0 }
+              : database,
         )),
   );
   vi.stubGlobal("fetch", fetch);
@@ -107,6 +109,7 @@ test("viewer reads database metadata and history without mutation or secret acce
   expect(fetch.mock.calls.map(([url]) => url)).toEqual([
     "/api/v1/resources/db/database",
     "/api/v1/resources/db/deployments?limit=20&offset=0",
+    "/api/v1/resources/db/database-backups",
   ]);
 });
 test.each([401, 403])(

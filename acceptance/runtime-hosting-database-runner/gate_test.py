@@ -707,7 +707,7 @@ class GateTest(unittest.TestCase):
             messages = []
             with (root / "stderr").open("wb") as log:
                 namespace = dict(os=os, signal=signal, subprocess=subprocess, time=time, tempfile=tempfile,
-                                 log=log, evidence=root, say=messages.append, browser_mode="0")
+                                 log=log, evidence=root, say=messages.append, browser_mode="0", outer_deadline=None, cleaning=False)
                 exec(compile(ast.Module(body=definitions, type_ignores=[]), str(script), "exec"), namespace)
                 with self.assertRaisesRegex(namespace["Failure"], "command deadline exceeded"):
                     namespace["run"]([sys.executable, str(script), str(root / "pids")], timeout=0.5)
@@ -1033,10 +1033,25 @@ class OuterPublicationTest(unittest.TestCase):
                    State=dict(Running=True),NetworkSettings=dict(Ports={
                        '18080/tcp':[dict(HostIp='127.0.0.1',HostPort='33077')],
                        '2375/tcp':None,'2376/tcp':None} if browser else {'2375/tcp':None,'2376/tcp':None}))
-        namespace=dict(re=__import__('re'),Failure=RuntimeError,image=dict(Id=image,Config={}),LABEL=LABEL,OWNER=OWNER,NAME=NAME,VOLUME=VOLUME,
+        namespace=dict(re=__import__('re'),Failure=RuntimeError,image=dict(Id=image,Config={}),LABEL=LABEL,OWNER=OWNER,OWNER_LABEL=OWNER,backup_mode="0",NAME=NAME,VOLUME=VOLUME,
                        browser_mode='1' if browser else '0',browser_origin='',inspect=lambda *_:value)
         exec(compile(ast.Module(body=[function],type_ignores=[]),'<real verified_outer>','exec'),namespace)
         return value,namespace
+
+    def test_backup_profile_requires_exact_owner_and_resource_bounds(self):
+        value,namespace=self.profile()
+        namespace['backup_mode']='1'
+        namespace['OWNER_LABEL']='20261025-pbr7319'
+        value['Config']['Labels'][LABEL]='20261025-pbr7319'
+        value['HostConfig'].update(NanoCpus=4000000000,Memory=4294967296,PidsLimit=1024)
+        namespace['verified_outer'](IDENTITY)
+        for field in ('NanoCpus','Memory','PidsLimit'):
+            saved=value['HostConfig'][field]
+            value['HostConfig'][field]=saved+1
+            with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
+            value['HostConfig'][field]=saved
+        value['Config']['Labels'][LABEL]='foreign'
+        with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
 
     def test_accepts_pinned_image_exposed_ports_during_preflight_and_cleanup(self):
         for inert in (None,[]):

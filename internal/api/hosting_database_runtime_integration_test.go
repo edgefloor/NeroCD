@@ -274,6 +274,7 @@ type databaseRunnerFixture struct {
 	owner                                 context.Context
 	database                              *pgxpool.Pool
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
+	backupWire                            atomic.Pointer[databaseBackupRuntimeWire]
 	upgrade                               bool
 	connected                             bool
 	storage                               *applicationDatabaseStorageFixture
@@ -372,6 +373,11 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		t.Fatal("connected fixture requires automatic capture and upgrade")
 	}
 	_, pg, database := newHostingBuildAPIFixture(t)
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+		if pg.ConfigureDatabaseBackupLimits(domain.HostingDatabaseBackupLimits{MaxBytes: 1 << 30, TimeoutSeconds: 10}) != nil {
+			t.Fatal("protected backup fixture policy failed")
+		}
+	}
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
 		t.Fatal("fixture key generation failed")
@@ -403,6 +409,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
 		defer func() { f.apiCounts.record(r.Method, r.URL.Path, observed.status) }()
 		w = observed
+		if wire := f.backupWire.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
 		if wire := f.capture.Load(); wire != nil && wire.serve(w, r, handler) {
 			return
 		}
@@ -482,6 +491,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	f.token = login.Token
 	f.adminToken = login.Token
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+	}
 	if capture {
 		principal, err := service.AuthenticateSessionToken(t.Context(), f.token)
 		if err != nil {
@@ -572,6 +584,9 @@ func (f *databaseRunnerFixture) start() {
 
 func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	args := []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"}
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+		args = append(args, "--hosting-database-backups")
+	}
 	if f.upgrade {
 		args = append(args, "--hosting-database-network-upgrade")
 	}
@@ -1573,6 +1588,9 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 		return rec
 	}
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+	}
 	created := post("/api/v1/runner-enrollments", token, app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, http.StatusCreated)
 	var enrollment app.CreatedRunnerEnrollment
 	if json.Unmarshal(created.Body.Bytes(), &enrollment) != nil {

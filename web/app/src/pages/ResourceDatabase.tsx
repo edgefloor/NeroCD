@@ -1,3 +1,4 @@
+import { DatabaseBackups } from "./DatabaseBackups";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, principalQuery } from "@/api";
@@ -156,6 +157,7 @@ export function ResourceDatabase({
       key={JSON.stringify([access.epoch, resource.id])}
       resource={resource}
       scope={access.scope}
+      owner={access.owner}
       maintainer={access.maintainer}
       blocked={access.refreshing || blocked}
       accessError={access.error}
@@ -164,6 +166,7 @@ export function ResourceDatabase({
   );
 }
 function DatabaseDetail({
+  owner,
   resource,
   scope,
   maintainer,
@@ -171,6 +174,7 @@ function DatabaseDetail({
   accessError,
   onDenied,
 }: {
+  owner: boolean;
   resource: Resource;
   scope: ReturnType<typeof useDatabaseAccess>["scope"];
   maintainer: boolean;
@@ -223,6 +227,15 @@ function DatabaseDetail({
           blocked={blocked || detail.isError || detail.isFetching}
           onDenied={deny}
           onRefresh={async () => !(await detail.refetch()).isError}
+        />
+      ) : null}
+      {detail.data && !detail.isError ? (
+        <DatabaseBackups
+          database={detail.data}
+          scope={scope}
+          owner={owner}
+          blocked={blocked || detail.isFetching}
+          onDenied={deny}
         />
       ) : null}
       <Button

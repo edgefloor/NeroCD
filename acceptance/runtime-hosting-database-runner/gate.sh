@@ -15,8 +15,10 @@ import sys
 import tempfile
 import time
 
-OWNER = "nerocd-database-runner-20261024-dbr7319"
-LABEL = "io.nerocd.database-runner.owner"
+backup_mode = os.environ.get("NEROCD_DATABASE_BACKUP_RUNTIME", "0")
+OWNER = "nerocd-postgresql-backup-runtime-20261025-pbr7319" if backup_mode == "1" else "nerocd-database-runner-20261024-dbr7319"
+LABEL = "io.nerocd.postgresql-backup-runtime.owner" if backup_mode == "1" else "io.nerocd.database-runner.owner"
+OWNER_LABEL = "20261025-pbr7319" if backup_mode == "1" else OWNER
 NAME, VOLUME = OWNER + "-dind", OWNER + "-docker-data"
 ENDPOINT = "unix:///var/run/docker.sock"
 DAEMON = "e37dd219-b13f-47dd-99ed-21d79442ed0c"
@@ -85,6 +87,8 @@ log = (evidence / "gate.log").open("ab", buffering=0)
 volume_attempted = outer_attempted = False
 volume_pin = image = None
 outer = ""
+outer_deadline = None
+cleaning = False
 head = tree = None
 browser_origin = ""
 browser_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_BROWSER", "0")
@@ -167,6 +171,8 @@ def run(args, output=None, timeout=60, env=None):
     try:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         deadline = time.monotonic() + timeout
+        if outer_deadline is not None and not cleaning:
+            deadline = min(deadline, outer_deadline)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -238,11 +244,48 @@ def inventory(kind, tag, users=False):
     return found
 
 
+def backup_baseline_capture(containers, volumes):
+    if backup_mode != "1":
+        return
+    ids = [v["ID"] for v in containers.values()]
+    values = document(docker("container", "inspect", *ids, output="backup-baseline-private")) if ids else []
+    volume_values = document(docker("volume", "inspect", *volumes, output="backup-baseline-volumes-private")) if volumes else []
+    (evidence / "backup-baseline-identities.json").write_text(json.dumps({"containers": values, "volumes": volumes, "volume_profiles": volume_values}, sort_keys=True))
+
+
+def backup_baseline_verify():
+    if backup_mode != "1" or not (evidence / "backup-baseline-identities.json").exists():
+        return
+    baseline = json.loads((evidence / "backup-baseline-identities.json").read_text())
+    ids = [v["Id"] for v in baseline["containers"]]
+    current = document(docker("container", "inspect", *ids, output="backup-final-private")) if ids else []
+    def selected(value, telemetry=True):
+        value = json.loads(json.dumps(value))
+        value["Mounts"] = sorted(value.get("Mounts", []), key=lambda v: json.dumps(v, sort_keys=True))
+        if not telemetry:
+            value.get("State", {}).get("Health", {}).pop("Log", None)
+        return {k: value.get(k) for k in ("Id", "Image", "Config", "HostConfig", "Mounts", "State", "NetworkSettings")}
+    old = {v["Id"]: v for v in baseline["containers"]}
+    strict = [v["Id"] for v in current if selected(v) != selected(old[v["Id"]])]
+    changed = [v["Id"] for v in current if selected(v, False) != selected(old[v["Id"]], False)]
+    now_volumes = inventory("volume", "backup-volumes-preserved")
+    if not set(baseline["volumes"]).issubset(now_volumes):
+        changed.append("missing_baseline_volume")
+    else:
+        volume_profiles = document(docker("volume", "inspect", *baseline["volumes"], output="backup-final-volumes-private")) if baseline["volumes"] else []
+        if {v["Name"]: v for v in volume_profiles} != {v["Name"]: v for v in baseline["volume_profiles"]}:
+            changed.append("baseline_volume_configuration_changed")
+    (evidence / "backup-preservation-raw.json").write_text(json.dumps({"status": "failed" if strict else "passed", "changed_ids": strict}))
+    (evidence / "backup-preservation-reconciled.json").write_text(json.dumps({"status": "failed" if changed else "passed", "actual_changes": changed, "health_log_only_ids": strict if not changed else [], "baseline_container_count": len(ids), "baseline_volume_count": len(baseline["volumes"])}))
+    if changed:
+        raise Failure("unrelated baseline identity/configuration/state/network changed")
+
+
 def verified_volume(allowed_user=""):
     global volume_pin
     value = inspect("volume", VOLUME, "volume-latest-inspect")
     if (value.get("Name") != VOLUME or value.get("Driver") != "local" or
-            value.get("Scope") != "local" or value.get("Labels") != {LABEL: OWNER} or
+            value.get("Scope") != "local" or value.get("Labels") != {LABEL: OWNER_LABEL} or
             value.get("Options") not in ({}, None) or not value.get("CreatedAt")):
         raise Failure("outer storage metadata mismatch; preserving volume")
     if volume_pin is not None and value != volume_pin:
@@ -261,7 +304,7 @@ def verified_outer(identity):
     value = inspect("container", identity, "outer-latest-inspect")
     host, config = value.get("HostConfig", {}), value.get("Config", {})
     expected_labels = dict((image.get("Config") or {}).get("Labels") or {})
-    expected_labels[LABEL] = OWNER
+    expected_labels[LABEL] = OWNER_LABEL
     mounts = value.get("Mounts", [])
     if (value.get("Id") != identity or value.get("Name") != "/" + NAME or
             value.get("Image") != image["Id"] or config.get("Labels") != expected_labels or
@@ -270,6 +313,8 @@ def verified_outer(identity):
             host.get("Binds") or host.get("PublishAllPorts") or
             host.get("NetworkMode") not in ("default", "bridge") or len(mounts) != 1):
         raise Failure("outer identity/configuration mismatch; preserving resources")
+    if backup_mode == "1" and (host.get("NanoCpus") != 4000000000 or host.get("Memory") != 4294967296 or host.get("PidsLimit") != 1024):
+        raise Failure("backup fixture resource profile mismatch")
     ports = host.get("PortBindings")
     ports = {} if ports is None else ports
     network = value.get("NetworkSettings", {})
@@ -384,7 +429,9 @@ def provision_procps():
 
 
 def main():
-    global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass
+    global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
+    if backup_mode not in ("0", "1") or backup_mode == "1" and (browser_mode != "1" or routes_mode != "0" or storage_mode != "0" or gate_mode != "full"):
+        raise Failure("backup mode requires its exact private database/browser profile")
     if browser_mode not in ("0", "1"):
         raise Failure("invalid browser mode")
     if routes_mode not in ("0", "1"):
@@ -410,6 +457,7 @@ def main():
     # Only successful complete inventories establish absence. Inspect errors never do.
     containers = inventory("container", "host-containers-before")
     volumes = inventory("volume", "host-volumes-before")
+    backup_baseline_capture(containers, volumes)
     if NAME in containers or VOLUME in volumes:
         raise Failure("exact fixture name already exists; no mutation permitted")
     run(["git", "ls-files", "-s", "acceptance/runtime-hosting-database-runner/",
@@ -492,12 +540,15 @@ def main():
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("Id", "")):
         raise Failure("invalid pinned image ID")
     volume_attempted = True
-    if docker("volume", "create", "--driver", "local", "--label", LABEL + "=" + OWNER, VOLUME).strip() != VOLUME:
+    if docker("volume", "create", "--driver", "local", "--label", LABEL + "=" + OWNER_LABEL, VOLUME).strip() != VOLUME:
         raise Failure("unexpected volume creation response")
     verified_volume()
     outer_attempted = True
+    if backup_mode == "1":
+        outer_deadline = time.monotonic() + 3600
     publication = ["--publish", "127.0.0.1::18080"] if browser_mode == "1" else []
-    response = docker("container", "create", *publication, "--privileged", "--name", NAME, "--label", LABEL + "=" + OWNER,
+    limits = ["--cpus", "4", "--memory", "4g", "--pids-limit", "1024"] if backup_mode == "1" else []
+    response = docker("container", "create", *publication, *limits, "--privileged", "--name", NAME, "--label", LABEL + "=" + OWNER_LABEL,
                       "--mount", "type=volume,src=" + VOLUME + ",dst=/var/lib/docker",
                       "--env", "DOCKER_TLS_CERTDIR=", IMAGE, "dockerd", "--host=unix:///var/run/docker.sock").strip()
     if not re.fullmatch(r"[a-f0-9]{64}", response):
@@ -537,7 +588,7 @@ def main():
     registry_image = "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
     docker("exec", outer, "docker", "--host", ENDPOINT, "pull", registry_image, timeout=180, output="registry-pull")
     registry = docker("exec", outer, "docker", "--host", ENDPOINT, "run", "--detach", "--name", OWNER + "-registry",
-                      "--label", LABEL + "=" + OWNER, "--publish", "127.0.0.1::5000", "--tmpfs", "/var/lib/registry:rw", registry_image).strip()
+                      "--label", LABEL + "=" + OWNER_LABEL, "--publish", "127.0.0.1::5000", "--tmpfs", "/var/lib/registry:rw", registry_image).strip()
     if not re.fullmatch(r"[a-f0-9]{64}", registry):
         raise Failure("invalid inner registry identity")
     registry_state = document(docker("exec", outer, "docker", "--host", ENDPOINT, "container", "inspect", registry,
@@ -547,7 +598,7 @@ def main():
     ports = registry_state.get("HostConfig", {}).get("PortBindings", {})
     publication = ports.get("5000/tcp", [])
     if (registry_state.get("Id") != registry or registry_state.get("Name") != "/" + OWNER + "-registry"
-            or registry_state.get("Config", {}).get("Labels", {}).get(LABEL) != OWNER
+            or registry_state.get("Config", {}).get("Labels", {}).get(LABEL) != OWNER_LABEL
             or registry_state.get("Config", {}).get("Image") != registry_image
             or registry_state.get("HostConfig", {}).get("Privileged") is not False
             or not registry_state.get("State", {}).get("Running") or len(ports) != 1 or len(publication) != 1
@@ -600,7 +651,7 @@ def main():
     postgres = "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
     docker("exec", outer, "docker", "--host", ENDPOINT, "pull", postgres, timeout=180, output="control-postgres-pull")
     pg = docker("exec", outer, "docker", "--host", ENDPOINT, "run", "--detach", "--name", OWNER + "-control-pg",
-                "--label", LABEL + "=" + OWNER, "--network", "host", "--tmpfs", "/var/lib/postgresql/data:rw",
+                "--label", LABEL + "=" + OWNER_LABEL, "--network", "host", "--tmpfs", "/var/lib/postgresql/data:rw",
                 "--env", "POSTGRES_USER=nerocd", "--env", "POSTGRES_PASSWORD=isolated_fixture_only",
                 "--env", "POSTGRES_DB=nerocd_database_runner", postgres).strip()
     if not re.fullmatch(r"[a-f0-9]{64}", pg):
@@ -623,6 +674,8 @@ def main():
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
                "--env", "NEROCD_DATABASE_HTTP_APP_IMAGE=" + app_image,
                "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable"]
+    if backup_mode == "1":
+        runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_RUNTIME=1"]
     if browser_mode == "1":
         verified_outer(outer)
         if not browser_origin:
@@ -639,6 +692,8 @@ def main():
         pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner|ApplicationDatabaseStorageCompiledRunner|ApplicationDatabaseStorageFailuresCompiledRunner)$"
     if gate_mode == "storage-cutover-diagnostic":
         pattern = STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR
+    if backup_mode == "1":
+        pattern = "^TestHostingDatabaseBackup(CompiledRunner|FailuresCompiledRunner)$"
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
@@ -648,6 +703,15 @@ def main():
     else:
         runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
+    if backup_mode == "1":
+        for marker in ("DATABASE_BACKUP_RESTORE_APP_PASS postgresql", "DATABASE_BACKUP_BROWSER_PASS postgresql", "DATABASE_BACKUP_GUEST_TIMEOUT_PASS postgresql", "DATABASE_BACKUP_FAILURE_PASS postgresql corrupt", "DATABASE_BACKUP_FAILURE_PASS postgresql truncated", "DATABASE_BACKUP_FAILURE_PASS postgresql revoked"):
+            if runtime_output.splitlines().count(marker) != 1:
+                raise Failure("required real backup restore proof missing: " + marker)
+        if not re.search(r"^--- PASS: TestHostingDatabaseBackupCompiledRunner ", runtime_output, re.MULTILINE) or re.search(r"^\s*--- (?:SKIP|FAIL): ", runtime_output, re.MULTILINE):
+            raise Failure("backup runtime test missing or skipped")
+        full_workflow_pass = True
+        say("hosted PostgreSQL logical backup and new-database restore fixture passed")
+        return
     if gate_mode == "storage-cutover-diagnostic":
         required = {"TestHostingApplicationDatabaseStorageFailuresCompiledRunner",
                     "TestHostingApplicationDatabaseStorageFailuresCompiledRunner/postgresql/cutover"}
@@ -728,6 +792,8 @@ exit 1
 
 
 def cleanup():
+    global cleaning
+    cleaning = True
     global outer
     if outer_attempted:
         containers = inventory("container", "cleanup-containers")
@@ -792,6 +858,7 @@ finally:
     try:
         inventory("container", "host-containers-after")
         inventory("volume", "host-volumes-after")
+        backup_baseline_verify()
         if head is not None and (run(["git", "rev-parse", "HEAD"]).strip() != head or
                                  run(["git", "rev-parse", "HEAD^{tree}"]).strip() != tree or
                                  run(["git", "status", "--porcelain"], output="status-after").strip()):
