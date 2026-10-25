@@ -89,8 +89,29 @@ async function proof(page: Page, m: Metadata, state: Progress, count: number) {
 async function continueRoutes(connection: Locator, enabled: boolean) {
   if (!enabled) return;
   const checkbox = connection.getByRole("checkbox", { name: "Continue all reviewed public routes when redeploying the connected application.", exact: true });
-  await expect(checkbox).toBeVisible(); await checkbox.focus(); await checkbox.press("Space"); await expect(checkbox).toBeChecked();
+  await expect(checkbox).toBeVisible();
+  await expect(checkbox).toBeEnabled();
+  if (!await checkbox.isChecked()) {
+    await checkbox.focus();
+    await checkbox.press("Space");
+  }
+  await expect(checkbox).toBeChecked();
 }
+test("route continuation helper preserves selection on repeated keyboard review", async ({ page }) => {
+  // Disposable page tests only the helper. It does not qualify a live workflow.
+  await page.setContent(`<section aria-label="Connection helper fixture"><label><input type="checkbox" data-changes="0" onchange="this.dataset.changes = String(Number(this.dataset.changes) + 1)">Continue all reviewed public routes when redeploying the connected application.</label><label><input type="checkbox">Independent request approval</label></section>`);
+  const connection = page.getByRole("region", { name: "Connection helper fixture", exact: true });
+  const continuation = connection.getByRole("checkbox", { name: "Continue all reviewed public routes when redeploying the connected application.", exact: true });
+  const approval = connection.getByRole("checkbox", { name: "Independent request approval", exact: true });
+  await continueRoutes(connection, true);
+  await expect(continuation).toBeChecked();
+  await expect(continuation).toHaveAttribute("data-changes", "1");
+  await expect(approval).not.toBeChecked();
+  await continueRoutes(connection, true);
+  await expect(continuation).toBeChecked();
+  await expect(continuation).toHaveAttribute("data-changes", "1");
+  await expect(approval).not.toBeChecked();
+});
 async function admit(page: Page, connection: Locator, name: string, path: string) {
   const form = connection.getByRole("form", { name: "Review database connection request", exact: true });
   const approval = form.getByRole("checkbox", { name: "I reviewed the selected database and application settings and approve this request.", exact: true });
