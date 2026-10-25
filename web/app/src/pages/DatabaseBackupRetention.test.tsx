@@ -475,3 +475,185 @@ test("manual batches require confirmation while automatic cleanup uses saved pol
   ).toBeTruthy();
   expect(screen.queryByText(/A later batch always needs/)).toBeNull();
 });
+
+async function confirmSavedBatch() {
+  fireEvent.click(await button("Retry this batch"));
+  await screen.findByRole("region", { name: "Retry saved retention batch" });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "I confirm continuing only this saved batch",
+    }),
+  );
+  fireEvent.click(await button("Confirm retry of this batch"));
+}
+test("reloaded history can recover only its exact saved execution without a fresh preview", async () => {
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+  mount();
+  fireEvent.click(await button("Retry this batch"));
+  const region = await screen.findByRole("region", {
+    name: "Retry saved retention batch",
+  });
+  expect(region.textContent).toContain("backup_old · local · copy local_copy");
+  expect(region.textContent).toContain(
+    "backup_old · remote · copy remote_copy",
+  );
+  expect(region.textContent).toContain(
+    "Copies with unknown prior effects may remain blocked",
+  );
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Confirm retry of this batch",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "I confirm continuing only this saved batch",
+    }),
+  );
+  fireEvent.click(await button("Confirm retry of this batch"));
+  await screen.findByText(/Accepted retention execution execution/);
+  const call = vi.mocked(api.executeRetention).mock.calls[0]!;
+  expect(call[2]).toEqual({
+    request_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+    preview_id: execution.preview_id,
+    expected_policy_revision: execution.policy_revision,
+    expected_plan_hash: execution.plan_hash,
+  });
+  expect(call[4]).toBe(execution.id);
+  expect(api.createRetentionPreview).not.toHaveBeenCalled();
+});
+test("lost recovery response replays the identical new request and expected execution", async () => {
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+  vi.mocked(api.executeRetention)
+    .mockRejectedValueOnce(new Error("lost"))
+    .mockResolvedValueOnce(execution);
+  mount();
+  await confirmSavedBatch();
+  await screen.findByText(/Retained request/);
+  const first = vi.mocked(api.executeRetention).mock.calls[0]!;
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Retry this batch",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  fireEvent.click(await button("Retry the same retention request"));
+  await screen.findByText(/Accepted retention execution execution/);
+  const second = vi.mocked(api.executeRetention).mock.calls[1]!;
+  expect(second[2]).toBe(first[2]);
+  expect(second[4]).toBe(execution.id);
+  expect(api.createRetentionPreview).not.toHaveBeenCalled();
+});
+test.each(["dispatched", "applying", "uncertain"] as const)(
+  "held %s batch is explicitly recoverable",
+  async (state) => {
+    vi.mocked(api.listRetentionExecutions).mockResolvedValue([
+      { ...execution, state },
+    ]);
+    mount();
+    await button("Retry this batch");
+    expect(api.executeRetention).not.toHaveBeenCalled();
+  },
+);
+test.each(["queued", "succeeded", "failed"] as const)(
+  "%s history cannot start a recovery deletion",
+  async (state) => {
+    vi.mocked(api.listRetentionExecutions).mockResolvedValue([
+      { ...execution, state },
+    ]);
+    mount();
+    await screen.findByText(/Local result: succeeded/);
+    expect(
+      screen.queryByRole("button", { name: "Retry this batch" }),
+    ).toBeNull();
+  },
+);
+test("released reservations and viewers cannot recover history", async () => {
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([
+    { ...execution, reservation_held: false },
+  ]);
+  const view = mount();
+  await screen.findByText(/Local result: succeeded/);
+  expect(screen.queryByRole("button", { name: "Retry this batch" })).toBeNull();
+  view.unmount();
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+  mount(false);
+  await screen.findByText(/Local result: succeeded/);
+  expect(screen.queryByRole("button", { name: "Retry this batch" })).toBeNull();
+});
+test.each(["actor", "resource", "generation", "role", "blocked"])(
+  "%s change retires recovery confirmation and request",
+  async (field) => {
+    vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+    let resolve!: (value: api.RetentionExecution) => void;
+    vi.mocked(api.executeRetention).mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const view = mount();
+    await confirmSavedBatch();
+    await waitFor(() => expect(api.executeRetention).toHaveBeenCalledTimes(1));
+    const signal = vi.mocked(api.executeRetention).mock.calls[0]![3];
+    view.rerender(
+      view.element(
+        {
+          ...db,
+          resource: {
+            ...db.resource,
+            ...(field === "resource" ? { id: "other" } : {}),
+            ...(field === "generation" ? { generation: 3 } : {}),
+          },
+        },
+        field === "actor" ? "other_actor" : "owner",
+        field !== "role",
+        field === "blocked",
+      ),
+    );
+    expect(signal?.aborted).toBe(true);
+    await act(async () => resolve(execution));
+    expect(
+      screen.queryByRole("region", { name: "Retry saved retention batch" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/Accepted retention execution execution/),
+    ).toBeNull();
+  },
+);
+test("stale resource generation blocks saved batch recovery", async () => {
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+  const view = mount();
+  view.rerender(
+    view.element({ ...db, resource: { ...db.resource, generation: 3 } }),
+  );
+  await screen.findByText(/Local result: succeeded/);
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Retry this batch",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+});
+test("recovery denial revokes authority and an unsafe conflict keeps history bounded", async () => {
+  vi.mocked(api.listRetentionExecutions).mockResolvedValue([execution]);
+  vi.mocked(api.executeRetention).mockRejectedValueOnce(
+    new ApiError(409, "unsafe", null),
+  );
+  const view = mount();
+  await confirmSavedBatch();
+  await screen.findByText(/Input is preserved/);
+  expect(api.createRetentionPreview).not.toHaveBeenCalled();
+  expect(screen.getByText(/Reservation remains held/)).toBeTruthy();
+  vi.mocked(api.executeRetention).mockRejectedValueOnce(
+    new ApiError(403, "denied", null),
+  );
+  await confirmSavedBatch();
+  await screen.findByText("Backup retention access is unavailable.");
+  expect(view.denied).toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Retry this batch" })).toBeNull();
+});

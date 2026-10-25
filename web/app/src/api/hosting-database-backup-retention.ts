@@ -469,9 +469,11 @@ export async function executeRetention(
   db: HostingDatabase,
   input: RetentionExecutionInput,
   signal?: AbortSignal,
+  expectedExecutionID?: string,
 ) {
   identity(input.request_id);
   if (
+    (expectedExecutionID !== undefined && !id(expectedExecutionID)) ||
     !id(input.preview_id) ||
     !hash(input.expected_plan_hash) ||
     !integer(input.expected_policy_revision, Number.MAX_SAFE_INTEGER, 1)
@@ -488,6 +490,7 @@ export async function executeRetention(
     db,
   );
   if (
+    (expectedExecutionID !== undefined && out.id !== expectedExecutionID) ||
     out.preview_id !== input.preview_id ||
     out.plan_hash !== input.expected_plan_hash ||
     out.policy_revision !== input.expected_policy_revision

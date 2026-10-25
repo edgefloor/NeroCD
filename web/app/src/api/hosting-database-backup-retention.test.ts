@@ -281,3 +281,53 @@ test("retired requests abort without accepting late responses", async () => {
   await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   expect(signal?.aborted).toBe(true);
 });
+
+test("history recovery posts the saved batch with new identity and requires the same execution ID", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(respond(execution))
+    .mockResolvedValueOnce(
+      respond({ ...execution, id: "different_execution" }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const input = {
+    request_id: "b".repeat(32),
+    preview_id: execution.preview_id,
+    expected_policy_revision: execution.policy_revision,
+    expected_plan_hash: execution.plan_hash,
+  };
+  expect(
+    await executeRetention(scope, db, input, undefined, execution.id),
+  ).toEqual(execution);
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual(input);
+  expect(fetch.mock.calls[0]![0]).toBe(
+    "/api/v1/resources/database/database-backup-retention/executions",
+  );
+  await expect(
+    executeRetention(scope, db, input, undefined, execution.id),
+  ).rejects.toThrow("Invalid database backup retention metadata");
+});
+
+test("history recovery retains existing scope, preview, policy and plan correlation", async () => {
+  const input = {
+    request_id,
+    preview_id: execution.preview_id,
+    expected_policy_revision: execution.policy_revision,
+    expected_plan_hash: execution.plan_hash,
+  };
+  for (const patch of [
+    { project_id: "other" },
+    { resource_id: "other" },
+    { preview_id: "other" },
+    { policy_revision: 2 },
+    { plan_hash: `sha256:${"b".repeat(64)}` },
+  ]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(respond({ ...execution, ...patch })),
+    );
+    await expect(
+      executeRetention(scope, db, input, undefined, execution.id),
+    ).rejects.toThrow();
+  }
+});

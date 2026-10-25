@@ -18,6 +18,7 @@ import {
   retentionBytesToGiB,
   retentionGiBToBytes,
   saveRetentionPolicy,
+  type RetentionExecution,
   type RetentionExecutionInput,
   type RetentionPolicy,
   type RetentionPolicyInput,
@@ -43,7 +44,12 @@ type Draft = {
 type Attempt =
   | { kind: "save"; input: RetentionPolicyInput }
   | { kind: "preview"; input: RetentionPreviewInput }
-  | { kind: "execute"; input: RetentionExecutionInput };
+  | { kind: "execute"; input: RetentionExecutionInput }
+  | { kind: "recover"; execution: string; input: RetentionExecutionInput };
+const recoverable = (execution: RetentionExecution) =>
+  execution.reservation_held &&
+  ["dispatched", "applying", "uncertain"].includes(execution.state) &&
+  execution.items.length > 0;
 const emptyFields = (): Fields => ({ count: "0", days: "0", size: "0" });
 function draftFor(policy: RetentionPolicy | null): Draft {
   const fields = (v: RetentionPolicy["local"]) => ({
@@ -98,6 +104,8 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
   const [draft, setDraft] = useState<Draft>();
   const [preview, setPreview] = useState<RetentionPreview>();
   const [confirmed, setConfirmed] = useState(false);
+  const [recovery, setRecovery] = useState<RetentionExecution>();
+  const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
   const [attempt, setAttempt] = useState<Attempt>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -175,11 +183,22 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
     draft?.revision === policy.data.revision &&
     policy.data.resource_generation === database.resource.generation;
   const selected = preview?.items.filter((v) => v.selected) ?? [];
+  const latestRecovery = history.data?.find((v) => v.id === recovery?.id);
+  const recoveryCurrent = Boolean(
+    recovery &&
+    latestRecovery &&
+    recoverable(latestRecovery) &&
+    latestRecovery.preview_id === recovery.preview_id &&
+    latestRecovery.policy_revision === recovery.policy_revision &&
+    latestRecovery.plan_hash === recovery.plan_hash,
+  );
   function edit(next: Draft) {
     setDraft(next);
     setPreview(undefined);
     setConfirmed(false);
     setMessage("");
+    setRecovery(undefined);
+    setRecoveryConfirmed(false);
   }
   async function submit(next: Attempt) {
     const controller = lifetime.current;
@@ -192,6 +211,19 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
       controller.signal.aborted
     )
       return;
+    if (next.kind === "recover" && !attempt) {
+      const saved = history.data?.find((v) => v.id === next.execution);
+      if (
+        !current ||
+        history.isFetching ||
+        !saved ||
+        !recoverable(saved) ||
+        saved.preview_id !== next.input.preview_id ||
+        saved.policy_revision !== next.input.expected_policy_revision ||
+        saved.plan_hash !== next.input.expected_plan_hash
+      )
+        return;
+    }
     setAttempt(next);
     setPending(true);
     setError(undefined);
@@ -226,10 +258,13 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
           database,
           next.input,
           controller.signal,
+          next.kind === "recover" ? next.execution : undefined,
         );
         if (controller.signal.aborted) return;
         setPreview(undefined);
         setConfirmed(false);
+        setRecovery(undefined);
+        setRecoveryConfirmed(false);
         setMessage(
           `Accepted retention execution ${out.id}. Review its independent local and remote results below.`,
         );
@@ -252,6 +287,8 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
           [400, 404, 409].includes(cause.status)
         ) {
           setAttempt(undefined);
+          setRecovery(undefined);
+          setRecoveryConfirmed(false);
           setPreview(undefined);
           setConfirmed(false);
         }
@@ -615,9 +652,96 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
                   </li>
                 ))}
               </ul>
+              {owner && recoverable(execution) ? (
+                <Button
+                  className="h-auto max-w-full whitespace-normal"
+                  type="button"
+                  variant="outline"
+                  disabled={unavailable || history.isFetching || !current}
+                  onClick={() => {
+                    setRecovery(execution);
+                    setRecoveryConfirmed(false);
+                    setPreview(undefined);
+                    setConfirmed(false);
+                    setError(undefined);
+                  }}
+                >
+                  Retry this batch
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
+        {owner && recovery ? (
+          <section
+            aria-label="Retry saved retention batch"
+            className="min-w-0 space-y-2"
+          >
+            <h5>Confirm retry of saved batch {recovery.id}</h5>
+            <p className="break-all">
+              Saved preview {recovery.preview_id}, policy revision{" "}
+              {recovery.policy_revision}, plan {recovery.plan_hash}.
+            </p>
+            <p>
+              This requests recovery of the same execution and exact copies
+              below. It does not select another batch. The server checks current
+              owner and destination authority and blocks a live or unsafe
+              attempt. Copies with unknown prior effects may remain blocked.
+            </p>
+            <ul>
+              {recovery.items.map((item) => (
+                <li key={item.copy_id} className="break-all">
+                  {item.backup_id} · {item.location} · copy {item.copy_id} ·{" "}
+                  {item.state}
+                </li>
+              ))}
+            </ul>
+            {!recoveryCurrent ? (
+              <p role="alert">
+                This saved batch is no longer eligible for retry. Refresh and
+                review its current history.
+              </p>
+            ) : null}
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                aria-label="I confirm continuing only this saved batch"
+                checked={recoveryConfirmed}
+                disabled={unavailable || !recoveryCurrent}
+                onChange={(event) => setRecoveryConfirmed(event.target.checked)}
+              />
+              <span>
+                I confirm retry of exactly the saved copies in execution{" "}
+                {recovery.id}, with no new batch selection.
+              </span>
+            </label>
+            <Button
+              className="h-auto max-w-full whitespace-normal"
+              type="button"
+              disabled={
+                unavailable ||
+                history.isFetching ||
+                !current ||
+                !recoveryCurrent ||
+                !recoveryConfirmed
+              }
+              onClick={() =>
+                void submit({
+                  kind: "recover",
+                  execution: recovery.id,
+                  input: {
+                    request_id: databaseRequestID(),
+                    preview_id: recovery.preview_id,
+                    expected_policy_revision: recovery.policy_revision,
+                    expected_plan_hash: recovery.plan_hash,
+                  },
+                })
+              }
+            >
+              Confirm retry of this batch
+            </Button>
+          </section>
+        ) : null}
       </section>
       <Button
         className="h-auto max-w-full whitespace-normal"
