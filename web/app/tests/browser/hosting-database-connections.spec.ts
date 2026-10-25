@@ -37,7 +37,7 @@ async function fixture(page: Page, connectedStart = false, viewerStart = false) 
     }
     if (path.endsWith("/runtime-configuration")) return route.fulfill({ json: { runtime_configuration: { resource_id: "app", project_id: "p", resource_generation: 3, runtime_generation: 5, entries: [] } } });
     if (path.endsWith("/binding")) return route.fulfill({ json: { id: "binding", resource_id: "app", destination_id: "dest", runtime_namespace: "fixture_namespace", created_by: "operator", created_at: "" } });
-    if (path.endsWith("/storage-deployment-options")) return route.fulfill({ status: 503, json: { error: "Unrelated fixture controls unavailable" } });
+    if (path.endsWith("/storage-deployment-options")) return route.fulfill({ json: { resource_id: "app", resource_generation: 3, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "storage_unconfigured", routes: [], storage_route_continuity: null, application_database_storage: null } });
     if (path.includes("/routes") || path.includes("/retained-releases")) return route.fulfill({ json: [] });
     return route.fulfill({ json: list([]) });
   });
@@ -172,3 +172,33 @@ test("intercepted refreshed eligible routes require renewed approval before depl
   expect(writes).toHaveLength(1);
   expect(JSON.parse(writes[0]).application_database_route_continuity.expected_loaded_generation).toBe(8);
 });
+
+for (const width of [320, 390, 430, 1440]) {
+  test(`intercepted connected upload storage review requires interruption approval at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const { panel, writes, lose } = await fixture(page, true);
+    const hash = `sha256:${"a".repeat(64)}`;
+    await page.route("**/resources/app/storage-deployment-options", (route) => route.fulfill({ json: { resource_id: "app", resource_generation: 3, storage_ref: { storage_id: "storage", generation: 1, hash }, previous_healthy_operation_id: "application_fixture", host_port: 20000, container_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, available: true, reason: "available", routes: [], storage_route_continuity: null, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption_required: true } } }));
+    await page.route("**/resources/app/storage", (route) => route.fulfill({ json: { id: "storage", project_id: "p", resource_id: "app", binding_id: "binding", destination_id: "dest", generation: 1, hash, kind: "platform_managed", driver: "local", access_mode: "read_write", retention: "retain", volume_name: "ncd_uploads", mount_path: "/app/uploads" } }));
+    await panel.getByRole("button", { name: "Refresh database connection", exact: true }).click();
+    await expect(panel.getByText(/Saved upload mount: \/app\/uploads/)).toBeVisible();
+    const continuation = panel.getByLabel("Continue all reviewed public routes when redeploying the connected application.");
+    await continuation.check();
+    const approve = panel.getByLabel("I reviewed the selected database and application settings and approve this request.");
+    await approve.check();
+    const deploy = panel.getByRole("button", { name: "Redeploy connected application", exact: true });
+    await expect(deploy).toBeDisabled();
+    const interrupt = panel.getByLabel("I acknowledge application interruption while replacing the release using this saved upload volume.");
+    await interrupt.focus(); await page.keyboard.press("Space");
+    await expect(approve).not.toBeChecked();
+    await approve.focus(); await page.keyboard.press("Space"); lose();
+    await deploy.focus(); await page.keyboard.press("Enter");
+    await expect(panel.getByText(/No confirmed response/)).toBeVisible();
+    await panel.getByRole("button", { name: "Retry identical application request", exact: true }).click();
+    await expect(panel.getByText(/Request accepted: hop_fixture/)).toBeVisible();
+    expect(writes[0]).toBe(writes[1]);
+    expect(JSON.parse(writes[1]).application_database_storage).toEqual({ expected_storage_generation: 1, expected_storage_hash: hash, acknowledge_interruption: true });
+    expect(JSON.parse(writes[1]).application_database_route_continuity.routes).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

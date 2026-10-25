@@ -4,7 +4,15 @@ import type { components } from "./generated";
 import { scopedStorage, type HostingStorage } from "./hosting-storage";
 
 export type StorageDeploymentOptions =
-  components["schemas"]["HostingStorageDeploymentOptions"];
+  components["schemas"]["HostingStorageDeploymentOptions"] & {
+    application_database_storage?: {
+      version: "application-database.storage.v1";
+      strategy: "replacement_with_interruption";
+      expected_storage_generation: number;
+      expected_storage_hash: string;
+      acknowledge_interruption_required: true;
+    } | null;
+  };
 export type StorageContinuityStatus =
   components["schemas"]["HostingStorageRouteContinuityStatus"];
 export type StorageDeploymentScope = {
@@ -133,6 +141,7 @@ export function validateStorageDeploymentOptions(
       "reason",
       "routes",
       "storage_route_continuity",
+      ...(Object.hasOwn(value, "application_database_storage") ? ["application_database_storage"] : []),
     ]) ||
     value.resource_id !== resource ||
     !positive(value.resource_generation) ||
@@ -193,6 +202,14 @@ export function validateStorageDeploymentOptions(
     seen.add(route.id);
   }
   const continuity = value.storage_route_continuity;
+  const connectedStorage = value.application_database_storage;
+  if (connectedStorage !== undefined && connectedStorage !== null &&
+    (!closed(connectedStorage, ["version", "strategy", "expected_storage_generation", "expected_storage_hash", "acknowledge_interruption_required"]) ||
+      connectedStorage.version !== "application-database.storage.v1" || connectedStorage.strategy !== "replacement_with_interruption" ||
+      connectedStorage.acknowledge_interruption_required !== true || !positive(connectedStorage.expected_storage_generation) ||
+      !/^sha256:[a-f0-9]{64}$/.test(connectedStorage.expected_storage_hash) ||
+      connectedStorage.expected_storage_generation !== value.storage_ref?.generation || connectedStorage.expected_storage_hash !== value.storage_ref?.hash)) fail();
+  if (connectedStorage && (continuity !== null || value.routes.some((route) => route.selected_release_operation_id !== value.previous_healthy_operation_id))) fail();
   if (
     continuity !== null &&
     (!closed(continuity, [
@@ -236,10 +253,10 @@ export function validateStorageDeploymentOptions(
       value.host_port === null ||
       value.container_port === null ||
       value.readiness === null ||
-      value.routes.length !== (continuity?.routes.length ?? 0) ||
+      !connectedStorage && value.routes.length !== (continuity?.routes.length ?? 0) ||
       value.routes.some(
         (route) =>
-          !continuity?.routes.some(
+          !connectedStorage && !continuity?.routes.some(
             (selection) =>
               selection.route_id === route.id &&
               selection.expected_version === route.version &&

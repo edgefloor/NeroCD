@@ -4,19 +4,31 @@ import { request } from "./client";
 import { boundedDatabaseRequest } from "./hosting-databases";
 import type { components } from "./generated";
 import type { SwitchOptions } from "./hosting-route-switch";
+import { getResourceBinding } from "./destinations";
+import { getStorageDeploymentOptions, getStorageDeploymentStorage } from "./hosting-storage-deployment";
 
 type Schema<K extends keyof components["schemas"]> = components["schemas"][K];
 export type DatabaseConnection = Schema<"HostingDatabaseConnection">;
 export type DatabaseConnectionInput = Schema<"HostingDatabaseConnectionInput">;
 export type DatabaseConnectionOptions = Schema<"HostingDatabaseConnectionOptions">;
 export type DatabaseConnectionScope = { actor: string; project: string; resource: string };
-export type ConnectedDeploymentInput = Schema<"HostingDeploymentInput">;
+export type ConnectedDeploymentInput = Schema<"HostingDeploymentInput"> & { application_database_storage?: { expected_storage_generation: number; expected_storage_hash: string; acknowledge_interruption: true } };
+export async function getConnectionStorageReview(scope: DatabaseConnectionScope, signal?: AbortSignal) {
+  const options = await getStorageDeploymentOptions(scope, signal);
+  if (!options.storage_ref) return { options, storage: null };
+  const binding = await boundedDatabaseRequest((signal) => getResourceBinding(scope.resource, { signal }), signal);
+  if (binding.resource_id !== scope.resource) throw new Error("Storage binding scope mismatch");
+  const storage = await getStorageDeploymentStorage(scope, options, binding.id, signal);
+  if (storage.destination_id !== binding.destination_id) throw new Error("Storage destination scope mismatch");
+  return { options, storage: { id: storage.id, project_id: storage.project_id, resource_id: storage.resource_id, binding_id: storage.binding_id, destination_id: storage.destination_id, generation: storage.generation, hash: storage.hash, kind: storage.kind, driver: storage.driver, access_mode: storage.access_mode, retention: storage.retention, volume_name: storage.volume_name, mount_path: storage.mount_path } };
+}
+export const connectionStorageReviewQuery = (scope: DatabaseConnectionScope) => queryOptions({ queryKey: [...connectionKey(scope), "storageReview"], retry: false, gcTime: 0, refetchOnWindowFocus: false, queryFn: ({ signal }) => getConnectionStorageReview(scope, signal) });
 export function connectionRouteIntent(options: SwitchOptions): ConnectedDeploymentInput["application_database_route_continuity"] {
   const healthy = options.targets.find((target) => target.kind === "current_healthy");
   if (!options.available || options.pending_operation_id || !options.loaded_generation || !options.loaded_proxy_operation_id || !healthy || !options.routes.length || options.routes.some((route) => route.selected_release_operation_id !== healthy.operation_id)) return undefined;
   return { expected_loaded_generation: options.loaded_generation, expected_loaded_proxy_operation_id: options.loaded_proxy_operation_id, routes: options.routes.map((route) => ({ route_id: route.id, expected_version: route.version, expected_selected_release_operation_id: route.selected_release_operation_id })) };
 }
-export type ConnectedProgress = { id: string; state: string; mutation_hold: boolean; restore_ownership_held: boolean; proxy_operation_id?: string; yielded: boolean };
+export type ConnectedProgress = { storage?: { strategy: "replacement_with_interruption"; storage_id: string; generation: number; hash: string }; storagePhase?: string; id: string; state: string; mutation_hold: boolean; restore_ownership_held: boolean; proxy_operation_id?: string; yielded: boolean };
 export const connectedProgressQuery = (scope: DatabaseConnectionScope, operation: string) => queryOptions({
   queryKey: [...connectionKey(scope), "operation", operation], retry: false, gcTime: 0, refetchOnWindowFocus: false,
   queryFn: async ({ signal }): Promise<ConnectedProgress> => {
@@ -32,7 +44,22 @@ export const connectedProgressQuery = (scope: DatabaseConnectionScope, operation
       const yielded = value.application_database_yield as Record<string, unknown>;
       if (!closed(yielded, ["version", "receipt_id", "plan_hash", "stage_hash", "candidate_hash", "continuation_hash"]) || yielded.version !== "application-database.route-continuity.v1" || !identifier(yielded.receipt_id) || [yielded.plan_hash, yielded.stage_hash, yielded.candidate_hash, yielded.continuation_hash].some((hash) => typeof hash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(hash))) throw new Error("Database candidate evidence is malformed");
     }
-    return { id: operation, state: value.state, mutation_hold: value.mutation_hold, restore_ownership_held: value.restore_ownership_held, proxy_operation_id: proxy, yielded: value.application_database_yield !== undefined };
+    let storage: ConnectedProgress["storage"];
+    const descriptor = value.application_database_storage;
+    const hash = (value: unknown) => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+    if (descriptor !== undefined) {
+      if (!closed(descriptor, ["version", "strategy", "storage_ref", "hash"])) throw new Error("Database storage descriptor is malformed");
+      const d = descriptor as Record<string, unknown>, ref = d.storage_ref as Record<string, unknown>;
+      if (d.version !== "application-database.storage.v1" || d.strategy !== "replacement_with_interruption" || !hash(d.hash) || !closed(ref, ["storage_id", "generation", "hash"]) || !identifier(ref.storage_id) || !integer(ref.generation, 1) || !hash(ref.hash)) throw new Error("Database storage descriptor is malformed");
+      storage = { strategy: "replacement_with_interruption", storage_id: ref.storage_id, generation: Number(ref.generation), hash: String(ref.hash) };
+    }
+    let storagePhase: string | undefined;
+    if (value.application_database_storage_state !== undefined) {
+      const s = value.application_database_storage_state as Record<string, unknown>;
+      if (!storage || !closed(s, ["version", "phase", "receipt_id", "state_hash", "previous_state_hash", "candidate_hash", "recovery_actions"]) || s.version !== "application-database.storage.v1" || !["stop_intent", "stopped", "candidate_stopped", "replacement_failed", "resume_intent", "resumed"].includes(String(s.phase)) || !Array.isArray(s.recovery_actions) || s.recovery_actions.length > 2 || new Set(s.recovery_actions).size !== s.recovery_actions.length || s.recovery_actions.some((action) => !["resume_predecessor", "complete_replacement"].includes(String(action))) || !identifier(s.receipt_id) || !hash(s.state_hash) || s.previous_state_hash !== "" && !hash(s.previous_state_hash) || s.candidate_hash !== "" && !hash(s.candidate_hash)) throw new Error("Database storage state is malformed");
+      storagePhase = String(s.phase);
+    }
+    return { ...(storage ? { storage } : {}), ...(storagePhase ? { storagePhase } : {}), id: operation, state: value.state, mutation_hold: value.mutation_hold, restore_ownership_held: value.restore_ownership_held, proxy_operation_id: proxy, yielded: value.application_database_yield !== undefined };
   },
 });
 export type DatabaseMaintenanceInput = Schema<"HostingDatabaseMaintenanceInput">;

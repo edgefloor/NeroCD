@@ -9,6 +9,7 @@ const resource: Resource = { id: "app", project_id: "project", project_environme
 const connection = { id: "hcn_test", project_id: "project", application_resource_id: "app", database_resource_id: "db", binding_id: "binding", binding_hash: `sha256:${"a".repeat(64)}`, state: "active", reason_code: "completed", capture_id: "capture", upgrade_operation_id: "upgrade", application_operation_id: "app_operation", membership_revision: 4, created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-24T00:00:00Z" };
 const option = { resource_id: "db", name: "Data", engine: "postgresql", generation: 2, destination_id: "dest", status: "available", reason_code: "eligible" };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+const noStorageOptions = { resource_id: "app", resource_generation: 3, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: false, reason: "storage_unconfigured", routes: [], storage_route_continuity: null, application_database_storage: null };
 let client: QueryClient;
 function setup(handler?: (url: string, init: RequestInit) => Response | Promise<Response> | undefined, role = "owner") {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -18,6 +19,7 @@ function setup(handler?: (url: string, init: RequestInit) => Response | Promise<
     const custom = handler?.(url, init);
     if (custom) return custom;
     if (url.endsWith("/database-connection")) return json({}, 404);
+    if (url.endsWith("/storage-deployment-options")) return json(noStorageOptions);
     if (url.endsWith("/options")) return json({ items: [option] });
     if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "app", project_id: "project", resource_generation: 3, runtime_generation: 5, entries: [] } });
     if (url.endsWith("/binding")) return json({ resource_id: "app", destination_id: "dest" });
@@ -422,4 +424,84 @@ test("material route refresh cannot rewrite an uncertain submitted request", asy
   const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
   expect(bodies[0]).toBe(bodies[1]);
   expect(JSON.parse(String(bodies[1])).application_database_route_continuity.expected_loaded_generation).toBe(7);
+});
+
+const storageHash = `sha256:${"a".repeat(64)}`;
+const uploadOptions = { ...noStorageOptions, available: true, reason: "available", previous_healthy_operation_id: "app_operation", host_port: 20000, container_port: 8080, readiness: { path: "/", timeout_seconds: 30 }, storage_ref: { storage_id: "storage", generation: 1, hash: storageHash }, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", expected_storage_generation: 1, expected_storage_hash: storageHash, acknowledge_interruption_required: true } };
+const uploadStorage = { id: "storage", project_id: "project", resource_id: "app", binding_id: "binding", destination_id: "dest", generation: 1, hash: storageHash, kind: "platform_managed", driver: "local", access_mode: "read_write", retention: "retain", volume_name: "ncd_uploads", mount_path: "/app/uploads" };
+const acknowledgeUpload = () => screen.getByLabelText("I acknowledge application interruption while replacing the release using this saved upload volume.");
+function storageSetup(handler?: (url: string, init: RequestInit) => Response | Promise<Response> | undefined, role = "owner") {
+  return setup((url, init) => {
+    const custom = handler?.(url, init); if (custom) return custom;
+    if (url.endsWith("/database-connection")) return json(connection);
+    if (url.endsWith("/storage-deployment-options")) return json(uploadOptions);
+    if (url.endsWith("/storage")) return json(uploadStorage);
+    if (url.endsWith("/binding")) return json({ id: "binding", resource_id: "app", destination_id: "dest" });
+    if (url.endsWith("/route-switches")) return json(loadedRoutes);
+    if (init.method === "POST") return json({ id: "operation", project_id: "project", resource_id: "app", snapshot: { resource_id: "app" } }, 202);
+  }, role);
+}
+test("saved mount requires explicit interruption acknowledgement and preserves route CAS", async () => {
+  const { fetch } = storageSetup();
+  await screen.findByText(/Saved upload mount: \/app\/uploads/);
+  fireEvent.click(await screen.findByLabelText("Continue all reviewed public routes when redeploying the connected application."));
+  const approve = screen.getByLabelText("I reviewed the selected database and application settings and approve this request.");
+  fireEvent.click(approve);
+  expect((screen.getByRole("button", { name: "Redeploy connected application" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(acknowledgeUpload());
+  expect((approve as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(approve); fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1));
+  const body = JSON.parse(String(fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body));
+  expect(body.application_database_storage).toEqual({ expected_storage_generation: 1, expected_storage_hash: storageHash, acknowledge_interruption: true });
+  expect(body.application_database_route_continuity.routes).toEqual([{ route_id: "route", expected_version: 3, expected_selected_release_operation_id: "app_operation" }]);
+  expect(body).not.toHaveProperty("storage_route_continuity");
+});
+test("storage change at submission sends nothing and preserves nonsecret settings", async () => {
+  let stale = false;
+  const { fetch } = storageSetup((url) => url.endsWith("/storage-deployment-options") && stale ? json({ ...uploadOptions, available: false, reason: "stale_storage", application_database_storage: null }) : undefined);
+  await screen.findByText(/Saved upload mount/); fireEvent.click(acknowledgeUpload());
+  fireEvent.change(screen.getByLabelText("Application readiness path"), { target: { value: "/ready" } });
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request.")); stale = true;
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/Saved configuration or membership changed/);
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+  expect((screen.getByLabelText("Application readiness path") as HTMLInputElement).value).toBe("/ready");
+});
+test("refreshed changed storage invalidates acknowledgement and approval", async () => {
+  let changed = false;
+  storageSetup((url) => url.endsWith("/storage-deployment-options") && changed ? json({ ...uploadOptions, previous_healthy_operation_id: "new_healthy" }) : undefined);
+  await screen.findByText(/Saved upload mount/); fireEvent.click(acknowledgeUpload());
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request.")); changed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText(/Saved storage changed/);
+  expect((acknowledgeUpload() as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByLabelText("I reviewed the selected database and application settings and approve this request.") as HTMLInputElement).checked).toBe(false);
+});
+test("uncertain storage request stays byte-identical after failed options refresh", async () => {
+  let failed = false;
+  const { fetch } = storageSetup((url, init) => {
+    if (url.endsWith("/storage-deployment-options") && failed) return json({}, 503);
+    if (init.method === "POST") return Promise.reject(new TypeError("lost"));
+  });
+  await screen.findByText(/Saved upload mount/); fireEvent.click(acknowledgeUpload());
+  fireEvent.click(screen.getByLabelText("I reviewed the selected database and application settings and approve this request."));
+  fireEvent.click(screen.getByRole("button", { name: "Redeploy connected application" }));
+  await screen.findByText(/No confirmed response/); failed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  await screen.findByText(/Unable to verify saved application storage/);
+  const retry = screen.getByRole("button", { name: "Retry identical application request" });
+  await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(retry);
+  await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+  const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+  expect(bodies[0]).toBe(bodies[1]);
+});
+test("storage denial clears sensitive requests and viewer cannot acknowledge or mutate", async () => {
+  storageSetup((url) => url.endsWith("/storage-deployment-options") ? json({}, 403) : undefined);
+  await screen.findByText(/Retained requests and drafts have been cleared/);
+  cleanup(); client.clear();
+  const { fetch } = storageSetup(undefined, "viewer");
+  await screen.findByText("Connection workflow completed");
+  expect(screen.queryByLabelText(/I acknowledge application interruption/)).toBeNull();
+  expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
 });

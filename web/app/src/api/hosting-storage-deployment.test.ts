@@ -264,3 +264,19 @@ test("continuity rejects a foreign operation or invented loaded receipt", async 
   await expect(getStorageContinuityStatus(scope, "hop")).rejects.toThrow();
   await expect(getStorageContinuityStatus(scope, "hop")).rejects.toThrow();
 });
+
+const connectedStorageOptions = { ...storageOptions, storage_ref: { storage_id: "storage", generation: 1, hash: `sha256:${"a".repeat(64)}` }, storage_route_continuity: null, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", expected_storage_generation: 1, expected_storage_hash: `sha256:${"a".repeat(64)}`, acknowledge_interruption_required: true } };
+test("connected storage has an explicit interruption descriptor and uses its own route request", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(connectedStorageOptions))));
+  expect(await getStorageDeploymentOptions(scope)).toEqual(connectedStorageOptions);
+});
+test.each([
+  { ...connectedStorageOptions.application_database_storage, acknowledge_interruption_required: false },
+  { ...connectedStorageOptions.application_database_storage, expected_storage_generation: 2 },
+  { ...connectedStorageOptions.application_database_storage, expected_storage_hash: `sha256:${"b".repeat(64)}` },
+  { ...connectedStorageOptions.application_database_storage, strategy: "rolling" },
+  { ...connectedStorageOptions.application_database_storage, password: "never cache" },
+])("connected storage rejects malformed or mismatched evidence %#", async (descriptor) => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...connectedStorageOptions, application_database_storage: descriptor }))));
+  await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
+});
