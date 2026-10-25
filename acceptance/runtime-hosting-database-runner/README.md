@@ -202,7 +202,13 @@ resume and Redis forward completion use the live owner recovery form, keyboard
 review and acknowledgement, the real POST, and viewer denial. All four runtime
 cases verify immutable same-operation association, a fresh task/lease/fence,
 actual one-writer/data/HTTPS settlement, and exact cleanup. Forward completion
-must preserve failed P, apply distinct P2, and finalize the original candidate.
+must preserve failed P, apply distinct P2 through its actual `proxy_<P2>` task,
+and finalize the original candidate. After resume, both engines also admit a
+fresh routed application C from new public route and storage reviews. C must
+stop recovered A before starting, retire that exact A once, retain the original
+upload volume and candidate-written database/upload data, and accept new writes
+through trusted fixture HTTPS. This follows maintenance against the fresh
+resumed membership receipt and preserves the original failed operation.
 Acceptance of a POST or a stopped phase alone is insufficient. Resume does not
 undo candidate database writes or uploaded files and cannot promise data
 compatibility with the previous application version.

@@ -161,6 +161,108 @@ func applicationDatabaseStorageProxyPause(ctx context.Context, r *applicationDat
 	return nil
 }
 
+func applicationDatabaseStorageRecoveryIdentity(action, operation, run, proxy, failedProxy string) bool {
+	return action == "resume_predecessor" && run == "storage_recover_"+operation && proxy == "" || action == "complete_replacement" && proxy == "appdb_storage_proxy_"+operation && run == "proxy_"+proxy && proxy != failedProxy
+}
+
+func TestApplicationDatabaseStorageRecoveryTaskIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name, action, run, proxy, failed string
+		want                             bool
+	}{
+		{"resume", "resume_predecessor", "storage_recover_original", "", "", true},
+		{"actual_proxy_dispatch", "complete_replacement", "proxy_appdb_storage_proxy_original", "appdb_storage_proxy_original", "failed_p", true},
+		{"invented_run_prefix", "complete_replacement", "run_appdb_storage_proxy_original", "appdb_storage_proxy_original", "failed_p", false},
+		{"failed_proxy_reuse", "complete_replacement", "proxy_appdb_storage_proxy_original", "appdb_storage_proxy_original", "appdb_storage_proxy_original", false},
+		{"foreign_proxy", "complete_replacement", "proxy_appdb_storage_proxy_other", "appdb_storage_proxy_other", "failed_p", false},
+		{"resume_with_proxy", "resume_predecessor", "storage_recover_original", "failed_p", "failed_p", false},
+		{"foreign_resume", "resume_predecessor", "storage_recover_other", "", "", false},
+		{"unknown_action", "retry", "storage_recover_original", "", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if applicationDatabaseStorageRecoveryIdentity(test.action, "original", test.run, test.proxy, test.failed) != test.want {
+				t.Fatal("recovery association differs from actual task dispatch or reuses failed identity")
+			}
+		})
+	}
+}
+
+// Admission rereads both public reviews after recovery and maintenance. In
+// particular it must not reuse the failed B readiness path or its stale route CAS.
+func (s *applicationDatabaseStorageFixture) requestResumedReplacement(f *databaseRunnerFixture, resource domain.Resource, previous domain.HostingOperation) domain.HostingOperation {
+	f.t.Helper()
+	deployment := domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: previous.Snapshot.RuntimeConfiguration.Generation, IdempotencyKey: "storage_resume_redeploy_c", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 10}}
+	input := s.deployment(f, f.routes.deployment(deployment))
+	return databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
+}
+
+func TestApplicationDatabaseStorageResumedReplacementAdmission(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			proxy := domain.HostingProxy{ID: "proxy", ServerID: "server", DestinationID: "destination", RunnerID: "runner", ControlProjectID: "project", Enabled: true, DaemonID: "daemon", LoadedGeneration: 7, DesiredGeneration: 7}
+			route := domain.HostingRoute{ID: "route", ResourceID: "application", Version: 4, SelectedReleaseOperationID: "resumed_a", Hostname: "connected-" + engine + ".example.test", PathPrefix: "/", Enabled: true}
+			loaded := "loaded_after_recovery"
+			options := domain.HostingRouteSwitchOptions{ResourceID: route.ResourceID, LoadedGeneration: &proxy.LoadedGeneration, LoadedProxyOperationID: &loaded, Available: true, Reason: "available", Routes: []domain.HostingRouteSwitchRoute{{ID: route.ID, Version: route.Version, SelectedReleaseOperationID: route.SelectedReleaseOperationID, Hostname: route.Hostname, PathPrefix: route.PathPrefix}}, Targets: []domain.HostingRouteSwitchTarget{{OperationID: route.SelectedReleaseOperationID, Kind: "current_healthy"}}}
+			var requests []string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				requests = append(requests, req.Method+" "+req.URL.Path)
+				var body any
+				switch req.URL.Path {
+				case "/api/v1/servers/server/proxy":
+					if req.Header.Get("Authorization") != "Bearer admin" {
+						t.Error("proxy review lost admin authentication")
+					}
+					body = proxy
+				case "/api/v1/resources/application/route-switches":
+					body = options
+				case "/api/v1/resources/application/storage-deployment-options":
+					body = map[string]any{"application_database_storage": map[string]any{"version": applicationDatabaseStorageVersion, "strategy": "replacement_with_interruption", "expected_storage_generation": 3, "expected_storage_hash": "saved_storage_hash", "acknowledge_interruption_required": true}}
+				case "/api/v1/resources/application/database-connection/deployments":
+					if req.Method != "POST" {
+						t.Error("replacement was not actually submitted")
+					}
+					var got struct {
+						domain.HostingDeploymentInput
+						Storage applicationDatabaseStorageAck `json:"application_database_storage"`
+					}
+					if json.NewDecoder(req.Body).Decode(&got) != nil {
+						t.Error("invalid replacement request")
+					}
+					want := domain.HostingDeploymentInput{ExpectedGeneration: 11, ExpectedRuntimeConfigurationGeneration: 9, IdempotencyKey: "storage_resume_redeploy_c", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 10}, ApplicationDatabaseRouteContinuity: &domain.HostingApplicationDatabaseRouteContinuityInput{ExpectedLoadedGeneration: 7, ExpectedLoadedProxyOperationID: loaded, Routes: []domain.HostingRouteSwitchSelection{{RouteID: route.ID, ExpectedVersion: 4, ExpectedSelectedReleaseOperationID: "resumed_a"}}}}
+					if !reflect.DeepEqual(got.HostingDeploymentInput, want) || got.Storage != (applicationDatabaseStorageAck{3, "saved_storage_hash", true}) {
+						t.Error("post-recovery deployment lost fresh route/storage CAS, readiness or runtime generation")
+					}
+					w.WriteHeader(http.StatusAccepted)
+					body = domain.HostingOperation{ID: "new_c"}
+				default:
+					t.Error("unexpected recovery replacement request")
+					w.WriteHeader(404)
+					return
+				}
+				if req.URL.Path != "/api/v1/servers/server/proxy" && req.Header.Get("Authorization") != "Bearer owner" {
+					t.Error("public review/admission lost owner authentication")
+				}
+				if err := json.NewEncoder(w).Encode(body); err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(server.Close)
+			f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), token: "owner", adminToken: "admin", serverID: proxy.ServerID}
+			f.routes = &applicationDatabaseRouteFixture{f: f, proxy: proxy, route: route, daemonID: proxy.DaemonID}
+			s := &applicationDatabaseStorageFixture{Metadata: domain.HostingStorage{ResourceID: "application", Generation: 3, Hash: "saved_storage_hash"}}
+			previous := domain.HostingOperation{ID: "resumed_a"}
+			previous.Snapshot.RuntimeConfiguration.Generation = 9
+			if s.requestResumedReplacement(f, domain.Resource{ID: "application", Generation: 11}, previous).ID != "new_c" {
+				t.Fatal("replacement admission lost new operation identity")
+			}
+			want := []string{"GET /api/v1/servers/server/proxy", "GET /api/v1/resources/application/route-switches", "GET /api/v1/resources/application/storage-deployment-options", "POST /api/v1/resources/application/database-connection/deployments"}
+			if !reflect.DeepEqual(requests, want) {
+				t.Fatal("replacement skipped fresh public review or duplicated admission")
+			}
+		})
+	}
+}
+
 func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixture, engine, failure string, resource domain.Resource, database domain.HostingDatabase, previous, op domain.HostingOperation, stage domain.HostingApplicationDatabaseStage, active domain.HostingDatabaseConnection, wire *applicationDatabaseRouteYieldWire) {
 	f.t.Helper()
 	r := f.routes
@@ -287,7 +389,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	if f.database.QueryRow(f.t.Context(), `SELECT run_id,coalesce(proxy_operation_id,'') FROM hosting_application_database_storage_recoveries WHERE operation_id=$1 AND action=$2`, op.ID, action).Scan(&run, &proxyID) != nil {
 		f.t.Fatal("recovery missing immutable same-operation association")
 	}
-	if action == "resume_predecessor" && (run != "storage_recover_"+op.ID || proxyID != "") || action == "complete_replacement" && (proxyID != "appdb_storage_proxy_"+op.ID || run != "run_"+proxyID || proxyID == failedProxy.ID) {
+	if !applicationDatabaseStorageRecoveryIdentity(action, op.ID, run, proxyID, failedProxy.ID) {
 		f.t.Fatal("recovery task or fresh proxy identity differs from deterministic association")
 	}
 	replay := databaseRunnerJSON[applicationDatabaseStoragePublic](f, f.token, "POST", path, input, 202)
@@ -324,12 +426,20 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 	}
 	f.stop()
 	selected := previous
+	var maintained domain.HostingOperation
 	if action == "resume_predecessor" {
 		settled := s.public(f, op.ID)
 		if settled.State != original.State || !reflect.DeepEqual(settled.Result, original.Result) {
 			f.t.Fatal("resume recovery rewrote original failed operation outcome")
 		}
 		f.applicationContainer(previous)
+		// Successful inventories, rather than an inspect error, prove the exact
+		// failed B is absent while A uses the original retained volume.
+		for _, filter := range []string{"id=" + stage.Candidate.ContainerID, "label=io.nerocd.operation=" + op.ID} {
+			if strings.TrimSpace(string(f.docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", filter))) != "" {
+				f.t.Fatal("resume left the proven-stopped failed candidate container behind")
+			}
+		}
 		s.assertFiles(f, previous)
 		r.assertSelected(previous)
 		r.record(f.t.Context(), previous, "GET", "a", "retained_a")
@@ -351,7 +461,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		maintenance := databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+database.Resource.ID+"/database/maintenance", domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: database.Resource.Generation, ExpectedMembershipRevision: resumed.MembershipRevision, IdempotencyKey: "storage_resume_database_maintenance"}, 202)
 		f.registerRouteOperationCleanup(maintenance.ID)
 		f.start()
-		maintained := f.awaitConnectionOperation(maintenance.ID)
+		maintained = f.awaitConnectionOperation(maintenance.ID)
 		f.stop()
 		if f.volumeProof(maintained) != databaseVolume || f.credentialMetadata(database) != credentials {
 			f.t.Fatal("database maintenance after resume changed retained database identity")
@@ -407,6 +517,36 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		browser.advance("finish", f.connection(op.ResourceID).MembershipRevision, selected, map[string]string{"a": "retained_a", "candidate_write": "retained_candidate_before_recovery"})
 		browser.awaitFinished()
 		fmt.Println("DATABASE_CONNECTION_STORAGE_RECOVERY_UI_PASS " + engine + " " + action)
+	}
+	if action == "resume_predecessor" {
+		// Recovery UI observes the resumed A first. A fresh API deployment then
+		// proves the recovered membership can retire A and settle new C normally.
+		request := s.requestResumedReplacement(f, resource, previous)
+		f.registerRouteOperationCleanup(request.ID)
+		revision := f.connection(resource.ID).MembershipRevision
+		r.recoverYield(request, previous, revision)
+		current := f.awaitConnectionOperation(request.ID)
+		f.stop()
+		if current.ID == op.ID || current.ID == previous.ID || current.Result.ContainerID == stage.Candidate.ContainerID || current.Result.ContainerID == previous.Result.ContainerID || current.Result.PreviousContainerID != previous.Result.ContainerID {
+			f.t.Fatal("resumed replacement reused failed B or did not replace exact recovered A")
+		}
+		f.assertApplicationDatabaseRetirement(current, previous)
+		f.exactMembers(current, maintained)
+		r.assertSelected(current)
+		s.assertFiles(f, current)
+		for key, value := range map[string]string{"a": "retained_a", "candidate_write": "retained_candidate_before_recovery", "resumed_maintenance": "retained_after_resume_maintenance"} {
+			r.record(f.t.Context(), current, "GET", key, value)
+		}
+		s.write(f, current, "retained_c", 55)
+		r.record(f.t.Context(), current, "PUT", "after_resume_redeploy", "retained_after_resume_redeploy")
+		r.record(f.t.Context(), current, "GET", "after_resume_redeploy", "retained_after_resume_redeploy")
+		originalAfter := s.public(f, op.ID)
+		if originalAfter.State != original.State || !reflect.DeepEqual(originalAfter.Result, original.Result) || originalAfter.StorageState.RecoveryState != "succeeded" {
+			f.t.Fatal("new deployment rewrote original failure or recovery settlement")
+		}
+		f.assertConnectionJournalRetired(current.ID)
+		r.assertUnrelated()
+		f.t.Log("resumed A replaced by fresh C with exact retained database/upload identity and trusted HTTPS writes")
 	}
 }
 
