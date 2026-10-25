@@ -37,7 +37,7 @@ The original three scenarios remain in the same gate. They check ordinary databa
 
 The reference behavior follows the pinned Coolify source at `b12d1386f3d458618b4c579babcd1e339c6c40b3`: PostgreSQL and Redis starts retain named mounts and destination networks; private URLs use the database identity; application deployment supplies environment and destination-network configuration. NeroCD carries these effects through its compiled Go agent, lease and fence, durable journal, and exact acknowledgments instead of SSH execution and activity status.
 
-This fixture covers one app and one database on one host, an ordinary registry image, no app storage or routes, and same-attempt lost-ACK recovery. It does not qualify expired-authority mutation recovery, host or disk loss, native backup, archive restore, or route continuity. Database metadata remains `adapter_unqualified` until a separate qualification decision. UI verification against the combined real backend is a later check.
+The base profile covers one app and one database on one host, an ordinary registry image, no app storage or routes, and same-attempt lost-ACK recovery. The route profile below adds continuation of existing HTTPS routes. It does not qualify expired-authority mutation recovery, host or disk loss, native backup, archive restore, or initial routed Connect. Database metadata remains `adapter_unqualified` until a separate qualification decision. Combined live UI qualification is recorded below.
 
 Harmless local checks never contact Docker:
 
@@ -71,4 +71,69 @@ The browser signs in through the actual UI. It selects the existing database, co
 
 Fixture setup uses supported service bootstrap to create and retain a distinct active installation administrator at `database-bootstrap@example.local`. Public APIs establish resources, project ownership, and viewer membership. One explicit isolated-schema exception demotes exactly the seeded `usr_bootstrap` account at `admin@example.local` to an ordinary user after public setup, with affected-row and resulting-role checks. That account signs in as project owner; the separate bootstrap administrator remains active. The fixture and browser both require public bootstrap status `complete` before login, and login actions have short explicit deadlines. This proves project-owner actions; it does not qualify self-service account provisioning. The viewer inspects the settled connection but cannot submit Connect, app redeployment, maintenance, or fixture controls. An anonymous request and an owner request for a separately owned private project must fail. The spec checks keyboard activation and panel containment at 320, 390, 430, and 1440 pixels. Browser traces and automatic screenshots/video are disabled; explicit screenshots cover only the nonsecret connection panel after login.
 
-Harmless gate tests exercise the bridge profile and UI-build-before-embedding order with executable stubs. Driver tests run local fixture/browser stubs and verify that child PIDs are gone after success, rejection, and cancellation. They never start a physical browser, Docker daemon, or database. Actual browser and combined physical results remain `not_run` until explicitly authorized and passed.
+Harmless gate tests exercise the bridge profile and UI-build-before-embedding order with executable stubs. Driver tests run local fixture/browser stubs and verify that child PIDs are gone after success, rejection, and cancellation. They never start a physical browser, Docker daemon, or database. Actual browser and combined physical results require explicit authorization and retained passing evidence. The qualified revision below has that evidence.
+
+## Qualified route continuation
+
+Enable both fixture modes for the five-group route and live UI gate:
+
+```sh
+NEROCD_DATABASE_CONNECTION_BROWSER=1 NEROCD_DATABASE_CONNECTION_ROUTES=1 bash acceptance/runtime-hosting-database-runner/gate.sh
+```
+
+Route mode adds `TestHostingApplicationDatabaseRouteFailuresCompiledRunner` to
+the four base groups and uses fail-fast execution. It proves readiness rejection
+and strict cutover rollback separately for PostgreSQL and Redis. The positive
+scenario observes a distinct ready candidate before switch, exact yield/proxy ACK
+replay across runner restarts, and exact predecessor retirement after switch.
+The UI reviews all enabled application routes and renews approval when choices
+change. This is existing-route continuation, with no initial routed Connect.
+
+The connected public-image workflow is physically qualified at
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
+`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
+journal format 16. An owner can connect one PostgreSQL or Redis database on the
+same destination, then redeploy the application through UI or API while continuing
+all reviewed existing HTTPS routes. Data and credential references survive app
+replacement and database maintenance. The candidate starts and passes readiness
+while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
+finalize lease that retires the exact predecessor.
+
+The full gate passed in 333.592 seconds with five runtime groups and zero skips.
+Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
+capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
+seconds. Four Chromium tests passed per engine, including the owner workflow in
+38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
+failures preserve the old HTTPS app and database reads/writes for both engines.
+Lost yield, proxy Complete and final Complete acknowledgments replay the original
+retained attempt without repeating effects or credential delivery.
+
+The physical receipt is
+`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
+Source and binary identities are retained in
+`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
+output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
+Owned processes and resources were removed. The unrelated 35 containers and 209
+volumes retained identical inventories; root graph and 75 generated UI files were
+unchanged, and the independent user UI remained ready.
+
+Qualification covers the pinned native Linux arm64 trusted Docker classic-store
+fixture and verified private CA. Initial Connect cannot include routes. Source
+builds, application storage, cross-server binding presentation, rotation,
+database-native backup/restore, disk loss and public ACME remain unqualified.
+There is no in-flight request draining or control-plane restart proof. Full R42,
+A17 and all full requirement, acceptance and matrix gates remain incomplete.
+
+The six prior route gate failures remain failures at their original revisions:
+
+- `/tmp/nerocd-database-runner-20261024.sz62wpzi`
+- `/tmp/nerocd-database-runner-20261024.7_uzg26w`
+- `/tmp/nerocd-database-runner-20261024.er27jnw5`
+- `/tmp/nerocd-database-runner-20261024.sk6wo1zu`
+- `/tmp/nerocd-database-runner-20261024.8xkvabak`
+- `/tmp/nerocd-database-runner-20261024.r6t4_4ux`
+
+The earlier successful four-group `9a69228` checkpoint and its 174.487-second
+receipt remain historical evidence. Neither it nor the six failed route attempts
+is relabeled by the final pass. Six physical failure/repair rounds preceded the
+333.592-second pass. Those observed durations provide no cost or ETA estimate.

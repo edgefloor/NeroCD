@@ -854,3 +854,47 @@ compatibility is validated at this assessment. Additive hosting and River
 migration checks cover only their stated schema boundaries. Existing-container
 adoption is a separate capability; discovered labels do not prove surrender of
 the previous controller's authority.
+
+## Connected application route continuation qualification
+
+The connected public-image workflow is physically qualified at
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
+`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
+journal format 16. An owner can connect one PostgreSQL or Redis database on the
+same destination, then redeploy the application through UI or API while continuing
+all reviewed existing HTTPS routes. Data and credential references survive app
+replacement and database maintenance. The candidate starts and passes readiness
+while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
+finalize lease that retires the exact predecessor.
+
+The full gate passed in 333.592 seconds with five runtime groups and zero skips.
+Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
+capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
+seconds. Four Chromium tests passed per engine, including the owner workflow in
+38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
+failures preserve the old HTTPS app and database reads/writes for both engines.
+Lost yield, proxy Complete and final Complete acknowledgments replay the original
+retained attempt without repeating effects or credential delivery.
+
+The physical receipt is
+`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
+Source and binary identities are retained in
+`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
+output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
+Owned processes and resources were removed. The unrelated 35 containers and 209
+volumes retained identical inventories; root graph and 75 generated UI files were
+unchanged, and the independent user UI remained ready.
+
+Qualification covers the pinned native Linux arm64 trusted Docker classic-store
+fixture and verified private CA. Initial Connect cannot include routes. Source
+builds, application storage, cross-server binding presentation, rotation,
+database-native backup/restore, disk loss and public ACME remain unqualified.
+There is no in-flight request draining or control-plane restart proof. Full R42,
+A17 and all full requirement, acceptance and matrix gates remain incomplete.
+
+The parity audit now retains 20 verified atomic outcomes out of 933 eligible
+outcomes, with 934 definitions. Presence is 65 implemented, 284 partial and 584
+missing. This is an evidence lower bound, not a completion percentage. The
+previous 17-outcome snapshot and original 4-outcome baseline remain in audit
+history. R21-C04, R21-C05 and R28-C02 gain current proof; no full gate gains a pass.
+The proposed workspace product remains deferred behind useful hosting.

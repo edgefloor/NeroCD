@@ -254,16 +254,15 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   below. Complete R42/A17 remains unfinished. See the
   [qualification evidence](docs/compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 - [Application/database connections](docs/hosting-database-connections.md) are
-  physically qualified at `9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, migration
-  0072. Owners connect an undeployed public-image app to one PostgreSQL or Redis
-  database on the same destination through UI/API, redeploy the app and maintain
-  the database with retained credentials, data, private network and membership.
-  Lost Complete-ACK replay does not repeat effects or credential delivery.
-  PostgreSQL/Redis live browser scenarios passed in 28.2/26.9 seconds; all four
-  compiled runtime groups passed without skips. This qualifies the native Linux
-  arm64 private fixture with a test CA. Source builds, existing app routes/storage,
-  cross-server presentation, rotation, native backup/restore, disk loss, public
-  routing and full R42/A17 remain open.
+  physically qualified at `5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, migration
+  0073 and journal 16. Owners connect one public-image app and PostgreSQL or Redis
+  on the same destination, then opt into continuing all reviewed existing HTTPS
+  routes during app redeployment. Data and credential references survive app and
+  database replacement. Failed readiness or cutover preserves the old app;
+  exact acknowledgment replay does not repeat effects. Five runtime groups and
+  eight live browser tests passed without skips in the native Linux arm64 private
+  CA fixture. Initial routed Connect, source builds, application storage, rotation,
+  native backup/restore, disk loss, public ACME and full R42/A17 remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "9a69228f9a2a8324e25b1c366ee4eba913b8dba2"
+BASE = "5277ab2ff5258ae6a4aee2fb642ed925d9a827cb"
 UPSTREAM = "b12d1386f3d458618b4c579babcd1e339c6c40b3"
 BASELINE_CRITERIA = 934
 BASELINE_ELIGIBLE = 933

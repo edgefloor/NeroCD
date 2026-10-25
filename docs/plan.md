@@ -29,7 +29,7 @@ remain distinct acceptance claims.
 
 | Foundation | Accepted bounded behavior | Remaining hosting gaps |
 | --- | --- | --- |
-| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0072, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
+| Application and persistence | Go API/application/store layers, PostgreSQL through migration 0073, River OSS v0.44.1, authorization, audit and React UI | Extend these contracts instead of creating a parallel queue or control plane |
 | Projects and placement | Shared project environments, typed resources, enrolled server/default destination, project grants and binding mutation holds | Broader SSH/host qualification, complete team/server access and legacy mappings |
 | Secrets | Encrypted project-secret versions, protected reveal, private Git credential delivery and bounded managed runtime delivery/execution; separate runner-file execution | Broader delivery and variable scopes, provider coverage and key recovery |
 | Desired runtime configuration | Accepted migration 0052 and resource GET/PUT API, generation compare-and-swap, idempotent requests, public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads | Broader value scopes and complete hosting qualification |
@@ -216,36 +216,40 @@ it does not establish successful exit of the whole continuous runtime. Owned
 cleanup and outer inventories passed. See the
 [current evidence and limits](compatibility.md#r42-remains-an-unfinished-hosting-workflow).
 
-The bounded image application/database workflow is physically qualified at
-`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, tree
-`3ccede1d9e44531f70993a40840274ced78b5969`, with migration 0072.
-Owners use the UI or public API to connect an undeployed image application to
-one healthy PostgreSQL or Redis database on the same destination, redeploy the
-application, and replace the database while retaining membership. Generated
-credential references, the private network, volume and application records
-survive these operations. Same-attempt committed Complete-ACK loss recovers
-without repeated effects or credential delivery; terminal effect authorization
-is denied. Viewers can inspect progress and cannot submit changes.
+The connected public-image workflow is physically qualified at
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
+`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
+journal format 16. An owner can connect one PostgreSQL or Redis database on the
+same destination, then redeploy the application through UI or API while continuing
+all reviewed existing HTTPS routes. Data and credential references survive app
+replacement and database maintenance. The candidate starts and passes readiness
+while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
+finalize lease that retires the exact predecessor.
 
-The live browser scenarios passed in 28.2 seconds for PostgreSQL and 26.9 seconds
-for Redis. The connected runtime group passed in 74.64 seconds; capture and
-normal database groups each passed in 23.19 seconds, and empty-network upgrade
-in 24.65 seconds. All four groups passed without skips; the gate took 174.487
-seconds. Cleanup completed and outer container/volume identities and canonical
-recorded fields matched. Root index and generated assets were preserved.
-Evidence remains in
-`/tmp/nerocd-application-database-final-c-integrated-physical-handoff.json` and
-`/tmp/nerocd-database-runner-20261024.wy_azrsp/runtime-test`.
+The full gate passed in 333.592 seconds with five runtime groups and zero skips.
+Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
+capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
+seconds. Four Chromium tests passed per engine, including the owner workflow in
+38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
+failures preserve the old HTTPS app and database reads/writes for both engines.
+Lost yield, proxy Complete and final Complete acknowledgments replay the original
+retained attempt without repeating effects or credential delivery.
 
-This qualifies the pinned native Linux arm64 private fixture with a verified
-test CA and responsive UI checks at 320/390/430/1440 widths. It supports one
-public-image application per database, with no existing application deployment,
-routes or application storage. Source builds, cross-server binding presentation,
-native database backups/restores, rotation, host-disk loss and public routing
-remain unqualified. Full R42/A17 and hosting parity remain incomplete. Earlier
-preflight and Redis replacement failures remain failed at their original
-revisions; the later pass does not reclassify them. See the
-[connection guide](hosting-database-connections.md) for actions and recovery limits.
+The physical receipt is
+`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
+Source and binary identities are retained in
+`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
+output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
+Owned processes and resources were removed. The unrelated 35 containers and 209
+volumes retained identical inventories; root graph and 75 generated UI files were
+unchanged, and the independent user UI remained ready.
+
+Qualification covers the pinned native Linux arm64 trusted Docker classic-store
+fixture and verified private CA. Initial Connect cannot include routes. Source
+builds, application storage, cross-server binding presentation, rotation,
+database-native backup/restore, disk loss and public ACME remain unqualified.
+There is no in-flight request draining or control-plane restart proof. Full R42,
+A17 and all full requirement, acceptance and matrix gates remain incomplete.
 
 R42 still needs broader application profiles and explicit unreachable cross-server
 binding presentation. The bounded workflow does not complete the requirement.

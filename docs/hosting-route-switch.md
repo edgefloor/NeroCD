@@ -5,8 +5,10 @@ routes, requiredRouteIDs)` prepares an opt-in engine plan for switching existing
 routes to new loopback host ports. This is a reusable engine mechanism for the
 hosting R21/R25/R28 and A11/A20 requirements. The controller exposes a bounded
 route-switch operation and admits only explicitly configured agents. R17 automatic
-HTTPS deployment orchestration remains separate work. The bounded connected
-application continuation is documented in
+HTTPS deployment orchestration remains separate work. The connected application continuation is physically qualified at
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb` for PostgreSQL and Redis, including
+readiness rejection and strict cutover rollback with the old HTTPS app preserved.
+Its default-off options, UI/API workflow and limits are documented in
 [database connections](hosting-database-connections.md#preserve-existing-https-routes-during-connected-redeployment).
 
 The caller must hold the existing fenced proxy lease, authorize the settled

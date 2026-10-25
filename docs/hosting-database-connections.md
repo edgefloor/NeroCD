@@ -1,24 +1,43 @@
 # Connect an image application to PostgreSQL or Redis
 
-The bounded workflow is physically qualified at
-`9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, tree
-`3ccede1d9e44531f70993a40840274ced78b5969`, for the pinned native Linux arm64
-private fixture with a verified test CA. The live browser scenarios passed in
-28.2 seconds for PostgreSQL and 26.9 seconds for Redis. Owner connection,
-application redeployment, database maintenance and same-attempt lost-ACK
-recovery passed through the real API, River and compiled Go runner.
+The connected public-image workflow is physically qualified at
+`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
+`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
+journal format 16. An owner can connect one PostgreSQL or Redis database on the
+same destination, then redeploy the application through UI or API while continuing
+all reviewed existing HTTPS routes. Data and credential references survive app
+replacement and database maintenance. The candidate starts and passes readiness
+while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
+finalize lease that retires the exact predecessor.
 
-All four runtime groups passed without skips, connected workflow 74.64 seconds,
-capture 23.19 seconds, normal database recovery 23.19 seconds and empty-network
-upgrade 24.65 seconds. The complete gate took 174.487 seconds. Cleanup and outer
-inventories were reconciled. Exact source, binaries, UI artifact and cleanup are
-recorded in `/tmp/nerocd-application-database-final-c-integrated-physical-handoff.json`;
-the runtime output is in `/tmp/nerocd-database-runner-20261024.wy_azrsp/runtime-test`.
+The full gate passed in 333.592 seconds with five runtime groups and zero skips.
+Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
+capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
+seconds. Four Chromium tests passed per engine, including the owner workflow in
+38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
+failures preserve the old HTTPS app and database reads/writes for both engines.
+Lost yield, proxy Complete and final Complete acknowledgments replay the original
+retained attempt without repeating effects or credential delivery.
 
-Earlier preflight-only failure and the failed Redis third replacement after
-`network_configured`, before `attached`, remain historical failures at their
-original revisions. The failed 273.666-second gate is not relabeled. This later
-pass qualifies only the adapter limits below, not full R42/A17 or hosting parity.
+The physical receipt is
+`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
+Source and binary identities are retained in
+`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
+output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
+Owned processes and resources were removed. The unrelated 35 containers and 209
+volumes retained identical inventories; root graph and 75 generated UI files were
+unchanged, and the independent user UI remained ready.
+
+Qualification covers the pinned native Linux arm64 trusted Docker classic-store
+fixture and verified private CA. Initial Connect cannot include routes. Source
+builds, application storage, cross-server binding presentation, rotation,
+database-native backup/restore, disk loss and public ACME remain unqualified.
+There is no in-flight request draining or control-plane restart proof. Full R42,
+A17 and all full requirement, acceptance and matrix gates remain incomplete.
+
+The earlier `9a69228f9a2a8324e25b1c366ee4eba913b8dba2` pass remains a
+separate historical checkpoint. Six subsequent failed physical attempts retain
+their original outcomes; see the [acceptance record](../acceptance/runtime-hosting-database-runner/README.md#qualified-route-continuation).
 
 ## Prepare the resources
 
@@ -144,7 +163,12 @@ application deployment request. Initial connection requests reject this option.
 The application must already have one active PostgreSQL or Redis connection on
 the same destination. Source builds and application storage remain unsupported.
 
-Read `GET /api/v1/resources/{id}/route-switches` before review. An available
+In the UI, review **Existing public routes**, select **Continue all reviewed public
+routes when redeploying the connected application.**, then approve and select
+**Redeploy connected application**. Changed route choices require a new review.
+The route continuation runner flag is disabled by default.
+
+For API requests, read `GET /api/v1/resources/{id}/route-switches` before review. An available
 response includes `loaded_generation`, `loaded_proxy_operation_id`, every enabled
 resource route, and the current healthy release. These values are explanatory
 state. Admission checks the loaded proxy, all route versions, and the exact
@@ -208,8 +232,9 @@ Observation recovery grants no new effects. An interrupted retirement intent
 without a detached receipt cannot automatically repeat retirement.
 
 Existing requests without this option keep their no-route admission rules.
-Package and PostgreSQL checks cover this protocol. Physical HTTPS and database
-read-write qualification is a separate acceptance gate.
+The physical gate above covers both engines, existing HTTPS routes, retained
+database reads/writes, failed readiness, verified cutover rollback and exact
+acknowledgment replay. An uncertain or held operation still needs explicit review.
 
 ## Handle an unavailable or conflicting request
 
@@ -266,6 +291,17 @@ unchanged-client compatibility claims.
 | [`ApplicationDeploymentJob::rolling_update`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2658), start and health-check the candidate before retiring the predecessor | Immutable ready yield, separate strict proxy operation, and fresh finalize lease for the original connected deployment |
 | [`generateLabelsApplication`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L1212), application hostname, port and HTTPS routing | Existing typed Traefik file snapshot and strict HTTP, HTTPS and certificate proof, with the complete unrelated route scope retained |
 | [`StandalonePostgresql`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandalonePostgresql.php#L322) and [`StandaloneRedis`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandaloneRedis.php#L308), internal connection details | Private deterministic alias, exact credential references and [connection UI](../web/app/src/pages/ResourceDatabaseConnections.tsx) without password disclosure |
+
+The same pinned `ApplicationDeploymentJob.php` separates
+[`health_check`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2709),
+[`generate_compose_file`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4090),
+and [`stop_running_container`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4930).
+The routing helper has separate
+[`fqdnLabelsForTraefik`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L932)
+and [`fqdnLabelsForCaddy`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L777).
+These references identify upstream behavior. NeroCD's current continuation uses
+its typed Traefik snapshot, PostgreSQL transactions, fenced Go runner and durable
+journal; it does not implement a PHP, SSH or Caddy execution port.
 
 NeroCD uses a native enrolled Go agent, current effect authorization, retained
 membership evidence and same-attempt journal replay. Coolify's PHP/SSH execution
