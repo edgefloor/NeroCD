@@ -65,6 +65,55 @@ func completeBackup(t *testing.T, f networkCaptureFixture, id string) domain.Hos
 	}
 	return out
 }
+
+func TestPostgresDatabaseBackupRestoredTargetApplicationConnection(t *testing.T) {
+	f := backupFixture(t)
+	backup, err := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "application_restore_source", ExpectedResourceGeneration: f.resource.Generation})
+	if err != nil {
+		t.Fatal("source backup admission", err)
+	}
+	backup = completeBackup(t, f, backup.ID)
+	restored, err := f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "application_restore_target", Name: "Restored application database"})
+	if err != nil {
+		t.Fatal("restore admission", err)
+	}
+	target, err := f.service.GetHostingDatabase(f.ctx, restored.TargetResourceID)
+	if err != nil {
+		t.Fatal("held target read", err)
+	}
+	child, storage := prepareBackupRestoreChild(t, f, restored, target)
+	restored = completeBackup(t, f, restored.ID)
+	if restored.State != "succeeded" || restored.OwnershipHeld || target.Resource.ID == f.resource.ID || target.Binding.ID == f.op.BindingID {
+		t.Fatal("restore did not settle an independent target")
+	}
+	// Continue with the real controller using the restored target's persisted
+	// healthy deployment and volume, rather than a newly seeded source database.
+	f.resource, f.storage, f.op = target.Resource, storage, child
+	capabilities := []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingDatabaseUpgradeCapability, domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability}
+	if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, f.runner, capabilities); err != nil {
+		t.Fatal(err)
+	}
+	application, err := f.pg.GetResource(f.ctx, "resource_image_web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runnerContext, err := store.BindHostingDatabaseConnectionRunnerContext(f.ctx, f.runner, f.credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: target.Resource.ID, ExpectedResourceGeneration: application.Generation, ExpectedDatabaseGeneration: target.Resource.Generation, RequestID: strings.Repeat("f", 32)}, Deployment: hostingDeploymentRequest()}
+	input.Deployment.IdempotencyKey = "restored_application_initial"
+	connected := (connectionFixture{networkCaptureFixture: f, application: application, input: input, runnerContext: runnerContext}).connect(t)
+	if connected.connection.CaptureID != domain.HostingDatabaseNetworkCaptureID(child.ID) || connected.appOperation.ApplicationDatabase == nil || connected.appOperation.ApplicationDatabase.Binding.DatabaseResourceID != target.Resource.ID {
+		t.Fatal("restored application used foreign capture or database evidence")
+	}
+	before := connectionCounts(t, connected)
+	replay, err := f.service.ConnectHostingApplicationDatabase(f.ctx, application.ID, input)
+	if err != nil || replay.ID != connected.connection.ID || replay.UpgradeOperationID != connected.connection.UpgradeOperationID || replay.ApplicationOperationID != connected.appOperation.ID || connectionCounts(t, connected) != before {
+		t.Fatal("connection replay changed restored-target admission", err)
+	}
+}
+
 func TestPostgresDatabaseBackupRestoreAtomicLifecycle(t *testing.T) {
 	f := backupFixture(t)
 	in := domain.HostingDatabaseBackupInput{RequestID: "backup_one", ExpectedResourceGeneration: 1}

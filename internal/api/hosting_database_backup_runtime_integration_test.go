@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
@@ -173,13 +176,24 @@ func backupRuntimeAwait(f *databaseRunnerFixture, id string) domain.HostingDatab
 	}
 }
 func backupRuntimeApplication(f *databaseRunnerFixture, db domain.HostingDatabase, suffix string) domain.HostingOperation {
+	return backupRuntimeApplicationObserved(f, db, suffix, nil)
+}
+
+func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.HostingDatabase, suffix string, observe func(string, string)) domain.HostingOperation {
 	f.t.Helper()
+	progress := func(stage, connection string) {
+		if observe != nil {
+			observe(stage, connection)
+		}
+	}
 	image := os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")
 	if applicationDatabaseFixtureImage(image) != nil {
 		f.t.Fatal("owned application image required")
 	}
 	resource := databaseRunnerJSON[domain.Resource](f, f.token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: db.Resource.ProjectID, ProjectEnvironmentID: f.environment, Name: "backup app " + suffix, Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: image}}}, 201)
+	progress("application_created", "")
 	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destination}, 201)
+	progress("application_bound", "")
 	entries := []domain.HostingRuntimeEntry{}
 	for _, v := range [][2]string{{"FIXTURE_DATABASE_ENGINE", "postgresql"}, {"FIXTURE_DATABASE_NAMESPACE", "backup_restored"}} {
 		value := v[1]
@@ -188,12 +202,17 @@ func backupRuntimeApplication(f *databaseRunnerFixture, db domain.HostingDatabas
 	config := databaseRunnerJSON[struct {
 		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
 	}](f, f.token, "PUT", "/api/v1/resources/"+resource.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, RequestID: backupRuntimeRequestID(f.t), Entries: entries}, 200).Configuration
+	progress("application_configured", "")
 	in := domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: db.Resource.ID, ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: config.RuntimeGeneration, ExpectedDatabaseGeneration: db.Resource.Generation, RequestID: backupRuntimeRequestID(f.t)}, Deployment: domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: config.RuntimeGeneration, IdempotencyKey: "backup_app_" + suffix, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}}}
 	connected := databaseRunnerJSON[domain.HostingDatabaseConnection](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connections", in, 202)
+	progress("connection_admitted", connected.ID)
 	f.registerRouteOperationCleanup(connected.UpgradeOperationID)
 	f.registerRouteOperationCleanup(connected.ApplicationOperationID)
 	f.activeConnection(resource.ID)
-	return f.awaitConnectionOperation(connected.ApplicationOperationID)
+	progress("connection_active", connected.ID)
+	op := f.awaitConnectionOperation(connected.ApplicationOperationID)
+	progress("application_settled", connected.ID)
+	return op
 }
 
 func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
@@ -252,16 +271,19 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.start()
 	backupRuntimeWaitReplay(f, wire)
 	f.backupWire.Store(nil)
+	browser.recordProgress("restore_replayed", "")
 	restored := backupRuntimeAwait(f, restoreID)
+	browser.recordProgress("restore_settled", "")
 	if restored.TargetResourceID == source.Resource.ID || restored.BackupID != backup.ID || restored.Blob.Digest != backup.Blob.Digest {
 		t.Fatal("restore changed immutable source or target identity")
 	}
 	target := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
+	browser.recordProgress("target_read", "")
 	f.registerRouteDatabaseCleanup(target.Resource.ID)
 	if target.Binding.ID == source.Binding.ID || target.StorageRef == source.StorageRef || target.Credentials[0].SecretID == source.Credentials[0].SecretID {
 		t.Fatal("restore reused source binding, volume or credentials")
 	}
-	b := backupRuntimeApplication(f, target, "restored")
+	b := backupRuntimeApplicationObserved(f, target, "restored", browser.recordProgress)
 	f.appRecord(b, "GET", "before", "application_origin")
 	f.appRecord(b, "PUT", "new", "restored_new_write")
 	f.appRecord(b, "GET", "new", "restored_new_write")
@@ -271,10 +293,12 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	if !strings.Contains(sql, "2") || !strings.Contains(sql, "ncd_app") {
 		t.Fatal("restored application sequence ownership failed")
 	}
+	browser.recordProgress("target_data_verified", "")
 	f.docker("container", "start", sourceOp.Result.ContainerID)
 	f.appRecord(a, "GET", "before", "application_origin")
 	f.appRecord(a, "GET", "after_snapshot", "source_still_writable")
 	f.appRecord(a, "PUT", "source_new", "source_new_write")
+	browser.recordProgress("source_data_verified", "")
 	browser.setPhase("complete", restored.ID)
 	browser.finished()
 	backupRuntimeFailureCases(f, source, sourceOp, a, backup)
@@ -282,12 +306,103 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 }
 
 type databaseBackupBrowserFixture struct {
-	f         *databaseRunnerFixture
-	mu        sync.Mutex
-	phase, id string
-	admitted  chan domain.HostingDatabaseBackupOperation
-	done      chan struct{}
-	once      sync.Once
+	f                                 *databaseRunnerFixture
+	mu                                sync.Mutex
+	phase, id                         string
+	admitted                          chan domain.HostingDatabaseBackupOperation
+	done                              chan struct{}
+	once                              sync.Once
+	stage, connectionID, lastProgress string
+	progressOutput                    io.Writer // Protected by mu; separate from the failure reporter's writer.
+}
+
+type databaseBackupProgressEvidence struct {
+	Stage, ConnectionState, Reason, CaptureRun, CaptureLease, CaptureReceipt string
+	UpgradeState, ApplicationState, TerminalClass, Requests                  string
+	RunnerExited                                                             bool
+	RunnerCode                                                               int
+}
+
+const databaseBackupProgressQuery = `SELECT c.state,c.reason_code,COALESCE(r.status,'missing'),
+ COALESCE((SELECT CASE WHEN l.status='active' AND l.expires_at<=clock_timestamp() THEN 'expired' ELSE l.status END FROM run_leases l WHERE l.run_id=n.run_id ORDER BY l.attempt DESC LIMIT 1),'missing'),
+ CASE WHEN n.id IS NULL THEN 'missing' WHEN EXISTS(SELECT 1 FROM hosting_database_network_origin_receipts o WHERE o.capture_id=n.id) THEN 'present' ELSE 'absent' END,
+ COALESCE(u.state,'missing'),COALESCE(a.state,'missing')
+ FROM hosting_database_connections c
+ LEFT JOIN hosting_database_network_captures n ON n.id=c.capture_id
+ LEFT JOIN task_runs r ON r.id=n.run_id
+ LEFT JOIN hosting_operations u ON u.id=c.upgrade_operation_id
+ LEFT JOIN hosting_operations a ON a.id=c.application_operation_id WHERE c.id=$1`
+
+func databaseBackupProgressProjection(stage, connection, reason, captureRun, captureLease, captureReceipt, upgrade, application string, raw []byte, exit databaseRunnerExit, counts *databaseRunnerAPICounts) databaseBackupProgressEvidence {
+	closed := func(value string, allowed ...string) string {
+		for _, item := range allowed {
+			if value == item {
+				return value
+			}
+		}
+		return "unknown"
+	}
+	opState := func(value string) string {
+		return closed(value, "not_admitted", "unavailable", "missing", "queued", "dispatched", "preparing", "prepared", "applying", "verifying", "succeeded", "failed", "canceled", "cancel_requested", "reconciliation_required")
+	}
+	out := databaseBackupProgressEvidence{
+		Stage:           closed(stage, "restore_replayed", "restore_settled", "target_read", "application_created", "application_bound", "application_configured", "connection_admitted", "connection_active", "application_settled", "target_data_verified", "source_data_verified"),
+		ConnectionState: closed(connection, "not_admitted", "unavailable", "missing", "binding_saved", "capture_requested", "capture_waiting", "upgrade_requested", "upgrade_waiting", "application_requested", "active", "held"),
+		Reason:          closed(reason, "not_admitted", "unavailable", "missing", "accepted", "capture_required", "capture_waiting", "upgrade_waiting", "application_waiting", "active", "child_failed", "uncertainty_held"),
+		CaptureRun:      closed(captureRun, "not_admitted", "unavailable", "missing", "queued", "waiting_approval", "running", "succeeded", "failed", "canceled", "rejected"),
+		CaptureLease:    closed(captureLease, "not_admitted", "unavailable", "missing", "active", "expired", "succeeded", "failed", "canceled"),
+		CaptureReceipt:  closed(captureReceipt, "not_admitted", "unavailable", "missing", "present", "absent"),
+		UpgradeState:    opState(upgrade), ApplicationState: opState(application), TerminalClass: databaseBackupTerminalClass(raw), Requests: counts.summary(), RunnerExited: exit.Exited, RunnerCode: -1,
+	}
+	if exit.Exited && exit.Code >= 0 && exit.Code <= 255 {
+		out.RunnerCode = exit.Code
+	}
+	if !exit.Exited {
+		out.TerminalClass = "not_exited"
+	}
+	return out
+}
+
+func (b *databaseBackupBrowserFixture) recordProgress(stage, connection string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.stage = stage
+	if connection != "" {
+		b.connectionID = connection
+	}
+	b.emitProgressLocked()
+}
+
+// Called both at milestones and by the live browser's existing state poll. It
+// emits while the fixture is alive, before a browser failure can kill its Go
+// process without running testing defers. Values are closed observations only.
+func (b *databaseBackupBrowserFixture) emitProgressLocked() {
+	if b.stage == "" {
+		return
+	}
+	c, reason, capture, lease, receipt, upgrade, application := "not_admitted", "not_admitted", "not_admitted", "not_admitted", "not_admitted", "not_admitted", "not_admitted"
+	if b.connectionID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
+		err := b.f.database.QueryRow(ctx, databaseBackupProgressQuery, b.connectionID).Scan(&c, &reason, &capture, &lease, &receipt, &upgrade, &application)
+		if err != nil {
+			missing := "unavailable"
+			if errors.Is(err, pgx.ErrNoRows) {
+				missing = "missing"
+			}
+			c, reason, capture, lease, receipt, upgrade, application = missing, missing, missing, missing, missing, missing, missing
+		}
+	}
+	out := databaseBackupProgressProjection(b.stage, c, reason, capture, lease, receipt, upgrade, application, b.f.logs.snapshot(), b.f.failureRunnerStatus(), &b.f.apiCounts)
+	raw, err := json.Marshal(out)
+	if err == nil && string(raw) != b.lastProgress {
+		b.lastProgress = string(raw)
+		output := b.progressOutput
+		if output == nil {
+			output = os.Stdout
+		}
+		_, _ = fmt.Fprintln(output, "DATABASE_BACKUP_PROGRESS "+string(raw))
+	}
 }
 
 func (b *databaseBackupBrowserFixture) setPhase(phase, id string) {
@@ -341,6 +456,7 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 		if r.Method == "GET" && r.URL.Path == control+"/state" {
 			b.mu.Lock()
 			defer b.mu.Unlock()
+			b.emitProgressLocked()
 			writeJSON(w, 200, map[string]string{"phase": b.phase, "operation_id": b.id})
 			return
 		}
@@ -943,6 +1059,71 @@ func TestDatabaseBackupDiagnosticTerminalClassesAndRedaction(t *testing.T) {
 	projection = databaseBackupFailureProjection(false, "backup", "succeeded", false, true, true, "succeeded", nil, databaseRunnerExit{}, counts)
 	if projection.State != "unknown" || projection.OwnershipHeld != "unknown" || projection.IntentReceipt != "unknown" || projection.LeaseStatus != "unknown" {
 		t.Fatal("failed observation fabricated settled state")
+	}
+}
+
+func TestDatabaseBackupProgressClosedObservation(t *testing.T) {
+	counts := &databaseRunnerAPICounts{}
+	counts.record("POST", "/api/v1/runners/claim", 200)
+	initial := databaseBackupProgressProjection("connection_admitted", "binding_saved", "accepted", "missing", "missing", "missing", "missing", "missing", nil, databaseRunnerExit{}, counts)
+	if initial.ConnectionState != "binding_saved" || initial.Reason != "accepted" {
+		t.Fatal("initial persisted connection reason became unknown")
+	}
+	known := databaseBackupProgressProjection("connection_admitted", "capture_waiting", "capture_waiting", "running", "expired", "absent", "missing", "missing", []byte("database backup authority unavailable\n"), databaseRunnerExit{Exited: true, Code: 1}, counts)
+	if known.Stage != "connection_admitted" || known.ConnectionState != "capture_waiting" || known.CaptureRun != "running" || known.CaptureLease != "expired" || known.CaptureReceipt != "absent" || known.UpgradeState != "missing" || known.ApplicationState != "missing" || known.TerminalClass != "plan_authority" || !known.RunnerExited || known.RunnerCode != 1 {
+		t.Fatal("progress lost the boundary between capture and child deployment")
+	}
+	canary := "ncr_progress_private_canary"
+	unknown := databaseBackupProgressProjection(canary, canary, canary, canary, canary, canary, canary, canary, []byte(canary), databaseRunnerExit{Exited: true, Kind: canary, Code: 999}, counts)
+	raw, err := json.Marshal(unknown)
+	if err != nil || bytes.Contains(raw, []byte(canary)) {
+		t.Fatal("progress leaked arbitrary observation content")
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 12 {
+		t.Fatal("progress schema changed")
+	}
+	for _, field := range []string{"Stage", "ConnectionState", "Reason", "CaptureRun", "CaptureLease", "CaptureReceipt", "UpgradeState", "ApplicationState", "TerminalClass"} {
+		if string(fields[field]) != `"unknown"` {
+			t.Fatal("progress emitted an unrecognized observation", field)
+		}
+	}
+	if unknown.RunnerCode != -1 || unknown.Requests != "POST /api/v1/runners/claim 200=1" {
+		t.Fatal("progress emitted an arbitrary exit code or lost closed counters")
+	}
+	for _, missing := range []string{"not_admitted", "unavailable", "missing"} {
+		got := databaseBackupProgressProjection("target_read", missing, missing, missing, missing, missing, missing, missing, nil, databaseRunnerExit{}, counts)
+		if got.ConnectionState != missing || got.CaptureRun != missing || got.CaptureLease != missing || got.CaptureReceipt != missing || got.UpgradeState != missing || got.ApplicationState != missing || got.RunnerCode != -1 {
+			t.Fatal("progress fabricated state from unavailable evidence")
+		}
+	}
+}
+
+func TestDatabaseBackupProgressEmitsBeforeBrowserFailure(t *testing.T) {
+	var output bytes.Buffer
+	f := &databaseRunnerFixture{logs: &databaseRunnerLog{}}
+	_, _ = f.logs.Write([]byte("database backup receipt request failed\n")) // An earlier intentionally interrupted process.
+	b := &databaseBackupBrowserFixture{f: f, progressOutput: &output}
+	b.recordProgress("restore_replayed", "")
+	before := output.String()
+	if !strings.Contains(before, `"Stage":"restore_replayed"`) || !strings.Contains(before, `"CaptureRun":"not_admitted"`) || !strings.Contains(before, `"TerminalClass":"not_exited"`) {
+		t.Fatal("live milestone was not emitted independently of testing cleanup")
+	}
+	var joined sync.WaitGroup
+	for range 8 {
+		joined.Add(1)
+		go func() {
+			defer joined.Done()
+			b.recordProgress("restore_replayed", "")
+		}()
+	}
+	joined.Wait()
+	if output.String() != before {
+		t.Fatal("unchanged browser polls duplicated progress evidence")
+	}
+	b.recordProgress("ncr_progress_canary_private", "")
+	if strings.Contains(output.String(), "ncr_progress_canary_private") || !strings.Contains(output.String(), `"Stage":"unknown"`) {
+		t.Fatal("live progress bypassed the closed projection")
 	}
 }
 
