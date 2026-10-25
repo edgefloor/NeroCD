@@ -194,7 +194,8 @@ function DatabaseBackupSchedulePanel({
         Disable stops future discovery. Accepted work keeps its original
         identity and authority checks. Overlapping backups of the same source
         are skipped. Missed, denied and failed occurrences remain in history.
-        External notifications and retention are not available. Remote uploads
+        External notifications are not available. Retention is configured in the
+        backup retention section. Remote uploads
         have separate transfer status in backup history.
       </p>
       {!owner ? (

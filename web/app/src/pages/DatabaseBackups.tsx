@@ -14,6 +14,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/errors";
+import { DatabaseBackupRetention } from "./DatabaseBackupRetention";
 import { DatabaseBackupSchedules } from "./DatabaseBackupSchedules";
 import { Button } from "../components/ui/button";
 import {
@@ -474,6 +475,13 @@ function DatabaseBackupsPanel({
         Refresh backup history
       </Button>
       <DatabaseBackupDestinations
+        database={database}
+        scope={scope}
+        owner={owner}
+        blocked={blocked}
+        onDenied={onDenied}
+      />
+      <DatabaseBackupRetention
         database={database}
         scope={scope}
         owner={owner}

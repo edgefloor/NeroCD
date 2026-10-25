@@ -1,3 +1,8 @@
+vi.mock("../api/hosting-database-backup-retention", async (original) => ({
+  ...(await original<typeof import("../api/hosting-database-backup-retention")>()),
+  getRetentionPolicy: vi.fn(async () => null),
+  listRetentionExecutions: vi.fn(async () => []),
+}));
 import * as remote from "../api/hosting-database-backup-targets";
 vi.mock("../api/hosting-database-backup-targets", async (original) => ({
   ...(await original<
@@ -458,4 +463,11 @@ test("an active transfer keeps polling even if the dump is terminal", async () =
   expect(
     vi.mocked(remote.listDatabaseBackupTransfers).mock.calls.length,
   ).toBeGreaterThan(initial);
+});
+
+test("backup workflow includes the retention policy and history panel", async () => {
+  mount();
+  await screen.findByRole("region", { name: "Database backup retention" });
+  await screen.findByText("No retention policy saved.");
+  expect(screen.getByRole("region", { name: "Retention execution history" })).toBeTruthy();
 });
