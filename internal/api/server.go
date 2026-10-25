@@ -249,7 +249,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
+	if hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if hostingStorageRouteRecoveryPath(r.URL.Path) {
@@ -471,7 +471,7 @@ func requiresAuth(path string) bool {
 }
 
 func requiresRunnerAuth(path string) bool {
-	if hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
+	if hostingDatabaseBackupRetentionRunnerPath(path) || hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
 		return true
 	}
 	switch path {

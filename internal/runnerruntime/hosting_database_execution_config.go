@@ -19,6 +19,7 @@ type DatabaseExecutionConfig struct {
 	RouteContinuity       bool
 	ApplicationStorage    bool
 	MembershipMaintenance bool
+	BackupRetention       bool
 	LogicalBackups        bool
 	RemoteBackups         bool
 	RemoteEndpoints       []string
@@ -42,6 +43,9 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.BackupRetention && !c.Database.RemoteBackups {
+		return errors.New("backup retention requires remote backup execution")
 	}
 	if c.Database.RemoteBackups && !c.Database.LogicalBackups {
 		return errors.New("remote backups require logical database backups")

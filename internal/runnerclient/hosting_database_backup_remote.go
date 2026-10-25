@@ -69,7 +69,13 @@ func (c Client) HostingDatabaseBackupTransferMutation(ctx context.Context, in do
 }
 
 func (c Client) HostingBackupRemoteCredentials(ctx context.Context, runner string, in domain.BackupRemoteCredentialRequest, options RuntimeEnvironmentTransport) (*domain.BackupRemoteCredentials, error) {
-	if in.Validate() != nil || ValidateRuntimeEnvironmentServer(c.Server, options) != nil {
+	return c.hostingBackupCredentials(ctx, runner, in, options, false)
+}
+func (c Client) HostingBackupRetentionCredentials(ctx context.Context, runner string, in domain.BackupRemoteCredentialRequest, options RuntimeEnvironmentTransport) (*domain.BackupRemoteCredentials, error) {
+	return c.hostingBackupCredentials(ctx, runner, in, options, true)
+}
+func (c Client) hostingBackupCredentials(ctx context.Context, runner string, in domain.BackupRemoteCredentialRequest, options RuntimeEnvironmentTransport, retention bool) (*domain.BackupRemoteCredentials, error) {
+	if in.Validate() != nil || retention != (in.RetentionCopyID != "") || ValidateRuntimeEnvironmentServer(c.Server, options) != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	hc := c.HTTP
@@ -95,7 +101,11 @@ func (c Client) HostingBackupRemoteCredentials(ctx context.Context, runner strin
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	defer clear(raw)
-	req, e := http.NewRequestWithContext(ctx, http.MethodPost, c.Server+"/api/v1/runners/hosting/database-backup-transfer/credentials", bytes.NewReader(raw))
+	path := "/api/v1/runners/hosting/database-backup-transfer/credentials"
+	if retention {
+		path = "/api/v1/runners/hosting/database-backup-retention/credentials"
+	}
+	req, e := http.NewRequestWithContext(ctx, http.MethodPost, c.Server+path, bytes.NewReader(raw))
 	if e != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}

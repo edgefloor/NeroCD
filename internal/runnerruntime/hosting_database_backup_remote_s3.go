@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+
 	"nerocd/internal/domain"
 )
 
@@ -56,6 +57,7 @@ type backupRemoteGrant struct {
 }
 
 type backupRemoteS3 struct {
+	ownership *domain.BackupRemoteCopyProof
 	lifetime  context.Context
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -255,7 +257,7 @@ func (c *backupRemoteS3) upload(ctx context.Context, bucket, key string, blob do
 	if _, err = src.Seek(0, io.SeekStart); err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
-	_, err = c.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: src, ContentLength: aws.Int64(blob.Bytes), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"sha256": strings.TrimPrefix(blob.Digest, "sha256:")}})
+	created, err := c.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: src, ContentLength: aws.Int64(blob.Bytes), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"sha256": strings.TrimPrefix(blob.Digest, "sha256:")}})
 	if err != nil {
 		var api smithy.APIError
 		if errors.As(err, &api) && (api.ErrorCode() == "PreconditionFailed" || api.ErrorCode() == "ConditionalRequestConflict") {
@@ -263,7 +265,14 @@ func (c *backupRemoteS3) upload(ctx context.Context, bucket, key string, blob do
 		}
 		return backupRemoteFailure(err)
 	}
-	return c.download(ctx, bucket, key, blob, io.Discard)
+	if err = c.download(ctx, bucket, key, blob, io.Discard); err != nil {
+		return err
+	}
+	proof := domain.BackupRemoteCopyProof{ETag: aws.ToString(created.ETag), VersionID: aws.ToString(created.VersionId), Created: true}
+	if proof.Validate() == nil {
+		c.ownership = &proof
+	}
+	return nil
 }
 
 // Prevent accidental diagnostic formatting of credentials held by the client.

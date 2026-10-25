@@ -227,6 +227,8 @@ func (p HostingDatabaseBackupTransferPlan) Validate() error {
 }
 
 type HostingDatabaseBackupTransferMutation struct {
+	LocalCopy  *BackupLocalCopyProof  `json:"local_copy,omitempty"`
+	RemoteCopy *BackupRemoteCopyProof `json:"remote_copy,omitempty"`
 	HostingAuthority
 	ReceiptID   string `json:"receipt_id"`
 	PlanHash    string `json:"plan_hash"`
@@ -236,6 +238,12 @@ type HostingDatabaseBackupTransferMutation struct {
 }
 
 func (in HostingDatabaseBackupTransferMutation) Validate() error {
+	if in.LocalCopy != nil && (in.Phase != "complete" || in.LocalCopy.Validate() != nil || in.RemoteCopy != nil) {
+		return ErrInvalidDatabaseBackupRemote
+	}
+	if in.RemoteCopy != nil && (in.Phase != "complete" || in.RemoteCopy.Validate() != nil) {
+		return ErrInvalidDatabaseBackupRemote
+	}
 	a := in.HostingAuthority
 	if !validRuntimeReferenceID(a.OperationID) || a.RunID != "db_transfer_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(in.ReceiptID) || !imageSHA256.MatchString(in.PlanHash) || !ValidBackupRemoteFailure(in.FailureCode) || len(in.DaemonID) < 1 || len(in.DaemonID) > 256 {
 		return ErrInvalidDatabaseBackupRemote

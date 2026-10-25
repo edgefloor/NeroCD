@@ -20,6 +20,9 @@ type JournalDatabaseBackupTransfer struct {
 }
 
 func validateJournalDatabaseBackupTransfer(e JournalDatabaseBackupTransfer) error {
+	if e.Request.LocalCopy != nil && e.Plan.Operation.Mode != "download" || e.Request.RemoteCopy != nil && e.Plan.Operation.Mode != "upload" {
+		return errors.New("remote backup copy proof purpose mismatch")
+	}
 	a := e.Request.HostingAuthority
 	if e.ID != e.Request.ReceiptID || validateAttemptIdentity(e.Attempt) != nil || e.CreatedAt.IsZero() || e.Plan.Validate() != nil || e.Request.Validate() != nil || e.Request.PlanHash != e.Plan.Hash || a.OperationID != e.Plan.Operation.ID || a.RunID != e.Attempt.RunID || a.LeaseID != e.Attempt.LeaseID || a.Attempt != e.Attempt.Attempt || a.Fence != e.Attempt.Fence {
 		return errors.New("invalid remote backup transfer journal")

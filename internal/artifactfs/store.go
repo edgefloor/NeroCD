@@ -42,10 +42,11 @@ type Blob struct {
 // Its methods and Close are safe for concurrent use. A handle returned by Open
 // remains valid after Store.Close and must be closed by the caller.
 type Store struct {
-	mu       sync.RWMutex
-	backend  *directoryBackend
-	maxBytes int64
-	closed   bool
+	mu            sync.RWMutex
+	backend       *directoryBackend
+	syncDirectory func() error
+	maxBytes      int64
+	closed        bool
 }
 
 // OpenStore opens an existing absolute root. Every path component must be a
@@ -59,7 +60,7 @@ func OpenStore(root string, maxBytes int64) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{backend: backend, maxBytes: maxBytes}, nil
+	return &Store{backend: backend, maxBytes: maxBytes, syncDirectory: backend.sync}, nil
 }
 
 // Put verifies and atomically publishes exactly size bytes under their
@@ -68,25 +69,46 @@ func OpenStore(root string, maxBytes int64) (*Store, error) {
 // as with all io.Reader APIs, the caller controls interruption of a blocked
 // source Read call.
 func (s *Store) Put(ctx context.Context, src io.Reader, expectedSHA256 string, size int64) (Blob, error) {
+	blob, _, err := s.PutOwned(ctx, src, expectedSHA256, size)
+	return blob, err
+}
+
+// Ownership identifies a newly published inode in one verified private pool.
+// It is protected runner evidence, never a public filesystem location.
+type Ownership struct {
+	PoolID  string `json:"pool_id"`
+	Device  uint64 `json:"device"`
+	Inode   uint64 `json:"inode"`
+	Bytes   int64  `json:"bytes"`
+	Created bool   `json:"created"`
+}
+
+// PutOwned distinguishes publication from adoption. A matching preexisting
+// object is readable but cannot acquire creation authority merely by adoption.
+func (s *Store) PutOwned(ctx context.Context, src io.Reader, expectedSHA256 string, size int64) (Blob, Ownership, error) {
 	if ctx == nil || src == nil || !validKey(expectedSHA256) || size < 0 {
-		return Blob{}, invalidError("invalid put request")
+		return Blob{}, Ownership{}, invalidError("invalid put request")
 	}
 	if err := contextError(ctx); err != nil {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed || s.backend == nil {
-		return Blob{}, ErrClosed
+		return Blob{}, Ownership{}, ErrClosed
 	}
+	if err := s.backend.lock(ctx); err != nil {
+		return Blob{}, Ownership{}, err
+	}
+	defer s.backend.unlock()
 	if size > s.maxBytes {
-		return Blob{}, invalidError("object exceeds size limit")
+		return Blob{}, Ownership{}, invalidError("object exceeds size limit")
 	}
 
 	tempName, temp, err := s.backend.createTemp()
 	if err != nil {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 	published := false
 	defer func() {
@@ -99,46 +121,52 @@ func (s *Store) Put(ctx context.Context, src io.Reader, expectedSHA256 string, s
 	hash := sha256.New()
 	written, err := copyBounded(ctx, io.MultiWriter(temp, hash), src, size)
 	if err != nil {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 	if written != size || hex.EncodeToString(hash.Sum(nil)) != expectedSHA256 {
-		return Blob{}, ErrIntegrity
+		return Blob{}, Ownership{}, ErrIntegrity
 	}
 	if err := temp.Sync(); err != nil {
-		return Blob{}, ioError("sync temporary object", err)
+		return Blob{}, Ownership{}, ioError("sync temporary object", err)
 	}
 	if err := temp.Close(); err != nil {
-		return Blob{}, ioError("close temporary object", err)
+		return Blob{}, Ownership{}, ioError("close temporary object", err)
 	}
 	if err := contextError(ctx); err != nil {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 
 	err = s.backend.renameNoReplace(tempName, expectedSHA256)
 	if err == nil {
 		published = true
-		if err := s.backend.sync(); err != nil {
-			return Blob{}, ioError("sync store directory", err)
+		if err := s.syncDirectory(); err != nil {
+			return Blob{}, Ownership{}, ioError("sync store directory", err)
 		}
-		return Blob{Key: expectedSHA256, SHA256: expectedSHA256, Size: size}, nil
+		proof, err := s.backend.ownership(expectedSHA256, s.maxBytes)
+		if err != nil {
+			return Blob{}, Ownership{}, err
+		}
+		proof.Created = true
+		return Blob{Key: expectedSHA256, SHA256: expectedSHA256, Size: size}, proof, nil
 	}
 	if !errors.Is(err, os.ErrExist) {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 
 	// A concurrent writer won. Treat it as success only after independently
 	// verifying the published object; never overwrite it.
 	existing, blob, err := s.openVerified(ctx, expectedSHA256)
 	if err != nil {
-		return Blob{}, err
+		return Blob{}, Ownership{}, err
 	}
 	if closeErr := existing.Close(); closeErr != nil {
-		return Blob{}, ioError("close existing object", closeErr)
+		return Blob{}, Ownership{}, ioError("close existing object", closeErr)
 	}
 	if blob.Size != size {
-		return Blob{}, ErrIntegrity
+		return Blob{}, Ownership{}, ErrIntegrity
 	}
-	return blob, nil
+	proof, err := s.backend.ownership(expectedSHA256, s.maxBytes)
+	return blob, proof, err
 }
 
 // Open returns a read/seek handle only after verifying ownership, permissions,
@@ -150,11 +178,15 @@ func (s *Store) Open(ctx context.Context, key string) (io.ReadSeekCloser, Blob, 
 	if err := contextError(ctx); err != nil {
 		return nil, Blob{}, err
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed || s.backend == nil {
 		return nil, Blob{}, ErrClosed
 	}
+	if err := s.backend.lock(ctx); err != nil {
+		return nil, Blob{}, err
+	}
+	defer s.backend.unlock()
 	return s.openVerified(ctx, key)
 }
 

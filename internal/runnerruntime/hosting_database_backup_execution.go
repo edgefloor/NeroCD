@@ -55,6 +55,9 @@ func executeDatabaseBackupWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 	record := func(phase string, blob *domain.HostingDatabaseBackupBlob, failure string) (runner.JournalDatabaseBackup, error) {
 		id := attemptMutationKey("dbbackup", a.LeaseID, a.Attempt, phase)
 		request := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, Blob: blob, FailureCode: failure}
+		if phase == "complete" && p.Operation.Mode == "backup" {
+			request.LocalCopy = e.localCopy
+		}
 		entry := runner.JournalDatabaseBackup{ID: id, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, s), Plan: p, Request: request, CreatedAt: time.Now().UTC()}
 		return j.AppendDatabaseBackup(entry)
 	}

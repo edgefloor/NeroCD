@@ -404,6 +404,9 @@ func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, ba
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
+		if err = backupRetentionArchiveAdmission(ctx, tx, backup, in.RemoteSource); err != nil {
+			return zero, err
+		}
 		source, err := hostingDatabaseLoad(ctx, q, original.SourceResourceID)
 		if err != nil {
 			return zero, err
@@ -672,7 +675,13 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 			return zero, err
 		}
 		if in.Phase == "complete" && r.Mode == "backup" {
+			if err = backupRetentionRegisterLocal(ctx, tx, updated, in); err != nil {
+				return zero, err
+			}
 			if err = s.backupRemoteLocalComplete(ctx, tx, updated); err != nil {
+				return zero, err
+			}
+			if err = backupRetentionPublication(ctx, tx, r.SourceResourceID, "local_"+r.ID); err != nil {
 				return zero, err
 			}
 		}

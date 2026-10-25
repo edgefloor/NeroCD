@@ -140,11 +140,12 @@ func databaseBackupErrorPhase(err error, phase databaseBackupPhase) error {
 }
 
 type databaseBackupEngine struct {
-	image  *imageEngine
-	host   DatabaseEngineConfig
-	root   *os.Root
-	store  *artifactfs.Store
-	stream func(context.Context, []string, io.Reader, io.Writer) error
+	localCopy *domain.BackupLocalCopyProof
+	image     *imageEngine
+	host      DatabaseEngineConfig
+	root      *os.Root
+	store     *artifactfs.Store
+	stream    func(context.Context, []string, io.Reader, io.Writer) error
 }
 
 func openDatabaseBackupEngine(ctx context.Context, config DatabaseExecutionConfig, endpoint string) (*databaseBackupEngine, error) {
@@ -425,9 +426,11 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 	if err != nil || !os.SameFile(info, current) {
 		return blob, errDatabaseBackupHeld
 	}
-	if _, err = e.store.Put(ctx, staged, strings.TrimPrefix(blob.Digest, "sha256:"), blob.Bytes); err != nil {
+	var owned artifactfs.Ownership
+	if _, owned, err = e.store.PutOwned(ctx, staged, strings.TrimPrefix(blob.Digest, "sha256:"), blob.Bytes); err != nil {
 		return blob, errDatabaseBackupPublication
 	}
+	e.localCopy = &domain.BackupLocalCopyProof{PoolID: owned.PoolID, Device: owned.Device, Inode: owned.Inode, Bytes: owned.Bytes, Created: owned.Created}
 	check := p
 	check.Operation.Blob = &blob
 	f, err := e.archive(ctx, check)
