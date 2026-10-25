@@ -89,6 +89,7 @@ head = tree = None
 browser_origin = ""
 browser_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_BROWSER", "0")
 routes_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_ROUTES", "0")
+storage_mode = os.environ.get("NEROCD_DATABASE_CONNECTION_STORAGE", "0")
 PEBBLE_IMAGE = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
 
 
@@ -385,6 +386,8 @@ def main():
         raise Failure("invalid browser mode")
     if routes_mode not in ("0", "1"):
         raise Failure("invalid route mode")
+    if storage_mode not in ("0", "1") or storage_mode == "1" and (routes_mode != "1" or browser_mode != "1"):
+        raise Failure("storage mode requires reviewed route and live browser profiles")
     if not Path("internal/api/hosting_database_runtime_integration_test.go").is_file():
         raise Failure("run from the assigned repository root")
     if run(["git", "status", "--porcelain"]).strip():
@@ -406,14 +409,19 @@ def main():
          "internal/api/hosting_database_upgrade_runtime_integration_test.go",
          "internal/api/hosting_application_database_runtime_integration_test.go",
          "internal/api/hosting_application_database_route_runtime_integration_test.go",
+         "internal/api/hosting_application_database_storage_runtime_integration_test.go",
          "acceptance/runtime-proxy-control/pebble.json", "internal/runnerruntime/hosting_proxy_engine_fixture.go",
          "db/migrations/0073_hosting_application_database_route_continuity.sql", "internal/domain/hosting_application_database_route_continuity.go",
+         "db/migrations/0074_hosting_application_database_storage.sql", "internal/domain/hosting_proxy_storage_switch.go",
+         "internal/store/sql/hosting_application_database_storage.sql", "internal/store/sqlcgen/hosting_application_database_storage.sql.go",
+         "internal/hostingjobs/application_database_storage*.go", "internal/hostingproxy/",
          "internal/hostingjobs/application_database_route.go", "internal/store/postgres_hosting_application_database_route_continuity.go",
          "internal/store/postgres_hosting_database_connection_authority.go", "internal/store/postgres_hosting_database_connection_complete.go",
          "internal/store/postgres_hosting_database_connection_execution.go", "internal/store/postgres_hosting_database_connection_runner.go",
          "internal/store/postgres_hosting_proxy.go", "internal/store/postgres_hosting_route_switch.go", "internal/hostingjobs/jobs.go",
          "internal/domain/hosting_route_switch.go", "internal/api/routes.go", "openapi.yaml", "web/app/src/api/generated.ts",
          "internal/api/hosting_database_connection*.go", "web/app/src/pages/ResourceDatabaseConnections.tsx",
+         "web/app/src/pages/ConnectedStorageRecovery.tsx",
          "web/app/tests/browser/database-connection-live.spec.ts", "web/app/src/api/hosting-database-connections.ts", "web/app/package.json", "web/app/bun.lock",
          "internal/app/hosting_database_connection_service.go", "internal/store/postgres_hosting_database_connection*.go",
          "internal/store/sql/hosting_database_connection.sql", "internal/store/sqlcgen/hosting_database_connection.sql.go",
@@ -423,6 +431,8 @@ def main():
          "internal/domain/hosting_application_database*.go", "internal/domain/hosting_database_maintenance.go",
          "internal/runnerruntime/hosting_application_database_execution.go",
          "internal/runnerruntime/hosting_application_database_engine.go", "internal/runnerruntime/hosting_database_maintenance_execution.go",
+         "internal/runnerruntime/hosting_application_database_storage.go", "internal/runner/journal_application_database_storage.go",
+         "internal/store/postgres_hosting_application_database_storage*.go", "internal/runnerclient/hosting_application_database_storage.go",
          "internal/runnerruntime/hosting_database_member_maintenance.go", "internal/runnerruntime/runtime.go",
          "cmd/nerocd/runner.go", "cmd/nerocd/runner_database_config.go",
          "internal/runnerruntime/hosting_database_network_capture_execution.go",
@@ -464,6 +474,8 @@ def main():
     run(["go", "build", "-trimpath", "-o", str(client_context / "client"), "./acceptance/runtime-hosting-database-client"], timeout=300, env=environment)
     (client_context / "Dockerfile").write_bytes(Path("acceptance/runtime-hosting-database-client/Dockerfile").read_bytes())
     (client_context / "Dockerfile.http").write_bytes(Path("acceptance/runtime-hosting-database-client/Dockerfile.http").read_bytes())
+    if storage_mode == "1":
+        (client_context / "Dockerfile.http-storage").write_bytes(Path("acceptance/runtime-hosting-database-client/Dockerfile.http-storage").read_bytes())
     for name, binary in (("api.test", evidence / "api.test"), ("nerocd", evidence / "nerocd"), ("client", client_context / "client")):
         run(["go", "version", "-m", str(binary)], output=name + "-build-info")
         (evidence / (name + "-sha256")).write_text(hashlib.sha256(binary.read_bytes()).hexdigest() + "\n")
@@ -561,6 +573,21 @@ def main():
     docker("exec", outer, "docker", "--host", ENDPOINT, "image", "rm", app_tag, output="http-app-remove-local-tag")
     if docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--quiet", "--no-trunc", "--filter", "reference=" + app_repository + "*").strip():
         raise Failure("HTTP fixture image remained local before production pull")
+    storage_image = ""
+    if storage_mode == "1":
+        storage_tag = app_repository + ":" + OWNER + "-storage"
+        docker("exec", outer, "docker", "--host", ENDPOINT, "build", "--file", "/fixture/client/Dockerfile.http-storage",
+               "--build-arg", "FIXTURE_OWNER=" + OWNER, "--tag", storage_tag, "/fixture/client", timeout=120, output="storage-http-app-image-build")
+        docker("exec", outer, "docker", "--host", ENDPOINT, "push", storage_tag, timeout=120, output="storage-http-app-image-push")
+        digests = document(docker("exec", outer, "docker", "--host", ENDPOINT, "image", "inspect", storage_tag,
+                                  "--format", "{{json .RepoDigests}}", output="storage-http-app-digests"))
+        if not isinstance(digests, list) or len(digests) != 1 or not re.fullmatch(re.escape(app_repository) + r"@sha256:[a-f0-9]{64}", digests[0]) or digests[0] == app_image:
+            raise Failure("distinct storage HTTP app registry digest missing")
+        storage_image = digests[0]
+        (evidence / "storage-http-app-image").write_text(storage_image + "\n")
+        docker("exec", outer, "docker", "--host", ENDPOINT, "image", "rm", storage_tag, output="storage-http-app-remove-local-tag")
+        if docker("exec", outer, "docker", "--host", ENDPOINT, "image", "ls", "--quiet", "--no-trunc", "--filter", "reference=" + app_repository + "*").strip():
+            raise Failure("storage HTTP fixture image remained local before production pull")
     postgres = "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
     docker("exec", outer, "docker", "--host", ENDPOINT, "pull", postgres, timeout=180, output="control-postgres-pull")
     pg = docker("exec", outer, "docker", "--host", ENDPOINT, "run", "--detach", "--name", OWNER + "-control-pg",
@@ -594,9 +621,13 @@ def main():
         runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_BROWSER=1", "--env", "NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN=" + browser_origin]
     if routes_mode == "1":
         runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_ROUTES=1"]
+    if storage_mode == "1":
+        runtime_args += ["--env", "NEROCD_DATABASE_CONNECTION_STORAGE=1", "--env", "NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE=" + storage_image]
     pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$"
     if routes_mode == "1":
         pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner)$"
+    if storage_mode == "1":
+        pattern = "^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner|ApplicationDatabaseRouteFailuresCompiledRunner|ApplicationDatabaseStorageCompiledRunner|ApplicationDatabaseStorageFailuresCompiledRunner)$"
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
@@ -609,6 +640,9 @@ def main():
     required = ["TestHostingDatabaseCompiledRunner", "TestHostingDatabaseCaptureCompiledRunner", "TestHostingDatabaseUpgradeCompiledRunner", "TestHostingApplicationDatabaseCompiledRunner"]
     if routes_mode == "1":
         required.append("TestHostingApplicationDatabaseRouteFailuresCompiledRunner")
+    if storage_mode == "1":
+        required.append("TestHostingApplicationDatabaseStorageCompiledRunner")
+        required.append("TestHostingApplicationDatabaseStorageFailuresCompiledRunner")
     for test in required:
         if not re.search(r"^--- PASS: " + test + r" ", runtime_output, re.MULTILINE):
             raise Failure("required physical test did not pass: " + test)
@@ -618,6 +652,22 @@ def main():
         for engine in ("postgresql", "redis"):
             if runtime_output.splitlines().count("DATABASE_CONNECTION_BROWSER_PASS " + engine) != 1:
                 raise Failure("required live browser result missing or repeated: " + engine)
+    if storage_mode == "1":
+        for engine in ("postgresql", "redis"):
+            for marker in ("DATABASE_CONNECTION_STORAGE_PASS ", "DATABASE_CONNECTION_STORAGE_BROWSER_PASS "):
+                if runtime_output.splitlines().count(marker + engine) != 1:
+                    raise Failure("required connected storage result missing or repeated: " + marker + engine)
+            if runtime_output.splitlines().count("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " success") != 1:
+                raise Failure("required post-cleanup storage capacity proof missing or repeated: " + engine)
+            for case in ("readiness", "cutover"):
+                if runtime_output.splitlines().count("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS " + engine + " " + case) != 1:
+                    raise Failure("required actual connected storage recovery proof missing or repeated: " + engine + " " + case)
+                if runtime_output.splitlines().count("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " " + case) != 1:
+                    raise Failure("required post-recovery storage capacity proof missing or repeated: " + engine + " " + case)
+        for engine, action in (("postgresql", "resume_predecessor"), ("redis", "complete_replacement")):
+            for marker in ("DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS ", "DATABASE_CONNECTION_STORAGE_RECOVERY_UI_PASS "):
+                if runtime_output.splitlines().count(marker + engine + " " + action) != 1:
+                    raise Failure("required live storage recovery UI proof missing or repeated: " + engine + " " + action)
     if routes_mode == "1":
         for engine in ("postgresql", "redis"):
             if runtime_output.splitlines().count("DATABASE_CONNECTION_ROUTE_PASS " + engine) != 1:

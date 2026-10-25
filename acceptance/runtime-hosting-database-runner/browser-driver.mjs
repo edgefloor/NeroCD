@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 const prefix = "DATABASE_CONNECTION_BROWSER_READY ";
 const metadataKeys = ["origin", "engine", "project_id", "environment", "application_resource_id", "application_name", "database_resource_id", "foreign_resource_id", "control_path"].sort();
 export function validateMetadata(value, origin) {
-  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535 || Number(new URL(origin).port) < 1024 || !value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(metadataKeys) || value.origin !== origin || !["postgresql", "redis"].includes(value.engine)) throw Error("invalid browser fixture metadata");
+  const keys = ["storage", "storage_resume", "storage_complete"].includes(value?.profile) ? [...metadataKeys, "profile"].sort() : metadataKeys;
+  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535 || Number(new URL(origin).port) < 1024 || !value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) || value.origin !== origin || !["postgresql", "redis"].includes(value.engine)) throw Error("invalid browser fixture metadata");
   for (const name of ["project_id", "application_resource_id", "database_resource_id", "foreign_resource_id"]) if (typeof value[name] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value[name])) throw Error("invalid browser fixture identity");
   for (const name of ["environment", "application_name"]) if (typeof value[name] !== "string" || !value[name] || value[name].length > 255 || /[\x00-\x1f\x7f]/.test(value[name])) throw Error("invalid browser fixture label");
   if (!/^\/api\/v1\/fixture\/database-connection\/[a-f0-9]{32}$/.test(value.control_path)) throw Error("invalid browser fixture controls");
@@ -42,6 +43,9 @@ async function joinGroup(child) {
 }
 export async function drive(origin, evidence, command) {
   const children = [], queue = [], engines = new Set();
+  const storage = process.env.NEROCD_DATABASE_CONNECTION_STORAGE ?? "0";
+  if (!["0", "1"].includes(storage)) throw Error("invalid browser storage profile");
+  const expected = ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
   let active, fixture, failed = false, fixtureDone = false, browserPasses = 0, outputBytes = 0, buffer = "";
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
@@ -60,13 +64,16 @@ export async function drive(origin, evidence, command) {
     if (failed || active || !queue.length) return;
     const meta = queue.shift();
     const env = Object.fromEntries(["PATH", "HOME", "TMPDIR", "NODE_PATH", "PLAYWRIGHT_BROWSERS_PATH", "CI"].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
-    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
+    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.profile ?? "base", meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
     active.stdout.on("data", (chunk) => { outputBytes += chunk.length; if (outputBytes > 1 << 20) abort(); else process.stdout.write(chunk); });
     const current = active;
     current.joined.then(async (code) => {
       if (code !== 0) { abort(); return; }
       try { await join(current); } catch { abort(); return; }
-      browserPasses++; process.stdout.write(`DATABASE_CONNECTION_BROWSER_PASS ${meta.engine}\n`); active = undefined; nextBrowser();
+      browserPasses++;
+      if (["storage_resume", "storage_complete"].includes(meta.profile)) process.stdout.write(`DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS ${meta.engine} ${meta.profile === "storage_resume" ? "resume_predecessor" : "complete_replacement"}\n`);
+      else process.stdout.write(`DATABASE_CONNECTION_${meta.profile === "storage" ? "STORAGE_" : ""}BROWSER_PASS ${meta.engine}\n`);
+      active = undefined; nextBrowser();
       if (fixtureDone && !active && !queue.length) finish();
     });
   };
@@ -85,14 +92,15 @@ export async function drive(origin, evidence, command) {
         if (!line.startsWith(prefix)) { process.stdout.write(line + "\n"); continue; }
         try {
           const meta = validateMetadata(JSON.parse(line.slice(prefix.length)), origin);
-          if (engines.has(meta.engine) || engines.size >= 2 || (engines.size === 0 ? meta.engine !== "postgresql" : meta.engine !== "redis")) throw Error("duplicate or out-of-order fixture");
-          engines.add(meta.engine); queue.push(meta); nextBrowser();
+          const identity = `${meta.profile ?? "base"}:${meta.engine}`;
+          if (engines.has(identity) || identity !== expected[engines.size]) throw Error("duplicate or out-of-order fixture");
+          engines.add(identity); queue.push(meta); nextBrowser();
         } catch { abort(); }
       }
     });
-    fixture.joined.then((code) => { fixtureDone = true; if (code !== 0 || buffer.trim() || engines.size !== 2) abort(); else if (!active && !queue.length) finish(); });
+    fixture.joined.then((code) => { fixtureDone = true; if (code !== 0 || buffer.trim() || engines.size !== expected.length) abort(); else if (!active && !queue.length) finish(); });
     await done;
-    if (failed || browserPasses !== 2 || !fixtureDone) throw Error("live browser fixture failed");
+    if (failed || browserPasses !== expected.length || !fixtureDone) throw Error("live browser fixture failed");
     return 0;
   } finally {
     clearTimeout(timer);

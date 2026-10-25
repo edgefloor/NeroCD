@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -171,7 +172,11 @@ func (f *databaseRunnerFixture) applicationContainer(op domain.HostingOperation)
 	const format = `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}},"State":{{json .State}},"HostConfig":{"NetworkMode":{{json .HostConfig.NetworkMode}},"PortBindings":{{json .HostConfig.PortBindings}},"Privileged":{{json .HostConfig.Privileged}}},"Mounts":{{json .Mounts}},"NetworkSettings":{{json .NetworkSettings}}}`
 	var c databaseRunnerContainer
 	rawInspection := f.docker("container", "inspect", op.Result.ContainerID, "--format", format)
-	if json.Unmarshal(rawInspection, &c) != nil || c.ID != op.Result.ContainerID || c.Image != op.Release.ImageID || !c.State.Running || c.Config.Labels["io.nerocd.binding"] != op.BindingID || c.Config.Labels["io.nerocd.operation"] != op.ID || c.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || c.Config.Labels["io.nerocd.release"] != op.Release.Hash || c.HostConfig.Privileged || len(c.Mounts) != 0 || len(c.NetworkSettings.Networks) != 2 {
+	var storagePlan *domain.HostingStoragePlan
+	if f.storage != nil {
+		storagePlan = op.Plan.Storage
+	}
+	if json.Unmarshal(rawInspection, &c) != nil || c.ID != op.Result.ContainerID || c.Image != op.Release.ImageID || !c.State.Running || c.Config.Labels["io.nerocd.binding"] != op.BindingID || c.Config.Labels["io.nerocd.operation"] != op.ID || c.Config.Labels["io.nerocd.plan"] != op.Plan.Hash || c.Config.Labels["io.nerocd.release"] != op.Release.Hash || c.HostConfig.Privileged || !applicationDatabaseStorageMount(c, storagePlan) || len(c.NetworkSettings.Networks) != 2 {
 		f.t.Fatal("connected app live identity mismatch")
 	}
 	private, ok := c.NetworkSettings.Networks[op.ApplicationDatabase.Binding.NetworkName]
@@ -325,6 +330,10 @@ func (f *databaseRunnerFixture) assertConnectionJournalRetired(id string) {
 }
 
 func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
+	testHostingApplicationDatabaseCompiledRunner(t, false)
+}
+
+func testHostingApplicationDatabaseCompiledRunner(t *testing.T, storage bool) {
 	if mode := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER"); mode != "" && mode != "0" && mode != "1" {
 		t.Fatal("invalid browser mode")
 	}
@@ -335,6 +344,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 		t.Fatal("native Linux arm64 required")
 	}
 	image := os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")
+	if storage {
+		image = os.Getenv("NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE")
+	}
 	if applicationDatabaseFixtureImage(image) != nil {
 		t.Fatal("owned registry HTTP image digest required")
 	}
@@ -346,8 +358,12 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				roots, public := newApplicationDatabaseRouteTrust(t)
 				routeTrust = &applicationDatabaseRouteFixture{roots: roots, publicRoot: public}
 			}
-			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
+			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, storage)
+			create := applicationDatabaseCreateInput(engine, f.environment, f.destination)
+			if storage {
+				create = applicationDatabaseRouteFailureCreateInput(engine, "storage_success", f.environment, f.destination)
+			}
+			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", create, 201)
 			f.registerRouteDatabaseCleanup(view.Resource.ID)
 			f.stop()
 			sourceRequest := f.deploy(view, "connected_source_v1")
@@ -408,6 +424,10 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			active := f.activeConnection(resource.ID)
 			a := f.awaitConnectionOperation(connection.ApplicationOperationID)
 			f.applicationContainer(a)
+			if f.storage != nil {
+				a = f.storage.bootstrap(f, resource, a, deployment)
+				active = f.connection(resource.ID)
+			}
 			upgrade, err := f.operation(t.Context(), connection.UpgradeOperationID)
 			if err != nil || upgrade.Plan == nil || upgrade.DatabaseUpgrade == nil || databaseRunnerValidatePlan(upgrade) != nil || domain.ValidateHostingDatabasePlanV2(*upgrade.Plan) != nil || f.volumeProof(upgrade) != volume || f.credentialMetadata(view) != credentials {
 				t.Fatal("automatic Connect failed retained V1 to V2 transition")
@@ -416,6 +436,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(a, "GET", "a", "retained_a")
 			if routeTrust != nil {
 				f.initialApplicationDatabaseRoute(a, engine, routeTrust.roots, routeTrust.publicRoot)
+			}
+			if f.storage != nil {
+				f.storage.write(f, a, "retained_a", 11)
 			}
 			deployment.ExpectedRuntimeConfigurationGeneration = a.Snapshot.RuntimeConfiguration.Generation
 			deployment.IdempotencyKey = "connected_b"
@@ -428,6 +451,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				var input any = deployment
 				if f.routes != nil {
 					input = f.routes.deployment(deployment)
+				}
+				if f.storage != nil {
+					input = f.storage.deployment(f, input)
 				}
 				bRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 			}
@@ -445,6 +471,10 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.exactMembers(b, upgrade)
 			f.appRecord(b, "GET", "a", "retained_a")
 			f.appRecord(b, "PUT", "b", "retained_b")
+			if f.storage != nil {
+				f.storage.assertFiles(f, b)
+				f.storage.write(f, b, "retained_b", 22)
+			}
 			if f.routes != nil {
 				f.routes.assertSelected(b)
 				f.routes.record(t.Context(), b, "GET", "https_a", "retained_https_a")
@@ -475,6 +505,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(b, "GET", "a", "retained_a")
 			f.appRecord(b, "GET", "b", "retained_b")
 			f.appRecord(b, "PUT", "db_replaced", "retained_database_replacement")
+			if f.storage != nil {
+				f.storage.assertFiles(f, b)
+			}
 			if f.routes != nil {
 				f.routes.record(t.Context(), b, "GET", "db_replaced", "retained_database_replacement")
 			}
@@ -489,12 +522,19 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				if f.routes != nil {
 					input = f.routes.deployment(deployment)
 				}
+				if f.storage != nil {
+					input = f.storage.deployment(f, input)
+				}
 				third = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 			}
 			wire := newDatabaseUpgradeCompleteWire(third.ID)
 			f.registerRouteOperationCleanup(third.ID)
 			f.upgradeComplete.Store(wire)
-			f.start()
+			if storage && f.routes != nil {
+				f.routes.recoverYield(third, b, f.connection(resource.ID).MembershipRevision)
+			} else {
+				f.start()
+			}
 			var failed <-chan struct{}
 			if browser != nil {
 				failed = browser.failed
@@ -603,6 +643,10 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			f.appRecord(c, "GET", "db_replaced", "retained_database_replacement")
 			f.appRecord(c, "PUT", "c", "retained_c")
 			f.appRecord(c, "GET", "c", "retained_c")
+			if f.storage != nil {
+				f.storage.assertFiles(f, c)
+				f.storage.write(f, c, "retained_c", 33)
+			}
 			if f.routes != nil {
 				f.routes.assertSelected(c)
 				for key, value := range map[string]string{"https_a": "retained_https_a", "https_b": "retained_https_b", "a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"} {
@@ -610,7 +654,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				}
 				f.assertApplicationDatabaseRetirement(b, a)
 				f.assertApplicationDatabaseRetirement(c, b)
-				fmt.Println("DATABASE_CONNECTION_ROUTE_PASS " + engine)
+				if !storage {
+					fmt.Println("DATABASE_CONNECTION_ROUTE_PASS " + engine)
+				}
 			}
 			if f.credentialMetadata(view) != credentials || databaseUpgradeAuthorityLogCheck(f.logs.snapshot(), original.HostingAuthority, f.protected) != nil {
 				t.Fatal("credential identity or output redaction failed")
@@ -638,12 +684,19 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				t.Fatal("final application port proof did not close")
 			}
 			t.Logf("connected HTTP app verified engine=%s capture=%s upgrade=%s app=%s database=%s revision=%d", engine, connection.CaptureID, upgrade.ID, c.ID, maintained.ID, active.MembershipRevision)
+			if storage {
+				fmt.Println("DATABASE_CONNECTION_STORAGE_PASS " + engine)
+			}
 		}) {
 			return
 		}
 		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
 			applicationDatabaseRouteCapacity(t)
-			fmt.Println("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " success")
+			if storage {
+				fmt.Println("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " success")
+			} else {
+				fmt.Println("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " success")
+			}
 		}
 	}
 }
@@ -946,6 +999,7 @@ type applicationDatabaseBrowserProof struct {
 	Operation domain.HostingOperation
 	Records   map[string]string
 	Route     *applicationDatabaseBrowserRouteProof
+	Uploads   map[string][]byte
 }
 
 type applicationDatabaseBrowserRouteProof struct {
@@ -953,23 +1007,39 @@ type applicationDatabaseBrowserRouteProof struct {
 	Route   domain.HostingRoute
 }
 type applicationDatabaseBrowser struct {
-	f               *databaseRunnerFixture
-	ctx             context.Context
-	mu              sync.Mutex
-	phase           string
-	revision        int64
-	operation       string
-	latestOperation string
-	invalid         bool
-	seen            map[string]applicationDatabaseBrowserSeen
-	proofs          map[string]applicationDatabaseBrowserProof
-	admissions      chan applicationDatabaseBrowserAdmission
-	finished        chan struct{}
-	failed          chan struct{}
-	fail            sync.Once
-	finish          sync.Once
-	report          sync.Once
-	reported        bool
+	f                *databaseRunnerFixture
+	ctx              context.Context
+	mu               sync.Mutex
+	phase            string
+	revision         int64
+	operation        string
+	latestOperation  string
+	invalid          bool
+	seen             map[string]applicationDatabaseBrowserSeen
+	proofs           map[string]applicationDatabaseBrowserProof
+	admissions       chan applicationDatabaseBrowserAdmission
+	finished         chan struct{}
+	failed           chan struct{}
+	fail             sync.Once
+	finish           sync.Once
+	report           sync.Once
+	reported         bool
+	recovery         *applicationDatabaseBrowserRecovery
+	recoveryObserved chan struct{}
+	recoveryOnce     sync.Once
+}
+
+type applicationDatabaseBrowserRecovery struct {
+	Action, OperationID, Profile string
+	Revision                     int64
+	Expected, Submitted          map[string]any
+}
+
+func (b *applicationDatabaseBrowser) expectedAdmissions() int {
+	if b.recovery != nil {
+		return 1
+	}
+	return 4
 }
 
 type applicationDatabaseFailure struct {
@@ -1144,7 +1214,7 @@ func applicationDatabaseBrowserBootstrapComplete(ctx context.Context, handler ht
 	return response.Code == http.StatusOK && json.Unmarshal(response.Body.Bytes(), &status) == nil && status.Status == "complete"
 }
 
-func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.Resource, database domain.HostingDatabase, engine string) *applicationDatabaseBrowser {
+func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.Resource, database domain.HostingDatabase, engine string, recovery ...*applicationDatabaseBrowserRecovery) *applicationDatabaseBrowser {
 	f.t.Helper()
 	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
 	if !applicationDatabaseBrowserOrigin(origin) {
@@ -1199,6 +1269,17 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 	}
 	ctx, cancel := context.WithTimeout(f.t.Context(), 12*time.Minute)
 	b := &applicationDatabaseBrowser{f: f, ctx: ctx, phase: "connect", seen: map[string]applicationDatabaseBrowserSeen{}, proofs: map[string]applicationDatabaseBrowserProof{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4), finished: make(chan struct{}), failed: make(chan struct{})}
+	if len(recovery) > 1 {
+		f.t.Fatal("browser recovery profile ambiguous")
+	}
+	if len(recovery) == 1 {
+		b.recovery = recovery[0]
+		if b.recovery == nil || b.recovery.OperationID == "" || b.recovery.Profile != "storage_resume" && b.recovery.Profile != "storage_complete" || b.recovery.Expected == nil {
+			f.t.Fatal("browser recovery correlation missing")
+		}
+		b.phase, b.operation, b.latestOperation, b.revision = "recover", b.recovery.OperationID, b.recovery.OperationID, b.recovery.Revision
+		b.recoveryObserved = make(chan struct{})
+	}
 	nonce := make([]byte, 16)
 	if _, err = rand.Read(nonce); err != nil {
 		cancel()
@@ -1215,6 +1296,18 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 			b.mu.Lock()
 			defer b.mu.Unlock()
 			writeJSON(w, 200, map[string]any{"phase": b.phase, "revision": b.revision, "operation_id": b.operation})
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == prefix+"/recovery-observed" && b.recovery != nil {
+			b.mu.Lock()
+			valid := b.phase == "recover" && len(b.seen) == 1 && !b.invalid
+			b.mu.Unlock()
+			if !valid {
+				w.WriteHeader(409)
+				return
+			}
+			b.recoveryOnce.Do(func() { close(b.recoveryObserved) })
+			w.WriteHeader(204)
 			return
 		}
 		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, prefix+"/proof/") {
@@ -1237,6 +1330,26 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 				}
 			}
 			response := map[string]any{"verified": true, "container_id": proof.Operation.Result.ContainerID, "record_count": len(proof.Records)}
+			if proof.Uploads != nil {
+				for key, data := range proof.Uploads {
+					if applicationDatabaseUpload(r.Context(), nil, "", "", proof.Operation, "GET", key, data, "") != nil || proof.Route == nil || applicationDatabaseUpload(r.Context(), proof.Route.Fixture.roots, proof.Route.Fixture.hostname, proof.Route.Route.Certificate.Fingerprint, proof.Operation, "GET", key, data, "127.0.0.1:443") != nil {
+						w.WriteHeader(502)
+						return
+					}
+				}
+				raw, err := databaseRunnerDocker(r.Context(), nil, "cp", proof.Operation.Result.ContainerID+":/data/uploads/retained_a", "-")
+				if err != nil || applicationDatabaseUploadArchive(raw, proof.Uploads["retained_a"]) != nil {
+					w.WriteHeader(502)
+					return
+				}
+				directory, err := databaseRunnerDocker(r.Context(), nil, "cp", proof.Operation.Result.ContainerID+":/data/uploads", "-")
+				if err != nil || applicationDatabaseUploadDirectoryArchive(directory, proof.Uploads) != nil {
+					w.WriteHeader(502)
+					return
+				}
+				hash := sha256.Sum256(proof.Uploads["retained_a"])
+				response["uploads"] = map[string]any{"verified": true, "file_count": len(proof.Uploads), "retained_bytes": 65537, "retained_sha256": hex.EncodeToString(hash[:]), "mode": "0640", "directory_mode": "0750", "uid": 12345, "gid": 12346, "volume_name": proof.Operation.Plan.Storage.VolumeName}
+			}
 			if proof.Route != nil {
 				response["route"] = map[string]any{"route_id": proof.Route.Route.ID, "http_ready": proof.Route.Route.HTTPReady, "https_ready": proof.Route.Route.HTTPSReady, "certificate_status": proof.Route.Route.Certificate.Status, "selected_release_operation_id": proof.Route.Route.SelectedReleaseOperationID, "https_verified": true}
 			}
@@ -1245,7 +1358,7 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 		}
 		if r.Method == "POST" && r.URL.Path == prefix+"/finish" {
 			b.mu.Lock()
-			valid := b.phase == "finish" && len(b.seen) == 4 && !b.invalid
+			valid := b.phase == "finish" && len(b.seen) == b.expectedAdmissions() && !b.invalid
 			b.mu.Unlock()
 			if !valid {
 				w.WriteHeader(409)
@@ -1271,6 +1384,8 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 				action = "deploy"
 			case "/api/v1/resources/" + database.Resource.ID + "/database/maintenance":
 				action = "maintenance"
+			case "/api/v1/resources/" + resource.ID + "/database-connection/recovery":
+				action = "recover"
 			}
 		}
 		if action == "" {
@@ -1321,6 +1436,12 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 		}
 	})
 	metadata := map[string]any{"origin": origin, "engine": engine, "project_id": resource.ProjectID, "environment": "database runner acceptance", "application_resource_id": resource.ID, "application_name": resource.Name, "database_resource_id": database.Resource.ID, "foreign_resource_id": foreign.ID, "control_path": prefix}
+	if f.storage != nil {
+		metadata["profile"] = "storage"
+	}
+	if b.recovery != nil {
+		metadata["profile"] = b.recovery.Profile
+	}
 	raw, metadataErr := json.Marshal(metadata)
 	if metadataErr != nil {
 		f.t.Fatal("browser metadata encoding failed")
@@ -1350,6 +1471,14 @@ func (b *applicationDatabaseBrowser) advance(phase string, revision int64, op do
 	defer b.mu.Unlock()
 	b.phase, b.revision, b.operation = phase, revision, op.ID
 	b.proofs[op.ID] = applicationDatabaseBrowserProof{Operation: op, Records: records}
+	if b.f.storage != nil {
+		proof := b.proofs[op.ID]
+		proof.Uploads = make(map[string][]byte, len(b.f.storage.Files))
+		for key, data := range b.f.storage.Files {
+			proof.Uploads[key] = bytes.Clone(data)
+		}
+		b.proofs[op.ID] = proof
+	}
 	if b.f.routes != nil {
 		proof := b.proofs[op.ID]
 		proof.Route = &applicationDatabaseBrowserRouteProof{Fixture: b.f.routes, Route: b.f.routes.route}
@@ -1367,7 +1496,7 @@ func (b *applicationDatabaseBrowser) awaitFinished() {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.invalid || len(b.seen) != 4 {
+	if b.invalid || len(b.seen) != b.expectedAdmissions() {
 		b.f.t.Fatal("browser admitted an unexpected mutation")
 	}
 }
@@ -1568,6 +1697,43 @@ func (b *applicationDatabaseBrowser) observe(action string, raw, response []byte
 		b.mu.Unlock()
 	}()
 	phase := b.phase
+	if b.recovery != nil {
+		if action != "recover" || phase != "recover" || len(response) > domain.HostingApplicationDatabaseJournalJSONLimit {
+			b.invalid = true
+			return
+		}
+		var body, expected map[string]any
+		normalized, _ := json.Marshal(b.recovery.Expected)
+		if json.Unmarshal(raw, &body) != nil || json.Unmarshal(normalized, &expected) != nil {
+			b.invalid = true
+			return
+		}
+		key, ok := body["idempotency_key"].(string)
+		compare := maps.Clone(body)
+		delete(compare, "idempotency_key")
+		delete(expected, "idempotency_key")
+		var op domain.HostingOperation
+		if !ok || len(key) == 0 || len(key) > 128 || !reflect.DeepEqual(compare, expected) || domain.DecodeHostingStorageProtocolJSON(response, &op) != nil || op.ID != b.recovery.OperationID || op.ProjectID != project || op.ResourceID != application {
+			b.invalid = true
+			return
+		}
+		evidence := applicationDatabaseBrowserSeen{Request: sha256.Sum256(raw), OperationID: op.ID}
+		if old, seen := b.seen[phase]; seen {
+			if old != evidence {
+				b.invalid = true
+			}
+			return
+		}
+		b.seen[phase] = evidence
+		b.recovery.Submitted = body
+		b.latestOperation = op.ID
+		select {
+		case b.admissions <- applicationDatabaseBrowserAdmission{Phase: phase, Operation: op}:
+		default:
+			b.invalid = true
+		}
+		return
+	}
 	if action == "deploy" && phase != "redeploy" && phase != "replay" || action != "deploy" && action != phase || len(response) > domain.HostingApplicationDatabaseJournalJSONLimit {
 		b.invalid = true
 		return

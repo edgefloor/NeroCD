@@ -137,6 +137,8 @@ var databaseRunnerDiagnosticRoutes = [...]struct{ method, path string }{
 	{"POST", "/api/v1/runners/hosting/database-binding/state"},
 	{"POST", "/api/v1/runners/hosting/database-binding/authorize"},
 	{"POST", "/api/v1/runners/hosting/database-binding/stage"},
+	{"POST", "/api/v1/runners/hosting/database-binding/storage/writer"},
+	{"POST", "/api/v1/runners/hosting/database-binding/storage/authorize"},
 	{"POST", "/api/v1/runners/proxy/plan"},
 	{"POST", "/api/v1/runners/proxy/prepared"},
 	{"POST", "/api/v1/runners/proxy/apply-begin"},
@@ -274,6 +276,7 @@ type databaseRunnerFixture struct {
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	upgrade                               bool
 	connected                             bool
+	storage                               *applicationDatabaseStorageFixture
 	routes                                *applicationDatabaseRouteFixture
 	routeYield                            atomic.Pointer[applicationDatabaseRouteYieldWire]
 	routeProxyComplete                    atomic.Pointer[applicationDatabaseRouteYieldWire]
@@ -363,8 +366,9 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 
 func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, connectedProfile ...bool) *databaseRunnerFixture {
 	t.Helper()
-	connected := len(connectedProfile) == 1 && connectedProfile[0]
-	if len(connectedProfile) > 1 || connected && (!capture || !upgrade) {
+	connected := len(connectedProfile) > 0 && connectedProfile[0]
+	storage := len(connectedProfile) == 2 && connectedProfile[1]
+	if len(connectedProfile) > 2 || connected && (!capture || !upgrade) || storage && !connected {
 		t.Fatal("connected fixture requires automatic capture and upgrade")
 	}
 	_, pg, database := newHostingBuildAPIFixture(t)
@@ -391,6 +395,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		}
 	})
 	f := &databaseRunnerFixture{t: t, root: root, upgrade: upgrade, connected: connected, service: service, database: database, logs: &databaseRunnerLog{}, completeCounts: map[string]int{}}
+	if storage {
+		f.storage = &applicationDatabaseStorageFixture{}
+	}
 	handler := NewServer(service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static())
 	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
@@ -488,6 +495,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	}
 	if connected {
 		caps = append(caps, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability)
+		if storage {
+			caps = append(caps, "hosting_application_database_storage_v1")
+		}
 		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
 			caps = append(caps, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, "hosting_application_database_route_continuity_v1")
 		}
@@ -570,6 +580,9 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
 			args = append(args, "--proxy-state-root", filepath.Join(f.root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch", "--hosting-application-database-route-continuity")
 		}
+	}
+	if f.storage != nil {
+		args = append(args, "--hosting-application-database-storage")
 	}
 	return args
 }

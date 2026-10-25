@@ -137,3 +137,71 @@ The earlier successful four-group `9a69228` checkpoint and its 174.487-second
 receipt remain historical evidence. Neither it nor the six failed route attempts
 is relabeled by the final pass. Six physical failure/repair rounds preceded the
 333.592-second pass. Those observed durations provide no cost or ETA estimate.
+
+## Connected application uploads profile, pending physical qualification
+
+The separate `NEROCD_DATABASE_CONNECTION_STORAGE=1` profile requires both
+`NEROCD_DATABASE_CONNECTION_ROUTES=1` and `NEROCD_DATABASE_CONNECTION_BROWSER=1`.
+It retains all five original runtime groups and adds the connected storage
+success and recovery groups. Every PostgreSQL and Redis result, cleanup capacity
+marker, and six serialized browser results must appear exactly once. Local unit
+and launcher tests do not qualify this profile. Run it only after approval of the
+exact combined revision and the complete disposable fixture profile.
+
+The gate builds `Dockerfile.http-storage` separately, pushes it to the same owned
+inner registry, records its distinct digest, and removes the local tag before the
+production pull. This scratch image explicitly uses UID/GID 0:0 and enables only
+the fixture's bounded upload handler. The original UID/GID 65532:65532 image is
+unchanged. This is a trusted root-container qualification; it makes no claim that
+arbitrary nonroot images initialize a fresh Docker volume correctly. There are no
+new outer ports, host paths, host sockets, DNS names, CA sources, or ACME targets.
+
+For each engine, Connect first creates a storage-less app A0. Saving the public
+resource storage metadata attaches one retained `/data/uploads` mount. An
+explicitly acknowledged nonrouted replacement creates storage app A. Routed B
+and C replacements then preserve both database records and binary uploads.
+`PUT /uploads/{key}` atomically replaces one bounded file using an exclusive
+temporary file, fsync, and rename. `GET /uploads/{key}` returns its bytes. Keys
+cannot choose paths; requests are bounded to 1 MiB and redirects are refused.
+
+The fixture compares a 65,537-byte SHA-256 payload through direct app HTTP and
+trusted HTTPS, including the served container identity and certificate. It reads
+bounded Docker copy archives in memory without extracting them to verify file
+0640 and directory 0750 permissions with UID/GID 12345:12346. New B/C uploads,
+database maintenance, and final Complete ACK replay must retain both datasets,
+the same volume mount, exact creation labels, and original volume metadata.
+
+Storage replacement explicitly interrupts service. At the yielded transition,
+independent Docker inspection must prove the exact A container is stopped, its
+finish time precedes B's start time, both reference the same owned volume, and B
+is the sole running writer before candidate data probes. This profile does not
+reuse the original storage-less assertion that A stays available during B's
+preparation. The pinned upstream `ApplicationDeploymentJob.php` volume generation
+and ordinary rolling update permit shared volume overlap; NeroCD's one-writer
+contract is intentionally stricter.
+
+Both engines exercise failed-readiness `resume_predecessor` and terminal failed
+proxy `complete_replacement` recovery. The proxy fault pauses only the exact
+ownership-verified nested managed proxy after B is ready. A fallback unpause is
+registered before the effect, and identity is checked again before each pause
+and unpause. This deliberately interrupts unrelated routes too. The test asserts
+their restoration after unpause/recovery, not uninterrupted availability during
+this fault. The ordinary unchanged route failure matrix still proves route
+preservation outside the deliberate unavailability injection.
+
+Recovery must use offered public actions and fresh reviewed storage/stage hashes.
+The original failed operation and result remain intact during admission; queued,
+running, succeeded, and uncertain recovery progress are independent. PostgreSQL
+resume and Redis forward completion use the live owner recovery form, keyboard
+review and acknowledgement, the real POST, and viewer denial. All four runtime
+cases verify immutable same-operation association, a fresh task/lease/fence,
+actual one-writer/data/HTTPS settlement, and exact cleanup. Forward completion
+must preserve failed P, apply distinct P2, and finalize the original candidate.
+Acceptance of a POST or a stopped phase alone is insufficient. Resume does not
+undo candidate database writes or uploaded files and cannot promise data
+compatibility with the previous application version.
+
+The accepted storage-less `5277ab2` evidence remains labeled with its original
+revision and dependencies. It does not prove these new mounts or recovery paths.
+Database-native backup/archive, disk loss, arbitrary image initialization,
+production ACME and full parity remain outside this profile's claims.

@@ -435,7 +435,18 @@ func serve() error {
 	if err != nil {
 		return errors.New("fixture container identity unavailable")
 	}
-	application, err := httpDatabaseInstanceHandler(instance, httpDatabaseHandler(record))
+	var uploads *httpUploadHandler
+	if enabled := os.Getenv("FIXTURE_UPLOADS"); enabled != "" {
+		if enabled != "1" || os.Geteuid() != 0 || os.Getenv("FIXTURE_DATABASE_ENGINE") == "unrelated" {
+			return errors.New("fixture upload profile requires qualified root image")
+		}
+		uploads, err = newHTTPUploadHandler("/data/uploads", 12345, 12346)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = uploads.Close() }()
+	}
+	application, err := httpDatabaseInstanceHandler(instance, httpDatabaseUploads(httpDatabaseHandler(record), uploads))
 	if err != nil {
 		return err
 	}

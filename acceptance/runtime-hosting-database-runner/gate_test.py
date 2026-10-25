@@ -174,6 +174,19 @@ elif tool == "node":
                 if case != "route_missing_capacity": print("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + phase)
     if case == "browser_driver_failure":
         sys.exit(39)
+    if "NEROCD_DATABASE_CONNECTION_STORAGE=1" in args:
+        if case != "storage_missing_test": print("--- PASS: TestHostingApplicationDatabaseStorageCompiledRunner (0.01s)")
+        if case != "storage_missing_recovery_test": print("--- PASS: TestHostingApplicationDatabaseStorageFailuresCompiledRunner (0.01s)")
+        for engine in ("postgresql", "redis"):
+            if case != "storage_missing_result": print("DATABASE_CONNECTION_STORAGE_PASS " + engine)
+            if case != "storage_missing_browser": print("DATABASE_CONNECTION_STORAGE_BROWSER_PASS " + engine)
+            if case != "storage_missing_capacity": print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " success")
+            for fault in ("readiness", "cutover"):
+                if case != "storage_missing_recovery": print("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS " + engine + " " + fault)
+                if case != "storage_missing_recovery_capacity": print("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " " + fault)
+        for engine,action in (("postgresql","resume_predecessor"),("redis","complete_replacement")):
+            if case != "storage_missing_recovery_browser": print("DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS " + engine + " " + action)
+            if case != "storage_missing_recovery_ui": print("DATABASE_CONNECTION_STORAGE_RECOVERY_UI_PASS " + engine + " " + action)
 elif tool == "go":
     if args[:2] == ["test", "-c"] or args[:1] == ["build"]:
         if case in ("sigint", "sigterm"):
@@ -352,7 +365,8 @@ elif tool == "docker":
             if "container" in args and "inspect" in args and "e" * 64 in args:
                 print(json.dumps(dict(Id="e" * 64, Name="/"+owner+"-registry", Config=dict(Image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",Labels={label:"foreign" if case=="registry_foreign" else owner}), State=dict(Running=True), HostConfig=dict(Privileged=False,PortBindings={"5000/tcp":[dict(HostIp="0.0.0.0" if case=="registry_public" else "127.0.0.1",HostPort="")]}), NetworkSettings=dict(Ports={"5000/tcp":[dict(HostIp="127.0.0.1",HostPort="35001")]}))))
             elif "image" in args and "inspect" in args:
-                print(json.dumps(["127.0.0.1:35001/nerocd-http-app@sha256:"+"a"*64] if case!="registry_digest_foreign" else ["foreign/app@sha256:"+"a"*64]))
+                digest = "b" if any(arg.endswith("-storage") for arg in args) and case != "storage_digest_collision" else "a"
+                print(json.dumps(["127.0.0.1:35001/nerocd-http-app@sha256:"+digest*64] if case!="registry_digest_foreign" else ["foreign/app@sha256:"+"a"*64]))
             elif "--detach" in args:
                 print("e" * 64)
             elif "--command=SELECT current_database()" in args:
@@ -373,7 +387,7 @@ else:
 
 
 class GateTest(unittest.TestCase):
-    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False):
+    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False):
         self.installed_closure = None
         gate = Path(os.environ.get("DATABASE_GATE_UNDER_TEST", Path(__file__).with_name("gate.sh"))).resolve()
         with tempfile.TemporaryDirectory(prefix="nerocd-database-gate-test-") as temporary:
@@ -389,6 +403,7 @@ class GateTest(unittest.TestCase):
             client.mkdir(parents=True)
             (client / "Dockerfile").write_text("FROM scratch\nCOPY client /client\n")
             (client / "Dockerfile.http").write_text("FROM scratch\nCOPY client /client\nENTRYPOINT [\"/client\",\"serve\"]\n")
+            (client / "Dockerfile.http-storage").write_text("FROM scratch\nCOPY client /client\nENV FIXTURE_UPLOADS=1\nUSER 0:0\nENTRYPOINT [\"/client\",\"serve\"]\n")
             proxy = root / "acceptance/runtime-proxy-control"
             proxy.mkdir(parents=True)
             (proxy / "pebble.json").write_text('{"pebble":{"listenAddress":"127.0.0.1:14000"}}\n')
@@ -407,6 +422,7 @@ class GateTest(unittest.TestCase):
                 executable.chmod(0o700)
             environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"], TMPDIR=str(root),
                                DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0", NEROCD_DATABASE_CONNECTION_ROUTES="bad" if case=="route_bad_mode" else "1" if routes else "0")
+            environment["NEROCD_DATABASE_CONNECTION_STORAGE"] = "bad" if case == "storage_bad_mode" else "1" if storage else "0"
             process = subprocess.Popen(["bash", str(gate)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -754,6 +770,34 @@ class GateTest(unittest.TestCase):
         state,_,_=self.run_gate("outer_unexpected_port",1)
         self.assertIn("outer",state)
 
+    def test_storage_profile_builds_distinct_root_fixture_and_preserves_ports(self):
+        state, commands, output = self.run_gate("storage_success", 0, browser=True, routes=True, storage=True)
+        self.assertEqual(state, {})
+        create = next(args for args in commands if args[:2] == ["container", "create"])
+        self.assertEqual(create[create.index("--publish")+1], "127.0.0.1::18080")
+        self.assertEqual(sum(arg == "--publish" for arg in create), 1)
+        build = next(args for args in commands if "/fixture/client/Dockerfile.http-storage" in args)
+        self.assertIn("FIXTURE_OWNER="+OWNER, build)
+        runtime = next(args for args in self.all_commands if args[:1] == ["acceptance/runtime-hosting-database-runner/browser-driver.mjs"])
+        self.assertIn("NEROCD_DATABASE_CONNECTION_STORAGE=1", runtime)
+        self.assertIn("NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE=127.0.0.1:35001/nerocd-http-app@sha256:"+"b"*64, runtime)
+        self.assertIn("ApplicationDatabaseStorageCompiledRunner", runtime[runtime.index("-test.run")+1])
+        self.assertIn("DATABASE_CONNECTION_STORAGE_PASS redis", output)
+
+    def test_storage_profile_requires_all_results_and_distinct_digest(self):
+        for case in ("storage_missing_test", "storage_missing_result", "storage_missing_browser", "storage_missing_capacity", "storage_missing_recovery_test", "storage_missing_recovery", "storage_missing_recovery_capacity", "storage_missing_recovery_browser", "storage_missing_recovery_ui", "storage_digest_collision", "storage_bad_mode"):
+            with self.subTest(case=case):
+                state, commands, _ = self.run_gate(case, 1, browser=True, routes=True, storage=True)
+                self.assertEqual(state, {})
+                if case == "storage_bad_mode": self.assert_no_creation(commands)
+
+    def test_storage_profile_refuses_unqualified_browser_or_routes(self):
+        for browser, routes in ((False,False),(True,False),(False,True)):
+            with self.subTest(browser=browser,routes=routes):
+                state, commands, _ = self.run_gate("storage_success", 1, browser=browser, routes=routes, storage=True)
+                self.assertEqual(state, {})
+                self.assert_no_creation(commands)
+
     def test_browser_prerequisite_and_driver_failures(self):
         for case,expected in (("browser_bad_mode",1),("browser_source_missing",1),("browser_build_failure",16),("browser_missing_result",1),("browser_driver_failure",39)):
             with self.subTest(case=case):
@@ -918,13 +962,16 @@ def stop(*_):
  child.terminate();child.wait(timeout=2);sys.exit(1)
 signal.signal(signal.SIGTERM,stop)
 try:
- for engine in ('postgresql','redis'):
+ for profile,engine in [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else []):
   meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
+  if profile!='base':meta['profile']=profile
+  if profile=='storage' and case=='storage_unknown_profile':meta['profile']='foreign'
   if case=='foreign_origin':meta['origin']='http://127.0.0.1:35003'
   if case=='metadata_secret':meta['password']='SENSITIVE-CANARY'
   print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   if case=='duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
-  while not (root/('done-'+engine)).exists():time.sleep(.01)
+  if profile=='storage' and case=='storage_duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
+  while not (root/('done-'+profile+'-'+engine)).exists():time.sleep(.01)
   if case=='missing_second':break
 finally:
  child.terminate();child.wait(timeout=2)
@@ -947,7 +994,7 @@ if case in ('cancel','detached_cancel'):
  while True:time.sleep(.01)
 child.terminate();child.wait(timeout=2)
 if case=='browser_failure':sys.exit(9)
-(root/('done-'+meta['engine'])).touch()
+(root/('done-'+meta.get('profile','base')+'-'+meta['engine'])).touch()
 '''
 
 class BrowserDriverTest(unittest.TestCase):
@@ -980,6 +1027,7 @@ class BrowserDriverTest(unittest.TestCase):
             (root/'bin').mkdir();browser=root/'bin/bun'
             browser.write_text('#!'+sys.executable+'\n'+DRIVER_BROWSER);browser.chmod(0o700)
             environment=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],NEROCD_TEST_DATABASE_URL='SENSITIVE-CANARY')
+            environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith('storage_') else '0'
             process=subprocess.Popen([node,str(driver),'http://127.0.0.1:35002',str(root/'evidence'),'--',sys.executable,str(fixture),str(root)],cwd=Path(__file__).resolve().parents[2],env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
             pids=[]
             try:
@@ -994,6 +1042,11 @@ class BrowserDriverTest(unittest.TestCase):
                 if expected==0:
                     self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS postgresql'),1)
                     self.assertEqual(output.count('DATABASE_CONNECTION_BROWSER_PASS redis'),1)
+                    if case=='storage_success':
+                        self.assertEqual(output.count('DATABASE_CONNECTION_STORAGE_BROWSER_PASS postgresql'),1)
+                        self.assertEqual(output.count('DATABASE_CONNECTION_STORAGE_BROWSER_PASS redis'),1)
+                        self.assertEqual(output.count('DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS postgresql resume_predecessor'),1)
+                        self.assertEqual(output.count('DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS redis complete_replacement'),1)
                 detached=int((root/'detached-pid').read_text()) if case=='detached_cancel' else None
                 if detached is not None:
                     self.assertIn('database connection browser cleanup unresolved: forced runner termination cannot prove detached browser exit',output)
@@ -1021,6 +1074,11 @@ class BrowserDriverTest(unittest.TestCase):
 
     def test_successful_two_engine_driver(self):
         self.run_driver('success',0)
+
+    def test_storage_profile_requires_both_distinct_engine_browser_runs(self):
+        self.run_driver('storage_success',0)
+        for case in ('storage_missing','storage_duplicate','storage_unknown_profile'):
+            with self.subTest(case=case): self.run_driver(case,1)
 
     def test_rejects_metadata_and_missing_results(self):
         for case in ('foreign_origin','metadata_secret','duplicate','missing_second','browser_failure'):

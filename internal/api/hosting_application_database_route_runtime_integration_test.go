@@ -660,12 +660,22 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 	if connection.MembershipRevision != revision || connection.HoldOperationID != candidate.ID {
 		f.t.Fatal("candidate readiness changed active database membership or network hold")
 	}
-	r.record(f.t.Context(), previous, "GET", "a", "retained_a")
-	f.applicationContainer(previous)
-	// The candidate endpoint is usable before it becomes current healthy or the
-	// route target; record identity proves that A and B are distinct live apps.
 	proof := op
 	proof.Result = &domain.HostingResult{ContainerID: stage.Candidate.ContainerID}
+	if f.storage != nil {
+		f.storage.assertTransition(f, previous, proof)
+		for key, data := range f.storage.Files {
+			if applicationDatabaseUpload(f.t.Context(), nil, "", "", proof, "GET", key, data, "") != nil {
+				f.t.Fatal("yielded candidate cannot read retained upload")
+			}
+		}
+		r.assertUnrelated()
+	} else {
+		r.record(f.t.Context(), previous, "GET", "a", "retained_a")
+		f.applicationContainer(previous)
+	}
+	// The candidate endpoint is usable before it becomes current healthy or the
+	// route target; record identity proves that A and B are distinct live apps.
 	if applicationDatabaseHTTPRecord(f.t.Context(), proof, "GET", "a", "retained_a") != nil {
 		f.t.Fatal("yielded candidate cannot read retained records")
 	}
@@ -704,7 +714,11 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 	}
 	r.assertSelected(proof)
 	r.record(f.t.Context(), proof, "GET", "a", "retained_a")
-	f.applicationContainer(previous)
+	if f.storage != nil {
+		f.storage.assertTransition(f, previous, proof)
+	} else {
+		f.applicationContainer(previous)
+	}
 	connection = f.connection(previous.ResourceID)
 	if connection.MembershipRevision != revision || connection.HoldOperationID != candidate.ID || f.runtimeDeliveryRequests.Load() != deliveries {
 		f.t.Fatal("proxy switch settled membership, released hold or repeated credential delivery before finalize")
@@ -1557,7 +1571,7 @@ func TestApplicationDatabaseRouteRuntimeFailureStorageIsolation(t *testing.T) {
 	for _, environment := range []string{"env_first", "env_next"} {
 		for _, destination := range []string{"dest_first", "dest_next"} {
 			for _, engine := range []string{"postgresql", "redis"} {
-				for _, scenario := range []string{"readiness", "cutover"} {
+				for _, scenario := range []string{"readiness", "cutover", "storage_success", "storage_readiness", "storage_cutover"} {
 					name := environment + "/" + destination + "/" + engine + "/" + scenario
 					t.Run(name, func(t *testing.T) {
 						in := applicationDatabaseRouteFailureCreateInput(engine, scenario, environment, destination)
@@ -1582,10 +1596,18 @@ func TestApplicationDatabaseRouteRuntimeFailureStorageIsolation(t *testing.T) {
 // Separate schemas keep a deliberate readiness or strict-switch failure from
 // supplying authority to a later success case. All cases share only owned DinD.
 func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
+	testHostingApplicationDatabaseRouteFailuresCompiledRunner(t, false)
+}
+
+func testHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T, storage bool) {
 	if os.Getenv("NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") != "1" {
 		t.Skip("requires approved combined route fixture profile")
 	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" || applicationDatabaseFixtureImage(os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")) != nil {
+	image := os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")
+	if storage {
+		image = os.Getenv("NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE")
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" || applicationDatabaseFixtureImage(image) != nil {
 		t.Fatal("route failures require native owned image fixture")
 	}
 	for _, engine := range []string{"postgresql", "redis"} {
@@ -1593,15 +1615,19 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 			if !t.Run(engine+"/"+failure, func(t *testing.T) {
 				applicationDatabaseRouteCapacity(t)
 				roots, public := newApplicationDatabaseRouteTrust(t)
-				f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseRouteFailureCreateInput(engine, failure, f.environment, f.destination), 201)
+				f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, storage)
+				scenario := failure
+				if storage {
+					scenario = "storage_" + failure
+				}
+				view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseRouteFailureCreateInput(engine, scenario, f.environment, f.destination), 201)
 				f.registerRouteDatabaseCleanup(view.Resource.ID)
 				f.stop()
 				source := f.deploy(view, "route_failure_source")
 				f.registerRouteOperationCleanup(source.ID)
 				f.start()
 				f.await(source.ID)
-				resource := databaseRunnerJSON[domain.Resource](f, f.token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "route failure " + engine, Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")}}}, 201)
+				resource := databaseRunnerJSON[domain.Resource](f, f.token, "POST", "/api/v1/resources", app.ResourceInput{ProjectID: "proj_platform", ProjectEnvironmentID: f.environment, Name: "route failure " + engine, Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: image}}}, 201)
 				databaseRunnerJSON[domain.ResourceBinding](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destination}, 201)
 				namespace := "connected_" + engine
 				config := databaseRunnerJSON[struct {
@@ -1615,8 +1641,15 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				f.start()
 				active := f.activeConnection(resource.ID)
 				a := f.awaitConnectionOperation(connection.ApplicationOperationID)
+				if f.storage != nil {
+					a = f.storage.bootstrap(f, resource, a, deploy)
+					active = f.connection(resource.ID)
+				}
 				f.appRecord(a, "PUT", "a", "retained_a")
 				r := f.initialApplicationDatabaseRoute(a, engine, roots, public)
+				if f.storage != nil {
+					f.storage.write(f, a, "retained_a", 11)
+				}
 				before := f.applicationContainer(a)
 				f.stop()
 				deploy.IdempotencyKey = "route_failure_b"
@@ -1624,7 +1657,11 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				if failure == "readiness" {
 					deploy.Readiness = domain.HostingReadiness{Path: "/never-ready", TimeoutSeconds: 3}
 				}
-				candidate := databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", r.deployment(deploy), 202)
+				input := r.deployment(deploy)
+				if f.storage != nil {
+					input = f.storage.deployment(f, input)
+				}
+				candidate := databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 				f.registerRouteOperationCleanup(candidate.ID)
 				var wire *applicationDatabaseRouteYieldWire
 				if failure == "cutover" {
@@ -1666,7 +1703,7 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 					}
 				}
 				op, err := f.operation(t.Context(), candidate.ID)
-				if err != nil || op.Plan == nil || op.Release == nil || op.ApplicationDatabase == nil || staged.Candidate.ContainerID == "" || op.Result != nil || op.CompleteReceipt != nil {
+				if err != nil || op.Plan == nil || op.Release == nil || op.ApplicationDatabase == nil || staged.Candidate.ContainerID == "" || !storage && (op.Result != nil || op.CompleteReceipt != nil) {
 					t.Fatal("route failure exact candidate identity unavailable")
 				}
 				proof, err := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
@@ -1675,6 +1712,11 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				}
 				if failure == "readiness" && (op.ApplicationDatabaseYield != nil || applicationDatabaseRouteReadinessRejected(t.Context(), op.Snapshot, staged.Candidate.ContainerID) != nil) {
 					t.Fatal("readiness failure yielded or lacks exact candidate HTTP rejection")
+				}
+				if storage {
+					f.storage.recoverFailure(f, engine, failure, resource, view, a, op, staged, active, wire)
+					fmt.Println("DATABASE_CONNECTION_STORAGE_RECOVERY_PASS " + engine + " " + failure)
+					return
 				}
 				if failure == "cutover" {
 					// Recheck exact create labels and image before the deliberate stop.
@@ -1734,7 +1776,11 @@ func TestHostingApplicationDatabaseRouteFailuresCompiledRunner(t *testing.T) {
 				return
 			}
 			applicationDatabaseRouteCapacity(t)
-			fmt.Println("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + failure)
+			if storage {
+				fmt.Println("DATABASE_CONNECTION_STORAGE_CAPACITY_PASS " + engine + " " + failure)
+			} else {
+				fmt.Println("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + failure)
+			}
 		}
 	}
 }
