@@ -107,3 +107,70 @@ history/import workflow. Persisted Go-agent fencing, exact creation provenance,
 protected local artifacts, and a fresh independent target replace SSH commands
 and cache locks. This is a narrower recovery product than the upstream import
 surface.
+
+## Accepted qualification and evidence
+
+The bounded workflow is accepted on main at
+`56cce329e620472e3c82e9ed7ef0ae0618f124e4`, with migration 0075 and runner
+journal format 18. The final physical gate ran at source
+`c1f7b153a963609336851f94a16b2eac96f86e91`. Integration retained that evidence
+by checking all 141 recorded source blobs and modes. Its runtime, tests, gates,
+SQL, UI, module and configuration inputs are unchanged. Fresh integration
+binaries carry different Git metadata; no binary-equality claim is made.
+
+The physical profile uses native Linux arm64, trusted rootful Docker with the
+classic image store, PostgreSQL 17.11, a same-destination public-image client
+application and fixture-CA HTTPS. A real cookie-authenticated Chromium session
+requests the backup and new-database restore through the embedded UI. The Go
+fixture checks the resulting application data. Accounts, environment and
+destination are fixture setup; this is not a complete onboarding qualification.
+
+The accepted outcomes are:
+
+- An owner requests an immediate backup and reads its completed local history.
+  The live browser checks the completed operation at 320, 390, 430 and 1440 pixels.
+- Backup and restore completion acknowledgements are lost after commit. The
+  compiled runner restarts and replays each durable result without repeating
+  the database tool.
+- Restore succeeds while the original source container is stopped. The target
+  has a distinct resource, binding, volume and generated credential identity.
+  A distinct application reads the pre-backup record and writes and reads new
+  data. A restored application-owned sequence remains usable under `ncd_app`.
+- The source restarts with its original and post-snapshot records intact and
+  accepts another write. This source restart is fixture cleanup, not a restore
+  requirement or an automatic source-management feature.
+- Corrupt and truncated artifacts and revoked authorization fail. The real
+  guest-tool timeout is exercised. Failed or uncertain effects preserve the
+  appropriate hold, rather than fabricating a successful restore.
+
+The behavior assertions live in
+[`TestHostingDatabaseBackupCompiledRunner`](../internal/api/hosting_database_backup_runtime_integration_test.go),
+`TestHostingDatabaseBackupFailuresCompiledRunner` in that same file, and the
+[live browser scenario](../web/app/tests/browser/database-backups-live.spec.ts).
+The [dedicated gate](../acceptance/runtime-hosting-postgresql-backup-runner/gate.sh)
+runs these against the compiled runner and embedded UI.
+
+Durable receipts are under
+`/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/`:
+
+| Receipt | Observed result and boundary |
+| --- | --- |
+| `thirteenth-runtime/driver.json` and `runtime-summary.json` | Final source `c1f7b153a963609336851f94a16b2eac96f86e91`, exit 0, `full_workflow_pass=1`, 130.140 seconds. Browser, application restore, guest timeout and corrupt/truncated/revoked markers passed. |
+| `thirteenth-runtime/independent-cleanup.json` | Owned outer container and volume absent. Existing container inventory and full volume profiles preserved. Health-log and mount-order differences are explicitly reconciled. |
+| `integration/handoff.json`, `sourceproof.json` and `retention.json` | Accepted source correspondence, 157 focused named passes with zero skips, vet, API generation, frontend and product builds, native/Linux binaries and embedded artifact checks passed. Physical and PostgreSQL results retain their original revisions. |
+| `integration/main-promotion.json` | Fast-forward to accepted `56cce329e620472e3c82e9ed7ef0ae0618f124e4` succeeded. The existing user UI process and its database were not restarted or migrated. |
+
+Earlier failed attempts, including `qualification-handoff.json`, remain failed
+historical evidence. They do not replace the final thirteenth pass. Selected
+measured durations are 56.94 seconds for the main runtime test, 41.05 seconds
+for its separate failure group, and 22.543 seconds for the integrated focused
+race checks. These overlap or cover different scopes and must not be summed
+as total delivery time. Receipts do not establish total elapsed effort, a total
+review-round count, token use or monetary cost.
+
+The [machine-readable checklist](parity-checklist.json) records ten later
+bounded outcome assessments under `supplemental_assessments`. Its historical
+`09a432407c41671517fa342d28c07e9c79978aea` audit and 933 eligible outcomes remain
+unchanged. The later assessments add no historical score or full requirement,
+acceptance or matrix gate. Scheduled PostgreSQL backup, S3 and retention remain
+open, as do in-place restore, cross-destination recovery and other engines.

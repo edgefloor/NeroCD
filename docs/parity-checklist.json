@@ -40845,7 +40845,8 @@
     "Previous9a69228 snapshot and physical receipts remain in audit_history. Changed dependency prefixes require new exact5277 receipts. R33-C02 retains original563fb88 receipt after Git-object equality for its complete four declared dependencies. Criteria, denominator and gate maps are unchanged.",
     "Current09a full qualification: seven Go groups,14 named subtests, zero Go skips/fails,683.423 seconds; six serialized browser phases,30 passes and6 deliberate opposite-profile skips. All32 required markers and exact owned cleanup passed. Full handoff: /tmp/nerocd-operation-status-retry-integrated-full-handoff.json.",
     "Refresh19 affected historical receipts without shrinking dependencies. R33-C02 retains its563fb88 original receipt after equality of all4 declared dependencies. Ten bounded R38/R23 outcomes gain proof; R38-C10 presence becomes implemented. R21-C07 stays partial and R38-C08 evidence_unavailable; no aggregate gates or broader storage/recovery features gain acceptance.",
-    "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed."
+    "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed.",
+    "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes gain a profile-specific validated assessment with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -44871,6 +44872,380 @@
           "next_acceptance": "Retain the exact bounded profile; broader strategies and complete requirement, acceptance and matrix gates require separate proof.",
           "eligibility": "hosting"
         }
+      ]
+    }
+  ],
+  "supplemental_assessments": [
+    {
+      "id": "postgresql-local-backup-20261025",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "These later profile-specific assessments update the delivery checklist without promoting the pinned historical audit or requalifying unrelated receipts. The existing validator checks the historical rows and generated report; independent specification review checks this supplemental assessment. No new overall percentage is claimed.",
+      "outcomes": [
+        {
+          "criterion_id": "R45-C02",
+          "outcome": "Expose database backups separately",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The database-specific panel and API expose logical backup history separately from platform backup and upload archives.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C01",
+          "outcome": "Request immediate backup",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The live browser requests Back up now and the compiled runner publishes the local PostgreSQL custom dump.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C06",
+          "outcome": "Enforce backup timeout",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The physical guest timeout marker proves bounded database-tool execution. Uncertain execution retains ownership.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C09",
+          "outcome": "Retain backup execution history",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The live embedded UI reads completed backup and restore history at four viewport widths.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C12",
+          "outcome": "Record backup size",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The completed local archive receipt includes its byte size, preserved by restore identity checks.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C13",
+          "outcome": "Record backup digest",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The completed archive digest binds the restore; corrupt and truncated artifacts fail rather than becoming successful targets.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C01",
+          "outcome": "Restore database into new resource for validation",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "Restore creates a distinct PostgreSQL resource, binding, volume and credential identity while the original source is stopped.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C08",
+          "outcome": "Verify application reads restored data",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "A distinct application reads the pre-backup record from the restored private database.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C09",
+          "outcome": "Verify application writes restored data before passing",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "That application writes and reads a new record; restored ncd_app sequence ownership remains usable.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R44-C09",
+          "outcome": "Restore through dashboard into a new resource and verify application data for PostgreSQL",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "accepted_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "physical_source_sha": "c1f7b153a963609336851f94a16b2eac96f86e91",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore",
+            "justification": "The real embedded dashboard requests a new-database restore, followed by application-level read and write verification.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupCompiledRunner",
+              "TestHostingDatabaseBackupFailuresCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_runtime_integration_test.go",
+              "web/app/tests/browser/database-backups-live.spec.ts"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/driver.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/thirteenth-runtime/runtime-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/sourceproof.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/handoff.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/integration/main-promotion.json"
+            ],
+            "limits": "PostgreSQL 17.11 only; native Linux arm64, trusted rootful Docker classic image store, same-destination public-image application and fixture-CA HTTPS. Fixture setup supplies accounts/environment/destination. No scheduled backup, S3, automated retention, in-place restore, cross-destination/host-disk-loss recovery, other engine or full R/A/matrix gate. Historical audit rows and score are unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "R44-C08 scheduled PostgreSQL backup",
+        "R46-C02 scheduled backup",
+        "R46-C07 automatic retention",
+        "R46-C16 S3 upload",
+        "R47 remote upload and independent retention",
+        "R48-C03 in-place replacement target",
+        "A25",
+        "A26",
+        "A37",
+        "DB01 full PostgreSQL matrix"
       ]
     }
   ]

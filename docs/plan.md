@@ -73,12 +73,17 @@ A practical deployment demo alone does not complete Coolify parity.
 
 The connected application, PostgreSQL/Redis and owned-upload-volume workflow is
 qualified within the [connection guide's profile](hosting-database-connections.md).
-Continue H2 with a bounded database-native backup and application-verified restore
-journey. First discover the existing archive, database and authority contracts;
-freeze the supported engine/profile, ownership and recovery boundaries before
-implementation. This is the next gap to investigate, not accepted backup/restore
-support. Broader R42 profiles, rotation, production ACME and aggregate stateful
-hosting gates remain open.
+The next H2 gap identified here now has a bounded accepted result. Immediate
+PostgreSQL logical backup and restore into a new private database are accepted at
+`56cce329e620472e3c82e9ed7ef0ae0618f124e4`. The embedded UI, compiled runner,
+application reads and new writes, completion replay and failure holds passed
+within the [backup qualification profile](hosting-database-backups.md#accepted-qualification-and-evidence).
+
+Continue H2 from the remaining recovery gaps. Scheduling, S3 publication,
+retention automation, other engines, cross-destination and in-place restore need
+their own frozen contracts and acceptance. Broader R42 profiles, rotation,
+production ACME and aggregate stateful hosting gates remain open. This accepted
+slice does not change the deferred workspace gates.
 
 ## Earlier hosting checkpoints
 

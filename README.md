@@ -267,6 +267,16 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Production ACME, arbitrary nonroot initialization, source builds, rotation,
   native backup/restore, disk loss, cross-host/external storage and full R42/A17
   remain unqualified. Earlier storage-less receipts retain their original scope.
+- [PostgreSQL logical backup and restore](docs/hosting-database-backups.md) is
+  accepted at `56cce329e620472e3c82e9ed7ef0ae0618f124e4`. Owners request an
+  immediate local backup and restore it into a new private database through the
+  embedded UI. The compiled-runner qualification proves application reads and
+  new writes, distinct target storage and credentials, completion replay and
+  failure holds. The final physical gate passed at source `c1f7b153a963609336851f94a16b2eac96f86e91`
+  in 130.140 seconds, retained by exact relevant-source correspondence.
+  This qualifies native Linux arm64, trusted classic-store Docker and PostgreSQL
+  17.11 on one destination. Scheduling, S3, retention automation, in-place and
+  cross-destination restore, other engines and full A25/A26/A37 remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
