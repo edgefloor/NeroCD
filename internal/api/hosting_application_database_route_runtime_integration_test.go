@@ -509,6 +509,122 @@ func (r *applicationDatabaseRouteFixture) deployment(in domain.HostingDeployment
 	return out
 }
 
+func applicationDatabaseRoutePendingSelection(current, expected domain.HostingRoute, proxyOperation string) bool {
+	return proxyOperation != "" && current.ID == expected.ID && current.ResourceID == expected.ResourceID && current.Hostname == expected.Hostname && current.PathPrefix == expected.PathPrefix && current.Version == expected.Version && current.SelectedReleaseOperationID == expected.SelectedReleaseOperationID && current.Enabled && current.OperationID == proxyOperation && (current.State == "queued" || current.State == "dispatched") && current.Reason == "" && !current.HTTPReady && !current.HTTPSReady && current.Certificate == (domain.HostingProxyCertificate{Hostname: expected.Hostname, Status: "pending"})
+}
+
+func applicationDatabaseRouteLoadedBeforeSwitch(current, loaded domain.HostingProxy, proxyOperation string) bool {
+	return proxyOperation != "" && loaded.ID != "" && loaded.LoadedGeneration > 0 && current.ID == loaded.ID && current.ServerID == loaded.ServerID && current.DestinationID == loaded.DestinationID && current.RunnerID == loaded.RunnerID && current.ControlProjectID == loaded.ControlProjectID && current.DaemonID == loaded.DaemonID && current.StaticHash == loaded.StaticHash && reflect.DeepEqual(current.Configuration, loaded.Configuration) && current.Enabled && !current.RestoreOwnershipHeld && current.HoldOperationID == "" && (current.ActiveOperationID == "" || current.ActiveOperationID == proxyOperation) && current.LoadedGeneration == loaded.LoadedGeneration && current.DesiredGeneration == loaded.LoadedGeneration+1
+}
+
+func (r *applicationDatabaseRouteFixture) awaitYieldedRoute(op domain.HostingOperation) {
+	f := r.f
+	c := op.ApplicationDatabaseRouteContinuity
+	if c == nil || c.Validate(op) != nil || c.ProxyID != r.proxy.ID || c.Request.ExpectedLoadedGeneration != r.proxy.LoadedGeneration || len(c.Request.Routes) != 1 || c.Request.Routes[0] != (domain.HostingRouteSwitchSelection{RouteID: r.route.ID, ExpectedVersion: r.route.Version, ExpectedSelectedReleaseOperationID: r.route.SelectedReleaseOperationID}) {
+		f.t.Fatal("yielded route lost its exact reviewed continuation")
+	}
+	expected := r.route
+	expected.Version++
+	expected.SelectedReleaseOperationID = op.ID
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		current := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+r.route.ID, nil, 200)
+		proxy := databaseRunnerJSON[domain.HostingProxy](f, f.adminToken, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+		unrelated := true
+		if r.unrelated.ID != "" {
+			other := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+r.unrelatedRoute.ID, nil, 200)
+			unrelated = applicationDatabaseRoutePendingSelection(other, r.unrelatedRoute, c.ProxyOperationID)
+		}
+		if applicationDatabaseRoutePendingSelection(current, expected, c.ProxyOperationID) && applicationDatabaseRouteLoadedBeforeSwitch(proxy, r.proxy, c.ProxyOperationID) && unrelated {
+			// Desired metadata already names B. Keep the independently recorded A
+			// certificate so direct trusted HTTPS proves what is actually loaded.
+			if r.unrelated.ID != "" && applicationDatabaseRouteHTTPRecord(f.t.Context(), r.roots, r.unrelatedRoute.Hostname, r.unrelatedRoute.Certificate.Fingerprint, r.unrelated, "GET", "unrelated", "unrelated_route") != nil {
+				f.t.Fatal("yield changed unrelated loaded HTTPS instance or certificate")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatal("yield did not reserve exact desired candidate while preserving loaded proxy")
+		}
+		select {
+		case <-f.t.Context().Done():
+			f.t.Fatal("yielded route wait canceled")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimePendingSelection(t *testing.T) {
+	expected := domain.HostingRoute{ID: "route_fixture", ResourceID: "resource_fixture", Hostname: "connected-postgresql.example.test", PathPrefix: "/", Version: 3, SelectedReleaseOperationID: "hop_b", Enabled: true}
+	valid := func() domain.HostingRoute {
+		current := expected
+		current.OperationID = "appdb_proxy_hop_b"
+		current.State = "dispatched"
+		current.Certificate = domain.HostingProxyCertificate{Hostname: expected.Hostname, Status: "pending"}
+		return current
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*domain.HostingRoute)
+		want   bool
+	}{
+		{"desired B before loaded switch", func(*domain.HostingRoute) {}, true},
+		{"queued B", func(r *domain.HostingRoute) { r.State = "queued" }, true},
+		{"stale desired A", func(r *domain.HostingRoute) { r.SelectedReleaseOperationID = "hop_a" }, false},
+		{"wrong pending operation", func(r *domain.HostingRoute) { r.OperationID = "pop_other" }, false},
+		{"wrong version", func(r *domain.HostingRoute) { r.Version++ }, false},
+		{"wrong route", func(r *domain.HostingRoute) { r.ID = "route_other" }, false},
+		{"wrong resource", func(r *domain.HostingRoute) { r.ResourceID = "resource_other" }, false},
+		{"wrong hostname", func(r *domain.HostingRoute) { r.Hostname = "other.example.test" }, false},
+		{"wrong path", func(r *domain.HostingRoute) { r.PathPrefix = "/other" }, false},
+		{"disabled", func(r *domain.HostingRoute) { r.Enabled = false }, false},
+		{"already applying", func(r *domain.HostingRoute) { r.State = "applying" }, false},
+		{"rolled back", func(r *domain.HostingRoute) { r.State = "rolled_back" }, false},
+		{"false HTTP readiness", func(r *domain.HostingRoute) { r.HTTPReady = true }, false},
+		{"false HTTPS readiness", func(r *domain.HostingRoute) { r.HTTPSReady = true }, false},
+		{"historical certificate", func(r *domain.HostingRoute) { r.Certificate.Status = "trusted" }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := valid()
+			test.change(&current)
+			if got := applicationDatabaseRoutePendingSelection(current, expected, "appdb_proxy_hop_b"); got != test.want {
+				t.Fatalf("pending selection=%t want=%t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeLoadedBeforeSwitch(t *testing.T) {
+	loaded := domain.HostingProxy{ID: "proxy_fixture", ServerID: "server_fixture", DestinationID: "dest_fixture", RunnerID: "runner_fixture", ControlProjectID: "proj_fixture", DaemonID: "daemon_fixture", StaticHash: "static_fixture", Enabled: true, LoadedGeneration: 3, DesiredGeneration: 3}
+	for _, test := range []struct {
+		name   string
+		change func(*domain.HostingProxy)
+		want   bool
+	}{
+		{"queued switch preserves loaded A", func(*domain.HostingProxy) {}, true},
+		{"dispatched exact P preserves loaded A", func(p *domain.HostingProxy) { p.ActiveOperationID = "appdb_proxy_hop_b" }, true},
+		{"arbitrary pending P", func(p *domain.HostingProxy) { p.ActiveOperationID = "pop_other" }, false},
+		{"loaded B too soon", func(p *domain.HostingProxy) { p.LoadedGeneration++ }, false},
+		{"desired generation drift", func(p *domain.HostingProxy) { p.DesiredGeneration++ }, false},
+		{"no pending generation", func(p *domain.HostingProxy) { p.DesiredGeneration-- }, false},
+		{"different proxy", func(p *domain.HostingProxy) { p.ID = "proxy_other" }, false},
+		{"different destination", func(p *domain.HostingProxy) { p.DestinationID = "dest_other" }, false},
+		{"different daemon", func(p *domain.HostingProxy) { p.DaemonID = "daemon_other" }, false},
+		{"different static hash", func(p *domain.HostingProxy) { p.StaticHash = "static_other" }, false},
+		{"different configuration", func(p *domain.HostingProxy) { p.Configuration.ManagementPort = 19081 }, false},
+		{"proxy effect admitted too soon", func(p *domain.HostingProxy) { p.HoldOperationID = "appdb_proxy_hop_b" }, false},
+		{"restore held", func(p *domain.HostingProxy) { p.RestoreOwnershipHeld = true }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := loaded
+			current.DesiredGeneration++
+			test.change(&current)
+			if got := applicationDatabaseRouteLoadedBeforeSwitch(current, loaded, "appdb_proxy_hop_b"); got != test.want {
+				t.Fatalf("loaded predecessor=%t want=%t", got, test.want)
+			}
+		})
+	}
+}
+
 func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domain.HostingOperation, revision int64) {
 	f := r.f
 	v := newApplicationDatabaseRouteYieldWire(candidate.ID)
@@ -535,6 +651,7 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 	if inputErr != nil || stage.Validate(*op.Plan, input) != nil {
 		f.t.Fatal("yield lacks exact valid ready candidate proof")
 	}
+	r.awaitYieldedRoute(op)
 	var healthy, hold string
 	if f.database.QueryRow(f.t.Context(), `SELECT healthy->>'operation_id',coalesce(hold_operation_id,'') FROM hosting_binding_state WHERE binding_id=$1`, previous.BindingID).Scan(&healthy, &hold) != nil || healthy != previous.ID || hold != candidate.ID {
 		f.t.Fatal("candidate readiness changed healthy predecessor or mutation hold")
@@ -543,7 +660,6 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 	if connection.MembershipRevision != revision || connection.HoldOperationID != candidate.ID {
 		f.t.Fatal("candidate readiness changed active database membership or network hold")
 	}
-	r.assertSelected(previous)
 	r.record(f.t.Context(), previous, "GET", "a", "retained_a")
 	f.applicationContainer(previous)
 	// The candidate endpoint is usable before it becomes current healthy or the
