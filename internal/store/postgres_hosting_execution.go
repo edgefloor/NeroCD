@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"reflect"
@@ -41,15 +42,14 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		var scheduleObserver databaseBackupScheduleObserver
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
 			recoveryAttempt, stop := context.WithTimeout(recoveryCtx, 3*time.Second)
 			_ = s.recoverHostingDispatch(recoveryAttempt)
 			stop()
-			scheduleAttempt, stopSchedule := context.WithTimeout(recoveryCtx, 3*time.Second)
-			_ = s.ReconcileDatabaseBackupSchedules(scheduleAttempt)
-			stopSchedule()
+			scheduleObserver.run(recoveryCtx, time.Now(), slog.Default(), s.ReconcileDatabaseBackupSchedules)
 			// Runtime plaintext retention progresses independently of dispatch
 			// recovery errors, transactions and their timeout budget.
 			purgeAttempt, stopPurge := context.WithTimeout(recoveryCtx, 3*time.Second)

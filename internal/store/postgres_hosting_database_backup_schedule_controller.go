@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
@@ -297,4 +299,37 @@ func (s *PostgresStore) recoverUnscheduledDatabaseBackups(ctx context.Context) e
 		return true, nil
 	})
 	return err
+}
+
+// One observer belongs to the serial hosting recovery loop. A failed pass may
+// roll back before any occurrence exists, so report a finite class here without
+// exposing SQL details, operation input, credentials or arbitrary error text.
+type databaseBackupScheduleObserver struct {
+	nextReport time.Time
+}
+
+func (o *databaseBackupScheduleObserver) run(ctx context.Context, now time.Time, logger *slog.Logger, reconcile func(context.Context) error) {
+	attempt, cancel := context.WithTimeout(ctx, 3*time.Second)
+	err := reconcile(attempt)
+	cancel()
+	if err == nil || ctx.Err() != nil || now.Before(o.nextReport) {
+		return
+	}
+	class := "unavailable"
+	var pg *pgconn.PgError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		class = "deadline"
+	case errors.Is(err, auth.ErrForbidden), errors.Is(err, auth.ErrUnauthenticated):
+		class = "authority_denied"
+	case errors.As(err, &pg):
+		switch pg.Code {
+		case "40001", "40P01":
+			class = "transaction_conflict"
+		case "23502", "23503", "23505", "23514":
+			class = "database_constraint"
+		}
+	}
+	o.nextReport = now.Add(time.Minute)
+	logger.WarnContext(ctx, "PostgreSQL backup schedule controller pass failed", "error_class", class)
 }
