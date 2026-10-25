@@ -539,11 +539,18 @@ func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.Hosti
 	}
 	defer release()
 	deadline := time.Now().Add(5 * time.Second)
+	var lockPID int
 	for {
-		raw := f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT a.pid FROM pg_stat_activity a WHERE a.application_name='fixture_backup_dump_lock' AND a.usename='postgres' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.mode='AccessExclusiveLock' AND l.granted AND l.relation='public.backup_sequence'::regclass);")
+		ctx, cancel := context.WithTimeout(f.t.Context(), 2*time.Second)
+		raw, queryErr := databaseRunnerDocker(ctx, nil, "exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT a.pid FROM pg_stat_activity a WHERE a.application_name='fixture_backup_dump_lock' AND a.usename='postgres' AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.mode='AccessExclusiveLock' AND l.granted AND l.relation='public.backup_sequence'::regclass);")
+		cancel()
 		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 		clear(raw)
+		if queryErr != nil {
+			f.t.Fatal("owned source lock observation failed")
+		}
 		if err == nil && pid > 1 {
+			lockPID = pid
 			break
 		}
 		if time.Now().After(deadline) {
@@ -551,37 +558,39 @@ func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.Hosti
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	started := time.Now()
 	requested := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: "genuine_guest_dump_timeout", ExpectedResourceGeneration: source.Resource.Generation}, 202)
 	diagnosticID = requested.ID
 	if requested.TimeoutSeconds != 10 {
 		f.t.Fatal("saved dump timeout policy mismatch")
 	}
-	deadline = time.Now().Add(30 * time.Second)
+	proofCtx, cancelProof := context.WithTimeout(f.t.Context(), 30*time.Second)
+	defer cancelProof()
+	var proof backupRuntimeDumpDeadlineProof
 	for {
-		op := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/database-backups/"+requested.ID, nil, 200)
-		if op.State == "uncertain" {
-			if !op.OwnershipHeld || op.Blob != nil {
-				f.t.Fatal("dump timeout released source or published archive")
-			}
+		ctx, cancel := context.WithTimeout(proofCtx, 3*time.Second)
+		sample, err := backupRuntimeObserveGuestDump(ctx, f, sourceOp.Result.ContainerID, requested.ID, lockPID)
+		cancel()
+		if err != nil {
+			f.t.Fatal("guest dump deadline observation failed")
+		}
+		done, err := proof.advance(sample, time.Since(started), time.Duration(requested.TimeoutSeconds)*time.Second)
+		if err != nil {
+			f.t.Fatal("guest dump deadline proof rejected")
+		}
+		if done {
 			break
 		}
-		if time.Now().After(deadline) {
-			f.t.Fatal("guest dump did not reach bounded uncertainty")
+		select {
+		case <-proofCtx.Done():
+			f.t.Fatal("guest dump deadline proof did not complete")
+		case <-time.After(100 * time.Millisecond):
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
+	// The guest process and PostgreSQL session must already be absent while
+	// the exact blocking lock remains held. Stopping the runner cannot satisfy
+	// either proof. Only now may the fixture join it and exercise replay.
 	f.stop()
-	deadline = time.Now().Add(10 * time.Second)
-	for {
-		top := string(f.docker("container", "top", sourceOp.Result.ContainerID, "-eo", "pid,comm"))
-		if !strings.Contains(top, "pg_dump") {
-			break
-		}
-		if time.Now().After(deadline) {
-			f.t.Fatal("guest dump survived bounded deadline")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
 	f.appRecord(application, "GET", "before", "application_origin")
 	f.appRecord(application, "PUT", "after_dump_timeout", "source_usable")
 	f.start()
@@ -596,6 +605,173 @@ func backupRuntimeGuestDumpTimeout(f *databaseRunnerFixture, source domain.Hosti
 		f.t.Fatal("dump restart changed uncertain ownership")
 	}
 	fmt.Println("DATABASE_BACKUP_GUEST_DUMP_TIMEOUT_PASS postgresql")
+}
+
+// These observations are fixture-private, never public API evidence or authority.
+type backupRuntimeDumpSample struct {
+	LockHeld              bool `json:"lock_held"`
+	BlockedPID            int  `json:"blocked_pid"`
+	Sessions              int  `json:"sessions"`
+	Processes             int
+	Uncertain, Held, Blob bool
+}
+type backupRuntimeDumpDeadlineProof struct{ blockedPID int }
+
+func (p *backupRuntimeDumpDeadlineProof) advance(s backupRuntimeDumpSample, elapsed, timeout time.Duration) (bool, error) {
+	invalid := errors.New("guest dump deadline proof rejected")
+	if !s.LockHeld || s.Sessions < 0 || s.Sessions > 1 || s.Processes < 0 || s.Processes > 1 || s.BlockedPID < 0 || s.Uncertain && (!s.Held || s.Blob) {
+		return false, invalid
+	}
+	if s.BlockedPID > 1 {
+		if p.blockedPID != 0 && p.blockedPID != s.BlockedPID {
+			return false, invalid
+		}
+		if p.blockedPID == 0 {
+			if s.Sessions != 1 || s.Processes != 1 {
+				return false, invalid
+			}
+			p.blockedPID = s.BlockedPID
+		}
+		// SQL and docker top are separate reads. Once the exact blocked
+		// guest was proved, expiry may occur between them. A late mixed
+		// sample stays pending; only a later all-absent sample may complete.
+	}
+	if s.Uncertain && p.blockedPID == 0 {
+		return false, invalid
+	}
+	if p.blockedPID != 0 && s.Processes == 0 && elapsed < timeout {
+		return false, invalid
+	}
+	return p.blockedPID != 0 && s.Uncertain && s.Processes == 0 && s.Sessions == 0 && s.BlockedPID == 0 && elapsed >= timeout, nil
+}
+
+func backupRuntimeObserveGuestDump(ctx context.Context, f *databaseRunnerFixture, container, operation string, lockPID int) (backupRuntimeDumpSample, error) {
+	var sample backupRuntimeDumpSample
+	invalid := errors.New("guest dump observation unavailable")
+	if lockPID <= 1 {
+		return sample, invalid
+	}
+	// lockPID is an observed integer, not caller-provided SQL. Both the owner
+	// session and the waiting pg_dump must target this exact table and database.
+	query := fmt.Sprintf(`SELECT json_build_object(
+ 'lock_held',EXISTS(SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE a.pid=%d AND a.application_name='fixture_backup_dump_lock' AND a.usename='postgres' AND a.datname='app' AND l.mode='AccessExclusiveLock' AND l.granted AND l.relation='public.backup_sequence'::regclass),
+ 'blocked_pid',COALESCE((SELECT min(a.pid) FROM pg_stat_activity a WHERE a.application_name='pg_dump' AND a.usename='postgres' AND a.datname='app' AND a.wait_event_type='Lock' AND %d=ANY(pg_blocking_pids(a.pid)) AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND NOT l.granted AND l.relation='public.backup_sequence'::regclass)),0),
+ 'sessions',(SELECT count(*) FROM pg_stat_activity WHERE application_name='pg_dump' AND usename='postgres' AND datname='app'))`, lockPID, lockPID)
+	raw, err := databaseRunnerDocker(ctx, nil, "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--command", query)
+	if err != nil {
+		return sample, invalid
+	}
+	defer clear(raw)
+	if len(raw) > 1024 || json.Unmarshal(bytes.TrimSpace(raw), &sample) != nil {
+		return sample, invalid
+	}
+	top, err := databaseRunnerDocker(ctx, nil, "container", "top", container, "-eo", "pid,comm")
+	if err != nil {
+		return sample, invalid
+	}
+	defer clear(top)
+	processes, err := backupRuntimeDumpProcesses(top)
+	if err != nil {
+		return sample, invalid
+	}
+	sample.Processes = processes
+	err = f.database.QueryRow(ctx, `SELECT state='uncertain',ownership_held,blob IS NOT NULL FROM hosting_database_backups WHERE id=$1 AND mode='backup'`, operation).Scan(&sample.Uncertain, &sample.Held, &sample.Blob)
+	if err != nil {
+		return sample, invalid
+	}
+	return sample, nil
+}
+
+func backupRuntimeDumpProcesses(raw []byte) (int, error) {
+	invalid := errors.New("guest process observation unavailable")
+	if len(raw) == 0 || len(raw) > 64<<10 {
+		return 0, invalid
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if strings.Join(strings.Fields(lines[0]), " ") != "PID COMMAND" {
+		return 0, invalid
+	}
+	count := 0
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return 0, invalid
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			return 0, invalid
+		}
+		if fields[1] == "pg_dump" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func TestDatabaseBackupGuestDumpDeadlineProofRejectsFalsePositives(t *testing.T) {
+	blocked := backupRuntimeDumpSample{LockHeld: true, BlockedPID: 42, Sessions: 1, Processes: 1, Held: true}
+	absent := backupRuntimeDumpSample{LockHeld: true, Uncertain: true, Held: true}
+	var proof backupRuntimeDumpDeadlineProof
+	if done, err := proof.advance(absent, 11*time.Second, 10*time.Second); err == nil || done {
+		t.Fatal("uncertainty without observed blocked guest accepted")
+	}
+	proof = backupRuntimeDumpDeadlineProof{}
+	unproved := blocked
+	unproved.Processes = 0
+	if done, err := proof.advance(unproved, 11*time.Second, 10*time.Second); err == nil || done {
+		t.Fatal("initial process proof omitted")
+	}
+	proof = backupRuntimeDumpDeadlineProof{}
+	if done, err := proof.advance(blocked, time.Second, 10*time.Second); err != nil || done {
+		t.Fatal("valid blocked guest rejected")
+	}
+	transition := blocked
+	transition.Processes = 0
+	transition.Uncertain = true
+	if done, err := proof.advance(transition, 11*time.Second, 10*time.Second); err != nil || done {
+		t.Fatal("expiry between SQL and process observations was not retried")
+	}
+	if done, err := proof.advance(absent, 11*time.Second, 10*time.Second); err != nil || !done {
+		t.Fatal("valid deadline disappearance rejected")
+	}
+	for _, tc := range []struct {
+		name    string
+		sample  backupRuntimeDumpSample
+		elapsed time.Duration
+	}{
+		{"premature_disappearance", absent, 2 * time.Second},
+		{"lock_released", backupRuntimeDumpSample{Uncertain: true, Held: true}, 11 * time.Second},
+		{"changed_backend", backupRuntimeDumpSample{LockHeld: true, BlockedPID: 43, Sessions: 1, Processes: 1, Held: true}, 11 * time.Second},
+		{"released_hold", backupRuntimeDumpSample{LockHeld: true, Uncertain: true}, 11 * time.Second},
+		{"published_blob", backupRuntimeDumpSample{LockHeld: true, Uncertain: true, Held: true, Blob: true}, 11 * time.Second},
+		{"extra_guest", backupRuntimeDumpSample{LockHeld: true, Sessions: 2, Processes: 2}, 11 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := backupRuntimeDumpDeadlineProof{blockedPID: 42}
+			if done, err := p.advance(tc.sample, tc.elapsed, 10*time.Second); err == nil || done {
+				t.Fatal("false deadline proof accepted")
+			}
+		})
+	}
+	p := backupRuntimeDumpDeadlineProof{blockedPID: 42}
+	pending := absent
+	pending.Processes = 1
+	if done, err := p.advance(pending, 11*time.Second, 10*time.Second); err != nil || done {
+		t.Fatal("live guest treated as absent")
+	}
+	for _, raw := range []string{"", "CANARY_PRIVATE", "PID COMMAND\nnot-a-pid pg_dump", "PID COMMAND\n1 pg_dump extra"} {
+		if _, err := backupRuntimeDumpProcesses([]byte(raw)); err == nil {
+			t.Fatal("malformed process output accepted")
+		}
+	}
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{{"PID COMMAND\n1 postgres\n2 pg_dump", 1}, {"PID COMMAND\n1 postgres\n2 pg_dump_other", 0}} {
+		if n, err := backupRuntimeDumpProcesses([]byte(tc.raw)); err != nil || n != tc.want {
+			t.Fatal("guest process identity weakened")
+		}
+	}
 }
 
 type databaseBackupBrowserFixture struct {
