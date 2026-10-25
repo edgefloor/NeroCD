@@ -55,10 +55,19 @@ func TestPostgresRemoteBackupDisabledScheduleRetainsUnusableSelection(t *testing
 			if err != nil || !reflect.DeepEqual(kept.RemoteTarget, disabled.RemoteTarget) {
 				t.Fatal("disable discarded immutable selection", err)
 			}
-			// Disabled state cannot introduce a foreign or nonexistent selection.
+			// Disabled state cannot introduce even a valid target from another project.
+			foreignKeys, err := app.NewBackupTargetCredentials([]byte("foreign-access"), []byte("foreign-secret"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer foreignKeys.Close()
+			foreign, err := f.service.SaveDatabaseBackupTarget(f.ctx, "proj_security", "", domain.HostingDatabaseBackupTargetInput{RequestID: "foreign_target", Name: "Foreign", Endpoint: target.Endpoint, Bucket: target.Bucket, Region: target.Region, Enabled: true}, foreignKeys)
+			if err != nil {
+				t.Fatal(err)
+			}
 			in.RequestID = "foreign_selection"
 			in.ExpectedVersion = kept.Revision
-			in.RemoteTarget = &domain.BackupTargetSelection{TargetID: "foreign-target", Revision: 1}
+			in.RemoteTarget = &domain.BackupTargetSelection{TargetID: foreign.ID, Revision: 1}
 			if _, err = f.service.SaveDatabaseBackupSchedule(f.ctx, f.resource.ID, saved.ID, in); err == nil {
 				t.Fatal("disabled update accepted foreign selection")
 			}
