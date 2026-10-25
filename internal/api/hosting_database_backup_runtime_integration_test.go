@@ -82,7 +82,7 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 		t.Fatal("native Linux arm64 required")
 	}
 	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput("postgresql", f.environment, f.destination), 201)
+	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
 	f.registerRouteDatabaseCleanup(source.Resource.ID)
 	requested := f.deploy(source, "backup_source")
 	f.registerRouteOperationCleanup(requested.ID)
@@ -91,7 +91,7 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.appRecord(a, "PUT", "before", "application_origin")
 	// The dump contains application-role sequence ownership, not source roles.
 	db := f.connection(a.ResourceID)
-	sourceOp := f.awaitConnectionOperation(db.UpgradeOperationID)
+	sourceOp := f.await(db.UpgradeOperationID)
 	f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; CREATE TABLE public.backup_sequence(id bigserial PRIMARY KEY, value text); INSERT INTO public.backup_sequence(value) VALUES ('before');")
 	wire := &databaseBackupRuntimeWire{mode: "backup", entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
@@ -140,7 +140,7 @@ func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
 	f.appRecord(b, "PUT", "new", "restored_new_write")
 	f.appRecord(b, "GET", "new", "restored_new_write")
 	targetConn := f.connection(b.ResourceID)
-	targetOp := f.awaitConnectionOperation(targetConn.UpgradeOperationID)
+	targetOp := f.await(targetConn.UpgradeOperationID)
 	sql := string(f.docker("exec", "--user", "postgres", targetOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SET ROLE ncd_app; INSERT INTO public.backup_sequence(value) VALUES ('restored') RETURNING id; SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.backup_sequence_id_seq'::regclass;"))
 	if !strings.Contains(sql, "2") || !strings.Contains(sql, "ncd_app") {
 		t.Fatal("restored application sequence ownership failed")
@@ -489,7 +489,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 	for _, kind := range []string{"corrupt", "truncated", "revoked"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
-			source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput("postgresql", f.environment, f.destination), 201)
+			source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
 			f.registerRouteDatabaseCleanup(source.Resource.ID)
 			requested := f.deploy(source, "backup_negative_source")
 			f.registerRouteOperationCleanup(requested.ID)
@@ -558,7 +558,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 				}
 			}
 			if kind == "revoked" {
-				databaseRunnerJSON[json.RawMessage](f, f.token, "GET", "/api/v1/database-backups/"+restore.ID, nil, 403)
+				databaseRunnerJSON[json.RawMessage](f, f.token, "GET", "/api/v1/database-backups/"+restore.ID, nil, 409)
 				if f.database.QueryRow(t.Context(), `SELECT state,ownership_held FROM hosting_database_backups WHERE id=$1`, restore.ID).Scan(&restore.State, &restore.OwnershipHeld) != nil {
 					t.Fatal("retained denied operation unavailable")
 				}
@@ -608,5 +608,33 @@ func TestDatabaseBackupRuntimeFixtureRequestContracts(t *testing.T) {
 	var decoded domain.HostingDatabaseBindingInput
 	if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != binding {
 		t.Fatal("closed binding request rejected generated identity")
+	}
+}
+
+// Every controller schema shares the isolated daemon, so resource creation
+// identities must be distinct even when desired metadata is otherwise equal.
+func backupRuntimeCreateInput(t *testing.T, environment, destination string) domain.HostingDatabaseCreateInput {
+	t.Helper()
+	in := applicationDatabaseCreateInput("postgresql", environment, destination)
+	in.RequestID = backupRuntimeRequestID(t)
+	return in
+}
+func TestDatabaseBackupRuntimeFixtureCreationIdentities(t *testing.T) {
+	seen := map[string]bool{}
+	for _, phase := range []string{"main", "corrupt", "truncated", "revoked"} {
+		in := backupRuntimeCreateInput(t, "penv_fixture", "dest_fixture")
+		if in.Validate() != nil {
+			t.Fatal("invalid typed creation input", phase)
+		}
+		id := domain.HostingDatabaseResourceID(in.ProjectID, in.RequestID)
+		if seen[id] {
+			t.Fatal("controller schemas would reuse an existing daemon volume", phase)
+		}
+		seen[id] = true
+		raw, err := json.Marshal(in)
+		var decoded domain.HostingDatabaseCreateInput
+		if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != in {
+			t.Fatal("creation input violates closed wire contract", phase)
+		}
 	}
 }
