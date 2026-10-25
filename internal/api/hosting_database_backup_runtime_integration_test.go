@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/runnerclient"
 	"nerocd/web"
 )
 
@@ -392,6 +394,124 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 	return b
 }
 
+// The repository stands in for persistence; requests still cross the real
+// runner client, HTTP server, authentication, decoder and application service.
+type databaseBackupWireRepository struct {
+	*databaseBackupHTTPRepository
+	received chan domain.HostingDatabaseBackupMutation
+}
+
+func (r *databaseBackupWireRepository) DatabaseBackupMutation(_ context.Context, runner string, in domain.HostingDatabaseBackupMutation) (domain.HostingDatabaseBackupOperation, error) {
+	if runner != "runner_archive" {
+		return domain.HostingDatabaseBackupOperation{}, fmt.Errorf("unexpected runner identity")
+	}
+	r.received <- in
+	out := r.value
+	out.State = map[string]string{"intent": "applying", "failed": "failed", "uncertain": "uncertain", "complete": "succeeded"}[in.Phase]
+	out.Blob, out.FailureCode, out.OwnershipHeld = in.Blob, in.FailureCode, in.Phase != "complete"
+	return out, nil
+}
+
+func TestDatabaseBackupRuntimeWirePreservesHTTPReceipts(t *testing.T) {
+	for _, mode := range []string{"backup", "restore"} {
+		t.Run(mode, func(t *testing.T) {
+			server, original, _, _, token := archiveHTTPFixture(t)
+			now := time.Unix(1700000000, 0).UTC()
+			value := domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, ID: "operation", Version: domain.HostingDatabaseBackupVersion, ProjectID: original.resource.ProjectID, SourceResourceID: original.resource.ID, SourceGeneration: 1, BackupID: "operation", Mode: mode, State: "dispatched", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
+			if mode == "restore" {
+				value.BackupID, value.TargetResourceID = "backup", "new_target"
+			}
+			repo := &databaseBackupWireRepository{databaseBackupHTTPRepository: &databaseBackupHTTPRepository{archiveHTTPRepository: original, value: value}, received: make(chan domain.HostingDatabaseBackupMutation, 8)}
+			mem := repo.MemoryStore
+			service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server.app = service
+			wire := &databaseBackupRuntimeWire{mode: mode, entered: make(chan struct{}), release: make(chan struct{})}
+			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !wire.serve(w, r, server) {
+					server.ServeHTTP(w, r)
+				}
+			}))
+			t.Cleanup(httpServer.Close)
+			t.Cleanup(func() { close(wire.release) })
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			ctx = runnerclient.WithDatabaseTransport(ctx, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: true})
+			client := runnerclient.New(httpServer.URL, token)
+			authority := domain.HostingAuthority{OperationID: value.ID, RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fixture_fence"}
+			request := func(phase string) domain.HostingDatabaseBackupMutation {
+				in := domain.HostingDatabaseBackupMutation{HostingAuthority: authority, ReceiptID: "receipt_" + phase, PlanHash: "sha256:" + strings.Repeat("a", 64), Phase: phase}
+				if phase == "failed" {
+					in.FailureCode = "execution_failed"
+				}
+				if phase == "complete" {
+					in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 123, Format: "postgresql_custom"}
+				}
+				return in
+			}
+			assertReceived := func(t *testing.T, in domain.HostingDatabaseBackupMutation) {
+				t.Helper()
+				select {
+				case got := <-repo.received:
+					if domain.HostingDocumentHash(got) != domain.HostingDocumentHash(in) {
+						t.Fatal("handler changed receipt or full authority")
+					}
+				case <-ctx.Done():
+					t.Fatal("receipt did not reach repository")
+				}
+			}
+			for _, phase := range []string{"intent", "failed", "uncertain"} {
+				t.Run(phase, func(t *testing.T) {
+					in := request(phase)
+					out, err := client.HostingDatabaseBackupMutation(ctx, in)
+					if err != nil || out.ID != value.ID {
+						t.Fatalf("forwarded %s receipt failed: %v", phase, err)
+					}
+					assertReceived(t, in)
+					select {
+					case <-wire.entered:
+						t.Fatal("non-completion receipt triggered ACK fault")
+					default:
+					}
+				})
+			}
+			complete := request("complete")
+			lostCtx, cancelLost := context.WithCancel(ctx)
+			defer cancelLost()
+			joined := make(chan error, 1)
+			go func() { _, err := client.HostingDatabaseBackupMutation(lostCtx, complete); joined <- err }()
+			select {
+			case <-wire.entered:
+			case <-ctx.Done():
+				t.Fatal("committed completion did not reach ACK fault")
+			}
+			assertReceived(t, complete)
+			cancelLost()
+			select {
+			case err := <-joined:
+				if err == nil {
+					t.Fatal("lost completion ACK unexpectedly succeeded")
+				}
+			case <-ctx.Done():
+				t.Fatal("cancelled completion request did not join")
+			}
+			out, err := client.HostingDatabaseBackupMutation(ctx, complete)
+			if err != nil || out.State != "succeeded" || out.OwnershipHeld || wire.replays() != 1 {
+				t.Fatalf("exact completion replay failed: %v", err)
+			}
+			assertReceived(t, complete)
+			changed := complete
+			changed.ReceiptID = "other_receipt"
+			if _, err = client.HostingDatabaseBackupMutation(ctx, changed); err == nil || wire.replays() != 1 {
+				t.Fatal("ACK interceptor accepted changed completion identity")
+			}
+			assertReceived(t, changed)
+		})
+	}
+}
+
 // This wire intercepts the real handler after its transaction commits. It never
 // synthesizes an acknowledgement or grants authority to a second execution.
 type databaseBackupRuntimeWire struct {
@@ -421,7 +541,10 @@ func (w *databaseBackupRuntimeWire) serve(out http.ResponseWriter, r *http.Reque
 	if path == "/api/v1/runners/hosting/database-backup/mutation" {
 		var in domain.HostingDatabaseBackupMutation
 		if json.Unmarshal(raw, &in) != nil || in.Phase != "complete" {
-			return false
+			// The reset body borrows raw. Forward before the deferred clear so
+			// the real decoder reads the original bytes, including invalid JSON.
+			handler.ServeHTTP(out, r)
+			return true
 		}
 	}
 	rec := httptest.NewRecorder()
