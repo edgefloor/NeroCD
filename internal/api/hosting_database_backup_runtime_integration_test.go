@@ -851,7 +851,7 @@ func backupRuntimeFailureCases(f *databaseRunnerFixture, source domain.HostingDa
 	}
 	f.appRecord(application, "GET", "before", "application_origin")
 	f.appRecord(application, "PUT", "after_timeout", "source_usable")
-	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+req.TargetResourceID+"/database/deployments", domain.HostingDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "denied_held_target"}, 409)
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+req.TargetResourceID+"/database/deployments", backupRuntimeHeldTargetDeploymentInput(), 409)
 	// A new runner must refuse the unmatched/uncertain journal rather than execute
 	// the import a second time. The exact target and its held evidence survive.
 	f.start()
@@ -869,6 +869,47 @@ func backupRuntimeFailureCases(f *databaseRunnerFixture, source domain.HostingDa
 	fmt.Println("DATABASE_BACKUP_GUEST_TIMEOUT_PASS postgresql")
 	_ = source
 	_ = sourceOp
+}
+
+func backupRuntimeHeldTargetDeploymentInput() domain.HostingDatabaseDeploymentInput {
+	return domain.HostingDatabaseDeploymentInput{ExpectedGeneration: 1, IdempotencyKey: "denied_held_target"}
+}
+
+func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string) {
+	f.t.Helper()
+	f.t.Cleanup(func() {
+		f.stop() // A denied attempt must join before its fixture grant is restored.
+		if err := backupRuntimeRestoreGrant(f, project); err != nil {
+			f.t.Error("owned fixture grant cleanup failed")
+		}
+	})
+}
+
+func backupRuntimeRestoreGrant(f *databaseRunnerFixture, project string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := json.Marshal(app.DestinationProjectInput{ProjectID: project})
+	defer clear(raw)
+	if err != nil {
+		return errors.New("owned fixture grant cleanup request invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.server.URL+"/api/v1/destinations/"+f.destination+"/project-grants", bytes.NewReader(raw))
+	if err != nil {
+		return errors.New("owned fixture grant cleanup request invalid")
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+f.token)
+	response, err := f.client.Do(request)
+	if err != nil {
+		return errors.New("owned fixture grant cleanup transport failed")
+	}
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	defer clear(data)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || response.StatusCode != http.StatusCreated || len(data) > 1<<20 || !json.Valid(data) || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
+		return errors.New("owned fixture grant cleanup response invalid")
+	}
+	return nil
 }
 
 func backupRuntimeWaitReplay(f *databaseRunnerFixture, wire *databaseBackupRuntimeWire) {
@@ -944,9 +985,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 					t.Fatal("revocation boundary missing")
 				}
 				databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
-				t.Cleanup(func() { // Fixture teardown restores its own grant only after the denied attempt is joined.
-					databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 201)
-				})
+				backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID)
 				close(wire.release)
 				select {
 				case <-f.process.done:
@@ -1022,6 +1061,93 @@ func TestDatabaseBackupRuntimeFixtureRequestContracts(t *testing.T) {
 	var decoded domain.HostingDatabaseBindingInput
 	if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != binding {
 		t.Fatal("closed binding request rejected generated identity")
+	}
+}
+
+func TestDatabaseBackupHeldTargetDeploymentRequestContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		var input domain.HostingDatabaseDeploymentInput
+		if err != nil || r.Method != http.MethodPost || json.Unmarshal(raw, &input) != nil || input.ExpectedGeneration != 1 || input.IdempotencyKey != "denied_held_target" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusConflict) // A valid request reaches held-target admission.
+	}))
+	defer server.Close()
+	raw, err := json.Marshal(backupRuntimeHeldTargetDeploymentInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Post(server.URL, "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("held-target fixture request failed closed decoding: status=%d", response.StatusCode)
+	}
+}
+
+func TestDatabaseBackupGrantCleanupAfterCanceledTestContext(t *testing.T) {
+	childContexts := make(chan context.Context, 1)
+	received := make(chan struct{}, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childContext := <-childContexts
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		var input app.DestinationProjectInput
+		if err != nil || json.Unmarshal(raw, &input) != nil || input.ProjectID != "project_fixture" || r.Method != http.MethodPost || r.URL.Path != "/api/v1/destinations/dest_fixture/project-grants" || r.Header.Get("Authorization") != "Bearer fixture_token" || childContext.Err() != context.Canceled || r.Context().Err() != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- struct{}{}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"project_id":"project_fixture"}`)
+	}))
+	defer server.Close()
+	if !t.Run("owned_cleanup", func(child *testing.T) {
+		childContexts <- child.Context()
+		f := &databaseRunnerFixture{t: child, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
+		backupRuntimeRegisterGrantCleanup(f, "project_fixture")
+	}) {
+		t.Fatal("owned grant cleanup used the canceled test lifetime")
+	}
+	select {
+	case <-received:
+	default:
+		t.Fatal("owned cleanup did not issue its bounded verified-TLS request")
+	}
+}
+
+func TestDatabaseBackupGrantCleanupResponseBoundaries(t *testing.T) {
+	for _, kind := range []string{"status", "body", "size", "tls"} {
+		t.Run(kind, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if kind == "status" {
+					w.WriteHeader(http.StatusForbidden)
+				} else {
+					w.WriteHeader(http.StatusCreated)
+				}
+				body := `{"ok":true}`
+				if kind == "body" {
+					body = "ncr_cleanup_private_canary"
+				} else if kind == "size" {
+					body = strings.Repeat("x", (1<<20)+1)
+				}
+				_, _ = io.WriteString(w, body)
+			})
+			var server *httptest.Server
+			if kind == "tls" {
+				server = httptest.NewServer(handler)
+			} else {
+				server = httptest.NewTLSServer(handler)
+			}
+			defer server.Close()
+			f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
+			if err := backupRuntimeRestoreGrant(f, "project_fixture"); err == nil || err.Error() != "owned fixture grant cleanup response invalid" {
+				t.Fatal("cleanup accepted or exposed an invalid response")
+			}
+		})
 	}
 }
 
