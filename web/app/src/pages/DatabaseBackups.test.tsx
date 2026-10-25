@@ -97,6 +97,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 function mount(owner = true, strict = false) {
   const client = new QueryClient({
@@ -393,4 +394,68 @@ test("viewer cannot retry a failed upload", async () => {
   expect(
     screen.queryByRole("button", { name: "Retry upload for backup" }),
   ).toBeNull();
+});
+
+for (const state of ["failed", "uncertain"] as const)
+  test(`terminal ${state} dump without an archive stops waiting for an impossible upload`, async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.listDatabaseBackups).mockResolvedValue([
+      {
+        ...completed,
+        remote_target: { target_id: "storage", revision: 2 },
+        state,
+        blob: undefined,
+        ownership_held: state === "uncertain",
+      },
+    ]);
+    mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    const initial = vi.mocked(remote.listDatabaseBackupTransfers).mock.calls
+      .length;
+    expect(initial).toBeGreaterThan(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(remote.listDatabaseBackupTransfers).toHaveBeenCalledTimes(initial);
+  });
+test("a successful archived remote dump polls until upload admission appears", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.listDatabaseBackups).mockResolvedValue([
+    { ...completed, remote_target: { target_id: "storage", revision: 2 } },
+  ]);
+  mount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  const initial = vi.mocked(remote.listDatabaseBackupTransfers).mock.calls
+    .length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(6000);
+  });
+  expect(
+    vi.mocked(remote.listDatabaseBackupTransfers).mock.calls.length,
+  ).toBeGreaterThan(initial);
+});
+test("an active transfer keeps polling even if the dump is terminal", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.listDatabaseBackups).mockResolvedValue([
+    { ...completed, state: "failed", blob: undefined },
+  ]);
+  vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([
+    { ...upload, state: "applying" },
+  ]);
+  mount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  const initial = vi.mocked(remote.listDatabaseBackupTransfers).mock.calls
+    .length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(6000);
+  });
+  expect(
+    vi.mocked(remote.listDatabaseBackupTransfers).mock.calls.length,
+  ).toBeGreaterThan(initial);
 });

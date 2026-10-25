@@ -114,6 +114,8 @@ function DatabaseBackupsPanel({
           state: { data?: DatabaseBackupTransfer[] };
         }) =>
           (v.remote_target &&
+            v.state === "succeeded" &&
+            v.blob &&
             !query.state.data?.some((t) => t.mode === "upload")) ||
           query.state.data?.some((t) =>
             ["queued", "dispatched", "applying"].includes(t.state),
