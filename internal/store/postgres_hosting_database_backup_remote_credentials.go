@@ -95,7 +95,14 @@ func (s *PostgresStore) RevalidateBackupRemoteCredentials(ctx context.Context, r
 			return false, hostingError(e)
 		}
 		var saved domain.BackupRemoteCredentialMetadata
-		if json.Unmarshal(raw, &saved) != nil || saved != m || m.Validate() != nil {
+		if json.Unmarshal(raw, &saved) != nil || m.Validate() != nil {
+			return false, ErrConflict
+		}
+		// PostgreSQL and JSON can represent the same instant with different
+		// process-local time zones. Keep every other metadata field exact.
+		comparable := saved
+		comparable.UseUntil = m.UseUntil
+		if comparable != m || !saved.UseUntil.Equal(m.UseUntil) {
 			return false, ErrConflict
 		}
 		return true, nil
