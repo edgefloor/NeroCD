@@ -16917,7 +16917,7 @@ components:
         "properties": {
           "pool_id": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            "pattern": "^sha256:[a-f0-9]{64}$"
           },
           "device": {
             "type": "integer",
@@ -16927,7 +16927,7 @@ components:
           "inode": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 1
           },
           "bytes": {
             "type": "integer",
@@ -16955,7 +16955,9 @@ components:
           },
           "version_id": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            "maxLength": 1024,
+            "pattern": "^[^\\x00-\\x1F\\x7F]*$",
+            "description": "Opaque saved provider version, empty for nonversioned objects. The server enforces the 1024-byte UTF-8 bound."
           },
           "created": {
             "type": "boolean"

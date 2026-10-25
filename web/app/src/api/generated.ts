@@ -8806,6 +8806,7 @@ export interface components {
         };
         BackupRemoteCopyProof: {
             etag: string;
+            /** @description Opaque saved provider version, empty for nonversioned objects. The server enforces the 1024-byte UTF-8 bound. */
             version_id: string;
             created: boolean;
         };

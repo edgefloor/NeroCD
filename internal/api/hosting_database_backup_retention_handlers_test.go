@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -129,5 +130,92 @@ func TestBackupRetentionSchemaMatchesTypedFields(t *testing.T) {
 				t.Fatalf("%s missing%s", name, key)
 			}
 		}
+	}
+}
+
+func TestBackupRetentionProofSchemasAcceptDomainValues(t *testing.T) {
+	printableASCII := ""
+	for c := rune(32); c <= 126; c++ {
+		printableASCII += string(c)
+	}
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, schema string
+		value        any
+	}{
+		{"local_created", "BackupLocalCopyProof", domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("a", 64), Device: 1, Inode: 2, Bytes: 65537, Created: true}},
+		{"remote_nonversioned", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque-etag"`, VersionID: "", Created: true}},
+		{"remote_all_printable_ASCII", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque-etag"`, VersionID: printableASCII, Created: true}},
+		{"remote_opaque_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque-etag"`, VersionID: "version+/=:?._-%()[]", Created: true}},
+		{"remote_utf8_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque-etag"`, VersionID: strings.Repeat("é", 512), Created: true}},
+		{"remote_max_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque-etag"`, VersionID: strings.Repeat("v", 1024), Created: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			switch v := tc.value.(type) {
+			case domain.BackupLocalCopyProof:
+				if v.Validate() != nil {
+					t.Fatal("invalid local fixture")
+				}
+			case domain.BackupRemoteCopyProof:
+				if v.Validate() != nil {
+					t.Fatal("invalid remote fixture")
+				}
+			}
+			raw, e := json.Marshal(tc.value)
+			if e != nil {
+				t.Fatal(e)
+			}
+			var value any
+			if json.Unmarshal(raw, &value) != nil {
+				t.Fatal("decode fixture")
+			}
+			if e = doc.Components.Schemas[tc.schema].Value.VisitJSON(value); e != nil {
+				t.Fatalf("valid domain proof rejected: %v", e)
+			}
+		})
+	}
+}
+
+func TestBackupRetentionProofSchemasRejectInvalidIdentity(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, schema string
+		value        any
+	}{
+		{"local_identifier_not_digest", "BackupLocalCopyProof", domain.BackupLocalCopyProof{PoolID: "pool", Device: 1, Inode: 2, Bytes: 65537, Created: true}},
+		{"local_zero_inode", "BackupLocalCopyProof", domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("a", 64), Device: 1, Inode: 0, Bytes: 65537, Created: true}},
+		{"remote_oversized_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque"`, VersionID: strings.Repeat("v", 1025), Created: true}},
+		{"remote_control_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque"`, VersionID: "opaque\nvalue", Created: true}},
+		{"remote_delete_control_version", "BackupRemoteCopyProof", domain.BackupRemoteCopyProof{ETag: `"opaque"`, VersionID: "opaque\x7fvalue", Created: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			switch v := tc.value.(type) {
+			case domain.BackupLocalCopyProof:
+				if v.Validate() == nil {
+					t.Fatal("valid local negative fixture")
+				}
+			case domain.BackupRemoteCopyProof:
+				if v.Validate() == nil {
+					t.Fatal("valid remote negative fixture")
+				}
+			}
+			raw, e := json.Marshal(tc.value)
+			if e != nil {
+				t.Fatal(e)
+			}
+			var value any
+			if json.Unmarshal(raw, &value) != nil {
+				t.Fatal("decode fixture")
+			}
+			if doc.Components.Schemas[tc.schema].Value.VisitJSON(value) == nil {
+				t.Fatal("invalid proof accepted by schema")
+			}
+		})
 	}
 }
