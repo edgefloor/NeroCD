@@ -201,7 +201,7 @@ func SelectBackupRetention(p HostingDatabaseBackupRetentionPolicy, inventory []B
 			}
 			if limits.MaxBytes > 0 {
 				var total int64
-				for _, i := range indices[1:] {
+				for offset, i := range indices[1:] {
 					// Bounds on copy bytes and inventory prevent arithmetic overflow.
 					if total > limits.MaxBytes-items[i].Bytes {
 						total = limits.MaxBytes + 1
@@ -209,15 +209,10 @@ func SelectBackupRetention(p HostingDatabaseBackupRetentionPolicy, inventory []B
 						total += items[i].Bytes
 					}
 					if total > limits.MaxBytes {
-						skipped := false
-						for _, j := range indices {
-							if !items[j].CreatedAt.After(items[i].CreatedAt) {
-								if !skipped {
-									skipped = true
-									continue
-								}
-								matched[j] = true
-							}
+						// Keep the threshold copy and the entire preceding prefix,
+						// including equal timestamps ordered by descending copy ID.
+						for _, j := range indices[offset+2:] {
+							matched[j] = true
 						}
 						break
 					}

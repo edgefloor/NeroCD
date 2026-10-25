@@ -119,3 +119,34 @@ func TestBackupRetentionCredentialPurposeAndFamilyAreIndependent(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupRetentionSizeThresholdPreservesEqualTimestampPrefix(t *testing.T) {
+	at := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	for _, location := range []string{"local", "remote"} {
+		t.Run(location, func(t *testing.T) {
+			// Index 0 is newest in the stable descending copy-ID order, regardless of input order.
+			copyID := func(i int) string { return fmt.Sprintf("%c_index_%d", 'z'-rune(i), i) }
+			var inventory []BackupRetentionItem
+			for _, i := range []int{1, 4, 0, 5, 2, 3} {
+				inventory = append(inventory, BackupRetentionItem{CopyID: copyID(i), Location: location, CreatedAt: at, Bytes: 10, Availability: "available"})
+			}
+			policy := HostingDatabaseBackupRetentionPolicy{Enabled: true}
+			if location == "local" {
+				policy.Local.MaxBytes = 20
+			} else {
+				policy.Remote.MaxBytes = 20
+			}
+			items, _, _, _ := SelectBackupRetention(policy, inventory)
+			selected := map[string]bool{}
+			for _, item := range items {
+				selected[item.CopyID] = item.Selected
+			}
+			for i := range 6 {
+				want := i >= 4
+				if selected[copyID(i)] != want {
+					t.Errorf("index %d selected=%v want=%v; indices 0–3 must survive", i, selected[copyID(i)], want)
+				}
+			}
+		})
+	}
+}
