@@ -1007,32 +1007,34 @@ type applicationDatabaseBrowserRouteProof struct {
 	Route   domain.HostingRoute
 }
 type applicationDatabaseBrowser struct {
-	f                *databaseRunnerFixture
-	ctx              context.Context
-	mu               sync.Mutex
-	phase            string
-	revision         int64
-	operation        string
-	latestOperation  string
-	invalid          bool
-	seen             map[string]applicationDatabaseBrowserSeen
-	proofs           map[string]applicationDatabaseBrowserProof
-	admissions       chan applicationDatabaseBrowserAdmission
-	finished         chan struct{}
-	failed           chan struct{}
-	fail             sync.Once
-	finish           sync.Once
-	report           sync.Once
-	reported         bool
-	recovery         *applicationDatabaseBrowserRecovery
-	recoveryObserved chan struct{}
-	recoveryOnce     sync.Once
+	f                   *databaseRunnerFixture
+	ctx                 context.Context
+	mu                  sync.Mutex
+	phase               string
+	revision            int64
+	operation           string
+	latestOperation     string
+	invalid             bool
+	recoveryObservation applicationDatabaseRecoveryObservation
+	seen                map[string]applicationDatabaseBrowserSeen
+	proofs              map[string]applicationDatabaseBrowserProof
+	admissions          chan applicationDatabaseBrowserAdmission
+	finished            chan struct{}
+	failed              chan struct{}
+	fail                sync.Once
+	finish              sync.Once
+	report              sync.Once
+	reported            bool
+	recovery            *applicationDatabaseBrowserRecovery
+	recoveryObserved    chan struct{}
+	recoveryOnce        sync.Once
 }
 
 type applicationDatabaseBrowserRecovery struct {
 	Action, OperationID, Profile string
 	Revision                     int64
 	Expected, Submitted          map[string]any
+	Original                     domain.HostingOperation
 }
 
 func (b *applicationDatabaseBrowser) expectedAdmissions() int {
@@ -1688,6 +1690,20 @@ func TestApplicationDatabaseRuntimeBrowserOrigin(t *testing.T) {
 	}
 }
 
+// This diagnostic retains only fixed reason enums, byte counts and correlation
+// booleans. Raw request/response bodies and decoder errors never enter output.
+type applicationDatabaseRecoveryObservation struct {
+	Reason           string `json:"reason"`
+	RequestBytes     int    `json:"request_bytes"`
+	ResponseBytes    int    `json:"response_bytes"`
+	RequestMatches   bool   `json:"request_matches"`
+	OperationMatches bool   `json:"operation_matches"`
+}
+
+func applicationDatabaseRecoveryOperationMatches(op, original domain.HostingOperation) bool {
+	return original.ID != "" && op.ID == original.ID && op.ProjectID == original.ProjectID && op.ResourceID == original.ResourceID && op.BindingID == original.BindingID && op.RunID == original.RunID && op.Snapshot == original.Snapshot && op.Plan != nil && original.Plan != nil && domain.HostingDocumentHash(op.Plan) == domain.HostingDocumentHash(original.Plan) && domain.HostingDocumentHash(op.Release) == domain.HostingDocumentHash(original.Release) && domain.HostingDocumentHash(op.ApplicationDatabase) == domain.HostingDocumentHash(original.ApplicationDatabase) && domain.HostingDocumentHash(op.ApplicationDatabaseRouteContinuity) == domain.HostingDocumentHash(original.ApplicationDatabaseRouteContinuity) && domain.HostingDocumentHash(op.ApplicationDatabaseStorage) == domain.HostingDocumentHash(original.ApplicationDatabaseStorage)
+}
+
 func (b *applicationDatabaseBrowser) observe(action string, raw, response []byte, project, application, database string) {
 	b.mu.Lock()
 	defer func() {
@@ -1698,39 +1714,64 @@ func (b *applicationDatabaseBrowser) observe(action string, raw, response []byte
 	}()
 	phase := b.phase
 	if b.recovery != nil {
-		if action != "recover" || phase != "recover" || len(response) > domain.HostingApplicationDatabaseJournalJSONLimit {
+		observation := applicationDatabaseRecoveryObservation{RequestBytes: len(raw), ResponseBytes: len(response)}
+		reject := func(reason string) {
 			b.invalid = true
+			observation.Reason = reason // Callers below supply fixed literals only.
+			b.recoveryObservation = observation
+			if b.f != nil {
+				b.f.t.Logf("browser_recovery_observation reason=%s request_bytes=%d response_bytes=%d request_matches=%t operation_matches=%t", reason, observation.RequestBytes, observation.ResponseBytes, observation.RequestMatches, observation.OperationMatches)
+			}
+		}
+		if action != "recover" || phase != "recover" {
+			reject("phase_mismatch")
+			return
+		}
+		if len(response) > domain.HostingApplicationDatabaseJournalJSONLimit {
+			reject("response_oversized")
 			return
 		}
 		var body, expected map[string]any
 		normalized, _ := json.Marshal(b.recovery.Expected)
-		if json.Unmarshal(raw, &body) != nil || json.Unmarshal(normalized, &expected) != nil {
-			b.invalid = true
+		if domain.DecodeHostingStorageProtocolJSON(raw, &body) != nil || json.Unmarshal(normalized, &expected) != nil {
+			reject("request_decode")
 			return
 		}
 		key, ok := body["idempotency_key"].(string)
 		compare := maps.Clone(body)
 		delete(compare, "idempotency_key")
 		delete(expected, "idempotency_key")
-		var op domain.HostingOperation
-		if !ok || len(key) == 0 || len(key) > 128 || !reflect.DeepEqual(compare, expected) || domain.DecodeHostingStorageProtocolJSON(response, &op) != nil || op.ID != b.recovery.OperationID || op.ProjectID != project || op.ResourceID != application {
-			b.invalid = true
+		observation.RequestMatches = ok && len(key) > 0 && len(key) <= 128 && reflect.DeepEqual(compare, expected)
+		if !observation.RequestMatches {
+			reject("request_mismatch")
+			return
+		}
+		op, err := domain.DecodeHostingApplicationDatabaseOperationJSON(response)
+		if err != nil {
+			reject("response_decode")
+			return
+		}
+		observation.OperationMatches = op.ID == b.recovery.OperationID && op.ProjectID == project && op.ResourceID == application && op.Snapshot.ResourceID == application && applicationDatabaseRecoveryOperationMatches(op, b.recovery.Original)
+		if !observation.OperationMatches {
+			reject("operation_mismatch")
 			return
 		}
 		evidence := applicationDatabaseBrowserSeen{Request: sha256.Sum256(raw), OperationID: op.ID}
 		if old, seen := b.seen[phase]; seen {
 			if old != evidence {
-				b.invalid = true
+				reject("replay_mismatch")
 			}
 			return
 		}
+		observation.Reason = "accepted"
+		b.recoveryObservation = observation
 		b.seen[phase] = evidence
 		b.recovery.Submitted = body
 		b.latestOperation = op.ID
 		select {
 		case b.admissions <- applicationDatabaseBrowserAdmission{Phase: phase, Operation: op}:
 		default:
-			b.invalid = true
+			reject("admission_overflow")
 		}
 		return
 	}

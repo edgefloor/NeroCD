@@ -147,6 +147,17 @@ func HostingApplicationDatabaseExecutionPlanInput(p HostingApplicationDatabaseEx
 	return owned.input(), nil
 }
 
+// DecodeHostingApplicationDatabaseOperationJSON decodes a closed full operation
+// under the connected journal bound, preserving nested proof validation. It
+// grants no lease or mutation authority and does not alter request size limits.
+func DecodeHostingApplicationDatabaseOperationJSON(raw []byte) (HostingOperation, error) {
+	var op HostingOperation
+	if decodeApplicationDatabaseDocument(raw, &op, HostingApplicationDatabaseJournalJSONLimit) != nil {
+		return HostingOperation{}, ErrInvalidHostingApplicationDatabasePlan
+	}
+	return op, nil
+}
+
 func decodeApplicationDatabaseDocument(raw []byte, out any, limit int) error {
 	var fields map[string]any
 	if len(raw) > limit || !validRuntimeJSONUnicode(raw) || json.Unmarshal(raw, &fields) != nil || fields == nil || databaseBindingHasNull(fields) || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {

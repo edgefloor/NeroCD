@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -24,9 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingproxy"
 	"nerocd/internal/store/sqlcgen"
+	"nerocd/web"
 )
 
 const applicationDatabaseStorageVersion = "application-database.storage.v1"
@@ -373,7 +377,7 @@ func (s *applicationDatabaseStorageFixture) recoverFailure(f *databaseRunnerFixt
 		if failure == "cutover" {
 			profile = "storage_complete"
 		}
-		browser = f.startApplicationDatabaseBrowser(resource, database, engine, &applicationDatabaseBrowserRecovery{Action: action, OperationID: op.ID, Profile: profile, Revision: active.MembershipRevision, Expected: input})
+		browser = f.startApplicationDatabaseBrowser(resource, database, engine, &applicationDatabaseBrowserRecovery{Action: action, OperationID: op.ID, Profile: profile, Revision: active.MembershipRevision, Expected: input, Original: op})
 		accepted.ID = browser.await("recover").Operation.ID
 		browser.mu.Lock()
 		input = maps.Clone(browser.recovery.Submitted)
@@ -1243,10 +1247,11 @@ func TestApplicationDatabaseStorageDirectoryArchive(t *testing.T) {
 
 func TestApplicationDatabaseStorageBrowserRecoveryCorrelation(t *testing.T) {
 	expected := map[string]any{"action": "complete_replacement", "operation_id": "original", "stage_hash": "stage", "candidate_hash": "candidate", "storage_state_hash": "state", "expected_membership_revision": int64(4), "idempotency_key": "fixture_key", "application_database_storage": applicationDatabaseStorageAck{1, "storage", true}}
-	response, _ := json.Marshal(domain.HostingOperation{ID: "original", ProjectID: "project", ResourceID: "application", Snapshot: domain.HostingSnapshot{ResourceID: "application"}})
-	for _, mode := range []string{"exact", "wrong_action", "wrong_operation", "wrong_stage", "wrong_candidate", "wrong_state", "wrong_revision", "wrong_storage_ack", "unknown_field", "changed_replay", "foreign_response", "wrong_phase"} {
+	original := domain.HostingOperation{ID: "original", ProjectID: "project", ResourceID: "application", BindingID: "binding", RunID: "run_original", Snapshot: domain.HostingSnapshot{ResourceID: "application", DestinationID: "destination"}, Plan: &domain.HostingApplyPlan{Hash: "plan"}}
+	response, _ := json.Marshal(original)
+	for _, mode := range []string{"exact", "wrong_action", "wrong_operation", "wrong_stage", "wrong_candidate", "wrong_state", "wrong_revision", "wrong_storage_ack", "unknown_field", "changed_replay", "foreign_response", "wrong_phase", "large_response", "boundary_response", "oversize_response", "duplicate_response", "alias_response", "unknown_response", "trailing_response", "null_response", "duplicate_request", "trailing_request", "foreign_project", "foreign_destination", "foreign_plan", "foreign_run", "authority_request"} {
 		t.Run(mode, func(t *testing.T) {
-			b := &applicationDatabaseBrowser{phase: "recover", seen: map[string]applicationDatabaseBrowserSeen{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4), recovery: &applicationDatabaseBrowserRecovery{Action: "complete_replacement", OperationID: "original", Expected: expected}}
+			b := &applicationDatabaseBrowser{phase: "recover", seen: map[string]applicationDatabaseBrowserSeen{}, admissions: make(chan applicationDatabaseBrowserAdmission, 4), recovery: &applicationDatabaseBrowserRecovery{Action: "complete_replacement", OperationID: "original", Expected: expected, Original: original}}
 			body := maps.Clone(expected)
 			body["idempotency_key"] = "actual_browser_generated_key"
 			switch mode {
@@ -1274,14 +1279,118 @@ func TestApplicationDatabaseStorageBrowserRecoveryCorrelation(t *testing.T) {
 			if mode == "foreign_response" {
 				reply = bytes.ReplaceAll(reply, []byte(`"original"`), []byte(`"foreign"`))
 			}
+			switch mode {
+			case "large_response":
+				reply = append(reply, bytes.Repeat([]byte(" "), (33<<10)-len(reply))...)
+			case "boundary_response":
+				reply = append(reply, bytes.Repeat([]byte(" "), domain.HostingApplicationDatabaseJournalJSONLimit-len(reply))...)
+			case "oversize_response":
+				reply = append(reply, bytes.Repeat([]byte(" "), domain.HostingApplicationDatabaseJournalJSONLimit+1-len(reply))...)
+			case "duplicate_response":
+				reply = bytes.Replace(reply, []byte(`"id":`), []byte(`"id":"duplicate","id":`), 1)
+			case "alias_response":
+				reply = bytes.Replace(reply, []byte(`"id":`), []byte(`"ID":`), 1)
+			case "unknown_response":
+				reply = bytes.Replace(reply, []byte(`"id":`), []byte(`"lease_id":"PRIVATE-CANARY","id":`), 1)
+			case "trailing_response":
+				reply = append(reply, []byte(`{}`)...)
+			case "null_response":
+				var fields map[string]json.RawMessage
+				if json.Unmarshal(reply, &fields) != nil {
+					t.Fatal("response fixture invalid")
+				}
+				fields["plan"] = json.RawMessage(`null`)
+				reply, _ = json.Marshal(fields)
+			case "duplicate_request":
+				raw = bytes.Replace(raw, []byte(`"action":`), []byte(`"action":"other","action":`), 1)
+			case "trailing_request":
+				raw = append(raw, []byte(`{}`)...)
+			case "foreign_project":
+				reply = bytes.Replace(reply, []byte(`"project"`), []byte(`"foreign"`), 1)
+			case "foreign_destination":
+				reply = bytes.Replace(reply, []byte(`"destination"`), []byte(`"foreign"`), 1)
+			case "foreign_plan":
+				reply = bytes.Replace(reply, []byte(`"hash":"plan"`), []byte(`"hash":"foreign"`), 1)
+			case "foreign_run":
+				reply = bytes.Replace(reply, []byte(`"run_original"`), []byte(`"run_foreign"`), 1)
+			case "authority_request":
+				body["fence"] = "PRIVATE-CANARY"
+				raw, _ = json.Marshal(body)
+			}
 			b.observe("recover", raw, reply, "project", "application", "database")
 			if mode == "changed_replay" {
 				body["idempotency_key"] = "changed"
 				raw, _ = json.Marshal(body)
 			}
 			b.observe("recover", raw, reply, "project", "application", "database")
-			if b.invalid != (mode != "exact") || mode == "exact" && (len(b.admissions) != 1 || b.expectedAdmissions() != 1 || b.recovery.Submitted["idempotency_key"] != "actual_browser_generated_key") {
+			valid := mode == "exact" || mode == "large_response" || mode == "boundary_response"
+			if b.invalid != !valid || valid && (len(b.admissions) != 1 || b.expectedAdmissions() != 1 || b.recovery.Submitted["idempotency_key"] != "actual_browser_generated_key") {
 				t.Fatal("browser recovery lost exact public request, operation, phase or identical replay correlation")
+			}
+			diagnostic, _ := json.Marshal(b.recoveryObservation)
+			if len(diagnostic) > 512 || bytes.Contains(diagnostic, []byte("CANARY")) {
+				t.Fatal("browser recovery diagnostic exposed response/request data")
+			}
+		})
+	}
+}
+
+// The authenticated real handler returns this repository seam's operation. This
+// exercises API202 serialization/observation, not PostgreSQL persistence.
+type applicationDatabaseRecoveryResponseRepository struct {
+	*connectionHTTPRepository
+	response domain.HostingOperation
+	input    domain.HostingDatabaseConnectionRecoveryInput
+	requests int
+}
+
+func (r *applicationDatabaseRecoveryResponseRepository) RequestHostingDatabaseConnectionRecovery(_ context.Context, _ string, resource, actor string, in domain.HostingDatabaseConnectionRecoveryInput, _ domain.AuditEvent) (domain.HostingOperation, error) {
+	r.requests++
+	r.input = in
+	if resource != r.response.ResourceID || actor == "" {
+		return domain.HostingOperation{}, errors.New("recovery fixture authorization mismatch")
+	}
+	return r.response, nil
+}
+
+func TestApplicationDatabaseStorageBrowserRecoveryAPI202(t *testing.T) {
+	original := domain.HostingOperation{ID: "original", ProjectID: "proj_platform", ResourceID: "connection_app", BindingID: "binding", RunID: "run_original", State: "failed", MutationHold: true, Snapshot: domain.HostingSnapshot{ResourceID: "connection_app", DestinationID: "destination"}}
+	original.Plan = &domain.HostingApplyPlan{Snapshot: original.Snapshot, Hash: "saved_plan"}
+	mem := newSeededTestStore()
+	repo := &applicationDatabaseRecoveryResponseRepository{connectionHTTPRepository: &connectionHTTPRepository{MemoryStore: mem}, response: original}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal("recovery API service unavailable")
+	}
+	server := NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+	token := createTestSession(t, server)
+	input := domain.HostingDatabaseConnectionRecoveryInput{Action: "resume_predecessor", OperationID: original.ID, StageHash: "sha256:" + strings.Repeat("a", 64), CandidateHash: "sha256:" + strings.Repeat("b", 64), StorageStateHash: "sha256:" + strings.Repeat("c", 64), ExpectedMembershipRevision: 4, IdempotencyKey: "actual_browser_key", ApplicationDatabaseStorage: &domain.HostingApplicationDatabaseStorageInput{ExpectedStorageGeneration: 1, ExpectedStorageHash: "sha256:" + strings.Repeat("d", 64), AcknowledgeInterruption: true}}
+	raw, err := json.Marshal(input)
+	if err != nil || input.Validate() != nil {
+		t.Fatal("recovery API request invalid")
+	}
+	response := connectionCall(t, server, "POST", "/api/v1/resources/connection_app/database-connection/recovery", token, string(raw))
+	if response.Code != http.StatusAccepted || repo.requests != 1 || !reflect.DeepEqual(repo.input, input) {
+		t.Fatal("authenticated recovery API did not return exact accepted operation request")
+	}
+	var expected map[string]any
+	if json.Unmarshal(raw, &expected) != nil {
+		t.Fatal("expected request invalid")
+	}
+	for _, mode := range []string{"actual_202", "lawful_whitespace_above_request_cap"} {
+		t.Run(mode, func(t *testing.T) {
+			reply := bytes.Clone(response.Body.Bytes())
+			if mode != "actual_202" {
+				reply = append(reply, bytes.Repeat([]byte(" "), (33<<10)-len(reply))...)
+			}
+			b := &applicationDatabaseBrowser{phase: "recover", seen: map[string]applicationDatabaseBrowserSeen{}, admissions: make(chan applicationDatabaseBrowserAdmission, 2), recovery: &applicationDatabaseBrowserRecovery{Action: input.Action, OperationID: original.ID, Expected: expected, Original: original}}
+			b.observe("recover", raw, reply, original.ProjectID, original.ResourceID, "connection_database")
+			if b.invalid || len(b.admissions) != 1 || b.recoveryObservation.Reason != "accepted" || !b.recoveryObservation.RequestMatches || !b.recoveryObservation.OperationMatches {
+				t.Fatal("actual API202 operation did not preserve exact observer correlation")
+			}
+			admitted := <-b.admissions
+			if !reflect.DeepEqual(admitted.Operation, original) {
+				t.Fatal("API202 observer changed failed operation, plan or destination")
 			}
 		})
 	}

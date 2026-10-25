@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 func applicationExecutionFixture(t *testing.T, engine string) (HostingOperation, HostingDatabaseUpgradeProof) {
@@ -222,5 +223,91 @@ func TestApplicationDatabaseExecutionClosedProofAndOperation(t *testing.T) {
 	b, _ := json.Marshal(old)
 	if bytes.Contains(b, []byte(`"application_database"`)) || bytes.Contains(b, []byte(`"database_maintenance"`)) || ValidateHostingApplicationDatabaseOperation(old) != nil || ValidateHostingDatabaseMaintenanceOperation(old) != nil {
 		t.Fatal("legacy omitted sidecars changed")
+	}
+}
+
+func TestApplicationDatabaseFullOperationDecode(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			// Reuse the compiler-valid initial deployment and its real attach
+			// recipe; this is generated evidence, never a captured physical body.
+			op, _ := applicationExecutionFixture(t, engine)
+			in, c, ep := executionCandidate(t, op)
+			previous := HostingHealthy{Snapshot: op.Snapshot, Release: *op.Release, OperationID: op.ID, ContainerID: c.ContainerID, PlanHash: op.Plan.Hash}
+			in.Members = []HostingDatabaseNetworkMemberProof{{Binding: in.Binding, EndpointPlan: ep, Receipt: databaseBindingReceipt(ep, "attached"), ApplicationHealthy: previous, DatabasePlan: in.BindingDatabasePlan, ApplicationProjectID: in.ApplicationProjectID, DatabaseProjectID: in.DatabaseProjectID}}
+			in.MembershipRevision = ep.MembershipRevision
+			in.OperationID = "failed_storage_replacement"
+			in.CreateNonce = strings.Repeat("b", 32)
+			proof, err := NewHostingApplicationDatabaseExecutionProof(in)
+			if err != nil {
+				t.Fatal("replacement proof rejected")
+			}
+			snapshot := op.Snapshot
+			snapshot.HostPort++
+			snapshot.PolicyVersion = HostingApplicationDatabaseStoragePolicyVersion
+			storageID, volume := HostingStorageIdentity(snapshot.BindingID)
+			storage := HostingStorage{ID: storageID, ProjectID: op.ProjectID, ResourceID: op.ResourceID, BindingID: op.BindingID, DestinationID: snapshot.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: "/data/uploads", AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: "actor", CreatedAt: time.Unix(1, 0).UTC()}
+			storage.Hash = storage.DocumentHash()
+			snapshot.Storage = storage.Reference()
+			storagePlan := HostingStoragePlan{Reference: snapshot.Storage, VolumeName: volume, MountPath: storage.MountPath, CreationOperationID: in.OperationID, DaemonID: op.Release.DaemonID}
+			storagePlan.CreationNonce = HostingStorageCreationNonce(snapshot.Storage, in.OperationID, op.Release.DaemonID)
+			plan, err := CompileHostingApplicationDatabaseStoragePlan(snapshot, *op.Release, &previous, nil, in, storagePlan)
+			if err != nil {
+				t.Fatal("storage replacement compiler rejected fixture")
+			}
+			descriptor := NewHostingApplicationDatabaseStorage(snapshot.Storage)
+			op.ID = in.OperationID
+			op.RunID = "run_" + op.ID
+			op.State = "failed"
+			op.MutationHold = true
+			op.Snapshot = snapshot
+			op.Plan = &plan
+			op.ApplicationDatabase = &proof
+			op.ApplicationDatabaseStorage = &descriptor
+			op.ApplicationDatabaseStorageState = &HostingApplicationDatabaseStorageState{Version: HostingApplicationDatabaseStorageVersion, Phase: "replacement_failed", ReceiptID: "writer_failed", StateHash: "sha256:" + strings.Repeat("a", 64), PreviousStateHash: "sha256:" + strings.Repeat("b", 64), StageHash: "sha256:" + strings.Repeat("c", 64), CandidateHash: "sha256:" + strings.Repeat("d", 64), RecoveryActions: []string{}, RecoveryAction: "resume_predecessor", RecoveryState: "queued"}
+			if ValidateHostingApplicationDatabaseOperation(op) != nil {
+				t.Fatal("full failed operation violates existing compiler/proof contracts")
+			}
+			raw, err := json.Marshal(op)
+			if err != nil || len(raw) >= HostingApplicationDatabaseJournalJSONLimit {
+				t.Fatal("compiled operation exceeds connected document bound")
+			}
+			compactBytes := len(raw)
+			// Lawful trailing whitespace crosses the small request cap without
+			// changing any compiled plan/proof or claiming a captured body size.
+			if len(raw) <= HostingStorageProtocolJSONLimit {
+				raw = append(raw, bytes.Repeat([]byte(" "), HostingStorageProtocolJSONLimit+1-len(raw))...)
+			}
+			t.Logf("compiled_failed_operation_bytes=%d response_bytes=%d", compactBytes, len(raw))
+			decoded, err := DecodeHostingApplicationDatabaseOperationJSON(raw)
+			if err != nil || ValidateHostingApplicationDatabaseOperation(decoded) != nil || HostingDocumentHash(decoded) != HostingDocumentHash(op) {
+				t.Fatal("full compiled operation rejected or identities changed")
+			}
+			for _, size := range []int{HostingApplicationDatabaseJournalJSONLimit, HostingApplicationDatabaseJournalJSONLimit + 1} {
+				bounded := append(bytes.Clone(raw), bytes.Repeat([]byte(" "), size-len(raw))...)
+				_, err := DecodeHostingApplicationDatabaseOperationJSON(bounded)
+				if (err == nil) != (size == HostingApplicationDatabaseJournalJSONLimit) {
+					t.Fatal("full operation whitespace boundary changed")
+				}
+			}
+			for _, bad := range [][]byte{append(bytes.Clone(raw), []byte(`{}`)...), bytes.Replace(raw, []byte(`"id":`), []byte(`"id":"duplicate","id":`), 1), bytes.Replace(raw, []byte(`"id":`), []byte(`"ID":`), 1), bytes.Replace(raw, []byte(`"id":`), []byte(`"unknown":true,"id":`), 1), bytes.Replace(raw, []byte(`"plan":`), []byte(`"plan":null,"discarded":`), 1), bytes.Replace(raw, []byte(`"id":`), []byte("\xff\"id\":"), 1)} {
+				if _, err := DecodeHostingApplicationDatabaseOperationJSON(bad); err == nil {
+					t.Fatal("ambiguous full operation JSON accepted")
+				}
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) != nil {
+				t.Fatal("compiled JSON fixture invalid")
+			}
+			fields["plan"] = json.RawMessage(`null`)
+			nullPlan, _ := json.Marshal(fields)
+			invalidUnicode := bytes.Replace(raw, []byte("failed_storage_replacement"), []byte{0xff}, 1)
+			for _, bad := range [][]byte{nullPlan, invalidUnicode, []byte(`null`), []byte(`[]`)} {
+				if _, err := DecodeHostingApplicationDatabaseOperationJSON(bad); err == nil {
+					t.Fatal("null or invalid Unicode operation accepted")
+				}
+			}
+
+		})
 	}
 }
