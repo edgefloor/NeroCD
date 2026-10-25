@@ -521,10 +521,15 @@ func applicationDatabaseRouteLoadedBeforeSwitch(current, loaded domain.HostingPr
 	return proxyOperation != "" && loaded.ID != "" && loaded.LoadedGeneration > 0 && current.ID == loaded.ID && current.ServerID == loaded.ServerID && current.DestinationID == loaded.DestinationID && current.RunnerID == loaded.RunnerID && current.ControlProjectID == loaded.ControlProjectID && current.DaemonID == loaded.DaemonID && current.StaticHash == loaded.StaticHash && reflect.DeepEqual(current.Configuration, loaded.Configuration) && current.Enabled && !current.RestoreOwnershipHeld && current.HoldOperationID == "" && (current.ActiveOperationID == "" || current.ActiveOperationID == proxyOperation) && current.LoadedGeneration == loaded.LoadedGeneration && current.DesiredGeneration == loaded.LoadedGeneration+1
 }
 
+func applicationDatabaseRouteMatchesReviewedContinuation(op domain.HostingOperation, proxy domain.HostingProxy, route domain.HostingRoute) bool {
+	c := op.ApplicationDatabaseRouteContinuity
+	return c != nil && c.Validate(op) == nil && c.ProxyID == proxy.ID && c.Request.ExpectedLoadedGeneration == proxy.LoadedGeneration && len(c.Request.Routes) == 1 && c.Request.Routes[0] == (domain.HostingRouteSwitchSelection{RouteID: route.ID, ExpectedVersion: route.Version, ExpectedSelectedReleaseOperationID: route.SelectedReleaseOperationID})
+}
+
 func (r *applicationDatabaseRouteFixture) awaitYieldedRoute(op domain.HostingOperation) {
 	f := r.f
 	c := op.ApplicationDatabaseRouteContinuity
-	if c == nil || c.Validate(op) != nil || c.ProxyID != r.proxy.ID || c.Request.ExpectedLoadedGeneration != r.proxy.LoadedGeneration || len(c.Request.Routes) != 1 || c.Request.Routes[0] != (domain.HostingRouteSwitchSelection{RouteID: r.route.ID, ExpectedVersion: r.route.Version, ExpectedSelectedReleaseOperationID: r.route.SelectedReleaseOperationID}) {
+	if !applicationDatabaseRouteMatchesReviewedContinuation(op, r.proxy, r.route) {
 		f.t.Fatal("yielded route lost its exact reviewed continuation")
 	}
 	expected := r.route
@@ -1003,6 +1008,12 @@ func (r *applicationDatabaseRouteFixture) assertSelected(op domain.HostingOperat
 	if current.SelectedReleaseOperationID != op.ID || !current.Enabled || !current.HTTPReady || !current.HTTPSReady || current.Certificate.Status != "trusted" || current.Certificate.Hostname != r.hostname {
 		r.f.t.Fatal("route selection, HTTP readiness and trusted HTTPS readiness disagree")
 	}
+	if op.ID != r.route.SelectedReleaseOperationID {
+		// A newly committed release advances both independently observed
+		// baselines. Retained traffic after a failed switch does not imply that
+		// its desired proxy generation settled, so keep its prior baseline.
+		r.awaitProxy()
+	}
 	r.route = current
 	if r.unrelated.ID != "" {
 		r.assertUnrelated()
@@ -1101,6 +1112,144 @@ func (r *applicationDatabaseRouteFixture) cleanup() {
 		f.t.Error(err)
 	} else {
 		f.t.Log("exact managed proxy absent and proxy listener ports free")
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeSequentialObservedBaseline(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			a := domain.HostingProxy{ID: "proxy_fixture", ServerID: "server_fixture", DestinationID: "destination_fixture", RunnerID: "runner_fixture", ControlProjectID: "project_fixture", DaemonID: "daemon_fixture", Enabled: true, LoadedGeneration: 3, DesiredGeneration: 3}
+			b := a
+			b.LoadedGeneration = 4
+			b.DesiredGeneration = 4
+			routeA := domain.HostingRoute{ID: "route_fixture", ResourceID: "resource_fixture", Version: 1, SelectedReleaseOperationID: "hop_a", Hostname: "connected-" + engine + ".example.test", PathPrefix: "/", Enabled: true, HTTPReady: true, HTTPSReady: true}
+			routeA.Certificate = domain.HostingProxyCertificate{Hostname: routeA.Hostname, Status: "trusted"}
+			routeB := routeA
+			routeB.Version = 2
+			routeB.SelectedReleaseOperationID = "hop_b"
+			var mu sync.Mutex
+			phase, proxyReads := "B", 0
+			// These observations arrive before committed B. The actual polling
+			// seam must reject each and retain A until exact settled B is read.
+			rejected := []func(*domain.HostingProxy){
+				func(p *domain.HostingProxy) { p.ID = "foreign_proxy" },
+				func(p *domain.HostingProxy) { p.DaemonID = "foreign_daemon" },
+				func(p *domain.HostingProxy) { p.Configuration.ManagementPort++ },
+				func(p *domain.HostingProxy) { p.LoadedGeneration = 3 },
+				func(p *domain.HostingProxy) { p.HoldOperationID = "held" },
+				func(p *domain.HostingProxy) { p.ActiveOperationID = "active" },
+				func(p *domain.HostingProxy) { p.RestoreOwnershipHeld = true },
+			}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch request.URL.Path {
+				case "/api/v1/servers/server_fixture/proxy":
+					if request.Header.Get("Authorization") != "Bearer admin" {
+						t.Error("settled proxy read lost independent admin authority")
+					}
+					proxyReads++
+					current := b
+					if phase == "B" && proxyReads <= len(rejected) {
+						rejected[proxyReads-1](&current)
+					}
+					if phase == "failed" || phase == "C" {
+						current.DesiredGeneration = 5
+					}
+					if phase == "C" {
+						current.ActiveOperationID = "appdb_proxy_hop_c"
+					}
+					if err := json.NewEncoder(w).Encode(current); err != nil {
+						t.Error(err)
+					}
+				case "/api/v1/routes/route_fixture":
+					if request.Header.Get("Authorization") != "Bearer owner" {
+						t.Error("route observation lost owner authority")
+					}
+					current := routeB
+					if phase == "C" {
+						current.Version = 3
+						current.SelectedReleaseOperationID = "hop_c"
+						current.OperationID = "appdb_proxy_hop_c"
+						current.State = "queued"
+						current.HTTPReady = false
+						current.HTTPSReady = false
+						current.Certificate = domain.HostingProxyCertificate{Hostname: routeB.Hostname, Status: "pending"}
+					}
+					if err := json.NewEncoder(w).Encode(current); err != nil {
+						t.Error(err)
+					}
+				default:
+					t.Error("unexpected baseline observation request")
+					w.WriteHeader(404)
+				}
+			}))
+			t.Cleanup(server.Close)
+			f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), token: "owner", adminToken: "admin", serverID: a.ServerID}
+			r := &applicationDatabaseRouteFixture{f: f, proxy: a, route: routeA, daemonID: a.DaemonID, hostname: routeA.Hostname}
+			r.assertSelected(domain.HostingOperation{ID: "hop_b"})
+			if !reflect.DeepEqual(r.proxy, b) || !reflect.DeepEqual(r.route, routeB) {
+				t.Fatal("observed B did not advance independently settled proxy and route baselines together")
+			}
+			mu.Lock()
+			verified := proxyReads == len(rejected)+1
+			phase = "maintenance"
+			mu.Unlock()
+			if !verified {
+				t.Fatal("settled observation accepted foreign, pending or held proxy metadata")
+			}
+			// Database maintenance leaves the application route unchanged. Its
+			// observation must preserve the exact already verified B baseline.
+			r.assertSelected(domain.HostingOperation{ID: "hop_b"})
+			mu.Lock()
+			phase = "failed"
+			reads := proxyReads
+			mu.Unlock()
+			r.assertSelected(domain.HostingOperation{ID: "hop_b"})
+			mu.Lock()
+			unchanged := proxyReads == reads
+			phase = "C"
+			mu.Unlock()
+			if !unchanged || !reflect.DeepEqual(r.proxy, b) {
+				t.Fatal("retained traffic observation consumed pending proxy state after failed switch")
+			}
+			previous := domain.HostingHealthy{OperationID: "hop_b", Snapshot: domain.HostingSnapshot{HostPort: 20001}}
+			op := domain.HostingOperation{ID: "hop_c", RunID: "run_hop_c", Snapshot: domain.HostingSnapshot{HostPort: 20002}, ApplicationDatabase: &domain.HostingApplicationDatabaseExecutionProof{Members: []domain.HostingDatabaseNetworkMemberEvidence{{ApplicationHealthy: previous}}}}
+			c := domain.HostingApplicationDatabaseRouteContinuity{Version: domain.HostingApplicationDatabaseRouteContinuityVersion, OperationID: op.ID, ProxyOperationID: "appdb_proxy_" + op.ID, FinalizeRunID: "finalize_" + op.ID, ProxyID: b.ID, LoadedSnapshotHash: "sha256:" + strings.Repeat("a", 64), PreviousHealthy: previous, Request: domain.HostingApplicationDatabaseRouteContinuityInput{ExpectedLoadedGeneration: 4, ExpectedLoadedProxyOperationID: "loaded_b", Routes: []domain.HostingRouteSwitchSelection{{RouteID: routeB.ID, ExpectedVersion: 2, ExpectedSelectedReleaseOperationID: previous.OperationID}}}}
+			c.Hash = c.DocumentHash()
+			op.ApplicationDatabaseRouteContinuity = &c
+			if c.Validate(op) != nil {
+				t.Fatal("independent browser-style C descriptor invalid")
+			}
+			r.awaitYieldedRoute(op)
+			if !reflect.DeepEqual(r.proxy, b) {
+				t.Fatal("pending C overwrote independently settled B baseline")
+			}
+			for _, change := range []struct {
+				name   string
+				mutate func(*domain.HostingApplicationDatabaseRouteContinuity)
+			}{
+				{"stale A generation", func(c *domain.HostingApplicationDatabaseRouteContinuity) { c.Request.ExpectedLoadedGeneration = 3 }},
+				{"unreviewed generation", func(c *domain.HostingApplicationDatabaseRouteContinuity) { c.Request.ExpectedLoadedGeneration = 5 }},
+				{"foreign proxy", func(c *domain.HostingApplicationDatabaseRouteContinuity) { c.ProxyID = "foreign_proxy" }},
+				{"stale route version", func(c *domain.HostingApplicationDatabaseRouteContinuity) { c.Request.Routes[0].ExpectedVersion = 1 }},
+				{"wrong route selection", func(c *domain.HostingApplicationDatabaseRouteContinuity) {
+					c.Request.Routes[0].ExpectedSelectedReleaseOperationID = "hop_a"
+				}},
+			} {
+				t.Run(change.name, func(t *testing.T) {
+					bad := c
+					bad.Request.Routes = append([]domain.HostingRouteSwitchSelection(nil), c.Request.Routes...)
+					change.mutate(&bad)
+					bad.Hash = bad.DocumentHash()
+					candidate := op
+					candidate.ApplicationDatabaseRouteContinuity = &bad
+					if applicationDatabaseRouteMatchesReviewedContinuation(candidate, r.proxy, r.route) {
+						t.Fatal("C accepted stale or foreign independently reviewed baseline")
+					}
+				})
+			}
+		})
 	}
 }
 
