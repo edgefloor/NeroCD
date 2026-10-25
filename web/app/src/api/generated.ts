@@ -5787,7 +5787,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize";
+            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize" | "storage_recover";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
@@ -5798,7 +5798,7 @@ export interface components {
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "finalize";
+            task_mode?: "deploy" | "observe" | "cleanup" | "finalize" | "storage_recover";
         } | {
             snapshot?: components["schemas"]["HostingStorageArchiveZeroSnapshot"];
             /** @enum {string} */

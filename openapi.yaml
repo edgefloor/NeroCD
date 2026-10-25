@@ -9223,7 +9223,8 @@ components:
               "backup",
               "restore",
               "recover",
-              "finalize"
+              "finalize",
+              "storage_recover"
             ]
           },
           "observation_lease": {
@@ -9261,7 +9262,8 @@ components:
                   "deploy",
                   "observe",
                   "cleanup",
-                  "finalize"
+                  "finalize",
+                  "storage_recover"
                 ]
               }
             }
