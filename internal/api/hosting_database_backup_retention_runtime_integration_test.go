@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
@@ -353,6 +357,50 @@ func retentionObjectKey(b domain.HostingDatabaseBackupOperation) string {
 	}
 	return "nerocd/postgresql/" + b.ID + "/" + strings.TrimPrefix(b.Blob.Digest, "sha256:") + ".dump"
 }
+
+// Observe the owned Silo directly, outside runner fault proxies. Only a complete,
+// successful bounded inventory can prove absence; request failures prove nothing.
+func databaseRetentionObservationClient(access, secret string, client s3.HTTPClient) *s3.Client {
+	return s3.New(s3.Options{
+		Region: "us-east-1", BaseEndpoint: aws.String("http://127.0.0.1:9000"), UsePathStyle: true,
+		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{AccessKeyID: access, SecretAccessKey: secret}, nil
+		}),
+		HTTPClient: databaseRetentionObservationBoundedHTTP{client}, RetryMaxAttempts: 1,
+	})
+}
+
+type databaseRetentionObservationBoundedHTTP struct{ client s3.HTTPClient }
+
+func (c databaseRetentionObservationBoundedHTTP) Do(r *http.Request) (*http.Response, error) {
+	response, err := c.client.Do(r)
+	if err == nil && response != nil && response.Body != nil {
+		response.Body = http.MaxBytesReader(nil, response.Body, 64<<10)
+	}
+	return response, err
+}
+
+func databaseRetentionObserveRemote(ctx context.Context, client *s3.Client, key string) string {
+	out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String("nerocd-runtime"), Prefix: aws.String(key), MaxKeys: aws.Int32(2),
+	})
+	if err != nil || out == nil || out.Name == nil || *out.Name != "nerocd-runtime" ||
+		out.Prefix == nil || *out.Prefix != key || out.IsTruncated == nil || *out.IsTruncated ||
+		out.KeyCount == nil || *out.KeyCount != int32(len(out.Contents)) || len(out.Contents) > 2 || len(out.CommonPrefixes) != 0 {
+		return "unknown"
+	}
+	observation := "missing"
+	for _, object := range out.Contents {
+		if object.Key == nil || !strings.HasPrefix(*object.Key, key) {
+			return "unknown"
+		}
+		if *object.Key == key {
+			observation = "present"
+		}
+	}
+	return observation
+}
+
 func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, deleted map[string]bool) {
 	for _, item := range p.Items {
 		known := false
@@ -385,11 +433,20 @@ func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, dele
 				}
 			}
 		} else {
-			// mc stat reports only the command status. No object names or metadata enter evidence.
-			script := "mc stat fixture/nerocd-runtime/nerocd/postgresql/" + item.BackupID + "/" + strings.TrimPrefix(item.Digest, "sha256:") + ".dump >/dev/null 2>&1"
-			raw, e := databaseRunnerDocker(x.f.t.Context(), []byte(script), "exec", "--interactive", x.silo.id, "sh", "-s")
-			clear(raw)
-			if deleted[item.CopyID] && e == nil || !deleted[item.CopyID] && e != nil {
+			key := "nerocd/postgresql/" + item.BackupID + "/" + strings.TrimPrefix(item.Digest, "sha256:") + ".dump"
+			transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 3 * time.Second}
+			client := databaseRetentionObservationClient(x.silo.access, x.silo.secret, &http.Client{
+				Transport: transport, Timeout: 3 * time.Second,
+				CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("observation redirect denied") },
+			})
+			ctx, cancel := context.WithTimeout(x.f.t.Context(), 3*time.Second)
+			observation := databaseRetentionObserveRemote(ctx, client, key)
+			cancel()
+			transport.CloseIdleConnections()
+			if observation == "unknown" {
+				x.f.t.Fatal("remote archive observation unavailable")
+			}
+			if deleted[item.CopyID] && observation != "missing" || !deleted[item.CopyID] && observation != "present" {
 				x.f.t.Fatal("remote archive availability differs from exact retention batch")
 			}
 			if !deleted[item.CopyID] {
@@ -1113,5 +1170,71 @@ func TestDatabaseBackupRetentionUnknownFaultScope(t *testing.T) {
 	out := httptest.NewRecorder()
 	if !fault.serve(out, httptest.NewRequest("HEAD", fault.path, nil), upstream) || out.Code != 503 {
 		t.Fatal("unknown object observation escaped denial")
+	}
+}
+
+// The SDK decodes these in-memory HTTP responses, so parsing failures exercise
+// the same boundary as physical Silo observations without starting a service.
+type databaseRetentionObservationHTTP struct {
+	status int
+	body   string
+	err    error
+	calls  int
+	scoped bool
+}
+
+func (c *databaseRetentionObservationHTTP) Do(r *http.Request) (*http.Response, error) {
+	c.calls++
+	c.scoped = r.Method == "GET" && r.URL.Scheme == "http" && r.URL.Host == "127.0.0.1:9000" && r.URL.Path == "/nerocd-runtime" && r.URL.Query().Get("list-type") == "2" && r.URL.Query().Get("prefix") == "nerocd/postgresql/owned-backup/archive.dump" && r.URL.Query().Get("max-keys") == "2"
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &http.Response{StatusCode: c.status, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(strings.NewReader(c.body)), Request: r}, nil
+}
+
+func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *testing.T) {
+	const key = "nerocd/postgresql/owned-backup/archive.dump"
+	inventory := func(contents string, count int, truncated bool) string {
+		return fmt.Sprintf(`<ListBucketResult><Name>nerocd-runtime</Name><Prefix>%s</Prefix><KeyCount>%d</KeyCount><IsTruncated>%t</IsTruncated>%s</ListBucketResult>`, key, count, truncated, contents)
+	}
+	present := "<Contents><Key>" + key + "</Key></Contents>"
+	canary := "private-error-url-credential-canary"
+	for _, tc := range []struct {
+		name, body, want string
+		status           int
+		err              error
+	}{
+		{name: "missing", status: 200, body: inventory("", 0, false), want: "missing"},
+		{name: "present", status: 200, body: inventory(present, 1, false), want: "present"},
+		{name: "different_suffix", status: 200, body: inventory("<Contents><Key>"+key+".other</Key></Contents>", 1, false), want: "missing"},
+		{name: "transport_failure", err: errors.New(canary), want: "unknown"},
+		{name: "command_failure", err: errors.New("exit status 1: " + canary), want: "unknown"},
+		{name: "authorization_failure", status: 403, body: "<Error><Code>AccessDenied</Code><Message>" + canary + "</Message></Error>", want: "unknown"},
+		{name: "server_failure", status: 500, body: canary, want: "unknown"},
+		{name: "not_found_error", status: 404, body: "<Error><Code>NoSuchKey</Code></Error>", want: "unknown"},
+		{name: "deadline", err: context.DeadlineExceeded, want: "unknown"},
+		{name: "parsing_failure", status: 200, body: "<ListBucketResult><broken>" + canary, want: "unknown"},
+		{name: "empty_response", status: 200, want: "unknown"},
+		{name: "oversize_response", status: 200, body: "<ListBucketResult><Name>" + strings.Repeat("x", 65<<10) + "</Name></ListBucketResult>", want: "unknown"},
+		{name: "truncated", status: 200, body: inventory("", 0, true), want: "unknown"},
+		{name: "count_mismatch", status: 200, body: inventory("", 1, false), want: "unknown"},
+		{name: "over_bound", status: 200, body: inventory(present+present+present, 3, false), want: "unknown"},
+		{name: "wrong_bucket", status: 200, body: strings.ReplaceAll(inventory("", 0, false), "nerocd-runtime", canary), want: "unknown"},
+		{name: "wrong_prefix", status: 200, body: strings.ReplaceAll(inventory("", 0, false), key, canary), want: "unknown"},
+		{name: "outside_prefix", status: 200, body: inventory("<Contents><Key>"+canary+"</Key></Contents>", 1, false), want: "unknown"},
+		{name: "missing_key", status: 200, body: inventory("<Contents></Contents>", 1, false), want: "unknown"},
+		{name: "incomplete_inventory", status: 200, body: "<ListBucketResult><Name>nerocd-runtime</Name></ListBucketResult>", want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := &databaseRetentionObservationHTTP{status: tc.status, body: tc.body, err: tc.err}
+			client := databaseRetentionObservationClient("fixture-access", "fixture-secret", wire)
+			got := databaseRetentionObserveRemote(t.Context(), client, key)
+			if got != tc.want {
+				t.Fatalf("observation classification = %q, want %q", got, tc.want)
+			}
+			if wire.calls != 1 || !wire.scoped {
+				t.Fatal("observation must make exactly one bounded request for the owned exact prefix")
+			}
+		})
 	}
 }
