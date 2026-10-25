@@ -387,6 +387,256 @@ func applicationDatabaseRouteReceiptHash(path string, raw []byte) ([32]byte, err
 	return sha256.Sum256(canonical), err
 }
 
+// Decode only fields needed to distinguish an accepted receipt from an applied
+// switch. The admin response also contains snapshots; they never enter logs.
+type applicationDatabaseProxyCompletion struct {
+	ID                   string    `json:"id"`
+	ProxyID              string    `json:"proxy_id"`
+	State                string    `json:"state"`
+	Generation           int64     `json:"generation"`
+	MutationHold         bool      `json:"mutation_hold"`
+	MetadataConflict     bool      `json:"metadata_conflict"`
+	RestoreOwnershipHeld bool      `json:"restore_ownership_held"`
+	CompleteReceipt      *struct{} `json:"complete_receipt"`
+	Result               *struct {
+		Outcome          string `json:"outcome"`
+		LoadedGeneration int64  `json:"loaded_generation"`
+	} `json:"result"`
+}
+
+func (p applicationDatabaseProxyCompletion) applied() bool {
+	return p.CompleteReceipt != nil && p.Result != nil && p.State == "applied" && p.Result.Outcome == "applied" && p.Generation > 0 && p.Result.LoadedGeneration == p.Generation && !p.MutationHold && !p.MetadataConflict && !p.RestoreOwnershipHeld
+}
+
+func applicationDatabaseRouteDiagnosticID(value string) string {
+	if len(value) > 80 {
+		return "invalid"
+	}
+	if suffix, ok := strings.CutPrefix(value, "appdb_proxy_hop_"); ok {
+		if len(suffix) == 16 && strings.Trim(suffix, "0123456789abcdef") == "" {
+			return value
+		}
+		return "invalid"
+	}
+	for _, prefix := range []string{"hop_", "proxy_", "route_", "pop_"} {
+		if suffix, ok := strings.CutPrefix(value, prefix); ok && (len(suffix) == 16 || len(suffix) == 24 || len(suffix) == 32) && strings.Trim(suffix, "0123456789abcdef") == "" {
+			return value
+		}
+	}
+	return "invalid"
+}
+
+func applicationDatabaseRouteDiagnosticEnum(value string, allowed ...string) string {
+	if slices.Contains(allowed, value) {
+		return value
+	}
+	return "unknown"
+}
+
+type applicationDatabaseRouteDiagnostic struct {
+	CandidateID                string `json:"candidate_id"`
+	ProxyOperationID           string `json:"proxy_operation_id"`
+	ProxyID                    string `json:"proxy_id"`
+	RouteID                    string `json:"route_id"`
+	SelectedID                 string `json:"selected_id"`
+	ReceiptAccepted            bool   `json:"receipt_accepted"`
+	ReceiptApplied             bool   `json:"receipt_applied"`
+	ReceiptOutcome             string `json:"receipt_outcome"`
+	ReceiptState               string `json:"receipt_state"`
+	ReceiptIdentityMatches     bool   `json:"receipt_identity_matches"`
+	ProxyOperationMatches      bool   `json:"proxy_operation_matches"`
+	ProxyState                 string `json:"proxy_state"`
+	ProxyOutcome               string `json:"proxy_outcome"`
+	ProxyGeneration            int64  `json:"proxy_generation"`
+	ResultLoadedGeneration     int64  `json:"result_loaded_generation"`
+	MutationHold               bool   `json:"mutation_hold"`
+	MetadataConflict           bool   `json:"metadata_conflict"`
+	RestoreOwnershipHeld       bool   `json:"restore_ownership_held"`
+	ProxyLoadedGeneration      int64  `json:"proxy_loaded_generation"`
+	ProxyDesiredGeneration     int64  `json:"proxy_desired_generation"`
+	BaselineLoadedGeneration   int64  `json:"baseline_loaded_generation"`
+	ProxyIdentityMatches       bool   `json:"proxy_identity_matches"`
+	ProxyConfigurationMatches  bool   `json:"proxy_configuration_matches"`
+	RouteVersion               int64  `json:"route_version"`
+	BaselineRouteVersion       int64  `json:"baseline_route_version"`
+	RouteIdentityMatches       bool   `json:"route_identity_matches"`
+	RouteSelectionMatches      bool   `json:"route_selection_matches"`
+	RouteState                 string `json:"route_state"`
+	RouteReason                string `json:"route_reason"`
+	RouteOperationMatches      bool   `json:"route_operation_matches"`
+	Enabled                    bool   `json:"enabled"`
+	HTTPReady                  bool   `json:"http_ready"`
+	HTTPSReady                 bool   `json:"https_ready"`
+	CertificateStatus          string `json:"certificate_status"`
+	CertificateHostnameMatches bool   `json:"certificate_hostname_matches"`
+	CertificateExpiryValid     bool   `json:"certificate_expiry_valid"`
+}
+
+func (r *applicationDatabaseRouteFixture) diagnostic(candidate, proxyOperation string, accepted bool, receipt, operation applicationDatabaseProxyCompletion, current domain.HostingRoute, proxy domain.HostingProxy) applicationDatabaseRouteDiagnostic {
+	states := []string{"queued", "dispatched", "prepared", "applying", "verifying", "applied", "rolled_back", "refused", "uncertain", "failed", "canceled", "cancel_requested", "superseded", "metadata_conflict", "restore_ownership_held"}
+	outcomes := []string{"applied", "rolled_back", "refused", "uncertain"}
+	d := applicationDatabaseRouteDiagnostic{
+		CandidateID:                applicationDatabaseRouteDiagnosticID(candidate),
+		ProxyOperationID:           applicationDatabaseRouteDiagnosticID(proxyOperation),
+		ProxyID:                    applicationDatabaseRouteDiagnosticID(proxy.ID),
+		RouteID:                    applicationDatabaseRouteDiagnosticID(current.ID),
+		SelectedID:                 applicationDatabaseRouteDiagnosticID(current.SelectedReleaseOperationID),
+		ReceiptAccepted:            accepted,
+		ReceiptApplied:             receipt.applied(),
+		ReceiptState:               applicationDatabaseRouteDiagnosticEnum(receipt.State, states...),
+		ReceiptOutcome:             "unknown",
+		ReceiptIdentityMatches:     receipt.ID == proxyOperation && receipt.ProxyID == r.proxy.ID,
+		ProxyOperationMatches:      operation.ID == proxyOperation && operation.ProxyID == r.proxy.ID,
+		ProxyState:                 applicationDatabaseRouteDiagnosticEnum(operation.State, states...),
+		ProxyOutcome:               "unknown",
+		ProxyGeneration:            operation.Generation,
+		MutationHold:               operation.MutationHold,
+		MetadataConflict:           operation.MetadataConflict,
+		RestoreOwnershipHeld:       operation.RestoreOwnershipHeld,
+		ProxyLoadedGeneration:      proxy.LoadedGeneration,
+		ProxyDesiredGeneration:     proxy.DesiredGeneration,
+		BaselineLoadedGeneration:   r.proxy.LoadedGeneration,
+		ProxyIdentityMatches:       proxy.ID == r.proxy.ID && proxy.ServerID == r.proxy.ServerID && proxy.DestinationID == r.proxy.DestinationID && proxy.RunnerID == r.proxy.RunnerID && proxy.ControlProjectID == r.proxy.ControlProjectID && proxy.DaemonID == r.daemonID,
+		ProxyConfigurationMatches:  reflect.DeepEqual(proxy.Configuration, r.proxy.Configuration),
+		RouteVersion:               current.Version,
+		BaselineRouteVersion:       r.route.Version,
+		RouteIdentityMatches:       current.ID == r.route.ID && current.ResourceID == r.route.ResourceID && current.Hostname == r.hostname && current.PathPrefix == r.route.PathPrefix,
+		RouteSelectionMatches:      current.SelectedReleaseOperationID == candidate,
+		RouteState:                 applicationDatabaseRouteDiagnosticEnum(current.State, states...),
+		RouteOperationMatches:      current.OperationID == proxyOperation,
+		Enabled:                    current.Enabled,
+		HTTPReady:                  current.HTTPReady,
+		HTTPSReady:                 current.HTTPSReady,
+		CertificateStatus:          applicationDatabaseRouteDiagnosticEnum(current.Certificate.Status, "pending", "trusted", "expired", "untrusted", "failed", "missing"),
+		CertificateHostnameMatches: current.Certificate.Hostname == r.hostname,
+		CertificateExpiryValid:     !current.Certificate.ExpiresAt.IsZero() && current.Certificate.ExpiresAt.After(time.Now()),
+	}
+	switch current.Reason {
+	case "":
+		d.RouteReason = "none"
+	case "storage replacement awaits proxy settlement":
+		d.RouteReason = "awaiting_storage_proxy_settlement"
+	case "storage replacement requires route reconciliation":
+		d.RouteReason = "storage_route_reconciliation"
+	default:
+		d.RouteReason = "unknown"
+	}
+	if receipt.Result != nil {
+		d.ReceiptOutcome = applicationDatabaseRouteDiagnosticEnum(receipt.Result.Outcome, outcomes...)
+	}
+	if operation.Result != nil {
+		d.ProxyOutcome = applicationDatabaseRouteDiagnosticEnum(operation.Result.Outcome, outcomes...)
+		d.ResultLoadedGeneration = operation.Result.LoadedGeneration
+	}
+	return d
+}
+
+func (r *applicationDatabaseRouteFixture) logDiagnostic(d applicationDatabaseRouteDiagnostic) {
+	r.f.t.Helper()
+	raw, err := json.Marshal(d)
+	if err != nil || len(raw) > 4096 {
+		r.f.t.Fatal("bounded route diagnostic encoding failed")
+	}
+	r.f.t.Logf("connected_route_observation=%s", raw)
+}
+
+func TestApplicationDatabaseRouteRuntimeCompletionOutcome(t *testing.T) {
+	for _, outcome := range []string{"applied", "refused", "uncertain", "rolled_back"} {
+		t.Run(outcome, func(t *testing.T) {
+			var completion applicationDatabaseProxyCompletion
+			if json.Unmarshal([]byte(`{"id":"proxy_operation","state":"`+outcome+`","generation":4,"complete_receipt":{},"result":{"outcome":"`+outcome+`","loaded_generation":4}}`), &completion) != nil {
+				t.Fatal("completion fixture invalid")
+			}
+			if completion.applied() != (outcome == "applied") {
+				t.Fatal("accepted receipt was confused with applied switch success")
+			}
+		})
+	}
+	for _, mode := range []string{"missing_result", "missing_receipt", "wrong_generation", "wrong_state", "metadata_conflict", "mutation_hold", "restore_hold"} {
+		t.Run(mode, func(t *testing.T) {
+			var c applicationDatabaseProxyCompletion
+			if json.Unmarshal([]byte(`{"state":"applied","generation":4,"complete_receipt":{},"result":{"outcome":"applied","loaded_generation":4}}`), &c) != nil {
+				t.Fatal("completion fixture invalid")
+			}
+			switch mode {
+			case "missing_result":
+				c.Result = nil
+			case "missing_receipt":
+				c.CompleteReceipt = nil
+			case "wrong_generation":
+				c.Generation = 5
+			case "wrong_state":
+				c.State = "uncertain"
+			case "metadata_conflict":
+				c.MetadataConflict = true
+			case "mutation_hold":
+				c.MutationHold = true
+			case "restore_hold":
+				c.RestoreOwnershipHeld = true
+			}
+			if c.applied() {
+				t.Fatal("incomplete or held receipt accepted as applied switch")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeDiagnosticRedaction(t *testing.T) {
+	canary := "PRIVATE-CANARY-password-bearer-fence-\n-forged-log"
+	id := "hop_" + strings.Repeat("a", 16)
+	proxyID := "proxy_" + strings.Repeat("b", 16)
+	proxyOperation := "appdb_proxy_" + id
+	routeID := "route_" + strings.Repeat("c", 24)
+	r := &applicationDatabaseRouteFixture{hostname: "connected-postgresql.example.test", daemonID: "daemon"}
+	r.proxy = domain.HostingProxy{ID: proxyID, DaemonID: r.daemonID, LoadedGeneration: 3, DesiredGeneration: 3}
+	r.route = domain.HostingRoute{ID: routeID, Hostname: r.hostname, PathPrefix: "/", Version: 2}
+	var completion applicationDatabaseProxyCompletion
+	raw, _ := json.Marshal(map[string]any{"id": proxyOperation, "proxy_id": proxyID, "state": "applied", "generation": 4, "complete_receipt": map[string]string{"id": canary}, "result": map[string]any{"outcome": "applied", "loaded_generation": 4, "free_text": canary}, "snapshot": map[string]string{"credentials": canary, "fence": canary, "configuration": canary}})
+	if json.Unmarshal(raw, &completion) != nil {
+		t.Fatal("diagnostic input invalid")
+	}
+	current := domain.HostingRoute{ID: routeID, SelectedReleaseOperationID: id, Hostname: r.hostname, PathPrefix: "/", Version: 3, Enabled: true, HTTPReady: true, HTTPSReady: true, Certificate: domain.HostingProxyCertificate{Hostname: r.hostname, Status: "trusted", ExpiresAt: time.Now().Add(time.Hour), Issuer: canary}}
+	proxy := r.proxy
+	proxy.LoadedGeneration = 4
+	proxy.DesiredGeneration = 4
+	d := r.diagnostic(id, proxyOperation, true, completion, completion, current, proxy)
+	encoded, err := json.Marshal(d)
+	if err != nil || len(encoded) > 4096 || strings.Contains(string(encoded), "CANARY") || !d.ReceiptAccepted || !d.ReceiptApplied || !d.ReceiptIdentityMatches || !d.ProxyOperationMatches || !d.RouteSelectionMatches || !d.CertificateExpiryValid || d.ProxyGeneration != 4 || d.BaselineLoadedGeneration != 3 {
+		t.Fatal("safe diagnostic lost exact outcome/correlation or exposed ignored snapshot/free text")
+	}
+	completion.ID = canary
+	completion.ProxyID = canary
+	completion.State = canary
+	completion.Result.Outcome = canary
+	current.ID = canary
+	current.SelectedReleaseOperationID = canary
+	current.Hostname = canary
+	current.Certificate.Hostname = canary
+	current.Certificate.Status = canary
+	current.Certificate.ExpiresAt = time.Time{}
+	current.Reason = canary
+	proxy.ID = canary
+	proxy.DaemonID = canary
+	proxy.Configuration.Email = canary
+	d = r.diagnostic(canary, canary, true, completion, completion, current, proxy)
+	encoded, err = json.Marshal(d)
+	if err != nil || len(encoded) > 4096 || strings.Contains(string(encoded), "CANARY") || strings.Contains(string(encoded), "forged-log") || d.CandidateID != "invalid" || d.ProxyOutcome != "unknown" || d.CertificateStatus != "unknown" || d.RouteReason != "unknown" || d.CertificateHostnameMatches || d.CertificateExpiryValid || d.ProxyIdentityMatches || d.ProxyConfigurationMatches {
+		t.Fatal("diagnostic emitted untrusted IDs, enums, hostname or configuration text")
+	}
+	for _, value := range []string{canary, strings.Repeat("appdb_proxy_", 10000), "appdb_proxy_proxy_" + strings.Repeat("a", 16)} {
+		if applicationDatabaseRouteDiagnosticID(value) != "invalid" {
+			t.Fatal("diagnostic identifier whitelist accepted unbounded or foreign text")
+		}
+	}
+	// Correlation is always computed from exact unsanitized identities; two
+	// different invalid IDs must never become equal because both log as invalid.
+	completion.ID = "foreign"
+	d = r.diagnostic(id, proxyOperation, true, completion, completion, current, proxy)
+	if d.ReceiptIdentityMatches || d.ProxyOperationMatches || d.RouteSelectionMatches {
+		t.Fatal("redacted IDs replaced exact provenance comparison")
+	}
+}
+
 // Commit the actual yield, withhold its first ACK, and require a byte-identical
 // request under the same saved authority and an unchanged immutable receipt.
 // No fixture endpoint mutates task state.
@@ -398,6 +648,8 @@ type applicationDatabaseRouteYieldWire struct {
 	requestHash, responseHash   [32]byte
 	calls                       int
 	exact                       bool
+	accepted                    bool
+	completion                  applicationDatabaseProxyCompletion
 }
 
 func newApplicationDatabaseRouteYieldWire(operation string) *applicationDatabaseRouteYieldWire {
@@ -432,6 +684,13 @@ func (v *applicationDatabaseRouteYieldWire) serve(w http.ResponseWriter, r *http
 	first := v.calls == 1
 	if first {
 		v.requestHash, v.responseHash = requestHash, responseHash
+		v.accepted = receipt.Code == 200 && receiptErr == nil
+		if v.path == "/api/v1/runners/proxy/complete" && v.accepted {
+			// Decode narrowly; never retain or print the full admin snapshot.
+			if json.Unmarshal(receipt.Body.Bytes(), &v.completion) != nil {
+				v.completion = applicationDatabaseProxyCompletion{}
+			}
+		}
 	} else {
 		v.exact = requestHash == v.requestHash && responseHash == v.responseHash && receipt.Code == 200 && receiptErr == nil
 	}
@@ -820,6 +1079,19 @@ func (r *applicationDatabaseRouteFixture) recoverYield(candidate, previous domai
 	case <-time.After(10 * time.Second):
 		f.t.Fatal("proxy Complete response-loss handler did not join")
 	}
+	// A 200 ACK also accepts refused/uncertain/rolled-back receipts. Record
+	// independent reads before any later assertion or cleanup loses the cause.
+	proxyWire.mu.Lock()
+	receipt, accepted := proxyWire.completion, proxyWire.accepted
+	proxyWire.mu.Unlock()
+	observed := databaseRunnerJSON[applicationDatabaseProxyCompletion](f, f.adminToken, "GET", "/api/v1/proxy-operations/"+public.Continuity.ProxyOperationID, nil, 200)
+	observedRoute := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+r.route.ID, nil, 200)
+	observedProxy := databaseRunnerJSON[domain.HostingProxy](f, f.adminToken, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+	diagnostic := r.diagnostic(candidate.ID, public.Continuity.ProxyOperationID, accepted, receipt, observed, observedRoute, observedProxy)
+	r.logDiagnostic(diagnostic)
+	if !accepted || !receipt.applied() || !observed.applied() || !diagnostic.ReceiptIdentityMatches || !diagnostic.ProxyOperationMatches {
+		f.t.Fatalf("proxy completion receipt did not prove applied switch: receipt_outcome=%s operation_outcome=%s operation_state=%s", diagnostic.ReceiptOutcome, diagnostic.ProxyOutcome, diagnostic.ProxyState)
+	}
 	r.assertSelected(proof)
 	r.record(f.t.Context(), proof, "GET", "a", "retained_a")
 	if f.storage != nil {
@@ -1006,6 +1278,8 @@ func (r *applicationDatabaseRouteFixture) assertSelected(op domain.HostingOperat
 	r.f.t.Helper()
 	current := databaseRunnerJSON[domain.HostingRoute](r.f, r.f.token, "GET", "/api/v1/routes/"+r.route.ID, nil, 200)
 	if current.SelectedReleaseOperationID != op.ID || !current.Enabled || !current.HTTPReady || !current.HTTPSReady || current.Certificate.Status != "trusted" || current.Certificate.Hostname != r.hostname {
+		proxy := databaseRunnerJSON[domain.HostingProxy](r.f, r.f.adminToken, "GET", "/api/v1/servers/"+r.f.serverID+"/proxy", nil, 200)
+		r.logDiagnostic(r.diagnostic(op.ID, "", false, applicationDatabaseProxyCompletion{}, applicationDatabaseProxyCompletion{}, current, proxy))
 		r.f.t.Fatal("route selection, HTTP readiness and trusted HTTPS readiness disagree")
 	}
 	if op.ID != r.route.SelectedReleaseOperationID {
@@ -1644,16 +1918,32 @@ func TestApplicationDatabaseRouteRuntimeTrustedServedIdentity(t *testing.T) {
 
 func TestApplicationDatabaseRouteRuntimeReceiptReplay(t *testing.T) {
 	for _, path := range []string{"/api/v1/runners/hosting/database-binding/yield", "/api/v1/runners/proxy/complete"} {
-		for _, mode := range []string{"exact", "changed_request", "changed_receipt", "mutable_state", "missing_receipt"} {
+		for _, mode := range []string{"exact", "changed_request", "changed_receipt", "changed_outcome", "mutable_state", "missing_receipt", "accepted_refused", "accepted_uncertain", "accepted_rolled_back"} {
 			t.Run(path+"/"+mode, func(t *testing.T) {
+				if path != "/api/v1/runners/proxy/complete" && (strings.HasPrefix(mode, "accepted_") || mode == "changed_outcome") {
+					t.Skip("proxy result outcome only")
+				}
+				outcome := "applied"
+				if strings.HasPrefix(mode, "accepted_") {
+					outcome = strings.TrimPrefix(mode, "accepted_")
+				}
 				wire := newApplicationDatabaseRouteYieldWire("operation")
 				wire.path = path
 				raw := `{"operation_id":"operation","run_id":"run","lease_id":"lease","attempt":1,"fence":"PRIVATE-CANARY"}`
 				calls := 0
 				next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls++
-					out := map[string]any{"state": "applying", "updated_at": "first", "application_database_yield": map[string]string{"receipt_id": "yield"}, "application_database_route_continuity": map[string]string{"hash": "continuation"}, "complete_receipt": map[string]string{"id": "complete"}, "result": map[string]string{"outcome": "applied"}}
+					out := map[string]any{"state": "applying", "updated_at": "first", "application_database_yield": map[string]string{"receipt_id": "yield"}, "application_database_route_continuity": map[string]string{"hash": "continuation"}, "complete_receipt": map[string]string{"id": "complete"}, "result": map[string]any{"outcome": outcome, "loaded_generation": int64(4)}}
+					if path == "/api/v1/runners/proxy/complete" {
+						out["id"] = "operation"
+						out["proxy_id"] = "proxy_fixture"
+						out["generation"] = int64(4)
+						out["state"] = outcome
+					}
 					if calls > 1 {
+						if mode == "changed_outcome" {
+							out["result"] = map[string]any{"outcome": "uncertain", "loaded_generation": int64(4)}
+						}
 						if mode == "mutable_state" {
 							out["state"] = "verifying"
 							out["updated_at"] = "second"
@@ -1697,9 +1987,12 @@ func TestApplicationDatabaseRouteRuntimeReceiptReplay(t *testing.T) {
 					t.Fatal("replay bypassed observer")
 				}
 				wire.mu.Lock()
-				exact := wire.exact
+				exact, accepted, applied := wire.exact, wire.accepted, wire.completion.applied()
 				wire.mu.Unlock()
-				if exact != (mode == "exact" || mode == "mutable_state") || calls != 2 {
+				if !accepted || path == "/api/v1/runners/proxy/complete" && applied != (outcome == "applied") {
+					t.Fatal("interceptor confused accepted receipt with applied switch outcome")
+				}
+				if exact != (mode == "exact" || mode == "mutable_state" || strings.HasPrefix(mode, "accepted_")) || calls != 2 {
 					t.Fatal("wire replay did not preserve immutable receipt and full original authority")
 				}
 				if strings.Contains(response.Body.String(), "CANARY") {
