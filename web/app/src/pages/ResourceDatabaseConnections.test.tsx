@@ -536,3 +536,38 @@ test.each(["queued", "running", "uncertain"])("explicit recovery %s pauses separ
   expect((screen.getByRole("button", { name: "Redeploy connected application" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "Redeploy connected database" }) as HTMLButtonElement).disabled).toBe(true);
 });
+
+
+test.each(["unavailable", "forbidden", "owner_lost"] as const)("retained recovery after lost acknowledgement handles progress %s", async (outcome) => {
+  let posted = false;
+  const operation = { id: "app_operation", project_id: "project", resource_id: "app", state: "failed", mutation_hold: true, restore_ownership_held: false, application_database_storage: { version: "application-database.storage.v1", strategy: "replacement_with_interruption", storage_ref: uploadOptions.storage_ref, hash: storageHash }, application_database_storage_state: { version: "application-database.storage.v1", phase: "replacement_failed", receipt_id: "receipt", state_hash: storageHash, previous_state_hash: storageHash, stage_hash: storageHash, candidate_hash: storageHash, recovery_actions: ["resume_predecessor"], recovery_action: "", recovery_state: "none" } };
+  const { fetch } = storageSetup((url, init) => {
+    if (url.endsWith("/database-connection")) return json({ ...connection, state: "held", hold_operation_id: "app_operation" });
+    if (url.includes("/hosting-operations/")) return posted ? json({}, outcome === "forbidden" ? 403 : 503) : json(operation);
+    if (url.endsWith("/database-connection/recovery") && init.method === "POST") { posted = true; return Promise.reject(new TypeError("lost acknowledgement")); }
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Review: Resume previous application" }));
+  const ack = await screen.findByLabelText("I acknowledge application interruption and retained data changes for this recovery.");
+  fireEvent.click(ack);
+  fireEvent.click(screen.getByRole("button", { name: "Resume previous application" }));
+  await screen.findByText(/No confirmed response/);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh database connection" }));
+  if (outcome === "forbidden") {
+    await screen.findByText(/Retained requests and drafts have been cleared/);
+    expect(screen.queryByRole("button", { name: "Retry identical storage recovery request" })).toBeNull();
+  } else {
+    await screen.findByText(/Current progress read: unavailable/);
+    if (outcome === "owner_lost") {
+      act(() => client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "actor", role: "viewer" }]));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Retry identical storage recovery request" })).toBeNull());
+    } else {
+      const retry = screen.getByRole("button", { name: "Retry identical storage recovery request" });
+      await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(retry);
+      await waitFor(() => expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(2));
+      const bodies = fetch.mock.calls.filter(([, init]) => init.method === "POST").map(([, init]) => init.body);
+      expect(bodies[0]).toBe(bodies[1]);
+    }
+  }
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(outcome === "unavailable" ? 2 : 1);
+});

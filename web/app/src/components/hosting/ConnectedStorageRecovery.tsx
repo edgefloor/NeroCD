@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 const labels: Record<StorageRecoveryAction, string> = { resume_predecessor: "Resume previous application", complete_replacement: "Complete interrupted replacement" };
 const button = "h-auto min-h-9 max-w-full min-w-0 whitespace-normal break-words";
-export function ConnectedStorageRecovery({ scope, progress, paused, authorize, onDenied, onUpdated }: { scope: DatabaseConnectionScope; progress: ConnectedProgress; paused: boolean; authorize: () => Promise<boolean>; onDenied: () => void; onUpdated: () => Promise<void> }) {
+export function ConnectedStorageRecovery({ scope, progress, paused, readUnavailable = false, authorize, onDenied, onUpdated }: { scope: DatabaseConnectionScope; progress: ConnectedProgress; paused: boolean; readUnavailable?: boolean; authorize: () => Promise<boolean>; onDenied: () => void; onUpdated: () => Promise<void> }) {
   const client = useQueryClient();
   const active = useRef(true), sending = useRef(false), pending = useRef<AbortController | null>(null);
   const [intent, setIntent] = useState<ConnectionStorageRecoveryInput>();
@@ -20,7 +20,7 @@ export function ConnectedStorageRecovery({ scope, progress, paused, authorize, o
     return storageRecoveryInput(recorded, connection, action, key);
   }
   async function run(action: StorageRecoveryAction, submit: boolean) {
-    if (paused || busy || sending.current || conflict || submit && (!intent || !confirmed)) return;
+    if (paused || busy || sending.current || conflict || readUnavailable && !(submit && attempted) || submit && (!intent || !confirmed)) return;
     const controller = new AbortController(); pending.current = controller; sending.current = true; setBusy(true); setError(""); setNotice("");
     let sent = false;
     try {
@@ -63,11 +63,11 @@ export function ConnectedStorageRecovery({ scope, progress, paused, authorize, o
     <p role="status">Recovery status: {progress.storageState.recovery_state}. {progress.storageState.recovery_action ? `Recorded recovery action: ${labels[progress.storageState.recovery_action]}.` : "No recovery request is recorded."}</p>
     {["queued", "running"].includes(progress.storageState.recovery_state) ? <p>Recovery remains pending, including when the original deployment is failed. Status checks are bounded; refresh manually if they stop or become unavailable. Acceptance is not completion.</p> : progress.storageState.recovery_state === "succeeded" ? <p>The server recorded verified recovery settlement. This does not confirm continuous application, HTTPS or database health.</p> : progress.storageState.recovery_state === "uncertain" ? <p role="alert">Recovery outcome is uncertain. Keep ownership held. No completion or data rollback is confirmed.</p> : null}
     <p>The server offers only actions supported by current evidence. Recovery retains existing file data and does not undo application or database writes.</p>
-    {!intent ? progress.storageState.recovery_actions.length ? <div className="flex flex-wrap gap-2">{progress.storageState.recovery_actions.map((action) => <Button key={action} type="button" variant="outline" className={button} disabled={paused || busy || conflict} onClick={() => void run(action, false)}>Review: {labels[action]}</Button>)}</div> : <p>No recovery action is offered. Keep ownership held and request server review of uncertain or missing evidence. Refreshing does not authorize an unlock.</p> : <>
+    {!intent ? progress.storageState.recovery_actions.length ? <div className="flex flex-wrap gap-2">{progress.storageState.recovery_actions.map((action) => <Button key={action} type="button" variant="outline" className={button} disabled={paused || busy || conflict || readUnavailable} onClick={() => void run(action, false)}>Review: {labels[action]}</Button>)}</div> : <p>No recovery action is offered. Keep ownership held and request server review of uncertain or missing evidence. Refreshing does not authorize an unlock.</p> : <>
       <p>Reviewed action: {labels[intent.action]}. Storage generation {intent.application_database_storage.expected_storage_generation} for operation {intent.operation_id}.</p>
       <p>{intent.action === "resume_predecessor" ? "Restart the previous application version only after the server verifies the candidate is stopped. Database writes and uploaded-file changes remain; process recovery does not guarantee data compatibility." : "Continue deployment of the same candidate through a fresh route switch and finalization. This does not restore older file or database data."}</p>
       <label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={paused || busy || conflict} onChange={(event) => setConfirmed(event.target.checked)} /><span>I acknowledge application interruption and retained data changes for this recovery.</span></label>
-      <Button type="button" className={button} disabled={paused || busy || conflict || !confirmed} onClick={() => void run(intent.action, true)}>{attempted ? "Retry identical storage recovery request" : labels[intent.action]}</Button>
+      <Button type="button" className={button} disabled={paused || busy || conflict || !confirmed || readUnavailable && !attempted} onClick={() => void run(intent.action, true)}>{attempted ? "Retry identical storage recovery request" : labels[intent.action]}</Button>
       {attempted ? <p className="break-all">Retained recovery request: {intent.idempotency_key}. Only an identical retry can recover an unconfirmed response.</p> : null}
     </>}
     {conflict ? <><p role="status">Recovery evidence changed. Nothing was resubmitted. Discard this review, then request fresh server choices.</p><Button type="button" variant="outline" className={button} disabled={paused || busy} onClick={() => { setIntent(undefined); setConfirmed(false); setAttempted(false); setConflict(false); setError(""); }}>Discard conflicted recovery review</Button></> : null}
