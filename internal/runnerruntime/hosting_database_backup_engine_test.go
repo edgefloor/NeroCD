@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -411,5 +412,184 @@ func TestDatabaseBackupStageErrorsDoNotRenderCauses(t *testing.T) {
 		if !errors.Is(err, canary) || strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "/private") {
 			t.Fatal("typed diagnostic rendered cause or lost error identity")
 		}
+	}
+}
+
+// Return a fresh observation only after the process ownership check, leaving
+// the exact admitted container and earlier volume-user observations unchanged.
+func backupContainerAfterTop(t *testing.T, f *databaseFake, id string, change func(map[string]any)) {
+	t.Helper()
+	original := f.hook
+	afterTop := false
+	f.hook = func(ctx context.Context, args []string) ([]byte, error, bool) {
+		if len(args) >= 3 && args[0] == "container" && args[1] == "top" && args[2] == id {
+			afterTop = true
+		}
+		if len(args) >= 3 && args[0] == "container" && args[1] == "inspect" && args[2] == id && afterTop {
+			afterTop = false
+			raw, err := json.Marshal(f.containers[id])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var observation map[string]any
+			if err := json.Unmarshal(raw, &observation); err != nil {
+				t.Fatal(err)
+			}
+			change(observation)
+			raw, err = json.Marshal(observation)
+			return raw, err, true
+		}
+		return original(ctx, args)
+	}
+}
+
+func TestDatabaseBackupMountOrderPreservesPreflightAndRecheck(t *testing.T) {
+	for _, mode := range []string{"backup", "restore"} {
+		for _, reversed := range []bool{false, true} {
+			name := "unchanged"
+			if reversed {
+				name = "reversed"
+			}
+			t.Run(mode+"/"+name, func(t *testing.T) {
+				fixture := backupEngineFixture
+				if mode == "restore" {
+					fixture = backupRestoreEngineFixture
+				}
+				e, f, p := fixture(t)
+				h := p.Source
+				if mode == "restore" {
+					h = *p.Target
+				}
+				original := domain.HostingDocumentHash(f.containers[h.ContainerID])
+				creates, starts, stops, removes := f.creates, f.starts, f.stops, f.removes
+				backupContainerAfterTop(t, f, h.ContainerID, func(observation map[string]any) {
+					mounts := observation["Mounts"].([]any)
+					if len(mounts) != 2 {
+						t.Fatal("exact data and credential mounts missing")
+					}
+					if reversed {
+						mounts[0], mounts[1] = mounts[1], mounts[0]
+					}
+				})
+				effects := 0
+				e.stream = func(_ context.Context, args []string, in io.Reader, out io.Writer) error {
+					if slices.Contains(args, "pg_dump") {
+						effects++
+						_, err := out.Write([]byte("PGDMPsynthetic_fixture"))
+						return err
+					}
+					if slices.Contains(args, "--single-transaction") {
+						effects++
+						raw, err := io.ReadAll(in)
+						if err != nil || !bytes.HasPrefix(raw, []byte("PGDMP")) {
+							t.Fatal("restore lost exact archive input")
+						}
+					}
+					return nil
+				}
+				if err := e.preflight(t.Context(), p); err != nil {
+					t.Fatalf("order-equivalent preflight rejected: %v", err)
+				}
+				if _, err := e.run(t.Context(), p, f.before); err != nil || effects != 1 {
+					t.Fatalf("order-equivalent recheck rejected: %v effects=%d", err, effects)
+				}
+				if original != domain.HostingDocumentHash(f.containers[h.ContainerID]) || f.creates != creates || f.starts != starts || f.stops != stops || f.removes != removes {
+					t.Fatal("comparison mutated container observation or lifecycle")
+				}
+			})
+		}
+	}
+}
+
+func TestDatabaseBackupMountComparisonDoesNotMutateObservations(t *testing.T) {
+	e, f, p := backupEngineFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	first, err := e.image.inspectDatabaseContainer(ctx, p.Source.ContainerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Mounts) != 2 {
+		t.Fatal("exact data and credential mounts missing")
+	}
+	// Ensure normalization would change this slice if the helper failed to copy.
+	if first.Mounts[0].Type == "bind" {
+		slices.Reverse(first.Mounts)
+	}
+	second := first
+	second.Mounts = slices.Clone(first.Mounts)
+	slices.Reverse(second.Mounts)
+	priorFirst, priorSecond := domain.HostingDocumentHash(first), domain.HostingDocumentHash(second)
+	if databaseBackupContainerHash(first) != databaseBackupContainerHash(second) || domain.HostingDocumentHash(first) != priorFirst || domain.HostingDocumentHash(second) != priorSecond || f.creates != 1 {
+		t.Fatal("comparison changed an input observation or dropped order equivalence")
+	}
+}
+
+func TestDatabaseBackupMountOrderStillRejectsIdentityDrift(t *testing.T) {
+	for _, field := range []string{"mount_type", "mount_name", "mount_driver", "mount_source", "mount_destination", "mount_rw", "mount_count", "mount_duplicate", "container_id", "container_name", "image", "labels", "pid", "running", "status", "network_id", "endpoint_id", "address", "aliases", "dns_names", "environment", "host_privileged", "host_network", "host_ports"} {
+		t.Run(field, func(t *testing.T) {
+			e, f, p := backupEngineFixture(t)
+			backupContainerAfterTop(t, f, p.Source.ContainerID, func(observation map[string]any) {
+				mounts := observation["Mounts"].([]any)
+				mount := mounts[0].(map[string]any)
+				state := observation["State"].(map[string]any)
+				config := observation["Config"].(map[string]any)
+				network := observation["NetworkSettings"].(map[string]any)["Networks"].(map[string]any)[p.SourcePlan.Database.NetworkName].(map[string]any)
+				switch field {
+				case "mount_type":
+					mount["Type"] = "foreign"
+				case "mount_name":
+					mount["Name"] = "foreign"
+				case "mount_driver":
+					mount["Driver"] = "foreign"
+				case "mount_source":
+					mount["Source"] = "foreign"
+				case "mount_destination":
+					mount["Destination"] = "foreign"
+				case "mount_rw":
+					mount["RW"] = !mount["RW"].(bool)
+				case "mount_count":
+					observation["Mounts"] = mounts[:1]
+				case "mount_duplicate":
+					mounts[1] = mounts[0]
+				case "container_id":
+					observation["Id"] = strings.Repeat("c", 64)
+				case "container_name":
+					observation["Name"] = "/foreign"
+				case "image":
+					observation["Image"] = "sha256:" + strings.Repeat("c", 64)
+				case "labels":
+					config["Labels"].(map[string]any)[imageOperationLabel] = "foreign"
+				case "pid":
+					state["Pid"] = 4322
+				case "running":
+					state["Running"] = false
+				case "status":
+					state["Status"] = "paused"
+				case "network_id":
+					network["NetworkID"] = strings.Repeat("c", 64)
+				case "endpoint_id":
+					network["EndpointID"] = strings.Repeat("c", 64)
+				case "address":
+					network["IPAddress"] = "172.30.0.99"
+				case "aliases":
+					network["Aliases"] = []string{"foreign"}
+				case "dns_names":
+					network["DNSNames"] = []string{"foreign"}
+				case "environment":
+					config["Env"] = []string{"FOREIGN=value"}
+				case "host_privileged":
+					observation["HostConfig"].(map[string]any)["Privileged"] = true
+				case "host_network":
+					observation["HostConfig"].(map[string]any)["NetworkMode"] = "host"
+				case "host_ports":
+					observation["HostConfig"].(map[string]any)["PortBindings"] = map[string]any{"5432/tcp": []any{map[string]any{"HostIp": "0.0.0.0", "HostPort": "5432"}}}
+				}
+				mounts[0], mounts[len(mounts)-1] = mounts[len(mounts)-1], mounts[0]
+			})
+			if err := e.preflight(t.Context(), p); err == nil || err.Error() != "database backup execution failed at preflight/stability" {
+				t.Fatalf("genuine %s drift was accepted: %v", field, err)
+			}
+		})
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -192,6 +194,30 @@ func (e *databaseBackupEngine) Close() error {
 	return errors.Join(e.root.Close(), e.store.Close(), e.image.Close())
 }
 
+// Docker reports mounts as an unordered collection. Preserve every tuple and
+// its multiplicity while comparing fresh copies of the observation slices.
+func databaseBackupContainerHash(container databaseContainer) string {
+	container.Mounts = slices.Clone(container.Mounts)
+	sort.Slice(container.Mounts, func(i, j int) bool {
+		a, b := container.Mounts[i], container.Mounts[j]
+		switch {
+		case a.Type != b.Type:
+			return a.Type < b.Type
+		case a.Name != b.Name:
+			return a.Name < b.Name
+		case a.Driver != b.Driver:
+			return a.Driver < b.Driver
+		case a.Source != b.Source:
+			return a.Source < b.Source
+		case a.Destination != b.Destination:
+			return a.Destination < b.Destination
+		default:
+			return !a.RW && b.RW
+		}
+	})
+	return domain.HostingDocumentHash(container)
+}
+
 // inspect is existing-only. No creation, adoption, network edits or secret
 // delivery is possible on this path. The controller owns the full saved proof.
 func (e *databaseBackupEngine) inspect(ctx context.Context, h domain.HostingHealthy, p domain.HostingApplyPlan, storage domain.HostingStorage) error {
@@ -227,7 +253,7 @@ func (e *databaseBackupEngine) inspect(ctx context.Context, h domain.HostingHeal
 		return failure(databaseBackupStageProcess)
 	}
 	current, err := e.image.inspectDatabaseContainer(ctx, h.ContainerID)
-	if err != nil || domain.HostingDocumentHash(current) != domain.HostingDocumentHash(c) {
+	if err != nil || databaseBackupContainerHash(current) != databaseBackupContainerHash(c) {
 		return failure(databaseBackupStageStability)
 	}
 	if e.image.verifyDaemon(ctx, r.Daemon) != nil {
