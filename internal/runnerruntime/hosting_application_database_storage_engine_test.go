@@ -6,12 +6,168 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
 )
+
+// Use the production engine and protected process adapter. Read-only Docker
+// observations are scripted; container create itself executes the test binary.
+func TestApplicationDatabaseStorageCreateUsesProtectedTransport(t *testing.T) {
+	for _, kind := range []string{"postgresql", "redis"} {
+		for _, retained := range []bool{false, true} {
+			name := kind + "/first_volume"
+			if retained {
+				name = kind + "/retained_volume"
+			}
+			for _, mode := range []string{"success", "revoked", "cancelled", "expired", "process_failure"} {
+				t.Run(name+"/"+mode, func(t *testing.T) {
+					f, original := applicationDatabaseFixture(t, kind, true)
+					metadata, err := original.Metadata()
+					if err != nil {
+						t.Fatal(err)
+					}
+					previous := f.in.Proof.Members[0].ApplicationHealthy
+					previous.Snapshot = f.in.Plan.Snapshot
+					id, volume := domain.HostingStorageIdentity(f.in.Plan.Snapshot.BindingID)
+					storage := domain.HostingStorage{ID: id, ProjectID: f.in.Proof.ApplicationProjectID, ResourceID: previous.Snapshot.ResourceID, BindingID: previous.Snapshot.BindingID, DestinationID: previous.Snapshot.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: "/data/uploads", AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: "actor", CreatedAt: time.Now().UTC()}
+					storage.Hash = storage.DocumentHash()
+					snapshot := f.in.Plan.Snapshot
+					snapshot.Storage, snapshot.PolicyVersion = storage.Reference(), domain.HostingApplicationDatabaseStoragePolicyVersion
+					originOperation, originPlan := f.in.Proof.OperationID, ""
+					if retained {
+						originOperation, originPlan = previous.OperationID, previous.PlanHash
+					}
+					descriptor := domain.HostingStoragePlan{Reference: storage.Reference(), VolumeName: volume, MountPath: storage.MountPath, CreationOperationID: originOperation, CreationNonce: domain.HostingStorageCreationNonce(storage.Reference(), originOperation, f.in.Plan.Release.DaemonID), DaemonID: f.in.Plan.Release.DaemonID}
+					if retained {
+						previous.Snapshot = snapshot
+						previous.Storage = &domain.HostingHealthyStorage{Plan: descriptor, CreationPlanHash: originPlan}
+						c := f.apps[previous.ContainerID]
+						c.Mounts, c.HostConfig.Mounts = connectedTransportMounts(volume, storage.MountPath)
+						f.apps[c.ID] = c
+					}
+					f.in.Proof.Members[0].ApplicationHealthy = previous
+					plan, err := domain.CompileHostingApplicationDatabaseStoragePlan(snapshot, f.in.Plan.Release, &previous, nil, f.in.Proof, descriptor)
+					if err != nil {
+						t.Fatal("storage transition plan", err)
+					}
+					if !retained {
+						originPlan = plan.Hash
+					}
+					f.in.Plan = plan
+					origin := domain.HostingStorageMaterialization{StorageRef: storage.Reference(), State: "materialized", CreationOperationID: originOperation, CreationPlanHash: originPlan, CreationNonce: descriptor.CreationNonce, DaemonID: descriptor.DaemonID, MaterializedReceipt: &domain.HostingReceipt{ID: "materialized", BodyHash: domain.HostingDocumentHash("volume"), CreatedAt: time.Now().UTC()}}
+					origin.Labels = domain.ExpectedHostingStorageLabels(storage, origin)
+					storageProof := domain.NewHostingApplicationDatabaseStorage(storage.Reference())
+					op := domain.HostingOperation{Plan: &plan, Snapshot: snapshot, ProjectID: storage.ProjectID, ResourceID: storage.ResourceID, BindingID: storage.BindingID, ID: f.in.Proof.OperationID, ApplicationDatabaseStorage: &storageProof}
+					if err = f.e.bindStorage(op, domain.HostingStorageCreateAck{Storage: storage, Materialization: origin}); err != nil {
+						t.Fatal("saved volume binding", err)
+					}
+					req := *f.e.storage
+					originHash := domain.HostingDocumentHash(req)
+					installHostingEnvironmentTestDocker(t)
+					f.e.create = f.e.image.createWithAuthorizedRuntimeEnvironment
+					f.e.image.command = imageCommandFunc(func(ctx context.Context, command string, args []string, dir string, env []string) ([]byte, error) {
+						a := args[4:]
+						if a[0] == "volume" && a[1] == "ls" {
+							return []byte(volume), nil
+						}
+						if a[0] == "volume" && a[1] == "inspect" {
+							return json.Marshal(ownedVolumeInspection(req))
+						}
+						if a[0] == "container" && a[1] == "ls" && a[len(a)-1] == "volume="+volume {
+							if retained {
+								return []byte(previous.ContainerID), nil
+							}
+							return nil, nil
+						}
+						if a[0] == "container" && a[1] == "inspect" && a[2] == strings.Repeat("a", 64) {
+							if _, err := os.Stat(filepath.Join(f.e.image.configDir, "observation.json")); err != nil {
+								t.Fatal("candidate inspection without the protected process")
+							}
+							c := f.app(a[2], f.in.Proof.OperationID, plan.Hash, f.in.Proof.CreateNonce, false)
+							c.Mounts, c.HostConfig.Mounts = connectedTransportMounts(volume, storage.MountPath)
+							return json.Marshal(c)
+						}
+						return f.command(ctx, command, args, dir, env)
+					})
+					if _, err = f.e.StopStoragePredecessor(t.Context(), f.in, f.before); err != nil {
+						t.Fatal("predecessor must stop before mounted create", err)
+					}
+					metadata.PlanHash = plan.Hash
+					value := "private-canary-value"
+					if mode == "process_failure" {
+						// A valid transport value deliberately rejected by the
+						// scripted Docker process after stdin was delivered.
+						value = "fixture-helper-rejects"
+					}
+					environment, err := hostingruntimeprotocol.NewEnvironment(metadata, []hostingruntimeprotocol.Entry{{Name: f.in.Proof.Binding.EnvironmentNames[0], Value: []byte(value)}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer environment.Close()
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					deadline := time.Now().Add(time.Minute)
+					if mode == "expired" {
+						deadline = time.Now().Add(-time.Second)
+					}
+					authorizations := 0
+					candidate, err := f.e.CreateStopped(ctx, f.in, environment, deadline, func(ctx context.Context) error {
+						authorizations++
+						if f.apps[previous.ContainerID].State.Running {
+							t.Fatal("create authority preceded predecessor quiescence")
+						}
+						if mode == "revoked" {
+							return errors.New("private-canary-value")
+						}
+						if mode == "cancelled" {
+							cancel()
+						}
+						return ctx.Err()
+					})
+					observation, readErr := os.ReadFile(filepath.Join(f.e.image.configDir, "observation.json"))
+					if mode == "success" {
+						if err != nil || candidate.ContainerID != strings.Repeat("a", 64) || authorizations != 1 || readErr != nil {
+							t.Fatalf("production mounted create failed: err=%v auth=%d process=%v", err, authorizations, readErr)
+						}
+						var got struct {
+							Args, Env []string
+							Launches  int
+						}
+						if json.Unmarshal(observation, &got) != nil || got.Launches != 1 || strings.Count(strings.Join(got.Args, "|"), "--mount") != 1 || !strings.Contains(strings.Join(got.Args, "|"), "--mount|type=volume,src="+volume+",dst=/data/uploads,volume-nocopy") || strings.Contains(string(observation), "private-canary") {
+							t.Fatal("protected process lost canonical singleton mount or leaked values")
+						}
+					} else if mode == "process_failure" {
+						if !errors.Is(err, errApplicationDatabaseCreateUncertain) || readErr != nil || candidate.ContainerID != "" {
+							t.Fatal("failed process did not retain the uncertain creation boundary", err)
+						}
+					} else if err == nil || errors.Is(err, errApplicationDatabaseCreateUncertain) || !os.IsNotExist(readErr) {
+						t.Fatalf("denied create launched or lost prelaunch certainty: %v", err)
+					}
+					expectedAuthorizations := 1
+					if mode == "expired" {
+						expectedAuthorizations = 0
+					}
+					if authorizations != expectedAuthorizations {
+						t.Fatal("create did not reach the expected fresh-authority boundary")
+					}
+					if f.apps[previous.ContainerID].State.Running || domain.HostingDocumentHash(*f.e.storage) != originHash || strings.Join(f.effects, ",") != "stop" {
+						t.Fatal("create changed retained storage or single-writer recovery boundary")
+					}
+				})
+			}
+		}
+	}
+}
+
+func connectedTransportMounts(volume, target string) ([]json.RawMessage, []json.RawMessage) {
+	return []json.RawMessage{json.RawMessage(`{"Type":"volume","Name":"` + volume + `","Driver":"local","Destination":"` + target + `","RW":true}`)}, []json.RawMessage{json.RawMessage(`{"Type":"volume","Source":"` + volume + `","Target":"` + target + `","VolumeOptions":{"NoCopy":true}}`)}
+}
 
 func TestApplicationDatabaseStorageMountScopeRemainsClosed(t *testing.T) {
 	f, env := applicationDatabaseFixture(t, "redis", false)

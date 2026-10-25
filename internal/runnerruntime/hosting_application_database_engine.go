@@ -134,22 +134,27 @@ func (e *applicationDatabaseEngine) CreateStopped(ctx context.Context, in applic
 	for _, pair := range [][2]string{{imageBindingLabel, in.Plan.Snapshot.BindingID}, {imageOperationLabel, c.OperationID}, {imageReleaseLabel, in.Plan.Release.Hash}, {imagePlanLabel, c.PlanHash}, {applicationDatabaseNonceLabel, c.CreateNonce}} {
 		flags = append(flags, "--label", pair[0]+"="+pair[1])
 	}
-	if in.Plan.Storage != nil {
-		flags = append(flags, "--mount", "type=volume,src="+in.Plan.Storage.VolumeName+",dst="+in.Plan.Storage.MountPath+",volume-nocopy")
-	}
 	launched := false
 	err = environment.WithValues(func(entries []hostingruntimeprotocol.Entry) error {
 		values := make(map[string][]byte, len(entries))
 		for _, entry := range entries {
 			values[entry.Name] = entry.Value
 		}
-		id, createErr := e.create(work, c.DaemonID, flags, hostingReleaseImage(in.Plan.Release), values, func(ctx context.Context) error {
+		before := func(ctx context.Context) error {
 			if ctx.Err() != nil || beforeEffect(ctx) != nil || ctx.Err() != nil || e.storageGuard(ctx, in, nil, true) != nil {
 				return errApplicationDatabaseEngine
 			}
 			launched = true
 			return nil
-		})
+		}
+		var id string
+		var createErr error
+		if in.Plan.Storage != nil {
+			storage := hostingEnvironmentOwnedStorage{Volume: *e.storage, Plan: *in.Plan.Storage}
+			id, createErr = e.image.createWithAuthorizedOwnedStorageRuntimeEnvironment(work, c.DaemonID, flags, hostingReleaseImage(in.Plan.Release), values, storage, before)
+		} else {
+			id, createErr = e.create(work, c.DaemonID, flags, hostingReleaseImage(in.Plan.Release), values, before)
+		}
 		if dockerObjectID.MatchString(id) {
 			c.ContainerID = id
 		}

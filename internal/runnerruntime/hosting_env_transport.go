@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/distribution/reference"
+
+	"nerocd/internal/domain"
 )
 
 var hostingEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
@@ -96,7 +98,7 @@ func (b *hostingEnvironmentOutput) Write(p []byte) (int, error) {
 // that uncertain outcome and must not retry the mutation automatically.
 // Docker's trusted daemon administrator can inspect the resulting Config.Env.
 func (e *imageEngine) createWithRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte) (string, error) {
-	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, nil)
+	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, nil, nil)
 }
 
 // createWithAuthorizedRuntimeEnvironment requires a fresh admission check after
@@ -105,13 +107,46 @@ func (e *imageEngine) createWithAuthorizedRuntimeEnvironment(ctx context.Context
 	if before == nil {
 		return "", errors.New("hosting runtime environment create requires authority")
 	}
-	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, before)
+	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, before, nil)
 }
 
-func (e *imageEngine) createRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte, before func(context.Context) error) (string, error) {
+// hostingEnvironmentOwnedStorage borrows saved controller provenance and the
+// compiled plan for one synchronous create. Neither document grants creation
+// permission or authorizes a writer; the caller must supply fresh authority.
+type hostingEnvironmentOwnedStorage struct {
+	Volume hostingOwnedVolumeRequest
+	Plan   domain.HostingStoragePlan
+}
+
+func (s hostingEnvironmentOwnedStorage) mount(daemonID string) (string, error) {
+	r, p := s.Volume, s.Plan
+	if r.validate() != nil || r.CreatePermitted || r.DaemonID != daemonID || p.DaemonID != daemonID || p.Reference != r.Storage.Reference() || p.VolumeName != r.Storage.VolumeName || p.MountPath != r.Storage.MountPath || p.CreationOperationID != r.OriginOperationID || p.CreationNonce != r.CreationNonce || p.CreationNonce != domain.HostingStorageCreationNonce(p.Reference, p.CreationOperationID, p.DaemonID) {
+		return "", errors.New("hosting runtime environment storage mismatch")
+	}
+	return "type=volume,src=" + p.VolumeName + ",dst=" + p.MountPath + ",volume-nocopy", nil
+}
+
+// Only the connected application engine selects this adapter after its retained
+// volume and stopped-predecessor checks. Raw mount flags remain forbidden.
+func (e *imageEngine) createWithAuthorizedOwnedStorageRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte, storage hostingEnvironmentOwnedStorage, before func(context.Context) error) (string, error) {
+	if before == nil {
+		return "", errors.New("hosting runtime environment create requires authority")
+	}
+	return e.createRuntimeEnvironment(ctx, daemonID, createFlags, image, values, before, &storage)
+}
+
+func (e *imageEngine) createRuntimeEnvironment(ctx context.Context, daemonID string, createFlags []string, image string, values map[string][]byte, before func(context.Context) error, storage *hostingEnvironmentOwnedStorage) (string, error) {
 	failed := errors.New("hosting runtime environment container create failed")
 	if !validHostingEnvironmentCreate(createFlags, image) {
 		return "", failed
+	}
+	if storage != nil {
+		mount, err := storage.mount(daemonID)
+		if err != nil {
+			return "", failed
+		}
+		// Own the appended flags; do not mutate the caller's backing array.
+		createFlags = append(append([]string(nil), createFlags...), "--mount", mount)
 	}
 	body, err := encodeHostingEnvironment(values)
 	if err != nil {

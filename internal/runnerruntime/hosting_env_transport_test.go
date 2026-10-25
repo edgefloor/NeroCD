@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"nerocd/internal/domain"
 )
 
 func TestAuthorizedRuntimeEnvironmentCreateRechecksAfterInspection(t *testing.T) {
@@ -141,9 +143,14 @@ func hostingEnvironmentHelper() int {
 	if err != nil || len(body) > hostingEnvironmentInputLimit {
 		return 3
 	}
+	var previous struct{ Launches int }
+	if raw, readErr := os.ReadFile("observation.json"); readErr == nil {
+		_ = json.Unmarshal(raw, &previous)
+	}
 	observation, _ := json.Marshal(struct {
 		Args, Env []string
-	}{os.Args[1:], os.Environ()})
+		Launches  int
+	}{os.Args[1:], os.Environ(), previous.Launches + 1})
 	if os.WriteFile("observation.json", observation, 0o600) != nil {
 		return 4
 	}
@@ -157,7 +164,8 @@ func hostingEnvironmentHelper() int {
 	case "invalid":
 		_, _ = os.Stdout.Write(body)
 	default:
-		if string(body) != "APP_EMPTY=\nAPP_SECRET=fixture-value-$#= Unicode-árvíz  \n" {
+		connected := strings.Contains(mode, "_appdb_") && (string(body) == "PGDATABASE=private-canary-value\n" || string(body) == "REDIS_HOST=private-canary-value\n")
+		if !connected && string(body) != "APP_EMPTY=\nAPP_SECRET=fixture-value-$#= Unicode-árvíz  \n" {
 			return 5
 		}
 		if _, err := fmt.Fprintln(os.Stdout, strings.Repeat("a", 64)); err != nil {
@@ -216,7 +224,7 @@ func TestHostingEnvTransportEncoding(t *testing.T) {
 	}
 }
 
-func hostingEnvironmentTestEngine(t *testing.T) *imageEngine {
+func installHostingEnvironmentTestDocker(t *testing.T) {
 	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
@@ -227,11 +235,110 @@ func hostingEnvironmentTestEngine(t *testing.T) *imageEngine {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func hostingEnvironmentTestEngine(t *testing.T) *imageEngine {
+	t.Helper()
+	installHostingEnvironmentTestDocker(t)
 	e := testImageEngine(t)
 	e.command = imageCommandFunc(func(context.Context, string, []string, string, []string) ([]byte, error) {
 		return []byte(`"qualified-daemon"`), nil
 	})
 	return e
+}
+
+func TestHostingOwnedStorageEnvTransportRejectsUnscopedOrChangedMounts(t *testing.T) {
+	for _, mode := range []string{"success", "foreign_volume", "changed_origin", "changed_nonce", "changed_daemon", "bind_source", "changed_target", "permission", "raw_mount", "extra_mount", "bind_mount", "short_volume", "equals_mount", "nil_authority", "revoked"} {
+		t.Run(mode, func(t *testing.T) {
+			e := hostingEnvironmentTestEngine(t)
+			storage := hostingEnvironmentTestStorage(t)
+			req := storage.Volume
+			flags := make([]string, 2, 8)
+			copy(flags, []string{"--name", "success"})
+			backing := flags[:cap(flags)]
+			authorizations := 0
+			before := func(ctx context.Context) error {
+				authorizations++
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > time.Minute {
+					t.Error("protected create lost bounded lifetime")
+				}
+				if mode == "revoked" {
+					return errors.New("private-canary-value")
+				}
+				return ctx.Err()
+			}
+			switch mode {
+			case "foreign_volume":
+				storage.Plan.VolumeName = "foreign"
+			case "changed_origin":
+				storage.Volume.OriginOperationID = "foreign"
+			case "changed_nonce":
+				storage.Plan.CreationNonce, storage.Volume.CreationNonce = strings.Repeat("f", 32), strings.Repeat("f", 32)
+			case "changed_daemon":
+				storage.Volume.DaemonID = "foreign"
+			case "bind_source":
+				storage.Volume.Storage.VolumeName = "/tmp"
+			case "changed_target":
+				storage.Plan.MountPath = "/other"
+			case "permission":
+				storage.Volume.CreatePermitted = true
+			case "raw_mount":
+				flags = append(flags, "--mount", "type=volume,src="+req.Storage.VolumeName+",dst=/data/uploads,volume-nocopy")
+			case "extra_mount":
+				flags = append(flags, "--mount", "type=volume,src="+req.Storage.VolumeName+",dst=/data/uploads,volume-nocopy", "--mount", "type=volume,src=foreign,dst=/extra,volume-nocopy")
+			case "bind_mount":
+				flags = append(flags, "--mount", "type=bind,src=/tmp,dst=/data/uploads")
+			case "short_volume":
+				flags = append(flags, "-v", "owned:/data/uploads")
+			case "equals_mount":
+				flags = append(flags, "--mount=type=volume,src=owned,dst=/data/uploads")
+			case "nil_authority":
+				before = nil
+			}
+			if mode == "raw_mount" {
+				if _, err := e.createWithAuthorizedRuntimeEnvironment(t.Context(), req.DaemonID, flags, "sha256:"+strings.Repeat("b", 64), nil, before); err == nil {
+					t.Fatal("unscoped transport accepted a canonical-looking mount")
+				}
+			}
+			id, err := e.createWithAuthorizedOwnedStorageRuntimeEnvironment(t.Context(), req.DaemonID, flags, "sha256:"+strings.Repeat("b", 64), map[string][]byte{"APP_EMPTY": {}, "APP_SECRET": []byte("fixture-value-$#= Unicode-árvíz  ")}, storage, before)
+			raw, readErr := os.ReadFile(filepath.Join(e.configDir, "observation.json"))
+			expectedAuthorizations := 0
+			if mode == "revoked" {
+				expectedAuthorizations = 1
+			}
+			if mode == "success" {
+				if err != nil || id != strings.Repeat("a", 64) || authorizations != 1 || readErr != nil || strings.Count(string(raw), "--mount") != 1 {
+					t.Fatal("exact owned mount did not reach one authorized process", err)
+				}
+				for _, value := range backing[2:] {
+					if value != "" {
+						t.Fatal("transport appended mount into caller-owned backing array")
+					}
+				}
+			} else if err == nil || id != "" || !os.IsNotExist(readErr) || strings.Contains(err.Error(), "private-canary") || authorizations != expectedAuthorizations {
+				t.Fatal("invalid scope or revoked authority reached protected process", err)
+			}
+		})
+	}
+}
+
+func hostingEnvironmentTestStorage(t *testing.T) hostingEnvironmentOwnedStorage {
+	t.Helper()
+	req := ownedVolumeRequest(t)
+	req.DaemonID = "qualified-daemon"
+	req.CreationNonce = domain.HostingStorageCreationNonce(req.Storage.Reference(), req.OriginOperationID, req.DaemonID)
+	return hostingEnvironmentOwnedStorage{Volume: req, Plan: domain.HostingStoragePlan{Reference: req.Storage.Reference(), VolumeName: req.Storage.VolumeName, MountPath: req.Storage.MountPath, CreationOperationID: req.OriginOperationID, CreationNonce: req.CreationNonce, DaemonID: req.DaemonID}}
+}
+
+func hostingEnvironmentTestCreate(t *testing.T, e *imageEngine, owned bool) func(context.Context, string, []string, string, map[string][]byte) (string, error) {
+	t.Helper()
+	if !owned {
+		return e.createWithRuntimeEnvironment
+	}
+	storage := hostingEnvironmentTestStorage(t)
+	return func(ctx context.Context, daemon string, flags []string, image string, values map[string][]byte) (string, error) {
+		return e.createWithAuthorizedOwnedStorageRuntimeEnvironment(ctx, daemon, flags, image, values, storage, func(current context.Context) error { return current.Err() })
+	}
 }
 
 func TestHostingEnvTransportCommandContainment(t *testing.T) {
@@ -327,7 +434,16 @@ func TestHostingEnvTransportRejectsBeforeCommand(t *testing.T) {
 }
 
 func TestHostingEnvTransportCancellationKillsBlockedGroup(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("owned_storage=%t", owned), func(t *testing.T) {
+			testHostingEnvTransportCancellationKillsBlockedGroup(t, owned)
+		})
+	}
+}
+
+func testHostingEnvTransportCancellationKillsBlockedGroup(t *testing.T, owned bool) {
 	e := hostingEnvironmentTestEngine(t)
+	create := hostingEnvironmentTestCreate(t, e, owned)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result := make(chan error, 1)
@@ -336,7 +452,7 @@ func TestHostingEnvTransportCancellationKillsBlockedGroup(t *testing.T) {
 		values[fmt.Sprintf("APP_%02d", i)] = bytes.Repeat([]byte("x"), 4096)
 	}
 	go func() {
-		_, err := e.createWithRuntimeEnvironment(ctx, "qualified-daemon", []string{"--name", "blocked"}, "sha256:"+strings.Repeat("b", 64), values)
+		_, err := create(ctx, "qualified-daemon", []string{"--name", "blocked"}, "sha256:"+strings.Repeat("b", 64), values)
 		result <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -377,9 +493,18 @@ func TestHostingEnvTransportCancellationKillsBlockedGroup(t *testing.T) {
 }
 
 func TestHostingEnvTransportEarlyParentExitKillsOwnedDescendant(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("owned_storage=%t", owned), func(t *testing.T) {
+			testHostingEnvTransportEarlyParentExitKillsOwnedDescendant(t, owned)
+		})
+	}
+}
+
+func testHostingEnvTransportEarlyParentExitKillsOwnedDescendant(t *testing.T, owned bool) {
 	for _, mode := range []string{"early-parent-exit", "early-parent-failure", "early-parent-invalid"} {
 		t.Run(mode, func(t *testing.T) {
 			e := hostingEnvironmentTestEngine(t)
+			create := hostingEnvironmentTestCreate(t, e, owned)
 			var pid int
 			defer func() {
 				if pid > 0 {
@@ -388,7 +513,7 @@ func TestHostingEnvTransportEarlyParentExitKillsOwnedDescendant(t *testing.T) {
 			}()
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			id, err := e.createWithRuntimeEnvironment(ctx, "qualified-daemon", []string{"--name", mode}, "sha256:"+strings.Repeat("b", 64), nil)
+			id, err := create(ctx, "qualified-daemon", []string{"--name", mode}, "sha256:"+strings.Repeat("b", 64), nil)
 			raw, readErr := os.ReadFile(filepath.Join(e.configDir, "descendant.pid"))
 			if readErr != nil {
 				t.Fatal("owned descendant handshake missing")
