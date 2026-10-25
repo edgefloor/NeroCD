@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { ConnectedStorageRecovery } from "./ConnectedStorageRecovery";
@@ -22,8 +22,8 @@ function setup(actions: StorageRecoveryAction[] = ["resume_predecessor"], handle
   vi.stubGlobal("fetch", fetch);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const authorize = vi.fn().mockResolvedValue(true), onDenied = vi.fn(), onSubmitting = vi.fn(), onUpdated = vi.fn().mockResolvedValue(undefined);
-  render(<QueryClientProvider client={client}><ConnectedStorageRecovery scope={scope} progress={progress} paused={false} authorize={authorize} onDenied={onDenied} onSubmitting={onSubmitting} onUpdated={onUpdated} /></QueryClientProvider>);
-  return { fetch, raw, authorize, onDenied, onSubmitting, onUpdated };
+  const view = render(<QueryClientProvider client={client}><ConnectedStorageRecovery scope={scope} progress={progress} paused={false} authorize={authorize} onDenied={onDenied} onSubmitting={onSubmitting} onUpdated={onUpdated} /></QueryClientProvider>);
+  return { ...view, fetch, raw, authorize, onDenied, onSubmitting, onUpdated };
 }
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
 async function review(label = "Resume previous application") {
@@ -69,6 +69,20 @@ test.each(["before evidence", "after evidence"])("authority loss %s cannot selec
   await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
   expect(onSubmitting).not.toHaveBeenCalled();
   expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
+});
+test("unmount during final authorization cannot select recovery or send a request", async () => {
+  const { fetch, authorize, onSubmitting, onUpdated, unmount } = setup();
+  const submit = await review();
+  let resolve!: (allowed: boolean) => void;
+  authorize.mockResolvedValueOnce(true).mockImplementationOnce(() => new Promise<boolean>((done) => { resolve = done; }));
+  fireEvent.click(submit);
+  await waitFor(() => expect(resolve).toBeTruthy());
+  expect(authorize).toHaveBeenCalledTimes(4);
+  unmount();
+  await act(async () => resolve(true));
+  expect(onSubmitting).not.toHaveBeenCalled();
+  expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
+  expect(onUpdated).not.toHaveBeenCalled();
 });
 test("unconfirmed recovery retries the exact request even when fresh evidence is unavailable", async () => {
   let posted = false;

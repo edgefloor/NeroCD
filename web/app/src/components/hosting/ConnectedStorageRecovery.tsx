@@ -36,6 +36,7 @@ export function ConnectedStorageRecovery({ scope, progress, paused, readUnavaila
         if (JSON.stringify(current) !== JSON.stringify(body)) throw new ApiError(409, "Recovery evidence changed", null);
       }
       if (!active.current || controller.signal.aborted || !await authorize()) return;
+      if (!active.current || controller.signal.aborted) return;
       // Keep this operation selected even if settlement clears the connection's
       // hold before the response arrives, or the acknowledgement is lost.
       onSubmitting(body.operation_id);
