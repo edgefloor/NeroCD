@@ -302,7 +302,114 @@ func TestDatabaseBackupRestoreNeedsOnlyTargetLockAndNeverSourceHealth(t *testing
 	defer func() { _ = targetLock.Close() }()
 	blocked, stop := context.WithTimeout(ctx, 30*time.Millisecond)
 	defer stop()
-	if _, err = e.run(blocked, p, target.before); err == nil || imports != 1 {
-		t.Fatal("target exclusivity was bypassed")
+	if _, err = e.run(blocked, p, target.before); err == nil || imports != 1 || err.Error() != "database backup execution failed at execution/binding_lock" {
+		t.Fatal("target exclusivity was bypassed or its failure boundary was lost")
+	}
+}
+
+func TestDatabaseBackupRestoreClosedFailureStages(t *testing.T) {
+	canary := errors.New("private_tool_path_password_canary")
+	for _, tc := range []struct {
+		name, want string
+		imports    int
+	}{
+		{"history", "recheck/history", 0},
+		{"daemon", "recheck/daemon", 0},
+		{"container_read", "recheck/container_read", 0},
+		{"container_identity", "recheck/container_identity", 0},
+		{"volume", "recheck/volume", 0},
+		{"process", "recheck/process", 0},
+		{"stability", "recheck/stability", 0},
+		{"list", "recheck/archive_list", 0},
+		{"authority", "execution/authority", 0},
+		{"archive", "execution/archive", 0},
+		{"restore", "execution/restore", 1},
+		{"post_inspection", "post_import/container_identity", 1},
+		{"post_authority", "post_import/authority", 1},
+		{"readiness", "post_import/readiness", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, f, p := backupRestoreEngineFixture(t)
+			imports, authorizations := 0, 0
+			processObserved := false
+			creates, starts, stops, removes := f.creates, f.starts, f.stops, f.removes
+			originalHook := f.hook
+			f.hook = func(ctx context.Context, args []string) ([]byte, error, bool) {
+				if len(args) >= 2 && args[0] == "container" && args[1] == "inspect" {
+					if tc.name == "container_read" || tc.name == "stability" && processObserved {
+						return nil, canary, true
+					}
+				}
+				if len(args) >= 2 && args[0] == "container" && args[1] == "top" {
+					processObserved = true
+					if tc.name == "process" {
+						return nil, canary, true
+					}
+				}
+				return originalHook(ctx, args)
+			}
+			switch tc.name {
+			case "history":
+				if err := os.Remove(filepath.Join(e.host.stateRoot, p.TargetPlan.Database.NetworkName+".json")); err != nil {
+					t.Fatal(err)
+				}
+			case "daemon":
+				f.req.DaemonID = "private_tool_path_password_canary"
+			case "container_identity":
+				f.containers[p.Target.ContainerID]["Image"] = "sha256:" + strings.Repeat("c", 64)
+			case "volume":
+				f.volume.Name = "private_tool_path_password_canary"
+			}
+			e.stream = func(_ context.Context, args []string, _ io.Reader, _ io.Writer) error {
+				if slices.Contains(args, "--list") && tc.name == "list" {
+					return canary
+				}
+				if slices.Contains(args, "--single-transaction") {
+					imports++
+					if tc.name == "restore" {
+						return canary
+					}
+					if tc.name == "post_inspection" {
+						f.containers[p.Target.ContainerID]["Image"] = "sha256:" + strings.Repeat("c", 64)
+					}
+				}
+				if slices.Contains(args, "pg_isready") && tc.name == "readiness" {
+					return canary
+				}
+				return nil
+			}
+			before := func(ctx context.Context) error {
+				authorizations++
+				if tc.name == "authority" || tc.name == "post_authority" && authorizations == 3 {
+					return canary
+				}
+				if tc.name == "archive" && authorizations == 1 {
+					if err := e.store.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return f.before(ctx)
+			}
+			_, err := e.run(t.Context(), p, before)
+			if err == nil || err.Error() != "database backup execution failed at "+tc.want || !errors.Is(err, errDatabaseBackupHeld) || imports != tc.imports {
+				t.Fatalf("wrong closed execution boundary: err=%v imports=%d", err, imports)
+			}
+			if strings.Contains(err.Error(), canary.Error()) || f.creates != creates || f.starts != starts || f.stops != stops || f.removes != removes {
+				t.Fatal("diagnostic leaked a cause or changed database lifecycle")
+			}
+		})
+	}
+}
+
+func TestDatabaseBackupStageErrorsDoNotRenderCauses(t *testing.T) {
+	canary := errors.New("/private/password=canary; arbitrary guest SQL")
+	for _, err := range []error{
+		databaseBackupErrorAt(databaseBackupPhaseExecution, databaseBackupStageRestore, canary),
+		databaseBackupErrorAt(255, 255, canary),
+		databaseBackupErrorPhase(canary, databaseBackupPhaseRecheck),
+	} {
+		if !errors.Is(err, canary) || strings.Contains(err.Error(), "canary") || strings.Contains(err.Error(), "/private") {
+			t.Fatal("typed diagnostic rendered cause or lost error identity")
+		}
 	}
 }

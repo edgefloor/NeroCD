@@ -41,6 +41,15 @@ func databaseBackupTerminalClass(raw []byte) string {
 		if len(line) == 0 || json.Valid(line) || bytes.HasPrefix(line, []byte("time=")) {
 			continue // Structured runner events and the fixture's server logger.
 		}
+		if raw, ok := bytes.CutPrefix(line, []byte("database backup execution failed at ")); ok {
+			phase, stage, found := strings.Cut(string(raw), "/")
+			phases := map[string]bool{"inspection": true, "preflight": true, "recheck": true, "execution": true, "post_import": true}
+			stages := map[string]bool{"plan": true, "binding_lock": true, "history": true, "daemon": true, "origin": true, "container_read": true, "container_identity": true, "volume": true, "process": true, "stability": true, "daemon_recheck": true, "archive": true, "archive_list": true, "authority": true, "restore": true, "readiness": true}
+			if found && phases[phase] && stages[stage] {
+				return "backup_" + phase + "_" + stage
+			}
+			return "unknown"
+		}
 		switch string(line) {
 		case "invalid or unconfigured database backup task":
 			return "claim_configuration"
@@ -901,8 +910,16 @@ func TestDatabaseBackupDiagnosticTerminalClassesAndRedaction(t *testing.T) {
 			t.Fatalf("known terminal boundary was not retained: %s", want)
 		}
 	}
+	for _, phase := range []string{"inspection", "preflight", "recheck", "execution", "post_import"} {
+		for _, stage := range []string{"plan", "binding_lock", "history", "daemon", "origin", "container_read", "container_identity", "volume", "process", "stability", "daemon_recheck", "archive", "archive_list", "authority", "restore", "readiness"} {
+			message := "database backup execution failed at " + phase + "/" + stage
+			if got := databaseBackupTerminalClass([]byte(message)); got != "backup_"+phase+"_"+stage {
+				t.Fatal("closed stage classification unavailable")
+			}
+		}
+	}
 	canary := "ncr_diagnostic_canary_private_value"
-	for _, raw := range []string{canary, "invalid database backup plan response: " + canary, "invalid database backup plan response\n" + canary, "{" + canary, strings.Repeat("x", (1<<20)+1)} {
+	for _, raw := range []string{canary, "database backup execution failed at execution/restore: " + canary, "database backup execution failed at execution/" + canary, "database backup execution failed at unknown/restore", "database backup execution failed at execution/unknown", "invalid database backup plan response: " + canary, "invalid database backup plan response\n" + canary, "{" + canary, strings.Repeat("x", (1<<20)+1)} {
 		if got := databaseBackupTerminalClass([]byte(raw)); got != "unknown" {
 			t.Fatal("unknown or canary-bearing terminal content became evidence")
 		}

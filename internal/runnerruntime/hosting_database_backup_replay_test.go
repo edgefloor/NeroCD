@@ -5,6 +5,7 @@ package runnerruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -233,5 +234,95 @@ func TestDatabaseBackupReceiptCannotRetireForeignProjection(t *testing.T) {
 		if databaseBackupReceiptMatches(p, entry.Request, changed) {
 			t.Fatal("foreign receipt permitted journal retirement")
 		}
+	}
+}
+
+func TestDatabaseBackupCoordinatorRetainsUncertainStageAndNeverRepeatsImport(t *testing.T) {
+	e, f, p := backupRestoreEngineFixture(t)
+	initialCreates := f.creates
+	now := time.Now().UTC()
+	p.Operation.CreatedAt, p.Operation.UpdatedAt = now, now
+	p.Operation.Consistency = "logical_snapshot_source_writable"
+	p.Hash = ""
+	p.Hash = domain.HostingDocumentHash(p)
+	lease := domain.RunLease{ID: "lease", RunID: "db_backup_" + p.Operation.ID, RunnerID: p.RunnerID, Attempt: 1, Fence: "fence", Status: domain.LeaseActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
+	claim := domain.ClaimedRun{Lease: lease, Run: domain.TaskRun{ID: lease.RunID, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseBackup, HostingOperationID: p.Operation.ID, HostingMode: "restore"}}, PrimitivePlan: domain.RunnerPrimitivePlan{RunID: lease.RunID}}
+	path := filepath.Join(t.TempDir(), "journal")
+	j, err := runner.OpenAttemptJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = j.Close() })
+	mutations := make(chan domain.HostingDatabaseBackupMutation, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/runners/hosting/database-backup/plan":
+			_ = json.NewEncoder(w).Encode(p)
+		case "/api/v1/runners/lease":
+			_ = json.NewEncoder(w).Encode(lease)
+		case "/api/v1/runners/hosting/database-backup/mutation":
+			var in domain.HostingDatabaseBackupMutation
+			if json.NewDecoder(r.Body).Decode(&in) != nil {
+				t.Error("invalid mutation")
+				w.WriteHeader(400)
+				return
+			}
+			found := false
+			for _, entry := range j.Snapshot().DatabaseBackup {
+				found = found || domain.HostingDocumentHash(entry.Request) == domain.HostingDocumentHash(in)
+			}
+			if !found {
+				t.Error("uncertain result sent before durable append")
+			}
+			mutations <- in
+			out := p.Operation
+			out.State = "applying"
+			if in.Phase == "uncertain" {
+				out.State, out.FailureCode = "uncertain", "execution_failed"
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			t.Error("unexpected effect or generic completion endpoint")
+			w.WriteHeader(400)
+		}
+	}))
+	t.Cleanup(server.Close)
+	imports := 0
+	e.stream = func(_ context.Context, args []string, _ io.Reader, _ io.Writer) error {
+		if strings.Contains(strings.Join(args, " "), "--single-transaction") {
+			imports++
+			return errors.New("arbitrary private SQL/password/path canary")
+		}
+		return nil
+	}
+	ctx := runnerclient.WithDatabaseTransport(t.Context(), runnerclient.DatabaseTransport{TrustedLoopbackHTTP: true})
+	supervisor := newAttemptSupervisorFrom(ctx, lease)
+	err = executeDatabaseBackupWithEngine(supervisor, j, func(context.Context) error { return nil }, server.URL, "runner", claim, "", &DatabaseExecutionConfig{LogicalBackups: true}, func(context.Context, DatabaseExecutionConfig, string) (*databaseBackupEngine, error) { return e, nil })
+	supervisor.Close()
+	if err == nil || err.Error() != "database backup execution failed at execution/restore" || !errors.Is(err, errDatabaseBackupHeld) || imports != 1 {
+		t.Fatalf("coordinator lost safe stage or changed effects: %v", err)
+	}
+	for _, phase := range []string{"intent", "uncertain"} {
+		select {
+		case in := <-mutations:
+			if in.Phase != phase || in.PlanHash != p.Hash || phase == "uncertain" && in.FailureCode != "execution_failed" {
+				t.Fatal("stage diagnostics changed receipt identity or failure policy")
+			}
+		default:
+			t.Fatal("expected durable receipt missing")
+		}
+	}
+	if len(j.Snapshot().DatabaseBackup) != 2 {
+		t.Fatal("uncertain intent/result was acknowledged away")
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = runner.OpenAttemptJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = reconcileDatabaseBackupJournal(ctx, Config{Server: server.URL, Token: "runner", Database: &DatabaseExecutionConfig{LogicalBackups: true, TrustedLoopbackHTTP: true}}, j); !errors.Is(err, errDatabaseBackupHeld) || imports != 1 || len(mutations) != 0 || len(j.Snapshot().DatabaseBackup) != 2 || f.creates != initialCreates {
+		t.Fatal("restart repeated import, sent mutation or retired uncertain ownership")
 	}
 }

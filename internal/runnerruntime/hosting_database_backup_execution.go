@@ -84,11 +84,11 @@ func executeDatabaseBackupWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 	} else if !databaseBackupReceiptMatches(p, intent.Request, response) {
 		return errDatabaseBackupHeld
 	}
-	blob, err := e.run(ctx, p, before)
+	blob, executionErr := e.run(ctx, p, before)
 	phase, failure := "complete", ""
-	if err != nil {
+	if executionErr != nil {
 		phase, failure = "uncertain", "execution_failed"
-		if errors.Is(err, errDatabaseBackupPublication) {
+		if errors.Is(executionErr, errDatabaseBackupPublication) {
 			failure = "publication_failed"
 		}
 	}
@@ -114,6 +114,12 @@ func executeDatabaseBackupWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 		return errDatabaseBackupHeld
 	}
 	if phase != "complete" {
+		var stage *databaseBackupStageError
+		if errors.As(executionErr, &stage) {
+			out := *stage
+			out.cause = errors.Join(errDatabaseBackupHeld, stage.cause)
+			return &out
+		}
 		return errDatabaseBackupHeld
 	}
 	if err = j.AckDatabaseBackup(intent.ID); err != nil {
