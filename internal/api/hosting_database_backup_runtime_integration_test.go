@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,8 +65,8 @@ func backupRuntimeApplication(f *databaseRunnerFixture, db domain.HostingDatabas
 	}
 	config := databaseRunnerJSON[struct {
 		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
-	}](f, f.token, "PUT", "/api/v1/resources/"+resource.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, RequestID: "backup_config_" + suffix, Entries: entries}, 200).Configuration
-	in := domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: db.Resource.ID, ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: config.RuntimeGeneration, ExpectedDatabaseGeneration: db.Resource.Generation, RequestID: "backup_connect_" + suffix}, Deployment: domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: config.RuntimeGeneration, IdempotencyKey: "backup_app_" + suffix, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}}}
+	}](f, f.token, "PUT", "/api/v1/resources/"+resource.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, RequestID: backupRuntimeRequestID(f.t), Entries: entries}, 200).Configuration
+	in := domain.HostingDatabaseConnectionInput{Binding: domain.HostingDatabaseBindingInput{DatabaseResourceID: db.Resource.ID, ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: config.RuntimeGeneration, ExpectedDatabaseGeneration: db.Resource.Generation, RequestID: backupRuntimeRequestID(f.t)}, Deployment: domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: config.RuntimeGeneration, IdempotencyKey: "backup_app_" + suffix, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}}}
 	connected := databaseRunnerJSON[domain.HostingDatabaseConnection](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connections", in, 202)
 	f.registerRouteOperationCleanup(connected.UpgradeOperationID)
 	f.registerRouteOperationCleanup(connected.ApplicationOperationID)
@@ -582,5 +584,29 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 			f.docker("exec", "--user", "postgres", op.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; INSERT INTO public.negative_record DEFAULT VALUES;")
 			fmt.Println("DATABASE_BACKUP_FAILURE_PASS postgresql " + kind)
 		})
+	}
+}
+
+func backupRuntimeRequestID(t *testing.T) string {
+	t.Helper()
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal("fixture request identity unavailable")
+	}
+	return hex.EncodeToString(nonce[:])
+}
+func TestDatabaseBackupRuntimeFixtureRequestContracts(t *testing.T) {
+	config := domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, RequestID: backupRuntimeRequestID(t), Entries: []domain.HostingRuntimeEntry{}}
+	if _, _, err := config.Validate(); err != nil {
+		t.Fatal("actual runtime-configuration request identity invalid")
+	}
+	binding := domain.HostingDatabaseBindingInput{DatabaseResourceID: "database", ExpectedResourceGeneration: 1, ExpectedDatabaseGeneration: 1, RequestID: backupRuntimeRequestID(t)}
+	if binding.Validate() != nil || binding.RequestID == config.RequestID {
+		t.Fatal("actual connection request identity invalid or reused")
+	}
+	raw, err := json.Marshal(binding)
+	var decoded domain.HostingDatabaseBindingInput
+	if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded != binding {
+		t.Fatal("closed binding request rejected generated identity")
 	}
 }

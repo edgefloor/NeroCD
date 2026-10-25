@@ -24,7 +24,7 @@ func databaseBackupParameters(w http.ResponseWriter, r *http.Request) bool {
 func decodeDatabaseBackup(w http.ResponseWriter, r *http.Request, out any) bool {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
 	if err != nil || len(raw) > 4096 || domain.DecodeHostingStorageProtocolJSON(raw, out) != nil {
-		writeErrorEnvelope(w, 400, "bad_request", "invalid database backup document")
+		writeErrorEnvelope(w, 400, "invalid_request", "invalid database backup document")
 		return false
 	}
 	return true
