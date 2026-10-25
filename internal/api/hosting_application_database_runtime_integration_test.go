@@ -59,16 +59,49 @@ func applicationDatabaseCompleteReceiptMatches(op domain.HostingOperation, origi
 }
 
 // This is retained permission history, used only to prove terminal denial.
-// Its identifier, complete request and response must all belong to the original
-// attempt; a newly invented identifier would not prove historical correlation.
-func applicationDatabaseOriginalCreateAuthorization(id, requestHash string, raw, response []byte, original domain.HostingCompleteRequest, revision int64) (domain.HostingApplicationDatabaseEffectRequest, bool) {
+// Its complete request and grant belong to the persisted deploy authority.
+// Routed Complete belongs to a separate finalize authority for the same plan.
+func applicationDatabaseOriginalCreateAuthorization(id, requestHash string, raw, response []byte, original domain.HostingCompleteRequest, revision int64, create domain.HostingAuthority) (domain.HostingApplicationDatabaseEffectRequest, bool) {
 	var request domain.HostingApplicationDatabaseEffectRequest
 	var grant domain.HostingApplicationDatabaseEffectAuthorization
 	if domain.DecodeHostingStorageProtocolJSON(raw, &request) != nil || domain.DecodeHostingStorageProtocolJSON(response, &grant) != nil || request.Validate() != nil || grant.Validate() != nil {
 		return request, false
 	}
-	return request, request.AuthorizationID == id && requestHash == domain.HostingDocumentHash(request) && request.HostingAuthority == original.HostingAuthority && request.Action == "create" && request.ExpectedStageHash == "" &&
-		grant.AuthorizationID == id && grant.OperationID == original.OperationID && grant.PlanHash == original.Result.PlanHash && grant.Action == request.Action && grant.StageHash == request.ExpectedStageHash && grant.LeaseID == original.LeaseID && grant.Attempt == original.Attempt && grant.Fence == original.Fence && grant.MembershipRevision == revision
+	return request, request.AuthorizationID == id && requestHash == domain.HostingDocumentHash(request) && request.HostingAuthority == create && request.OperationID == original.OperationID && request.Action == "create" && request.ExpectedStageHash == "" &&
+		grant.AuthorizationID == id && grant.OperationID == original.OperationID && grant.PlanHash == original.Result.PlanHash && grant.Action == request.Action && grant.StageHash == request.ExpectedStageHash && grant.LeaseID == create.LeaseID && grant.Attempt == create.Attempt && grant.Fence == create.Fence && grant.MembershipRevision == revision
+}
+
+type applicationDatabasePhaseAuthority struct {
+	domain.HostingAuthority
+	BindingID, RunnerID, Mode, LeaseStatus, TaskStatus, CompletionKey string
+}
+
+func (f *databaseRunnerFixture) applicationDatabasePhaseAuthority(lease string) (applicationDatabasePhaseAuthority, error) {
+	ctx, cancel := context.WithTimeout(f.t.Context(), 5*time.Second)
+	defer cancel()
+	var p applicationDatabasePhaseAuthority
+	err := f.database.QueryRow(ctx, `SELECT t.operation_id,l.run_id,l.id,l.attempt,l.fence,t.binding_id,l.runner_id,t.mode,l.status,r.status,coalesce(l.completion_key,'')
+ FROM run_leases l JOIN hosting_task_targets t ON t.run_id=l.run_id JOIN task_runs r ON r.id=t.run_id
+ WHERE l.id=$1 AND l.runner_id=t.runner_id AND r.runner_id=l.runner_id
+ AND r.run_spec->>'hosting_operation_id'=t.operation_id AND r.run_spec->>'hosting_mode'=t.mode
+ AND l.completed_at IS NOT NULL AND r.finished_at IS NOT NULL`, lease).Scan(&p.OperationID, &p.RunID, &p.LeaseID, &p.Attempt, &p.Fence, &p.BindingID, &p.RunnerID, &p.Mode, &p.LeaseStatus, &p.TaskStatus, &p.CompletionKey)
+	return p, err
+}
+
+// The operation/result were already validated after the real Complete commit.
+// Independently read task/lease facts pin each historical phase, including the
+// receipt that ended it; neither the create row nor Complete invents authority.
+func applicationDatabaseReplayAuthorityMatches(op domain.HostingOperation, original domain.HostingCompleteRequest, create, complete applicationDatabasePhaseAuthority) bool {
+	matches := func(p applicationDatabasePhaseAuthority, run, mode string) bool {
+		return p.OperationID == op.ID && p.RunID == run && p.LeaseID != "" && p.Attempt > 0 && p.Fence != "" && p.BindingID == op.BindingID && p.RunnerID == op.Snapshot.RunnerID && p.Mode == mode && p.LeaseStatus == "succeeded" && p.TaskStatus == "succeeded" && p.CompletionKey != ""
+	}
+	if !matches(create, op.RunID, "deploy") || original.OperationID != op.ID || !applicationDatabaseCompleteReceiptMatches(op, original) || complete.HostingAuthority != original.HostingAuthority || complete.CompletionKey != original.ReceiptID {
+		return false
+	}
+	if c := op.ApplicationDatabaseRouteContinuity; c != nil {
+		return c.Version == domain.HostingApplicationDatabaseRouteContinuityVersion && c.OperationID == op.ID && op.RunID == "run_"+op.ID && c.FinalizeRunID == "finalize_"+op.ID && matches(complete, c.FinalizeRunID, "finalize") && complete.Attempt == 1 && create.LeaseID != complete.LeaseID && create.Fence != complete.Fence && op.ApplicationDatabaseYield != nil && op.ApplicationDatabaseYield.Version == c.Version && create.CompletionKey == op.ApplicationDatabaseYield.ReceiptID
+	}
+	return op.ApplicationDatabaseYield == nil && matches(complete, op.RunID, "deploy") && create.HostingAuthority == original.HostingAuthority && create.CompletionKey == original.ReceiptID
 }
 
 func applicationDatabaseCompleted(op domain.HostingOperation) bool {
@@ -510,11 +543,21 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			if f.database.QueryRow(t.Context(), `SELECT authorization_id,request_hash,request,response FROM hosting_application_database_effect_authorizations WHERE operation_id=$1 AND request->>'action'='create' ORDER BY created_at,authorization_id LIMIT 1`, third.ID).Scan(&authorizationID, &authorizationHash, &authorizationRequest, &authorizationResponse) != nil {
 				t.Fatal("missing original persisted create authorization")
 			}
-			staleAuthority, exact := applicationDatabaseOriginalCreateAuthorization(authorizationID, authorizationHash, authorizationRequest, authorizationResponse, original, c.ApplicationDatabase.MembershipRevision)
+			defer func() { clear(authorizationRequest); clear(authorizationResponse) }()
+			var savedCreate domain.HostingApplicationDatabaseEffectRequest
+			if domain.DecodeHostingStorageProtocolJSON(authorizationRequest, &savedCreate) != nil {
+				t.Fatal("persisted create authorization request unavailable")
+			}
+			createPhase, createErr := f.applicationDatabasePhaseAuthority(savedCreate.LeaseID)
+			completePhase, completeErr := f.applicationDatabasePhaseAuthority(original.LeaseID)
+			if createErr != nil || completeErr != nil || !applicationDatabaseReplayAuthorityMatches(c, original, createPhase, completePhase) {
+				t.Fatal("persisted create and Complete lack exact phase task and lease provenance")
+			}
+			staleAuthority, exact := applicationDatabaseOriginalCreateAuthorization(authorizationID, authorizationHash, authorizationRequest, authorizationResponse, original, c.ApplicationDatabase.MembershipRevision, createPhase.HostingAuthority)
 			clear(authorizationRequest)
 			clear(authorizationResponse)
 			if !exact {
-				t.Fatal("persisted create authorization differs from original Complete authority")
+				t.Fatal("persisted create request and grant differ from original deploy authority")
 			}
 			before := f.applicationContainer(c)
 			f.exactMembers(c, maintained)
@@ -522,8 +565,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			runtimeDeliveries, authorizations := f.runtimeDeliveryRequests.Load(), f.connectionAuthorizationRequests.Load()
 			since := time.Now().UTC().Format(time.RFC3339Nano)
 			// Effect authorization requires a live lease before it reads historical
-			// authorization IDs. Complete retired this exact lease, so denial is
-			// specifically 404/not_found, while saved Complete ACK replay remains valid.
+			// authorization IDs. This deploy lease is terminal (routed yield or
+			// same-task Complete), so denial is specifically 404/not_found while
+			// the separately retained exact Complete ACK replay remains valid.
 			denied := databaseRunnerJSON[map[string]string](f, string(credential), "POST", "/api/v1/runners/hosting/database-binding/authorize", staleAuthority, http.StatusNotFound)
 			clear(credential)
 			if denied["code"] != "not_found" || f.connectionDurableCounts() != counts || f.applyRequests.Load() != applies || f.deliveryRequests.Load() != deliveries || f.runtimeDeliveryRequests.Load() != runtimeDeliveries || f.connectionAuthorizationRequests.Load() != authorizations+1 || !reflect.DeepEqual(before, f.applicationContainer(c)) {
@@ -778,9 +822,96 @@ func TestApplicationDatabaseRuntimeOriginalCreateAuthorization(t *testing.T) {
 			if name == "malformed" {
 				raw = []byte(`{`)
 			}
-			saved, ok := applicationDatabaseOriginalCreateAuthorization(id, requestHash, raw, response, original, 7)
+			saved, ok := applicationDatabaseOriginalCreateAuthorization(id, requestHash, raw, response, original, 7, original.HostingAuthority)
 			if ok != (name == "exact_historical") || ok && saved != request {
 				t.Fatal("historical authorization did not require exact original request and response identity")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRuntimeRoutedCreateAndFinalizeAuthority(t *testing.T) {
+	for _, mode := range []string{"routed", "same_task", "missing_create_target", "missing_complete_target", "create_operation", "create_binding", "create_runner", "create_mode", "create_run", "create_lease", "create_fence", "create_status", "create_task_status", "create_completion", "complete_binding", "complete_runner", "complete_mode", "complete_run", "complete_lease", "complete_fence", "complete_completion", "same_lease", "same_fence", "finalize_attempt", "finalize_identity", "missing_yield", "grant_from_finalize", "request_from_finalize"} {
+		t.Run(mode, func(t *testing.T) {
+			create := applicationDatabasePhaseAuthority{HostingAuthority: domain.HostingAuthority{OperationID: "hop_fixture", RunID: "run_hop_fixture", LeaseID: "lease_create", Attempt: 1, Fence: "private_create_fence"}, BindingID: "binding_fixture", RunnerID: "runner_fixture", Mode: "deploy", LeaseStatus: "succeeded", TaskStatus: "succeeded", CompletionKey: "yield_fixture"}
+			final := applicationDatabasePhaseAuthority{HostingAuthority: domain.HostingAuthority{OperationID: create.OperationID, RunID: "finalize_hop_fixture", LeaseID: "lease_finalize", Attempt: 1, Fence: "private_finalize_fence"}, BindingID: create.BindingID, RunnerID: create.RunnerID, Mode: "finalize", LeaseStatus: "succeeded", TaskStatus: "succeeded", CompletionKey: "complete_fixture"}
+			original := domain.HostingCompleteRequest{HostingAuthority: final.HostingAuthority, ReceiptID: final.CompletionKey, Result: domain.HostingResult{PlanHash: "sha256:" + strings.Repeat("b", 64)}}
+			op := domain.HostingOperation{ID: create.OperationID, RunID: create.RunID, BindingID: create.BindingID, Snapshot: domain.HostingSnapshot{RunnerID: create.RunnerID}, Result: &original.Result, CompleteReceipt: &domain.HostingReceipt{ID: original.ReceiptID, BodyHash: domain.HostingDocumentHash(original.Result)}, ApplicationDatabaseRouteContinuity: &domain.HostingApplicationDatabaseRouteContinuity{Version: domain.HostingApplicationDatabaseRouteContinuityVersion, OperationID: create.OperationID, FinalizeRunID: final.RunID}, ApplicationDatabaseYield: &domain.HostingApplicationDatabaseYieldReceipt{Version: domain.HostingApplicationDatabaseRouteContinuityVersion, ReceiptID: create.CompletionKey}}
+			id := strings.Repeat("a", 32)
+			request := domain.HostingApplicationDatabaseEffectRequest{HostingAuthority: create.HostingAuthority, AuthorizationID: id, Action: "create"}
+			grant := domain.HostingApplicationDatabaseEffectAuthorization{AuthorizationID: id, OperationID: create.OperationID, PlanHash: original.Result.PlanHash, Action: "create", LeaseID: create.LeaseID, Attempt: create.Attempt, Fence: create.Fence, MembershipRevision: 7, UseUntil: time.Unix(1, 0).UTC()}
+			switch mode {
+			case "same_task":
+				original.HostingAuthority = create.HostingAuthority
+				final = create
+				final.CompletionKey = original.ReceiptID
+				create.CompletionKey = original.ReceiptID
+				op.ApplicationDatabaseRouteContinuity = nil
+				op.ApplicationDatabaseYield = nil
+			case "missing_create_target":
+				create = applicationDatabasePhaseAuthority{}
+			case "missing_complete_target":
+				final = applicationDatabasePhaseAuthority{}
+			case "create_operation":
+				create.OperationID = "hop_other"
+			case "create_binding":
+				create.BindingID = "binding_other"
+			case "create_runner":
+				create.RunnerID = "runner_other"
+			case "create_mode":
+				create.Mode = "finalize"
+			case "create_run":
+				create.RunID = "run_other"
+			case "create_lease":
+				create.LeaseID = "lease_other"
+			case "create_fence":
+				create.Fence = "fence_other"
+			case "create_status":
+				create.LeaseStatus = "active"
+			case "create_task_status":
+				create.TaskStatus = "running"
+			case "create_completion":
+				create.CompletionKey = "yield_other"
+			case "complete_binding":
+				final.BindingID = "binding_other"
+			case "complete_runner":
+				final.RunnerID = "runner_other"
+			case "complete_mode":
+				final.Mode = "deploy"
+			case "complete_run":
+				final.RunID = "finalize_other"
+				original.RunID = final.RunID
+			case "complete_lease":
+				final.LeaseID = "lease_other"
+			case "complete_fence":
+				final.Fence = "fence_other"
+			case "complete_completion":
+				final.CompletionKey = "complete_other"
+			case "same_lease":
+				final.LeaseID = create.LeaseID
+				original.LeaseID = final.LeaseID
+			case "same_fence":
+				final.Fence = create.Fence
+				original.Fence = final.Fence
+			case "finalize_attempt":
+				final.Attempt++
+				original.Attempt = final.Attempt
+			case "finalize_identity":
+				op.ApplicationDatabaseRouteContinuity.FinalizeRunID = "finalize_other"
+			case "missing_yield":
+				op.ApplicationDatabaseYield = nil
+			case "grant_from_finalize":
+				grant.LeaseID = original.LeaseID
+				grant.Fence = original.Fence
+			case "request_from_finalize":
+				request.HostingAuthority = original.HostingAuthority
+			}
+			raw, _ := json.Marshal(request)
+			response, _ := json.Marshal(grant)
+			saved, ok := applicationDatabaseOriginalCreateAuthorization(id, domain.HostingDocumentHash(request), raw, response, original, 7, create.HostingAuthority)
+			exact := ok && applicationDatabaseReplayAuthorityMatches(op, original, create, final)
+			if exact != (mode == "routed" || mode == "same_task") || exact && saved != request {
+				t.Fatal("phase provenance or exact persisted create/Complete identity was lost")
 			}
 		})
 	}
