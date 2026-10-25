@@ -32,6 +32,62 @@ import (
 
 const applicationDatabasePebbleImage = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
 
+type applicationDatabaseRetirementPhase struct {
+	OperationID, Phase, PredecessorOperationID, PredecessorContainerID string
+}
+
+func applicationDatabaseRetirementPhasesExact(phases []applicationDatabaseRetirementPhase, operation, previous, container string) bool {
+	if len(phases) != 2 || operation == "" || previous == "" || container == "" {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, phase := range phases {
+		if phase.OperationID != operation || phase.PredecessorOperationID != previous || phase.PredecessorContainerID != container || phase.Phase != "retire_intent" && phase.Phase != "detached" || seen[phase.Phase] {
+			return false
+		}
+		seen[phase.Phase] = true
+	}
+	return seen["retire_intent"] && seen["detached"]
+}
+
+func (f *databaseRunnerFixture) assertApplicationDatabaseRetirement(op, previous domain.HostingOperation) {
+	f.t.Helper()
+	if op.ApplicationDatabase == nil || len(op.ApplicationDatabase.Members) != 1 || previous.Result == nil {
+		f.t.Fatal("retirement predecessor evidence unavailable")
+	}
+	ctx, cancel := context.WithTimeout(f.t.Context(), 10*time.Second)
+	defer cancel()
+	var total int
+	if f.database.QueryRow(ctx, `SELECT count(*) FROM hosting_application_database_retirements WHERE operation_id=$1`, op.ID).Scan(&total) != nil || total != 2 {
+		f.t.Fatal("replacement requires exactly one retirement intent and one detachment")
+	}
+	q := sqlcgen.New(f.database)
+	var firstPlan domain.HostingDatabaseBindingEndpointPlan
+	var intent domain.HostingDatabaseBindingEndpointReceipt
+	phases := make([]applicationDatabaseRetirementPhase, 0, 2)
+	for _, phase := range []string{"retire_intent", "detached"} {
+		row, err := q.ReadApplicationDatabaseRetirementPhase(ctx, sqlcgen.ReadApplicationDatabaseRetirementPhaseParams{OperationID: op.ID, Phase: phase})
+		clear(row.Authority)
+		var plan domain.HostingDatabaseBindingEndpointPlan
+		var receipt domain.HostingDatabaseBindingEndpointReceipt
+		if err != nil || json.Unmarshal(row.Plan, &plan) != nil || json.Unmarshal(row.Receipt, &receipt) != nil || row.OperationID != op.ID || row.Phase != phase || row.ReceiptID != receipt.ReceiptID || row.ReceiptHash != receipt.Hash || receipt.Phase != phase || receipt.Validate(plan, op.ApplicationDatabase.Binding) != nil || plan.Action != "retire" || plan.Target != op.ApplicationDatabase.Members[0].EndpointPlan.Target || plan.MembershipRevision != op.ApplicationDatabase.MembershipRevision+2 {
+			f.t.Fatal("retirement phase lacks exact immutable predecessor evidence")
+		}
+		phases = append(phases, applicationDatabaseRetirementPhase{OperationID: row.OperationID, Phase: phase, PredecessorOperationID: plan.Target.ContainerOperationID, PredecessorContainerID: plan.Target.ContainerID})
+		if phase == "retire_intent" {
+			if receipt.ValidateTransition(nil, plan, op.ApplicationDatabase.Binding) != nil {
+				f.t.Fatal("retirement intent is invalid")
+			}
+			firstPlan, intent = plan, receipt
+		} else if plan != firstPlan || receipt.ValidateTransition(&intent, plan, op.ApplicationDatabase.Binding) != nil {
+			f.t.Fatal("detachment does not settle the exact retirement intent")
+		}
+	}
+	if !applicationDatabaseRetirementPhasesExact(phases, op.ID, previous.ID, previous.Result.ContainerID) {
+		f.t.Fatal("retirement phases did not identify the exact replaced operation and container")
+	}
+}
+
 func applicationDatabaseRoutePortsFree(ports ...int) error {
 	for _, port := range ports {
 		listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
@@ -62,12 +118,73 @@ func applicationDatabaseRouteCapacity(t *testing.T) {
 	t.Log("route fixture fixed listeners and initial app port capacity verified free")
 }
 
+// Historical A/B or a completed explicit cleanup may already have removed the
+// container. Both the exact ID and operation inventory must prove absence on the
+// pinned daemon. An inspect error alone never proves retirement.
+func cleanupApplicationDatabaseRetained(ctx context.Context, op domain.HostingOperation, docker func(context.Context, ...string) ([]byte, error), portsFree func(...int) error) error {
+	invalid := errors.New("retained fixture cleanup identity or absence unconfirmed")
+	if !applicationDatabaseCleanupIdentity(op) {
+		return invalid
+	}
+	checkDaemon := func() bool {
+		raw, err := docker(ctx, "info", "--format", "{{.ID}}")
+		return err == nil && strings.TrimSpace(string(raw)) == op.Release.DaemonID
+	}
+	inventory := func(filter string) (string, error) {
+		raw, err := docker(ctx, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", filter)
+		return strings.TrimSpace(string(raw)), err
+	}
+	if !checkDaemon() {
+		return invalid
+	}
+	exact, err := inventory("id=" + op.Result.ContainerID)
+	if err != nil {
+		return invalid
+	}
+	owned, err := inventory("label=io.nerocd.operation=" + op.ID)
+	if err != nil {
+		return invalid
+	}
+	if exact != "" || owned != "" {
+		if exact != op.Result.ContainerID || owned != op.Result.ContainerID {
+			return invalid
+		}
+		if cleanupApplicationDatabaseFinal(ctx, op, docker) != nil {
+			return invalid
+		}
+	}
+	exact, err = inventory("id=" + op.Result.ContainerID)
+	if err != nil || exact != "" {
+		return invalid
+	}
+	owned, err = inventory("label=io.nerocd.operation=" + op.ID)
+	if err != nil || owned != "" || !checkDaemon() {
+		return invalid
+	}
+	if op.Snapshot.HostPort >= 1024 {
+		if err := portsFree(op.Snapshot.HostPort); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *databaseRunnerFixture) cleanupRouteOperation(id string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	op, err := f.operation(ctx, id)
 	if err != nil {
-		return errors.New("route cleanup operation unavailable")
+		// Reserved workflow children need not have been admitted before a test
+		// aborts. Only successful exact operation inventory can prove no effect.
+		var exists bool
+		if id == "" || f.database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE id=$1)`, id).Scan(&exists) != nil || exists {
+			return errors.New("route cleanup operation unavailable")
+		}
+		raw, inventoryErr := databaseRunnerDocker(ctx, nil, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.operation="+id)
+		if inventoryErr != nil || len(strings.TrimSpace(string(raw))) != 0 {
+			return errors.New("route cleanup operation or absence unavailable")
+		}
+		return nil
 	}
 	if op.Result == nil || op.Result.ContainerID == "" {
 		row, stageErr := sqlcgen.New(f.database).ReadApplicationDatabaseStage(ctx, id)
@@ -80,21 +197,30 @@ func (f *databaseRunnerFixture) cleanupRouteOperation(id string) error {
 			op.Result = &domain.HostingResult{ContainerID: stage.Candidate.ContainerID, PlanHash: op.Plan.Hash, ImageID: op.Release.ImageID, DaemonID: op.Release.DaemonID}
 		} else {
 			raw, inventoryErr := databaseRunnerDocker(ctx, nil, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.operation="+id)
-			if inventoryErr != nil || len(strings.TrimSpace(string(raw))) != 0 {
+			ids := strings.Fields(string(raw))
+			if inventoryErr != nil || len(ids) > 1 {
 				return errors.New("route cleanup candidate identity or absence unknown")
 			}
-			return nil
+			if len(ids) == 0 {
+				if op.Snapshot.HostPort >= 1024 {
+					return applicationDatabaseRoutePortsFree(op.Snapshot.HostPort)
+				}
+				return nil
+			}
+			if op.Plan == nil || op.Release == nil {
+				return errors.New("route cleanup candidate lacks retained plan and release")
+			}
+			// For database or ordinary-image interruption before Complete, inspect
+			// the sole operation candidate against every retained ownership label.
+			op.Result = &domain.HostingResult{ContainerID: ids[0], PlanHash: op.Plan.Hash, ImageID: op.Release.ImageID, DaemonID: op.Release.DaemonID}
 		}
 	}
-	if err = cleanupApplicationDatabaseFinal(ctx, op, func(ctx context.Context, args ...string) ([]byte, error) {
+	if err = cleanupApplicationDatabaseRetained(ctx, op, func(ctx context.Context, args ...string) ([]byte, error) {
 		return databaseRunnerDocker(ctx, nil, args...)
-	}); err != nil {
+	}, applicationDatabaseRoutePortsFree); err != nil {
 		return err
 	}
 	if op.Snapshot.HostPort >= 1024 {
-		if err = applicationDatabaseRoutePortsFree(op.Snapshot.HostPort); err != nil {
-			return err
-		}
 		f.t.Logf("exact app absent and allocated port free operation=%s port=%d", id, op.Snapshot.HostPort)
 	}
 	return nil
@@ -744,6 +870,125 @@ func TestApplicationDatabaseRouteRuntimePortIsolation(t *testing.T) {
 	}
 	if err := applicationDatabaseRoutePortsFree(port); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeRetirementPhases(t *testing.T) {
+	exact := []applicationDatabaseRetirementPhase{{"b", "retire_intent", "a", "old_a"}, {"b", "detached", "a", "old_a"}}
+	for _, mode := range []string{"exact", "missing_intent", "missing_detached", "duplicate_intent", "duplicate_detached", "extra_phase", "foreign_operation", "foreign_previous_operation", "foreign_previous_container"} {
+		t.Run(mode, func(t *testing.T) {
+			phases := append([]applicationDatabaseRetirementPhase(nil), exact...)
+			switch mode {
+			case "missing_intent":
+				phases = phases[1:]
+			case "missing_detached":
+				phases = phases[:1]
+			case "duplicate_intent":
+				phases[1].Phase = "retire_intent"
+			case "duplicate_detached":
+				phases[0].Phase = "detached"
+			case "extra_phase":
+				phases = append(phases, phases[0])
+			case "foreign_operation":
+				phases[1].OperationID = "c"
+			case "foreign_previous_operation":
+				phases[1].PredecessorOperationID = "foreign"
+			case "foreign_previous_container":
+				phases[1].PredecessorContainerID = "foreign"
+			}
+			if applicationDatabaseRetirementPhasesExact(phases, "b", "a", "old_a") != (mode == "exact") {
+				t.Fatal("retirement phase cardinality or predecessor correlation was accepted incorrectly")
+			}
+		})
+	}
+}
+
+func TestApplicationDatabaseRouteRuntimeRetainedCleanup(t *testing.T) {
+	for _, mode := range []string{"present", "retired", "retired_port_occupied", "foreign_daemon", "changed_daemon", "id_inventory_error", "operation_inventory_error", "extra_operation_container", "changed_operation_label", "inspect_error", "foreign_image", "remove_error", "residue"} {
+		t.Run(mode, func(t *testing.T) {
+			id, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
+			op := domain.HostingOperation{ID: "owned", BindingID: "binding", Snapshot: domain.HostingSnapshot{HostPort: 20002}, Plan: &domain.HostingApplyPlan{Hash: "plan"}, Release: &domain.HostingRelease{Hash: "release", ImageID: "image", DaemonID: "daemon"}, Result: &domain.HostingResult{ContainerID: id, PlanHash: "plan", ImageID: "image", DaemonID: "daemon"}}
+			present := !strings.HasPrefix(mode, "retired")
+			removed, daemonChecks, portChecks := 0, 0, 0
+			docker := func(_ context.Context, args ...string) ([]byte, error) {
+				if reflect.DeepEqual(args, []string{"info", "--format", "{{.ID}}"}) {
+					daemonChecks++
+					if mode == "foreign_daemon" || mode == "changed_daemon" && daemonChecks > 1 {
+						return []byte("foreign"), nil
+					}
+					return []byte("daemon"), nil
+				}
+				if len(args) == 7 && reflect.DeepEqual(args[:6], []string{"container", "ls", "--all", "--quiet", "--no-trunc", "--filter"}) {
+					switch args[6] {
+					case "id=" + id:
+						if mode == "id_inventory_error" {
+							return nil, errors.New("PRIVATE-CANARY")
+						}
+						if present {
+							return []byte(id), nil
+						}
+						return nil, nil
+					case "label=io.nerocd.operation=owned":
+						if mode == "operation_inventory_error" {
+							return nil, errors.New("PRIVATE-CANARY")
+						}
+						if mode == "extra_operation_container" {
+							return []byte(id + "\n" + other), nil
+						}
+						if present && mode != "changed_operation_label" {
+							return []byte(id), nil
+						}
+						return nil, nil
+					}
+				}
+				if len(args) == 5 && reflect.DeepEqual(args[:4], []string{"container", "inspect", id, "--format"}) {
+					if mode == "inspect_error" {
+						return nil, errors.New("PRIVATE-CANARY")
+					}
+					image := "image"
+					if mode == "foreign_image" {
+						image = "foreign"
+					}
+					return json.Marshal(map[string]any{"Id": id, "Image": image, "Config": map[string]any{"Labels": map[string]string{"io.nerocd.binding": "binding", "io.nerocd.operation": "owned", "io.nerocd.plan": "plan", "io.nerocd.release": "release"}}})
+				}
+				if reflect.DeepEqual(args, []string{"container", "rm", "--force", id}) {
+					removed++
+					if mode == "remove_error" {
+						return nil, errors.New("PRIVATE-CANARY")
+					}
+					if mode != "residue" {
+						present = false
+					}
+					return nil, nil
+				}
+				t.Fatal("cleanup attempted a command outside exact owned identity")
+				return nil, errors.New("unexpected")
+			}
+			portsFree := func(ports ...int) error {
+				portChecks++
+				if !reflect.DeepEqual(ports, []int{20002}) {
+					t.Fatal("cleanup probed unrelated capacity")
+				}
+				if mode == "retired_port_occupied" {
+					return errors.New("owned port occupied")
+				}
+				return nil
+			}
+			err := cleanupApplicationDatabaseRetained(t.Context(), op, docker, portsFree)
+			want := mode == "present" || mode == "retired"
+			if (err == nil) != want || err != nil && strings.Contains(err.Error(), "CANARY") {
+				t.Fatal("retained cleanup failed to preserve exact ownership and absence evidence")
+			}
+			if mode == "retired" && (removed != 0 || portChecks != 1) {
+				t.Fatal("already retired predecessor was mutated or its port went unverified")
+			}
+			if mode == "present" && (removed != 1 || present || portChecks != 1) {
+				t.Fatal("live fallback did not remove exactly once and release its port")
+			}
+			if !want && mode != "remove_error" && mode != "residue" && removed != 0 {
+				t.Fatal("cleanup mutated after missing or mismatched ownership evidence")
+			}
+		})
 	}
 }
 

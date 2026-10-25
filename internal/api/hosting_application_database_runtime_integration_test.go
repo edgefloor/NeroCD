@@ -173,9 +173,13 @@ func (f *databaseRunnerFixture) applicationContainer(op domain.HostingOperation)
 
 // Each engine has isolated controller metadata but shares the owned DinD daemon.
 // Release only its verified final app, so the next schema can reuse its ports.
+func applicationDatabaseCleanupIdentity(op domain.HostingOperation) bool {
+	return op.Result != nil && op.Plan != nil && op.Release != nil && op.ID != "" && op.BindingID != "" && op.Plan.Hash != "" && op.Release.Hash != "" && op.Release.DaemonID != "" && op.Result.PlanHash == op.Plan.Hash && op.Result.ImageID == op.Release.ImageID && op.Result.DaemonID == op.Release.DaemonID && len(op.Result.ContainerID) == 64 && strings.Trim(op.Result.ContainerID, "0123456789abcdef") == ""
+}
+
 func cleanupApplicationDatabaseFinal(ctx context.Context, op domain.HostingOperation, docker func(context.Context, ...string) ([]byte, error)) error {
 	invalid := errors.New("final fixture application cleanup identity or absence unconfirmed")
-	if op.Result == nil || op.Plan == nil || op.Release == nil || op.ID == "" || op.BindingID == "" || op.Plan.Hash == "" || op.Release.Hash == "" || op.Release.DaemonID == "" || op.Result.PlanHash != op.Plan.Hash || op.Result.ImageID != op.Release.ImageID || op.Result.DaemonID != op.Release.DaemonID || len(op.Result.ContainerID) != 64 || strings.Trim(op.Result.ContainerID, "0123456789abcdef") != "" {
+	if !applicationDatabaseCleanupIdentity(op) {
 		return invalid
 	}
 	daemon := func() bool {
@@ -311,7 +315,12 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			}
 			f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
 			view := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", applicationDatabaseCreateInput(engine, f.environment, f.destination), 201)
-			source := f.await(f.deploy(view, "connected_source_v1").ID)
+			f.registerRouteDatabaseCleanup(view.Resource.ID)
+			f.stop()
+			sourceRequest := f.deploy(view, "connected_source_v1")
+			f.registerRouteOperationCleanup(sourceRequest.ID)
+			f.start()
+			source := f.await(sourceRequest.ID)
 			if source.Plan.Database.Network != nil {
 				t.Fatal("first Connect must start from ordinary V1 database")
 			}
@@ -350,6 +359,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+foreign.ID+"/database-connections", cross, 409)
 			var browser *applicationDatabaseBrowser
 			var connection domain.HostingDatabaseConnection
+			f.stop()
 			if os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER") == "1" {
 				browser = f.startApplicationDatabaseBrowser(resource, view, engine)
 				connection = browser.await("connect").Connection
@@ -359,6 +369,9 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			if connection.CaptureID == "" || connection.UpgradeOperationID == "" || connection.ApplicationOperationID == "" {
 				t.Fatal("public Connect omitted automatic workflow identities")
 			}
+			f.registerRouteOperationCleanup(connection.UpgradeOperationID)
+			f.registerRouteOperationCleanup(connection.ApplicationOperationID)
+			f.start()
 			active := f.activeConnection(resource.ID)
 			a := f.awaitConnectionOperation(connection.ApplicationOperationID)
 			f.applicationContainer(a)
@@ -373,9 +386,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			}
 			deployment.ExpectedRuntimeConfigurationGeneration = a.Snapshot.RuntimeConfiguration.Generation
 			deployment.IdempotencyKey = "connected_b"
-			if f.routes != nil {
-				f.stop()
-			}
+			f.stop()
 			var bRequest domain.HostingOperation
 			if browser != nil {
 				browser.advance("redeploy", active.MembershipRevision, a, map[string]string{"a": "retained_a"})
@@ -387,8 +398,11 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				}
 				bRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 			}
+			f.registerRouteOperationCleanup(bRequest.ID)
 			if f.routes != nil {
 				f.routes.recoverYield(bRequest, a, active.MembershipRevision)
+			} else {
+				f.start()
 			}
 			b := f.awaitConnectionOperation(bRequest.ID)
 			if b.Result.ContainerID == a.Result.ContainerID || b.Result.PreviousContainerID != a.Result.ContainerID {
@@ -406,6 +420,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			}
 			active = f.connection(resource.ID)
 			maintain := domain.HostingDatabaseMaintenanceInput{ExpectedGeneration: view.Resource.Generation, ExpectedMembershipRevision: active.MembershipRevision, IdempotencyKey: "connected_database_replacement"}
+			f.stop()
 			var maintenanceRequest domain.HostingOperation
 			if browser != nil {
 				browser.advance("maintenance", active.MembershipRevision, b, map[string]string{"a": "retained_a", "b": "retained_b"})
@@ -413,6 +428,8 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 			} else {
 				maintenanceRequest = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+view.Resource.ID+"/database/maintenance", maintain, 202)
 			}
+			f.registerRouteOperationCleanup(maintenanceRequest.ID)
+			f.start()
 			maintained := f.awaitConnectionOperation(maintenanceRequest.ID)
 			if maintained.Result.ContainerID == upgrade.Result.ContainerID || maintained.DatabaseMaintenance == nil || len(maintained.Plan.Database.Network.Members) != 1 || !reflect.DeepEqual(maintained.Plan.Storage, source.Plan.Storage) || !reflect.DeepEqual(maintained.Plan.Database.Credentials, source.Plan.Database.Credentials) || maintained.Plan.Database.Network.NetworkID != upgrade.Plan.Database.Network.NetworkID || f.volumeProof(maintained) != volume || f.credentialMetadata(view) != credentials {
 				t.Fatal("database maintenance changed retained identity")
@@ -442,6 +459,7 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				third = databaseRunnerJSON[domain.HostingOperation](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/database-connection/deployments", input, 202)
 			}
 			wire := newDatabaseUpgradeCompleteWire(third.ID)
+			f.registerRouteOperationCleanup(third.ID)
 			f.upgradeComplete.Store(wire)
 			f.start()
 			var failed <-chan struct{}
@@ -546,10 +564,8 @@ func TestHostingApplicationDatabaseCompiledRunner(t *testing.T) {
 				for key, value := range map[string]string{"https_a": "retained_https_a", "https_b": "retained_https_b", "a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"} {
 					f.routes.record(t.Context(), c, "GET", key, value)
 				}
-				var retirements int
-				if f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_application_database_retirements WHERE operation_id IN ($1,$2)`, b.ID, c.ID).Scan(&retirements) != nil || retirements != 2 {
-					t.Fatal("route continuations did not retire each exact predecessor once")
-				}
+				f.assertApplicationDatabaseRetirement(b, a)
+				f.assertApplicationDatabaseRetirement(c, b)
 				fmt.Println("DATABASE_CONNECTION_ROUTE_PASS " + engine)
 			}
 			if f.credentialMetadata(view) != credentials || databaseUpgradeAuthorityLogCheck(f.logs.snapshot(), original.HostingAuthority, f.protected) != nil {
