@@ -7,9 +7,12 @@ backup, protected execution limits, fenced runner and new-database restore path
 as [immediate PostgreSQL backups](hosting-database-backups.md).
 
 The supported source is the pinned PostgreSQL 17.11 recipe on its authorized
-stable destination. Redis, S3, retention, notifications and user-supplied commands
-are outside this path. A local archive remains dependent on that destination;
-a schedule is not an off-host disaster recovery policy.
+stable destination. [Remote backup targets](hosting-database-remote-backups.md)
+can now be selected explicitly by target ID and revision for immediate and
+scheduled backups. A target edit does not redirect an existing schedule. Redis,
+retention, notifications and user-supplied commands remain outside this path.
+A local archive remains dependent on that destination. Remote acceptance uses
+a loopback fixture and does not qualify off-host disaster recovery.
 
 ## Create or change a schedule
 
@@ -204,5 +207,7 @@ R46-C02 gains supported scheduled-backup qualification, and R46-C06 gains actual
 `pg_dump` timeout qualification. The prior documentation snapshot, its nine
 validated outcomes and one partial timeout outcome remain historical. The
 933-outcome audit and all parent gates remain unchanged. The unsupported cron
-forms above, S3, retention, notifications, other engines and full R46/R62 or
-Coolify parity remain open.
+forms above, retention, notifications, other engines and full R46/R62 or
+Coolify parity remain open. Subsequent [remote acceptance](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
+adds bounded S3 targets and recovery; it does not change this historical
+schedule receipt or add another R46-C02 credit.

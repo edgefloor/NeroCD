@@ -275,8 +275,8 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   failure holds. The final physical gate passed at source `c1f7b153a963609336851f94a16b2eac96f86e91`
   in 130.140 seconds, retained by exact relevant-source correspondence.
   This qualifies native Linux arm64, trusted classic-store Docker and PostgreSQL
-  17.11 on one destination. Later scheduled-backup qualification is below. S3,
-  retention automation, in-place and cross-destination restore, other engines
+  17.11 on one destination. Later scheduled and remote qualification is below.
+  Retention automation, in-place and cross-destination restore, other engines
   and full A25/A26/A37 remain open.
 - [PostgreSQL backup schedules](docs/hosting-database-backup-schedules.md) are
   accepted at `60b86e47504533280170028cbc0b9b632c7b67db`, with physical proof at
@@ -286,8 +286,18 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   exact retry and restart identity, new-target restore and application data.
   The full 157.868-second gate also proves guest `pg_dump` timeout separately
   from restore timeout. The supported cron subset excludes weekday `7` and
-  `L`/`W`/`#` forms. S3, retention, notifications and general scheduler parity
+  `L`/`W`/`#` forms. Retention, notifications and general scheduler parity
   remain open within the existing PostgreSQL-only physical profile.
+- [PostgreSQL remote backups](docs/hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
+  are accepted at `6621204964e96039558c0f267dbac50475a7ad98`. Versioned encrypted
+  S3 targets, separate local/upload results, retry of the same archive without
+  another dump, committed-ACK replay and remote GET into a new private database
+  passed with application reads and new writes. The native Linux arm64 fixture
+  uses pinned PostgreSQL 17.11 and Silo on an explicitly trusted loopback HTTP
+  origin. Target setup/validation uses the API; selection, warning/reload, retry
+  and restore use the live UI. Production S3 HTTPS, retention/deletion,
+  notifications, other engines and aggregate parity gates remain open. The
+  existing user UI process is unchanged.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

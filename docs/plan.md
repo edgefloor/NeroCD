@@ -83,8 +83,14 @@ Scheduled PostgreSQL backups and the guest `pg_dump` timeout are accepted at
 `60b86e47504533280170028cbc0b9b632c7b67db`, with physical source
 `c76019739ffbde0bcf7eb357c9740ddd35bf9a57` retained by exact source correspondence. See the [schedule qualification and limits](hosting-database-backup-schedules.md#physical-qualification-and-retained-evidence).
 
-Continue H2 from the remaining recovery gaps. Full upstream cron grammar, S3
-publication, retention automation, notifications, other engines,
+Remote PostgreSQL backup and application-verified recovery are accepted at
+`6621204964e96039558c0f267dbac50475a7ad98`. The [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
+proves failed-upload local preservation, same-archive retry, acknowledgment replay
+and a forced remote GET before fresh-target restore. The pinned Silo fixture uses
+explicitly trusted loopback HTTP; production S3 HTTPS remains unqualified.
+
+Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
+independent local/S3 retention and deletion, notifications, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.
 Broader R42 profiles, rotation,
 production ACME and aggregate stateful hosting gates remain open. This accepted

@@ -42,7 +42,7 @@ failure holds. The final physical source is
 `c1f7b153a963609336851f94a16b2eac96f86e91`, retained through checked source
 correspondence. See the [qualification and durable receipts](hosting-database-backups.md#accepted-qualification-and-evidence).
 The profile is native Linux arm64, trusted classic-store Docker, PostgreSQL 17.11
-and one destination. Later schedule qualification is below. S3, retention
+and one destination. Later schedule and remote qualification is below. Retention
 automation, in-place restore,
 cross-destination recovery, other engines and complete A25/A26/A37 remain open.
 Earlier checkpoint limits below retain their original revision and scope.
@@ -56,8 +56,22 @@ retry, editing, disablement, controller restart, one admitted dump and
 application-verified restore.
 The separate guest `pg_dump` deadline proof closes the earlier backup-timeout
 evidence gap. This qualifies the documented cron subset only. Weekday `7`,
-`L`, `W` and `#`, S3, retention, notifications, other engines and full R46/R62 or
+`L`, `W` and `#`, retention, notifications, other engines and full R46/R62 or
 aggregate gates remain open. See the [schedule evidence](hosting-database-backup-schedules.md#physical-qualification-and-retained-evidence).
+
+Remote PostgreSQL backup and recovery are accepted at
+`6621204964e96039558c0f267dbac50475a7ad98`, through migration 0077.
+The [remote qualification and receipts](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
+cover versioned encrypted targets, API validation, live-browser selection,
+failed-upload local preservation across restart/reload, same-archive retry,
+committed acknowledgment replay and forced remote GET into a fresh private
+resource with distinct application reads and new writes. The source remains
+usable. Native Linux arm64, PostgreSQL 17.11 and pinned Silo on one declared
+same destination are qualified using an explicitly trusted loopback HTTP origin.
+Production S3 HTTPS, independent retention/deletion, notifications, other
+engines, in-place/cross-host restore and aggregate gates remain open. Historical
+checkpoint exclusions below retain their original scope. Feature equivalence
+adds no migration or unchanged-client compatibility claim.
 
 ## Status and evidence
 
@@ -778,7 +792,7 @@ The reference backup/restore distinctions below are retained from R44. PostgreSQ
 
 | Engine | Status | Reference scheduled backup | Reference dashboard restore | Supported limits and required outcome | Planned fixtures |
 | --- | --- | --- | --- | --- | --- |
-| PostgreSQL | partial, bounded private hosting and direct alias upgrade accepted | Yes | Yes | PostgreSQL 17.11 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C proof retained at d384; same-destination image-app binding qualified at 9a69228; bounded immediate logical backup and dashboard new-private-resource restore with application reads/new writes accepted at 56cce; bounded schedules and pg_dump timeout accepted at 60b86e4 with physical sourcec760; full upstream cron grammar, S3, retention, broader R42 and rotation unfinished | db-postgresql-lifecycle, db-postgresql-restore, A17, A18, A26 |
+| PostgreSQL | partial, bounded private hosting and direct alias upgrade accepted | Yes | Yes | PostgreSQL 17.11 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C proof retained at d384; same-destination image-app binding qualified at 9a69228; bounded immediate logical backup and dashboard new-private-resource restore with application reads/new writes accepted at 56cce; bounded schedules and pg_dump timeout accepted at 60b86e4 with physical sourcec760; bounded remote S3 upload/retry/new-database restore accepted at 6621204 within loopback HTTP fixture limits; full upstream cron grammar, production S3 HTTPS, retention, broader R42 and rotation unfinished | db-postgresql-lifecycle, db-postgresql-restore, A17, A18, A26 |
 | Redis | partial, bounded private hosting and direct alias upgrade accepted | No | No | Redis 8.2.10 API/compiled-runner recovery, capture/replay and empty-network upgrade/maintenance accepted at 5ff5b7e with exact-ID/automatic capture; earlier 563fb88/b777 evidence retained; direct origin/empty-v2 A→B→C persistence proof retained at d384; same-destination image-app binding qualified at 9a69228; broader R42, rotation and recovery unfinished | db-redis-lifecycle, db-redis-persistence |
 | MySQL | planned, M3 | Yes | Yes | Engine-specific backup/import and application verification | db-mysql-backup-restore, db-mysql-upgrade |
 | MariaDB | planned, M3 | Yes | Yes | Separate version/configuration tests from MySQL | db-mariadb-backup-restore, db-mariadb-upgrade |

@@ -40847,7 +40847,8 @@
     "Refresh19 affected historical receipts without shrinking dependencies. R33-C02 retains its563fb88 original receipt after equality of all4 declared dependencies. Ten bounded R38/R23 outcomes gain proof; R38-C10 presence becomes implemented. R21-C07 stays partial and R38-C08 evidence_unavailable; no aggregate gates or broader storage/recovery features gain acceptance.",
     "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed.",
     "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit.",
-    "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open."
+    "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open.",
+    "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -45343,6 +45344,385 @@
         "A26",
         "A37",
         "DB01 full PostgreSQL matrix"
+      ]
+    },
+    {
+      "id": "postgresql-remote-backup-recovery-20261025",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Eight bounded remote assessments are validated; R29-C12 remains partial. R48-C01/C08/C09 extend prior local restore evidence to remote recovery without duplicate credit. R46-C02 schedule credit remains in its original assessment. No historical score, scope, denominator or parent gate changes.",
+      "outcomes": [
+        {
+          "criterion_id": "R46-C03",
+          "outcome": "Record backup target",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "The API-created target revision is validated by real ListObjectsV2 and selected in the browser. The failed and retried upload retain that exact target ID/revision. Immediate and scheduled admission save an explicit target selection; no new R46-C02 schedule credit is claimed.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C14",
+          "outcome": "Record available backup locations",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "History exposes local success separately from the saved remote transfer. Browser selection of the successful recorded remote object leads to a real GET after the exact fixture-owned local CAS archive is withheld, followed by matching SHA-256 publication.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C16",
+          "outcome": "Upload to configured S3-compatible target",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "After real PutObject denial, the browser retries the same saved archive and key against pinned Silo. The object digest matches, no second dump is admitted or planned, and committed acknowledgment loss replays the exact receipt. This does not assert exactly one PUT.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C01",
+          "outcome": "Distinguish dump/archive result from remote-upload result",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "ListObjects validation succeeds while PutObject is denied. Local logical snapshot success and the failed upload remain distinct through controller/runner restart and browser reload, with a useful warning and explicit retry.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C02",
+          "outcome": "Preserve local artifact after failed upload",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "The local blob identity remains equal after denied upload and restart. Retry uses that same blob without another dump. Withholding the exact CAS file later isolates successful remote GET recovery from a local cache hit.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C01",
+          "outcome": "Restore database into new resource for validation",
+          "prior_assessment": {
+            "subject_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "classification": "validated",
+            "assessment_id": "postgresql-local-backup-20261025",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "Remote restore creates a new private resource with distinct binding, volume and encrypted credential identity. The source remains available and retains its post-snapshot data.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C08",
+          "outcome": "Verify application reads restored data",
+          "prior_assessment": {
+            "subject_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "classification": "validated",
+            "assessment_id": "postgresql-local-backup-20261025",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "A distinct application reads the snapshot record from the freshly restored remote archive. The remote GET is required by withholding only the exact fixture-owned local CAS file and checking its republished digest.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C09",
+          "outcome": "Verify application writes restored data before passing",
+          "prior_assessment": {
+            "subject_sha": "56cce329e620472e3c82e9ed7ef0ae0618f124e4",
+            "classification": "validated",
+            "assessment_id": "postgresql-local-backup-20261025",
+            "scope": "Immediate local PostgreSQL backup and new-private-database restore"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "The distinct restored application writes and reads a new record. The original application retains its post-snapshot record and remains usable, independently of the restored target.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R29-C12",
+          "outcome": "Deliver the authorized managed-secret version to the S3 consumer under its separate purpose/operation grant",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "partial",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "physical_source_sha": "6621204964e96039558c0f267dbac50475a7ad98",
+            "reviewed_source_sha": "ba63eeefcb98eda32fb18184f10c794357bb114b",
+            "source_tree": "c2dba0c2a9ff32a7e6b433283a750da82836f9fe",
+            "scope": "PostgreSQL remote backup failure, same-archive retry and remote GET new-private-database restore",
+            "justification": "Real Silo access uses protected purpose/operation-bound encrypted target references. Source authorization and credential tests cover immutable delivery and revocation boundaries, but this physical run does not jointly qualify the broader key provisioning, rotation/recovery and production transport contract; retain partial.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRemoteCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_remote_runtime_integration_test.go",
+              "web/app/tests/browser/database-remote-backups-live.spec.ts",
+              "internal/store/postgres_hosting_database_backup_remote_credentials.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/runtime-results-redacted.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/backup_remote-browser-last-run.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/main-integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "limits": "PostgreSQL 17.11; native Linux arm64, trusted rootful Docker classic image store, pinned Silo on one declared same-destination runner with explicitly trusted loopback HTTP. Target setup/validation through API, selection/backup/warning/reload/retry/restore through live embedded browser. No production S3 HTTPS, independent retention/deletion, notifications, other engines, in-place/cross-host recovery or complete requirement/acceptance/matrix gate. Existing user UI process unchanged; historical933 audit and prior supplemental assessments unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "Production S3 HTTPS and certificate qualification",
+        "R46-C07 automatic retention",
+        "R47 independent local/remote retention, deletion replay and audit atomicity",
+        "Notifications",
+        "Other database engines",
+        "In-place/cross-host restore",
+        "Full upstream cron grammar",
+        "Broader managed credential provisioning/rotation/recovery",
+        "A25",
+        "A26",
+        "A37",
+        "DB01 full PostgreSQL matrix",
+        "Migration and unchanged-client compatibility"
       ]
     }
   ]

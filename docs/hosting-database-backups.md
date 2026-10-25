@@ -94,11 +94,13 @@ administrative resolution for that crash window.
 ## Deliberate limits and upstream reference
 
 [PostgreSQL schedules](hosting-database-backup-schedules.md) have subsequent
-physical qualification within their documented cron subset. S3 publication,
-retention automation, other database engines, arbitrary SQL uploads or URLs,
+physical qualification within their documented cron subset.
+[Remote S3 publication and recovery](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
+have subsequent acceptance within an explicitly trusted loopback HTTP fixture.
+Production S3 HTTPS, retention automation, other database engines, arbitrary SQL uploads or URLs,
 in-place replacement, cross-destination restore, and backup of
 PostgreSQL roles are deferred. These gaps must remain visible when assessing full
-hosting parity. No A25/S3 qualification is implied.
+hosting parity. No full A25 qualification is implied.
 
 The pinned Coolify reference (`b12d1386f3d458618b4c579babcd1e339c6c40b3`)
 uses `app/Jobs/DatabaseBackupJob.php` for PostgreSQL custom dumps and separate
