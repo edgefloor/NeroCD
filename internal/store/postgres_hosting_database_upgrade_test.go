@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -478,6 +479,9 @@ func TestPostgresDatabaseUpgradeRevokedCapabilityBoundaries(t *testing.T) {
 			if err == nil {
 				t.Fatal("revoked upgrade capability accepted at", stage)
 			}
+			if stage == "status" && !errors.Is(err, store.ErrConflict) {
+				t.Fatalf("revoked status read must return semantic capability denial, got %v", err)
+			}
 		})
 	}
 }
@@ -702,11 +706,229 @@ func TestPostgresDatabaseUpgradeCapabilityAfterRunnerWait(t *testing.T) {
 				if e == nil {
 					t.Fatal("upgrade used capability read before runner lock")
 				}
+				if stage == "status" && !errors.Is(e, store.ErrConflict) {
+					t.Fatalf("status must rerun authority and return semantic capability denial, got %v", e)
+				}
 			case <-ctx.Done():
 				t.Fatal("runner waiter deadline")
 			}
 			if upgradeCounts(t, f) != before {
 				t.Fatal("runner revocation leaked upgrade effects")
+			}
+		})
+	}
+}
+
+type hostingStatusTraceKey struct{}
+type hostingStatusRetryTrace struct {
+	operation            string
+	snapshots            atomic.Int32
+	locks                atomic.Int32
+	serializations       atomic.Int32
+	runnerSerializations atomic.Int32
+	flushes              atomic.Int32
+	beforeLock           func(context.Context, int) error
+	beforeFlush          func(context.Context, int) error
+	afterSerialization   func()
+	effectErr            error
+}
+
+func (r *hostingStatusRetryTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.HasPrefix(data.SQL, "-- name: GetHostingOperationSnapshot :one") && len(data.Args) > 0 && data.Args[0] == r.operation {
+		r.snapshots.Add(1)
+	}
+	attempt := int(r.snapshots.Load())
+	if attempt > 0 && strings.HasPrefix(data.SQL, "-- name: FlushDatabaseNetworkUpgrade :exec") {
+		r.flushes.Add(1)
+		if r.beforeFlush != nil && r.effectErr == nil {
+			r.effectErr = r.beforeFlush(ctx, attempt)
+		}
+	}
+	if attempt > 0 && strings.HasPrefix(data.SQL, "-- name: LockHostingExactRunner :one") {
+		r.locks.Add(1)
+		if r.beforeLock != nil && r.effectErr == nil {
+			r.effectErr = r.beforeLock(ctx, attempt)
+		}
+		return context.WithValue(ctx, hostingStatusTraceKey{}, true)
+	}
+	return ctx
+}
+func (r *hostingStatusRetryTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	var pg *pgconn.PgError
+	if errors.As(data.Err, &pg) && pg.Code == "40001" {
+		r.serializations.Add(1)
+		if ctx.Value(hostingStatusTraceKey{}) == true {
+			r.runnerSerializations.Add(1)
+		}
+		if r.afterSerialization != nil {
+			r.afterSerialization()
+		}
+	}
+}
+
+func TestPostgresHostingOperationHeartbeatSerializationRetry(t *testing.T) {
+	for _, engine := range []string{"postgresql", "redis"} {
+		t.Run(engine, func(t *testing.T) {
+			f, in := upgradeFixture(t, engine)
+			op, err := f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			expected, err := f.pg.GetHostingOperation(f.ctx, op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			trace := &hostingStatusRetryTrace{operation: op.ID}
+			trace.beforeLock = func(ctx context.Context, attempt int) error {
+				if attempt != 1 {
+					return nil
+				}
+				_, err := f.pg.HeartbeatRunner(ctx, f.runner, time.Now())
+				return err
+			}
+			reader, err := store.HostingOperationReaderForTest(f.ctx, f.pg, trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closePostgresStore(t, reader)
+			ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+			defer cancel()
+			got, err := reader.GetHostingOperation(ctx, op.ID)
+			if trace.effectErr != nil {
+				t.Fatal("real heartbeat did not commit", trace.effectErr)
+			}
+			if trace.serializations.Load() != 1 || trace.runnerSerializations.Load() != 1 {
+				t.Fatalf("actual runner lock did not report SQLSTATE40001: count=%d error=%v", trace.serializations.Load(), err)
+			}
+			if err != nil {
+				var pg *pgconn.PgError
+				if errors.As(err, &pg) {
+					t.Logf("actual public Get returned SQLSTATE=%s after committed heartbeat", pg.Code)
+				}
+				t.Fatal("benign heartbeat serialization escaped complete-read retry", err)
+			}
+			if trace.snapshots.Load() != 2 || trace.locks.Load() != 2 || trace.flushes.Load() != 2 || domain.HostingDocumentHash(got) != domain.HostingDocumentHash(expected) {
+				t.Fatal("retry did not reload exact operation and authority in a fresh transaction")
+			}
+		})
+	}
+}
+
+func TestPostgresHostingOperationSerializationRetryRevocation(t *testing.T) {
+	for _, mode := range []string{"capability", "grant", "token"} {
+		t.Run(mode, func(t *testing.T) {
+			f, in := upgradeFixture(t, "postgresql")
+			var op domain.HostingOperation
+			var err error
+			if mode == "token" {
+				actor, _ := proxyLegacyToken(t, f.pg, f.service, "tok_status_retry", []string{domain.RoleSystemAdmin})
+				op, err = f.pg.RequestHostingDatabaseNetworkUpgrade(f.ctx, "hop_status_retry_token", f.resource.ID, actor.ID, in, destinationEvent("status_retry_token"))
+			} else {
+				op, err = f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, in)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			before := upgradeCounts(t, f)
+			trace := &hostingStatusRetryTrace{operation: op.ID}
+			// This hook is after O/sidecar decoding but before any target authority
+			// locks. Grant/token revocation must never block on a lock held by the read.
+			trace.beforeFlush = func(ctx context.Context, attempt int) error {
+				if attempt != 1 {
+					return nil
+				}
+				if _, err := f.pg.HeartbeatRunner(ctx, f.runner, time.Now()); err != nil {
+					return err
+				}
+				var err error
+				switch mode {
+				case "capability":
+					_, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingDatabaseUpgradeCapability)
+				case "grant":
+					_, err = f.db.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1 AND project_id=$2`, f.op.Snapshot.DestinationID, f.op.ProjectID)
+				case "token":
+					_, err = f.db.Exec(ctx, `UPDATE api_tokens SET status='revoked',revoked_at=clock_timestamp() WHERE id=$1`, op.CreatedBy)
+				}
+				return err
+			}
+			reader, err := store.HostingOperationReaderForTest(f.ctx, f.pg, trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closePostgresStore(t, reader)
+			ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+			defer cancel()
+			got, err := reader.GetHostingOperation(ctx, op.ID)
+			if trace.effectErr != nil {
+				t.Fatal("revocation did not commit", trace.effectErr)
+			}
+			var pg *pgconn.PgError
+			if !errors.Is(err, store.ErrConflict) || errors.As(err, &pg) || !reflect.DeepEqual(got, domain.HostingOperation{}) || trace.serializations.Load() != 1 || trace.snapshots.Load() != 2 || trace.flushes.Load() != 2 {
+				t.Fatalf("revocation escaped fresh semantic authority denial: mode=%s err=%v attempts=%d serializations=%d", mode, err, trace.snapshots.Load(), trace.serializations.Load())
+			}
+			if upgradeCounts(t, f) != before {
+				t.Fatal("read retry minted durable deployment or authority")
+			}
+		})
+	}
+}
+
+func TestPostgresHostingOperationSerializationRetryBounds(t *testing.T) {
+	for _, mode := range []string{"exhausted", "canceled", "non40001"} {
+		t.Run(mode, func(t *testing.T) {
+			f, in := upgradeFixture(t, "postgresql")
+			op, err := f.service.RequestHostingDatabaseNetworkUpgrade(f.ctx, f.resource.ID, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f = settleUpgrade(t, prepareUpgrade(t, f, op))
+			trace := &hostingStatusRetryTrace{operation: op.ID}
+			ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+			defer cancel()
+			if mode == "non40001" {
+				// Only this owned unique schema is changed. A real non-serialization
+				// PostgreSQL error must pass through after one snapshot, never be retried.
+				_, err = f.db.Exec(ctx, `CREATE OR REPLACE FUNCTION nerocd_database_network_upgrade_flush() RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='55P03', MESSAGE='owned status fixture non-serialization failure'; END $$`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				trace.beforeLock = func(ctx context.Context, _ int) error {
+					_, err := f.pg.HeartbeatRunner(ctx, f.runner, time.Now())
+					return err
+				}
+				if mode == "canceled" {
+					trace.afterSerialization = cancel
+				}
+			}
+			reader, err := store.HostingOperationReaderForTest(f.ctx, f.pg, trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closePostgresStore(t, reader)
+			got, err := reader.GetHostingOperation(ctx, op.ID)
+			if trace.effectErr != nil {
+				t.Fatal("heartbeat fixture failed", trace.effectErr)
+			}
+			if !reflect.DeepEqual(got, domain.HostingOperation{}) {
+				t.Fatal("failed read returned cached operation values")
+			}
+			var pg *pgconn.PgError
+			switch mode {
+			case "exhausted":
+				if !errors.As(err, &pg) || pg.Code != "40001" || trace.snapshots.Load() != 3 || trace.serializations.Load() != 3 {
+					t.Fatal("serialization retry was not finite/exactly three fresh attempts", err, trace.snapshots.Load())
+				}
+			case "canceled":
+				if !errors.Is(err, context.Canceled) || trace.snapshots.Load() != 1 || trace.serializations.Load() != 1 {
+					t.Fatal("canceled caller started another read attempt", err, trace.snapshots.Load())
+				}
+			case "non40001":
+				if !errors.As(err, &pg) || pg.Code != "55P03" || trace.snapshots.Load() != 1 || trace.flushes.Load() != 1 {
+					t.Fatal("non40001 failure was retried or remapped", err, trace.snapshots.Load())
+				}
 			}
 		})
 	}

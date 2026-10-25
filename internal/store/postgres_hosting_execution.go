@@ -13,6 +13,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store/sqlcgen"
@@ -181,6 +182,25 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 
 // GetHostingOperation loads immutable evidence without exposing lease authority.
 func (s *PostgresStore) GetHostingOperation(ctx context.Context, id string) (domain.HostingOperation, error) {
+	const attempts = 3
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		op, err := s.hostingOperationReadSnapshot(ctx, id)
+		if err == nil {
+			return op, nil
+		}
+		var pgErr *pgconn.PgError
+		if attempt+1 >= attempts || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+			return domain.HostingOperation{}, err
+		}
+		// The failed snapshot has rolled back. Reload all evidence and current
+		// authority; a runner heartbeat may have invalidated its shared row lock.
+	}
+}
+
+func (s *PostgresStore) hostingOperationReadSnapshot(ctx context.Context, id string) (domain.HostingOperation, error) {
 	// Operation, task and sidecar projections must describe the same committed
 	// snapshot. Keep this writable for the historical upgrade constraint flush.
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
