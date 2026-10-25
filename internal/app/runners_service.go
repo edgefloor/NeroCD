@@ -411,7 +411,21 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup {
+		if domain.ValidateDatabaseBackupTask(claim.Run) != nil || claim.Lease.RunID != claim.Run.ID || claim.Lease.RunnerID != principal.ID {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		plan, err := s.RunnerDatabaseBackupPlan(ctx, a)
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		if plan.Operation.ID != a.OperationID || plan.Operation.Mode != claim.Run.RunSpec.HostingMode || plan.RunnerID != principal.ID {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		claim.PrimitivePlan = domain.RunnerPrimitivePlan{RunID: claim.Run.ID}
+		return claim, nil
+	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageArchive {
 		if domain.ValidateStorageArchiveTask(claim.Run) != nil {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
