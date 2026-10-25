@@ -461,5 +461,11 @@ func (s *PostgresStore) databaseBackupTransferClaimAllowed(ctx context.Context, 
 		return false, nil
 	}
 	err = backupRemoteCurrent(ctx, tx, r.plan)
+	// Expected current-authority denial makes this item ineligible. Let the
+	// claim cursor advance without granting a lease or changing its history.
+	// Database and cancellation errors still abort the transaction.
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) {
+		return false, nil
+	}
 	return err == nil, err
 }
