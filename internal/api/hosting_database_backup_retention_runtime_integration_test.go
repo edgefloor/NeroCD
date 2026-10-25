@@ -506,21 +506,93 @@ func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, dele
 		}
 	}
 }
-func (x *databaseRetentionFixture) restore(backup domain.HostingDatabaseBackupOperation, upload databaseRemoteTransfer) {
-	admitted := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", "/api/v1/database-backups/"+backup.ID+"/restores", map[string]any{"request_id": backupRuntimeRequestID(x.f.t), "name": "Retention survivor", "remote_source": map[string]any{"transfer_id": upload.ID, "expected_target_revision": upload.TargetRevision}}, 202)
-	restored := backupRuntimeAwait(x.f, admitted.ID)
+func (x *databaseRetentionFixture) restoreApplication(backup domain.HostingDatabaseBackupOperation, restoreID, suffix string) (domain.HostingDatabase, domain.HostingOperation) {
+	restored := backupRuntimeAwait(x.f, restoreID)
+	if restored.BackupID != backup.ID || restored.Blob == nil || backup.Blob == nil || *restored.Blob != *backup.Blob {
+		x.f.t.Fatal("retention restore changed immutable archive identity")
+	}
 	fresh := databaseRunnerJSON[domain.HostingDatabase](x.f, x.f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
 	x.f.registerRouteDatabaseCleanup(fresh.Resource.ID)
 	if fresh.Resource.ID == x.source.Resource.ID || fresh.StorageRef == x.source.StorageRef || fresh.Credentials[0].SecretID == x.source.Credentials[0].SecretID {
 		x.f.t.Fatal("retention restore reused source identity")
 	}
-	app := backupRuntimeApplication(x.f, fresh, "retention_survivor")
+	app := backupRuntimeApplication(x.f, fresh, suffix)
 	if app.ResourceID == x.application.ResourceID {
 		x.f.t.Fatal("retention restore reused application")
 	}
 	x.f.appRecord(app, "GET", "before", "retention_origin")
 	x.f.appRecord(app, "PUT", "restored_new", "retention_new_write")
 	x.f.appRecord(app, "GET", "restored_new", "retention_new_write")
+	return fresh, app
+}
+
+// Public previews omit deleted inventory in the current contract. If a future
+// response includes it, it must still retain its deleted availability.
+func retentionRecoveredLocalCopy(p databaseRetentionPreview, backup domain.HostingDatabaseBackupOperation, original, remote string) (string, bool) {
+	if backup.Blob == nil {
+		return "", false
+	}
+	localID, remoteCount, localCount := "", 0, 0
+	for _, item := range p.Items {
+		if item.BackupID != backup.ID {
+			continue
+		}
+		if item.Digest != backup.Blob.Digest || item.Bytes != backup.Blob.Bytes {
+			return "", false
+		}
+		if item.CopyID == original && item.Availability != "deleted" {
+			return "", false
+		}
+		if item.Availability == "deleted" {
+			continue
+		}
+		switch item.Location {
+		case "local":
+			if item.CopyID == "" || item.CopyID == original || item.Availability != "available" {
+				return "", false
+			}
+			localID = item.CopyID
+			localCount++
+		case "remote":
+			if item.CopyID != remote || item.Availability != "available" {
+				return "", false
+			}
+			remoteCount++
+		default:
+			return "", false
+		}
+	}
+	return localID, localCount == 1 && remoteCount == 1
+}
+
+func retentionSameInventory(a, b []databaseRetentionItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byID := make(map[string]databaseRetentionItem, len(a))
+	for _, item := range a {
+		if _, exists := byID[item.CopyID]; exists {
+			return false
+		}
+		byID[item.CopyID] = item
+	}
+	for _, item := range b {
+		prior, exists := byID[item.CopyID]
+		if !exists || prior.BackupID != item.BackupID || prior.TransferID != item.TransferID || prior.Location != item.Location || prior.Digest != item.Digest || prior.Bytes != item.Bytes || prior.Selected != item.Selected || prior.Availability != item.Availability || !slices.Equal(prior.ProtectedReasons, item.ProtectedReasons) {
+			return false
+		}
+		delete(byID, item.CopyID)
+	}
+	return len(byID) == 0
+}
+
+func retentionHistoryPreserved(history []databaseRetentionExecution, prior databaseRetentionExecution) bool {
+	for _, current := range history {
+		if current.ID == prior.ID {
+			return current.State == prior.State && current.ReservationHeld == prior.ReservationHeld && current.LocalState == prior.LocalState && current.RemoteState == prior.RemoteState && slices.Equal(current.Items, prior.Items)
+		}
+	}
+	return false
 }
 
 func TestHostingDatabaseBackupRetentionCompiledRunner(t *testing.T) {
@@ -575,9 +647,85 @@ func TestHostingDatabaseBackupRetentionCompiledRunner(t *testing.T) {
 	if len(history) != 1 {
 		t.Fatal("manual retention expanded into another batch")
 	}
-	x.restore(x.backups[3], x.uploads[3])
 	browser.setPhase("complete", execution.ID)
 	browser.finished()
+	// Admit one newer local-only backup, then delete the survivor's original
+	// local copy through retention. Its remote archive remains available.
+	x.f.appRecord(x.application, "PUT", "local_newest", "retention_local_newest")
+	newest := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", "/api/v1/resources/"+x.source.Resource.ID+"/database-backups", map[string]any{"request_id": backupRuntimeRequestID(t), "expected_resource_generation": x.source.Resource.Generation}, 202)
+	x.backups = append(x.backups, backupRuntimeAwait(x.f, newest.ID))
+	if transfers := databaseRunnerJSON[[]databaseRemoteTransfer](x.f, x.f.token, "GET", "/api/v1/database-backups/"+newest.ID+"/transfers", nil, 200); len(transfers) != 0 {
+		t.Fatal("local-only backup unexpectedly admitted remote work")
+	}
+	x.policy(databaseRetentionLimits{KeepCount: 1}, databaseRetentionLimits{})
+	localPreview := x.preview()
+	localWant := []string{"dbc_local_" + x.backups[2].ID, "dbc_local_" + x.backups[3].ID}
+	if !retentionExactSelection(localPreview, localWant) {
+		t.Fatal("local-only retention changed the exact selected copies")
+	}
+	localExecution := x.execute(localPreview, x.f.token, 202)
+	localSettled := x.await(localExecution.ID)
+	if localSettled.State != "succeeded" || localSettled.ReservationHeld || len(localSettled.Items) != len(localWant) {
+		t.Fatal("local-only retention did not settle the exact batch")
+	}
+	localDeleted := map[string]bool{}
+	for _, item := range localSettled.Items {
+		if !slices.Contains(localWant, item.CopyID) || item.Location != "local" || item.State != "deleted" && item.State != "absent" || item.ReservationHeld {
+			t.Fatal("local-only retention changed selected copy results")
+		}
+		localDeleted[item.CopyID] = true
+	}
+	if len(localDeleted) != len(localWant) {
+		t.Fatal("local-only retention omitted a selected copy")
+	}
+	x.assertCopies(localPreview, localDeleted)
+
+	survivor, upload := x.backups[3], x.uploads[3]
+	restorePath := "/api/v1/database-backups/" + survivor.ID + "/restores"
+	remoteRequest := map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Retention remote survivor", "remote_source": map[string]any{"transfer_id": upload.ID, "expected_target_revision": upload.TargetRevision}}
+	remoteAdmission := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", restorePath, remoteRequest, 202)
+	remoteDatabase, remoteApp := x.restoreApplication(survivor, remoteAdmission.ID, "retention_remote_survivor")
+	download := databaseRemoteAwait(x.f, survivor.ID, "download", "succeeded")
+	if download.RestoreOperationID != remoteAdmission.ID || download.Blob == nil || *download.Blob != *survivor.Blob {
+		t.Fatal("retention recovery did not download the original remote archive")
+	}
+	cas := filepath.Join(x.f.root, "state", "logical-backups", strings.TrimPrefix(survivor.Blob.Digest, "sha256:"))
+	raw, err := os.ReadFile(cas)
+	sum := sha256.Sum256(raw)
+	clear(raw)
+	if err != nil || fmt.Sprintf("sha256:%x", sum) != survivor.Blob.Digest {
+		t.Fatal("remote recovery did not republish the original local archive")
+	}
+	recoveredPreview := x.preview()
+	copyID, valid := retentionRecoveredLocalCopy(recoveredPreview, survivor, "dbc_local_"+survivor.ID, "dbc_remote_"+upload.ID)
+	if !valid {
+		t.Fatal("remote recovery did not publish one distinct available local copy")
+	}
+	// Replay only the public admission. Protected download-receipt replay is
+	// qualified separately by the core receipt regression, not this assertion.
+	replayed := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", restorePath, remoteRequest, 202)
+	replayedPreview := x.preview()
+	replayedCopyID, valid := retentionRecoveredLocalCopy(replayedPreview, survivor, "dbc_local_"+survivor.ID, "dbc_remote_"+upload.ID)
+	if replayed.ID != remoteAdmission.ID || !valid || replayedCopyID != copyID || !retentionSameInventory(recoveredPreview.Items, replayedPreview.Items) {
+		t.Fatal("public restore admission replay changed the operation or copy inventory")
+	}
+	localAdmission := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", restorePath, map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Retention local survivor"}, 202)
+	localDatabase, localApp := x.restoreApplication(survivor, localAdmission.ID, "retention_local_survivor")
+	if localAdmission.ID == remoteAdmission.ID || localDatabase.Resource.ID == remoteDatabase.Resource.ID || localDatabase.StorageRef == remoteDatabase.StorageRef || localDatabase.Credentials[0].SecretID == remoteDatabase.Credentials[0].SecretID || localApp.ResourceID == remoteApp.ResourceID {
+		t.Fatal("subsequent local restore reused the remote recovery target")
+	}
+	transfers := databaseRunnerJSON[[]databaseRemoteTransfer](x.f, x.f.token, "GET", "/api/v1/database-backups/"+survivor.ID+"/transfers", nil, 200)
+	if len(transfers) != 2 {
+		t.Fatal("local restore or admission replay created another remote transfer")
+	}
+	finalPreview := x.preview()
+	if !retentionSameInventory(replayedPreview.Items, finalPreview.Items) {
+		t.Fatal("subsequent local restore changed the available copy inventory")
+	}
+	finalHistory := databaseRunnerJSON[[]databaseRetentionExecution](x.f, x.f.token, "GET", x.path()+"/executions", nil, 200)
+	if len(finalHistory) != 2 || !retentionHistoryPreserved(finalHistory, settled) || !retentionHistoryPreserved(finalHistory, localSettled) {
+		t.Fatal("restore or replay changed the original deletion history")
+	}
 	x.f.assertRedacted()
 	fmt.Println("DATABASE_BACKUP_RETENTION_PASS postgresql")
 	fmt.Println("DATABASE_BACKUP_RETENTION_RESTORE_APP_PASS postgresql")
@@ -1296,5 +1444,57 @@ func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *te
 				t.Fatal("observation must make exactly one bounded request for the owned exact prefix")
 			}
 		})
+	}
+}
+
+func TestDatabaseBackupRetentionRecoveredCopyPublicEvidence(t *testing.T) {
+	backup := domain.HostingDatabaseBackupOperation{ID: "backup", Blob: &domain.HostingDatabaseBackupBlob{Digest: "sha256:archive", Bytes: 42}}
+	local := databaseRetentionItem{CopyID: "downloaded", BackupID: backup.ID, Location: "local", Availability: "available", Digest: backup.Blob.Digest, Bytes: backup.Blob.Bytes}
+	remote := local
+	remote.CopyID, remote.Location = "remote", "remote"
+	original := local
+	original.CopyID, original.Availability = "original", "deleted"
+	for _, tc := range []struct {
+		name  string
+		items []databaseRetentionItem
+		want  bool
+	}{
+		{name: "new_copy_and_remote", items: []databaseRetentionItem{local, remote}, want: true},
+		{name: "deleted_original_preserved", items: []databaseRetentionItem{local, remote, original}, want: true},
+		{name: "duplicate_download_copy", items: []databaseRetentionItem{local, local, remote}},
+		{name: "missing_local", items: []databaseRetentionItem{remote}},
+		{name: "missing_remote", items: []databaseRetentionItem{local}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id, valid := retentionRecoveredLocalCopy(databaseRetentionPreview{Items: tc.items}, backup, original.CopyID, remote.CopyID)
+			if valid != tc.want || valid && id != local.CopyID {
+				t.Fatal("recovery inventory qualification differs from expected evidence")
+			}
+		})
+	}
+	for _, mutate := range []func(*databaseRetentionItem){
+		func(v *databaseRetentionItem) { v.CopyID = original.CopyID },
+		func(v *databaseRetentionItem) { v.Availability = "unproven" },
+		func(v *databaseRetentionItem) { v.Digest = "sha256:other" },
+		func(v *databaseRetentionItem) { v.Bytes++ },
+	} {
+		changed := local
+		mutate(&changed)
+		if _, valid := retentionRecoveredLocalCopy(databaseRetentionPreview{Items: []databaseRetentionItem{changed, remote}}, backup, original.CopyID, remote.CopyID); valid {
+			t.Fatal("changed or resurrected local copy satisfied recovery proof")
+		}
+	}
+	if !retentionSameInventory([]databaseRetentionItem{local, remote}, []databaseRetentionItem{remote, local}) || retentionSameInventory([]databaseRetentionItem{local, remote}, []databaseRetentionItem{local, local}) {
+		t.Fatal("public inventory replay comparison lost copy identity")
+	}
+	prior := databaseRetentionExecution{ID: "execution", State: "succeeded", Items: []databaseRetentionExecutionItem{{CopyID: original.CopyID, State: "deleted"}}}
+	if !retentionHistoryPreserved([]databaseRetentionExecution{prior}, prior) {
+		t.Fatal("unchanged deletion history was rejected")
+	}
+	changed := prior
+	changed.Items = slices.Clone(prior.Items)
+	changed.Items[0].State = "available"
+	if retentionHistoryPreserved([]databaseRetentionExecution{changed}, prior) {
+		t.Fatal("recovery erased original deletion evidence")
 	}
 }
