@@ -384,6 +384,13 @@ function DestinationPanel(props: Props) {
             Credentials are write-only. Leave both key fields empty while
             editing to keep the existing credentials.
           </p>
+          {editing.id ? (
+            <p>
+              Replacing keys revokes the previous credentials. Older backups
+              cannot use the replacement keys, so retrying their upload or
+              restoring them remotely may fail. Local backups remain available.
+            </p>
+          ) : null}
           <label className="block">
             S3 access key
             <input

@@ -119,10 +119,16 @@ async function fill() {
 test("owner creates with write-only keys, clears accepted keys, then omits credentials on edit", async () => {
   const view = mount();
   await fill();
+  expect(screen.queryByText(/Replacing keys revokes/)).toBeNull();
   fireEvent.click(
     screen.getByRole("button", { name: "Create backup destination" }),
   );
   await screen.findByText(/Saved destination Daily archive, revision 1/);
+  expect(
+    screen.getByText(
+      "Replacing keys revokes the previous credentials. Older backups cannot use the replacement keys, so retrying their upload or restoring them remotely may fail. Local backups remain available.",
+    ),
+  ).toBeTruthy();
   expect(
     (screen.getByLabelText("S3 access key") as HTMLInputElement).value,
   ).toBe("");
