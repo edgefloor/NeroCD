@@ -5533,7 +5533,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover";
+            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
@@ -5542,7 +5542,7 @@ export interface components {
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup";
+            task_mode?: "deploy" | "observe" | "cleanup" | "finalize";
         } | {
             snapshot?: components["schemas"]["HostingStorageArchiveZeroSnapshot"];
             /** @enum {string} */
