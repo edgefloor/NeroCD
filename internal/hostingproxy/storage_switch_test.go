@@ -16,7 +16,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -283,5 +285,298 @@ func TestInterruptedStorageLoadedGuardRejectsUnrelatedReadinessAndForeignConfigu
 				t.Fatal("invalid configuration or unrelated unavailable backend admitted")
 			}
 		})
+	}
+}
+
+func interruptedReceiptEngine(t *testing.T) (*Engine, Plan, Plan, *interruptedLoadedFixture) {
+	t.Helper()
+	e, prior, next, fixture := interruptedLoadedEngine(t, true)
+	directory, err := filepath.EvalSymlinks(e.settings.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := e.settings
+	settings.Directory = directory
+	settings.DockerSocket = filepath.Join(directory, "docker.sock")
+	settings.DockerBinary = filepath.Join(directory, "docker-script")
+	// Only the two read-only inspection commands are implemented. No process may
+	// silently accept run, rm, stop, network, or any other effect command.
+	script := `#!/bin/sh
+owned_dir=${0%/*}
+printf '%s %s\n' "$5" "$6" >> "$owned_dir/commands"
+case "$5:$6" in
+container:ls) printf 'owned-proxy\n';;
+container:inspect) exec /bin/cat "$owned_dir/inspect.json";;
+*) exit 93;;
+esac
+`
+	if err = os.WriteFile(settings.DockerBinary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	prior, err = PrepareVerifiedSwitch(prior.identity, settings, prior.generation, prior.previous, prior.Routes(), prior.verification.RequiredRouteIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err = PrepareVerifiedSwitch(next.identity, settings, next.generation, next.previous, next.Routes(), next.verification.RequiredRouteIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.settings = settings
+	fixture.mu.Lock()
+	fixture.active = prior
+	fixture.mu.Unlock()
+	c := container{ID: "owned-proxy"}
+	c.Config.Image = Image
+	c.Config.Labels = prior.labels()
+	c.Config.Cmd = e.staticArgs()
+	c.HostConfig.NetworkMode = "host"
+	c.HostConfig.RestartPolicy.Name = "unless-stopped"
+	c.State.Running = true
+	c.Mounts = append(c.Mounts, struct {
+		Source, Destination string
+		RW                  bool
+	}{filepath.Join(directory, "dynamic"), "/dynamic", false}, struct {
+		Source, Destination string
+		RW                  bool
+	}{filepath.Join(directory, "certificates"), "/certificates", true})
+	raw, err := json.Marshal([]container{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(directory, "inspect.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	saveInterruptedReceipt(t, e, prior, "committed")
+	return e, prior, next, fixture
+}
+
+func saveInterruptedReceipt(t *testing.T, e *Engine, p Plan, phase string) {
+	t.Helper()
+	r := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: phase, Verification: p.verification}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"dynamic", "certificates", "docker-config"} {
+		if err = os.MkdirAll(filepath.Join(e.settings.Directory, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range map[string][]byte{"receipt.json": raw, "dynamic/routes.yml": p.dynamic(), "certificates/acme.json": []byte("{}")} {
+		if err = os.WriteFile(filepath.Join(e.settings.Directory, name), body, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func readInterruptedTestReceipt(e *Engine) (receipt, []byte, error) {
+	raw, err := os.ReadFile(filepath.Join(e.settings.Directory, "receipt.json"))
+	if err != nil {
+		return receipt{}, nil, err
+	}
+	var local receipt
+	if err = json.Unmarshal(raw, &local); err != nil {
+		return receipt{}, nil, err
+	}
+	file, err := os.ReadFile(filepath.Join(e.settings.Directory, "dynamic/routes.yml"))
+	return local, file, err
+}
+func verifyInterruptedTestReceipt(ctx context.Context, e *Engine, current, prior Plan, failed *Plan, outcome Outcome, generation uint64) error {
+	local, file, err := readInterruptedTestReceipt(e)
+	if err != nil {
+		return err
+	}
+	return e.verifyInterruptedStorageReceipt(ctx, current, prior, failed, outcome, generation, local, file)
+}
+
+func TestInterruptedStorageReceiptVerifiesClosedPriorWithoutBackendReadiness(t *testing.T) {
+	e, prior, current, _ := interruptedReceiptEngine(t)
+	if e.loaded(t.Context(), prior) == nil {
+		t.Fatal("ordinary managed receipt loaded guard accepted stopped verified backend")
+	}
+	before := map[string]string{}
+	for _, name := range []string{"receipt.json", "dynamic/routes.yml", "certificates/acme.json"} {
+		raw, err := os.ReadFile(filepath.Join(e.settings.Directory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = string(raw)
+	}
+	if err := verifyInterruptedTestReceipt(t.Context(), e, current, prior, nil, Refused, prior.generation); err != nil {
+		t.Fatal("exact closed interrupted refusal rejected", err)
+	}
+	for name, body := range before {
+		raw, err := os.ReadFile(filepath.Join(e.settings.Directory, name))
+		if err != nil || string(raw) != body {
+			t.Fatal("verification mutated settled evidence", name, err)
+		}
+	}
+	if runtime.GOOS == "linux" {
+		if e.VerifyManagedReceipt(t.Context(), current, Refused, prior.generation) == nil {
+			t.Fatal("ordinary public managed verifier accepted stopped verified backend")
+		}
+		if err := e.VerifyInterruptedStorageReceipt(t.Context(), current, prior, nil, Refused, prior.generation); err != nil {
+			t.Fatal(err)
+		}
+	} else if e.VerifyInterruptedStorageReceipt(t.Context(), current, prior, nil, Refused, prior.generation) == nil {
+		t.Fatal("public verifier broadened Linux eligibility")
+	}
+	calls, err := os.ReadFile(filepath.Join(e.settings.Directory, "commands"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range strings.FieldsFunc(string(calls), func(r rune) bool { return r == '\n' }) {
+		if call != "container ls" && call != "container inspect" {
+			t.Fatal("verification attempted effect", call)
+		}
+	}
+}
+
+func TestInterruptedStorageReceiptRejectsForeignOrUnresolvedEvidence(t *testing.T) {
+	for _, mode := range []string{"receipt_hash", "receipt_routes", "receipt_verification", "receipt_generation", "receipt_phase", "file", "missing_receipt", "generation", "outcome_uncertain", "outcome_rollback", "foreign_prior", "daemon", "unrelated502", "generation_marker", "route_id", "missing_route_marker", "foreign_service", "container_labels", "container_mount", "container_stopped", "missing_container", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			e, prior, current, fixture := interruptedReceiptEngine(t)
+			outcome, generation := Refused, prior.generation
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			switch mode {
+			case "receipt_hash", "receipt_routes", "receipt_verification", "receipt_generation", "receipt_phase":
+				local, _, err := readInterruptedTestReceipt(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch mode {
+				case "receipt_hash":
+					local.Hash = digest("foreign")
+				case "receipt_routes":
+					local.Routes[0].HostPort++
+				case "receipt_verification":
+					local.Verification = nil
+				case "receipt_generation":
+					local.Generation--
+				case "receipt_phase":
+					local.Phase = "intent"
+				}
+				raw, marshalErr := json.Marshal(local)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				err = os.WriteFile(filepath.Join(e.settings.Directory, "receipt.json"), raw, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "file":
+				if err := os.WriteFile(filepath.Join(e.settings.Directory, "dynamic/routes.yml"), []byte("foreign"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "missing_receipt":
+				if err := os.Remove(filepath.Join(e.settings.Directory, "receipt.json")); err != nil {
+					t.Fatal(err)
+				}
+			case "generation":
+				generation++
+			case "outcome_uncertain":
+				outcome = Uncertain
+			case "outcome_rollback":
+				outcome = RolledBack
+			case "foreign_prior":
+				prior.hash = digest("foreign")
+			case "container_labels", "container_mount", "container_stopped", "missing_container":
+				path := filepath.Join(e.settings.Directory, "inspect.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var cs []container
+				if err = json.Unmarshal(raw, &cs); err != nil {
+					t.Fatal(err)
+				}
+				switch mode {
+				case "container_labels":
+					cs[0].Config.Labels["io.nerocd.daemon"] = "foreign"
+				case "container_mount":
+					cs[0].Mounts[0].Source = "/foreign"
+				case "container_stopped":
+					cs[0].State.Running = false
+				case "missing_container":
+					cs = nil
+				}
+				raw, err = json.Marshal(cs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "canceled":
+				cancel()
+			default:
+				fixture.mu.Lock()
+				if mode == "unrelated502" {
+					fixture.status["other"] = 502
+				} else {
+					fixture.fault = mode
+				}
+				fixture.mu.Unlock()
+			}
+			if err := verifyInterruptedTestReceipt(ctx, e, current, prior, nil, outcome, generation); err == nil {
+				t.Fatal("foreign or unresolved receipt accepted")
+			}
+		})
+	}
+}
+
+func TestInterruptedStorageAppliedReceiptStillRequiresTrustedCandidate(t *testing.T) {
+	e, prior, current, fixture := interruptedReceiptEngine(t)
+	saveInterruptedReceipt(t, e, current, "committed")
+	fixture.mu.Lock()
+	fixture.active = current
+	fixture.mu.Unlock()
+	if verifyInterruptedTestReceipt(t.Context(), e, current, prior, nil, Applied, current.generation) == nil {
+		t.Fatal("applied receipt accepted candidate502")
+	}
+	fixture.mu.Lock()
+	fixture.status["selected"] = 200
+	fixture.mu.Unlock()
+	if err := verifyInterruptedTestReceipt(t.Context(), e, current, prior, nil, Applied, current.generation); err != nil {
+		t.Fatal("healthy trusted candidate rejected", err)
+	}
+	// Even an otherwise identical receipt cannot omit the committed strict policy.
+	local, _, err := readInterruptedTestReceipt(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local.Verification = nil
+	raw, err := json.Marshal(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(e.settings.Directory, "receipt.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if verifyInterruptedTestReceipt(t.Context(), e, current, prior, nil, Applied, current.generation) == nil {
+		t.Fatal("applied verification policy omitted")
+	}
+}
+
+func TestInterruptedStorageReceiptForwardRecoveryRetainsExactFailedHistory(t *testing.T) {
+	e, prior, failed, _ := interruptedReceiptEngine(t)
+	current, err := PrepareVerifiedSwitch(failed.identity, failed.settings, failed.generation+1, prior.generation, failed.Routes(), failed.verification.RequiredRouteIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = verifyInterruptedTestReceipt(t.Context(), e, current, prior, &failed, Refused, prior.generation); err != nil {
+		t.Fatal("exact closed prior refused recovery rejected", err)
+	}
+	saveInterruptedReceipt(t, e, failed, "committed")
+	if verifyInterruptedTestReceipt(t.Context(), e, current, prior, &failed, Refused, prior.generation) == nil {
+		t.Fatal("failed generation receipt substituted for closed refused prior")
+	}
+	saveInterruptedReceipt(t, e, prior, "committed")
+	foreign := failed
+	foreign.routes = append([]Route(nil), failed.routes...)
+	foreign.routes[0].HostPort++
+	if verifyInterruptedTestReceipt(t.Context(), e, current, prior, &foreign, Refused, prior.generation) == nil {
+		t.Fatal("changed failed history accepted")
 	}
 }

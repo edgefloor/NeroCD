@@ -79,7 +79,7 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if err = proxyResultAcknowledged(op, entry, runnerID); err != nil {
 			return err
 		}
-		if err = verifyProxyLocalReceipt(engine, local, entry.Result.Result); err != nil {
+		if err = verifyProxyLocalReceipt(engine, local, entry.Plan, config, entry.Result.Result); err != nil {
 			return err
 		}
 		if parent.Err() != nil {
@@ -130,7 +130,7 @@ func reconcileProxyJournal(server, token, runnerID string, journal *runner.Attem
 		if err != nil {
 			return err
 		}
-		if err = verifyProxyLocalReceipt(engine, local, *op.Result); err != nil {
+		if err = verifyProxyLocalReceipt(engine, local, entry.Plan, config, *op.Result); err != nil {
 			return err
 		}
 		if parent.Err() != nil {

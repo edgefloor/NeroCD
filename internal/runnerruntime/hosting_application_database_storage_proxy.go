@@ -112,3 +112,20 @@ func applyApplicationStorageProxy(s *attemptSupervisor, c runnerclient.Client, e
 	}
 	return special.ApplyInterruptedStorageSwitch(s.Context(), local, prior, failed, before)
 }
+
+func verifyApplicationStorageProxyReceipt(ctx context.Context, engine managedProxyEngine, current hostingproxy.Plan, durable domain.HostingProxyPlan, config ProxyConfig, result domain.HostingProxyResult) error {
+	if config.storageDatabase == nil || !config.storageDatabase.ApplicationStorage || !config.storageDatabase.RouteContinuity || !config.VerifiedSwitch || domain.ValidateHostingProxyPlan(durable) != nil || result.PlanHash != durable.Hash || result.EngineHash != current.Hash() || result.DaemonID != durable.DaemonID || uint64(durable.Snapshot.Generation) != current.Generation() {
+		return errApplicationDatabaseExecution
+	}
+	verifier, ok := engine.(interface {
+		VerifyInterruptedStorageReceipt(context.Context, hostingproxy.Plan, hostingproxy.Plan, *hostingproxy.Plan, hostingproxy.Outcome, uint64) error
+	})
+	if !ok {
+		return errApplicationDatabaseExecution
+	}
+	prior, failed, err := applicationStorageProxyPlans(config, durable)
+	if err != nil {
+		return err
+	}
+	return verifier.VerifyInterruptedStorageReceipt(ctx, current, prior, failed, hostingproxy.Outcome(result.Outcome), uint64(result.LoadedGeneration))
+}

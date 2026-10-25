@@ -244,7 +244,7 @@ func executeProxyClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	if err = proxyResultAcknowledged(finished, entry, claim.Lease.RunnerID); err != nil {
 		return errors.Join(err, engineErr)
 	}
-	if err = verifyProxyLocalReceipt(engine, local, evidence); err != nil {
+	if err = verifyProxyLocalReceipt(engine, local, *op.Plan, config, evidence); err != nil {
 		return err
 	}
 	if err = journal.AckProxy(entry.ID); err != nil {
@@ -321,8 +321,11 @@ func proxyResultAcknowledged(op domain.HostingProxyOperation, entry runner.Journ
 	return nil
 }
 
-func verifyProxyLocalReceipt(engine managedProxyEngine, plan hostingproxy.Plan, result domain.HostingProxyResult) error {
+func verifyProxyLocalReceipt(engine managedProxyEngine, plan hostingproxy.Plan, durable domain.HostingProxyPlan, config ProxyConfig, result domain.HostingProxyResult) error {
 	ctx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
+	if durable.Snapshot.StorageSwitch != nil {
+		return verifyApplicationStorageProxyReceipt(ctx, engine, plan, durable, config, result)
+	}
 	return engine.VerifyManagedReceipt(ctx, plan, hostingproxy.Outcome(result.Outcome), uint64(result.LoadedGeneration))
 }

@@ -129,3 +129,91 @@ func (e *Engine) loadedInterruptedStoragePredecessor(ctx context.Context, loaded
 	}
 	return e.loadedConfiguration(ctx, loaded, &next)
 }
+
+// VerifyInterruptedStorageReceipt verifies only already settled interrupted-storage
+// evidence. It never retries a switch, authorizes a writer, or changes a receipt.
+func (e *Engine) VerifyInterruptedStorageReceipt(ctx context.Context, current, prior Plan, failed *Plan, outcome Outcome, loadedGeneration uint64) error {
+	for _, p := range []Plan{current, prior} {
+		if err := e.validate(p); err != nil {
+			return err
+		}
+	}
+	if failed != nil {
+		if err := e.validate(*failed); err != nil {
+			return err
+		}
+	}
+	state, err := openStorage(ctx, e.settings.Directory)
+	if err != nil {
+		return err
+	}
+	defer state.close()
+	local, err := state.load()
+	if err != nil {
+		return err
+	}
+	if err = state.checkFile("certificates/acme.json"); err != nil {
+		return err
+	}
+	file, err := state.read("dynamic/routes.yml")
+	if err != nil {
+		return err
+	}
+	return e.verifyInterruptedStorageReceipt(ctx, current, prior, failed, outcome, loadedGeneration, local, file)
+}
+
+// The public method retains the Linux eligibility guard. This read-only core is
+// also exercised with owned scripted endpoints on other Unix development hosts.
+func (e *Engine) verifyInterruptedStorageReceipt(ctx context.Context, current, prior Plan, failed *Plan, outcome Outcome, loadedGeneration uint64, local receipt, file []byte) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if current.hash == "" || prior.hash == "" || !reflect.DeepEqual(current.settings, e.settings) || !reflect.DeepEqual(prior.settings, e.settings) || current.verification == nil || current.previous != prior.generation || current.identity != prior.identity || current.staticHash != prior.staticHash {
+		return errors.New("invalid interrupted receipt history")
+	}
+	baseline := receipt{Identity: prior.identity, StaticHash: prior.staticHash, Hash: prior.hash, Generation: prior.generation, Routes: prior.Routes(), Phase: "committed", Verification: prior.verification}
+	if current.switchPredecessor(baseline, false) != nil {
+		return errors.New("interrupted receipt route scope changed")
+	}
+	if failed != nil && (failed.hash == "" || !reflect.DeepEqual(failed.settings, e.settings) || failed.identity != current.identity || failed.staticHash != current.staticHash || failed.previous != prior.generation || failed.generation >= current.generation || !reflect.DeepEqual(failed.routes, current.routes) || !reflect.DeepEqual(failed.verification, current.verification)) {
+		return errors.New("invalid failed interrupted receipt history")
+	}
+	expected := current
+	switch outcome {
+	case Applied:
+		if loadedGeneration != current.generation {
+			return errors.New("applied interrupted receipt generation changed")
+		}
+	case Refused:
+		if loadedGeneration != prior.generation {
+			return errors.New("refused interrupted receipt generation changed")
+		}
+		expected = prior
+	default:
+		return errors.New("interrupted receipt outcome is unresolved or unsupported")
+	}
+	if local.Phase != "committed" || local.Identity != expected.identity || local.StaticHash != expected.staticHash || local.Hash != expected.hash || local.Generation != expected.generation || !reflect.DeepEqual(local.Routes, expected.routes) || !reflect.DeepEqual(local.Verification, expected.verification) {
+		return errors.New("interrupted local receipt differs from exact settled history")
+	}
+	if !bytes.Equal(file, expected.dynamic()) {
+		return errors.New("interrupted local file differs from settled history")
+	}
+	if err := e.daemon(ctx, expected); err != nil {
+		return err
+	}
+	container, err := e.find(ctx, expected)
+	if err != nil {
+		return err
+	}
+	if container == nil || !container.State.Running {
+		return errors.New("settled interrupted proxy container is missing or stopped")
+	}
+	if outcome == Refused {
+		return e.loadedInterruptedStoragePredecessor(ctx, prior, current)
+	}
+	if err := e.loaded(ctx, current); err != nil {
+		return err
+	}
+	_, err = e.verifiedObservation(ctx, current, container.ID)
+	return err
+}

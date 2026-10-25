@@ -480,3 +480,18 @@ func TestRuntimeIdentityPropagatesReadinessAndVerifiedSwitch(t *testing.T) {
 		t.Fatal("combined identity bypassed readiness transport trust")
 	}
 }
+
+func TestProxyLocalReceiptPreservesOrdinaryVerification(t *testing.T) {
+	_, op, _, config, engine := proxyRuntimeFixture(t)
+	sentinel := errors.New("ordinary settled receipt unavailable")
+	calls := 0
+	engine.verify = func() error { calls++; return sentinel }
+	_, local, prepared, err := prepareProxyEngine(t.Context(), config, *op.Plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := domain.HostingProxyResult{Outcome: "refused", LoadedGeneration: op.Plan.PreviousGeneration, PlanHash: op.Plan.Hash, EngineHash: prepared.EngineHash, DaemonID: prepared.DaemonID}
+	if err = verifyProxyLocalReceipt(engine, local, *op.Plan, config, result); !errors.Is(err, sentinel) || calls != 1 || engine.effects.Load() != 0 {
+		t.Fatalf("ordinary verifier bypassed: err=%v calls=%d", err, calls)
+	}
+}
