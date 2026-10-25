@@ -278,6 +278,7 @@ type databaseRunnerFixture struct {
 	database                              *pgxpool.Pool
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	backupWire                            atomic.Pointer[databaseBackupRuntimeWire]
+	remoteBackupWire                      atomic.Pointer[databaseRemoteBackupWire]
 	upgrade                               bool
 	connected                             bool
 	storage                               *applicationDatabaseStorageFixture
@@ -414,6 +415,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 		observed := &databaseRunnerStatusWriter{ResponseWriter: w}
 		defer func() { f.apiCounts.record(r.Method, r.URL.Path, observed.status) }()
 		w = observed
+		if wire := f.remoteBackupWire.Load(); wire != nil && wire.serve(w, r, handler) {
+			return
+		}
 		if wire := f.backupWire.Load(); wire != nil && wire.serve(w, r, handler) {
 			return
 		}
@@ -498,6 +502,9 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
 	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
+			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
+		}
 	}
 	if capture {
 		principal, err := service.AuthenticateSessionToken(t.Context(), f.token)
@@ -593,6 +600,9 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	args := []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"}
 	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
 		args = append(args, "--hosting-database-backups")
+		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
+			args = append(args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000")
+		}
 	}
 	if f.upgrade {
 		args = append(args, "--hosting-database-network-upgrade")
@@ -1597,6 +1607,9 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
 	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
+			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
+		}
 	}
 	created := post("/api/v1/runner-enrollments", token, app.RunnerEnrollmentInput{RunnerID: "runner_database_acceptance", RunnerName: "private database acceptance", Capabilities: caps}, http.StatusCreated)
 	var enrollment app.CreatedRunnerEnrollment

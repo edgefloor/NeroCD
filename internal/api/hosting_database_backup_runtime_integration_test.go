@@ -1115,7 +1115,7 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 
 func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.HostingDatabase, profile string) *databaseBackupBrowserFixture {
 	f.t.Helper()
-	if profile != "backup" && profile != "backup_schedule" {
+	if profile != "backup" && profile != "backup_schedule" && profile != "backup_remote" {
 		f.t.Fatal("closed backup browser profile required")
 	}
 	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
@@ -1143,6 +1143,17 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 			defer b.mu.Unlock()
 			b.emitProgressLocked()
 			writeJSON(w, 200, map[string]string{"phase": b.phase, "operation_id": b.id})
+			return
+		}
+		if profile == "backup_remote" && r.Method == "POST" && r.URL.Path == control+"/warning-seen" {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if b.phase != "denied" {
+				w.WriteHeader(409)
+				return
+			}
+			b.phase = "warning_seen"
+			w.WriteHeader(204)
 			return
 		}
 		if r.Method == "POST" && r.URL.Path == control+"/done" {

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Remote object storage is a separate, explicitly enabled qualification.
+export NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME="${NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME:-0}"
 export NEROCD_DATABASE_BACKUP_RUNTIME=1 NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME=1 NEROCD_DATABASE_CONNECTION_BROWSER=1
 export NEROCD_DATABASE_CONNECTION_ROUTES=0 NEROCD_DATABASE_CONNECTION_STORAGE=0 NEROCD_DATABASE_RUNNER_MODE=full
 exec bash acceptance/runtime-hosting-database-runner/gate.sh

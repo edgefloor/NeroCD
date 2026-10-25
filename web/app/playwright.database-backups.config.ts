@@ -9,7 +9,7 @@ if (
   throw new Error("invalid owned backup browser port");
 export default defineConfig({
   testDir: "./tests/browser",
-  testMatch: ["database-backups.spec.ts", "database-backup-schedules.spec.ts"],
+  testMatch: ["database-backups.spec.ts", "database-backup-schedules.spec.ts", "database-remote-backups-live.spec.ts"],
   timeout: 60000,
   use: {
     baseURL: `http://127.0.0.1:${port}`,
