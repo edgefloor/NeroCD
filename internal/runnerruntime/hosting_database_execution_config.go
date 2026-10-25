@@ -20,6 +20,10 @@ type DatabaseExecutionConfig struct {
 	ApplicationStorage    bool
 	MembershipMaintenance bool
 	LogicalBackups        bool
+	RemoteBackups         bool
+	RemoteEndpoints       []string
+	RemoteCIDRs           []string
+	RemoteFixtureOrigin   string
 }
 
 // Format redacts protected host paths for every formatting verb.
@@ -38,6 +42,12 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.RemoteBackups && !c.Database.LogicalBackups {
+		return errors.New("remote backups require logical database backups")
+	}
+	if _, err := databaseBackupRemotePolicy(*c.Database); err != nil {
+		return err
 	}
 	if c.Database.ApplicationStorage && !c.Database.ApplicationDatabase {
 		return errors.New("connected application storage requires connected execution")

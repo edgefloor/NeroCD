@@ -68,6 +68,10 @@ func runRunner(args []string) error {
 	hostingDatabaseUpgrade := fs.Bool("hosting-database-network-upgrade", false, "explicitly enable existing-volume empty database network upgrades")
 	hostingDatabase := fs.Bool("hosting-database", false, "explicitly enable private database execution on a qualified native Linux arm64 host")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
+	remoteDatabaseBackups := fs.Bool("hosting-database-remote-backups", false, "enable fenced PostgreSQL S3 transfers and recorded remote restores")
+	remoteEndpoints := fs.String("hosting-backup-remote-endpoints", "", "operator-approved private HTTPS origins, comma-separated")
+	remoteCIDRs := fs.String("hosting-backup-remote-cidrs", "", "operator-approved private endpoint CIDRs, comma-separated")
+	remoteFixture := fs.String("hosting-backup-remote-trusted-loopback", "", "trusted exact loopback HTTP origin for isolated fixtures only")
 	logicalDatabaseBackups := fs.Bool("hosting-database-backups", false, "explicitly enable local PostgreSQL logical backups and held new-database restores")
 	databaseStateRoot := fs.String("database-state-root", "", "persistent protected database engine state root")
 	databaseSecretRoot := fs.String("database-secret-root", "", "persistent protected database credential root")
@@ -107,6 +111,23 @@ func runRunner(args []string) error {
 			return errors.New("route continuity requires connected execution and strict proxy switching")
 		}
 		databaseConfig.RouteContinuity = true
+	}
+	if *remoteDatabaseBackups {
+		if databaseConfig == nil || !*logicalDatabaseBackups {
+			return errors.New("remote backups require --hosting-database-backups")
+		}
+		databaseConfig.RemoteBackups = true
+	}
+	if databaseConfig != nil {
+		if *remoteEndpoints != "" {
+			databaseConfig.RemoteEndpoints = strings.Split(*remoteEndpoints, ",")
+		}
+		if *remoteCIDRs != "" {
+			databaseConfig.RemoteCIDRs = strings.Split(*remoteCIDRs, ",")
+		}
+		databaseConfig.RemoteFixtureOrigin = *remoteFixture
+	} else if *remoteEndpoints != "" || *remoteCIDRs != "" || *remoteFixture != "" {
+		return errors.New("remote network policy requires database execution")
 	}
 	if *logicalDatabaseBackups {
 		if databaseConfig == nil {
@@ -234,6 +255,9 @@ func runRunner(args []string) error {
 	registrationCapabilities, err = runnerDatabaseCapabilities(*hostingDatabase, capabilitiesSpecified || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
 	if err != nil {
 		return err
+	}
+	if *remoteDatabaseBackups {
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability)
 	}
 	if *logicalDatabaseBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
@@ -368,7 +392,7 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

@@ -23,12 +23,13 @@ var ErrInvalidDatabaseBackup = errors.New("invalid hosted PostgreSQL backup requ
 
 // HostingDatabaseBackupInput identifies one immediate logical snapshot request.
 type HostingDatabaseBackupInput struct {
-	RequestID                  string `json:"request_id"`
-	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	RequestID                  string                 `json:"request_id"`
+	ExpectedResourceGeneration int64                  `json:"expected_resource_generation"`
+	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
 }
 
 func (in HostingDatabaseBackupInput) Validate() error {
-	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 {
+	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
@@ -36,8 +37,9 @@ func (in HostingDatabaseBackupInput) Validate() error {
 
 // HostingDatabaseBackupRestoreInput creates an independent private database.
 type HostingDatabaseBackupRestoreInput struct {
-	RequestID string `json:"request_id"`
-	Name      string `json:"name"`
+	RequestID    string              `json:"request_id"`
+	Name         string              `json:"name"`
+	RemoteSource *BackupRemoteSource `json:"remote_source,omitempty"`
 }
 
 func (in HostingDatabaseBackupRestoreInput) Validate() error {
@@ -46,7 +48,7 @@ func (in HostingDatabaseBackupRestoreInput) Validate() error {
 			return ErrInvalidDatabaseBackup
 		}
 	}
-	if !validRuntimeReferenceID(in.RequestID) || len(in.Name) < 1 || len(in.Name) > 128 || strings.TrimSpace(in.Name) != in.Name || !utf8.ValidString(in.Name) || strings.ContainsAny(in.Name, "\x00\r\n\t") {
+	if !validRuntimeReferenceID(in.RequestID) || len(in.Name) < 1 || len(in.Name) > 128 || strings.TrimSpace(in.Name) != in.Name || !utf8.ValidString(in.Name) || strings.ContainsAny(in.Name, "\x00\r\n\t") || in.RemoteSource != nil && in.RemoteSource.Validate() != nil {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
@@ -69,6 +71,7 @@ func (b HostingDatabaseBackupBlob) Validate() error {
 // HostingDatabaseBackupOperation is safe for project viewers. Local locations,
 // credential references and runner lease authority are deliberately separate.
 type HostingDatabaseBackupOperation struct {
+	RemoteTarget     *BackupTargetSelection     `json:"remote_target,omitempty"`
 	MaxBytes         int64                      `json:"max_bytes"`
 	TimeoutSeconds   int                        `json:"timeout_seconds"`
 	ID               string                     `json:"id"`
@@ -182,6 +185,9 @@ func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 	return nil
 }
 func (o HostingDatabaseBackupOperation) Validate() error {
+	if o.RemoteTarget != nil && o.RemoteTarget.Validate() != nil {
+		return ErrInvalidDatabaseBackup
+	}
 	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || o.Version != HostingDatabaseBackupVersion || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {
 		return ErrInvalidDatabaseBackup
 	}

@@ -499,6 +499,9 @@ func executeDatabaseObservation(s *attemptSupervisor, c runnerclient.Client, e d
 // ValidateDatabaseExecution verifies the explicit profile without pulling images
 // or mutating the daemon. Passing this probe does not qualify the capability.
 func ValidateDatabaseExecution(ctx context.Context, c DatabaseExecutionConfig, endpoint string) error {
+	if _, err := databaseBackupRemotePolicy(c); err != nil {
+		return err
+	}
 	if err := validateDatabasePlatformConfig(c); err != nil {
 		return err
 	}

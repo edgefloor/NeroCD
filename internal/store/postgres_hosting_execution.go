@@ -43,6 +43,7 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 	go func() {
 		defer close(done)
 		var scheduleObserver databaseBackupScheduleObserver
+		var remoteWarningAfter time.Time
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -50,6 +51,12 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			_ = s.recoverHostingDispatch(recoveryAttempt)
 			stop()
 			scheduleObserver.run(recoveryCtx, time.Now(), slog.Default(), s.ReconcileDatabaseBackupSchedules)
+			remoteCtx, stopRemote := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.recoverDatabaseBackupTransfers(remoteCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(remoteWarningAfter) {
+				slog.Warn("remote backup dispatch recovery failed")
+				remoteWarningAfter = time.Now().Add(time.Minute)
+			}
+			stopRemote()
 			// Runtime plaintext retention progresses independently of dispatch
 			// recovery errors, transactions and their timeout budget.
 			purgeAttempt, stopPurge := context.WithTimeout(recoveryCtx, 3*time.Second)
@@ -1728,6 +1735,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
+		return s.databaseBackupTransferClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackup {
 		return s.databaseBackupClaimAllowed(ctx, tx, run, runnerID)
 	}

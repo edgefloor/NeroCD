@@ -3,6 +3,17 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/database-backup-targets"},
+	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/database-backup-targets"},
+	{Method: http.MethodPut, Path: "/api/v1/projects/{project_id}/database-backup-targets/{target_id}"},
+	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations"},
+	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations"},
+	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}/transfers"},
+	{Method: http.MethodPost, Path: "/api/v1/database-backups/{id}/transfers/retry"},
+	{Method: http.MethodGet, Path: "/api/v1/database-backup-transfers/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-transfer/credentials"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-transfer/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-transfer/mutation"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-schedules"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backup-schedules"},
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}"},
@@ -302,6 +313,24 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseConnectionAuthorize
 	case "/api/v1/runners/hosting/database-binding/state":
 		return s.runnerDatabaseConnectionState
+	case "/api/v1/projects/{project_id}/database-backup-targets":
+		return s.databaseBackupTargets
+	case "/api/v1/projects/{project_id}/database-backup-targets/{target_id}":
+		return s.databaseBackupTargets
+	case "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations":
+		return s.databaseBackupTargetValidations
+	case "/api/v1/database-backups/{id}/transfers":
+		return s.databaseBackupTransfers
+	case "/api/v1/database-backups/{id}/transfers/retry":
+		return s.retryDatabaseBackupTransfer
+	case "/api/v1/database-backup-transfers/{id}":
+		return s.databaseBackupTransfer
+	case "/api/v1/runners/hosting/database-backup-transfer/credentials":
+		return s.runnerBackupRemoteCredentials
+	case "/api/v1/runners/hosting/database-backup-transfer/plan":
+		return s.runnerDatabaseBackupTransferPlan
+	case "/api/v1/runners/hosting/database-backup-transfer/mutation":
+		return s.runnerDatabaseBackupTransferMutation
 	case "/api/v1/resources/{id}/database-backups":
 		return s.hostingDatabaseBackups
 	case "/api/v1/resources/{id}/database-backup-schedules":

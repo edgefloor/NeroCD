@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	RemoteDatabaseBackups                                                                                                        bool
 	LogicalDatabaseBackups                                                                                                       bool
 	ApplicationDatabaseStorage                                                                                                   bool
 	ApplicationDatabaseRouteContinuity                                                                                           bool
@@ -220,6 +221,14 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if applicationCap != options.ApplicationDatabase || maintenanceCap != options.DatabaseMaintenance || (applicationCap || maintenanceCap) && (!options.Database || !options.DatabaseNetworkCaptureAutomatic || !options.DatabaseUpgrade || !options.RuntimeEnvironment || !imageCap || !releaseCap || !databaseCapable || !storageCapable || !captureCapable || !upgradeCapable || shellCapable || options.DatabaseNetworkCapture) {
 		return "", errors.New("authenticated connected database capabilities do not match explicit configuration")
+	}
+	remoteCap, remoteTask := false, false
+	for _, capability := range result.Capabilities {
+		remoteCap = remoteCap || capability == domain.HostingDatabaseBackupRemoteCapability
+		remoteTask = remoteTask || capability == domain.RunTypeDatabaseBackupTransfer
+	}
+	if remoteCap != options.RemoteDatabaseBackups || remoteTask != options.RemoteDatabaseBackups || remoteCap && (!options.LogicalDatabaseBackups || !options.Database || shellCapable) {
+		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
 	backupCapability, backupTask := false, false
 	for _, capability := range result.Capabilities {

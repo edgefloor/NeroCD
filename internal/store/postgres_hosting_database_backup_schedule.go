@@ -102,7 +102,11 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
+		if err = s.saveBackupRemoteScheduleSelection(ctx, tx, actor, resource, id, saved.Revision, in.RemoteTarget); err != nil {
+			return zero, err
+		}
 		out := databaseBackupScheduleView(saved)
+		out.RemoteTarget = in.RemoteTarget
 		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_requests(resource_id,request_id,actor_id,request_hash,schedule_id,revision,response) VALUES($1,$2,$3,$4,$5,$6,$7)`, resource, in.RequestID, actor, hash, id, saved.Revision, buildJSON(out))
 		if err != nil {
 			return zero, err
@@ -124,7 +128,12 @@ func (s *PostgresStore) ListDatabaseBackupSchedules(ctx context.Context, actor, 
 		}
 		out := make([]domain.HostingDatabaseBackupSchedule, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, databaseBackupScheduleView(r))
+			item := databaseBackupScheduleView(r)
+			item.RemoteTarget, err = backupRemoteScheduleSelection(ctx, tx, r.ID, r.Revision)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, item)
 		}
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})

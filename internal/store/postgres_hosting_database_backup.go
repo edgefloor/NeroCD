@@ -35,7 +35,7 @@ func databaseBackupView(r sqlcgen.HostingDatabaseBackup) (domain.HostingDatabase
 	if err != nil {
 		return domain.HostingDatabaseBackupOperation{}, err
 	}
-	v := domain.HostingDatabaseBackupOperation{MaxBytes: p.MaxBytes, TimeoutSeconds: p.TimeoutSeconds, ID: r.ID, Version: domain.HostingDatabaseBackupVersion, ProjectID: r.ProjectID, SourceResourceID: r.SourceResourceID, SourceGeneration: r.SourceGeneration, BackupID: r.BackupID, Mode: r.Mode, State: r.State, TargetResourceID: proxyString(r.TargetResourceID), Consistency: "logical_snapshot_source_writable", FailureCode: r.FailureCode, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	v := domain.HostingDatabaseBackupOperation{RemoteTarget: p.Operation.RemoteTarget, MaxBytes: p.MaxBytes, TimeoutSeconds: p.TimeoutSeconds, ID: r.ID, Version: domain.HostingDatabaseBackupVersion, ProjectID: r.ProjectID, SourceResourceID: r.SourceResourceID, SourceGeneration: r.SourceGeneration, BackupID: r.BackupID, Mode: r.Mode, State: r.State, TargetResourceID: proxyString(r.TargetResourceID), Consistency: "logical_snapshot_source_writable", FailureCode: r.FailureCode, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 	if r.Blob != nil {
 		var b domain.HostingDatabaseBackupBlob
 		if json.Unmarshal(r.Blob, &b) != nil || b.Validate() != nil {
@@ -259,7 +259,7 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 	}
 	limits := s.databaseBackupPolicy()
 	now := time.Now().UTC()
-	view := domain.HostingDatabaseBackupOperation{MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, ID: id, Version: domain.HostingDatabaseBackupVersion, ProjectID: v.Resource.ProjectID, SourceResourceID: resource, SourceGeneration: in.ExpectedResourceGeneration, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
+	view := domain.HostingDatabaseBackupOperation{RemoteTarget: in.RemoteTarget, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, ID: id, Version: domain.HostingDatabaseBackupVersion, ProjectID: v.Resource.ProjectID, SourceResourceID: resource, SourceGeneration: in.ExpectedResourceGeneration, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
 	p := domain.HostingDatabaseBackupPlan{Operation: view, ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: *op.Plan, Credentials: v.Credentials, LocationID: id, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
 	storageRow, e := q.ReadHostingStorage(ctx, resource)
 	if e != nil {
@@ -276,9 +276,19 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 	if err = databaseBackupAgent(ctx, tx, p); err != nil {
 		return zero, err
 	}
+	if in.RemoteTarget != nil {
+		if _, err = backupRemoteSelect(ctx, tx, p, *in.RemoteTarget); err != nil {
+			return zero, err
+		}
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,runner_id,plan,plan_hash) VALUES($1,$2,$3,$4,$5,$1,'backup',$6,$7,$8,'queued',$9,$10,$11)`, id, view.ProjectID, resource, h.Snapshot.BindingID, view.SourceGeneration, in.RequestID, hash, actor, p.RunnerID, buildJSON(p), p.Hash)
 	if err != nil {
 		return zero, hostingError(err)
+	}
+	if in.RemoteTarget != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_remote_selections(operation_id,target_id,target_revision) VALUES($1,$2,$3)`, id, in.RemoteTarget.TargetID, in.RemoteTarget.Revision); err != nil {
+			return zero, err
+		}
 	}
 	if err = databaseBackupAudit(ctx, tx, actor, id, "requested", view.ProjectID); err != nil {
 		return zero, err
@@ -430,6 +440,11 @@ func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, ba
 		if err != nil {
 			return zero, hostingError(err)
 		}
+		if in.RemoteSource != nil {
+			if err = s.backupRemoteRestoreAdmit(ctx, tx, p, *in.RemoteSource); err != nil {
+				return zero, err
+			}
+		}
 		if err = databaseBackupAudit(ctx, tx, actor, id, "requested", view.ProjectID); err != nil {
 			return zero, err
 		}
@@ -456,6 +471,19 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 			return false, err
 		}
 		if r.Mode == "restore" {
+			var downloadState string
+			e := tx.QueryRow(ctx, `SELECT state FROM hosting_database_backup_transfers WHERE restore_operation_id=$1`, r.ID).Scan(&downloadState)
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+				return false, e
+			}
+			if e == nil && downloadState != "succeeded" {
+				if downloadState == "failed" || downloadState == "uncertain" {
+					_, err = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='uncertain',failure_code='execution_failed',updated_at=clock_timestamp() WHERE id=$1`, r.ID)
+					return err == nil, err
+				}
+				waiting = true
+				return true, nil
+			}
 			child, err := hostingOperation(ctx, tx, *r.DeploymentOperationID)
 			if err != nil {
 				return false, err
@@ -636,6 +664,11 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 		updated, err := q.ReadDatabaseBackup(ctx, r.ID)
 		if err != nil {
 			return zero, err
+		}
+		if in.Phase == "complete" && r.Mode == "backup" {
+			if err = s.backupRemoteLocalComplete(ctx, tx, updated); err != nil {
+				return zero, err
+			}
 		}
 		view, err := databaseBackupView(updated)
 		if err != nil {
