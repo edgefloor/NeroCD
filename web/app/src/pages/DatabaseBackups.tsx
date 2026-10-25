@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/errors";
+import { DatabaseBackupSchedules } from "./DatabaseBackupSchedules";
 import { Button } from "../components/ui/button";
 import {
   databaseDenied,
@@ -77,7 +78,7 @@ export function DatabaseBackups({
         <h4>Logical backups</h4>
         <p>
           Immediate logical backup and new-database restore currently support
-          PostgreSQL17.11. Redis backups, schedules and S3 are not available.
+          PostgreSQL17.11. Redis backups and S3 are not available.
         </p>
       </section>
     );
@@ -145,7 +146,7 @@ export function DatabaseBackups({
         A backup captures a consistent logical snapshot of the app database
         while source writes continue. Local storage only. The operator sets byte
         and execution limits; each accepted operation records its exact limits.
-        Schedules and S3 are not available.
+        Scheduled local backups are configured below. S3 is not available.
       </p>
       <p>
         Restore creates a new private database with distinct credentials and
@@ -305,6 +306,13 @@ export function DatabaseBackups({
       >
         Refresh backup history
       </Button>
+      <DatabaseBackupSchedules
+        database={database}
+        scope={scope}
+        owner={owner}
+        blocked={blocked}
+        onDenied={onDenied}
+      />
     </section>
   );
 }

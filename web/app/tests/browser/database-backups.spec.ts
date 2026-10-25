@@ -141,6 +141,8 @@ test("owner backup retry and new-target restore history across responsive widths
       body = database();
     else if (path === "/api/v1/resources/db_fixture/deployments")
       body = list([]);
+    else if (path === "/api/v1/resources/db_fixture/database-backup-schedules")
+      body = [];
     else if (path === "/api/v1/resources/db_fixture/database-backups") {
       if (request.method() === "POST") {
         const input = request.postDataJSON();

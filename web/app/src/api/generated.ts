@@ -4,6 +4,70 @@
  */
 
 export interface paths {
+    "/api/v1/resources/{id}/database-backup-schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted PostgreSQL backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         */
+        get: operations["listHostingDatabaseBackupSchedules"];
+        put?: never;
+        /**
+         * Hosted PostgreSQL backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         */
+        post: operations["createHostingDatabaseBackupSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Hosted PostgreSQL backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         */
+        put: operations["updateHostingDatabaseBackupSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}/occurrences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted PostgreSQL backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.
+         */
+        get: operations["listHostingDatabaseBackupOccurrences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database-backups": {
         parameters: {
             query?: never;
@@ -3904,6 +3968,60 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        HostingDatabaseBackupScheduleInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_version: number;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            enabled: boolean;
+        };
+        HostingDatabaseBackupSchedule: {
+            id: string;
+            /** @constant */
+            version: "postgresql.logical-local.schedule.v1";
+            project_id: string;
+            resource_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            enabled: boolean;
+            /** Format: date-time */
+            last_scheduled_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HostingDatabaseBackupOccurrence: {
+            id: string;
+            schedule_id: string;
+            project_id: string;
+            resource_id: string;
+            /** Format: int64 */
+            schedule_revision: number;
+            /** Format: date-time */
+            scheduled_at: string;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            operation_id?: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "applying" | "succeeded" | "failed" | "uncertain" | "denied" | "skipped" | "missed";
+            /** @enum {string} */
+            reason: "" | "authority_denied" | "source_unavailable" | "source_busy" | "placement_changed" | "newer_occurrence" | "too_old" | "queue_unavailable" | "execution_failed" | "publication_failed" | "interrupted";
+            ownership_held: boolean;
+            /** Format: date-time */
+            created_at: string;
+        };
         HostingDatabaseBackupInput: {
             request_id: string;
             expected_resource_generation: number;
@@ -8099,6 +8217,244 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listHostingDatabaseBackupSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupSchedule"][];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createHostingDatabaseBackupSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupSchedule"];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateHostingDatabaseBackupSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupSchedule"];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostingDatabaseBackupOccurrences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupOccurrence"][];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listHostingDatabaseBackups: {
         parameters: {
             query?: never;

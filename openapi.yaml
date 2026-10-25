@@ -21,6 +21,233 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/resources/{id}/database-backup-schedules:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackupSchedules",
+        "summary": "Hosted PostgreSQL backup schedule",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe resource-scoped schedule metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupSchedule"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or undeclared request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Resource or schedule unavailable"
+          },
+          "409": {
+            "description": "Stale version, generation or placement"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createHostingDatabaseBackupSchedule",
+        "summary": "Hosted PostgreSQL backup schedule",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe resource-scoped schedule metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupSchedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or undeclared request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Resource or schedule unavailable"
+          },
+          "409": {
+            "description": "Stale version, generation or placement"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupScheduleInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/database-backup-schedules/{schedule_id}:
+    {
+      "put": {
+        "operationId": "updateHostingDatabaseBackupSchedule",
+        "summary": "Hosted PostgreSQL backup schedule",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe resource-scoped schedule metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupSchedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or undeclared request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Resource or schedule unavailable"
+          },
+          "409": {
+            "description": "Stale version, generation or placement"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupScheduleInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/database-backup-schedules/{schedule_id}/occurrences:
+    {
+      "get": {
+        "operationId": "listHostingDatabaseBackupOccurrences",
+        "summary": "Hosted PostgreSQL backup schedule",
+        "description": "Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups; S3, retention and external notifications deferred. Cache-Control no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe resource-scoped schedule metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingDatabaseBackupOccurrence"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or undeclared request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Resource or schedule unavailable"
+          },
+          "409": {
+            "description": "Stale version, generation or placement"
+          }
+        }
+      }
+    }
   /api/v1/resources/{id}/database-backups:
     {
       "get": {
@@ -5897,6 +6124,216 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    HostingDatabaseBackupScheduleInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_resource_generation",
+          "expected_version",
+          "frequency",
+          "timezone",
+          "enabled"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "frequency": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected."
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    HostingDatabaseBackupSchedule:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "resource_id",
+          "revision",
+          "frequency",
+          "timezone",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "const": "postgresql.logical-local.schedule.v1"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "frequency": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "last_scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    HostingDatabaseBackupOccurrence:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "schedule_id",
+          "project_id",
+          "resource_id",
+          "schedule_revision",
+          "scheduled_at",
+          "frequency",
+          "timezone",
+          "state",
+          "reason",
+          "ownership_held",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "schedule_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "schedule_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "frequency": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected."
+          },
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain",
+              "denied",
+              "skipped",
+              "missed"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "",
+              "authority_denied",
+              "source_unavailable",
+              "source_busy",
+              "placement_changed",
+              "newer_occurrence",
+              "too_old",
+              "queue_unavailable",
+              "execution_failed",
+              "publication_failed",
+              "interrupted"
+            ]
+          },
+          "ownership_held": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
     HostingDatabaseBackupInput:
       {
         "type": "object",

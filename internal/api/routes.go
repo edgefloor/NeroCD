@@ -3,6 +3,10 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-schedules"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backup-schedules"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}/occurrences"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backups"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backups"},
 	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}"},
@@ -300,6 +304,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseConnectionState
 	case "/api/v1/resources/{id}/database-backups":
 		return s.hostingDatabaseBackups
+	case "/api/v1/resources/{id}/database-backup-schedules":
+		return s.hostingDatabaseBackupSchedules
+	case "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}":
+		return s.saveDatabaseBackupSchedule
+	case "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}/occurrences":
+		return s.hostingDatabaseBackupOccurrences
 	case "/api/v1/database-backups/{id}":
 		return s.hostingDatabaseBackup
 	case "/api/v1/database-backups/{id}/restores":

@@ -14,6 +14,12 @@ import type { HostingDatabase } from "../api/hosting-databases";
 import type { DatabaseBackup } from "../api/hosting-database-backups";
 import { ApiError } from "../api/errors";
 import * as api from "../api/hosting-database-backups";
+vi.mock("../api/hosting-database-backup-schedules", async (original) => ({
+  ...(await original<
+    typeof import("../api/hosting-database-backup-schedules")
+  >()),
+  listDatabaseBackupSchedules: vi.fn(async () => []),
+}));
 vi.mock("../api/hosting-database-backups", async (original) => {
   const actual =
     await original<typeof import("../api/hosting-database-backups")>();
