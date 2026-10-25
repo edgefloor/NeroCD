@@ -20,6 +20,8 @@ import (
 type ProxyConfig struct {
 	Directory, DockerBinary, DockerSocket, Protocol string
 	VerifiedSwitch                                  bool
+	storageDatabase                                 *DatabaseExecutionConfig
+	storageEndpoint                                 string
 	engineFactory                                   func(hostingproxy.Settings) (managedProxyEngine, error)
 }
 
@@ -78,6 +80,9 @@ func proxyResponseMatches(op domain.HostingProxyOperation, a domain.HostingAutho
 func prepareProxyEngine(ctx context.Context, config ProxyConfig, plan domain.HostingProxyPlan, prepared *domain.HostingProxyPreparation) (managedProxyEngine, hostingproxy.Plan, domain.HostingProxyPreparation, error) {
 	if !config.Enabled() || config.Protocol != domain.HostingProxyCompilerVersion || domain.ValidateHostingProxyPlan(plan) != nil {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("explicit supported proxy configuration and canonical plan are required")
+	}
+	if plan.Snapshot.StorageSwitch != nil && (config.storageDatabase == nil || !config.storageDatabase.ApplicationStorage || !config.storageDatabase.RouteContinuity) {
+		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("interrupted storage proxy is not explicitly enabled")
 	}
 	if plan.Snapshot.VerifiedSwitch != nil && !config.VerifiedSwitch {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("verified proxy switch is not explicitly enabled")
@@ -198,7 +203,9 @@ func executeProxyClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	var result hostingproxy.Result
 	var engineErr error
-	if op.Plan.PreviousGeneration == 0 {
+	if op.Plan.Snapshot.StorageSwitch != nil {
+		result, engineErr = applyApplicationStorageProxy(supervisor, client, engine, local, admitted, a, config)
+	} else if op.Plan.PreviousGeneration == 0 {
 		result, engineErr = engine.Install(supervisor.Context(), local)
 	} else {
 		result, engineErr = engine.Apply(supervisor.Context(), local)

@@ -84,3 +84,24 @@ func TestRunnerApplicationDatabaseRouteCapabilityExplicitAndDependent(t *testing
 		}
 	}
 }
+
+func TestRunnerApplicationDatabaseStorageCapabilityExplicitAndDependent(t *testing.T) {
+	base := []string{domain.HostingApplicationDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability}
+	caps, err := runnerApplicationDatabaseStorageCapabilities(false, slices.Clone(base))
+	if err != nil || slices.Contains(caps, domain.HostingApplicationDatabaseStorageCapability) {
+		t.Fatal("route permission enabled by default")
+	}
+	caps, err = runnerApplicationDatabaseStorageCapabilities(true, slices.Clone(base))
+	if err != nil || !slices.Contains(caps, domain.HostingApplicationDatabaseStorageCapability) {
+		t.Fatal("explicit route permission missing", err)
+	}
+	if _, err = runnerApplicationDatabaseStorageCapabilities(false, caps); err == nil {
+		t.Fatal("persisted route capability accepted without opt-in")
+	}
+	for _, missing := range base {
+		reduced := slices.DeleteFunc(slices.Clone(base), func(c string) bool { return c == missing })
+		if _, err = runnerApplicationDatabaseStorageCapabilities(true, reduced); err == nil {
+			t.Fatal("missing route prerequisite admitted", missing)
+		}
+	}
+}

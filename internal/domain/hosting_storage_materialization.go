@@ -169,7 +169,13 @@ func ValidateHostingStorageSnapshot(s HostingSnapshot) error {
 	}
 	has := s.Storage != (HostingStorageRef{})
 	if !has {
-		if s.PolicyVersion == HostingOwnedStoragePolicyVersion || s.PolicyVersion == HostingDatabasePolicyVersion {
+		if s.PolicyVersion == HostingOwnedStoragePolicyVersion || s.PolicyVersion == HostingDatabasePolicyVersion || s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion {
+			return ErrInvalidHostingStorage
+		}
+		return nil
+	}
+	if s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion {
+		if !validHostingStorageRef(s.Storage) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
 			return ErrInvalidHostingStorage
 		}
 		return nil

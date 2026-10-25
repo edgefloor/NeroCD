@@ -35,3 +35,10 @@ type HostingApplicationDatabaseRunnerRepository interface {
 type HostingApplicationDatabaseYieldRepository interface {
 	HostingApplicationDatabaseYield(context.Context, string, string, domain.HostingApplicationDatabaseYieldRequest) (domain.HostingOperation, error)
 }
+
+// HostingApplicationDatabaseStorageRunnerRepository admits only the composed writer protocol.
+type HostingApplicationDatabaseStorageRunnerRepository interface {
+	HostingApplicationDatabaseStorageWriter(context.Context, string, string, domain.HostingApplicationDatabaseStorageWriterRequest) (domain.HostingOperation, error)
+	AuthorizeHostingApplicationDatabaseStorageEffect(context.Context, string, string, domain.HostingApplicationDatabaseStorageEffectRequest) (domain.HostingApplicationDatabaseStorageEffectAuthorization, error)
+	HostingApplicationDatabaseStorageProxyPlan(context.Context, string, string, domain.HostingAuthority) (domain.HostingApplicationDatabaseStorageProxyPlan, error)
+}

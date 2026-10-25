@@ -4,17 +4,18 @@ package domain
 // must independently recheck the current resource, storage and route authority.
 // Missing predecessor values remain null instead of supplying guessed defaults.
 type HostingStorageDeploymentOptions struct {
-	ResourceID                 string                              `json:"resource_id"`
-	ResourceGeneration         int64                               `json:"resource_generation"`
-	StorageRef                 *HostingStorageRef                  `json:"storage_ref"`
-	PreviousHealthyOperationID *string                             `json:"previous_healthy_operation_id"`
-	HostPort                   *int                                `json:"host_port"`
-	ContainerPort              *int                                `json:"container_port"`
-	Readiness                  *HostingReadiness                   `json:"readiness"`
-	Available                  bool                                `json:"available"`
-	Reason                     string                              `json:"reason"`
-	Routes                     []HostingRouteSwitchRoute           `json:"routes"`
-	StorageRouteContinuity     *HostingStorageRouteContinuityInput `json:"storage_route_continuity"`
+	ApplicationDatabaseStorage *HostingApplicationDatabaseStorageReview `json:"application_database_storage"`
+	ResourceID                 string                                   `json:"resource_id"`
+	ResourceGeneration         int64                                    `json:"resource_generation"`
+	StorageRef                 *HostingStorageRef                       `json:"storage_ref"`
+	PreviousHealthyOperationID *string                                  `json:"previous_healthy_operation_id"`
+	HostPort                   *int                                     `json:"host_port"`
+	ContainerPort              *int                                     `json:"container_port"`
+	Readiness                  *HostingReadiness                        `json:"readiness"`
+	Available                  bool                                     `json:"available"`
+	Reason                     string                                   `json:"reason"`
+	Routes                     []HostingRouteSwitchRoute                `json:"routes"`
+	StorageRouteContinuity     *HostingStorageRouteContinuityInput      `json:"storage_route_continuity"`
 }
 
 // HostingStorageRouteContinuityStatus separates a committed historical proxy

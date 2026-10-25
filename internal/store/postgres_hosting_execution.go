@@ -684,6 +684,15 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 		}
 		return op, nil
 	}
+	if mode == "storage_recover" {
+		if !storageRecoveryRun(ctx, tx, op, a.RunID) || op.State != "failed" || !op.MutationHold {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if err = finalDatabaseConnectionAuthority(ctx, tx, runnerID, a, op, false, false); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		return op, nil
+	}
 	if mode == "finalize" {
 		if err = continuityFinalizeAuthority(ctx, tx, runnerID, a, op, false); err != nil {
 			return domain.HostingOperation{}, err
@@ -870,7 +879,9 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		}
 	}
 	var plan domain.HostingApplyPlan
-	if op.ApplicationDatabase != nil {
+	if op.ApplicationDatabaseStorage != nil {
+		plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, nil)
+	} else if op.ApplicationDatabase != nil {
 		input, inputErr := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
 		if inputErr != nil {
 			return domain.HostingOperation{}, ErrConflict
@@ -1694,6 +1705,32 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		if domain.ValidateProxyApplyTask(run) != nil {
 			return false, nil
 		}
+		proxyOp, e := proxyOperation(ctx, tx, run.RunSpec.ProxyOperationID)
+		if e != nil {
+			return false, e
+		}
+		if proxyOp.Snapshot.StorageSwitch != nil {
+			if e = applicationDatabaseStorageAgent(ctx, tx, runnerID); e != nil {
+				return false, nil
+			}
+			fresh, e := sqlcgen.New(tx).ApplicationDatabaseFinalizeClaimFresh(ctx, run.ID)
+			if e != nil {
+				return false, e
+			}
+			if !fresh {
+				return false, nil
+			}
+			original, e := hostingOperation(ctx, tx, proxyOp.Snapshot.StorageSwitch.OperationID)
+			if e != nil {
+				return false, e
+			}
+			if e = checkDatabaseConnectionRunnerContext(ctx, tx, runnerID); e != nil {
+				return false, nil
+			}
+			if e = databaseConnectionAuthority(ctx, tx, original, false, false); e != nil {
+				return false, nil
+			}
+		}
 		return sqlcgen.New(tx).ProxyClaimEligible(ctx, sqlcgen.ProxyClaimEligibleParams{RunID: run.ID, RunnerID: runnerID})
 	}
 	if run.RunSpec.Type != domain.RunTypeImageDeploy && run.RunSpec.Type != domain.RunTypeLocalBuildDeploy && run.RunSpec.Type != domain.RunTypeDatabaseDeploy {
@@ -1733,8 +1770,24 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 			return false, err
 		}
 	}
+	if op.ApplicationDatabaseStorage != nil {
+		if e := applicationDatabaseStorageAgent(ctx, tx, runnerID); e != nil {
+			return false, nil
+		}
+	}
 	if mode == "observe" {
 		if !op.ReconcileRequested || op.ReconciliationRunID != run.ID {
+			return false, nil
+		}
+	} else if mode == "storage_recover" {
+		if !storageRecoveryRun(ctx, tx, op, run.ID) || op.State != "failed" || !op.MutationHold {
+			return false, nil
+		}
+		fresh, e := sqlcgen.New(tx).ApplicationDatabaseFinalizeClaimFresh(ctx, run.ID)
+		if e != nil {
+			return false, e
+		}
+		if !fresh {
 			return false, nil
 		}
 	} else if mode == "finalize" {

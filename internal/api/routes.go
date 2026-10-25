@@ -10,6 +10,10 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-connection/recovery"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database/maintenance"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/yield"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/storage/writer"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/storage/authorize"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/storage/proxy-plan"},
+
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/stage"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement-plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-binding/retirement"},
@@ -269,6 +273,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.recoverHostingDatabaseConnection
 	case "/api/v1/resources/{id}/database/maintenance":
 		return s.maintainHostingDatabaseConnection
+	case "/api/v1/runners/hosting/database-binding/storage/writer":
+		return s.runnerApplicationDatabaseStorageWriter
+	case "/api/v1/runners/hosting/database-binding/storage/authorize":
+		return s.runnerApplicationDatabaseStorageAuthorize
+	case "/api/v1/runners/hosting/database-binding/storage/proxy-plan":
+		return s.runnerApplicationDatabaseStorageProxyPlan
 	case "/api/v1/runners/hosting/database-binding/yield":
 		return s.runnerDatabaseConnectionYield
 	case "/api/v1/runners/hosting/database-binding/stage":

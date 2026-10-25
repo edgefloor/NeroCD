@@ -68,6 +68,8 @@ func ValidateImageDeploymentTask(run TaskRun) error {
 		prefix = "observe_"
 	} else if spec.HostingMode == "finalize" {
 		prefix = "finalize_"
+	} else if spec.HostingMode == "storage_recover" {
+		prefix = "storage_recover_"
 	} else if spec.HostingMode == "cleanup" {
 		prefix = "cleanup_"
 	} else if spec.HostingMode != "deploy" {
@@ -87,6 +89,7 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
+	ApplicationDatabaseStorage             *HostingApplicationDatabaseStorageInput         `json:"application_database_storage,omitempty"`
 	ApplicationDatabaseRouteContinuity     *HostingApplicationDatabaseRouteContinuityInput `json:"application_database_route_continuity,omitempty"`
 	StorageRouteContinuity                 *HostingStorageRouteContinuityInput             `json:"storage_route_continuity,omitempty"`
 	ExpectedRuntimeConfigurationGeneration int64                                           `json:"expected_runtime_configuration_generation,omitempty"`
@@ -179,6 +182,8 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
+	ApplicationDatabaseStorage         *HostingApplicationDatabaseStorage         `json:"application_database_storage,omitempty"`
+	ApplicationDatabaseStorageState    *HostingApplicationDatabaseStorageState    `json:"application_database_storage_state,omitempty"`
 	ApplicationDatabaseRouteContinuity *HostingApplicationDatabaseRouteContinuity `json:"application_database_route_continuity,omitempty"`
 	ApplicationDatabaseYield           *HostingApplicationDatabaseYieldReceipt    `json:"application_database_yield,omitempty"`
 	ApplicationDatabase                *HostingApplicationDatabaseExecutionProof  `json:"application_database,omitempty"`
@@ -249,6 +254,9 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.ApplicationDatabaseStorage != nil && (in.ApplicationDatabaseStorage.Validate() != nil || in.StorageRouteContinuity != nil) {
+		return ErrInvalidHostingStorage
+	}
 	if in.ApplicationDatabaseRouteContinuity != nil {
 		if _, err := CanonicalHostingApplicationDatabaseRouteContinuityInput(*in.ApplicationDatabaseRouteContinuity); err != nil || in.StorageRouteContinuity != nil {
 			return errors.New("invalid application database route continuity request")
@@ -360,7 +368,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
 		return HostingApplyPlan{}, err
 	}
-	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion {
+	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion {
 		return HostingApplyPlan{}, ErrInvalidHostingStorage
 	}
 	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
@@ -372,7 +380,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: compiler, RetainedReleases: append([]HostingHealthy(nil), retained...)}
 	seen := map[string]bool{}
 	for _, old := range plan.RetainedReleases {
-		if policy != HostingApplicationDatabasePolicyVersion && old.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && old.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingSnapshotRelease(old.Snapshot, old.Release) != nil {
@@ -381,7 +389,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 		seen[old.OperationID] = true
 	}
 	if previous != nil {
-		if policy != HostingApplicationDatabasePolicyVersion && previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && previous.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if ValidateHostingSnapshotRelease(previous.Snapshot, previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {

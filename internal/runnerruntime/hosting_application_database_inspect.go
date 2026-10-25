@@ -116,7 +116,7 @@ func (e *applicationDatabaseEngine) inspectCandidateState(ctx context.Context, i
 		status = "running"
 	}
 	actual, err := e.container(ctx, c.ContainerID)
-	if err != nil || !applicationDatabaseSafeContainer(actual) || actual.Image != c.ImageID || actual.Name != "/"+applicationDatabaseName(in) || actual.Config.Labels[applicationDatabaseNonceLabel] != c.CreateNonce || actual.Config.Labels[imageBindingLabel] != in.Plan.Snapshot.BindingID || actual.Config.Labels[imageOperationLabel] != c.OperationID || actual.Config.Labels[imagePlanLabel] != c.PlanHash || actual.Config.Labels[imageReleaseLabel] != in.Plan.Release.Hash || actual.State.Running != running || actual.State.Status != status {
+	if err != nil || !e.storageCandidateSafe(actual, in) || actual.Image != c.ImageID || actual.Name != "/"+applicationDatabaseName(in) || actual.Config.Labels[applicationDatabaseNonceLabel] != c.CreateNonce || actual.Config.Labels[imageBindingLabel] != in.Plan.Snapshot.BindingID || actual.Config.Labels[imageOperationLabel] != c.OperationID || actual.Config.Labels[imagePlanLabel] != c.PlanHash || actual.Config.Labels[imageReleaseLabel] != in.Plan.Release.Hash || actual.State.Running != running || actual.State.Status != status {
 		return errApplicationDatabaseEngine
 	}
 	ports := actual.HostConfig.PortBindings[strconv.Itoa(in.Plan.Snapshot.ContainerPort)+"/tcp"]
@@ -145,7 +145,11 @@ func (e *applicationDatabaseEngine) inspectCandidateState(ctx context.Context, i
 
 func (e *applicationDatabaseEngine) memberIdentity(c applicationDatabaseContainer, m domain.HostingDatabaseNetworkMember, binding string) bool {
 	t := m.Endpoint.Target
-	return applicationDatabaseSafeContainer(c) && c.ID == t.ContainerID && c.Image == t.ImageID && c.Config.Labels[imageBindingLabel] == binding && c.Config.Labels[imageOperationLabel] == t.ContainerOperationID && c.Config.Labels[imagePlanLabel] == t.ContainerPlanHash && c.Config.Labels[imageReleaseLabel] == t.ReleaseHash
+	safe := applicationDatabaseSafeContainer(c)
+	if e.storagePredecessor != nil && e.storagePredecessor.ContainerID == c.ID && e.storagePredecessor.Storage != nil {
+		safe = applicationDatabaseMountedSafe(c, e.storagePredecessor.Storage.Plan)
+	}
+	return safe && c.ID == t.ContainerID && c.Image == t.ImageID && c.Config.Labels[imageBindingLabel] == binding && c.Config.Labels[imageOperationLabel] == t.ContainerOperationID && c.Config.Labels[imagePlanLabel] == t.ContainerPlanHash && c.Config.Labels[imageReleaseLabel] == t.ReleaseHash
 }
 
 func (e *applicationDatabaseEngine) member(ctx context.Context, m domain.HostingDatabaseNetworkMember, binding string) (applicationDatabaseContainer, error) {
@@ -192,6 +196,19 @@ func (e *applicationDatabaseEngine) network(ctx context.Context, in applicationD
 	for _, m := range in.Plan.ApplicationDatabase.PreviousMembers {
 		if m.Endpoint.Target.ContainerID == retired {
 			continue
+		}
+		if in.Plan.Storage != nil {
+			actual, e1 := e.container(ctx, m.Endpoint.Target.ContainerID)
+			if e1 != nil {
+				return errApplicationDatabaseEngine
+			}
+			if !actual.State.Running {
+				bridge, e2 := e.bridge(ctx)
+				if e2 != nil || e.stoppedMember(ctx, in, m, bridge) != nil {
+					return errApplicationDatabaseEngine
+				}
+				continue
+			}
 		}
 		if _, err := e.member(ctx, m, in.Proof.Binding.ApplicationBindingID); err != nil {
 			return errApplicationDatabaseEngine

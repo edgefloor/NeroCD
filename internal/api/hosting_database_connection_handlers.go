@@ -24,7 +24,7 @@ func connectionAuthorityReference(value string) bool {
 
 func databaseConnectionRunnerPath(path string) bool {
 	switch path {
-	case "/api/v1/runners/hosting/database-binding/yield", "/api/v1/runners/hosting/database-binding/stage", "/api/v1/runners/hosting/database-binding/retirement-plan", "/api/v1/runners/hosting/database-binding/retirement", "/api/v1/runners/hosting/database-binding/authorize", "/api/v1/runners/hosting/database-binding/state":
+	case "/api/v1/runners/hosting/database-binding/storage/writer", "/api/v1/runners/hosting/database-binding/storage/authorize", "/api/v1/runners/hosting/database-binding/storage/proxy-plan", "/api/v1/runners/hosting/database-binding/yield", "/api/v1/runners/hosting/database-binding/stage", "/api/v1/runners/hosting/database-binding/retirement-plan", "/api/v1/runners/hosting/database-binding/retirement", "/api/v1/runners/hosting/database-binding/authorize", "/api/v1/runners/hosting/database-binding/state":
 		return true
 	default:
 		return false

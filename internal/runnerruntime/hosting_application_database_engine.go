@@ -60,9 +60,11 @@ func applicationDatabaseExpectedConfiguration(in applicationDatabaseEngineInput,
 // Callers own durable intents/ACKs and current lease checks; a callback is only
 // their admitted-stage/fresh-authority boundary, never proof of a durable receipt.
 type applicationDatabaseEngine struct {
-	image  *imageEngine
-	config DatabaseEngineConfig
-	create func(context.Context, string, []string, string, map[string][]byte, func(context.Context) error) (string, error)
+	storage            *hostingOwnedVolumeRequest
+	storagePredecessor *domain.HostingHealthy
+	image              *imageEngine
+	config             DatabaseEngineConfig
+	create             func(context.Context, string, []string, string, map[string][]byte, func(context.Context) error) (string, error)
 }
 
 func newApplicationDatabaseEngine(endpoint string, config DatabaseEngineConfig) (*applicationDatabaseEngine, error) {
@@ -125,9 +127,15 @@ func (e *applicationDatabaseEngine) CreateStopped(ctx context.Context, in applic
 		return c, errApplicationDatabaseEngine
 	}
 	c.DefaultNetworkID = bridge
+	if e.storageGuard(work, in, nil, true) != nil {
+		return c, errApplicationDatabaseEngine
+	}
 	flags := []string{"--pull=never", "--name", applicationDatabaseName(in), "--restart", "no", "--publish", "127.0.0.1:" + strconv.Itoa(in.Plan.Snapshot.HostPort) + ":" + strconv.Itoa(in.Plan.Snapshot.ContainerPort)}
 	for _, pair := range [][2]string{{imageBindingLabel, in.Plan.Snapshot.BindingID}, {imageOperationLabel, c.OperationID}, {imageReleaseLabel, in.Plan.Release.Hash}, {imagePlanLabel, c.PlanHash}, {applicationDatabaseNonceLabel, c.CreateNonce}} {
 		flags = append(flags, "--label", pair[0]+"="+pair[1])
+	}
+	if in.Plan.Storage != nil {
+		flags = append(flags, "--mount", "type=volume,src="+in.Plan.Storage.VolumeName+",dst="+in.Plan.Storage.MountPath+",volume-nocopy")
 	}
 	launched := false
 	err = environment.WithValues(func(entries []hostingruntimeprotocol.Entry) error {
@@ -136,7 +144,7 @@ func (e *applicationDatabaseEngine) CreateStopped(ctx context.Context, in applic
 			values[entry.Name] = entry.Value
 		}
 		id, createErr := e.create(work, c.DaemonID, flags, hostingReleaseImage(in.Plan.Release), values, func(ctx context.Context) error {
-			if ctx.Err() != nil || beforeEffect(ctx) != nil || ctx.Err() != nil {
+			if ctx.Err() != nil || beforeEffect(ctx) != nil || ctx.Err() != nil || e.storageGuard(ctx, in, nil, true) != nil {
 				return errApplicationDatabaseEngine
 			}
 			launched = true
@@ -190,7 +198,7 @@ func (e *applicationDatabaseEngine) StartAndObserve(ctx context.Context, in appl
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var zero domain.HostingDatabaseBindingEndpointObservation
-	if !applicationDatabaseAttachMatches(in, c, p) || configured != applicationDatabaseExpectedConfiguration(in, c, p) || e.inspectCandidate(ctx, in, c, true, false) != nil || e.effect(ctx, in, beforeEffect, "container", "start", c.ContainerID) != nil || e.inspectCandidate(ctx, in, c, true, true) != nil {
+	if e.storageGuard(ctx, in, &c, true) != nil || !applicationDatabaseAttachMatches(in, c, p) || configured != applicationDatabaseExpectedConfiguration(in, c, p) || e.inspectCandidate(ctx, in, c, true, false) != nil || e.effect(ctx, in, beforeEffect, "container", "start", c.ContainerID) != nil || e.inspectCandidate(ctx, in, c, true, true) != nil {
 		return zero, errApplicationDatabaseEngine
 	}
 	container, err := e.container(ctx, c.ContainerID)
@@ -217,10 +225,15 @@ func (e *applicationDatabaseEngine) observeAttached(ctx context.Context, in appl
 func (e *applicationDatabaseEngine) VerifyReady(ctx context.Context, in applicationDatabaseEngineInput, c applicationDatabaseCandidate, observed domain.HostingDatabaseBindingEndpointObservation) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if e.observeAttached(ctx, in, c, observed) != nil {
+	if e.storageGuard(ctx, in, &c, true) != nil || e.observeAttached(ctx, in, c, observed) != nil {
 		return errApplicationDatabaseEngine
 	}
-	if e.image.readiness(ctx, in.Plan, c.OperationID, c.ContainerID, func(ctx context.Context) error { return e.observeAttached(ctx, in, c, observed) }) != nil {
+	if e.image.readiness(ctx, in.Plan, c.OperationID, c.ContainerID, func(ctx context.Context) error {
+		if e.storageGuard(ctx, in, &c, true) != nil {
+			return errApplicationDatabaseEngine
+		}
+		return e.observeAttached(ctx, in, c, observed)
+	}) != nil {
 		return errApplicationDatabaseEngine
 	}
 	return nil
@@ -246,6 +259,12 @@ func (e *applicationDatabaseEngine) Retire(ctx context.Context, in applicationDa
 		return result, errApplicationDatabaseEngine
 	}
 	old, err := e.member(ctx, *member, in.Proof.Binding.ApplicationBindingID)
+	if in.Plan.Storage != nil {
+		err = e.stoppedMember(ctx, in, *member, candidate.DefaultNetworkID)
+		if err == nil {
+			old, err = e.container(ctx, member.Endpoint.Target.ContainerID)
+		}
+	}
 	if err != nil {
 		return result, errApplicationDatabaseEngine
 	}

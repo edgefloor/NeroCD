@@ -94,6 +94,7 @@ func (o HostingDatabaseNetworkOrigin) DocumentHash() string { return HostingDocu
 // persisted lease or secret. DatabasePlan must be the original v1 plan against
 // which Binding was saved. Creating new bindings against v2 is unsupported here.
 type HostingDatabaseNetworkMemberProof struct {
+	Resume               *HostingDatabaseNetworkResumeEvidence
 	Binding              HostingDatabaseBinding
 	EndpointPlan         HostingDatabaseBindingEndpointPlan
 	Receipt              HostingDatabaseBindingEndpointReceipt
@@ -209,15 +210,15 @@ func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDat
 	}
 	members := make([]HostingDatabaseNetworkMember, 0, len(in.Members))
 	for _, proof := range in.Members {
-		b, ep, receipt, app := proof.Binding, proof.EndpointPlan, proof.Receipt, proof.ApplicationHealthy
+		b, ep, app := proof.Binding, proof.EndpointPlan, proof.ApplicationHealthy
 		if ValidateHostingDatabasePlan(proof.DatabasePlan) != nil || !databaseNetworkSameTarget(p, proof.DatabasePlan) || proof.DatabasePlan.Snapshot.ResourceGeneration > h.Snapshot.ResourceGeneration || b.ValidateTargets(proof.ApplicationProjectID, app.Snapshot, proof.DatabaseProjectID, proof.DatabasePlan) != nil || ep.ValidateApplication(b, app) != nil || ep.Action != "attach" || ep.MembershipRevision > in.MembershipRevision || ep.Target.NetworkID != o.NetworkID || ep.Target.DaemonID != o.Daemon {
 			return nil, ErrInvalidHostingDatabaseNetworkPlan
 		}
-		endpoint, ok := receipt.ObservedMembership(ep, b)
+		endpoint, receiptID, receiptHash, ok := HostingDatabaseMemberEndpoint(proof)
 		if !ok {
 			return nil, ErrInvalidHostingDatabaseNetworkPlan
 		}
-		members = append(members, HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: receipt.ReceiptID, ReceiptHash: receipt.Hash, Endpoint: endpoint})
+		members = append(members, HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: receiptID, ReceiptHash: receiptHash, Endpoint: endpoint})
 	}
 	slices.SortFunc(members, databaseNetworkMemberLess)
 	if previousPlan.Database.Network != nil && !slices.Equal(members, previousPlan.Database.Network.Members) && in.MembershipRevision == previousPlan.Database.Network.MembershipRevision {
@@ -226,7 +227,22 @@ func databaseNetworkProofMembers(p, previousPlan HostingApplyPlan, in HostingDat
 	var prior []HostingDatabaseNetworkMember
 	var priorRevision int64
 	if n := previousPlan.Database.Network; n != nil {
-		prior, priorRevision = n.Members, n.MembershipRevision
+		prior, priorRevision = slices.Clone(n.Members), n.MembershipRevision
+		for _, proof := range in.Members {
+			if proof.Resume == nil {
+				continue
+			}
+			current, err := databaseNetworkAttachedMember(proof)
+			if err != nil || proof.Resume.MembershipRevision > in.MembershipRevision {
+				return nil, ErrInvalidHostingDatabaseNetworkPlan
+			}
+			for index, old := range prior {
+				if old.Endpoint.Target == current.Endpoint.Target && old.ReceiptHash == proof.Resume.OriginalReceiptHash {
+					prior[index] = current
+				}
+			}
+		}
+
 	}
 	if validateDatabaseNetworkRetirements(previousPlan, in.Origin, prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
 		return nil, ErrInvalidHostingDatabaseNetworkPlan

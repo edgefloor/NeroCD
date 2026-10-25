@@ -418,6 +418,9 @@ func (j *AttemptJournal) persistLocked() error {
 		return err
 	}
 	state := j.state
+	if state.Version == 17 && !journalStateUsesApplicationStorage(state) {
+		state.Version = 16
+	}
 	if state.Version == 16 && !journalStateUsesRouteContinuity(state) {
 		state.Version = 15
 	}
@@ -475,7 +478,7 @@ func validateJournalState(state journalState) error {
 	if err := validateJournalStorageArchives(state); err != nil {
 		return err
 	}
-	if state.Version < journalFormatVersion || state.Version > 16 {
+	if state.Version < journalFormatVersion || state.Version > 17 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
 	if len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
@@ -542,7 +545,13 @@ func validateJournalState(state journalState) error {
 	if state.Version == 16 && !journalStateUsesRouteContinuity(state) {
 		return errors.New("journal version 16 requires route continuation evidence")
 	}
+	if state.Version == 17 && !journalStateUsesApplicationStorage(state) {
+		return errJournalConnection
+	}
 	for _, entry := range state.Hosting {
+		if entry.ApplicationStorage != nil && state.Version < 17 {
+			return errJournalConnection
+		}
 		if hostingJournalUsesRouteContinuity(entry) && state.Version < 16 {
 			return errors.New("route continuation requires journal version 16")
 		}

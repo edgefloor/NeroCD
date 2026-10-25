@@ -20,9 +20,10 @@ type HostingRuntimeConfigurationRef struct {
 
 // ValidateHostingRuntimeConfigurationRef binds runtime references to their policy family.
 func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
-	combined := s.PolicyVersion == HostingApplicationDatabasePolicyVersion
+	storageCombined := s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion
+	combined := s.PolicyVersion == HostingApplicationDatabasePolicyVersion || storageCombined
 	if combined {
-		if !hostingProxyID.MatchString(s.ApplicationDatabase.BindingID) || !imageSHA256.MatchString(s.ApplicationDatabase.BindingHash) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Storage != (HostingStorageRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.Database != (HostingDatabaseExecutionRef{}) {
+		if !hostingProxyID.MatchString(s.ApplicationDatabase.BindingID) || !imageSHA256.MatchString(s.ApplicationDatabase.BindingHash) || s.LocalBuild != (HostingLocalBuildSource{}) || (!storageCombined && s.Storage != (HostingStorageRef{}) || storageCombined && !validHostingStorageRef(s.Storage)) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.Database != (HostingDatabaseExecutionRef{}) {
 			return ErrInvalidHostingApplicationDatabasePlan
 		}
 	} else if s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {

@@ -61,3 +61,20 @@ func runnerApplicationDatabaseRouteCapabilities(enabled bool, caps []string) ([]
 	}
 	return caps, nil
 }
+
+func runnerApplicationDatabaseStorageCapabilities(enabled bool, caps []string) ([]string, error) {
+	if !enabled && slices.Contains(caps, domain.HostingApplicationDatabaseStorageCapability) {
+		return nil, errors.New("connected storage capability requires explicit opt-in")
+	}
+	if enabled {
+		for _, cap := range []string{domain.HostingApplicationDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability} {
+			if !slices.Contains(caps, cap) {
+				return nil, errors.New("connected storage capability prerequisites unavailable")
+			}
+		}
+		if !slices.Contains(caps, domain.HostingApplicationDatabaseStorageCapability) {
+			caps = append(caps, domain.HostingApplicationDatabaseStorageCapability)
+		}
+	}
+	return caps, nil
+}

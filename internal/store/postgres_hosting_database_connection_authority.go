@@ -35,8 +35,16 @@ func loadDatabaseConnectionExecution(ctx context.Context, db sqlcgen.DBTX, op *d
 			return ErrConflict
 		}
 		op.ApplicationDatabase = &p
+		if err = loadApplicationDatabaseStorage(ctx, db, op); err != nil {
+			return err
+		}
 		if err = loadApplicationDatabaseContinuity(ctx, db, op); err != nil {
 			return err
+		}
+		if op.ApplicationDatabaseStorage != nil {
+			if err = loadApplicationDatabaseStorage(ctx, db, op); err != nil {
+				return err
+			}
 		}
 		if domain.ValidateHostingApplicationDatabaseOperation(*op) != nil {
 			return ErrConflict
@@ -87,6 +95,15 @@ func databaseConnectionAuthority(ctx context.Context, tx pgx.Tx, op domain.Hosti
 	b, err := lockConnectionTargets(ctx, tx, c, actor, domain.RoleOwner)
 	if err != nil {
 		return err
+	}
+	if op.ApplicationDatabaseStorage != nil {
+		if err = applicationDatabaseStorageAgent(ctx, tx, b.RunnerID); err != nil {
+			return err
+		}
+		storage, e := currentHostingStorage(ctx, tx, op.ProjectID, op.ResourceID)
+		if e != nil || storage.Reference() != op.Snapshot.Storage || storage.BindingID != op.BindingID || storage.DestinationID != op.Snapshot.DestinationID {
+			return ErrConflict
+		}
 	}
 	if op.ApplicationDatabaseRouteContinuity != nil {
 		compatible, e := q.ApplicationDatabaseRouteSchemaCompatible(ctx)
@@ -185,6 +202,18 @@ func databaseConnectionAuthority(ctx context.Context, tx pgx.Tx, op domain.Hosti
 			return ErrConflict
 		}
 	}
+	// A fresh recovery request retains its own owner authority in addition to the
+	// original deployment owner. Neither recorded admission survives revocation.
+	if op.ApplicationDatabaseStorage != nil {
+		recovery, e := q.ReadApplicationDatabaseStorageRecovery(ctx, op.ID)
+		if e == nil {
+			if err := authorizeBuildActor(ctx, tx, recovery.ActorID, c.ProjectID, domain.RoleOwner); err != nil {
+				return err
+			}
+		} else if !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+	}
 	// Owner expiration is evaluated after all potentially blocking metadata locks.
 	return authorizeBuildActor(ctx, tx, actor, c.ProjectID, domain.RoleOwner)
 }
@@ -252,7 +281,7 @@ func finalDatabaseConnectionAuthority(ctx context.Context, tx pgx.Tx, runner str
 	if err := databaseOperationAuthorityMode(ctx, tx, op, observe, settled); err != nil {
 		return err
 	}
-	if a.OperationID != op.ID || observe && a.RunID != op.ReconciliationRunID || !observe && a.RunID != op.RunID && !continuityFinalizeRun(op, a.RunID) || op.Snapshot.RunnerID != runner {
+	if a.OperationID != op.ID || observe && a.RunID != op.ReconciliationRunID || !observe && a.RunID != op.RunID && !continuityFinalizeRun(op, a.RunID) && !storageRecoveryRun(ctx, tx, op, a.RunID) || op.Snapshot.RunnerID != runner {
 		return ErrConflict
 	}
 	if err := checkDatabaseConnectionRunnerContext(ctx, tx, runner); err != nil {

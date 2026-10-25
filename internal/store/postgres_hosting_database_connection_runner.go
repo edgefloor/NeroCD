@@ -156,6 +156,26 @@ func (s *PostgresStore) GetHostingApplicationDatabaseState(ctx context.Context, 
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
+
+		if op.ApplicationDatabaseStorage != nil {
+			owned, e := currentHostingStorage(ctx, tx, op.ProjectID, op.ResourceID)
+			if e != nil {
+				return zero, e
+			}
+			origin, e := readHostingStorageMaterialization(ctx, tx, owned)
+			if e != nil {
+				return zero, e
+			}
+			out.Storage = &domain.HostingStorageCreateAck{Storage: owned, Materialization: origin, CreatePermitted: false}
+			out.StorageWriter, e = applicationStorageWriter(ctx, q, op)
+			if e != nil {
+				return zero, e
+			}
+			out.StorageRecovery, e = storageRecoveryPlan(ctx, q, op)
+			if e != nil {
+				return zero, e
+			}
+		}
 		if out.Validate() != nil {
 			return zero, ErrConflict
 		}
@@ -227,6 +247,13 @@ func (s *PostgresStore) AuthorizeHostingApplicationDatabaseEffect(ctx context.Co
 		_, retirement, err := connectionRetirement(ctx, q, op)
 		if err != nil || !connectionEffectStage(in.Action, in.ExpectedStageHash, stage, retirement) {
 			return zero, ErrConflict
+		}
+
+		if op.ApplicationDatabaseStorage != nil {
+			writer, e := applicationStorageWriter(ctx, q, op)
+			if e != nil || writer == nil || writer.Receipt.Phase != "stopped" {
+				return zero, ErrConflict
+			}
 		}
 		mode := "deploy"
 		if op.ApplicationDatabaseRouteContinuity != nil && in.Action == "retire" {
@@ -311,7 +338,7 @@ func (s *PostgresStore) HostingApplicationDatabaseRetirementPlan(ctx context.Con
 			return zero, ErrConflict
 		}
 		member := proof.Members[0]
-		endpoint, ok := member.Receipt.ObservedMembership(member.EndpointPlan, proof.Binding)
+		endpoint, _, _, ok := domain.HostingDatabaseMemberEndpoint(domain.HostingDatabaseNetworkMemberProof(member))
 		if !ok {
 			return zero, ErrConflict
 		}

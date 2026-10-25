@@ -57,11 +57,11 @@ func validateDatabaseMaintenanceJournal(e JournalHosting) error {
 }
 
 func validateApplicationDatabaseJournal(e JournalHosting) error {
-	if e.ApplicationDatabase == nil || e.ApplicationSnapshot == nil || e.ApplicationDatabase.Validate() != nil || e.DatabaseMaintenance != nil || e.DatabaseUpgrade != nil || e.Database || e.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || HostingJournalUsesStorage(e) || e.LocalBuild || HostingJournalUsesLocalBuild(e) || !e.RuntimeEnvironment || e.RuntimeConfiguration != e.ApplicationSnapshot.RuntimeConfiguration || e.CleanupPlan != nil || e.ID == "" || len(e.ID) > 128 || e.OperationID == "" || len(e.OperationID) > 128 || e.CreatedAt.IsZero() || validateAttemptIdentity(e.Attempt) != nil {
+	if e.ApplicationDatabase == nil || e.ApplicationSnapshot == nil || e.ApplicationDatabase.Validate() != nil || e.DatabaseMaintenance != nil || e.DatabaseUpgrade != nil || e.Database || e.DatabaseRef != (domain.HostingDatabaseExecutionRef{}) || HostingJournalUsesStorage(e) && e.ApplicationStorage == nil || e.LocalBuild || HostingJournalUsesLocalBuild(e) || !e.RuntimeEnvironment || e.RuntimeConfiguration != e.ApplicationSnapshot.RuntimeConfiguration || e.CleanupPlan != nil || e.ID == "" || len(e.ID) > 128 || e.OperationID == "" || len(e.OperationID) > 128 || e.CreatedAt.IsZero() || validateAttemptIdentity(e.Attempt) != nil {
 		return errJournalConnection
 	}
 	proof := e.ApplicationDatabase
-	op := domain.HostingOperation{ID: e.OperationID, ProjectID: proof.Binding.ProjectID, ResourceID: e.ApplicationSnapshot.ResourceID, BindingID: e.ApplicationSnapshot.BindingID, RunID: "run_" + e.OperationID, Snapshot: *e.ApplicationSnapshot, ApplicationDatabase: proof, Plan: e.Plan, ApplicationDatabaseRouteContinuity: e.ApplicationRouteContinuity}
+	op := domain.HostingOperation{ID: e.OperationID, ProjectID: proof.Binding.ProjectID, ResourceID: e.ApplicationSnapshot.ResourceID, BindingID: e.ApplicationSnapshot.BindingID, RunID: "run_" + e.OperationID, Snapshot: *e.ApplicationSnapshot, ApplicationDatabase: proof, ApplicationDatabaseStorage: e.ApplicationStorage, Plan: e.Plan, ApplicationDatabaseRouteContinuity: e.ApplicationRouteContinuity}
 	if e.Plan != nil {
 		op.Release = &e.Plan.Release
 		op.ApplicationDatabaseYield = e.ApplicationFinalize
@@ -70,7 +70,7 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 		return errJournalConnection
 	}
 	in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*proof)
-	if err != nil || e.StorageCreate != nil || e.StorageMaterialized != nil || e.StorageMetadata != nil {
+	if err != nil || e.ApplicationStorage == nil && (e.StorageCreate != nil || e.StorageMaterialized != nil || e.StorageMetadata != nil) {
 		return errJournalConnection
 	}
 	a := domain.HostingAuthority{OperationID: e.OperationID, RunID: e.Attempt.RunID, LeaseID: e.Attempt.LeaseID, Attempt: e.Attempt.Attempt, Fence: e.Attempt.Fence}
@@ -78,6 +78,16 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 		return errJournalConnection
 	}
 	if e.ApplicationYield != nil && e.Phase != "application_yield" {
+		return errJournalConnection
+	}
+	if e.ApplicationStorage != nil {
+		if err := validateApplicationStorageJournal(e, a); err != nil {
+			return err
+		}
+		if e.Phase == "storage_create_intent" || e.Phase == "storage_materialized" || e.Phase == "application_storage_writer" || e.Phase == "application_storage_recovery" {
+			return nil
+		}
+	} else if e.ApplicationStorageWriter != nil || e.ApplicationStorageRecovery != nil {
 		return errJournalConnection
 	}
 	if e.Phase != "apply_intent" && e.DeliveryID != "" || e.Phase != "application_candidate" && e.ApplicationCandidate != nil || e.Phase != "application_stage" && e.Phase != "application_retirement" && e.Phase != "application_yield" && e.Phase != "application_finalize" && e.ApplicationStage != nil || e.Phase != "application_retirement" && (e.ApplicationRetirementPlan != nil || e.ApplicationRetirement != nil) {
@@ -111,7 +121,7 @@ func validateApplicationDatabaseJournal(e JournalHosting) error {
 		}
 		if e.Phase == "application_retirement" {
 			p, r := e.ApplicationRetirementPlan, e.ApplicationRetirement
-			if e.ApplicationStage.Phase != "ready" || len(in.Members) != 1 || p == nil || r == nil || p.Validate(in.Binding) != nil || p.OperationID != e.OperationID || p.Action != "retire" || p.Target != in.Members[0].EndpointPlan.Target || p.ExpectedEndpointID != in.Members[0].Receipt.Observation.Endpoint.EndpointID || p.MembershipRevision != in.MembershipRevision+2 || r.Validate(*p, in.Binding) != nil {
+			if e.ApplicationStage.Phase != "ready" || len(in.Members) != 1 || p == nil || r == nil || p.Validate(in.Binding) != nil || p.OperationID != e.OperationID || p.Action != "retire" || p.Target != in.Members[0].EndpointPlan.Target || p.ExpectedEndpointID != effectiveApplicationMemberEndpoint(in.Members[0]) || p.MembershipRevision != in.MembershipRevision+2 || r.Validate(*p, in.Binding) != nil {
 				return errJournalConnection
 			}
 		}
@@ -133,6 +143,8 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 	type chain struct {
 		proof, snapshot, maintenance, plan, delivery, previous string
 		continuity, finalize                                   string
+		storage                                                string
+		writer                                                 *domain.HostingApplicationDatabaseStorageWriterRequest
 		candidate                                              *domain.HostingApplicationDatabaseCandidate
 		stage                                                  *domain.HostingApplicationDatabaseStage
 		retirement                                             *domain.HostingDatabaseBindingEndpointReceipt
@@ -164,6 +176,10 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 		if exists && (c.continuity != domain.HostingDocumentHash(e.ApplicationRouteContinuity) || c.finalize != domain.HostingDocumentHash(e.ApplicationFinalize)) {
 			return errJournalConnection
 		}
+		if exists && c.storage != domain.HostingDocumentHash(e.ApplicationStorage) {
+			return errJournalConnection
+		}
+		c.storage = domain.HostingDocumentHash(e.ApplicationStorage)
 		c.continuity, c.finalize = domain.HostingDocumentHash(e.ApplicationRouteContinuity), domain.HostingDocumentHash(e.ApplicationFinalize)
 		c.proof, c.snapshot, c.maintenance = proof, snapshot, maintenance
 		if proof != "" || maintenance != "" {
@@ -192,6 +208,20 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 			in, err := domain.HostingApplicationDatabaseExecutionPlanInput(*e.ApplicationDatabase)
 			if err != nil {
 				return errJournalConnection
+			}
+			if e.ApplicationStorage != nil && e.ApplicationCandidate != nil && (c.writer == nil || c.writer.Receipt.Phase != "stopped") {
+				return errJournalConnection
+			}
+			if e.ApplicationStorageWriter != nil {
+				w := e.ApplicationStorageWriter
+				if c.writer == nil {
+					if w.Receipt.Phase != "stop_intent" && !(e.ApplicationStorageRecovery != nil && w.Receipt.Phase == "resume_intent") {
+						return errJournalConnection
+					}
+				} else if w.Receipt.PreviousStateHash != c.writer.Receipt.Hash || !applicationStorageJournalWriterPhase(c.writer.Receipt.Phase, w.Receipt.Phase) {
+					return errJournalConnection
+				}
+				c.writer = w
 			}
 			if e.Phase == "application_finalize" {
 				if exists {
@@ -247,4 +277,67 @@ func (j *AttemptJournal) AckHostingConnection(a domain.HostingAuthority) error {
 		return err
 	}
 	return nil
+}
+
+func journalStateUsesApplicationStorage(s journalState) bool {
+	for _, e := range s.Hosting {
+		if e.ApplicationStorage != nil {
+			return true
+		}
+	}
+	return false
+}
+func validateApplicationStorageJournal(e JournalHosting, a domain.HostingAuthority) error {
+	if e.ApplicationSnapshot == nil || e.ApplicationStorage.Validate(*e.ApplicationSnapshot) != nil {
+		return errJournalConnection
+	}
+	if e.ApplicationStorageWriter != nil && e.Phase != "application_storage_writer" || e.ApplicationStorageRecovery != nil && e.ApplicationStorageRecovery.Validate() != nil {
+		return errJournalConnection
+	}
+	switch e.Phase {
+	case "storage_create_intent":
+		if e.Plan == nil || e.StorageRef != e.Plan.Snapshot.Storage || e.StorageCreate == nil || e.StorageCreate.HostingAuthority != a || e.StorageCreate.PlanHash != e.Plan.Hash || e.StorageCreate.StorageRef != e.StorageRef || e.StorageCreate.CreationNonce != e.Plan.Storage.CreationNonce || e.StorageMaterialized != nil || e.StorageMetadata != nil || e.DeliveryID != "" || e.Result != nil || e.Prepared != nil {
+			return errJournalConnection
+		}
+	case "storage_materialized":
+		if e.Plan == nil || e.StorageMetadata == nil || e.StorageMaterialized == nil || e.StorageMaterialized.HostingAuthority != a || e.StorageMaterialized.PlanHash != e.Plan.Hash || e.StorageMaterialized.ReceiptID != e.ID || e.StorageMaterialized.Validate() != nil || e.StorageMetadata.Reference() != e.Plan.Snapshot.Storage || e.DeliveryID != "" || e.Result != nil || e.Prepared != nil {
+			return errJournalConnection
+		}
+	case "application_storage_writer":
+		if e.Plan == nil || e.ApplicationStorageWriter == nil || e.ApplicationStorageWriter.Validate() != nil || e.ApplicationStorageWriter.HostingAuthority != a || e.ApplicationStorageWriter.Receipt.ReceiptID != e.ID || e.ApplicationStorageWriter.Receipt.PlanHash != e.Plan.Hash || e.ApplicationStorageWriter.Receipt.StorageRef != e.Plan.Snapshot.Storage || e.Plan.PreviousHealthy == nil || e.ApplicationStorageWriter.Receipt.PredecessorHash != domain.HostingDocumentHash(e.Plan.PreviousHealthy) || e.DeliveryID != "" || e.Result != nil || e.Prepared != nil {
+			return errJournalConnection
+		}
+	case "application_storage_recovery":
+		if e.Plan == nil || e.ApplicationStorageRecovery == nil || e.ApplicationStorageRecovery.RunID != a.RunID || a.RunID != "storage_recover_"+e.OperationID || e.DeliveryID != "" || e.Result != nil || e.Prepared != nil {
+			return errJournalConnection
+		}
+	default:
+		if e.StorageCreate != nil || e.StorageMaterialized != nil || e.StorageMetadata != nil || e.StorageRef != (domain.HostingStorageRef{}) {
+			return errJournalConnection
+		}
+	}
+	return nil
+}
+
+func effectiveApplicationMemberEndpoint(m domain.HostingDatabaseNetworkMemberProof) string {
+	endpoint, _, _, ok := domain.HostingDatabaseMemberEndpoint(m)
+	if !ok {
+		return ""
+	}
+	return endpoint.EndpointID
+}
+
+func applicationStorageJournalWriterPhase(previous, next string) bool {
+	switch previous {
+	case "stop_intent":
+		return next == "stopped"
+	case "stopped":
+		return next == "candidate_stopped"
+	case "candidate_stopped":
+		return next == "replacement_failed"
+	case "resume_intent":
+		return next == "resumed"
+	default:
+		return false
+	}
 }

@@ -134,14 +134,15 @@ type HostingProxyRouteTarget struct {
 
 // HostingProxySnapshot is a complete immutable desired generation, internal to dispatch.
 type HostingProxySnapshot struct {
-	ProxyID        string                    `json:"proxy_id"`
-	ServerID       string                    `json:"server_id"`
-	DestinationID  string                    `json:"destination_id"`
-	RunnerID       string                    `json:"runner_id"`
-	Generation     int64                     `json:"generation"`
-	Configuration  HostingProxyConfiguration `json:"configuration"`
-	Routes         []HostingProxyRouteTarget `json:"routes"`
-	VerifiedSwitch *HostingVerifiedSwitch    `json:"verified_switch,omitempty"`
+	StorageSwitch  *HostingProxyStorageSwitch `json:"storage_switch,omitempty"`
+	ProxyID        string                     `json:"proxy_id"`
+	ServerID       string                     `json:"server_id"`
+	DestinationID  string                     `json:"destination_id"`
+	RunnerID       string                     `json:"runner_id"`
+	Generation     int64                      `json:"generation"`
+	Configuration  HostingProxyConfiguration  `json:"configuration"`
+	Routes         []HostingProxyRouteTarget  `json:"routes"`
+	VerifiedSwitch *HostingVerifiedSwitch     `json:"verified_switch,omitempty"`
 }
 
 // HostingProxyPlan binds engine preparation and the committed predecessor to a snapshot.
@@ -320,6 +321,9 @@ func CompileHostingProxyPlan(snapshot HostingProxySnapshot, previous int64, daem
 		return HostingProxyPlan{}, err
 	}
 	snapshot.VerifiedSwitch = verification
+	if snapshot.StorageSwitch != nil && snapshot.StorageSwitch.Validate(snapshot, previous) != nil {
+		return HostingProxyPlan{}, ErrInvalidHostingStorage
+	}
 	plan := HostingProxyPlan{Snapshot: snapshot, PreviousGeneration: previous, CompilerVersion: HostingProxyCompilerVersion, DaemonID: daemon}
 	plan.Hash = HostingDocumentHash(plan)
 	encoded, err := json.Marshal(plan)

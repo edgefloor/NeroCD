@@ -163,7 +163,11 @@ func continuityProxyApplied(ctx context.Context, tx pgx.Tx, op domain.HostingOpe
 	if err != nil {
 		return err
 	}
-	applied, err := proxyOperation(ctx, tx, c.ProxyOperationID)
+	effective, _, err := applicationStorageProxyID(ctx, q, op)
+	if err != nil {
+		return err
+	}
+	applied, err := proxyOperation(ctx, tx, effective)
 	if err != nil {
 		return err
 	}
@@ -298,7 +302,11 @@ func (s *PostgresStore) PrepareApplicationDatabaseRoute(ctx context.Context, id 
 			return false, err
 		}
 		q := sqlcgen.New(tx)
-		p, err := proxyOperation(ctx, tx, c.ProxyOperationID)
+		effective, _, err := applicationStorageProxyID(ctx, q, op)
+		if err != nil {
+			return false, err
+		}
+		p, err := proxyOperation(ctx, tx, effective)
 		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
 			if err = s.createApplicationDatabaseSwitch(ctx, tx, op); err != nil {
 				return false, err
@@ -390,6 +398,15 @@ func continuityScope(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, op d
 		count++
 		pick, ok := picks[row.ID]
 		version, release := pick.ExpectedVersion, pick.ExpectedSelectedReleaseOperationID
+		if op.ApplicationDatabaseStorage != nil {
+			_, recovery, e := applicationStorageProxyID(ctx, q, op)
+			if e != nil {
+				return nil, e
+			}
+			if recovery {
+				version += 2
+			}
+		}
 		if selected {
 			version++
 			release = op.ID
@@ -428,7 +445,7 @@ func continuityStrictScope(ctx context.Context, tx pgx.Tx, p domain.HostingProxy
 	if !present {
 		return proxyCurrentScope(ctx, tx, p, rows)
 	}
-	id, err := sqlcgen.New(tx).ApplicationDatabaseRouteOrigin(ctx, proxy.ID)
+	id, err := applicationStorageProxyOrigin(ctx, tx, proxy.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return proxyCurrentScope(ctx, tx, p, rows)
 	}
@@ -453,6 +470,10 @@ func continuityStrictScope(ctx context.Context, tx pgx.Tx, p domain.HostingProxy
 func (s *PostgresStore) createApplicationDatabaseSwitch(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
 	c := op.ApplicationDatabaseRouteContinuity
 	q := sqlcgen.New(tx)
+	effective, recovery, err := applicationStorageProxyID(ctx, q, op)
+	if err != nil {
+		return err
+	}
 	if c == nil || op.ApplicationDatabaseYield == nil {
 		return ErrConflict
 	}
@@ -485,8 +506,14 @@ func (s *PostgresStore) createApplicationDatabaseSwitch(ctx context.Context, tx 
 	if !reflect.DeepEqual(current, proxySortedTargets(prior.Snapshot.Routes)) {
 		return ErrConflict
 	}
+	picks := append([]domain.HostingRouteSwitchSelection(nil), c.Request.Routes...)
+	if recovery {
+		for i := range picks {
+			picks[i].ExpectedVersion += 2
+		}
+	}
 	v := &domain.HostingVerifiedSwitch{Version: 1, ExpectedLoadedGeneration: p.LoadedGeneration, PriorAppliedProxyOperationID: prior.ID}
-	for _, pick := range c.Request.Routes {
+	for _, pick := range picks {
 		found := false
 		for n, target := range current {
 			if target.RouteID != pick.RouteID {
@@ -507,12 +534,15 @@ func (s *PostgresStore) createApplicationDatabaseSwitch(ctx context.Context, tx 
 		return err
 	}
 	snapshot := domain.HostingProxySnapshot{ProxyID: p.ID, ServerID: p.ServerID, DestinationID: p.DestinationID, RunnerID: p.RunnerID, Generation: generation, Configuration: p.Configuration, Routes: current, VerifiedSwitch: v}
+	if err = storageSwitchSnapshot(ctx, tx, op, prior, &snapshot, recovery); err != nil {
+		return err
+	}
 	plan, err := domain.CompileHostingProxyPlan(snapshot, p.LoadedGeneration, p.DaemonID)
 	if err != nil {
 		return ErrConflict
 	}
 	snapshot = plan.Snapshot
-	for _, pick := range c.Request.Routes {
+	for _, pick := range picks {
 		changed, e := q.ProxySwitchRoute(ctx, sqlcgen.ProxySwitchRouteParams{ID: pick.RouteID, SelectedReleaseOperationID: op.ID, Version: pick.ExpectedVersion, SelectedReleaseOperationID_2: pick.ExpectedSelectedReleaseOperationID})
 		if e != nil {
 			return e
@@ -521,12 +551,12 @@ func (s *PostgresStore) createApplicationDatabaseSwitch(ctx context.Context, tx 
 			return ErrConflict
 		}
 	}
-	_, err = s.proxyInsertSnapshot(ctx, tx, p, snapshot, c.ProxyOperationID, op.ProjectID, "", op.CreatedBy, "appdb:"+op.ID, domain.HostingDocumentHash(c), domain.AuditEvent{ID: "aud_appdb_proxy_" + op.ID, CreatedAt: time.Now().UTC()}, false)
+	_, err = s.proxyInsertSnapshot(ctx, tx, p, snapshot, effective, op.ProjectID, "", op.CreatedBy, "appdb:"+effective, domain.HostingDocumentHash(c), domain.AuditEvent{ID: "aud_appdb_proxy_" + effective, CreatedAt: time.Now().UTC()}, false)
 	if err != nil {
 		return err
 	}
 	for _, route := range v.Routes {
-		if _, err = q.ProxyReferencePriorRelease(ctx, sqlcgen.ProxyReferencePriorReleaseParams{OperationID: c.ProxyOperationID, RouteID: route.RouteID, PriorProxyOperationID: prior.ID, PriorReleaseOperationID: route.PriorTarget.ReleaseOperationID, PriorVersion: route.PriorVersion}); err != nil {
+		if _, err = q.ProxyReferencePriorRelease(ctx, sqlcgen.ProxyReferencePriorReleaseParams{OperationID: effective, RouteID: route.RouteID, PriorProxyOperationID: prior.ID, PriorReleaseOperationID: route.PriorTarget.ReleaseOperationID, PriorVersion: route.PriorVersion}); err != nil {
 			return err
 		}
 	}

@@ -71,6 +71,7 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 		view.Available = reason == "available" || reason == "initial_deployment"
 		if !view.Available {
 			view.StorageRouteContinuity = nil
+			view.ApplicationDatabaseStorage = nil
 		}
 		if err := proxyCheckLegacyToken(ctx, tx, actor); err != nil {
 			return domain.HostingStorageDeploymentOptions{}, err
@@ -110,6 +111,12 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	}
 	ref := storage.Reference()
 	view.StorageRef = &ref
+	if handled, reason, readErr := connectedStorageDeploymentOptions(ctx, tx, &view, storage); handled {
+		if readErr != nil {
+			return view, readErr
+		}
+		return finish(reason)
+	}
 	runtime, err := q.StorageDeploymentRuntimeGeneration(ctx, resource)
 	if err != nil {
 		return view, err

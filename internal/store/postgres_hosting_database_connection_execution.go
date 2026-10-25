@@ -160,7 +160,19 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if app.Generation != in.ExpectedGeneration || app.Generation != binding.ApplicationResourceGeneration || database.Generation != binding.DatabaseResourceGeneration || in.ExpectedRuntimeConfigurationGeneration != binding.RuntimeConfiguration.Generation {
 			return zero, ErrConflict
 		}
-		supported, err := connectionDeploymentSupported(ctx, tx, application, c.DatabaseResourceID, in.ApplicationDatabaseRouteContinuity != nil)
+		storageProof, err := admittedApplicationDatabaseStorage(ctx, tx, application, app.ProjectID, app.BindingID, app.DestinationID, app.RunnerID, in.ApplicationDatabaseStorage)
+		if err != nil || initial && storageProof != nil {
+			if err != nil {
+				return zero, err
+			}
+			return zero, ErrConflict
+		}
+		var supported bool
+		if storageProof != nil {
+			supported, err = q.ConnectionStorageDeploymentSupported(ctx, sqlcgen.ConnectionStorageDeploymentSupportedParams{ApplicationResourceID: application, DatabaseResourceID: c.DatabaseResourceID, Routed: in.ApplicationDatabaseRouteContinuity != nil})
+		} else {
+			supported, err = connectionDeploymentSupported(ctx, tx, application, c.DatabaseResourceID, in.ApplicationDatabaseRouteContinuity != nil)
+		}
 		if err != nil || !supported {
 			return zero, ErrConflict
 		}
@@ -190,6 +202,10 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 			return zero, ErrConflict
 		}
 		snap := domain.HostingSnapshot{ResourceID: application, ResourceGeneration: app.Generation, ImageReference: source.Image.Reference, BindingID: app.BindingID, DestinationID: app.DestinationID, RuntimeNamespace: app.RuntimeNamespace, ServerID: app.ServerID, RunnerID: app.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, RuntimeConfiguration: binding.RuntimeConfiguration, PolicyVersion: domain.HostingApplicationDatabasePolicyVersion, ApplicationDatabase: domain.HostingApplicationDatabaseRef{BindingID: binding.ID, BindingHash: binding.Hash}}
+		if storageProof != nil {
+			snap.Storage = storageProof.StorageRef
+			snap.PolicyVersion = domain.HostingApplicationDatabaseStoragePolicyVersion
+		}
 		runtime, err := lockHostingRuntimeConfiguration(ctx, tx, app.ProjectID, application, in.ExpectedRuntimeConfigurationGeneration)
 		if err != nil || runtime != binding.RuntimeConfiguration {
 			return zero, ErrConflict
@@ -197,7 +213,11 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
 			return zero, err
 		}
-		snap.PolicyVersion = domain.HostingApplicationDatabasePolicyVersion
+		if storageProof != nil {
+			snap.PolicyVersion = domain.HostingApplicationDatabaseStoragePolicyVersion
+		} else {
+			snap.PolicyVersion = domain.HostingApplicationDatabasePolicyVersion
+		}
 		if !initial && snap.HostPort == previous.Snapshot.HostPort {
 			return zero, ErrConflict
 		}
@@ -211,7 +231,7 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if err != nil || !port.RestoreAdmitted || port.HoldOperationID != nil {
 			return zero, ErrConflict
 		}
-		op := domain.HostingOperation{ID: id, ProjectID: app.ProjectID, ResourceID: application, BindingID: app.BindingID, CreatedBy: actor, State: "queued", Snapshot: snap, ApplicationDatabase: &proof}
+		op := domain.HostingOperation{ID: id, ProjectID: app.ProjectID, ResourceID: application, BindingID: app.BindingID, CreatedBy: actor, State: "queued", Snapshot: snap, ApplicationDatabase: &proof, ApplicationDatabaseStorage: storageProof}
 		if in.ApplicationDatabaseRouteContinuity != nil {
 			if initial {
 				return zero, ErrConflict
@@ -252,6 +272,11 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		}
 		if _, err = q.CreateHostingReleaseClaim(ctx, sqlcgen.CreateHostingReleaseClaimParams{OperationID: id, DestinationID: snap.DestinationID, HostPort: int32(snap.HostPort), BindingID: snap.BindingID}); err != nil {
 			return zero, err
+		}
+		if storageProof != nil {
+			if err = q.InsertApplicationDatabaseStorage(ctx, sqlcgen.InsertApplicationDatabaseStorageParams{OperationID: id, StorageID: storageProof.StorageRef.StorageID, Body: buildJSON(storageProof), BodyHash: storageProof.Hash}); err != nil {
+				return zero, err
+			}
 		}
 		if continuity := op.ApplicationDatabaseRouteContinuity; continuity != nil {
 			if e := q.InsertApplicationDatabaseRouteContinuation(ctx, sqlcgen.InsertApplicationDatabaseRouteContinuationParams{OperationID: id, ProxyID: continuity.ProxyID, ProxyOperationID: continuity.ProxyOperationID, FinalizeRunID: continuity.FinalizeRunID, Body: buildJSON(continuity), BodyHash: continuity.Hash}); e != nil {

@@ -135,8 +135,8 @@ func (b HostingDatabaseBinding) Validate() error {
 // The first binding adapter accepts only public images with runtime input, no
 // application storage, local builds, route continuity or database sidecars.
 func databaseBindingApplicationSnapshot(s HostingSnapshot, b HostingDatabaseBinding) bool {
-	policy := s.PolicyVersion == HostingRuntimePolicyVersion && s.ApplicationDatabase == (HostingApplicationDatabaseRef{}) || s.PolicyVersion == HostingApplicationDatabasePolicyVersion && s.ApplicationDatabase == (HostingApplicationDatabaseRef{BindingID: b.ID, BindingHash: b.Hash})
-	return policy && s.LocalBuild == (HostingLocalBuildSource{}) && s.Storage == (HostingStorageRef{}) && s.StorageRouteContinuity == (HostingStorageRouteContinuityRef{}) && s.Database == (HostingDatabaseExecutionRef{}) && ValidateHostingRuntimeConfigurationRef(s) == nil
+	policy := s.PolicyVersion == HostingRuntimePolicyVersion && s.ApplicationDatabase == (HostingApplicationDatabaseRef{}) || (s.PolicyVersion == HostingApplicationDatabasePolicyVersion || s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion) && s.ApplicationDatabase == (HostingApplicationDatabaseRef{BindingID: b.ID, BindingHash: b.Hash})
+	return policy && s.LocalBuild == (HostingLocalBuildSource{}) && (s.Storage == (HostingStorageRef{}) || s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion && validHostingStorageRef(s.Storage)) && s.StorageRouteContinuity == (HostingStorageRouteContinuityRef{}) && s.Database == (HostingDatabaseExecutionRef{}) && ValidateHostingRuntimeConfigurationRef(s) == nil
 }
 
 // ValidateTargets links desired metadata to exact saved targets. Project IDs are
@@ -221,7 +221,7 @@ func (p HostingDatabaseBindingEndpointPlan) Validate(b HostingDatabaseBinding) e
 // metadata. The runner must independently inspect labels, image and network users.
 func (p HostingDatabaseBindingEndpointPlan) ValidateApplication(b HostingDatabaseBinding, h HostingHealthy) error {
 	s := h.Snapshot
-	if p.Validate(b) != nil || !databaseBindingApplicationSnapshot(s, b) || h.Storage != nil || h.Release.LocalBuild != (HostingBuildArtifact{}) || ValidateHostingRelease(h.Release) != nil || s.ResourceID != b.ApplicationResourceID || s.ResourceGeneration != b.ApplicationResourceGeneration || s.BindingID != b.ApplicationBindingID || s.DestinationID != b.DestinationID || s.ServerID != b.ServerID || s.RunnerID != b.RunnerID || s.RuntimeConfiguration != b.RuntimeConfiguration || p.Target.ContainerID != h.ContainerID || p.Target.ContainerOperationID != h.OperationID || p.Target.ContainerPlanHash != h.PlanHash || p.Target.ImageID != h.Release.ImageID || p.Target.ReleaseHash != h.Release.Hash || p.Target.DaemonID != h.Release.DaemonID {
+	if p.Validate(b) != nil || !databaseBindingApplicationSnapshot(s, b) || (h.Storage != nil && (s.PolicyVersion != HostingApplicationDatabaseStoragePolicyVersion || ValidateHostingHealthyStorage(h) != nil) || h.Storage == nil && s.Storage != (HostingStorageRef{})) || h.Release.LocalBuild != (HostingBuildArtifact{}) || ValidateHostingRelease(h.Release) != nil || s.ResourceID != b.ApplicationResourceID || s.ResourceGeneration != b.ApplicationResourceGeneration || s.BindingID != b.ApplicationBindingID || s.DestinationID != b.DestinationID || s.ServerID != b.ServerID || s.RunnerID != b.RunnerID || s.RuntimeConfiguration != b.RuntimeConfiguration || p.Target.ContainerID != h.ContainerID || p.Target.ContainerOperationID != h.OperationID || p.Target.ContainerPlanHash != h.PlanHash || p.Target.ImageID != h.Release.ImageID || p.Target.ReleaseHash != h.Release.Hash || p.Target.DaemonID != h.Release.DaemonID {
 		return ErrInvalidHostingDatabaseBinding
 	}
 	return nil

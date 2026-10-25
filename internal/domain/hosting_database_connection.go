@@ -69,12 +69,14 @@ type HostingDatabaseMaintenanceInput struct {
 // HostingDatabaseConnectionRecoveryInput admits observation only. Effectful
 // recovery needs a future descriptor; it cannot relabel the original candidate.
 type HostingDatabaseConnectionRecoveryInput struct {
-	Action                     string `json:"action"`
-	OperationID                string `json:"operation_id"`
-	StageHash                  string `json:"stage_hash"`
-	CandidateHash              string `json:"candidate_hash"`
-	ExpectedMembershipRevision int64  `json:"expected_membership_revision"`
-	IdempotencyKey             string `json:"idempotency_key"`
+	ApplicationDatabaseStorage *HostingApplicationDatabaseStorageInput `json:"application_database_storage,omitempty"`
+	StorageStateHash           string                                  `json:"storage_state_hash,omitempty"`
+	Action                     string                                  `json:"action"`
+	OperationID                string                                  `json:"operation_id"`
+	StageHash                  string                                  `json:"stage_hash"`
+	CandidateHash              string                                  `json:"candidate_hash"`
+	ExpectedMembershipRevision int64                                   `json:"expected_membership_revision"`
+	IdempotencyKey             string                                  `json:"idempotency_key"`
 }
 
 // HostingApplicationDatabaseStageRequest binds one immutable stage to its lease.
@@ -118,17 +120,30 @@ type HostingApplicationDatabaseEffectAuthorization struct {
 // HostingApplicationDatabaseExecutionState is authenticated read-only retained
 // evidence. It does not authorize any create, configuration or retirement effect.
 type HostingApplicationDatabaseExecutionState struct {
-	OperationID        string                                 `json:"operation_id"`
-	PlanHash           string                                 `json:"plan_hash"`
-	Stage              *HostingApplicationDatabaseStage       `json:"stage,omitempty"`
-	RetirementPlan     *HostingDatabaseBindingEndpointPlan    `json:"retirement_plan,omitempty"`
-	RetirementReceipt  *HostingDatabaseBindingEndpointReceipt `json:"retirement_receipt,omitempty"`
-	MembershipRevision int64                                  `json:"membership_revision"`
-	HoldOperationID    string                                 `json:"hold_operation_id"`
+	Storage            *HostingStorageCreateAck                        `json:"storage,omitempty"`
+	StorageWriter      *HostingApplicationDatabaseStorageWriterRequest `json:"storage_writer,omitempty"`
+	StorageRecovery    *HostingApplicationDatabaseStorageRecoveryPlan  `json:"storage_recovery,omitempty"`
+	OperationID        string                                          `json:"operation_id"`
+	PlanHash           string                                          `json:"plan_hash"`
+	Stage              *HostingApplicationDatabaseStage                `json:"stage,omitempty"`
+	RetirementPlan     *HostingDatabaseBindingEndpointPlan             `json:"retirement_plan,omitempty"`
+	RetirementReceipt  *HostingDatabaseBindingEndpointReceipt          `json:"retirement_receipt,omitempty"`
+	MembershipRevision int64                                           `json:"membership_revision"`
+	HoldOperationID    string                                          `json:"hold_operation_id"`
 }
 
 // Validate checks state framing; callers must compare it with the operation proof.
 func (out HostingApplicationDatabaseExecutionState) Validate() error {
+	if out.Storage != nil && (out.Storage.CreatePermitted || out.Storage.Materialization.Validate(out.Storage.Storage) != nil) {
+		return ErrInvalidHostingStorage
+	}
+	if out.StorageWriter != nil && (out.Storage == nil || out.StorageWriter.Validate() != nil || out.StorageWriter.OperationID != out.OperationID || out.StorageWriter.Receipt.PlanHash != out.PlanHash || out.StorageWriter.Receipt.StorageRef != out.Storage.Storage.Reference()) {
+		return ErrInvalidHostingStorage
+	}
+	if out.StorageRecovery != nil && (out.Storage == nil || out.StorageRecovery.Validate() != nil || out.StorageRecovery.OperationID != out.OperationID || out.StorageRecovery.StorageRef != out.Storage.Storage.Reference()) {
+		return ErrInvalidHostingStorage
+	}
+
 	if !hostingProxyID.MatchString(out.OperationID) || !imageSHA256.MatchString(out.PlanHash) || out.MembershipRevision < 1 || out.HoldOperationID != "" && out.HoldOperationID != out.OperationID {
 		return ErrInvalidHostingDatabaseConnection
 	}
@@ -147,7 +162,7 @@ func (out HostingApplicationDatabaseExecutionState) Validate() error {
 // Validate checks the closed initial request without authorizing saved targets.
 // Both CAS inputs refer to the runtime generation before binding injection.
 func (in HostingDatabaseConnectionInput) Validate() error {
-	if in.Binding.Validate() != nil || ValidateHostingDeployment(in.Deployment) != nil || in.Deployment.StorageRouteContinuity != nil || in.Deployment.ApplicationDatabaseRouteContinuity != nil || in.Deployment.ExpectedGeneration != in.Binding.ExpectedResourceGeneration || in.Deployment.ExpectedRuntimeConfigurationGeneration != in.Binding.ExpectedRuntimeGeneration {
+	if in.Binding.Validate() != nil || ValidateHostingDeployment(in.Deployment) != nil || in.Deployment.ApplicationDatabaseStorage != nil || in.Deployment.StorageRouteContinuity != nil || in.Deployment.ApplicationDatabaseRouteContinuity != nil || in.Deployment.ExpectedGeneration != in.Binding.ExpectedResourceGeneration || in.Deployment.ExpectedRuntimeConfigurationGeneration != in.Binding.ExpectedRuntimeGeneration {
 		return ErrInvalidHostingDatabaseConnection
 	}
 	return nil
@@ -163,8 +178,11 @@ func (in HostingDatabaseMaintenanceInput) Validate() error {
 
 // Validate admits observation shape only, including an unresolved unknown candidate.
 func (in HostingDatabaseConnectionRecoveryInput) Validate() error {
-	if in.Action != "observe" {
+	if in.Action != "observe" && in.Action != "resume_predecessor" && in.Action != "complete_replacement" {
 		return ErrHostingDatabaseRecoveryObserveOnly
+	}
+	if in.Action == "observe" && (in.ApplicationDatabaseStorage != nil || in.StorageStateHash != "") || in.Action != "observe" && (in.ApplicationDatabaseStorage == nil || in.ApplicationDatabaseStorage.Validate() != nil || !imageSHA256.MatchString(in.StorageStateHash)) {
+		return ErrInvalidHostingDatabaseConnection
 	}
 	known := imageSHA256.MatchString(in.StageHash) && imageSHA256.MatchString(in.CandidateHash)
 	unknown := in.StageHash == "" && in.CandidateHash == ""

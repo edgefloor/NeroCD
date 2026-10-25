@@ -142,6 +142,16 @@ func compileHostingStoragePlan(ctx context.Context, tx pgx.Tx, op domain.Hosting
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingApplyPlan{}, err
 	}
+	if op.ApplicationDatabaseStorage != nil {
+		if op.ApplicationDatabaseStorage.Validate(op.Snapshot) != nil || op.ApplicationDatabase == nil {
+			return domain.HostingApplyPlan{}, ErrConflict
+		}
+		input, e := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
+		if e != nil {
+			return domain.HostingApplyPlan{}, ErrConflict
+		}
+		return domain.CompileHostingApplicationDatabaseStoragePlan(op.Snapshot, release, previous, retained, input, descriptor)
+	}
 	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
 		if len(retained) != 0 {
 			return domain.HostingApplyPlan{}, ErrConflict
@@ -227,6 +237,9 @@ func finalHostingStorageAuthority(ctx context.Context, tx pgx.Tx, runner string,
 	}
 	if err := validateStorageContinuityFinal(ctx, tx, op); err != nil {
 		return err
+	}
+	if op.ApplicationDatabaseStorage != nil {
+		return finalDatabaseConnectionAuthority(ctx, tx, runner, a, op, false, false)
 	}
 	if op.DatabaseUpgrade != nil || op.DatabaseMaintenance != nil {
 		return finalDatabaseAuthority(ctx, tx, runner, a, op, false, false)

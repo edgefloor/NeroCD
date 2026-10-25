@@ -17,11 +17,11 @@ func databaseNetworkAttachedMember(proof HostingDatabaseNetworkMemberProof) (Hos
 	if ValidateHostingDatabasePlan(proof.DatabasePlan) != nil || b.ValidateTargets(proof.ApplicationProjectID, app.Snapshot, proof.DatabaseProjectID, proof.DatabasePlan) != nil || ep.ValidateApplication(b, app) != nil || ep.Action != "attach" || ep.Target.DaemonID != proof.DatabasePlan.Release.DaemonID {
 		return HostingDatabaseNetworkMember{}, ErrInvalidHostingDatabaseNetworkPlan
 	}
-	endpoint, ok := proof.Receipt.ObservedMembership(ep, b)
+	endpoint, receiptID, receiptHash, ok := HostingDatabaseMemberEndpoint(proof)
 	if !ok {
 		return HostingDatabaseNetworkMember{}, ErrInvalidHostingDatabaseNetworkPlan
 	}
-	return HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: proof.Receipt.ReceiptID, ReceiptHash: proof.Receipt.Hash, Endpoint: endpoint}, nil
+	return HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: receiptID, ReceiptHash: receiptHash, Endpoint: endpoint}, nil
 }
 
 // ValidateHostingDatabaseNetworkRetirement checks complete historical evidence

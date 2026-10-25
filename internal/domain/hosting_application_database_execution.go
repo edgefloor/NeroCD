@@ -18,6 +18,7 @@ const (
 // HostingDatabaseNetworkMemberEvidence is the closed serialized form of retained
 // member proof. ApplicationHealthy is settled historical evidence only.
 type HostingDatabaseNetworkMemberEvidence struct {
+	Resume               *HostingDatabaseNetworkResumeEvidence `json:"resume,omitempty"`
 	Binding              HostingDatabaseBinding                `json:"binding"`
 	EndpointPlan         HostingDatabaseBindingEndpointPlan    `json:"endpoint_plan"`
 	Receipt              HostingDatabaseBindingEndpointReceipt `json:"receipt"`
@@ -112,7 +113,7 @@ func (p HostingApplicationDatabaseExecutionProof) Validate() error {
 		}
 	}
 	for _, member := range p.Members {
-		if member.ApplicationHealthy.Snapshot.PolicyVersion != HostingApplicationDatabasePolicyVersion || member.ApplicationHealthy.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{BindingID: p.Binding.ID, BindingHash: p.Binding.Hash}) {
+		if (member.ApplicationHealthy.Snapshot.PolicyVersion != HostingApplicationDatabasePolicyVersion && member.ApplicationHealthy.Snapshot.PolicyVersion != HostingApplicationDatabaseStoragePolicyVersion) || member.ApplicationHealthy.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{BindingID: p.Binding.ID, BindingHash: p.Binding.Hash}) {
 			return ErrInvalidHostingApplicationDatabasePlan
 		}
 	}
@@ -173,6 +174,12 @@ func (p *HostingApplicationDatabaseExecutionProof) UnmarshalJSON(raw []byte) err
 // ValidateHostingApplicationDatabaseOperation checks sidecar and exact compiler
 // output. This is historical consistency, never current owner or lease authority.
 func ValidateHostingApplicationDatabaseOperation(op HostingOperation) error {
+	if op.ApplicationDatabaseStorage != nil && (op.ApplicationDatabaseStorage.Validate(op.Snapshot) != nil || op.ApplicationDatabase == nil) || op.ApplicationDatabaseStorage == nil && op.Snapshot.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
+	if op.ApplicationDatabaseStorageState != nil && (op.ApplicationDatabaseStorage == nil || op.ApplicationDatabaseStorageState.Validate() != nil) {
+		return ErrInvalidHostingApplicationDatabasePlan
+	}
 	if op.ApplicationDatabase == nil {
 		if op.ApplicationDatabaseRouteContinuity != nil || op.ApplicationDatabaseYield != nil || op.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || op.Plan != nil && op.Plan.ApplicationDatabase != nil {
 			return ErrInvalidHostingApplicationDatabasePlan
@@ -186,7 +193,7 @@ func ValidateHostingApplicationDatabaseOperation(op HostingOperation) error {
 	if op.ApplicationDatabaseRouteContinuity != nil && op.ApplicationDatabaseRouteContinuity.Validate(op) != nil {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
-	if proof.Validate() != nil || op.ID != proof.OperationID || op.ProjectID != proof.Binding.ProjectID || op.ResourceID != proof.Binding.ApplicationResourceID || op.BindingID != proof.Binding.ApplicationBindingID || op.Snapshot.PolicyVersion != HostingApplicationDatabasePolicyVersion || proof.Binding.ValidateTargets(op.ProjectID, op.Snapshot, proof.DatabaseProjectID, proof.BindingDatabasePlan) != nil || op.DatabaseUpgrade != nil || op.DatabaseMaintenance != nil || op.CleanupPlan != nil || op.StorageArchive != nil {
+	if proof.Validate() != nil || op.ID != proof.OperationID || op.ProjectID != proof.Binding.ProjectID || op.ResourceID != proof.Binding.ApplicationResourceID || op.BindingID != proof.Binding.ApplicationBindingID || (op.Snapshot.PolicyVersion != HostingApplicationDatabasePolicyVersion && op.Snapshot.PolicyVersion != HostingApplicationDatabaseStoragePolicyVersion) || proof.Binding.ValidateTargets(op.ProjectID, op.Snapshot, proof.DatabaseProjectID, proof.BindingDatabasePlan) != nil || op.DatabaseUpgrade != nil || op.DatabaseMaintenance != nil || op.CleanupPlan != nil || op.StorageArchive != nil {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
 	if op.Release == nil && op.Plan == nil {

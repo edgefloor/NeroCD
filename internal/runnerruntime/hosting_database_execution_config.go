@@ -17,6 +17,7 @@ type DatabaseExecutionConfig struct {
 	NetworkCapture        bool
 	ApplicationDatabase   bool
 	RouteContinuity       bool
+	ApplicationStorage    bool
 	MembershipMaintenance bool
 }
 
@@ -36,6 +37,9 @@ func validateDatabaseExecutionConfig(c Config) error {
 	}
 	if c.Database == nil {
 		return nil
+	}
+	if c.Database.ApplicationStorage && !c.Database.ApplicationDatabase {
+		return errors.New("connected application storage requires connected execution")
 	}
 	if c.Database.RouteContinuity && (!c.Database.ApplicationDatabase || !c.Proxy.Enabled() || !c.Proxy.VerifiedSwitch) {
 		return errors.New("application database route continuity requires connected execution and strict proxy switching")

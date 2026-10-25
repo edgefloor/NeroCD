@@ -201,6 +201,52 @@ type HostingApplicationDatabaseStage struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
+type HostingApplicationDatabaseStorage struct {
+	OperationID string          `json:"operation_id"`
+	StorageID   string          `json:"storage_id"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingApplicationDatabaseStorageEffect struct {
+	AuthorizationID string          `json:"authorization_id"`
+	OperationID     string          `json:"operation_id"`
+	Request         json.RawMessage `json:"request"`
+	Response        json.RawMessage `json:"response"`
+	UseUntil        time.Time       `json:"use_until"`
+}
+
+type HostingApplicationDatabaseStorageMembershipReceipt struct {
+	DatabaseBindingID string          `json:"database_binding_id"`
+	Revision          int64           `json:"revision"`
+	OperationID       string          `json:"operation_id"`
+	Body              json.RawMessage `json:"body"`
+	BodyHash          string          `json:"body_hash"`
+}
+
+type HostingApplicationDatabaseStorageRecovery struct {
+	OperationID      string          `json:"operation_id"`
+	Action           string          `json:"action"`
+	RunID            string          `json:"run_id"`
+	ProxyOperationID *string         `json:"proxy_operation_id"`
+	ActorID          string          `json:"actor_id"`
+	Request          json.RawMessage `json:"request"`
+	RequestHash      string          `json:"request_hash"`
+	Body             json.RawMessage `json:"body"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+type HostingApplicationDatabaseStorageWriter struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Request     json.RawMessage `json:"request"`
+	RequestHash string          `json:"request_hash"`
+	Response    json.RawMessage `json:"response"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
 type HostingApplicationDatabaseYield struct {
 	OperationID string          `json:"operation_id"`
 	ReceiptID   string          `json:"receipt_id"`

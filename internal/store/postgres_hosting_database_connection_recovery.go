@@ -10,9 +10,9 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
-// RequestHostingDatabaseConnectionRecovery admits one observation of an original
-// attempt. It never resets the
-// deployment task, rewrites its candidate, advances its stage or releases a hold.
+// RequestHostingDatabaseConnectionRecovery admits observation or one explicit
+// composed-storage recovery. Each effect recovery gets a dedicated fresh task;
+// admission preserves the original deployment, candidate and held ownership.
 func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Context, id, application, actor string, in domain.HostingDatabaseConnectionRecoveryInput, event domain.AuditEvent) (domain.HostingOperation, error) {
 	var zero domain.HostingOperation
 	if err := in.Validate(); err != nil {
@@ -44,6 +44,18 @@ func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Con
 			return zero, err
 		}
 		requestHash := domain.HostingDocumentHash(in)
+
+		if in.Action != "observe" && before.ApplicationDatabaseStorage != nil {
+			saved, e := q.ReadApplicationDatabaseStorageRecovery(ctx, before.ID)
+			if e == nil {
+				if saved.ActorID != actor || saved.RequestHash != requestHash || !connectionJSONMatches(saved.Request, in) {
+					return zero, ErrConflict
+				}
+				return before, finalizeConnectionRequest(ctx, tx, c, b, actor, domain.RoleOwner, false)
+			} else if !errors.Is(e, pgx.ErrNoRows) {
+				return zero, e
+			}
+		}
 		old, err := q.ReadDatabaseConnectionRecovery(ctx, sqlcgen.ReadDatabaseConnectionRecoveryParams{ConnectionID: c.ID, IdempotencyKey: in.IdempotencyKey})
 		if err == nil {
 			if old.ActorID != actor || old.OperationID != in.OperationID || old.RequestHash != requestHash || !connectionJSONMatches(old.AcceptedRequest, in) {
@@ -76,6 +88,9 @@ func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Con
 		}
 		if _, err = q.LockHostingOperationState(ctx, before.ID); err != nil {
 			return zero, err
+		}
+		if in.Action != "observe" {
+			return s.admitApplicationStorageRecovery(ctx, tx, id, actor, in, event, c, b, before)
 		}
 		// A new task has observation authority only; the original deploy lease
 		// and every immutable effect record are deliberately untouched.

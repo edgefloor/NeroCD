@@ -102,11 +102,11 @@ func applicationDatabaseMembers(in HostingApplicationDatabasePlanInput) ([]Hosti
 		if b.ID != in.Binding.ID || b.Hash != in.Binding.Hash || ValidateHostingDatabasePlan(proof.DatabasePlan) != nil || !databaseNetworkSameTarget(proof.DatabasePlan, in.BindingDatabasePlan) || proof.DatabasePlan.Hash != in.BindingDatabasePlan.Hash || b.ValidateTargets(proof.ApplicationProjectID, app.Snapshot, proof.DatabaseProjectID, proof.DatabasePlan) != nil || ep.ValidateApplication(b, app) != nil || ep.Action != "attach" || ep.MembershipRevision > in.MembershipRevision || ep.Target.NetworkID != in.Origin.NetworkID || ep.Target.DaemonID != in.Origin.Daemon || ep.Target.ContainerOperationID == in.OperationID {
 			return nil, ErrInvalidHostingApplicationDatabasePlan
 		}
-		endpoint, ok := proof.Receipt.ObservedMembership(ep, b)
+		endpoint, receiptID, receiptHash, ok := HostingDatabaseMemberEndpoint(proof)
 		if !ok {
 			return nil, ErrInvalidHostingApplicationDatabasePlan
 		}
-		members = append(members, HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: proof.Receipt.ReceiptID, ReceiptHash: proof.Receipt.Hash, Endpoint: endpoint})
+		members = append(members, HostingDatabaseNetworkMember{BindingID: b.ID, BindingHash: b.Hash, EndpointPlanHash: ep.Hash, ReceiptID: receiptID, ReceiptHash: receiptHash, Endpoint: endpoint})
 	}
 	slices.SortFunc(members, databaseNetworkMemberLess)
 	for i := 1; i < len(members); i++ {
@@ -129,7 +129,22 @@ func applicationDatabaseMembers(in HostingApplicationDatabasePlanInput) ([]Hosti
 	var prior []HostingDatabaseNetworkMember
 	var priorRevision int64
 	if n := in.DatabasePlan.Database.Network; n != nil {
-		prior, priorRevision = n.Members, n.MembershipRevision
+		prior, priorRevision = slices.Clone(n.Members), n.MembershipRevision
+		for _, proof := range in.Members {
+			if proof.Resume == nil {
+				continue
+			}
+			current, e := databaseNetworkAttachedMember(proof)
+			if e != nil || proof.Resume.MembershipRevision > in.MembershipRevision {
+				return nil, ErrInvalidHostingApplicationDatabasePlan
+			}
+			for i, old := range prior {
+				if old.Endpoint.Target == current.Endpoint.Target && old.ReceiptHash == proof.Resume.OriginalReceiptHash {
+					prior[i] = current
+				}
+			}
+		}
+
 	}
 	if validateDatabaseNetworkRetirements(in.DatabasePlan, in.Origin, prior, members, priorRevision, in.MembershipRevision, in.Retired) != nil {
 		return nil, ErrInvalidHostingApplicationDatabasePlan
@@ -141,7 +156,7 @@ func applicationDatabasePrevious(h HostingHealthy, proofs []HostingDatabaseNetwo
 	// Compare the complete settled record, including ports and namespace. Endpoint
 	// target hashes alone must not allow a rewritten predecessor snapshot.
 	for _, proof := range proofs {
-		if h == proof.ApplicationHealthy {
+		if HostingDocumentHash(h) == HostingDocumentHash(proof.ApplicationHealthy) {
 			return true
 		}
 	}
@@ -152,6 +167,23 @@ func applicationDatabasePrevious(h HostingHealthy, proofs []HostingDatabaseNetwo
 // exact binding before application creation. It does not admit a runtime task,
 // fetch credentials, create an endpoint, or invent a healthy candidate record.
 func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, previous *HostingHealthy, retained []HostingHealthy, in HostingApplicationDatabasePlanInput) (HostingApplyPlan, error) {
+	return compileHostingApplicationDatabasePlan(s, r, previous, retained, in, nil)
+}
+
+// CompileHostingApplicationDatabaseStoragePlan explicitly composes one owned
+// volume with the connected network compiler. The old compiler remains closed.
+func CompileHostingApplicationDatabaseStoragePlan(s HostingSnapshot, r HostingRelease, previous *HostingHealthy, retained []HostingHealthy, in HostingApplicationDatabasePlanInput, storage HostingStoragePlan) (HostingApplyPlan, error) {
+	if s.PolicyVersion != HostingApplicationDatabaseStoragePolicyVersion || storage.Validate(s, r) != nil || previous == nil || len(in.Members) != 1 || previous.Storage != nil && previous.Storage.Plan != storage {
+		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
+	}
+	return compileHostingApplicationDatabasePlan(s, r, previous, retained, in, &storage)
+}
+
+func compileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, previous *HostingHealthy, retained []HostingHealthy, in HostingApplicationDatabasePlanInput, storage *HostingStoragePlan) (HostingApplyPlan, error) {
+	policy, compiler := HostingApplicationDatabasePolicyVersion, HostingApplicationDatabaseCompilerVersion
+	if storage != nil {
+		policy, compiler = HostingApplicationDatabaseStoragePolicyVersion, HostingApplicationDatabaseStorageCompilerVersion
+	}
 	b := in.Binding
 	if in.OperationID == in.DatabaseHealthy.OperationID || in.OperationID == in.Origin.OriginOperation {
 		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
@@ -161,7 +193,7 @@ func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, 
 			return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
 		}
 	}
-	if !hostingProxyID.MatchString(in.OperationID) || !applicationDatabaseNonce(in.CreateNonce) || in.BindingApplicationSnapshot.PolicyVersion != HostingRuntimePolicyVersion || in.BindingApplicationSnapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || b.ValidateTargets(in.ApplicationProjectID, in.BindingApplicationSnapshot, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || s.PolicyVersion != HostingApplicationDatabasePolicyVersion || b.ValidateTargets(in.ApplicationProjectID, s, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || r.LocalBuild != (HostingBuildArtifact{}) || ValidateHostingSnapshotRelease(s, r) != nil || r.DaemonID != in.DatabasePlan.Release.DaemonID || !applicationDatabaseOrigin(in) {
+	if !hostingProxyID.MatchString(in.OperationID) || !applicationDatabaseNonce(in.CreateNonce) || in.BindingApplicationSnapshot.PolicyVersion != HostingRuntimePolicyVersion || in.BindingApplicationSnapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || b.ValidateTargets(in.ApplicationProjectID, in.BindingApplicationSnapshot, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || s.PolicyVersion != policy || b.ValidateTargets(in.ApplicationProjectID, s, in.DatabaseProjectID, in.BindingDatabasePlan) != nil || r.LocalBuild != (HostingBuildArtifact{}) || ValidateHostingSnapshotRelease(s, r) != nil || r.DaemonID != in.DatabasePlan.Release.DaemonID || !applicationDatabaseOrigin(in) {
 		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
 	}
 	members, err := applicationDatabaseMembers(in)
@@ -176,7 +208,7 @@ func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, 
 			return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
 		}
 	}
-	p, err := compileRetainedHostingPlan(s, r, previous, retained, HostingApplicationDatabasePolicyVersion, HostingApplicationDatabaseCompilerVersion)
+	p, err := compileRetainedHostingPlan(s, r, previous, retained, policy, compiler)
 	if err != nil {
 		return HostingApplyPlan{}, ErrInvalidHostingApplicationDatabasePlan
 	}
@@ -184,6 +216,11 @@ func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, 
 	descriptor := &HostingApplicationDatabasePlan{Version: HostingApplicationDatabasePlanVersion, OperationID: in.OperationID, CreateNonce: in.CreateNonce, Binding: b, DatabasePlanHash: in.DatabasePlan.Hash, Origin: in.Origin, MembershipRevision: in.MembershipRevision, PreviousMembers: members}
 	descriptor.Hash = descriptor.DocumentHash()
 	p.ApplicationDatabase, p.Hash = descriptor, ""
+	if storage != nil {
+		owned := *storage
+		p.Storage = &owned
+		p.RetainPrevious = false
+	}
 	p.Hash = HostingDocumentHash(p)
 	raw, err := json.Marshal(p)
 	if err != nil || len(raw) > 48<<10 {
@@ -195,10 +232,16 @@ func CompileHostingApplicationDatabasePlan(s HostingSnapshot, r HostingRelease, 
 // ValidateHostingApplicationDatabasePlan requires complete original capture and
 // retained proofs again; a self-rehashed descriptor alone cannot authorize effects.
 func ValidateHostingApplicationDatabasePlan(p HostingApplyPlan, in HostingApplicationDatabasePlanInput) error {
-	if p.ApplicationDatabase == nil || p.ApplicationDatabase.Version != HostingApplicationDatabasePlanVersion || p.ApplicationDatabase.Hash != p.ApplicationDatabase.DocumentHash() || p.Database != nil || p.Storage != nil || p.CompilerVersion != HostingApplicationDatabaseCompilerVersion {
+	if p.ApplicationDatabase == nil || p.ApplicationDatabase.Version != HostingApplicationDatabasePlanVersion || p.ApplicationDatabase.Hash != p.ApplicationDatabase.DocumentHash() || p.Database != nil || (p.Storage == nil && p.CompilerVersion != HostingApplicationDatabaseCompilerVersion || p.Storage != nil && p.CompilerVersion != HostingApplicationDatabaseStorageCompilerVersion) {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
-	want, err := CompileHostingApplicationDatabasePlan(p.Snapshot, p.Release, p.PreviousHealthy, p.RetainedReleases, in)
+	var want HostingApplyPlan
+	var err error
+	if p.Storage != nil {
+		want, err = CompileHostingApplicationDatabaseStoragePlan(p.Snapshot, p.Release, p.PreviousHealthy, p.RetainedReleases, in, *p.Storage)
+	} else {
+		want, err = CompileHostingApplicationDatabasePlan(p.Snapshot, p.Release, p.PreviousHealthy, p.RetainedReleases, in)
+	}
 	if err != nil {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}

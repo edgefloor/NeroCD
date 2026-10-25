@@ -302,7 +302,10 @@ func RunContext(ctx context.Context, config Config) error {
 		return buildReplayErr
 	}
 	operational := &runnerOperationalCounters{}
-	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, config.Proxy, ctx); err != nil {
+	proxyReplayConfig := config.Proxy
+	proxyReplayConfig.storageDatabase = config.Database
+	proxyReplayConfig.storageEndpoint = config.ImageDockerEndpoint
+	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, proxyReplayConfig, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
 	if err := reconcileStorageArchiveJournal(ctx, config, journal); err != nil {
@@ -592,7 +595,10 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeDatabaseClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeProxyApply {
-		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, options.proxy)
+		proxyConfig := options.proxy
+		proxyConfig.storageDatabase = options.database
+		proxyConfig.storageEndpoint = options.imageEndpoint
+		return executeProxyClaim(supervisor, journal, reporter, server, token, claim, proxyConfig)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		if options.database != nil && options.database.ApplicationDatabase {
