@@ -7,11 +7,11 @@ const backupMode = process.env.NEROCD_DATABASE_BACKUP_RUNTIME === "1";
 const prefix = backupMode ? "DATABASE_BACKUP_BROWSER_READY " : "DATABASE_CONNECTION_BROWSER_READY ";
 const metadataKeys = ["origin", "engine", "project_id", "environment", "application_resource_id", "application_name", "database_resource_id", "foreign_resource_id", "control_path"].sort();
 export function validateMetadata(value, origin) {
-  const keys = ["storage", "storage_resume", "storage_complete", "backup", "backup_schedule", "backup_remote"].includes(value?.profile) ? [...metadataKeys, "profile"].sort() : metadataKeys;
+  const keys = ["storage", "storage_resume", "storage_complete", "backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery"].includes(value?.profile) ? [...metadataKeys, "profile"].sort() : metadataKeys;
   if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535 || Number(new URL(origin).port) < 1024 || !value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) || value.origin !== origin || !["postgresql", "redis"].includes(value.engine)) throw Error("invalid browser fixture metadata");
   for (const name of ["project_id", "application_resource_id", "database_resource_id", "foreign_resource_id"]) if (typeof value[name] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value[name])) throw Error("invalid browser fixture identity");
   for (const name of ["environment", "application_name"]) if (typeof value[name] !== "string" || !value[name] || value[name].length > 255 || /[\x00-\x1f\x7f]/.test(value[name])) throw Error("invalid browser fixture label");
-  if (!(["backup", "backup_schedule", "backup_remote"].includes(value.profile) ? /^\/api\/v1\/fixture\/database-backup\/[a-f0-9]{32}$/ : /^\/api\/v1\/fixture\/database-connection\/[a-f0-9]{32}$/).test(value.control_path)) throw Error("invalid browser fixture controls");
+  if (!(["backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery"].includes(value.profile) ? /^\/api\/v1\/fixture\/database-backup\/[a-f0-9]{32}$/ : /^\/api\/v1\/fixture\/database-connection\/[a-f0-9]{32}$/).test(value.control_path)) throw Error("invalid browser fixture controls");
   return value;
 }
 
@@ -50,8 +50,10 @@ export async function drive(origin, evidence, command) {
   if (!["0", "1"].includes(schedule) || schedule === "1" && !backupMode) throw Error("invalid browser schedule profile");
   const remote = process.env.NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME ?? "0";
   if (!["0", "1"].includes(remote) || remote === "1" && !backupMode) throw Error("invalid browser remote profile");
+  const retention = process.env.NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME ?? "0";
+  if (!["0", "1"].includes(retention) || retention === "1" && remote !== "1") throw Error("invalid browser retention profile");
   // Go registers backup_remote_runtime before backup_runtime in lexical file order.
-  const expected = backupMode ? [...(remote === "1" ? ["backup_remote:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
+  const expected = backupMode ? [...(remote === "1" ? ["backup_remote:postgresql"] : []), ...(retention === "1" ? ["backup_retention:postgresql", "backup_retention_recovery:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
   let active, fixture, failed = false, fixtureDone = false, browserPasses = 0, outputBytes = 0, buffer = "";
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
@@ -70,14 +72,16 @@ export async function drive(origin, evidence, command) {
     if (failed || active || !queue.length) return;
     const meta = queue.shift();
     const env = Object.fromEntries(["PATH", "HOME", "TMPDIR", "NODE_PATH", "PLAYWRIGHT_BROWSERS_PATH", "CI"].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
-    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", meta.profile === "backup_remote" ? "database-remote-backups-live.spec.ts" : meta.profile === "backup_schedule" ? "database-backup-schedules-live.spec.ts" : backupMode ? "database-backups-live.spec.ts" : "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.profile ?? "base", meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
+    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", ["backup_retention", "backup_retention_recovery"].includes(meta.profile) ? "database-backup-retention-live.spec.ts" : meta.profile === "backup_remote" ? "database-remote-backups-live.spec.ts" : meta.profile === "backup_schedule" ? "database-backup-schedules-live.spec.ts" : backupMode ? "database-backups-live.spec.ts" : "database-connection-live.spec.ts", "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.profile ?? "base", meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: origin, NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
     active.stdout.on("data", (chunk) => { outputBytes += chunk.length; if (outputBytes > 1 << 20) abort(); else process.stdout.write(chunk); });
     const current = active;
     current.joined.then(async (code) => {
       if (code !== 0) { abort(); return; }
       try { await join(current); } catch { abort(); return; }
       browserPasses++;
-      if (meta.profile === "backup_remote") process.stdout.write("DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql\n");
+      if (meta.profile === "backup_retention_recovery") process.stdout.write("DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS postgresql\n");
+      else if (meta.profile === "backup_retention") process.stdout.write("DATABASE_BACKUP_RETENTION_BROWSER_PASS postgresql\n");
+      else if (meta.profile === "backup_remote") process.stdout.write("DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql\n");
       else if (meta.profile === "backup_schedule") process.stdout.write("DATABASE_BACKUP_SCHEDULE_BROWSER_PASS postgresql\n");
       else if (meta.profile === "backup") process.stdout.write("DATABASE_BACKUP_BROWSER_PASS postgresql\n");
       else if (["storage_resume", "storage_complete"].includes(meta.profile)) process.stdout.write(`DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS ${meta.engine} ${meta.profile === "storage_resume" ? "resume_predecessor" : "complete_replacement"}\n`);

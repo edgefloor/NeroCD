@@ -1016,6 +1016,8 @@ type databaseBackupBrowserFixture struct {
 	progressOutput                    io.Writer // Protected by mu; separate from the failure reporter's writer.
 	schedules                         chan domain.HostingDatabaseBackupSchedule
 	scheduleSeen                      map[string]bool
+	retentionPreviews                 chan databaseRetentionPreview
+	retentions                        chan databaseRetentionExecution
 }
 
 type databaseBackupProgressEvidence struct {
@@ -1139,7 +1141,7 @@ func startDatabaseBackupBrowser(f *databaseRunnerFixture, source domain.HostingD
 
 func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.HostingDatabase, profile string) *databaseBackupBrowserFixture {
 	f.t.Helper()
-	if profile != "backup" && profile != "backup_schedule" && profile != "backup_remote" {
+	if profile != "backup" && profile != "backup_schedule" && profile != "backup_remote" && profile != "backup_retention" && profile != "backup_retention_recovery" {
 		f.t.Fatal("closed backup browser profile required")
 	}
 	origin := os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN")
@@ -1158,7 +1160,7 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 		f.t.Fatal("browser owner demotion failed")
 	}
 	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
-	b := &databaseBackupBrowserFixture{f: f, phase: "backup", admitted: make(chan domain.HostingDatabaseBackupOperation, 2), done: make(chan struct{}), schedules: make(chan domain.HostingDatabaseBackupSchedule, 4), scheduleSeen: make(map[string]bool)}
+	b := &databaseBackupBrowserFixture{f: f, phase: "backup", admitted: make(chan domain.HostingDatabaseBackupOperation, 2), done: make(chan struct{}), schedules: make(chan domain.HostingDatabaseBackupSchedule, 4), scheduleSeen: make(map[string]bool), retentionPreviews: make(chan databaseRetentionPreview, 1), retentions: make(chan databaseRetentionExecution, 1)}
 	control := "/api/v1/fixture/database-backup/" + strings.Repeat("b", 32)
 	owner := applicationDatabaseBrowserOwner(api, source.Resource.ProjectID, origin, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -1190,6 +1192,36 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, control) {
 			owner.ServeHTTP(w, r)
+			return
+		}
+		if (profile == "backup_retention" || profile == "backup_retention_recovery") && r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/api/v1/resources/"+source.Resource.ID+"/database-backup-retention/") {
+			rec := httptest.NewRecorder()
+			api.ServeHTTP(rec, r)
+			if strings.HasSuffix(r.URL.Path, "/previews") && rec.Code == 200 {
+				var value databaseRetentionPreview
+				if json.Unmarshal(rec.Body.Bytes(), &value) != nil || value.ID == "" {
+					f.t.Error("invalid browser retention preview")
+				} else {
+					select {
+					case b.retentionPreviews <- value:
+					default:
+						f.t.Error("duplicate browser retention preview")
+					}
+				}
+			}
+			if strings.HasSuffix(r.URL.Path, "/executions") && rec.Code == 202 {
+				var value databaseRetentionExecution
+				if json.Unmarshal(rec.Body.Bytes(), &value) != nil || value.ID == "" {
+					f.t.Error("invalid browser retention execution")
+				} else {
+					select {
+					case b.retentions <- value:
+					default:
+						f.t.Error("duplicate browser retention execution")
+					}
+				}
+			}
+			databaseRemoteCopyResponse(w, rec)
 			return
 		}
 		if profile == "backup_schedule" && (r.Method == http.MethodPost || r.Method == http.MethodPut) && strings.Contains(r.URL.Path, "/database-backup-schedules") {
