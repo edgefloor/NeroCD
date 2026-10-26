@@ -52,3 +52,12 @@ The runner opt-in is `--hosting-database-backup-retention`, alongside the existi
 This implementation reuses Coolify's local/S3 count, age and size selection behavior from `bootstrap/helpers/databases.php` and `DatabaseBackupJob::removeExpiredBackups`. Go agent leases, durable receipts, explicit immutable batches, exact physical ownership and conditional deletion replace SSH commands and helper-side deletion. Newest/shared/active/unproven-copy protection and retained history are deliberate safety differences. Resource removal or redeployment does not implicitly run retention.
 
 UI, controller transaction tests, portable filesystem/S3 tests and source reviews are separate evidence. Compiled-runner retention, provider conditional DELETE and restored application reads/writes must pass the isolated runtime gate before workflow acceptance. No production user's backup should be used as a test fixture.
+
+A verified remote download can publish a new inode at the original local CAS
+location when the recorded file was moved or is missing. The controller records
+an immutable supersession link to that exact successful download receipt. It
+preserves the prior ownership document and availability history; it does not
+claim that the prior inode was deleted. Only the new generation participates in
+current availability and retention selection. Reserved or uncertain generations
+and locations with held retention reservations cannot be superseded. Adopting an
+existing file does not prove replacement and cannot supersede another inode.

@@ -451,17 +451,18 @@ type HostingDatabaseBackup struct {
 }
 
 type HostingDatabaseBackupCopy struct {
-	ID           string          `json:"id"`
-	BackupID     string          `json:"backup_id"`
-	TransferID   *string         `json:"transfer_id"`
-	ResourceID   string          `json:"resource_id"`
-	RunnerID     string          `json:"runner_id"`
-	Location     string          `json:"location"`
-	IdentityHash string          `json:"identity_hash"`
-	LocationHash string          `json:"location_hash"`
-	Body         json.RawMessage `json:"body"`
-	Availability string          `json:"availability"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID                 string          `json:"id"`
+	BackupID           string          `json:"backup_id"`
+	TransferID         *string         `json:"transfer_id"`
+	ResourceID         string          `json:"resource_id"`
+	RunnerID           string          `json:"runner_id"`
+	Location           string          `json:"location"`
+	IdentityHash       string          `json:"identity_hash"`
+	LocationHash       string          `json:"location_hash"`
+	Body               json.RawMessage `json:"body"`
+	Availability       string          `json:"availability"`
+	CreatedAt          time.Time       `json:"created_at"`
+	SupersededByCopyID *string         `json:"superseded_by_copy_id"`
 }
 
 type HostingDatabaseBackupReceipt struct {

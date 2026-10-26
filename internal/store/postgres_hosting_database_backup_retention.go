@@ -150,7 +150,7 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 		}{location, in.LocalCopy})
 		if !c.Local.Created {
 			var prior []byte
-			e = tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND availability IN ('available','reserved') AND body->'local'->>'created'='true' LIMIT 1`, location).Scan(&prior)
+			e = tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND superseded_by_copy_id IS NULL AND availability IN ('available','reserved') AND body->'local'->>'created'='true' LIMIT 1`, location).Scan(&prior)
 			if e == nil {
 				var known domain.BackupRetentionCopy
 				if json.Unmarshal(prior, &known) != nil {
@@ -179,6 +179,33 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 	if c.IdentityHash == "" {
 		c.IdentityHash = location
 	}
+	// A no-clobber download can prove a new generation at a previously recorded
+	// location. Preserve the old ownership document; supersession is not deletion.
+	// Reusing known ownership above does not turn adoption into fresh creation.
+	if strings.HasPrefix(copyID, "dbc_download_") && in.LocalCopy != nil && in.LocalCopy.Created {
+		if e = backupRetentionLock(ctx, tx); e != nil {
+			return e
+		}
+		var priorID string
+		var raw []byte
+		e = tx.QueryRow(ctx, `SELECT id,body FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local' AND location_hash=$2 AND availability<>'deleted' AND superseded_by_copy_id IS NULL FOR UPDATE`, r.ID, location).Scan(&priorID, &raw)
+		if e == nil {
+			var prior domain.BackupRetentionCopy
+			if json.Unmarshal(raw, &prior) != nil || prior.Local == nil || prior.Local.PoolID != c.Local.PoolID || prior.Local.Device != c.Local.Device || prior.Local.Inode == c.Local.Inode || prior.Local.Bytes != c.Local.Bytes || c.Local.Bytes != c.Item.Bytes || prior.Item.Digest != c.Item.Digest || prior.Item.Bytes != c.Item.Bytes || prior.ServerID != c.ServerID || prior.DestinationID != c.DestinationID || prior.DaemonID != c.DaemonID {
+				return ErrConflict
+			}
+			// Current-authority validation flushes deferred constraints. Defer only
+			// this new link until its copy and completion receipt have been written.
+			if _, e = tx.Exec(ctx, `SET CONSTRAINTS hosting_database_backup_copies_superseded_by_copy_id_fkey, hosting_database_backup_copy_supersession_receipt DEFERRED`); e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_copies SET superseded_by_copy_id=$2 WHERE id=$1`, priorID, copyID); e != nil {
+				return e
+			}
+		} else if !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+	}
 	_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_copies(id,backup_id,resource_id,runner_id,location,identity_hash,location_hash,body,availability,created_at) VALUES($1,$2,$3,$4,'local',$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, c.Item.CopyID, r.ID, r.SourceResourceID, r.RunnerID, c.IdentityHash, location, buildJSON(c), c.Item.Availability, r.CreatedAt)
 	return e
 }
@@ -191,7 +218,7 @@ func backupRetentionRegisterRemote(ctx context.Context, tx pgx.Tx, r backupRemot
 	c := domain.BackupRetentionCopy{Item: domain.BackupRetentionItem{CopyID: "dbc_remote_" + r.view.ID, BackupID: r.view.BackupID, TransferID: r.view.ID, Location: "remote", Digest: p.Operation.Blob.Digest, Bytes: p.Operation.Blob.Bytes, CreatedAt: r.view.CreatedAt, Availability: "unproven", ProtectedReasons: []string{}}, RunnerID: p.RunnerID, DestinationID: p.Operation.DestinationID, ServerID: p.ServerID, DaemonID: in.DaemonID, Remote: in.RemoteCopy, Target: &p.Target, ObjectKey: p.ObjectKey}
 	if c.Remote != nil && !c.Remote.Created {
 		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND availability IN ('available','reserved') AND body->'remote'->>'created'='true' LIMIT 1`, location).Scan(&raw)
+		err := tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND superseded_by_copy_id IS NULL AND availability IN ('available','reserved') AND body->'remote'->>'created'='true' LIMIT 1`, location).Scan(&raw)
 		if err == nil {
 			var known domain.BackupRetentionCopy
 			if json.Unmarshal(raw, &known) != nil {
@@ -287,13 +314,13 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 		}
 	}
 	rows, e = tx.Query(ctx, `SELECT c.body,c.availability,
- (SELECT count(DISTINCT other.id) FROM hosting_database_backup_copies other WHERE other.availability<>'deleted' AND other.id<>c.id AND other.location_hash=c.location_hash)
+ (SELECT count(DISTINCT other.id) FROM hosting_database_backup_copies other WHERE other.availability<>'deleted' AND other.superseded_by_copy_id IS NULL AND other.id<>c.id AND other.location_hash=c.location_hash)
  + (SELECT count(*) FROM hosting_database_backups other WHERE c.location='local' AND other.mode='backup' AND other.id<>c.backup_id AND other.state='succeeded' AND other.blob->>'digest'=c.body->'item'->>'digest' AND other.plan->'source'->'snapshot'->>'server_id'=c.body->>'server_id' AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies known WHERE known.backup_id=other.id AND known.location='local' AND known.availability='deleted'))
  + (SELECT count(*) FROM hosting_database_backup_transfers other WHERE c.location='remote' AND other.id<>c.transfer_id AND other.mode='upload' AND other.state='succeeded' AND nerocd_backup_remote_scope(other.plan->'target'->'target'->>'endpoint',other.plan->'target'->'target'->>'bucket',other.plan->>'object_key')=nerocd_backup_remote_scope(c.body->'target'->'target'->>'endpoint',c.body->'target'->'target'->>'bucket',c.body->>'object_key')),
  EXISTS(SELECT 1 FROM hosting_database_backups b WHERE b.runner_id=c.runner_id AND b.ownership_held),
  EXISTS(SELECT 1 FROM hosting_database_backup_transfers t WHERE t.backup_id=c.backup_id AND t.mode='upload' AND t.state IN ('queued','dispatched','applying','failed','uncertain')),
  EXISTS(SELECT 1 FROM hosting_database_backup_retention_items i WHERE i.location_hash=c.location_hash AND i.reservation_held)
- FROM hosting_database_backup_copies c WHERE c.resource_id=$1 AND c.availability<>'deleted' ORDER BY c.created_at,c.id LIMIT 100001`, resource)
+ FROM hosting_database_backup_copies c WHERE c.resource_id=$1 AND c.availability<>'deleted' AND c.superseded_by_copy_id IS NULL ORDER BY c.created_at,c.id LIMIT 100001`, resource)
 	if e != nil {
 		return nil, e
 	}
@@ -620,7 +647,7 @@ func backupRetentionArchiveAdmission(ctx context.Context, tx pgx.Tx, backup stri
 	}
 	var denied bool
 	if remote == nil {
-		e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local') AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local' AND availability IN ('available','unproven'))`, backup).Scan(&denied)
+		e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local') AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local' AND superseded_by_copy_id IS NULL AND availability IN ('available','unproven'))`, backup).Scan(&denied)
 		if e != nil {
 			return e
 		}
