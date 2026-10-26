@@ -1435,6 +1435,56 @@ type HostingStorageBackup struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type HostingStorageBackupRemoteDelivery struct {
+	DeliveryID  string          `json:"delivery_id"`
+	OperationID string          `json:"operation_id"`
+	RunID       string          `json:"run_id"`
+	LeaseID     string          `json:"lease_id"`
+	Attempt     int32           `json:"attempt"`
+	Fence       string          `json:"fence"`
+	RunnerID    string          `json:"runner_id"`
+	RequestHash string          `json:"request_hash"`
+	Metadata    json.RawMessage `json:"metadata"`
+	UseUntil    time.Time       `json:"use_until"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingStorageBackupTransfer struct {
+	ID                 string          `json:"id"`
+	ProjectID          string          `json:"project_id"`
+	TargetID           string          `json:"target_id"`
+	TargetRevision     int64           `json:"target_revision"`
+	DestinationID      string          `json:"destination_id"`
+	ActorID            string          `json:"actor_id"`
+	RequestID          string          `json:"request_id"`
+	RequestHash        string          `json:"request_hash"`
+	Mode               string          `json:"mode"`
+	BackupID           *string         `json:"backup_id"`
+	RestoreOperationID *string         `json:"restore_operation_id"`
+	PredecessorID      *string         `json:"predecessor_id"`
+	State              string          `json:"state"`
+	FailureCode        string          `json:"failure_code"`
+	RunnerID           string          `json:"runner_id"`
+	RunID              *string         `json:"run_id"`
+	DaemonID           string          `json:"daemon_id"`
+	Blob               []byte          `json:"blob"`
+	Plan               json.RawMessage `json:"plan"`
+	PlanHash           string          `json:"plan_hash"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+}
+
+type HostingStorageBackupTransferReceipt struct {
+	OperationID           string          `json:"operation_id"`
+	Phase                 string          `json:"phase"`
+	ReceiptID             string          `json:"receipt_id"`
+	Authority             json.RawMessage `json:"authority"`
+	Body                  json.RawMessage `json:"body"`
+	BodyHash              string          `json:"body_hash"`
+	Response              json.RawMessage `json:"response"`
+	ExpiredClassification bool            `json:"expired_classification"`
+}
+
 type HostingStorageMaterialization struct {
 	StorageID               string          `json:"storage_id"`
 	OriginOperationID       string          `json:"origin_operation_id"`

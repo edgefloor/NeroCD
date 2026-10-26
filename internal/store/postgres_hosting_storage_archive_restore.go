@@ -137,6 +137,8 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		d.CreationNonce = domain.HostingStorageCreationNonce(d.Reference, id, d.DaemonID)
 		p.OperationID = id
 		p.Mode = "restore"
+		p.RemoteTarget = nil
+		p.RemoteSource = in.RemoteSource
 		p.Target = &domain.HostingStorageArchiveTarget{Resource: resource, Storage: st, Plan: d}
 		p.Writers = nil
 		p.Blob = &blob
@@ -174,7 +176,11 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if err = archiveAudit(ctx, tx, actor, "requested", op); err != nil {
 			return zero, err
 		}
-		if _, err = s.hostingJobs.EnqueueStorageArchiveTx(ctx, tx, hostingjobs.PrepareStorageArchiveArgs{OperationID: id}); err != nil {
+		if in.RemoteSource != nil {
+			if err = s.storageRemoteRestoreAdmit(ctx, tx, p, actor, *in.RemoteSource); err != nil {
+				return zero, err
+			}
+		} else if _, err = s.hostingJobs.EnqueueStorageArchiveTx(ctx, tx, hostingjobs.PrepareStorageArchiveArgs{OperationID: id}); err != nil {
 			return zero, err
 		}
 		_ = event

@@ -32,6 +32,12 @@ func (s *Server) runnerBackupRemoteCredentials(w http.ResponseWriter, r *http.Re
 	if !decodeDatabaseBackup(w, r, &in) {
 		return
 	}
+	storageRoute := strings.HasPrefix(r.URL.Path, "/api/v1/runners/hosting/storage-backup-transfer/")
+	storageAuthority := in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID
+	if storageRoute != storageAuthority {
+		writeErrorEnvelope(w, 400, "invalid_request", "credential family mismatch")
+		return
+	}
 	if !s.runtimeEnvironmentTransport(r) {
 		writeError(w, app.ErrHostingDatabaseCredentialsUnavailable)
 		return

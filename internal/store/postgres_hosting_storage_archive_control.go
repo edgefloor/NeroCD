@@ -29,6 +29,16 @@ func (s *PostgresStore) PrepareStorageArchive(ctx context.Context, id string) er
 		if op.State != "queued" {
 			return true, archiveFinalizeActor(ctx, tx, op.CreatedBy)
 		}
+		if op.StorageArchive.Plan.RemoteSource != nil {
+			var ready bool
+			ready, err = sqlcgen.New(tx).StorageRemoteRestoreDownloaded(ctx, optionalStorageRestore(id))
+			if err != nil {
+				return false, err
+			}
+			if !ready {
+				return false, ErrConflict
+			}
+		}
 		q := sqlcgen.New(tx)
 		state, err := q.LockHostingOperationState(ctx, id)
 		if err != nil {
@@ -236,6 +246,8 @@ func (s *PostgresStore) RequestStorageArchiveRecovery(ctx context.Context, id, o
 		}
 		p.OperationID = id
 		p.Mode = "recover"
+		p.RemoteTarget = nil
+		p.RemoteSource = nil
 		p.RecoveryOfOperationID = originalID
 		p.RecoveryEvidence = evidence
 		p.Hash = ""

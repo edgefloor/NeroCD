@@ -69,6 +69,7 @@ type JournalProvenance struct {
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
 	DatabaseBackupRetentions []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
+	StorageBackupTransfers   []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
 	DatabaseBackupTransfers  []JournalDatabaseBackupTransfer  `json:"database_backup_transfers,omitempty"`
 	DatabaseBackup           []JournalDatabaseBackup          `json:"database_backup,omitempty"`
 	DatabaseNetworkCapture   []JournalDatabaseNetworkCapture  `json:"database_network_capture,omitempty"`
@@ -85,6 +86,7 @@ type JournalSnapshot struct {
 
 type journalState struct {
 	DatabaseBackupRetentions []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
+	StorageBackupTransfers   []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
 	DatabaseBackupTransfers  []JournalDatabaseBackupTransfer  `json:"database_backup_transfers,omitempty"`
 	DatabaseBackup           []JournalDatabaseBackup          `json:"database_backup,omitempty"`
 	DatabaseNetworkCapture   []JournalDatabaseNetworkCapture  `json:"database_network_capture,omitempty"`
@@ -314,6 +316,11 @@ func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 			return errors.New("retention evidence requires explicit acknowledgment")
 		}
 	}
+	for _, entry := range j.state.StorageBackupTransfers {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("storage transfer evidence requires explicit acknowledgment")
+		}
+	}
 	for _, entry := range j.state.DatabaseBackupTransfers {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("remote transfer evidence requires explicit acknowledgment")
@@ -393,7 +400,7 @@ func sameAttemptAuthority(left, right AttemptIdentity) bool {
 func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return JournalSnapshot{DatabaseBackupRetentions: cloneDatabaseBackupRetentions(j.state.DatabaseBackupRetentions), DatabaseBackupTransfers: cloneDatabaseBackupTransfers(j.state.DatabaseBackupTransfers), DatabaseBackup: cloneDatabaseBackups(j.state.DatabaseBackup),
+	return JournalSnapshot{StorageBackupTransfers: cloneStorageBackupTransfers(j.state.StorageBackupTransfers), DatabaseBackupRetentions: cloneDatabaseBackupRetentions(j.state.DatabaseBackupRetentions), DatabaseBackupTransfers: cloneDatabaseBackupTransfers(j.state.DatabaseBackupTransfers), DatabaseBackup: cloneDatabaseBackups(j.state.DatabaseBackup),
 		DatabaseNetworkCapture: cloneDatabaseNetworkCaptures(j.state.DatabaseNetworkCapture),
 		StorageArchive:         cloneStorageArchiveEntries(j.state.StorageArchive),
 		BuildLogs:              cloneBuildLogs(j.state.BuildLogs),
@@ -424,10 +431,13 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.DatabaseBackupRetentions) + len(j.state.DatabaseBackupTransfers) + len(j.state.DatabaseBackup) + len(j.state.DatabaseNetworkCapture) + len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
+	return len(j.state.StorageBackupTransfers) + len(j.state.DatabaseBackupRetentions) + len(j.state.DatabaseBackupTransfers) + len(j.state.DatabaseBackup) + len(j.state.DatabaseNetworkCapture) + len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if err := validateJournalStorageBackupTransfers(j.state); err != nil {
+		return err
+	}
 	if err := validateJournalDatabaseBackupTransfers(j.state); err != nil {
 		return err
 	}
@@ -459,6 +469,12 @@ func (j *AttemptJournal) persistLocked() error {
 		j.state.Version = 20
 	}
 	state := j.state
+	if len(state.StorageBackupTransfers) > 0 {
+		state.Version = 21
+	}
+	if state.Version == 21 && len(state.StorageBackupTransfers) == 0 {
+		state.Version = 20
+	}
 	if state.Version == 20 && !journalUsesRetention(state) {
 		state.Version = 19
 	}
@@ -516,6 +532,59 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
+	if len(state.StorageBackupTransfers) > 0 {
+		if state.Version != 21 {
+			return errors.New("storage transfer journal version mismatch")
+		}
+		if err := validateJournalStorageBackupTransfers(state); err != nil {
+			return err
+		}
+		state.Version = 20
+		if state.Version == 20 && !journalUsesRetention(state) {
+			state.Version = 19
+		}
+		if state.Version == 19 && len(state.DatabaseBackupTransfers) == 0 {
+			state.Version = 18
+		}
+		if state.Version == 18 && len(state.DatabaseBackup) == 0 {
+			state.Version = 17
+		}
+		if state.Version == 17 && !journalStateUsesApplicationStorage(state) {
+			state.Version = 16
+		}
+		if state.Version == 16 && !journalStateUsesRouteContinuity(state) {
+			state.Version = 15
+		}
+		if state.Version == 15 && !journalStateUsesConnection(state) {
+			state.Version = 14
+		}
+		if state.Version == 14 && !journalStateUsesDatabaseUpgrade(state) {
+			state.Version = 13
+		}
+		if state.Version == 13 && len(state.DatabaseNetworkCapture) == 0 {
+			state.Version = 12
+		}
+		if state.Version == 12 && len(state.StorageArchive) == 0 {
+			state.Version = 11
+		}
+		if state.Version == 11 && !journalStateUsesDatabase(state) {
+			state.Version = 10
+		}
+		if state.Version == 10 && !journalStateUsesStorage(state) {
+			state.Version = 9
+		}
+		if state.Version == 9 {
+			strict := false
+			for _, entry := range state.Proxy {
+				strict = strict || entry.Plan.Snapshot.VerifiedSwitch != nil
+			}
+			if !strict {
+				state.Version = 8
+			}
+		}
+
+	}
+
 	if journalUsesRetention(state) && state.Version != 20 || state.Version == 20 && !journalUsesRetention(state) {
 		return errors.New("backup retention journal version mismatch")
 	}
@@ -549,7 +618,7 @@ func validateJournalState(state journalState) error {
 	if state.Version < journalFormatVersion || state.Version > 20 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
+	if len(state.StorageBackupTransfers)+len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { DatabaseBackupDestinations } from "./DatabaseBackupDestinations";
 import { ApiError } from "../api/errors";
 import type { HostingDatabase } from "../api/hosting-databases";
+import * as storageRemote from "../api/hosting-storage-backup-remote";
 import * as api from "../api/hosting-database-backup-targets";
 vi.mock("../api/hosting-database-backup-targets", async (original) => ({
   ...(await original<
@@ -20,6 +21,10 @@ vi.mock("../api/hosting-database-backup-targets", async (original) => ({
   listDatabaseBackupValidations: vi.fn(),
   saveDatabaseBackupTarget: vi.fn(),
   validateDatabaseBackupTarget: vi.fn(),
+}));
+vi.mock("../api/hosting-storage-backup-remote", () => ({
+  listStorageValidations: vi.fn(async () => []),
+  validateStorageTarget: vi.fn(),
 }));
 const scope = { actor: "owner", project: "project", environment: "env" };
 const database = {
@@ -362,4 +367,54 @@ test("real helper preserves one sent request after transport loss", async () => 
   expect(fetch.mock.calls[1]?.[1]?.body).toEqual(first?.[1]?.body);
   expect(fetch.mock.calls[1]?.[1]?.headers).toEqual(first?.[1]?.headers);
   expect(fetch.mock.calls[1]?.[1]?.method).toEqual(first?.[1]?.method);
+});
+
+test("uploads-only applications configure and validate a target without a database", async () => {
+  targets = [target];
+  const validation = {
+    id: "storage_validation",
+    version: "owned-upload.s3-transfer.v1",
+    project_id: "project",
+    target_id: target.id,
+    target_revision: 1,
+    destination_id: "uploads_destination",
+    mode: "validate",
+    state: "queued",
+    failure_code: "",
+    created_at: target.created_at,
+    updated_at: target.updated_at,
+  } as Extract<storageRemote.StorageBackupTransfer,{mode:"validate"}>;
+  vi.mocked(storageRemote.validateStorageTarget).mockResolvedValue(validation);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <DatabaseBackupDestinations
+        storage={{
+          resource: { id: "uploads_app" },
+          destination_id: "uploads_destination",
+        }}
+        scope={scope}
+        owner
+        blocked={false}
+        onDenied={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const validate = await screen.findByRole("button", {
+    name: `Validate ${target.name} from this runner`,
+  });
+  await waitFor(() => expect(validate.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(validate);
+  await waitFor(() =>
+    expect(storageRemote.validateStorageTarget).toHaveBeenCalledTimes(1),
+  );
+  expect(
+    vi.mocked(storageRemote.validateStorageTarget).mock.calls[0]![2]
+      .destination_id,
+  ).toBe("uploads_destination");
+  expect(api.validateDatabaseBackupTarget).not.toHaveBeenCalled();
+  expect(screen.getByRole("region", { name: "Backup targets" })).toBeTruthy();
+  client.clear();
 });

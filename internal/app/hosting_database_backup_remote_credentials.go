@@ -25,10 +25,15 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 	if err != nil {
 		return nil, err
 	}
+	storageFamily := in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID
 	token = strings.TrimSpace(token)
 	current := func() bool {
 		identity, e := s.CurrentRunnerIdentity(ctx)
-		if e != nil || identity.RunnerID != principal.ID || !slices.Contains(identity.Capabilities, domain.HostingDatabaseBackupRemoteCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupTransfer) {
+		capability, kind := domain.HostingDatabaseBackupRemoteCapability, domain.RunTypeDatabaseBackupTransfer
+		if storageFamily {
+			capability, kind = domain.HostingStorageBackupRemoteCapability, domain.RunTypeStorageBackupTransfer
+		}
+		if e != nil || identity.RunnerID != principal.ID || !slices.Contains(identity.Capabilities, capability) || !slices.Contains(identity.Capabilities, kind) {
 			return false
 		}
 		if retention && (!slices.Contains(identity.Capabilities, domain.HostingDatabaseBackupRetentionCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupRetention)) {
@@ -42,7 +47,13 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	var a store.BackupRemoteCredentialAuthorization
-	if retention {
+	if storageFamily {
+		r, ok := s.hosting.(store.HostingStorageBackupRemoteCredentialRepository)
+		if !ok {
+			return nil, domain.ErrBackupRemoteCredentials
+		}
+		a, err = r.AuthorizeStorageRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in)
+	} else if retention {
 		r, ok := s.hosting.(store.HostingDatabaseBackupRetentionCredentialRepository)
 		if !ok {
 			return nil, domain.ErrBackupRemoteCredentials
@@ -72,6 +83,9 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	validate := func() error {
+		if storageFamily {
+			return s.hosting.(store.HostingStorageBackupRemoteCredentialRepository).RevalidateStorageRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
+		}
 		if retention {
 			r := s.hosting.(store.HostingDatabaseBackupRetentionCredentialRepository)
 			return r.RevalidateBackupRetentionCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)

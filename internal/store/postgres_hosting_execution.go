@@ -63,6 +63,9 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			if err := s.recoverDatabaseBackupRetentions(remoteCtx); err != nil && recoveryCtx.Err() == nil {
 				slog.Warn("backup retention dispatch recovery failed")
 			}
+			if err := s.recoverStorageBackupTransfers(remoteCtx); err != nil && recoveryCtx.Err() == nil {
+				slog.Warn("storage remote transfer recovery unavailable")
+			}
 			if err := s.recoverDatabaseBackupTransfers(remoteCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(remoteWarningAfter) {
 				slog.Warn("remote backup dispatch recovery failed")
 				remoteWarningAfter = time.Now().Add(time.Minute)
@@ -1753,6 +1756,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
 		return s.databaseBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
+	}
+	if run.RunSpec.Type == domain.RunTypeStorageBackupTransfer {
+		return s.storageBackupTransferClaimAllowed(ctx, tx, run, runnerID)
 	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		return s.databaseBackupTransferClaimAllowed(ctx, tx, run, runnerID)

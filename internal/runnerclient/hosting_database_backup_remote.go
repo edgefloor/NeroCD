@@ -102,6 +102,9 @@ func (c Client) hostingBackupCredentials(ctx context.Context, runner string, in 
 	}
 	defer clear(raw)
 	path := "/api/v1/runners/hosting/database-backup-transfer/credentials"
+	if in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID {
+		path = "/api/v1/runners/hosting/storage-backup-transfer/credentials"
+	}
 	if retention {
 		path = "/api/v1/runners/hosting/database-backup-retention/credentials"
 	}

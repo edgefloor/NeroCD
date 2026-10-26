@@ -35,6 +35,13 @@ func (r BackupRemoteCredentialRequest) Validate() error {
 		}
 		return nil
 	}
+	if r.Authority.RunID == "storage_transfer_"+r.Authority.OperationID {
+		check := HostingStorageBackupTransferMutation{HostingAuthority: r.Authority, ReceiptID: r.DeliveryID, PlanHash: r.PlanHash, Phase: "intent", DaemonID: r.DaemonID}
+		if check.Validate() != nil {
+			return ErrBackupRemoteCredentials
+		}
+		return nil
+	}
 	check := HostingDatabaseBackupTransferMutation{HostingAuthority: r.Authority, ReceiptID: r.DeliveryID, PlanHash: r.PlanHash, Phase: "intent", DaemonID: r.DaemonID}
 	if check.Validate() != nil {
 		return ErrBackupRemoteCredentials
@@ -52,6 +59,9 @@ type BackupRemoteCredentialMetadata struct {
 
 func (m BackupRemoteCredentialMetadata) Validate() error {
 	expected := HostingDatabaseBackupRemoteCredentialPurpose
+	if m.Request.Authority.RunID == "storage_transfer_"+m.Request.Authority.OperationID {
+		expected = HostingStorageBackupRemoteCredentialPurpose
+	}
 	if m.Request.RetentionCopyID != "" {
 		expected = HostingDatabaseBackupRetentionCredentialPurpose
 	}

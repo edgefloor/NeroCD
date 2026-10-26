@@ -353,7 +353,7 @@ const backupPath = (id: string) =>
   `/api/v1/storage-backups/${encodeURIComponent(id)}`;
 const operationPath = (id: string) =>
   `/api/v1/hosting-operations/${encodeURIComponent(id)}`;
-const read = <T,>(path: string, signal?: AbortSignal) =>
+const read = <T>(path: string, signal?: AbortSignal) =>
   boundedStorageRequest(
     (s) => request<T>(path, { signal: s, cache: "no-store" }),
     signal,
@@ -472,9 +472,18 @@ export async function requestArchiveBackup(
   signal?: AbortSignal,
 ) {
   if (
-    !keys(body, ["request_id", "expected_resource_generation"]) ||
+    !keys(
+      body,
+      ["request_id", "expected_resource_generation"],
+      ["remote_target"],
+    ) ||
     !Number.isSafeInteger(body.expected_resource_generation) ||
-    body.expected_resource_generation < 1
+    body.expected_resource_generation < 1 ||
+    (body.remote_target !== undefined &&
+      (!keys(body.remote_target, ["target_id", "revision"]) ||
+        !id(body.remote_target.target_id) ||
+        !Number.isSafeInteger(body.remote_target.revision) ||
+        body.remote_target.revision < 1))
   )
     fail();
   return archiveBackup(
@@ -488,7 +497,16 @@ export async function requestArchiveRestore(
   body: RestoreInput,
   signal?: AbortSignal,
 ) {
-  if (!keys(body, ["request_id", "name"]) || !displayName(body.name)) fail();
+  if (
+    !keys(body, ["request_id", "name"], ["remote_source"]) ||
+    !displayName(body.name) ||
+    (body.remote_source !== undefined &&
+      (!keys(body.remote_source, ["transfer_id", "expected_target_revision"]) ||
+        !id(body.remote_source.transfer_id) ||
+        !Number.isSafeInteger(body.remote_source.expected_target_revision) ||
+        body.remote_source.expected_target_revision < 1))
+  )
+    fail();
   const value = archiveRestore(
     await write<Restore>(`${backupPath(backup)}/restores`, body, signal),
     scope,
