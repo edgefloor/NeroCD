@@ -16,3 +16,13 @@ test("recovery locator is bounded, paired and preserves unrelated search state",
     expect(validateSearch({ q: "host", proxy_recovery_scope: scope, proxy_recovery_operation: "pop_original", ...locator })).toEqual({ q: "host" });
   }
 });
+
+test("backup recovery locator is complete, strictly bounded and carries no action", () => {
+  const locator = { project_id: "project", environment_id: "env", resource_id: "db", backup_id: "backup", transfer_id: "upload" };
+  expect(validateSearch({ ...locator, action: "retry", q: "preserved" })).toEqual({ ...locator, q: "preserved" });
+  for (const key of ["project_id", "environment_id", "resource_id", "backup_id", "transfer_id"]) {
+    expect(validateSearch({ ...locator, [key]: "../foreign" }).backup_id).toBeUndefined();
+    expect(validateSearch({ ...locator, [key]: "x".repeat(129) }).backup_id).toBeUndefined();
+  }
+  expect(validateSearch({ project_id: "project", backup_id: "backup" })).toEqual({});
+});

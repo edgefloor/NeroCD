@@ -1,3 +1,7 @@
+import { DatabaseBackups } from "./DatabaseBackups";
+import { useDatabaseAccess } from "./ResourceDatabase";
+import { getHostingDatabase, validateDatabase } from "@/api/hosting-databases";
+import { getNotificationRecoveryTransfer, getNotificationRecoveryBackup, parseBackupRecoveryLocator, type BackupRecoveryLocator } from "@/api/hosting-backup-notifications";
 import { type FormEvent, useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, type Project } from "@/api";
@@ -223,13 +227,47 @@ function ProjectEnvironments({ projectID, writable, blocked }: { projectID: stri
   </div>;
 }
 
-export function ProjectHosting({ projects, canOperateProject, unavailable = false }: { projects: Project[]; canOperateProject: (projectID: string) => boolean; unavailable?: boolean }) {
+function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; blocked: boolean }) {
+  const access = useDatabaseAccess(locator.project_id, locator.environment_id);
+  const [revoked, setRevoked] = useState(false);
+  const resolved = useQuery({
+    queryKey: ["backup-notification-recovery", access.epoch, locator],
+    enabled: access.ready && access.viewer && !access.refreshing && !blocked && !revoked,
+    retry: false, gcTime: 0,
+    queryFn: async ({ signal }) => {
+      // Resolve every scope through authenticated metadata before rendering actions.
+      let environmentFound = false;
+      for (let offset = 0; offset < 10000; offset += 100) {
+        const page = await listProjectEnvironments({ project_id: locator.project_id, limit: 100, offset }, { signal });
+        if (page.items.some(e => e.id === locator.environment_id && e.project_id === locator.project_id)) { environmentFound = true; break; }
+        if (offset + page.items.length >= page.total || !page.items.length) break;
+      }
+      if (!environmentFound) throw new Error("Recovery environment is unavailable");
+      const database = validateDatabase(await getHostingDatabase(locator.resource_id, { signal }), access.scope, locator.resource_id);
+      const backup = await getNotificationRecoveryBackup(access.scope, database, locator.backup_id, signal);
+      const transfer = locator.transfer_id ? await getNotificationRecoveryTransfer(access.scope, backup.id, locator.transfer_id, signal) : undefined;
+      return { database, backup, transfer };
+    },
+  });
+  if (!access.ready || access.refreshing || blocked) return <p role="status">Verifying authenticated backup recovery access...</p>;
+  if (!access.viewer || revoked || resolved.isError) return <section aria-label="Backup notification recovery"><p role="alert">Backup recovery is unavailable for this project, environment, resource, or backup. Refresh project access and open the link again.</p></section>;
+  return <section aria-label="Backup notification recovery" className="min-w-0 space-y-3 rounded-xl border p-3">
+    <h3 className="font-semibold">Backup notification recovery</h3>
+    <p className="break-all">Backup {locator.backup_id}{locator.transfer_id ? ` · upload ${locator.transfer_id}` : ""}. The link selects history only. Review current state before requesting an upload retry or a restore.</p>
+    {resolved.isPending ? <p role="status">Resolving backup history...</p> : null}
+    {resolved.data ? <DatabaseBackups database={resolved.data.database} recoveryBackup={resolved.data.backup} recoveryTransfer={resolved.data.transfer} scope={access.scope} owner={access.owner} blocked={blocked || access.refreshing} onDenied={() => setRevoked(true)} recovery={locator} /> : null}
+  </section>;
+}
+
+export function ProjectHosting({ projects, canOperateProject, unavailable = false, recoverySearch = {} }: { projects: Project[]; canOperateProject: (projectID: string) => boolean; unavailable?: boolean; recoverySearch?: Record<string, unknown> }) {
   const id = useId();
   const [projectID, setProjectID] = useState("");
   const project = projects.find((item) => item.id === projectID);
+  const locator = parseBackupRecoveryLocator(recoverySearch);
   return <Card className="min-w-0" role="region" aria-label="Project hosting">
     <CardHeader><CardTitle>Project hosting</CardTitle><p className="text-sm text-muted-foreground">Save application or database configuration in shared project environments. Database metadata does not start an engine. Choose application placement and request image deployment separately. Operation history records outcomes; it does not provide continuous runtime health.</p></CardHeader>
     <CardContent className="min-w-0 space-y-5">
+      {locator ? projects.some(p => p.id === locator.project_id) ? <BackupRecovery key={JSON.stringify(locator)} locator={locator} blocked={unavailable} /> : <p role="alert">Backup recovery project is unavailable.</p> : null}
       <div className="max-w-xl space-y-1.5"><label htmlFor={`${id}-project`}>Hosting project</label><select id={`${id}-project`} className={selectClass} value={project?.id ?? ""} onChange={(event) => setProjectID(event.target.value)}><option value="">Select a project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       {project ? <><p className="break-all text-xs text-muted-foreground">Project ID for destination grants: {project.id}</p><ProjectEnvironments key={project.id} projectID={project.id} writable={canOperateProject(project.id)} blocked={unavailable} /></> : <p className="text-sm text-muted-foreground">Choose a project to manage or view saved configuration.</p>}
     </CardContent>

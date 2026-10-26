@@ -109,8 +109,13 @@ test("viewer reads database metadata and history without mutation or secret acce
   expect(fetch.mock.calls.map(([url]) => url)).toEqual([
     "/api/v1/resources/db/database",
     "/api/v1/resources/db/deployments?limit=20&offset=0",
+    "/api/v1/projects/project/database-backup-targets",
+    "/api/v1/resources/db/database-backup-retention",
+    "/api/v1/resources/db/database-backup-retention/executions",
+    "/api/v1/resources/db/database-backup-schedules",
     "/api/v1/resources/db/database-backups",
   ]);
+  for (const [, init] of fetch.mock.calls) expect(init.method).toBe("GET");
 });
 test.each([401, 403])(
   "current HTTP%s hides metadata and retires scoped cache",

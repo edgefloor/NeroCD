@@ -1,3 +1,4 @@
+import type { BackupRecoveryLocator } from "../api/hosting-backup-notifications";
 import {
   BackupDestinationSelect,
   DatabaseBackupDestinations,
@@ -29,6 +30,7 @@ import {
   listDatabaseBackups,
   requestDatabaseBackup,
   restoreDatabaseBackup,
+  type DatabaseBackup,
   type DatabaseBackupInput,
   type DatabaseRestoreInput,
 } from "../api/hosting-database-backups";
@@ -42,6 +44,9 @@ type Props = {
   owner: boolean;
   blocked: boolean;
   onDenied: () => void;
+  recovery?: BackupRecoveryLocator;
+  recoveryBackup?: DatabaseBackup;
+  recoveryTransfer?: DatabaseBackupTransfer;
 };
 export function DatabaseBackups(props: Props) {
   return (
@@ -62,6 +67,9 @@ function DatabaseBackupsPanel({
   owner,
   blocked,
   onDenied,
+  recovery,
+  recoveryBackup,
+  recoveryTransfer,
 }: Props) {
   const client = useQueryClient();
   const [accessRevoked, setAccessRevoked] = useState(false);
@@ -75,7 +83,7 @@ function DatabaseBackupsPanel({
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [restoreSource, setRestoreSource] = useState("");
   const [name, setName] = useState("");
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(recovery?.backup_id ?? "");
   const [attempt, setAttempt] = useState<Attempt>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -102,8 +110,13 @@ function DatabaseBackupsPanel({
         ? 3000
         : false,
   });
+  // The authenticated exact-ID lookup can resolve a retained backup outside
+  // the latest 100 operations. Prefer fresh list metadata when it is present.
+  const records = recoveryBackup && !history.data?.some(v => v.id === recoveryBackup.id)
+    ? [recoveryBackup, ...(history.data ?? [])]
+    : history.data ?? [];
   const transfers = useQueries({
-    queries: (history.data ?? [])
+    queries: records
       .filter((v) => v.mode === "backup")
       .map((v) => ({
         queryKey: databaseBackupTransfersKey(scope, v.id),
@@ -125,9 +138,12 @@ function DatabaseBackupsPanel({
             : false,
       })),
   });
-  const uploads = transfers
+  const recentUploads = transfers
     .flatMap((v) => v.data ?? [])
     .filter((v) => v.mode === "upload");
+  const uploads = recoveryTransfer && !recentUploads.some(v => v.id === recoveryTransfer.id)
+    ? [recoveryTransfer, ...recentUploads]
+    : recentUploads;
   const restoreTransfers = uploads.filter(
     (v) => v.backup_id === selected && v.state === "succeeded" && v.blob,
   );
@@ -210,7 +226,7 @@ function DatabaseBackupsPanel({
     history.isError ||
     history.isFetching;
   const backups =
-    history.data?.filter(
+    records.filter(
       (v) => v.mode === "backup" && v.state === "succeeded" && v.blob,
     ) ?? [];
   return (
@@ -402,12 +418,12 @@ function DatabaseBackupsPanel({
         </p>
       ) : null}
       {history.isPending ? <p role="status">Loading backup history…</p> : null}
-      {history.data?.length === 0 ? (
+      {history.data && records.length === 0 ? (
         <p>No logical backup or restore requests yet.</p>
       ) : null}
       <ul className="space-y-3">
-        {history.data?.map((v) => (
-          <li key={v.id} className="min-w-0 space-y-1 border-t pt-2 break-all">
+        {records.map((v) => (
+          <li key={v.id} aria-label={recovery?.backup_id === v.id ? "Linked backup history" : undefined} className="min-w-0 space-y-1 border-t pt-2 break-all">
             <p>
               {v.mode === "backup" ? "Backup" : "New-database restore"} ·{" "}
               {v.state} · {v.id}
@@ -448,12 +464,13 @@ function DatabaseBackupsPanel({
                 owner={owner}
                 blocked={blocked}
                 onDenied={onDenied}
+                recovery={recovery}
                 backup={v.id}
                 dumpState={v.state}
                 transfers={uploads.filter((t) => t.backup_id === v.id)}
                 unavailable={
                   transfers[
-                    (history.data ?? [])
+                    records
                       .filter((t) => t.mode === "backup")
                       .findIndex((t) => t.id === v.id)
                   ]?.isError ?? false
@@ -508,6 +525,7 @@ function BackupUploadStatus({
   dumpState,
   transfers,
   unavailable,
+  recovery,
 }: Props & {
   backup: string;
   dumpState: string;
@@ -625,7 +643,7 @@ function BackupUploadStatus({
           ) : null}
           <ul>
             {transfers.map((v) => (
-              <li key={v.id}>
+              <li key={v.id} aria-label={recovery?.transfer_id === v.id ? "Linked upload history" : undefined}>
                 Upload {v.id} · {v.state} · target {v.target_id} revision{" "}
                 {v.target_revision}
                 {v.failure_code ? ` · ${v.failure_code}` : ""}

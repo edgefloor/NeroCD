@@ -5,6 +5,7 @@ import { apiSnapshot } from "@/api/compat";
 import { useProjectActions } from "@/api/mutations";
 import { PageNavigation, usePage } from "@/components/common/PageNavigation";
 import { ProjectsView } from "@/pages/ProjectsView";
+import { ProjectNotifications } from "@/pages/ProjectNotifications";
 import { ProjectHosting } from "@/pages/ProjectHosting";
 import { ProjectSecrets } from "@/pages/ProjectSecrets";
 import { canMaintainProject } from "@/lib/permissions";
@@ -19,7 +20,8 @@ export const Route = createFileRoute("/_authenticated/projects")({
 });
 
 function ProjectsRoute() {
-  const { q } = Route.useSearch();
+  const search = Route.useSearch();
+  const { q } = search;
   const page = usePage();
   const projects = useQuery({ ...projectsQuery({ limit: page.limit, offset: page.offset }), retryOnMount: false });
   const allProjects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
@@ -37,7 +39,7 @@ function ProjectsRoute() {
   </section> : null;
   return <div className="grid min-w-0 gap-4">
     {recovery}
-    <ProjectHosting projects={allProjects.data ?? []} unavailable={failed.length > 0} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} />
+    <ProjectHosting recoverySearch={search} projects={allProjects.data ?? []} unavailable={failed.length > 0} canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} />
     {projects.data || !projects.isError ? <ProjectsView
       canOperateProject={(projectID) => canMaintainProject(principal.data, members.data ?? [], projectID)} q={q}
       snapshot={apiSnapshot({ projects: projects.data, repositories: repositories.data, templates: templates.data, runs: runs.data })}
@@ -45,6 +47,7 @@ function ProjectsRoute() {
       loading={queries.some((query) => query.isPending)}
     /> : null}
     <PageNavigation page={projects.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="projects" loading={projects.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} />
+    <ProjectNotifications projects={allProjects.data ?? []} principal={principal.data} members={members.data ?? []} unavailable={failed.length > 0 || principal.isFetching || members.isFetching} />
     <ProjectSecrets projects={allProjects.data ?? []} principal={principal.data} members={members.data ?? []} unavailable={failed.length > 0} />
   </div>;
 }
