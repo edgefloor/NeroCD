@@ -741,3 +741,140 @@ func TestPostgresBackupRetentionRemoteDownloadRepublishesDistinctLocalCopy(t *te
 		t.Fatal("download changed deletion receipt", e)
 	}
 }
+
+func TestPostgresBackupRetentionRemoteDownloadReplacesAvailableGeneration(t *testing.T) {
+	f, target := remoteBackupFixture(t)
+	original := ownedRetentionBackupTarget(t, f, 0, &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision})
+	completeOwnedRetentionUpload(t, f, original.ID)
+	var savedCopy []byte
+	if e := f.db.QueryRow(f.ctx, `SELECT body FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID).Scan(&savedCopy); e != nil {
+		t.Fatal(e)
+	}
+	transfers, e := f.service.ListDatabaseBackupTransfers(f.ctx, original.ID, false)
+	if e != nil || len(transfers) != 1 {
+		t.Fatal(e)
+	}
+	restored, e := f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "remote_restore_with_available_inventory", Name: "Remote-only recovery", RemoteSource: &domain.BackupRemoteSource{TransferID: transfers[0].ID, ExpectedTargetRevision: target.Revision}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	targetDB, e := f.service.GetHostingDatabase(f.ctx, restored.TargetResourceID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	prepareBackupRestoreChild(t, f, restored, targetDB)
+	transfers, e = f.service.ListDatabaseBackupTransfers(f.ctx, original.ID, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	download := ""
+	for _, v := range transfers {
+		if v.Mode == "download" {
+			download = v.ID
+		}
+	}
+	if download == "" {
+		t.Fatal("missing download")
+	}
+	a, p := claimRemoteTransfer(t, f, download)
+	mutation := domain.HostingDatabaseBackupTransferMutation{HostingAuthority: a, ReceiptID: "available_download_intent", PlanHash: p.Hash, Phase: "intent", DaemonID: p.DaemonID}
+	if _, e = f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation); e != nil {
+		t.Fatal(e)
+	}
+	mutation.Phase = "complete"
+	mutation.ReceiptID = "available_download_complete"
+	// The live fixture withholds the CAS file without changing controller metadata.
+	// A verified, no-clobber download therefore creates a new inode at the same pool/key.
+	mutation.LocalCopy = &domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("a", 64), Device: 1, Inode: 9999, Bytes: original.Blob.Bytes, Created: true}
+	for _, state := range []string{"reserved", "uncertain"} {
+		if _, e = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_copies SET availability=$2 WHERE id=$1`, "dbc_local_"+original.ID, state); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation); !errors.Is(e, store.ErrConflict) {
+			t.Fatal("protected generation replaced", state, e)
+		}
+	}
+	if _, e = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_copies SET availability='available' WHERE id=$1`, "dbc_local_"+original.ID); e != nil {
+		t.Fatal(e)
+	}
+	for _, name := range []string{"device", "bytes", "same_inode", "adopted"} {
+		bad := mutation
+		proof := *mutation.LocalCopy
+		bad.LocalCopy = &proof
+		switch name {
+		case "device":
+			proof.Device++
+		case "bytes":
+			proof.Bytes++
+		case "same_inode":
+			proof.Inode = 1
+		case "adopted":
+			proof.Created = false
+		}
+		if _, e = f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, bad); !errors.Is(e, store.ErrConflict) {
+			t.Fatal("mismatched or unowned generation admitted", name, e)
+		}
+	}
+	// Direct SQL cannot manufacture supersession from a new inventory row
+	// without the exact successful download completion receipt.
+	tx, e := f.db.Begin(f.ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(f.ctx) })
+	if _, e = tx.Exec(f.ctx, `SET CONSTRAINTS hosting_database_backup_copies_superseded_by_copy_id_fkey, hosting_database_backup_copy_supersession_receipt DEFERRED`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = tx.Exec(f.ctx, `UPDATE hosting_database_backup_copies SET superseded_by_copy_id=$2 WHERE id=$1`, "dbc_local_"+original.ID, "dbc_download_"+download); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = tx.Exec(f.ctx, `INSERT INTO hosting_database_backup_copies(id,backup_id,resource_id,runner_id,location,identity_hash,location_hash,body,availability,created_at) SELECT $2,backup_id,resource_id,runner_id,location,identity_hash,location_hash,jsonb_set(body,'{local,inode}','9999'::jsonb),availability,created_at FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID, "dbc_download_"+download); e != nil {
+		t.Fatal(e)
+	}
+	var constraint *pgconn.PgError
+	if e = tx.Commit(f.ctx); !errors.As(e, &constraint) || constraint.Code != "23514" {
+		t.Fatal("supersession without receipt accepted", e)
+	}
+	result, e := f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation)
+	if e != nil {
+		t.Fatal("fresh remote download publication against available old generation", e)
+	}
+	replay, e := f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation)
+	if e != nil || !reflect.DeepEqual(result, replay) {
+		t.Fatal("download completion replay changed", e)
+	}
+	var after []byte
+	if e = f.db.QueryRow(f.ctx, `SELECT body FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID).Scan(&after); e != nil || !reflect.DeepEqual(savedCopy, after) {
+		t.Fatal("download rewrote old ownership evidence", e)
+	}
+	var oldState, successor string
+	var copies int
+	if e = f.db.QueryRow(f.ctx, `SELECT availability,superseded_by_copy_id,(SELECT count(*) FROM hosting_database_backup_copies WHERE backup_id=$2 AND location='local') FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID, original.ID).Scan(&oldState, &successor, &copies); e != nil || oldState != "available" || successor != "dbc_download_"+download || copies != 2 {
+		t.Fatal("supersession lost historical state or duplicated copies", oldState, successor, copies, e)
+	}
+	if _, e = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_copies SET superseded_by_copy_id=NULL WHERE id=$1`, "dbc_local_"+original.ID); e == nil {
+		t.Fatal("supersession link was mutable")
+	}
+	ra, rp := claimBackup(t, f, restored.ID)
+	done := domain.HostingDatabaseBackupMutation{HostingAuthority: ra, ReceiptID: "available_restore_intent", PlanHash: rp.Hash, Phase: "intent"}
+	if _, e = f.pg.DatabaseBackupMutation(f.ctx, f.runner, done); e != nil {
+		t.Fatal(e)
+	}
+	done.Phase = "complete"
+	done.ReceiptID = "available_restore_complete"
+	done.Blob = original.Blob
+	if _, e = f.pg.DatabaseBackupMutation(f.ctx, f.runner, done); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "local_after_available_generation_replaced", Name: "Republished local recovery"}); e != nil {
+		t.Fatal("republished local restore unavailable", e)
+	}
+	// A later deletion of the current generation must not revive the historical
+	// row's availability. This models inventory state, not a physical DELETE.
+	if _, e = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_copies SET availability='deleted' WHERE id=$1`, "dbc_download_"+download); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "no_historical_generation_resurrection", Name: "Unavailable local recovery"}); !errors.Is(e, store.ErrConflict) {
+		t.Fatal("superseded generation restored current availability", e)
+	}
+}
