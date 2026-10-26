@@ -6,15 +6,20 @@ import (
 	"nerocd/internal/domain"
 )
 
-// Records contain only encrypted envelopes. Compare is invoked under the same
+// BackupRemoteCredentialRecords contains only encrypted envelopes. Compare is invoked under the same
 // admission transaction on a replay, so concurrent requests cannot silently
 // accept different credentials under one request identity.
 type BackupRemoteCredentialRecords struct {
 	Access ManagedSecretRecord
 	Secret ManagedSecretRecord
 }
+
+// BackupRemoteCredentialCompare checks whether replayed encrypted records match the supplied
+// credentials.
 type BackupRemoteCredentialCompare func(BackupRemoteCredentialRecords) error
 
+// HostingDatabaseBackupRemoteRepository defines persistence operations for database backup
+// remote.
 type HostingDatabaseBackupRemoteRepository interface {
 	SaveDatabaseBackupTarget(context.Context, string, string, string, string, domain.HostingDatabaseBackupTargetInput, *BackupRemoteCredentialRecords, BackupRemoteCredentialCompare) (domain.HostingDatabaseBackupTarget, error)
 	ListDatabaseBackupTargets(context.Context, string, string) ([]domain.HostingDatabaseBackupTarget, error)

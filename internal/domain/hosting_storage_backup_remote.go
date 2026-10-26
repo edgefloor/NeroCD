@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// HostingStorageBackupTransferVersion and related constants identify remote storage backup documents and capabilities.
 const (
 	HostingStorageBackupTransferVersion         = "owned-upload.s3-transfer.v1"
 	HostingStorageBackupRemoteCapability        = "hosting_storage_remote_backup_v1"
@@ -14,10 +15,13 @@ const (
 	HostingStorageBackupRemoteCredentialPurpose = "hosting_storage_remote_backup_credentials.v1"
 )
 
+// ErrInvalidStorageBackupRemote reports invalid storage backup remote input.
 var ErrInvalidStorageBackupRemote = errors.New("invalid storage remote backup request")
 
+// HostingStorageBackupTransferRetryInput describes the requested storage backup transfer retry.
 type HostingStorageBackupTransferRetryInput = HostingDatabaseBackupTransferRetryInput
 
+// HostingStorageBackupTransfer records a storage backup transfer operation and its state.
 type HostingStorageBackupTransfer struct {
 	ID                 string                     `json:"id"`
 	Version            string                     `json:"version"`
@@ -35,6 +39,7 @@ type HostingStorageBackupTransfer struct {
 	UpdatedAt          time.Time                  `json:"updated_at"`
 }
 
+// Validate checks the storage backup transfer fields and invariants.
 func (t HostingStorageBackupTransfer) Validate() error {
 	if !validRuntimeReferenceID(t.ID) || t.Version != HostingStorageBackupTransferVersion || !validRuntimeReferenceID(t.ProjectID) || !validRuntimeReferenceID(t.TargetID) || t.TargetRevision < 1 || !validRuntimeReferenceID(t.DestinationID) || t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() || !ValidBackupRemoteFailure(t.FailureCode) {
 		return ErrInvalidStorageBackupRemote
@@ -62,7 +67,7 @@ func (t HostingStorageBackupTransfer) Validate() error {
 	return nil
 }
 
-// Transfer plans contain opaque key references and immutable object identity,
+// HostingStorageBackupTransferPlan contains opaque key references and immutable object identity,
 // never plaintext credentials, local paths or executable commands.
 type HostingStorageBackupTransferPlan struct {
 	Limits         HostingStorageArchiveLimits         `json:"limits"`
@@ -79,9 +84,12 @@ type HostingStorageBackupTransferPlan struct {
 	Hash           string                              `json:"hash"`
 }
 
+// StorageRemoteObjectKey returns the immutable remote object key for a storage backup blob.
 func StorageRemoteObjectKey(backup string, blob HostingStorageArchiveBlob) string {
 	return "nerocd/storage/" + backup + "/" + strings.TrimPrefix(blob.SHA256, "sha256:") + ".tar"
 }
+
+// Validate checks the storage backup transfer plan fields and invariants.
 func (p HostingStorageBackupTransferPlan) Validate() error {
 	h := p.Hash
 	p.Hash = ""
@@ -98,6 +106,8 @@ func (p HostingStorageBackupTransferPlan) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupTransferMutation reports a fenced storage backup transfer execution
+// outcome.
 type HostingStorageBackupTransferMutation struct {
 	LocalCopy  *BackupLocalCopyProof  `json:"local_copy,omitempty"`
 	RemoteCopy *BackupRemoteCopyProof `json:"remote_copy,omitempty"`
@@ -109,6 +119,7 @@ type HostingStorageBackupTransferMutation struct {
 	DaemonID    string `json:"daemon_id"`
 }
 
+// Validate checks the storage backup transfer mutation fields and invariants.
 func (in HostingStorageBackupTransferMutation) Validate() error {
 	if in.LocalCopy != nil && (in.LocalCopy.Validate() != nil || in.Phase != "complete" || in.RemoteCopy != nil) || in.RemoteCopy != nil && (in.RemoteCopy.Validate() != nil || in.Phase != "complete") {
 		return ErrInvalidStorageBackupRemote
@@ -124,6 +135,8 @@ func (in HostingStorageBackupTransferMutation) Validate() error {
 	}
 	return nil
 }
+
+// ValidateStorageBackupTransferTask checks the storage backup transfer task contract.
 func ValidateStorageBackupTransferTask(r TaskRun) error {
 	s := r.RunSpec
 	if s.Type != RunTypeStorageBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "storage_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download") || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {

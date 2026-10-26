@@ -26,6 +26,8 @@ func storageDeletionScope(ctx context.Context, tx pgx.Tx, actor, resource, backu
 	}
 	return scope, nil
 }
+
+// PreviewStorageBackupDeletion previews deletion of the selected backup copy.
 func (s *PostgresStore) PreviewStorageBackupDeletion(ctx context.Context, id, actor, resource, backup string, in domain.HostingStorageBackupDeletionPreviewInput) (domain.HostingStorageBackupRetentionPreview, error) {
 	var zero domain.HostingStorageBackupRetentionPreview
 	if in.Validate() != nil {
@@ -75,6 +77,8 @@ func (s *PostgresStore) PreviewStorageBackupDeletion(ctx context.Context, id, ac
 		return out, archiveFinalizeActor(ctx, tx, actor)
 	})
 }
+
+// ExecuteStorageBackupDeletion admits manual deletion from a saved backup preview.
 func (s *PostgresStore) ExecuteStorageBackupDeletion(ctx context.Context, id, actor, resource, backup string, in domain.HostingStorageBackupDeletionInput) (domain.HostingStorageBackupRetentionExecution, error) {
 	var zero domain.HostingStorageBackupRetentionExecution
 	if in.Validate() != nil {
@@ -135,6 +139,8 @@ func (s *PostgresStore) ExecuteStorageBackupDeletion(ctx context.Context, id, ac
 		return s.storageRetentionAdmitTx(ctx, tx, actor, resource, in.RequestID, hash, "deletion_execution", "manual_deletion_requested", out, chosen, byID, eligible)
 	})
 }
+
+// ListStorageBackupDeletions lists manual deletion executions for the selected backup.
 func (s *PostgresStore) ListStorageBackupDeletions(ctx context.Context, actor, resource, backup string) ([]domain.HostingStorageBackupRetentionExecution, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) ([]domain.HostingStorageBackupRetentionExecution, error) {
 		if _, e := storageDeletionScope(ctx, tx, actor, resource, backup, domain.RoleViewer); e != nil {
@@ -155,6 +161,8 @@ func (s *PostgresStore) ListStorageBackupDeletions(ctx context.Context, actor, r
 		return out, nil
 	})
 }
+
+// GetStorageBackupDeletion returns an authorized manual backup deletion execution.
 func (s *PostgresStore) GetStorageBackupDeletion(ctx context.Context, actor, resource, backup, id string) (domain.HostingStorageBackupRetentionExecution, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackupRetentionExecution, error) {
 		var out domain.HostingStorageBackupRetentionExecution

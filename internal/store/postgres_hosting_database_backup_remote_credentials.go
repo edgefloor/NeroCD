@@ -12,11 +12,16 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// BackupRemoteCredentialAuthorization contains delivery metadata and encrypted credential
+// records.
 type BackupRemoteCredentialAuthorization struct {
 	ProjectID string
 	Metadata  domain.BackupRemoteCredentialMetadata
 	Records   BackupRemoteCredentialRecords
 }
+
+// HostingDatabaseBackupRemoteCredentialRepository defines persistence operations for database
+// backup remote credential.
 type HostingDatabaseBackupRemoteCredentialRepository interface {
 	AuthorizeBackupRemoteCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error)
 	RevalidateBackupRemoteCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest, domain.BackupRemoteCredentialMetadata) error
@@ -41,6 +46,7 @@ func backupRemoteDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, token
 	return r, expiry, hostingError(err)
 }
 
+// AuthorizeBackupRemoteCredentials authorizes and records a remote transfer credential delivery.
 func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, runner, tokenHash string, in domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (BackupRemoteCredentialAuthorization, error) {
 		var out BackupRemoteCredentialAuthorization
@@ -87,6 +93,8 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 		return out, err
 	})
 }
+
+// RevalidateBackupRemoteCredentials rechecks a saved remote transfer credential grant before use.
 func (s *PostgresStore) RevalidateBackupRemoteCredentials(ctx context.Context, runner, tokenHash string, in domain.BackupRemoteCredentialRequest, m domain.BackupRemoteCredentialMetadata) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		_, expiry, e := backupRemoteDeliveryAuthority(ctx, tx, runner, tokenHash, in)

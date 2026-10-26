@@ -10,8 +10,10 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// HostingDatabaseBackupScheduleVersion identifies the database backup schedule document format.
 const HostingDatabaseBackupScheduleVersion = "postgresql.logical-local.schedule.v1"
 
+// ErrInvalidDatabaseBackupSchedule reports invalid database backup schedule input.
 var ErrInvalidDatabaseBackupSchedule = errors.New("invalid PostgreSQL backup schedule")
 
 // HostingDatabaseBackupScheduleInput uses a whole-document compare-and-swap.
@@ -55,6 +57,7 @@ func backupSchedule(frequency, zone string) (cron.Schedule, string, *time.Locati
 	return parsed, fields[1], location, nil
 }
 
+// Validate checks the database backup schedule input fields and invariants.
 func (in HostingDatabaseBackupScheduleInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.ExpectedVersion < 0 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackupSchedule

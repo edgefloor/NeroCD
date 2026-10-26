@@ -55,7 +55,7 @@ type notificationClaim struct {
 	Expires     time.Time
 }
 
-// A dedicated PostgreSQL session lock serializes sends across processes even
+// SendBackupNotification uses a dedicated PostgreSQL session lock to serialize sends even
 // when a lease expires. Expiry alone never permits a concurrent duplicate send.
 // Losing the session is an authority failure; the sender's before-send callback
 // probes that same session before each message. External delivery is at least

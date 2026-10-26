@@ -6,6 +6,7 @@ import (
 	"slices"
 )
 
+// HostingProxyStorageSwitchVersion identifies the proxy storage switch document format.
 const HostingProxyStorageSwitchVersion = "application-database.storage-proxy.v1"
 
 // HostingProxyStorageSwitch is controller-derived exact interrupted-writer intent.
@@ -32,11 +33,14 @@ type HostingProxyStorageSwitch struct {
 	Hash                    string            `json:"hash"`
 }
 
+// DocumentHash returns the hash of the proxy storage switch document.
 func (p HostingProxyStorageSwitch) DocumentHash() string { p.Hash = ""; return HostingDocumentHash(p) }
 func proxyStorageEngineHash(hash string) bool {
 	value, err := hex.DecodeString(hash)
 	return err == nil && len(value) == 32 && hex.EncodeToString(value) == hash
 }
+
+// Validate checks the proxy storage switch fields and invariants.
 func (p HostingProxyStorageSwitch) Validate(snapshot HostingProxySnapshot, previous int64) error {
 	if p.Version != HostingProxyStorageSwitchVersion || p.Hash != p.DocumentHash() || !hostingProxyID.MatchString(p.OperationID) || !imageSHA256.MatchString(p.ContinuationHash) || !validHostingStorageRef(p.StorageRef) || !imageSHA256.MatchString(p.StorageOriginHash) || !imageSHA256.MatchString(p.WriterStateHash) || !imageSHA256.MatchString(p.CandidateHash) || p.RouteScopeHash != HostingDocumentHash(snapshot.Routes) || p.PriorGeneration != previous || p.PriorGeneration < 1 || p.PriorPreviousGeneration < 0 || p.PriorPreviousGeneration >= p.PriorGeneration || !proxyStorageEngineHash(p.PriorEngineHash) || snapshot.VerifiedSwitch == nil {
 		return ErrInvalidHostingStorage

@@ -18,6 +18,9 @@ func (s *Service) storageConnectionRunner(ctx context.Context, token string) (st
 	}
 	return repo, runner, credential, nil
 }
+
+// RunnerHostingApplicationDatabaseStorageWriter records a storage writer receipt for the
+// authenticated runner.
 func (s *Service) RunnerHostingApplicationDatabaseStorageWriter(ctx context.Context, token string, in domain.HostingApplicationDatabaseStorageWriterRequest) (domain.HostingOperation, error) {
 	if err := in.Validate(); err != nil {
 		return domain.HostingOperation{}, InvalidInput(err)
@@ -28,6 +31,9 @@ func (s *Service) RunnerHostingApplicationDatabaseStorageWriter(ctx context.Cont
 	}
 	return repo.HostingApplicationDatabaseStorageWriter(ctx, runner, credential, in)
 }
+
+// RunnerHostingApplicationDatabaseStorageAuthorize authorizes a storage effect for the
+// authenticated runner.
 func (s *Service) RunnerHostingApplicationDatabaseStorageAuthorize(ctx context.Context, token string, in domain.HostingApplicationDatabaseStorageEffectRequest) (domain.HostingApplicationDatabaseStorageEffectAuthorization, error) {
 	if err := in.Validate(); err != nil {
 		return domain.HostingApplicationDatabaseStorageEffectAuthorization{}, InvalidInput(err)
@@ -38,6 +44,9 @@ func (s *Service) RunnerHostingApplicationDatabaseStorageAuthorize(ctx context.C
 	}
 	return repo.AuthorizeHostingApplicationDatabaseStorageEffect(ctx, runner, credential, in)
 }
+
+// RunnerHostingApplicationDatabaseStorageProxyPlan returns the storage proxy plan for the
+// authenticated runner.
 func (s *Service) RunnerHostingApplicationDatabaseStorageProxyPlan(ctx context.Context, token string, in domain.HostingAuthority) (domain.HostingApplicationDatabaseStorageProxyPlan, error) {
 	repo, runner, credential, err := s.storageConnectionRunner(ctx, token)
 	if err != nil {

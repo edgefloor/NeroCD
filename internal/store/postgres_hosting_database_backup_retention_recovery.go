@@ -117,6 +117,9 @@ func (s *PostgresStore) backupRetentionResumeTx(ctx context.Context, tx pgx.Tx, 
 	}
 	return r.view, databaseBackupFinalizeActor(ctx, tx, actor)
 }
+
+// DatabaseBackupRetentionRetirement proves that a newer audited database retention attempt
+// superseded a lease.
 func (s *PostgresStore) DatabaseBackupRetentionRetirement(ctx context.Context, runner string, in domain.HostingDatabaseBackupRetentionRetirementInput) (domain.HostingDatabaseBackupRetentionRetirement, error) {
 	var zero domain.HostingDatabaseBackupRetentionRetirement
 	if in.Validate() != nil {

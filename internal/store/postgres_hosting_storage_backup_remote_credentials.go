@@ -31,6 +31,8 @@ func storageRemoteDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, toke
 	return r, expiry, hostingError(err)
 }
 
+// AuthorizeStorageRemoteCredentials authorizes and records a storage transfer credential
+// delivery.
 func (s *PostgresStore) AuthorizeStorageRemoteCredentials(ctx context.Context, runner, tokenHash string, in domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (BackupRemoteCredentialAuthorization, error) {
 		var out BackupRemoteCredentialAuthorization
@@ -77,6 +79,9 @@ func (s *PostgresStore) AuthorizeStorageRemoteCredentials(ctx context.Context, r
 		return out, err
 	})
 }
+
+// RevalidateStorageRemoteCredentials rechecks a saved storage transfer credential grant before
+// use.
 func (s *PostgresStore) RevalidateStorageRemoteCredentials(ctx context.Context, runner, tokenHash string, in domain.BackupRemoteCredentialRequest, m domain.BackupRemoteCredentialMetadata) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		_, expiry, e := storageRemoteDeliveryAuthority(ctx, tx, runner, tokenHash, in)

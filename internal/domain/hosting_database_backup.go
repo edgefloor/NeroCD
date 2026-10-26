@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 )
 
+// RunTypeDatabaseBackup and related constants identify database backup tasks and protocols.
 const (
 	RunTypeDatabaseBackup                 = "database_backup"
 	HostingDatabaseBackupCapability       = "hosting_postgresql_backup_v1"
@@ -19,6 +20,7 @@ const (
 	HostingDatabaseBackupMaxBytes   int64 = 1 << 30
 )
 
+// ErrInvalidDatabaseBackup reports invalid database backup input.
 var ErrInvalidDatabaseBackup = errors.New("invalid hosted PostgreSQL backup request")
 
 // HostingDatabaseBackupInput identifies one immediate logical snapshot request.
@@ -28,6 +30,7 @@ type HostingDatabaseBackupInput struct {
 	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
 }
 
+// Validate checks the database backup input fields and invariants.
 func (in HostingDatabaseBackupInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
@@ -42,6 +45,7 @@ type HostingDatabaseBackupRestoreInput struct {
 	RemoteSource *BackupRemoteSource `json:"remote_source,omitempty"`
 }
 
+// Validate checks the database backup restore input fields and invariants.
 func (in HostingDatabaseBackupRestoreInput) Validate() error {
 	for _, r := range in.Name {
 		if unicode.IsControl(r) {
@@ -61,6 +65,7 @@ type HostingDatabaseBackupBlob struct {
 	Format string `json:"format"`
 }
 
+// Validate checks the database backup blob fields and invariants.
 func (b HostingDatabaseBackupBlob) Validate() error {
 	if !imageSHA256.MatchString(b.Digest) || b.Bytes < 5 || b.Bytes > HostingDatabaseBackupMaxBytes || b.Format != "postgresql_custom" {
 		return ErrInvalidDatabaseBackup
@@ -110,6 +115,7 @@ type HostingDatabaseBackupPlan struct {
 	Hash           string                         `json:"hash"`
 }
 
+// Validate checks the database backup plan fields and invariants.
 func (p HostingDatabaseBackupPlan) Validate() error {
 	hash := p.Hash
 	p.Hash = ""
@@ -141,6 +147,7 @@ type HostingDatabaseBackupMutation struct {
 	FailureCode string                     `json:"failure_code,omitempty"`
 }
 
+// Validate checks the database backup mutation fields and invariants.
 func (in HostingDatabaseBackupMutation) Validate() error {
 	if in.LocalCopy != nil && (in.Phase != "complete" || in.LocalCopy.Validate() != nil || in.Blob == nil || in.LocalCopy.Bytes != in.Blob.Bytes) {
 		return ErrInvalidDatabaseBackup
@@ -167,6 +174,8 @@ func (in HostingDatabaseBackupMutation) Validate() error {
 	}
 	return nil
 }
+
+// ValidateDatabaseBackupTask checks the database backup task contract.
 func ValidateDatabaseBackupTask(run TaskRun) error {
 	s := run.RunSpec
 	if s.Type != RunTypeDatabaseBackup || !validRuntimeReferenceID(s.HostingOperationID) || run.ID != "db_backup_"+s.HostingOperationID || (s.HostingMode != "backup" && s.HostingMode != "restore") || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(run.Workflow.Steps) != 0 {
@@ -188,6 +197,8 @@ func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 	}
 	return nil
 }
+
+// Validate checks the database backup operation fields and invariants.
 func (o HostingDatabaseBackupOperation) Validate() error {
 	if o.RemoteTarget != nil && o.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
@@ -223,12 +234,15 @@ type HostingDatabaseBackupLimits struct {
 	TimeoutSeconds int
 }
 
+// Validate checks the database backup limits fields and invariants.
 func (l HostingDatabaseBackupLimits) Validate() error {
 	if l.MaxBytes < 5 || l.MaxBytes > HostingDatabaseBackupMaxBytes || l.TimeoutSeconds < 1 || l.TimeoutSeconds > 3600 {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
 }
+
+// DefaultHostingDatabaseBackupLimits returns the default backup size and timeout limits.
 func DefaultHostingDatabaseBackupLimits() HostingDatabaseBackupLimits {
 	return HostingDatabaseBackupLimits{MaxBytes: HostingDatabaseBackupMaxBytes, TimeoutSeconds: 900}
 }

@@ -60,6 +60,8 @@ func (s *PostgresStore) storageRemoteLocalComplete(ctx context.Context, tx pgx.T
 	plan.Hash = domain.HostingDocumentHash(plan)
 	return s.storageRemoteInsert(ctx, tx, plan, "upload_"+p.BackupID, domain.HostingDocumentHash(struct{ Backup, Plan string }{p.BackupID, p.Hash}), nil)
 }
+
+// RetryStorageBackupTransfer admits a retry of the selected failed storage backup upload.
 func (s *PostgresStore) RetryStorageBackupTransfer(ctx context.Context, id, actor, backup string, in domain.HostingStorageBackupTransferRetryInput) (domain.HostingStorageBackupTransfer, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackupTransfer, error) {
 		var zero domain.HostingStorageBackupTransfer

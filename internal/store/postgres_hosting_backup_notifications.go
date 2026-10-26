@@ -53,6 +53,7 @@ func notificationMembers(ctx context.Context, tx pgx.Tx, project string, ids []s
 	return emails, nil
 }
 
+// SaveNotificationChannel creates or revises a project notification channel.
 func (s *PostgresStore) SaveNotificationChannel(ctx context.Context, id, project, actor, existing string, in domain.NotificationChannelInput, secret *NotificationSecret, recipientIDs []string, compare NotificationSecretCompare) (domain.NotificationChannel, error) {
 	if in.Validate() != nil {
 		return domain.NotificationChannel{}, domain.ErrInvalidNotification
@@ -161,6 +162,8 @@ func (s *PostgresStore) SaveNotificationChannel(ctx context.Context, id, project
 		return v, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListNotificationChannels lists notification channels visible to the project viewer.
 func (s *PostgresStore) ListNotificationChannels(ctx context.Context, actor, project string) ([]domain.NotificationChannel, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.NotificationChannel, error) {
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleViewer, false); err != nil {
@@ -177,6 +180,8 @@ func (s *PostgresStore) ListNotificationChannels(ctx context.Context, actor, pro
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListNotificationDeliveries lists notification deliveries visible to the project viewer.
 func (s *PostgresStore) ListNotificationDeliveries(ctx context.Context, actor, project string) ([]domain.NotificationDelivery, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.NotificationDelivery, error) {
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleViewer, false); err != nil {
@@ -193,6 +198,8 @@ func (s *PostgresStore) ListNotificationDeliveries(ctx context.Context, actor, p
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// GetNotificationDelivery returns an authorized notification delivery view.
 func (s *PostgresStore) GetNotificationDelivery(ctx context.Context, actor, project, id string) (domain.NotificationDelivery, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.NotificationDelivery, error) {
 		var zero domain.NotificationDelivery
@@ -215,6 +222,8 @@ func (s *PostgresStore) GetNotificationDelivery(ctx context.Context, actor, proj
 		return v, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// TestNotificationChannel queues a test delivery for an authorized notification channel.
 func (s *PostgresStore) TestNotificationChannel(ctx context.Context, id, project, actor, channel string, in domain.NotificationTestInput) (domain.NotificationDelivery, error) {
 	if in.Validate() != nil {
 		return domain.NotificationDelivery{}, domain.ErrInvalidNotification

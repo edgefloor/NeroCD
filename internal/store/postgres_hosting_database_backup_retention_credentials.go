@@ -12,6 +12,8 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// HostingDatabaseBackupRetentionCredentialRepository defines persistence operations for database
+// backup retention credential.
 type HostingDatabaseBackupRetentionCredentialRepository interface {
 	AuthorizeBackupRetentionCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error)
 	RevalidateBackupRetentionCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest, domain.BackupRemoteCredentialMetadata) error
@@ -44,6 +46,9 @@ func backupRetentionDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, to
 	expiry, e = sqlcgen.New(tx).ReadDatabaseBackupRetentionCredentialExpiry(ctx, sqlcgen.ReadDatabaseBackupRetentionCredentialExpiryParams{ID: in.Authority.LeaseID, ID_2: runner, TokenHash: token})
 	return r, c, expiry, hostingError(e)
 }
+
+// AuthorizeBackupRetentionCredentials authorizes and records a database retention credential
+// delivery.
 func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context, runner, token string, in domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (BackupRemoteCredentialAuthorization, error) {
 		var out BackupRemoteCredentialAuthorization
@@ -89,6 +94,9 @@ func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context,
 		return out, e
 	})
 }
+
+// RevalidateBackupRetentionCredentials rechecks a saved database retention credential grant
+// before use.
 func (s *PostgresStore) RevalidateBackupRetentionCredentials(ctx context.Context, runner, token string, in domain.BackupRemoteCredentialRequest, m domain.BackupRemoteCredentialMetadata) error {
 	_, e := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		_, _, expiry, e := backupRetentionDeliveryAuthority(ctx, tx, runner, token, in)

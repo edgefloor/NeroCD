@@ -7,6 +7,7 @@ import (
 	"github.com/riverqueue/river"
 )
 
+// BackupNotificationKind identifies the backup notification River job kind.
 const BackupNotificationKind = "hosting.backup_notification.v1"
 
 // BackupNotificationArgs contains no recipient, target, payload, or credentials.
@@ -14,13 +15,17 @@ type BackupNotificationArgs struct {
 	DeliveryID string `json:"delivery_id"`
 }
 
+// Kind returns the River job kind.
 func (BackupNotificationArgs) Kind() string { return BackupNotificationKind }
+
+// InsertOpts returns the queue and uniqueness options for this job.
 func (BackupNotificationArgs) InsertOpts() river.InsertOpts {
 	v := (PrepareDeploymentArgs{}).InsertOpts()
 	v.MaxAttempts = 5
 	return v
 }
 
+// BackupNotificationHandler handles backup notification jobs.
 type BackupNotificationHandler interface {
 	SendBackupNotification(context.Context, string) error
 }
@@ -43,7 +48,11 @@ func (w *backupNotificationWorker) Work(ctx context.Context, job *river.Job[Back
 	}
 	return nil
 }
+
+// BackupNotificationEnabled reports whether the backup notification worker is configured.
 func (c *Client) BackupNotificationEnabled() bool { return c != nil && c.hasBackupNotification }
+
+// EnqueueBackupNotificationTx enqueues a backup notification job in the caller's transaction.
 func (c *Client) EnqueueBackupNotificationTx(ctx context.Context, tx pgx.Tx, args BackupNotificationArgs) (int64, error) {
 	if !c.BackupNotificationEnabled() {
 		return 0, ErrUnavailable

@@ -71,6 +71,7 @@ func (s *PostgresStore) backupRemoteLocalComplete(ctx context.Context, tx pgx.Tx
 	return s.backupRemoteInsert(ctx, tx, plan, "upload_"+r.ID, domain.HostingDocumentHash(struct{ Backup, Plan string }{r.ID, p.Hash}), nil)
 }
 
+// RetryDatabaseBackupTransfer admits a retry of the selected failed database backup upload.
 func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, actor, backup string, in domain.HostingDatabaseBackupTransferRetryInput) (domain.HostingDatabaseBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingDatabaseBackupTransfer{}, domain.ErrInvalidDatabaseBackupRemote

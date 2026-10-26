@@ -2,7 +2,12 @@ package domain
 
 import "errors"
 
+// HostingApplicationDatabaseRouteContinuityVersion identifies the application database route
+// continuity document format.
 const HostingApplicationDatabaseRouteContinuityVersion = "application-database.route-continuity.v1"
+
+// HostingApplicationDatabaseRouteContinuityCapability advertises support for application database
+// route continuity.
 const HostingApplicationDatabaseRouteContinuityCapability = "hosting_application_database_route_continuity_v1"
 
 // HostingApplicationDatabaseRouteContinuityInput pins the loaded proxy and all application routes.
@@ -12,6 +17,8 @@ type HostingApplicationDatabaseRouteContinuityInput struct {
 	Routes                         []HostingRouteSwitchSelection `json:"routes"`
 }
 
+// CanonicalHostingApplicationDatabaseRouteContinuityInput normalizes application database routing
+// input through the storage route contract.
 func CanonicalHostingApplicationDatabaseRouteContinuityInput(in HostingApplicationDatabaseRouteContinuityInput) (HostingApplicationDatabaseRouteContinuityInput, error) {
 	c, err := CanonicalHostingStorageRouteContinuityInput(HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: in.ExpectedLoadedGeneration, ExpectedLoadedProxyOperationID: in.ExpectedLoadedProxyOperationID, Routes: in.Routes})
 	if err != nil {
@@ -35,10 +42,13 @@ type HostingApplicationDatabaseRouteContinuity struct {
 	Hash               string                                         `json:"hash"`
 }
 
+// DocumentHash returns the hash of the application database route continuity document.
 func (c HostingApplicationDatabaseRouteContinuity) DocumentHash() string {
 	c.Hash = ""
 	return HostingDocumentHash(c)
 }
+
+// Validate checks the application database route continuity fields and invariants.
 func (c HostingApplicationDatabaseRouteContinuity) Validate(op HostingOperation) error {
 	// Binding state and membership evidence are decoded independently. Compare
 	// the complete persisted document, including nested storage provenance.
@@ -69,12 +79,15 @@ type HostingApplicationDatabaseYieldRequest struct {
 	ContinuationHash string `json:"continuation_hash"`
 }
 
+// Validate checks the application database yield request fields and invariants.
 func (y HostingApplicationDatabaseYieldRequest) Validate() error {
 	if y.Version != HostingApplicationDatabaseRouteContinuityVersion || !hostingProxyID.MatchString(y.ReceiptID) || !connectionRequestAuthority(y.HostingAuthority) || y.RunID != "run_"+y.OperationID || !imageSHA256.MatchString(y.PlanHash) || !imageSHA256.MatchString(y.StageHash) || !imageSHA256.MatchString(y.CandidateHash) || !imageSHA256.MatchString(y.ContinuationHash) {
 		return errors.New("invalid application database yield")
 	}
 	return nil
 }
+
+// ValidateStage checks the yield request against the operation and captured stage.
 func (y HostingApplicationDatabaseYieldRequest) ValidateStage(op HostingOperation, stage HostingApplicationDatabaseStage) error {
 	if y.Validate() != nil || op.ApplicationDatabaseRouteContinuity == nil || op.ApplicationDatabaseRouteContinuity.Validate(op) != nil || op.Plan == nil || y.OperationID != op.ID || y.RunID != op.RunID || y.PlanHash != op.Plan.Hash || y.StageHash != stage.Hash || stage.Phase != "ready" || y.CandidateHash != stage.Candidate.DocumentHash() || y.ContinuationHash != op.ApplicationDatabaseRouteContinuity.Hash {
 		return errors.New("yield ready candidate mismatch")
@@ -85,6 +98,8 @@ func (y HostingApplicationDatabaseYieldRequest) ValidateStage(op HostingOperatio
 	}
 	return stage.Validate(*op.Plan, in)
 }
+
+// UnmarshalJSON decodes the application database yield request document.
 func (y *HostingApplicationDatabaseYieldRequest) UnmarshalJSON(raw []byte) error {
 	type wire HostingApplicationDatabaseYieldRequest
 	var v wire
@@ -105,6 +120,7 @@ type HostingApplicationDatabaseYieldReceipt struct {
 	ContinuationHash string `json:"continuation_hash"`
 }
 
+// Receipt returns the immutable yield receipt described by the request.
 func (y HostingApplicationDatabaseYieldRequest) Receipt() HostingApplicationDatabaseYieldReceipt {
 	return HostingApplicationDatabaseYieldReceipt{
 		Version:          y.Version,

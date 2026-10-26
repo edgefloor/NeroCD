@@ -17,6 +17,8 @@ func (s *Service) notificationRepository() (store.HostingNotificationRepository,
 	}
 	return r, nil
 }
+
+// SaveNotificationChannel creates or revises a project notification channel.
 func (s *Service) SaveNotificationChannel(ctx context.Context, project, existing string, in domain.NotificationChannelInput, c *domain.NotificationConfiguration) (domain.NotificationChannel, error) {
 	var zero domain.NotificationChannel
 	if in.Validate() != nil || existing == "" && in.ExpectedGeneration != 0 || existing != "" && in.ExpectedGeneration < 1 || existing == "" && c == nil || c != nil && c.Validate(in.Type) != nil {
@@ -67,6 +69,8 @@ func (s *Service) SaveNotificationChannel(ctx context.Context, project, existing
 	}
 	return r.SaveNotificationChannel(ctx, id, project, actor.ID, existing, in, record, recipients, compare)
 }
+
+// ListNotificationChannels lists notification channels visible to the project viewer.
 func (s *Service) ListNotificationChannels(ctx context.Context, project string) ([]domain.NotificationChannel, error) {
 	actor, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer)
 	if err != nil {
@@ -78,6 +82,8 @@ func (s *Service) ListNotificationChannels(ctx context.Context, project string) 
 	}
 	return r.ListNotificationChannels(ctx, actor.ID, project)
 }
+
+// TestNotificationChannel queues a test delivery for an authorized notification channel.
 func (s *Service) TestNotificationChannel(ctx context.Context, project, channel string, in domain.NotificationTestInput) (domain.NotificationDelivery, error) {
 	var zero domain.NotificationDelivery
 	if in.Validate() != nil {
@@ -97,6 +103,8 @@ func (s *Service) TestNotificationChannel(ctx context.Context, project, channel 
 	}
 	return r.TestNotificationChannel(ctx, id, project, actor.ID, channel, in)
 }
+
+// ListNotificationDeliveries lists notification deliveries visible to the project viewer.
 func (s *Service) ListNotificationDeliveries(ctx context.Context, project string) ([]domain.NotificationDelivery, error) {
 	actor, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer)
 	if err != nil {
@@ -108,6 +116,8 @@ func (s *Service) ListNotificationDeliveries(ctx context.Context, project string
 	}
 	return r.ListNotificationDeliveries(ctx, actor.ID, project)
 }
+
+// GetNotificationDelivery returns an authorized notification delivery view.
 func (s *Service) GetNotificationDelivery(ctx context.Context, project, id string) (domain.NotificationDelivery, error) {
 	actor, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer)
 	if err != nil {

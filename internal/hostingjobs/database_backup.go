@@ -9,19 +9,26 @@ import (
 	"github.com/riverqueue/river"
 )
 
+// DatabaseBackupKind identifies the database backup River job kind.
 const DatabaseBackupKind = "hosting.database_backup.v1"
 
+// ErrDatabaseBackupWaiting reports that a restore is waiting for its download or target.
 var ErrDatabaseBackupWaiting = errors.New("hosting_database_backup_waiting")
 
+// DatabaseBackupArgs identifies the operation handled by a database backup job.
 type DatabaseBackupArgs struct {
 	OperationID string `json:"operation_id"`
 }
 
+// Kind returns the River job kind.
 func (DatabaseBackupArgs) Kind() string { return DatabaseBackupKind }
+
+// InsertOpts returns the queue and uniqueness options for this job.
 func (DatabaseBackupArgs) InsertOpts() river.InsertOpts {
 	return (PrepareDeploymentArgs{}).InsertOpts()
 }
 
+// DatabaseBackupHandler handles database backup jobs.
 type DatabaseBackupHandler interface {
 	PrepareDatabaseBackup(context.Context, string) error
 }
@@ -48,7 +55,11 @@ func (w *databaseBackupWorker) Work(ctx context.Context, job *river.Job[Database
 	}
 	return nil
 }
+
+// DatabaseBackupEnabled reports whether the database backup worker is configured.
 func (c *Client) DatabaseBackupEnabled() bool { return c != nil && c.hasDatabaseBackup }
+
+// EnqueueDatabaseBackupTx enqueues a database backup job in the caller's transaction.
 func (c *Client) EnqueueDatabaseBackupTx(ctx context.Context, tx pgx.Tx, args DatabaseBackupArgs) (int64, error) {
 	if !c.DatabaseBackupEnabled() {
 		return 0, ErrUnavailable

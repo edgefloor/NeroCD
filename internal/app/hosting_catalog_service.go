@@ -11,6 +11,7 @@ import (
 	"nerocd/internal/store"
 )
 
+// HostingCatalog lists catalog templates visible to the project viewer.
 func (s *Service) HostingCatalog(ctx context.Context, project string) ([]domain.HostingCatalogTemplate, error) {
 	if _, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer); err != nil {
 		return nil, err
@@ -18,6 +19,7 @@ func (s *Service) HostingCatalog(ctx context.Context, project string) ([]domain.
 	return domain.HostingCatalogTemplates(), nil
 }
 
+// InstallHostingCatalog installs a catalog template with managed credentials.
 func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCatalogInstallInput) (domain.HostingCatalogInstallation, error) {
 	var zero domain.HostingCatalogInstallation
 	actor, err := s.authorizeHostingProject(ctx, in.ProjectID, domain.RoleOwner)
@@ -66,6 +68,7 @@ func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCa
 	return repo.InstallHostingCatalog(ctx, actor.ID, in, records, event)
 }
 
+// GetHostingCatalogInstallation returns an authorized catalog installation view.
 func (s *Service) GetHostingCatalogInstallation(ctx context.Context, resource string) (domain.HostingCatalogInstallation, error) {
 	var zero domain.HostingCatalogInstallation
 	r, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)

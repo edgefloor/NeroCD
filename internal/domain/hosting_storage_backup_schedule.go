@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
+// HostingStorageBackupScheduleVersion identifies the storage backup schedule document format.
 const HostingStorageBackupScheduleVersion = "hosting.storage-backup.schedule.v1"
 
+// ErrInvalidStorageBackupSchedule reports invalid storage backup schedule input.
 var ErrInvalidStorageBackupSchedule = errors.New("invalid storage backup schedule")
 
 // HostingStorageBackupScheduleInput uses a whole-document compare-and-swap.
@@ -21,6 +23,7 @@ type HostingStorageBackupScheduleInput struct {
 	Enabled                    bool                   `json:"enabled"`
 }
 
+// Validate checks the storage backup schedule input fields and invariants.
 func (in HostingStorageBackupScheduleInput) Validate() error {
 	if !hostingStorageRequest.MatchString(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.ExpectedVersion < 0 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidStorageBackupSchedule

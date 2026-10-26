@@ -7,16 +7,24 @@ import (
 
 var storageDeletionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
+// HostingStorageBackupDeletionVersion identifies the storage backup deletion document format.
 const HostingStorageBackupDeletionVersion = "owned-upload.backup-deletion.v1"
+
+// HostingStorageBackupDeletionCapability advertises support for storage backup deletion.
 const HostingStorageBackupDeletionCapability = "hosting_storage_backup_deletion_v1"
+
+// StorageBackupManualSelection identifies an explicit operator selection for backup deletion.
 const StorageBackupManualSelection = "manual_selection"
 
+// HostingStorageBackupDeletionPreviewInput describes the requested storage backup deletion
+// preview.
 type HostingStorageBackupDeletionPreviewInput struct {
 	RequestID                  string   `json:"request_id"`
 	ExpectedResourceGeneration int64    `json:"expected_resource_generation"`
 	CopyIDs                    []string `json:"copy_ids"`
 }
 
+// Validate checks the storage backup deletion preview input fields and invariants.
 func (in HostingStorageBackupDeletionPreviewInput) Validate() error {
 	if !storageDeletionID.MatchString(in.RequestID) || in.ExpectedResourceGeneration < 1 || len(in.CopyIDs) == 0 || len(in.CopyIDs) > BackupRetentionBatchLimit {
 		return ErrInvalidStorageBackupRetention
@@ -31,6 +39,7 @@ func (in HostingStorageBackupDeletionPreviewInput) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupDeletionInput describes the requested storage backup deletion.
 type HostingStorageBackupDeletionInput struct {
 	RequestID        string `json:"request_id"`
 	PreviewID        string `json:"preview_id"`
@@ -38,12 +47,16 @@ type HostingStorageBackupDeletionInput struct {
 	ConfirmFinalCopy bool   `json:"confirm_final_copy"`
 }
 
+// Validate checks the storage backup deletion input fields and invariants.
 func (in HostingStorageBackupDeletionInput) Validate() error {
 	if !storageDeletionID.MatchString(in.RequestID) || !storageDeletionID.MatchString(in.PreviewID) || !imageSHA256.MatchString(in.ExpectedPlanHash) {
 		return ErrInvalidStorageBackupRetention
 	}
 	return nil
 }
+
+// ValidStorageBackupDeletionOperation reports whether a retention execution represents manual
+// backup deletion.
 func ValidStorageBackupDeletionOperation(o HostingStorageBackupRetentionExecution) bool {
 	if o.Version == HostingStorageBackupRetentionVersion {
 		return o.Origin == "" && o.BackupID == "" && o.ResourceGeneration == 0 && !o.FinalCopy

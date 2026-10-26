@@ -9,14 +9,17 @@ import (
 	"time"
 )
 
+// HostingStorageBackupRetentionVersion and related constants identify storage backup retention documents and capabilities.
 const (
 	HostingStorageBackupRetentionVersion    = "owned-upload.backup-retention.v1"
 	HostingStorageBackupRetentionCapability = "hosting_storage_backup_retention_v1"
 	RunTypeStorageBackupRetention           = "storage_backup_retention"
 )
 
+// ErrInvalidStorageBackupRetention reports invalid storage backup retention input.
 var ErrInvalidStorageBackupRetention = errors.New("invalid storage backup retention request")
 
+// HostingStorageBackupRetentionInput describes the requested storage backup retention.
 type HostingStorageBackupRetentionInput struct {
 	RequestID                  string                `json:"request_id"`
 	ExpectedRevision           int64                 `json:"expected_revision"`
@@ -27,6 +30,7 @@ type HostingStorageBackupRetentionInput struct {
 	Remote                     BackupRetentionLimits `json:"remote"`
 }
 
+// Validate checks the storage backup retention input fields and invariants.
 func (in HostingStorageBackupRetentionInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedRevision < 0 || in.ExpectedResourceGeneration < 1 || in.Local.Validate() != nil || in.Remote.Validate() != nil {
 		return ErrInvalidStorageBackupRetention
@@ -34,6 +38,7 @@ func (in HostingStorageBackupRetentionInput) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupRetentionPolicy records the configured storage backup retention rules.
 type HostingStorageBackupRetentionPolicy struct {
 	Storage            HostingStorageRef     `json:"storage"`
 	BindingID          string                `json:"binding_id"`
@@ -50,11 +55,15 @@ type HostingStorageBackupRetentionPolicy struct {
 	CreatedAt          time.Time             `json:"created_at"`
 	UpdatedAt          time.Time             `json:"updated_at"`
 }
+
+// HostingStorageBackupRetentionPreviewInput describes the requested storage backup retention
+// preview.
 type HostingStorageBackupRetentionPreviewInput struct {
 	RequestID              string `json:"request_id"`
 	ExpectedPolicyRevision int64  `json:"expected_policy_revision"`
 }
 
+// Validate checks the storage backup retention preview input fields and invariants.
 func (in HostingStorageBackupRetentionPreviewInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedPolicyRevision < 1 {
 		return ErrInvalidStorageBackupRetention
@@ -62,6 +71,7 @@ func (in HostingStorageBackupRetentionPreviewInput) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupRetentionPreview records a saved storage backup retention selection.
 type HostingStorageBackupRetentionPreview struct {
 	Origin             string                `json:"origin,omitempty"`
 	BackupID           string                `json:"backup_id,omitempty"`
@@ -80,6 +90,9 @@ type HostingStorageBackupRetentionPreview struct {
 	Items              []BackupRetentionItem `json:"items"`
 	CreatedAt          time.Time             `json:"created_at"`
 }
+
+// HostingStorageBackupRetentionExecutionInput describes the requested storage backup retention
+// execution.
 type HostingStorageBackupRetentionExecutionInput struct {
 	RequestID              string `json:"request_id"`
 	PreviewID              string `json:"preview_id"`
@@ -87,6 +100,7 @@ type HostingStorageBackupRetentionExecutionInput struct {
 	ExpectedPlanHash       string `json:"expected_plan_hash"`
 }
 
+// Validate checks the storage backup retention execution input fields and invariants.
 func (in HostingStorageBackupRetentionExecutionInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || !validRuntimeReferenceID(in.PreviewID) || in.ExpectedPolicyRevision < 1 || !imageSHA256.MatchString(in.ExpectedPlanHash) {
 		return ErrInvalidStorageBackupRetention
@@ -94,6 +108,7 @@ func (in HostingStorageBackupRetentionExecutionInput) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupRetentionExecution records the state of a storage backup retention batch.
 type HostingStorageBackupRetentionExecution struct {
 	Origin             string                         `json:"origin,omitempty"`
 	BackupID           string                         `json:"backup_id,omitempty"`
@@ -115,6 +130,7 @@ type HostingStorageBackupRetentionExecution struct {
 	UpdatedAt          time.Time                      `json:"updated_at"`
 }
 
+// StorageBackupRetentionCopy combines a storage backup copy identity with its deletion evidence.
 type StorageBackupRetentionCopy struct {
 	Item          BackupRetentionItem                  `json:"item"`
 	RunnerID      string                               `json:"runner_id"`
@@ -129,6 +145,8 @@ type StorageBackupRetentionCopy struct {
 	ObjectKey     string                               `json:"object_key,omitempty"`
 }
 
+// HostingStorageBackupRetentionPlan binds the storage backup retention operation to its execution
+// inputs.
 type HostingStorageBackupRetentionPlan struct {
 	Progress       []BackupRetentionExecutionItem         `json:"progress,omitempty"`
 	Operation      HostingStorageBackupRetentionExecution `json:"operation"`
@@ -139,6 +157,7 @@ type HostingStorageBackupRetentionPlan struct {
 	Hash           string                                 `json:"hash"`
 }
 
+// Validate checks the storage backup retention plan fields and invariants.
 func (p HostingStorageBackupRetentionPlan) Validate() error {
 	if p.Progress != nil {
 		if len(p.Progress) != len(p.Copies) {
@@ -184,6 +203,8 @@ func (p HostingStorageBackupRetentionPlan) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupRetentionMutation reports a fenced storage backup retention execution
+// outcome.
 type HostingStorageBackupRetentionMutation struct {
 	ProbeOnly bool   `json:"probe_only,omitempty"`
 	ProbeKey  string `json:"probe_key,omitempty"`
@@ -195,6 +216,7 @@ type HostingStorageBackupRetentionMutation struct {
 	FailureCode string `json:"failure_code"`
 }
 
+// Validate checks the storage backup retention mutation fields and invariants.
 func (in HostingStorageBackupRetentionMutation) Validate() error {
 	if in.ProbeOnly {
 		prefix := "nerocd/storage/retention-probes/" + in.OperationID + "/"
@@ -217,6 +239,8 @@ func (in HostingStorageBackupRetentionMutation) Validate() error {
 	}
 	return nil
 }
+
+// ValidateStorageBackupRetentionTask checks the storage backup retention task contract.
 func ValidateStorageBackupRetentionTask(r TaskRun) error {
 	s := r.RunSpec
 	if s.Type != RunTypeStorageBackupRetention || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "storage_retention_"+s.HostingOperationID || s.HostingMode != "retention" || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
@@ -225,13 +249,14 @@ func ValidateStorageBackupRetentionTask(r TaskRun) error {
 	return nil
 }
 
-// Retirement proves only that an audited same-batch continuation superseded an
+// HostingStorageBackupRetentionRetirementInput requests proof that an audited continuation superseded an
 // old attempt. It grants no execution or credential authority to that attempt.
 type HostingStorageBackupRetentionRetirementInput struct {
 	HostingAuthority
 	PlanHash string `json:"plan_hash"`
 }
 
+// Validate checks the storage backup retention retirement input fields and invariants.
 func (in HostingStorageBackupRetentionRetirementInput) Validate() error {
 	if !validRuntimeReferenceID(in.OperationID) || in.RunID != "storage_retention_"+in.OperationID || !validRuntimeReferenceID(in.LeaseID) || in.Attempt < 1 || in.Attempt > math.MaxInt32 || len(in.Fence) < 1 || len(in.Fence) > 256 || !imageSHA256.MatchString(in.PlanHash) {
 		return ErrInvalidStorageBackupRetention
@@ -239,6 +264,8 @@ func (in HostingStorageBackupRetentionRetirementInput) Validate() error {
 	return nil
 }
 
+// HostingStorageBackupRetentionRetirement proves that an older storage retention attempt is
+// restricted to receipt replay.
 type HostingStorageBackupRetentionRetirement struct {
 	HostingAuthority
 	PlanHash    string `json:"plan_hash"`

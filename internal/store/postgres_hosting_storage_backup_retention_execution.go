@@ -60,6 +60,8 @@ func storageRetentionAuthority(ctx context.Context, tx pgx.Tx, runner string, a 
 	}
 	return storageRetentionLoad(ctx, tx, id, true)
 }
+
+// PrepareStorageBackupRetention prepares an admitted storage retention batch for dispatch.
 func (s *PostgresStore) PrepareStorageBackupRetention(ctx context.Context, id string) error {
 	_, e := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		if e := storageRetentionBoundary(ctx, tx, id); e != nil {
@@ -92,6 +94,9 @@ func (s *PostgresStore) PrepareStorageBackupRetention(ctx context.Context, id st
 func (h deploymentOnlyHandler) PrepareStorageBackupRetention(ctx context.Context, id string) error {
 	return h.store.PrepareStorageBackupRetention(ctx, id)
 }
+
+// StorageBackupRetentionPlan loads the storage retention plan under current runner lease
+// authority.
 func (s *PostgresStore) StorageBackupRetentionPlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingStorageBackupRetentionPlan, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackupRetentionPlan, error) {
 		if e := storageRetentionBoundary(ctx, tx, a.OperationID); e != nil {
@@ -128,6 +133,8 @@ func (s *PostgresStore) storageBackupRetentionClaimAllowed(ctx context.Context, 
 	}
 	return e == nil, e
 }
+
+// StorageBackupRetentionMutation records a fenced storage copy deletion outcome and receipt.
 func (s *PostgresStore) StorageBackupRetentionMutation(ctx context.Context, runner string, in domain.HostingStorageBackupRetentionMutation) (domain.HostingStorageBackupRetentionExecution, error) {
 	var zero domain.HostingStorageBackupRetentionExecution
 	if in.Validate() != nil {

@@ -11,9 +11,12 @@ import (
 	"nerocd/internal/store"
 )
 
+// RunnerBackupRemoteCredentials returns remote transfer credentials for the authenticated runner.
 func (s *Service) RunnerBackupRemoteCredentials(ctx context.Context, in domain.BackupRemoteCredentialRequest, token string) (*domain.BackupRemoteCredentials, error) {
 	return s.runnerBackupCredentials(ctx, in, token, false)
 }
+
+// RunnerBackupRetentionCredentials returns retention credentials for the authenticated runner.
 func (s *Service) RunnerBackupRetentionCredentials(ctx context.Context, in domain.BackupRemoteCredentialRequest, token string) (*domain.BackupRemoteCredentials, error) {
 	return s.runnerBackupCredentials(ctx, in, token, true)
 }

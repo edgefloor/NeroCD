@@ -222,6 +222,9 @@ func storageSwitchSnapshot(ctx context.Context, tx pgx.Tx, op domain.HostingOper
 	snapshot.StorageSwitch = &proof
 	return proof.Validate(*snapshot, prior.Generation)
 }
+
+// HostingApplicationDatabaseStorageProxyPlan loads the recovery proxy plan under current runner
+// authority.
 func (s *PostgresStore) HostingApplicationDatabaseStorageProxyPlan(ctx context.Context, runner, fingerprint string, a domain.HostingAuthority) (domain.HostingApplicationDatabaseStorageProxyPlan, error) {
 	var zero domain.HostingApplicationDatabaseStorageProxyPlan
 	ctx, err := BindHostingDatabaseConnectionRunnerContext(ctx, runner, fingerprint)

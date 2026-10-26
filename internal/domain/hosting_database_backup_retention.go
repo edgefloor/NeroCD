@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// HostingDatabaseBackupRetentionVersion and related constants identify database backup retention documents and capabilities.
 const (
 	HostingDatabaseBackupRetentionVersion    = "postgresql.backup-retention.v1"
 	HostingDatabaseBackupRetentionCapability = "hosting_postgresql_backup_retention_v1"
@@ -17,14 +18,17 @@ const (
 	BackupRetentionBatchLimit                = 100
 )
 
+// ErrInvalidDatabaseBackupRetention reports invalid database backup retention input.
 var ErrInvalidDatabaseBackupRetention = errors.New("invalid database backup retention request")
 
+// BackupRetentionLimits sets the count and age limits for retained copies.
 type BackupRetentionLimits struct {
 	KeepCount int   `json:"keep_count"`
 	KeepDays  int   `json:"keep_days"`
 	MaxBytes  int64 `json:"max_bytes"`
 }
 
+// Validate checks the backup retention limits fields and invariants.
 func (l BackupRetentionLimits) Validate() error {
 	if l.KeepCount < 0 || l.KeepCount > 10000 || l.KeepDays < 0 || l.KeepDays > 36500 || l.MaxBytes < 0 || l.MaxBytes > 1<<50 {
 		return ErrInvalidDatabaseBackupRetention
@@ -32,6 +36,7 @@ func (l BackupRetentionLimits) Validate() error {
 	return nil
 }
 
+// HostingDatabaseBackupRetentionInput describes the requested database backup retention.
 type HostingDatabaseBackupRetentionInput struct {
 	RequestID                  string                `json:"request_id"`
 	ExpectedRevision           int64                 `json:"expected_revision"`
@@ -42,6 +47,7 @@ type HostingDatabaseBackupRetentionInput struct {
 	Remote                     BackupRetentionLimits `json:"remote"`
 }
 
+// Validate checks the database backup retention input fields and invariants.
 func (in HostingDatabaseBackupRetentionInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedRevision < 0 || in.ExpectedResourceGeneration < 1 || in.Local.Validate() != nil || in.Remote.Validate() != nil {
 		return ErrInvalidDatabaseBackupRetention
@@ -49,6 +55,7 @@ func (in HostingDatabaseBackupRetentionInput) Validate() error {
 	return nil
 }
 
+// HostingDatabaseBackupRetentionPolicy records the configured database backup retention rules.
 type HostingDatabaseBackupRetentionPolicy struct {
 	Version            string                `json:"version"`
 	ProjectID          string                `json:"project_id"`
@@ -62,11 +69,15 @@ type HostingDatabaseBackupRetentionPolicy struct {
 	CreatedAt          time.Time             `json:"created_at"`
 	UpdatedAt          time.Time             `json:"updated_at"`
 }
+
+// HostingDatabaseBackupRetentionPreviewInput describes the requested database backup retention
+// preview.
 type HostingDatabaseBackupRetentionPreviewInput struct {
 	RequestID              string `json:"request_id"`
 	ExpectedPolicyRevision int64  `json:"expected_policy_revision"`
 }
 
+// Validate checks the database backup retention preview input fields and invariants.
 func (in HostingDatabaseBackupRetentionPreviewInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedPolicyRevision < 1 {
 		return ErrInvalidDatabaseBackupRetention
@@ -74,6 +85,7 @@ func (in HostingDatabaseBackupRetentionPreviewInput) Validate() error {
 	return nil
 }
 
+// BackupRetentionItem describes one copy considered by a retention preview.
 type BackupRetentionItem struct {
 	CopyID           string    `json:"copy_id"`
 	BackupID         string    `json:"backup_id"`
@@ -86,6 +98,8 @@ type BackupRetentionItem struct {
 	Selected         bool      `json:"selected"`
 	ProtectedReasons []string  `json:"protected_reasons"`
 }
+
+// HostingDatabaseBackupRetentionPreview records a saved database backup retention selection.
 type HostingDatabaseBackupRetentionPreview struct {
 	ID                 string                `json:"id"`
 	Version            string                `json:"version"`
@@ -99,6 +113,9 @@ type HostingDatabaseBackupRetentionPreview struct {
 	Items              []BackupRetentionItem `json:"items"`
 	CreatedAt          time.Time             `json:"created_at"`
 }
+
+// HostingDatabaseBackupRetentionExecutionInput describes the requested database backup retention
+// execution.
 type HostingDatabaseBackupRetentionExecutionInput struct {
 	RequestID              string `json:"request_id"`
 	PreviewID              string `json:"preview_id"`
@@ -106,6 +123,7 @@ type HostingDatabaseBackupRetentionExecutionInput struct {
 	ExpectedPlanHash       string `json:"expected_plan_hash"`
 }
 
+// Validate checks the database backup retention execution input fields and invariants.
 func (in HostingDatabaseBackupRetentionExecutionInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || !validRuntimeReferenceID(in.PreviewID) || in.ExpectedPolicyRevision < 1 || !imageSHA256.MatchString(in.ExpectedPlanHash) {
 		return ErrInvalidDatabaseBackupRetention
@@ -113,6 +131,7 @@ func (in HostingDatabaseBackupRetentionExecutionInput) Validate() error {
 	return nil
 }
 
+// BackupRetentionExecutionItem records progress and reservation state for a selected copy.
 type BackupRetentionExecutionItem struct {
 	CopyID          string `json:"copy_id"`
 	BackupID        string `json:"backup_id"`
@@ -121,6 +140,8 @@ type BackupRetentionExecutionItem struct {
 	FailureCode     string `json:"failure_code"`
 	ReservationHeld bool   `json:"reservation_held"`
 }
+
+// HostingDatabaseBackupRetentionExecution records the state of a database backup retention batch.
 type HostingDatabaseBackupRetentionExecution struct {
 	ID              string                         `json:"id"`
 	Version         string                         `json:"version"`
@@ -138,6 +159,7 @@ type HostingDatabaseBackupRetentionExecution struct {
 	UpdatedAt       time.Time                      `json:"updated_at"`
 }
 
+// ValidBackupRetentionFailure reports whether a retention failure code is recognized.
 func ValidBackupRetentionFailure(v string) bool {
 	return slices.Contains([]string{"", "authority_denied", "scope_changed", "object_changed", "conditional_unsupported", "interrupted", "storage_unavailable", "remote_unavailable"}, v)
 }
@@ -267,7 +289,7 @@ func appendReason(v []string, s string) []string {
 	return v
 }
 
-// Copy proofs are runner-only persisted evidence. They contain no local path or
+// BackupLocalCopyProof is runner-only persisted evidence. It contains no local path or
 // credential value. Created=false is adoption and cannot authorize deletion.
 type BackupLocalCopyProof struct {
 	PoolID  string `json:"pool_id"`
@@ -277,6 +299,7 @@ type BackupLocalCopyProof struct {
 	Created bool   `json:"created"`
 }
 
+// Validate checks the backup local copy proof fields and invariants.
 func (p BackupLocalCopyProof) Validate() error {
 	if !imageSHA256.MatchString(p.PoolID) || p.Inode == 0 || p.Bytes < 5 || p.Bytes > HostingDatabaseBackupMaxBytes {
 		return ErrInvalidDatabaseBackupRetention
@@ -284,12 +307,14 @@ func (p BackupLocalCopyProof) Validate() error {
 	return nil
 }
 
+// BackupRemoteCopyProof records runner evidence for one remote backup object.
 type BackupRemoteCopyProof struct {
 	ETag      string `json:"etag"`
 	VersionID string `json:"version_id"`
 	Created   bool   `json:"created"`
 }
 
+// Validate checks the backup remote copy proof fields and invariants.
 func (p BackupRemoteCopyProof) Validate() error {
 	if len(p.ETag) < 3 || len(p.ETag) > 256 || len(p.VersionID) > 1024 {
 		return ErrInvalidDatabaseBackupRetention
@@ -304,6 +329,7 @@ func (p BackupRemoteCopyProof) Validate() error {
 	return nil
 }
 
+// BackupRetentionCopy combines a database backup copy identity with its deletion evidence.
 type BackupRetentionCopy struct {
 	Item          BackupRetentionItem                  `json:"item"`
 	RunnerID      string                               `json:"runner_id"`
@@ -316,6 +342,9 @@ type BackupRetentionCopy struct {
 	Target        *HostingDatabaseBackupTargetSnapshot `json:"target,omitempty"`
 	ObjectKey     string                               `json:"object_key,omitempty"`
 }
+
+// HostingDatabaseBackupRetentionPlan binds the database backup retention operation to its
+// execution inputs.
 type HostingDatabaseBackupRetentionPlan struct {
 	Progress       []BackupRetentionExecutionItem          `json:"progress,omitempty"`
 	Operation      HostingDatabaseBackupRetentionExecution `json:"operation"`
@@ -326,6 +355,7 @@ type HostingDatabaseBackupRetentionPlan struct {
 	Hash           string                                  `json:"hash"`
 }
 
+// Validate checks the database backup retention plan fields and invariants.
 func (p HostingDatabaseBackupRetentionPlan) Validate() error {
 	if p.Progress != nil {
 		if len(p.Progress) != len(p.Copies) {
@@ -368,6 +398,8 @@ func (p HostingDatabaseBackupRetentionPlan) Validate() error {
 	return nil
 }
 
+// HostingDatabaseBackupRetentionMutation reports a fenced database backup retention execution
+// outcome.
 type HostingDatabaseBackupRetentionMutation struct {
 	ProbeOnly bool   `json:"probe_only,omitempty"`
 	ProbeKey  string `json:"probe_key,omitempty"`
@@ -379,6 +411,7 @@ type HostingDatabaseBackupRetentionMutation struct {
 	FailureCode string `json:"failure_code"`
 }
 
+// Validate checks the database backup retention mutation fields and invariants.
 func (in HostingDatabaseBackupRetentionMutation) Validate() error {
 	if in.ProbeOnly {
 		prefix := "nerocd/postgresql/retention-probes/" + in.OperationID + "/"
@@ -401,6 +434,8 @@ func (in HostingDatabaseBackupRetentionMutation) Validate() error {
 	}
 	return nil
 }
+
+// ValidateDatabaseBackupRetentionTask checks the database backup retention task contract.
 func ValidateDatabaseBackupRetentionTask(r TaskRun) error {
 	s := r.RunSpec
 	if s.Type != RunTypeDatabaseBackupRetention || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "db_retention_"+s.HostingOperationID || s.HostingMode != "retention" || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
@@ -409,13 +444,14 @@ func ValidateDatabaseBackupRetentionTask(r TaskRun) error {
 	return nil
 }
 
-// Retirement proves only that an audited same-batch continuation superseded an
+// HostingDatabaseBackupRetentionRetirementInput requests proof that an audited continuation superseded an
 // old attempt. It grants no execution or credential authority to that attempt.
 type HostingDatabaseBackupRetentionRetirementInput struct {
 	HostingAuthority
 	PlanHash string `json:"plan_hash"`
 }
 
+// Validate checks the database backup retention retirement input fields and invariants.
 func (in HostingDatabaseBackupRetentionRetirementInput) Validate() error {
 	if !validRuntimeReferenceID(in.OperationID) || in.RunID != "db_retention_"+in.OperationID || !validRuntimeReferenceID(in.LeaseID) || in.Attempt < 1 || in.Attempt > math.MaxInt32 || len(in.Fence) < 1 || len(in.Fence) > 256 || !imageSHA256.MatchString(in.PlanHash) {
 		return ErrInvalidDatabaseBackupRetention
@@ -423,6 +459,8 @@ func (in HostingDatabaseBackupRetentionRetirementInput) Validate() error {
 	return nil
 }
 
+// HostingDatabaseBackupRetentionRetirement proves that an older retention attempt is restricted
+// to receipt replay.
 type HostingDatabaseBackupRetentionRetirement struct {
 	HostingAuthority
 	PlanHash    string `json:"plan_hash"`

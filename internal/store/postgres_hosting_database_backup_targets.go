@@ -55,6 +55,7 @@ func insertBackupRemoteCredential(ctx context.Context, tx pgx.Tx, project, actor
 	return hostingError(err)
 }
 
+// SaveDatabaseBackupTarget creates or revises a remote backup target.
 func (s *PostgresStore) SaveDatabaseBackupTarget(ctx context.Context, id, project, actor, existing string, in domain.HostingDatabaseBackupTargetInput, records *BackupRemoteCredentialRecords, compare BackupRemoteCredentialCompare) (domain.HostingDatabaseBackupTarget, error) {
 	if in.Validate() != nil || existing == "" && (in.ExpectedRevision != 0 || records == nil) || existing != "" && in.ExpectedRevision < 1 || records != nil && compare == nil {
 		return domain.HostingDatabaseBackupTarget{}, domain.ErrInvalidDatabaseBackupRemote
@@ -192,6 +193,7 @@ func (s *PostgresStore) SaveDatabaseBackupTarget(ctx context.Context, id, projec
 	})
 }
 
+// ListDatabaseBackupTargets lists remote backup targets visible to the project viewer.
 func (s *PostgresStore) ListDatabaseBackupTargets(ctx context.Context, actor, project string) ([]domain.HostingDatabaseBackupTarget, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupTarget, error) {
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleViewer, false); err != nil {

@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// HostingApplicationDatabaseStorageVersion and related constants identify application database storage documents and policies.
 const (
 	HostingApplicationDatabaseStorageVersion         = "application-database.storage.v1"
 	HostingApplicationDatabaseStoragePolicyVersion   = "public-image.application-database.owned-storage.v1"
@@ -22,12 +23,15 @@ type HostingApplicationDatabaseStorageInput struct {
 	AcknowledgeInterruption   bool   `json:"acknowledge_interruption"`
 }
 
+// Validate checks the application database storage input fields and invariants.
 func (in HostingApplicationDatabaseStorageInput) Validate() error {
 	if in.ExpectedStorageGeneration != 1 || !imageSHA256.MatchString(in.ExpectedStorageHash) || !in.AcknowledgeInterruption {
 		return ErrInvalidHostingStorage
 	}
 	return nil
 }
+
+// UnmarshalJSON decodes the application database storage input document.
 func (in *HostingApplicationDatabaseStorageInput) UnmarshalJSON(raw []byte) error {
 	type wire HostingApplicationDatabaseStorageInput
 	var value wire
@@ -55,15 +59,21 @@ type HostingApplicationDatabaseStorage struct {
 	Hash       string            `json:"hash"`
 }
 
+// NewHostingApplicationDatabaseStorage builds the initial storage document for a storage
+// reference.
 func NewHostingApplicationDatabaseStorage(ref HostingStorageRef) HostingApplicationDatabaseStorage {
 	out := HostingApplicationDatabaseStorage{Version: HostingApplicationDatabaseStorageVersion, Strategy: HostingApplicationDatabaseStorageStrategy, StorageRef: ref}
 	out.Hash = out.DocumentHash()
 	return out
 }
+
+// DocumentHash returns the hash of the application database storage document.
 func (p HostingApplicationDatabaseStorage) DocumentHash() string {
 	p.Hash = ""
 	return HostingDocumentHash(p)
 }
+
+// Validate checks the application database storage fields and invariants.
 func (p HostingApplicationDatabaseStorage) Validate(s HostingSnapshot) error {
 	if p.Version != HostingApplicationDatabaseStorageVersion || p.Strategy != HostingApplicationDatabaseStorageStrategy || !validHostingStorageRef(p.StorageRef) || p.StorageRef != s.Storage || s.PolicyVersion != HostingApplicationDatabaseStoragePolicyVersion || p.Hash != p.DocumentHash() {
 		return ErrInvalidHostingStorage
@@ -86,6 +96,7 @@ type HostingApplicationDatabaseStorageState struct {
 	RecoveryActions   []string `json:"recovery_actions"`
 }
 
+// Validate checks the application database storage state fields and invariants.
 func (s HostingApplicationDatabaseStorageState) Validate() error {
 	if (s.RecoveryState == "none") != (s.RecoveryAction == "") {
 		return ErrInvalidHostingStorage
@@ -138,13 +149,18 @@ type HostingApplicationDatabaseStorageWriterReceipt struct {
 	Hash                string                                     `json:"hash"`
 }
 
+// DocumentHash returns the hash of the application database storage writer receipt document.
 func (r HostingApplicationDatabaseStorageWriterReceipt) DocumentHash() string {
 	r.Hash = ""
 	return HostingDocumentHash(r)
 }
+
+// State returns the storage state represented by the writer receipt.
 func (r HostingApplicationDatabaseStorageWriterReceipt) State() HostingApplicationDatabaseStorageState {
 	return HostingApplicationDatabaseStorageState{Version: r.Version, Phase: r.Phase, ReceiptID: r.ReceiptID, StateHash: r.Hash, PreviousStateHash: r.PreviousStateHash, StageHash: r.StageHash, CandidateHash: r.CandidateHash, RecoveryActions: []string{}, RecoveryState: "none"}
 }
+
+// Validate checks the application database storage writer receipt fields and invariants.
 func (r HostingApplicationDatabaseStorageWriterReceipt) Validate() error {
 	if (r.Phase == "resumed") != (r.PredecessorEndpoint != nil) || r.PredecessorEndpoint != nil && (!r.PredecessorEndpoint.Present || !imageSHA256.MatchString("sha256:"+r.PredecessorEndpoint.Endpoint.EndpointID)) {
 		return ErrInvalidHostingStorage
@@ -160,17 +176,22 @@ func (r HostingApplicationDatabaseStorageWriterReceipt) Validate() error {
 	return nil
 }
 
+// HostingApplicationDatabaseStorageWriterRequest describes a application database storage writer
+// request.
 type HostingApplicationDatabaseStorageWriterRequest struct {
 	HostingAuthority
 	Receipt HostingApplicationDatabaseStorageWriterReceipt `json:"receipt"`
 }
 
+// Validate checks the application database storage writer request fields and invariants.
 func (r HostingApplicationDatabaseStorageWriterRequest) Validate() error {
 	if !connectionRequestAuthority(r.HostingAuthority) || r.Receipt.Validate() != nil {
 		return ErrInvalidHostingStorage
 	}
 	return nil
 }
+
+// UnmarshalJSON decodes the application database storage writer request document.
 func (r *HostingApplicationDatabaseStorageWriterRequest) UnmarshalJSON(raw []byte) error {
 	type wire HostingApplicationDatabaseStorageWriterRequest
 	var value wire
@@ -191,6 +212,7 @@ type HostingApplicationDatabaseStorageEffectRequest struct {
 	StageHash       string `json:"stage_hash"`
 }
 
+// Validate checks the application database storage effect request fields and invariants.
 func (r HostingApplicationDatabaseStorageEffectRequest) Validate() error {
 	if !connectionRequestAuthority(r.HostingAuthority) || !hostingStorageRequest.MatchString(r.AuthorizationID) || !imageSHA256.MatchString(r.StateHash) || r.StageHash != "" && !imageSHA256.MatchString(r.StageHash) {
 		return ErrInvalidHostingStorage
@@ -202,6 +224,8 @@ func (r HostingApplicationDatabaseStorageEffectRequest) Validate() error {
 	}
 	return nil
 }
+
+// UnmarshalJSON decodes the application database storage effect request document.
 func (r *HostingApplicationDatabaseStorageEffectRequest) UnmarshalJSON(raw []byte) error {
 	type wire HostingApplicationDatabaseStorageEffectRequest
 	var value wire
@@ -212,6 +236,8 @@ func (r *HostingApplicationDatabaseStorageEffectRequest) UnmarshalJSON(raw []byt
 	return nil
 }
 
+// HostingApplicationDatabaseStorageEffectAuthorization binds a application database storage
+// effect effect to current execution authority.
 type HostingApplicationDatabaseStorageEffectAuthorization struct {
 	HostingApplicationDatabaseEffectAuthorization
 	StateHash string `json:"state_hash"`
@@ -229,10 +255,13 @@ type HostingApplicationDatabaseStorageRecoveryPlan struct {
 	Hash             string            `json:"hash"`
 }
 
+// DocumentHash returns the hash of the application database storage recovery plan document.
 func (p HostingApplicationDatabaseStorageRecoveryPlan) DocumentHash() string {
 	p.Hash = ""
 	return HostingDocumentHash(p)
 }
+
+// Validate checks the application database storage recovery plan fields and invariants.
 func (p HostingApplicationDatabaseStorageRecoveryPlan) Validate() error {
 	if p.Version != HostingApplicationDatabaseStorageVersion || !hostingProxyID.MatchString(p.OperationID) || p.Action != "resume_predecessor" && p.Action != "complete_replacement" || !hostingProxyID.MatchString(p.RunID) || !validHostingStorageRef(p.StorageRef) || !imageSHA256.MatchString(p.StorageStateHash) || !imageSHA256.MatchString(p.RequestHash) || p.Hash != p.DocumentHash() {
 		return ErrInvalidHostingStorage
@@ -240,6 +269,8 @@ func (p HostingApplicationDatabaseStorageRecoveryPlan) Validate() error {
 	return nil
 }
 
+// HostingApplicationDatabaseStorageProxyPlan loads the recovery proxy plan under current runner
+// authority.
 type HostingApplicationDatabaseStorageProxyPlan struct {
 	Operation HostingOperation                `json:"operation"`
 	Stage     HostingApplicationDatabaseStage `json:"stage"`
@@ -262,6 +293,7 @@ func (a HostingApplicationDatabaseStorageEffectAuthorization) Validate() error {
 	}
 }
 
+// UnmarshalJSON decodes the application database storage effect authorization document.
 func (a *HostingApplicationDatabaseStorageEffectAuthorization) UnmarshalJSON(raw []byte) error {
 	var wire struct {
 		AuthorizationID    string    `json:"authorization_id"`
@@ -333,6 +365,8 @@ func applicationStorageRequired(raw []byte, nested string, keys []string) bool {
 	}
 	return true
 }
+
+// UnmarshalJSON decodes the application database storage state document.
 func (s *HostingApplicationDatabaseStorageState) UnmarshalJSON(raw []byte) error {
 	type wire HostingApplicationDatabaseStorageState
 	var value wire

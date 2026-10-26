@@ -205,6 +205,8 @@ func databaseBackupFinalizeActor(ctx context.Context, tx pgx.Tx, actor string) e
 func databaseBackupAudit(ctx context.Context, tx pgx.Tx, actor, id, phase, project string) error {
 	return createAuditWithQueries(ctx, sqlcgen.New(tx), domain.AuditEvent{ID: "aud_dbbackup_" + phase + "_" + id, ActorID: actor, Action: "hosting.database_backup." + phase, TargetID: id, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": project}})
 }
+
+// RequestDatabaseBackup admits a logical PostgreSQL backup under current source authority.
 func (s *PostgresStore) RequestDatabaseBackup(ctx context.Context, id, resource, actor string, in domain.HostingDatabaseBackupInput, _ domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
 	if in.Validate() != nil {
 		return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup
@@ -310,6 +312,7 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 	return view, databaseBackupFinalizeActor(ctx, tx, actor)
 }
 
+// GetDatabaseBackup returns an authorized database backup operation.
 func (s *PostgresStore) GetDatabaseBackup(ctx context.Context, actor, id string) (domain.HostingDatabaseBackupOperation, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupOperation, error) {
 		q := sqlcgen.New(tx)
@@ -334,6 +337,8 @@ func databaseBackupDestination(r sqlcgen.HostingDatabaseBackup) string {
 	p, _ := databaseBackupPlan(r)
 	return p.Source.Snapshot.DestinationID
 }
+
+// ListDatabaseBackups lists authorized backup operations for a database resource.
 func (s *PostgresStore) ListDatabaseBackups(ctx context.Context, actor, resource string) ([]domain.HostingDatabaseBackupOperation, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupOperation, error) {
 		q := sqlcgen.New(tx)
@@ -366,6 +371,8 @@ func (s *PostgresStore) ListDatabaseBackups(ctx context.Context, actor, resource
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// RequestDatabaseBackupRestore admits restoration into a new private database resource.
 func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, backup, actor string, in domain.HostingDatabaseBackupRestoreInput, create domain.HostingDatabaseCreateInput, records []HostingDatabaseCredentialRecord, event domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
 	if in.Validate() != nil || create.Validate() != nil {
 		return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup
@@ -462,6 +469,7 @@ func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, ba
 	})
 }
 
+// PrepareDatabaseBackup prepares a queued backup or waiting restore for dispatch.
 func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) error {
 	waiting := false
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
@@ -586,6 +594,8 @@ func databaseBackupAuthority(ctx context.Context, tx pgx.Tx, runner string, a do
 	}
 	return sqlcgen.New(tx).LockDatabaseBackup(ctx, r.ID)
 }
+
+// DatabaseBackupPlan loads the backup plan under current runner lease authority.
 func (s *PostgresStore) DatabaseBackupPlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingDatabaseBackupPlan, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupPlan, error) {
 		r, err := databaseBackupAuthority(ctx, tx, runner, a, true)
@@ -602,6 +612,8 @@ func (s *PostgresStore) DatabaseBackupPlan(ctx context.Context, runner string, a
 		return p, nil
 	})
 }
+
+// DatabaseBackupMutation records a fenced backup mutation and immutable receipt.
 func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner string, in domain.HostingDatabaseBackupMutation) (domain.HostingDatabaseBackupOperation, error) {
 	if in.Validate() != nil {
 		return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup

@@ -57,6 +57,8 @@ func backupRetentionSaveRequest(ctx context.Context, tx pgx.Tx, resource, actor,
 	e := sqlcgen.New(tx).CreateDatabaseBackupRetentionRequest(ctx, sqlcgen.CreateDatabaseBackupRetentionRequestParams{ResourceID: resource, Kind: kind, RequestID: request, ActorID: actor, RequestHash: hash, Response: buildJSON(out)})
 	return e
 }
+
+// GetDatabaseBackupRetention returns the authorized database backup retention policy.
 func (s *PostgresStore) GetDatabaseBackupRetention(ctx context.Context, actor, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
@@ -65,6 +67,8 @@ func (s *PostgresStore) GetDatabaseBackupRetention(ctx context.Context, actor, r
 		return backupRetentionPolicy(ctx, tx, resource)
 	})
 }
+
+// SaveDatabaseBackupRetention updates the authorized database backup retention policy.
 func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, resource string, in domain.HostingDatabaseBackupRetentionInput) (domain.HostingDatabaseBackupRetentionPolicy, error) {
 	var zero domain.HostingDatabaseBackupRetentionPolicy
 	if in.Validate() != nil {
@@ -361,6 +365,8 @@ func backupRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, acto
 	e = sqlcgen.New(tx).CreateDatabaseBackupRetentionPreview(ctx, sqlcgen.CreateDatabaseBackupRetentionPreviewParams{ID: id, ResourceID: resource, ActorID: actor, PolicyRevision: int64(p.Revision), Body: buildJSON(out), Copies: buildJSON(chosen), PlanHash: out.PlanHash})
 	return out, chosen, e
 }
+
+// PreviewDatabaseBackupRetention records a retention preview for database backup copies.
 func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingDatabaseBackupRetentionPreviewInput) (domain.HostingDatabaseBackupRetentionPreview, error) {
 	var zero domain.HostingDatabaseBackupRetentionPreview
 	if in.Validate() != nil {
@@ -394,6 +400,8 @@ func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, 
 		return out, databaseBackupFinalizeActor(ctx, tx, actor)
 	})
 }
+
+// ListDatabaseBackupRetentionExecutions lists authorized database backup retention executions.
 func (s *PostgresStore) ListDatabaseBackupRetentionExecutions(ctx context.Context, actor, resource string) ([]domain.HostingDatabaseBackupRetentionExecution, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupRetentionExecution, error) {
 		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
@@ -414,6 +422,8 @@ func (s *PostgresStore) ListDatabaseBackupRetentionExecutions(ctx context.Contex
 		return out, nil
 	})
 }
+
+// GetDatabaseBackupRetentionExecution returns an authorized database backup retention execution.
 func (s *PostgresStore) GetDatabaseBackupRetentionExecution(ctx context.Context, actor, resource, id string) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionExecution, error) {
 		var v domain.HostingDatabaseBackupRetentionExecution
@@ -432,6 +442,8 @@ func (s *PostgresStore) GetDatabaseBackupRetentionExecution(ctx context.Context,
 	})
 }
 
+// ExecuteDatabaseBackupRetention admits deletion of the database copies selected by a saved
+// preview.
 func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingDatabaseBackupRetentionExecutionInput) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	var zero domain.HostingDatabaseBackupRetentionExecution
 	if in.Validate() != nil {
@@ -633,6 +645,7 @@ func backupRetentionArchiveAdmission(ctx context.Context, tx pgx.Tx, backup stri
 	return nil
 }
 
+// ErrBackupRetentionBusy reports a conflicting reservation in the backup copy pool.
 var ErrBackupRetentionBusy = fmt.Errorf("%w: backup copy pool busy", ErrConflict)
 
 func backupRetentionLocalLocation(server string, proof domain.BackupLocalCopyProof, digest string) string {

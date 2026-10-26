@@ -131,6 +131,7 @@ func (s *PostgresStore) backupRemoteInsert(ctx context.Context, tx pgx.Tx, p dom
 	return databaseBackupAudit(ctx, tx, p.ActorID, p.Operation.ID, "remote_requested", p.Operation.ProjectID)
 }
 
+// ValidateDatabaseBackupTarget queues remote target validation for the selected destination.
 func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, project, actor, target string, in domain.HostingDatabaseBackupTargetValidationInput) (domain.HostingDatabaseBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingDatabaseBackupTransfer{}, domain.ErrInvalidDatabaseBackupRemote
@@ -196,6 +197,7 @@ func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, pr
 	})
 }
 
+// GetDatabaseBackupTransfer returns an authorized database backup transfer view.
 func (s *PostgresStore) GetDatabaseBackupTransfer(ctx context.Context, actor, id string) (domain.HostingDatabaseBackupTransfer, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupTransfer, error) {
 		r, err := backupRemoteLoad(ctx, tx, id, false)
@@ -211,6 +213,8 @@ func (s *PostgresStore) GetDatabaseBackupTransfer(ctx context.Context, actor, id
 		return r.view, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListDatabaseBackupTransfers lists authorized database backup transfers or target validations.
 func (s *PostgresStore) ListDatabaseBackupTransfers(ctx context.Context, actor, id string, validation bool) ([]domain.HostingDatabaseBackupTransfer, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupTransfer, error) {
 		q := sqlcgen.New(tx)
@@ -251,6 +255,7 @@ func (s *PostgresStore) ListDatabaseBackupTransfers(ctx context.Context, actor, 
 	})
 }
 
+// PrepareDatabaseBackupTransfer prepares a queued database backup transfer for dispatch.
 func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id string) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		r, err := backupRemoteLoad(ctx, tx, id, true)
@@ -299,6 +304,9 @@ func backupRemoteAuthority(ctx context.Context, tx pgx.Tx, runner string, a doma
 	}
 	return backupRemoteLoad(ctx, tx, id, true)
 }
+
+// DatabaseBackupTransferPlan loads the database transfer plan under current runner lease
+// authority.
 func (s *PostgresStore) DatabaseBackupTransferPlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingDatabaseBackupTransferPlan, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupTransferPlan, error) {
 		r, err := backupRemoteAuthority(ctx, tx, runner, a, true)
@@ -312,6 +320,7 @@ func (s *PostgresStore) DatabaseBackupTransferPlan(ctx context.Context, runner s
 	})
 }
 
+// DatabaseBackupTransferMutation records a fenced database backup transfer mutation and receipt.
 func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runner string, in domain.HostingDatabaseBackupTransferMutation) (domain.HostingDatabaseBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingDatabaseBackupTransfer{}, domain.ErrInvalidDatabaseBackupRemote

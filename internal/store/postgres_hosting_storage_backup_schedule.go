@@ -67,6 +67,7 @@ func (s *PostgresStore) storageBackupScheduleTarget(ctx context.Context, tx pgx.
 	return s.storageRemoteSelect(ctx, tx, domain.HostingStorageArchivePlan{ProjectID: st.ProjectID, DestinationID: st.DestinationID, RunnerID: healthy.Snapshot.RunnerID, ServerID: healthy.Snapshot.ServerID, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits}, actor, *selection)
 }
 
+// SaveStorageBackupSchedule creates or revises an authorized storage backup schedule.
 func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resource, actor, existingID string, in domain.HostingStorageBackupScheduleInput) (domain.HostingStorageBackupSchedule, error) {
 	if in.Validate() != nil || existingID == "" && in.ExpectedVersion != 0 || existingID != "" && in.ExpectedVersion < 1 {
 		return domain.HostingStorageBackupSchedule{}, domain.ErrInvalidStorageBackupSchedule
@@ -161,6 +162,8 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		return out, archiveFinalizeActor(ctx, tx, actor)
 	})
 }
+
+// ListStorageBackupSchedules lists authorized storage backup schedules for a resource.
 func (s *PostgresStore) ListStorageBackupSchedules(ctx context.Context, actor, resource string) ([]domain.HostingStorageBackupSchedule, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingStorageBackupSchedule, error) {
 		if _, _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
@@ -182,6 +185,9 @@ func (s *PostgresStore) ListStorageBackupSchedules(ctx context.Context, actor, r
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListStorageBackupOccurrences lists recorded occurrences of an authorized storage backup
+// schedule.
 func (s *PostgresStore) ListStorageBackupOccurrences(ctx context.Context, actor, resource, id string) ([]domain.HostingStorageBackupOccurrence, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingStorageBackupOccurrence, error) {
 		if _, _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {

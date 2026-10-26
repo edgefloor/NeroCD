@@ -13,6 +13,8 @@ func (s *Service) databaseBackupScheduleRepository() (store.HostingDatabaseBacku
 	}
 	return repo, nil
 }
+
+// SaveDatabaseBackupSchedule creates or revises an authorized database backup schedule.
 func (s *Service) SaveDatabaseBackupSchedule(ctx context.Context, resource, schedule string, in domain.HostingDatabaseBackupScheduleInput) (domain.HostingDatabaseBackupSchedule, error) {
 	var zero domain.HostingDatabaseBackupSchedule
 	if in.Validate() != nil || schedule == "" && in.ExpectedVersion != 0 || schedule != "" && in.ExpectedVersion < 1 {
@@ -40,6 +42,8 @@ func (s *Service) SaveDatabaseBackupSchedule(ctx context.Context, resource, sche
 	}
 	return repo.SaveDatabaseBackupSchedule(ctx, id, resource, actor.ID, schedule, in)
 }
+
+// ListDatabaseBackupSchedules lists authorized database backup schedules for a resource.
 func (s *Service) ListDatabaseBackupSchedules(ctx context.Context, resource string) ([]domain.HostingDatabaseBackupSchedule, error) {
 	_, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)
 	if err != nil {
@@ -51,6 +55,9 @@ func (s *Service) ListDatabaseBackupSchedules(ctx context.Context, resource stri
 	}
 	return repo.ListDatabaseBackupSchedules(ctx, actor.ID, resource)
 }
+
+// ListDatabaseBackupOccurrences lists recorded occurrences of an authorized database backup
+// schedule.
 func (s *Service) ListDatabaseBackupOccurrences(ctx context.Context, resource, schedule string) ([]domain.HostingDatabaseBackupOccurrence, error) {
 	if err := validateDestinationID(schedule, "schedule_id"); err != nil {
 		return nil, err

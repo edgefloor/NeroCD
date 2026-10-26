@@ -14,8 +14,10 @@ import (
 	"time"
 )
 
+// ErrInvalidNotification reports invalid notification input.
 var ErrInvalidNotification = errors.New("invalid backup notification")
 
+// NotificationMaxAttempts bounds the number of attempts for one notification delivery.
 const NotificationMaxAttempts = 5
 
 // NotificationChannel is safe for any project viewer. Targets and recipient
@@ -34,6 +36,7 @@ type NotificationChannel struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
+// NotificationChannelInput describes the requested notification channel.
 type NotificationChannelInput struct {
 	RequestID          string   `json:"request_id"`
 	ExpectedGeneration int64    `json:"expected_generation"`
@@ -43,6 +46,7 @@ type NotificationChannelInput struct {
 	Events             []string `json:"events"`
 }
 
+// Validate checks the notification channel input fields and invariants.
 func (in NotificationChannelInput) Validate() error {
 	if !notificationID(in.RequestID) || in.ExpectedGeneration < 0 || len(in.Name) < 1 || len(in.Name) > 80 || strings.TrimSpace(in.Name) != in.Name || strings.ContainsAny(in.Name, "\x00\r\n") || (in.Type != "email" && in.Type != "webhook") || len(in.Events) > 2 {
 		return ErrInvalidNotification
@@ -57,11 +61,13 @@ func (in NotificationChannelInput) Validate() error {
 	return nil
 }
 
+// NotificationTestInput describes the requested notification test.
 type NotificationTestInput struct {
 	RequestID          string `json:"request_id"`
 	ExpectedGeneration int64  `json:"expected_generation"`
 }
 
+// Validate checks the notification test input fields and invariants.
 func (in NotificationTestInput) Validate() error {
 	if !notificationID(in.RequestID) || in.ExpectedGeneration < 1 {
 		return ErrInvalidNotification
@@ -83,13 +89,20 @@ type NotificationConfiguration struct {
 }
 type notificationConfigurationJSON NotificationConfiguration
 
+// Format writes a redacted representation.
 func (NotificationConfiguration) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "[write-only notification configuration]")
 }
+
+// MarshalJSON returns an empty object without protected configuration values.
 func (NotificationConfiguration) MarshalJSON() ([]byte, error) { return []byte(`{}`), nil }
+
+// Encode encodes the configuration for protected storage or transport.
 func (c *NotificationConfiguration) Encode() ([]byte, error) {
 	return json.Marshal((*notificationConfigurationJSON)(c))
 }
+
+// DecodeNotificationConfiguration decodes a bounded notification configuration document.
 func DecodeNotificationConfiguration(raw []byte) (*NotificationConfiguration, error) {
 	var c notificationConfigurationJSON
 	if len(raw) > 16384 || DecodeHostingStorageProtocolJSON(raw, &c) != nil {
@@ -98,6 +111,8 @@ func DecodeNotificationConfiguration(raw []byte) (*NotificationConfiguration, er
 	out := NotificationConfiguration(c)
 	return &out, nil
 }
+
+// Close clears the held credential values.
 func (c *NotificationConfiguration) Close() {
 	if c != nil {
 		c.WebhookURL = ""
@@ -109,6 +124,8 @@ func (c *NotificationConfiguration) Close() {
 		c.SMTPHost = ""
 	}
 }
+
+// Validate checks the notification configuration fields and invariants.
 func (c *NotificationConfiguration) Validate(kind string) error {
 	if c == nil {
 		return ErrInvalidNotification
@@ -138,6 +155,8 @@ func (c *NotificationConfiguration) Validate(kind string) error {
 	}
 	return nil
 }
+
+// NotificationEmail reports whether an address is valid for notification delivery.
 func NotificationEmail(v string) bool {
 	a, err := mail.ParseAddress(v)
 	return err == nil && a.Address == v && len(v) <= 254 && !strings.ContainsAny(v, "\x00\r\n")
@@ -157,6 +176,7 @@ func notificationID(v string) bool {
 	return true
 }
 
+// NotificationAttempt records one notification send attempt.
 type NotificationAttempt struct {
 	Number      int        `json:"number"`
 	State       string     `json:"state"`
@@ -164,6 +184,8 @@ type NotificationAttempt struct {
 	StartedAt   time.Time  `json:"started_at"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 }
+
+// NotificationDelivery describes a queued notification and its delivery outcome.
 type NotificationDelivery struct {
 	ID                 string                `json:"id"`
 	EventID            string                `json:"event_id"`
@@ -200,9 +222,12 @@ type NotificationPayload struct {
 	RecoveryURL        string `json:"recovery_url"`
 }
 
+// NotificationSelected reports whether the event appears in the channel selection.
 func NotificationSelected(events []string, event string) bool {
 	return event == "test" || slices.Contains(events, event)
 }
+
+// NotificationMessage returns the safe message text for a backup event.
 func NotificationMessage(event string, sourceState ...string) string {
 	if len(sourceState) > 0 && sourceState[0] == "uncertain" {
 		if event == "upload_failed" {

@@ -18,6 +18,8 @@ func (s *Service) databaseBackupRepository() (store.HostingDatabaseBackupReposit
 	}
 	return r, nil
 }
+
+// RequestDatabaseBackup admits a logical PostgreSQL backup under current source authority.
 func (s *Service) RequestDatabaseBackup(ctx context.Context, resource string, in domain.HostingDatabaseBackupInput) (domain.HostingDatabaseBackupOperation, error) {
 	var zero domain.HostingDatabaseBackupOperation
 	if in.Validate() != nil {
@@ -44,6 +46,8 @@ func (s *Service) RequestDatabaseBackup(ctx context.Context, resource string, in
 	}
 	return repo.RequestDatabaseBackup(ctx, id, resource, actor.ID, in, event)
 }
+
+// GetDatabaseBackup returns an authorized database backup operation.
 func (s *Service) GetDatabaseBackup(ctx context.Context, id string) (domain.HostingDatabaseBackupOperation, error) {
 	actor, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -55,6 +59,8 @@ func (s *Service) GetDatabaseBackup(ctx context.Context, id string) (domain.Host
 	}
 	return repo.GetDatabaseBackup(ctx, actor.ID, id)
 }
+
+// ListDatabaseBackups lists authorized backup operations for a database resource.
 func (s *Service) ListDatabaseBackups(ctx context.Context, resource string) ([]domain.HostingDatabaseBackupOperation, error) {
 	_, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)
 	if err != nil {
@@ -66,6 +72,8 @@ func (s *Service) ListDatabaseBackups(ctx context.Context, resource string) ([]d
 	}
 	return repo.ListDatabaseBackups(ctx, actor.ID, resource)
 }
+
+// RequestDatabaseBackupRestore admits restoration into a new private database resource.
 func (s *Service) RequestDatabaseBackupRestore(ctx context.Context, backup string, in domain.HostingDatabaseBackupRestoreInput) (domain.HostingDatabaseBackupOperation, error) {
 	var zero domain.HostingDatabaseBackupOperation
 	if in.Validate() != nil {
@@ -119,6 +127,8 @@ func (s *Service) RequestDatabaseBackupRestore(ctx context.Context, backup strin
 	}
 	return repo.RequestDatabaseBackupRestore(ctx, id, backup, actor.ID, in, create, records, event)
 }
+
+// RunnerDatabaseBackupPlan returns a backup plan for the authenticated runner.
 func (s *Service) RunnerDatabaseBackupPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingDatabaseBackupPlan, error) {
 	r, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -130,6 +140,8 @@ func (s *Service) RunnerDatabaseBackupPlan(ctx context.Context, a domain.Hosting
 	}
 	return repo.DatabaseBackupPlan(ctx, r.ID, a)
 }
+
+// RunnerDatabaseBackupMutation records a backup mutation from the authenticated runner.
 func (s *Service) RunnerDatabaseBackupMutation(ctx context.Context, in domain.HostingDatabaseBackupMutation) (domain.HostingDatabaseBackupOperation, error) {
 	r, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {

@@ -10,12 +10,18 @@ import (
 	"time"
 )
 
+// ErrBackupRemoteCredentials reports unavailable or invalid remote backup credentials.
 var ErrBackupRemoteCredentials = errors.New("remote backup credentials unavailable")
 
+// HostingStorageBackupRetentionCredentialPurpose identifies credentials issued for storage backup
+// retention.
 const HostingStorageBackupRetentionCredentialPurpose = "hosting_storage_backup_retention_credentials.v1"
 
+// HostingDatabaseBackupRetentionCredentialPurpose identifies credentials issued for database
+// backup retention.
 const HostingDatabaseBackupRetentionCredentialPurpose = "hosting_postgresql_backup_retention_credentials.v1"
 
+// BackupRemoteCredentialRequest binds a credential delivery to a runner lease, target, and plan.
 type BackupRemoteCredentialRequest struct {
 	RetentionCopyID string           `json:"retention_copy_id,omitempty"`
 	Authority       HostingAuthority `json:"authority"`
@@ -26,6 +32,7 @@ type BackupRemoteCredentialRequest struct {
 	DaemonID        string           `json:"daemon_id"`
 }
 
+// Validate checks the backup remote credential request fields and invariants.
 func (r BackupRemoteCredentialRequest) Validate() error {
 	if !validRuntimeReferenceID(r.TargetID) || r.TargetRevision < 1 {
 		return ErrBackupRemoteCredentials
@@ -51,6 +58,7 @@ func (r BackupRemoteCredentialRequest) Validate() error {
 	return nil
 }
 
+// BackupRemoteCredentialMetadata records the identity and deadline of a credential delivery.
 type BackupRemoteCredentialMetadata struct {
 	Purpose     string                        `json:"purpose"`
 	Request     BackupRemoteCredentialRequest `json:"request"`
@@ -59,6 +67,7 @@ type BackupRemoteCredentialMetadata struct {
 	UseUntil    time.Time                     `json:"use_until"`
 }
 
+// Validate checks the backup remote credential metadata fields and invariants.
 func (m BackupRemoteCredentialMetadata) Validate() error {
 	expected := HostingDatabaseBackupRemoteCredentialPurpose
 	if m.Request.Authority.RunID == "storage_transfer_"+m.Request.Authority.OperationID {
@@ -79,24 +88,32 @@ func (m BackupRemoteCredentialMetadata) Validate() error {
 	return nil
 }
 
+// BackupRemoteCredentials holds plaintext delivery credentials. Call Close after use.
 type BackupRemoteCredentials struct {
 	metadata       BackupRemoteCredentialMetadata
 	access, secret []byte
 }
 
+// NewBackupRemoteCredentials validates and copies plaintext credentials. Call Close after use.
 func NewBackupRemoteCredentials(m BackupRemoteCredentialMetadata, access, secret []byte) (*BackupRemoteCredentials, error) {
 	if m.Validate() != nil || len(access) < 1 || len(access) > 256 || len(secret) < 1 || len(secret) > 4096 {
 		return nil, ErrBackupRemoteCredentials
 	}
 	return &BackupRemoteCredentials{metadata: m, access: bytes.Clone(access), secret: bytes.Clone(secret)}, nil
 }
+
+// Metadata returns the persisted credential delivery metadata.
 func (c *BackupRemoteCredentials) Metadata() BackupRemoteCredentialMetadata { return c.metadata }
+
+// Use calls fn with the held credential bytes while they are available.
 func (c *BackupRemoteCredentials) Use(fn func([]byte, []byte) error) error {
 	if c == nil || len(c.access) == 0 || len(c.secret) == 0 || fn == nil {
 		return ErrBackupRemoteCredentials
 	}
 	return fn(c.access, c.secret)
 }
+
+// Close clears the held credential values.
 func (c *BackupRemoteCredentials) Close() {
 	if c != nil {
 		clear(c.access)
@@ -105,12 +122,16 @@ func (c *BackupRemoteCredentials) Close() {
 		c.secret = nil
 	}
 }
+
+// Format writes a redacted representation.
 func (*BackupRemoteCredentials) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "[protected remote backup credentials]")
 }
+
+// MarshalJSON returns an empty object without protected configuration values.
 func (*BackupRemoteCredentials) MarshalJSON() ([]byte, error) { return []byte(`{}`), nil }
 
-// The explicit codec is restricted to authenticated protected runtime transport.
+// WriteBackupRemoteCredentials is restricted to authenticated protected runtime transport.
 // Ordinary JSON encoding of the credential holder can never reveal its values.
 func WriteBackupRemoteCredentials(w io.Writer, c *BackupRemoteCredentials) error {
 	if c == nil {
@@ -129,6 +150,8 @@ func WriteBackupRemoteCredentials(w io.Writer, c *BackupRemoteCredentials) error
 	_, err = w.Write(raw)
 	return err
 }
+
+// ReadBackupRemoteCredentials reads a bounded credential document from protected transport.
 func ReadBackupRemoteCredentials(r io.Reader) (*BackupRemoteCredentials, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, 16385))
 	defer clear(raw)

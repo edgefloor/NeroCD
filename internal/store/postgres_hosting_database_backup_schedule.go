@@ -43,6 +43,7 @@ func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 	return value, proxyCheckLegacyToken(ctx, tx, actor)
 }
 
+// SaveDatabaseBackupSchedule creates or revises an authorized database backup schedule.
 func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, resource, actor, existingID string, in domain.HostingDatabaseBackupScheduleInput) (domain.HostingDatabaseBackupSchedule, error) {
 	if in.Validate() != nil || existingID == "" && in.ExpectedVersion != 0 || existingID != "" && in.ExpectedVersion < 1 {
 		return domain.HostingDatabaseBackupSchedule{}, domain.ErrInvalidDatabaseBackupSchedule
@@ -127,6 +128,8 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		return out, databaseBackupFinalizeActor(ctx, tx, actor)
 	})
 }
+
+// ListDatabaseBackupSchedules lists authorized database backup schedules for a resource.
 func (s *PostgresStore) ListDatabaseBackupSchedules(ctx context.Context, actor, resource string) ([]domain.HostingDatabaseBackupSchedule, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupSchedule, error) {
 		if _, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
@@ -148,6 +151,9 @@ func (s *PostgresStore) ListDatabaseBackupSchedules(ctx context.Context, actor, 
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListDatabaseBackupOccurrences lists recorded occurrences of an authorized database backup
+// schedule.
 func (s *PostgresStore) ListDatabaseBackupOccurrences(ctx context.Context, actor, resource, id string) ([]domain.HostingDatabaseBackupOccurrence, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupOccurrence, error) {
 		if _, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {

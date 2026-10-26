@@ -12,14 +12,18 @@ import (
 	"nerocd/internal/store"
 )
 
+// BackupTargetCredentials holds plaintext target credentials. Call Close after use.
 type BackupTargetCredentials struct{ access, secret []byte }
 
+// NewBackupTargetCredentials copies bounded plaintext target credentials. Call Close after use.
 func NewBackupTargetCredentials(access, secret []byte) (*BackupTargetCredentials, error) {
 	if len(access) < 1 || len(access) > 256 || len(secret) < 1 || len(secret) > 4096 {
 		return nil, domain.ErrInvalidDatabaseBackupRemote
 	}
 	return &BackupTargetCredentials{access: append([]byte(nil), access...), secret: append([]byte(nil), secret...)}, nil
 }
+
+// Close clears the held credential values.
 func (c *BackupTargetCredentials) Close() {
 	if c != nil {
 		clear(c.access)
@@ -28,9 +32,13 @@ func (c *BackupTargetCredentials) Close() {
 		c.secret = nil
 	}
 }
+
+// Format writes a redacted representation.
 func (*BackupTargetCredentials) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "[write-only backup target credentials]")
 }
+
+// MarshalJSON returns an empty object without protected configuration values.
 func (*BackupTargetCredentials) MarshalJSON() ([]byte, error) { return []byte(`{}`), nil }
 
 func (s *Service) databaseBackupRemoteRepository() (store.HostingDatabaseBackupRemoteRepository, error) {
@@ -41,6 +49,7 @@ func (s *Service) databaseBackupRemoteRepository() (store.HostingDatabaseBackupR
 	return r, nil
 }
 
+// SaveDatabaseBackupTarget creates or revises a remote backup target.
 func (s *Service) SaveDatabaseBackupTarget(ctx context.Context, project, existing string, in domain.HostingDatabaseBackupTargetInput, credentials *BackupTargetCredentials) (domain.HostingDatabaseBackupTarget, error) {
 	var zero domain.HostingDatabaseBackupTarget
 	if in.Validate() != nil || existing == "" && credentials == nil {
@@ -98,6 +107,7 @@ func (s *Service) SaveDatabaseBackupTarget(ctx context.Context, project, existin
 	return repo.SaveDatabaseBackupTarget(ctx, id, project, actor.ID, existing, in, records, compare)
 }
 
+// ListDatabaseBackupTargets lists remote backup targets visible to the project viewer.
 func (s *Service) ListDatabaseBackupTargets(ctx context.Context, project string) ([]domain.HostingDatabaseBackupTarget, error) {
 	actor, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer)
 	if err != nil {
@@ -109,6 +119,8 @@ func (s *Service) ListDatabaseBackupTargets(ctx context.Context, project string)
 	}
 	return repo.ListDatabaseBackupTargets(ctx, actor.ID, project)
 }
+
+// ValidateDatabaseBackupTarget queues remote target validation for the selected destination.
 func (s *Service) ValidateDatabaseBackupTarget(ctx context.Context, project, target string, in domain.HostingDatabaseBackupTargetValidationInput) (domain.HostingDatabaseBackupTransfer, error) {
 	var zero domain.HostingDatabaseBackupTransfer
 	if in.Validate() != nil {
@@ -128,6 +140,8 @@ func (s *Service) ValidateDatabaseBackupTarget(ctx context.Context, project, tar
 	}
 	return repo.ValidateDatabaseBackupTarget(ctx, id, project, actor.ID, target, in)
 }
+
+// ListDatabaseBackupTransfers lists authorized database backup transfers or target validations.
 func (s *Service) ListDatabaseBackupTransfers(ctx context.Context, id string, validation bool) ([]domain.HostingDatabaseBackupTransfer, error) {
 	actor, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -139,6 +153,8 @@ func (s *Service) ListDatabaseBackupTransfers(ctx context.Context, id string, va
 	}
 	return repo.ListDatabaseBackupTransfers(ctx, actor.ID, id, validation)
 }
+
+// GetDatabaseBackupTransfer returns an authorized database backup transfer view.
 func (s *Service) GetDatabaseBackupTransfer(ctx context.Context, id string) (domain.HostingDatabaseBackupTransfer, error) {
 	actor, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -150,6 +166,8 @@ func (s *Service) GetDatabaseBackupTransfer(ctx context.Context, id string) (dom
 	}
 	return repo.GetDatabaseBackupTransfer(ctx, actor.ID, id)
 }
+
+// RetryDatabaseBackupTransfer admits a retry of the selected failed database backup upload.
 func (s *Service) RetryDatabaseBackupTransfer(ctx context.Context, backup string, in domain.HostingDatabaseBackupTransferRetryInput) (domain.HostingDatabaseBackupTransfer, error) {
 	var zero domain.HostingDatabaseBackupTransfer
 	if in.Validate() != nil {
@@ -169,6 +187,8 @@ func (s *Service) RetryDatabaseBackupTransfer(ctx context.Context, backup string
 	}
 	return repo.RetryDatabaseBackupTransfer(ctx, id, actor.ID, backup, in)
 }
+
+// RunnerDatabaseBackupTransferPlan returns a database transfer plan for the authenticated runner.
 func (s *Service) RunnerDatabaseBackupTransferPlan(ctx context.Context, in domain.HostingAuthority) (domain.HostingDatabaseBackupTransferPlan, error) {
 	runner, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -180,6 +200,9 @@ func (s *Service) RunnerDatabaseBackupTransferPlan(ctx context.Context, in domai
 	}
 	return repo.DatabaseBackupTransferPlan(ctx, runner.ID, in)
 }
+
+// RunnerDatabaseBackupTransferMutation records a database transfer mutation from the
+// authenticated runner.
 func (s *Service) RunnerDatabaseBackupTransferMutation(ctx context.Context, in domain.HostingDatabaseBackupTransferMutation) (domain.HostingDatabaseBackupTransfer, error) {
 	runner, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {

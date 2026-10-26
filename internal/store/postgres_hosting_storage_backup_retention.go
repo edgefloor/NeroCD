@@ -53,6 +53,8 @@ func storageRetentionSaveRequest(ctx context.Context, tx pgx.Tx, resource, actor
 	e := sqlcgen.New(tx).StorageRetentionInsertRequest(ctx, sqlcgen.StorageRetentionInsertRequestParams{ResourceID: resource, Kind: kind, RequestID: request, ActorID: actor, RequestHash: hash, Response: buildJSON(out)})
 	return e
 }
+
+// GetStorageBackupRetention returns the authorized storage backup retention policy.
 func (s *PostgresStore) GetStorageBackupRetention(ctx context.Context, actor, resource string) (*domain.HostingStorageBackupRetentionPolicy, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (*domain.HostingStorageBackupRetentionPolicy, error) {
 		if _, e := storageRetentionScopeAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
@@ -61,6 +63,8 @@ func (s *PostgresStore) GetStorageBackupRetention(ctx context.Context, actor, re
 		return storageRetentionPolicy(ctx, tx, resource)
 	})
 }
+
+// SaveStorageBackupRetention updates the authorized storage backup retention policy.
 func (s *PostgresStore) SaveStorageBackupRetention(ctx context.Context, actor, resource string, in domain.HostingStorageBackupRetentionInput) (domain.HostingStorageBackupRetentionPolicy, error) {
 	var zero domain.HostingStorageBackupRetentionPolicy
 	if in.Validate() != nil {
@@ -140,6 +144,8 @@ func storageRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, act
 	e = sqlcgen.New(tx).StorageRetentionInsertPreview(ctx, sqlcgen.StorageRetentionInsertPreviewParams{ID: id, ResourceID: resource, ActorID: actor, PolicyRevision: p.Revision, Body: buildJSON(out), Copies: buildJSON(chosen), PlanHash: out.PlanHash})
 	return out, chosen, e
 }
+
+// PreviewStorageBackupRetention records a retention preview for storage backup copies.
 func (s *PostgresStore) PreviewStorageBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingStorageBackupRetentionPreviewInput) (domain.HostingStorageBackupRetentionPreview, error) {
 	var zero domain.HostingStorageBackupRetentionPreview
 	if in.Validate() != nil {
@@ -177,6 +183,8 @@ func (s *PostgresStore) PreviewStorageBackupRetention(ctx context.Context, id, a
 		return out, archiveFinalizeActor(ctx, tx, actor)
 	})
 }
+
+// ListStorageBackupRetentionExecutions lists authorized storage backup retention executions.
 func (s *PostgresStore) ListStorageBackupRetentionExecutions(ctx context.Context, actor, resource string) ([]domain.HostingStorageBackupRetentionExecution, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) ([]domain.HostingStorageBackupRetentionExecution, error) {
 		if _, e := storageRetentionScopeAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
@@ -197,6 +205,8 @@ func (s *PostgresStore) ListStorageBackupRetentionExecutions(ctx context.Context
 		return out, nil
 	})
 }
+
+// GetStorageBackupRetentionExecution returns an authorized storage backup retention execution.
 func (s *PostgresStore) GetStorageBackupRetentionExecution(ctx context.Context, actor, resource, id string) (domain.HostingStorageBackupRetentionExecution, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackupRetentionExecution, error) {
 		var v domain.HostingStorageBackupRetentionExecution
@@ -215,6 +225,8 @@ func (s *PostgresStore) GetStorageBackupRetentionExecution(ctx context.Context, 
 	})
 }
 
+// ExecuteStorageBackupRetention admits deletion of the storage copies selected by a saved
+// preview.
 func (s *PostgresStore) ExecuteStorageBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingStorageBackupRetentionExecutionInput) (domain.HostingStorageBackupRetentionExecution, error) {
 	var zero domain.HostingStorageBackupRetentionExecution
 	if in.Validate() != nil {

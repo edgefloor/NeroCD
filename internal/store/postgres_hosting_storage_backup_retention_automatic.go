@@ -16,7 +16,7 @@ func storageRetentionPublication(ctx context.Context, tx pgx.Tx, resource, publi
 	return e
 }
 
-// Each publication has one stable request identity. Discovery failure never
+// ReconcileStorageBackupRetention gives each publication one stable request identity. Discovery failure never
 // rewrites the successful dump/upload outcome, and a replay cannot pick a batch.
 func (s *PostgresStore) ReconcileStorageBackupRetention(ctx context.Context) error {
 	if !s.hostingJobs.StorageBackupRetentionEnabled() {

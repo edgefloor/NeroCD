@@ -129,6 +129,7 @@ func (s *PostgresStore) storageRemoteInsert(ctx context.Context, tx pgx.Tx, p do
 	return storageRemoteAudit(ctx, tx, p.ActorID, p.Operation.ID, "requested", p.Operation.ProjectID)
 }
 
+// ValidateStorageBackupTarget queues remote target validation for the selected destination.
 func (s *PostgresStore) ValidateStorageBackupTarget(ctx context.Context, id, project, actor, target string, in domain.HostingDatabaseBackupTargetValidationInput) (domain.HostingStorageBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingStorageBackupTransfer{}, domain.ErrInvalidStorageBackupRemote
@@ -196,6 +197,7 @@ func (s *PostgresStore) ValidateStorageBackupTarget(ctx context.Context, id, pro
 	})
 }
 
+// GetStorageBackupTransfer returns an authorized storage backup transfer view.
 func (s *PostgresStore) GetStorageBackupTransfer(ctx context.Context, actor, id string) (domain.HostingStorageBackupTransfer, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackupTransfer, error) {
 		r, err := storageRemoteLoad(ctx, tx, id, false)
@@ -211,6 +213,8 @@ func (s *PostgresStore) GetStorageBackupTransfer(ctx context.Context, actor, id 
 		return r.view, proxyCheckLegacyToken(ctx, tx, actor)
 	})
 }
+
+// ListStorageBackupTransfers lists authorized storage backup transfers or target validations.
 func (s *PostgresStore) ListStorageBackupTransfers(ctx context.Context, actor, id string, validation bool) ([]domain.HostingStorageBackupTransfer, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingStorageBackupTransfer, error) {
 		var project string
@@ -250,6 +254,7 @@ func (s *PostgresStore) ListStorageBackupTransfers(ctx context.Context, actor, i
 	})
 }
 
+// PrepareStorageBackupTransfer prepares a queued storage backup transfer for dispatch.
 func (s *PostgresStore) PrepareStorageBackupTransfer(ctx context.Context, id string) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		r, err := storageRemoteLoad(ctx, tx, id, true)
@@ -298,6 +303,8 @@ func storageRemoteAuthority(ctx context.Context, tx pgx.Tx, runner string, a dom
 	}
 	return storageRemoteLoad(ctx, tx, id, true)
 }
+
+// StorageBackupTransferPlan loads the storage transfer plan under current runner lease authority.
 func (s *PostgresStore) StorageBackupTransferPlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingStorageBackupTransferPlan, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackupTransferPlan, error) {
 		r, err := storageRemoteAuthority(ctx, tx, runner, a, true)
@@ -311,6 +318,7 @@ func (s *PostgresStore) StorageBackupTransferPlan(ctx context.Context, runner st
 	})
 }
 
+// StorageBackupTransferMutation records a fenced storage backup transfer mutation and receipt.
 func (s *PostgresStore) StorageBackupTransferMutation(ctx context.Context, runner string, in domain.HostingStorageBackupTransferMutation) (domain.HostingStorageBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingStorageBackupTransfer{}, domain.ErrInvalidStorageBackupRemote

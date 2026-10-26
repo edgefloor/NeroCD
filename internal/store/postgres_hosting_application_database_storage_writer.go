@@ -69,7 +69,7 @@ func storageWriterTransition(previous *domain.HostingApplicationDatabaseStorageW
 	return old.Phase == "stop_intent" && r.Phase == "stopped" || old.Phase == "stopped" && r.Phase == "candidate_stopped" && stage != nil || old.Phase == "candidate_stopped" && r.Phase == "replacement_failed"
 }
 
-// Writer acknowledgments retain the exact historical response. A lost ACK cannot
+// HostingApplicationDatabaseStorageWriter retains the exact historical response. A lost ACK cannot
 // repeat a stop/start effect or grant the old attempt fresh authority.
 func (s *PostgresStore) HostingApplicationDatabaseStorageWriter(ctx context.Context, runner, fingerprint string, in domain.HostingApplicationDatabaseStorageWriterRequest) (domain.HostingOperation, error) {
 	var zero domain.HostingOperation
@@ -187,6 +187,8 @@ func (s *PostgresStore) HostingApplicationDatabaseStorageWriter(ctx context.Cont
 	})
 }
 
+// AuthorizeHostingApplicationDatabaseStorageEffect issues a storage effect authorization after
+// current authority checks.
 func (s *PostgresStore) AuthorizeHostingApplicationDatabaseStorageEffect(ctx context.Context, runner, fingerprint string, in domain.HostingApplicationDatabaseStorageEffectRequest) (domain.HostingApplicationDatabaseStorageEffectAuthorization, error) {
 	var zero domain.HostingApplicationDatabaseStorageEffectAuthorization
 	if in.Validate() != nil {

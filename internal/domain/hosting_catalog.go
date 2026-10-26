@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
+// HostingCatalogLinkdingVersion identifies the catalog linkding document format.
 const HostingCatalogLinkdingVersion = "coolify-b12d1386.linkding-1.47.0.v1"
+
+// HostingCatalogLinkdingImage pins the Linkding catalog image by digest.
 const HostingCatalogLinkdingImage = "docker.io/sissbruecker/linkding@sha256:e35cb50e0581178f245125ffaa909c565416c94c9f22ace305a7d234a4345522"
 
 //go:embed hosting_catalog_linkding.yaml
@@ -27,6 +30,7 @@ type HostingCatalogDefinition struct {
 	CredentialNames []string         `json:"credential_names"`
 }
 
+// HostingCatalogTemplate describes a versioned catalog template and its resource definition.
 type HostingCatalogTemplate struct {
 	ID                 string                   `json:"id"`
 	Version            string                   `json:"immutable_version"`
@@ -47,6 +51,7 @@ func HostingCatalogTemplates() []HostingCatalogTemplate {
 	return []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
 }
 
+// HostingCatalogInstallInput describes the requested catalog install.
 type HostingCatalogInstallInput struct {
 	RequestID            string `json:"request_id"`
 	ProjectID            string `json:"project_id"`
@@ -65,6 +70,8 @@ func (in HostingCatalogInstallInput) ValidateShape() error {
 	}
 	return nil
 }
+
+// Validate checks the catalog install input fields and invariants.
 func (in HostingCatalogInstallInput) Validate() error {
 	if err := in.ValidateShape(); err != nil {
 		return err
@@ -75,6 +82,7 @@ func (in HostingCatalogInstallInput) Validate() error {
 	return nil
 }
 
+// UnmarshalJSON decodes the catalog install input document.
 func (in *HostingCatalogInstallInput) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 4096 || !validRuntimeJSONUnicode(raw) {
 		return errors.New("invalid catalog install input")
@@ -129,9 +137,12 @@ type HostingCatalogInstallation struct {
 	CreatedAt            time.Time                      `json:"created_at"`
 }
 
+// HostingCatalogResourceID derives the stable resource identity for an installation request.
 func HostingCatalogResourceID(project, request string) string {
 	return "res_catalog_" + HostingDocumentHash(struct{ Project, Request string }{project, request})[7:39]
 }
+
+// HostingCatalogSecretID derives a credential identity within a catalog resource.
 func HostingCatalogSecretID(resource, name string) string {
 	return "msec_catalog_" + HostingDocumentHash(struct{ Resource, Name string }{resource, name})[7:39]
 }

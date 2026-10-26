@@ -191,6 +191,7 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	return view, nil
 }
 
+// GetHostingCatalogInstallation returns an authorized catalog installation view.
 func (s *PostgresStore) GetHostingCatalogInstallation(ctx context.Context, actor, resource string) (domain.HostingCatalogInstallation, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingCatalogInstallation, error) {
 		var zero domain.HostingCatalogInstallation

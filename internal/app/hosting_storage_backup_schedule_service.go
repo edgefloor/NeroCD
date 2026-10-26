@@ -14,6 +14,8 @@ func (s *Service) storageBackupScheduleRepository() (store.HostingStorageBackupS
 	}
 	return repo, nil
 }
+
+// SaveStorageBackupSchedule creates or revises an authorized storage backup schedule.
 func (s *Service) SaveStorageBackupSchedule(ctx context.Context, resource, schedule string, in domain.HostingStorageBackupScheduleInput) (domain.HostingStorageBackupSchedule, error) {
 	var zero domain.HostingStorageBackupSchedule
 	if in.Validate() != nil || schedule == "" && in.ExpectedVersion != 0 || schedule != "" && in.ExpectedVersion < 1 {
@@ -41,6 +43,8 @@ func (s *Service) SaveStorageBackupSchedule(ctx context.Context, resource, sched
 	}
 	return repo.SaveStorageBackupSchedule(ctx, id, resource, actor.ID, schedule, in)
 }
+
+// ListStorageBackupSchedules lists authorized storage backup schedules for a resource.
 func (s *Service) ListStorageBackupSchedules(ctx context.Context, resource string) ([]domain.HostingStorageBackupSchedule, error) {
 	_, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)
 	if err != nil {
@@ -52,6 +56,9 @@ func (s *Service) ListStorageBackupSchedules(ctx context.Context, resource strin
 	}
 	return repo.ListStorageBackupSchedules(ctx, actor.ID, resource)
 }
+
+// ListStorageBackupOccurrences lists recorded occurrences of an authorized storage backup
+// schedule.
 func (s *Service) ListStorageBackupOccurrences(ctx context.Context, resource, schedule string) ([]domain.HostingStorageBackupOccurrence, error) {
 	if err := validateDestinationID(schedule, "schedule_id"); err != nil {
 		return nil, err

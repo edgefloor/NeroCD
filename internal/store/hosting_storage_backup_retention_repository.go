@@ -6,6 +6,8 @@ import (
 	"nerocd/internal/domain"
 )
 
+// HostingStorageBackupRetentionRepository defines persistence operations for storage backup
+// retention.
 type HostingStorageBackupRetentionRepository interface {
 	StorageBackupRetentionRetirement(context.Context, string, domain.HostingStorageBackupRetentionRetirementInput) (domain.HostingStorageBackupRetentionRetirement, error)
 	GetStorageBackupRetention(context.Context, string, string) (*domain.HostingStorageBackupRetentionPolicy, error)

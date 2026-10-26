@@ -15,6 +15,7 @@ func (s *Service) storageBackupRemoteRepository() (store.HostingStorageBackupRem
 	return r, nil
 }
 
+// ValidateStorageBackupTarget queues remote target validation for the selected destination.
 func (s *Service) ValidateStorageBackupTarget(ctx context.Context, project, target string, in domain.HostingDatabaseBackupTargetValidationInput) (domain.HostingStorageBackupTransfer, error) {
 	var zero domain.HostingStorageBackupTransfer
 	if in.Validate() != nil {
@@ -34,6 +35,8 @@ func (s *Service) ValidateStorageBackupTarget(ctx context.Context, project, targ
 	}
 	return repo.ValidateStorageBackupTarget(ctx, id, project, actor.ID, target, in)
 }
+
+// ListStorageBackupTransfers lists authorized storage backup transfers or target validations.
 func (s *Service) ListStorageBackupTransfers(ctx context.Context, id string, validation bool) ([]domain.HostingStorageBackupTransfer, error) {
 	actor, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -45,6 +48,8 @@ func (s *Service) ListStorageBackupTransfers(ctx context.Context, id string, val
 	}
 	return repo.ListStorageBackupTransfers(ctx, actor.ID, id, validation)
 }
+
+// GetStorageBackupTransfer returns an authorized storage backup transfer view.
 func (s *Service) GetStorageBackupTransfer(ctx context.Context, id string) (domain.HostingStorageBackupTransfer, error) {
 	actor, err := s.CurrentPrincipal(ctx)
 	if err != nil {
@@ -56,6 +61,8 @@ func (s *Service) GetStorageBackupTransfer(ctx context.Context, id string) (doma
 	}
 	return repo.GetStorageBackupTransfer(ctx, actor.ID, id)
 }
+
+// RetryStorageBackupTransfer admits a retry of the selected failed storage backup upload.
 func (s *Service) RetryStorageBackupTransfer(ctx context.Context, backup string, in domain.HostingStorageBackupTransferRetryInput) (domain.HostingStorageBackupTransfer, error) {
 	var zero domain.HostingStorageBackupTransfer
 	if in.Validate() != nil {
@@ -75,6 +82,8 @@ func (s *Service) RetryStorageBackupTransfer(ctx context.Context, backup string,
 	}
 	return repo.RetryStorageBackupTransfer(ctx, id, actor.ID, backup, in)
 }
+
+// RunnerStorageBackupTransferPlan returns a storage transfer plan for the authenticated runner.
 func (s *Service) RunnerStorageBackupTransferPlan(ctx context.Context, in domain.HostingAuthority) (domain.HostingStorageBackupTransferPlan, error) {
 	runner, err := s.requireRunnerPrincipal(ctx)
 	if err != nil {
@@ -86,6 +95,9 @@ func (s *Service) RunnerStorageBackupTransferPlan(ctx context.Context, in domain
 	}
 	return repo.StorageBackupTransferPlan(ctx, runner.ID, in)
 }
+
+// RunnerStorageBackupTransferMutation records a storage transfer mutation from the authenticated
+// runner.
 func (s *Service) RunnerStorageBackupTransferMutation(ctx context.Context, in domain.HostingStorageBackupTransferMutation) (domain.HostingStorageBackupTransfer, error) {
 	if in.Validate() != nil {
 		return domain.HostingStorageBackupTransfer{}, InvalidInput(domain.ErrInvalidStorageBackupRemote)

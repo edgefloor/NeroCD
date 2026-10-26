@@ -65,6 +65,8 @@ func backupRetentionAuthority(ctx context.Context, tx pgx.Tx, runner string, a d
 	}
 	return backupRetentionLoad(ctx, tx, id, true)
 }
+
+// PrepareDatabaseBackupRetention prepares an admitted database retention batch for dispatch.
 func (s *PostgresStore) PrepareDatabaseBackupRetention(ctx context.Context, id string) error {
 	_, e := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
 		if e := backupRetentionBoundary(ctx, tx, id); e != nil {
@@ -97,6 +99,9 @@ func (s *PostgresStore) PrepareDatabaseBackupRetention(ctx context.Context, id s
 func (h deploymentOnlyHandler) PrepareDatabaseBackupRetention(ctx context.Context, id string) error {
 	return h.store.PrepareDatabaseBackupRetention(ctx, id)
 }
+
+// DatabaseBackupRetentionPlan loads the database retention plan under current runner lease
+// authority.
 func (s *PostgresStore) DatabaseBackupRetentionPlan(ctx context.Context, runner string, a domain.HostingAuthority) (domain.HostingDatabaseBackupRetentionPlan, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionPlan, error) {
 		if e := backupRetentionBoundary(ctx, tx, a.OperationID); e != nil {
@@ -133,6 +138,8 @@ func (s *PostgresStore) databaseBackupRetentionClaimAllowed(ctx context.Context,
 	}
 	return e == nil, e
 }
+
+// DatabaseBackupRetentionMutation records a fenced database copy deletion outcome and receipt.
 func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, runner string, in domain.HostingDatabaseBackupRetentionMutation) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	var zero domain.HostingDatabaseBackupRetentionExecution
 	if in.Validate() != nil {
