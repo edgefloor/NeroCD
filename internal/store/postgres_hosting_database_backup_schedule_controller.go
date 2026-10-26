@@ -22,31 +22,19 @@ func (s *PostgresStore) ReconcileDatabaseBackupSchedules(ctx context.Context) er
 		return nil
 	}
 	var present bool
-	if err := s.pool.QueryRow(ctx, `SELECT to_regclass(current_schema()||'.hosting_database_backup_schedules') IS NOT NULL`).Scan(&present); err != nil {
+	present, err := sqlcgen.New(s.pool).DatabaseBackupScheduleSchemaPresent(ctx)
+	if err != nil {
 		return err
 	}
 	if !present {
 		return nil
 	}
 	var discoveryTime time.Time
-	if err := s.pool.QueryRow(ctx, `SELECT clock_timestamp() AS backup_schedule_discovery_time`).Scan(&discoveryTime); err != nil {
-		return err
-	}
-	rows, err := s.pool.Query(ctx, `SELECT s.id FROM hosting_database_backup_schedules s WHERE s.enabled OR EXISTS(SELECT 1 FROM hosting_database_backup_schedule_occurrences o JOIN hosting_database_backups b ON b.id=o.operation_id WHERE o.schedule_id=s.id AND o.state='admitted' AND b.state='queued') ORDER BY s.checked_at,s.id LIMIT 100`)
+	discoveryTime, err = sqlcgen.New(s.pool).ReadDatabaseBackupScheduleDiscoveryClock(ctx)
 	if err != nil {
 		return err
 	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	ids, err := sqlcgen.New(s.pool).ListDatabaseBackupSchedulesToReconcile(ctx)
 	if err != nil {
 		return err
 	}
@@ -84,10 +72,11 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 			return false, e
 		}
 		var now time.Time
-		if e = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); e != nil {
+		now, e = sqlcgen.New(tx).ReadDatabaseBackupScheduleClock(ctx)
+		if e != nil {
 			return false, e
 		}
-		if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_schedules SET checked_at=$2 WHERE id=$1`, id, now); e != nil {
+		if e = sqlcgen.New(tx).CheckDatabaseBackupSchedule(ctx, sqlcgen.CheckDatabaseBackupScheduleParams{ID: id, CheckedAt: now}); e != nil {
 			return false, e
 		}
 		if schedule.Enabled {
@@ -96,7 +85,7 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 				return false, e
 			}
 			if ok {
-				if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_schedules SET last_scheduled_at=$2 WHERE id=$1`, id, due); e != nil {
+				if e = sqlcgen.New(tx).AdvanceDatabaseBackupSchedule(ctx, sqlcgen.AdvanceDatabaseBackupScheduleParams{ID: id, LastScheduledAt: &due}); e != nil {
 					return false, e
 				}
 				schedule.LastScheduledAt = &due
@@ -129,7 +118,7 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 				}
 				if e == nil {
 					var busy bool
-					e = admission.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backups WHERE ownership_held AND mode='backup' AND source_binding_id=$1)`, schedule.BindingID).Scan(&busy)
+					busy, e = sqlcgen.New(admission).DatabaseBackupSourceBusy(ctx, schedule.BindingID)
 					if e == nil && busy {
 						reason = "source_busy"
 						e = ErrConflict
@@ -164,7 +153,7 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 				if operation != "" {
 					operationID = &operation
 				}
-				if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_occurrences(id,schedule_id,schedule_revision,scheduled_at,operation_id,state,reason) VALUES($1,$2,$3,$4,$5,$6,$7)`, occurrence, id, schedule.Revision, due, operationID, state, reason); e != nil {
+				if e = sqlcgen.New(tx).CreateDatabaseBackupScheduleOccurrence(ctx, sqlcgen.CreateDatabaseBackupScheduleOccurrenceParams{ID: occurrence, ScheduleID: id, ScheduleRevision: int64(schedule.Revision), ScheduledAt: due, OperationID: operationID, State: state, Reason: reason}); e != nil {
 					return false, e
 				}
 			}
@@ -178,7 +167,7 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 }
 
 func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Context, tx pgx.Tx, schedule sqlcgen.HostingDatabaseBackupSchedule, now time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT o.id,o.operation_id,o.scheduled_at FROM hosting_database_backup_schedule_occurrences o JOIN hosting_database_backups b ON b.id=o.operation_id WHERE o.schedule_id=$1 AND o.state='admitted' AND o.enqueued_at<$2 AND b.state='queued' AND b.run_id IS NULL ORDER BY o.scheduled_at DESC LIMIT 100`, schedule.ID, now.Add(-60*time.Minute))
+	rows, err := sqlcgen.New(tx).ListRecoverableDatabaseBackupOccurrences(ctx, sqlcgen.ListRecoverableDatabaseBackupOccurrencesParams{ScheduleID: schedule.ID, EnqueuedAt: now.Add(-60 * time.Minute)})
 	if err != nil {
 		return err
 	}
@@ -186,19 +175,12 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 		id, operation string
 		due           time.Time
 	}
-	pending := []lost{}
-	for rows.Next() {
-		var v lost
-		if err = rows.Scan(&v.id, &v.operation, &v.due); err != nil {
-			rows.Close()
-			return err
+	pending := make([]lost, 0, len(rows))
+	for _, row := range rows {
+		if row.OperationID == nil {
+			return pgx.ScanArgError{ColumnIndex: 1, FieldName: "operation_id", Err: errors.New("cannot scan NULL into *string")}
 		}
-		pending = append(pending, v)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
+		pending = append(pending, lost{id: row.ID, operation: *row.OperationID, due: row.ScheduledAt})
 	}
 	for _, v := range pending {
 		backup, e := sqlcgen.New(tx).LockDatabaseBackup(ctx, v.operation)
@@ -222,12 +204,12 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 			if backupScheduleDenial(currentErr) == "" {
 				return currentErr
 			}
-			if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_retirements(operation_id,occurrence_id,plan_hash,reason,ownership_held) VALUES($1,$2,$3,$4,true)`, backup.ID, v.id, backup.PlanHash, backupScheduleDenial(currentErr)); e != nil {
+			if e = sqlcgen.New(tx).RecordUnreleasedDatabaseBackupRetirement(ctx, sqlcgen.RecordUnreleasedDatabaseBackupRetirementParams{OperationID: backup.ID, OccurrenceID: v.id, PlanHash: backup.PlanHash, Reason: backupScheduleDenial(currentErr)}); e != nil {
 				return e
 			}
 			// Revocation ends discovery/dispatch authority, but cannot release a
 			// previously held source on behalf of its now-revoked owner.
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='failed',failure_code='interrupted',updated_at=$2 WHERE id=$1 AND state='queued' AND run_id IS NULL`, backup.ID, now); e != nil {
+			if e = sqlcgen.New(tx).FailExpiredDatabaseBackup(ctx, sqlcgen.FailExpiredDatabaseBackupParams{ID: backup.ID, UpdatedAt: now}); e != nil {
 				return e
 			}
 			receipt, receiptErr := notificationDirectReceipt(ctx, tx, "backup", backup.ID, "schedule_retired")
@@ -252,10 +234,10 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 			reason = "too_old"
 		}
 		if reason != "" {
-			if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_retirements(operation_id,occurrence_id,plan_hash,reason,ownership_held) VALUES($1,$2,$3,$4,false)`, backup.ID, v.id, backup.PlanHash, reason); e != nil {
+			if e = sqlcgen.New(tx).RecordReleasedDatabaseBackupRetirement(ctx, sqlcgen.RecordReleasedDatabaseBackupRetirementParams{OperationID: backup.ID, OccurrenceID: v.id, PlanHash: backup.PlanHash, Reason: reason}); e != nil {
 				return e
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='failed',ownership_held=false,failure_code='interrupted',updated_at=$2 WHERE id=$1 AND state='queued' AND run_id IS NULL`, backup.ID, now); e != nil {
+			if e = sqlcgen.New(tx).ReleaseExpiredDatabaseBackup(ctx, sqlcgen.ReleaseExpiredDatabaseBackupParams{ID: backup.ID, UpdatedAt: now}); e != nil {
 				return e
 			}
 			receipt, receiptErr := notificationDirectReceipt(ctx, tx, "backup", backup.ID, "schedule_retired")
@@ -265,7 +247,7 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 			if e = notificationBackupFailure(ctx, tx, backup.ID, receipt); e != nil {
 				return e
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_schedule_occurrences SET state='missed',reason=$2 WHERE id=$1`, v.id, reason); e != nil {
+			if e = sqlcgen.New(tx).MissDatabaseBackupOccurrence(ctx, sqlcgen.MissDatabaseBackupOccurrenceParams{ID: v.id, Reason: reason}); e != nil {
 				return e
 			}
 			if e = databaseBackupAudit(ctx, tx, backup.CreatedBy, backup.ID, "schedule_retired", backup.ProjectID); e != nil {
@@ -276,7 +258,7 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 		if _, e = s.hostingJobs.EnqueueDatabaseBackupTx(ctx, tx, hostingjobs.DatabaseBackupArgs{OperationID: backup.ID}); e != nil {
 			return e
 		}
-		if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_schedule_occurrences SET enqueued_at=$2 WHERE id=$1`, v.id, now); e != nil {
+		if e = sqlcgen.New(tx).EnqueueDatabaseBackupOccurrence(ctx, sqlcgen.EnqueueDatabaseBackupOccurrenceParams{ID: v.id, EnqueuedAt: now}); e != nil {
 			return e
 		}
 	}
@@ -288,21 +270,7 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 // recreated. Current full authority is checked again by the normal preparer.
 func (s *PostgresStore) recoverUnscheduledDatabaseBackups(ctx context.Context) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		rows, e := tx.Query(ctx, `SELECT b.id FROM hosting_database_backups b WHERE b.state IN ('queued','waiting_target') AND b.run_id IS NULL AND b.updated_at<clock_timestamp()-interval '60 minutes' AND b.created_at>=clock_timestamp()-interval '24 hours' AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_schedule_occurrences o WHERE o.operation_id=b.id) ORDER BY b.updated_at,b.id LIMIT 100 FOR UPDATE OF b SKIP LOCKED`)
-		if e != nil {
-			return false, e
-		}
-		ids := []string{}
-		for rows.Next() {
-			var id string
-			if e = rows.Scan(&id); e != nil {
-				rows.Close()
-				return false, e
-			}
-			ids = append(ids, id)
-		}
-		e = rows.Err()
-		rows.Close()
+		ids, e := sqlcgen.New(tx).ListUnscheduledDatabaseBackupsToRecover(ctx)
 		if e != nil {
 			return false, e
 		}
@@ -310,7 +278,7 @@ func (s *PostgresStore) recoverUnscheduledDatabaseBackups(ctx context.Context) e
 			if _, e = s.hostingJobs.EnqueueDatabaseBackupTx(ctx, tx, hostingjobs.DatabaseBackupArgs{OperationID: id}); e != nil {
 				return false, e
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backups SET updated_at=clock_timestamp() WHERE id=$1`, id); e != nil {
+			if e = sqlcgen.New(tx).TouchDatabaseBackup(ctx, id); e != nil {
 				return false, e
 			}
 		}

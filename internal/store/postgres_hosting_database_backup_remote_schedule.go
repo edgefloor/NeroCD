@@ -6,11 +6,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
 )
 
 func backupRemoteScheduleSelection(ctx context.Context, tx pgx.Tx, id string, revision int64) (*domain.BackupTargetSelection, error) {
 	var out domain.BackupTargetSelection
-	err := tx.QueryRow(ctx, `SELECT target_id,target_revision FROM hosting_database_backup_schedule_remote_targets WHERE schedule_id=$1 AND schedule_revision=$2`, id, revision).Scan(&out.TargetID, &out.Revision)
+	readDatabaseBackupScheduleRemoteSelectionRow, err := sqlcgen.New(tx).ReadDatabaseBackupScheduleRemoteSelection(ctx, sqlcgen.ReadDatabaseBackupScheduleRemoteSelectionParams{ScheduleID: id, ScheduleRevision: int64(revision)})
+	out.TargetID = readDatabaseBackupScheduleRemoteSelectionRow.TargetID
+	out.Revision = readDatabaseBackupScheduleRemoteSelectionRow.TargetRevision
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -40,13 +43,14 @@ func (s *PostgresStore) saveBackupRemoteScheduleSelection(ctx context.Context, t
 				return err
 			}
 			var project string
-			if err = tx.QueryRow(ctx, `SELECT project_id FROM resources WHERE id=$1`, resource).Scan(&project); err != nil {
+			project, err = sqlcgen.New(tx).ReadDatabaseBackupScheduleResourceProject(ctx, resource)
+			if err != nil {
 				return hostingError(err)
 			}
 			if snapshot.Target.ProjectID != project {
 				return ErrConflict
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_remote_targets(schedule_id,schedule_revision,target_id,target_revision) VALUES($1,$2,$3,$4)`, id, revision, selection.TargetID, selection.Revision)
+			err = sqlcgen.New(tx).CreateDatabaseBackupScheduleRemoteSelection(ctx, sqlcgen.CreateDatabaseBackupScheduleRemoteSelectionParams{ScheduleID: id, ScheduleRevision: int64(revision), TargetID: selection.TargetID, TargetRevision: int64(selection.Revision)})
 			return err
 		}
 	}
@@ -59,6 +63,6 @@ func (s *PostgresStore) saveBackupRemoteScheduleSelection(ctx context.Context, t
 	if _, err = backupRemoteSelect(ctx, tx, check, *selection); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_remote_targets(schedule_id,schedule_revision,target_id,target_revision) VALUES($1,$2,$3,$4)`, id, revision, selection.TargetID, selection.Revision)
+	err = sqlcgen.New(tx).CreateEmptyDatabaseBackupScheduleRemoteSelection(ctx, sqlcgen.CreateEmptyDatabaseBackupScheduleRemoteSelectionParams{ScheduleID: id, ScheduleRevision: int64(revision), TargetID: selection.TargetID, TargetRevision: int64(selection.Revision)})
 	return err
 }

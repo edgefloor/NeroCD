@@ -72,14 +72,15 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 			return zero, ErrConflict
 		}
 		if existingID == "" {
-			var count int
-			if err = tx.QueryRow(ctx, `SELECT count(*) FROM hosting_database_backup_schedules WHERE resource_id=$1`, resource).Scan(&count); err != nil {
+			var count int64
+			count, err = sqlcgen.New(tx).CountDatabaseBackupSchedules(ctx, resource)
+			if err != nil {
 				return zero, err
 			}
 			if count >= 100 {
 				return zero, ErrConflict
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9)`, id, value.Resource.ProjectID, resource, value.Binding.ID, value.Binding.DestinationID, actor, in.Frequency, in.Timezone, in.Enabled)
+			err = sqlcgen.New(tx).CreateDatabaseBackupSchedule(ctx, sqlcgen.CreateDatabaseBackupScheduleParams{ID: id, ProjectID: value.Resource.ProjectID, ResourceID: resource, BindingID: value.Binding.ID, DestinationID: value.Binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		} else {
 			prior, e := q.LockDatabaseBackupSchedule(ctx, existingID)
 			if e != nil {
@@ -89,7 +90,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 				return zero, ErrConflict
 			}
 			id = existingID
-			_, err = tx.Exec(ctx, `UPDATE hosting_database_backup_schedules SET actor_id=$2,revision=revision+1,frequency=$3,timezone=$4,enabled=$5,updated_at=clock_timestamp() WHERE id=$1`, id, actor, in.Frequency, in.Timezone, in.Enabled)
+			err = sqlcgen.New(tx).UpdateDatabaseBackupSchedule(ctx, sqlcgen.UpdateDatabaseBackupScheduleParams{ID: id, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		}
 		if err != nil {
 			return zero, hostingError(err)
@@ -98,7 +99,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, saved.Revision, actor, in.ExpectedResourceGeneration, in.Frequency, in.Timezone, in.Enabled)
+		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleVersion(ctx, sqlcgen.CreateDatabaseBackupScheduleVersionParams{ScheduleID: id, Revision: int64(saved.Revision), ActorID: actor, ExpectedResourceGeneration: int64(in.ExpectedResourceGeneration), Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		if err != nil {
 			return zero, err
 		}
@@ -116,7 +117,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		}
 		out := databaseBackupScheduleView(saved)
 		out.RemoteTarget = selection
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_requests(resource_id,request_id,actor_id,request_hash,schedule_id,revision,response) VALUES($1,$2,$3,$4,$5,$6,$7)`, resource, in.RequestID, actor, hash, id, saved.Revision, buildJSON(out))
+		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleRequest(ctx, sqlcgen.CreateDatabaseBackupScheduleRequestParams{ResourceID: resource, RequestID: in.RequestID, ActorID: actor, RequestHash: hash, ScheduleID: id, Revision: int64(saved.Revision), Response: buildJSON(out)})
 		if err != nil {
 			return zero, err
 		}
