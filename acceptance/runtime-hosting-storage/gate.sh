@@ -213,6 +213,11 @@ if state.get("Paused") or state.get("Restarting") or state.get("Status") not in 
 ' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$remote"
 }
 
+collect_runtime_evidence() {
+ mkdir -p "$evidence/runtime" || return 1
+ host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime"
+}
+
 cleanup() {
  result=$?
  trap - EXIT INT TERM
@@ -259,8 +264,7 @@ cleanup() {
   echo 'owned API and runner processes absent' | tee "$evidence/process-absence"
   if [[ "$running" == true && "$remote" == true ]]; then
    # Only the fixture's public archive and closed marker document are exported.
-   mkdir -p "$evidence/runtime"
-   host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime" || result=1
+   collect_runtime_evidence || result=1
   fi
   if [[ "$running" == true ]]; then
   postgres_capacity final || result=1
@@ -499,13 +503,15 @@ for name in required:
 if "SKIP" in text:raise SystemExit("required API runtime test skipped")
 CHECK_API_PASS
  if [[ "$deletion" == true ]]; then
-  python3 - "$evidence/deletion-markers.json" "$evidence/browser-safe.json" <<'CHECK_DELETION_MARKERS'
+  collect_runtime_evidence
+  python3 - "$evidence/runtime/deletion-markers.json" "$evidence/browser-safe.json" <<'CHECK_DELETION_MARKERS'
 import json,sys
 v=json.load(open(sys.argv[1]))
 for k in ['local_absent','remote_retained','history_retained','remaining_remote_restore','new_volume_application_reads_and_writes','source_preserved','manual_remote_conditional_delete','final_copy_confirmation','final_history_retained']:
  if v.get(k) is not True:raise SystemExit('manual deletion proof missing: '+k)
 if v.get('status')!='passed':raise SystemExit('manual deletion failed')
 b=json.load(open(sys.argv[2]))
+if b.get('status')!='passed':raise SystemExit('connected browser manual deletion failed')
 for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_and_final_copy_warning','manual_deletion_viewer_history_and_denied','manual_deletion_remote_and_final_confirmation','manual_deletion_final_history']:
  if b.get(k) is not True:raise SystemExit('connected browser manual deletion proof missing: '+k)
 CHECK_DELETION_MARKERS

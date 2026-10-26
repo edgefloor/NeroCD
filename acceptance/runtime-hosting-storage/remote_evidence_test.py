@@ -60,13 +60,14 @@ class ProfileTest(unittest.TestCase):
             (root / "runtime").mkdir()
             (root / "result").write_text("gate_exit=0\n")
             (root / "runtime/owned-upload.tar").write_bytes(b"fixture archive")
+            (root / "runtime/deletion-markers.json").write_text("{}")
             (root / "preservation-before.private.json").write_text("private credentials")
             (root / "browser.log").write_text("private runtime log")
             (root / "unlisted-secret").write_text("private")
             with patch("sys.argv", ["remote_evidence.py", "receipt", directory]):
                 evidence.main()
             with tarfile.open(root / "safe-receipt.tar.gz") as archive:
-                self.assertEqual(set(archive.getnames()), {"result", "runtime/owned-upload.tar"})
+                self.assertEqual(set(archive.getnames()), {"result", "runtime/owned-upload.tar", "runtime/deletion-markers.json"})
 
 
 if __name__ == "__main__":

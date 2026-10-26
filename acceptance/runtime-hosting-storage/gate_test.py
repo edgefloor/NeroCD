@@ -986,6 +986,52 @@ class RetentionModeContractTests(unittest.TestCase):
         self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageRetentionRuntimeWorkflow"):])
 
 class DeletionModeContractTests(unittest.TestCase):
+    def test_collects_joined_guest_markers_before_validating_and_rejects_bad_evidence(self):
+        source = (Path(__file__).parent / "gate.sh").read_text()
+        start = source.index("collect_runtime_evidence() {")
+        collect = source[start:source.index("\n}\n", start) + 3]
+        start = source.index(' if [[ "$deletion" == true ]]; then\n  collect_runtime_evidence')
+        validation = source[start:source.index("\n fi\nelse", start) + len("\n fi")]
+        required = ['local_absent','remote_retained','history_retained','remaining_remote_restore','new_volume_application_reads_and_writes','source_preserved','manual_remote_conditional_delete','final_copy_confirmation','final_history_retained']
+        browser_required = ['manual_deletion_selection_and_exact_retry','manual_deletion_history_and_final_copy_warning','manual_deletion_viewer_history_and_denied','manual_deletion_remote_and_final_confirmation','manual_deletion_final_history']
+        for kind in ["valid", "missing", "malformed", "missing_flag", "false_flag", "numeric_flag", "failed_status", "browser_missing_flag", "browser_failed", "browser_missing", "browser_malformed"]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                guest = root / "guest"
+                guest.mkdir()
+                output = root / "evidence"
+                output.mkdir()
+                marker = {"status": "passed", **dict.fromkeys(required, True)}
+                browser = {"status": "passed", **dict.fromkeys(browser_required, True)}
+                if kind == "missing_flag": del marker[required[0]]
+                if kind == "false_flag": marker[required[0]] = False
+                if kind == "numeric_flag": marker[required[0]] = 1
+                if kind == "failed_status": marker["status"] = "failed"
+                if kind == "browser_missing_flag": del browser[browser_required[0]]
+                if kind == "browser_failed": browser["status"] = "failed"
+                if kind != "missing":
+                    (guest / "deletion-markers.json").write_text("invalid JSON" if kind == "malformed" else json.dumps(marker))
+                if kind != "browser_missing":
+                    (output / "browser-safe.json").write_text("invalid JSON" if kind == "browser_malformed" else json.dumps(browser))
+                # Execute the actual collection function and validation block with
+                # an inert copy tool. No Docker or runtime fixture is launched.
+                script = """set -euo pipefail
+evidence=$GATE_MARKER_EVIDENCE
+outer=owned-id
+deletion=true
+host_docker() {
+ [[ "$1" == cp && "$2" == 'owned-id:/fixture/evidence/.' && "$3" == "$evidence/runtime" ]]
+ cp -R "$GATE_MARKER_GUEST/." "$3"
+}
+""" + collect + "\n" + validation
+                env = os.environ.copy()
+                env.update(GATE_MARKER_EVIDENCE=str(output), GATE_MARKER_GUEST=str(guest))
+                result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
+                self.assertFalse((output / "deletion-markers.json").exists())
+                if kind != "missing": self.assertTrue((output / "runtime/deletion-markers.json").is_file())
+
+
     def test_deletion_requires_its_own_profile_and_physical_recovery_evidence(self):
         source = (Path(__file__).parent / "gate.sh").read_text()
         for requirement in ["owner=nerocd-storage-deletion-runtime-20261026", "NEROCD_STORAGE_DELETION_RUNTIME=$deletion_mode", "TestHostingStorageBackupDeletionCompiledRunnerHTTPS", "CHECK_DELETION_PG", "CHECK_DELETION_MARKERS", "deletion-markers.json"]:

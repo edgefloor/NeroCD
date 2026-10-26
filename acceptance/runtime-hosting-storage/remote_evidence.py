@@ -124,7 +124,7 @@ def main():
     if mode == "receipt":
         # Explicit allowlist, never recurse over private evidence or inventories.
         names = ["result", "binary-sha256", "archive-helper-provenance", "image-store-scope",
-                 "preservation-safe.json", "runtime/remote-markers.json", "runtime/retention-markers.json", "runtime/owned-upload.tar",
+                 "preservation-safe.json", "runtime/remote-markers.json", "runtime/retention-markers.json", "runtime/deletion-markers.json", "runtime/owned-upload.tar",
                  "browser-safe.json", "browser-ui-manifest.json"]
         with tarfile.open(root / "safe-receipt.tar.gz", "w:gz") as archive:
             for name in names:
