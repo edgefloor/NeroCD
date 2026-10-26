@@ -57,11 +57,12 @@ func TestPostgresApplicationDatabaseRouteMigrationUpgrade(t *testing.T) {
 	if _, err = database.Exec(ctx, string(seed)); err != nil {
 		t.Fatal(err)
 	}
-	pg, err := store.OpenPostgres(ctx, address)
-	if err != nil {
-		t.Fatal("open accepted predecessor schema", err)
+	// The historical predecessor is valid for this upgrade, but lacks the
+	// notification schema required by the current server.
+	if predecessor, err := store.OpenPostgres(ctx, address); err == nil {
+		closePostgresStore(t, predecessor)
+		t.Fatal("current server accepted incomplete predecessor schema")
 	}
-	t.Cleanup(func() { closePostgresStore(t, pg) })
 	var before, after string
 	const history = `SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM projects p),(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM principals p),(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM resources p))::text`
 	if err = database.QueryRow(ctx, history).Scan(&before); err != nil {
@@ -81,6 +82,11 @@ func TestPostgresApplicationDatabaseRouteMigrationUpgrade(t *testing.T) {
 	}
 	if err = database.QueryRow(ctx, history).Scan(&after); err != nil || before != after {
 		t.Fatal("upgrade changed historical resource or principal data", err)
+	}
+	// After proving the historical 0072-to-0073 upgrade, bring the fixture to
+	// the current schema in migration order before opening the current server.
+	if err = applyEmbeddedMigrations(ctx, database, "0073_hosting_application_database_route_continuity.sql", ""); err != nil {
+		t.Fatal(err)
 	}
 	upgraded, err := store.OpenPostgres(ctx, address)
 	if err != nil {

@@ -1201,6 +1201,140 @@ func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 // dependencies above 0046 so older missing-layer tests retain their assertions.
 func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	t.Helper()
+	// Newer application, backup, notification, and catalog layers retain keys in
+	// the older network/runtime layers. Remove only their explicit fixture
+	// objects first; RESTRICT keeps omitted dependencies visible to this test.
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_database_network_upgrade_snapshot ON hosting_snapshots;
+DROP TRIGGER hosting_database_network_upgrade_plan ON hosting_apply_plans;
+DROP TRIGGER hosting_database_network_upgrade_lease ON run_leases;
+DROP TRIGGER hosting_connection_single_family ON hosting_database_bindings;
+DROP TRIGGER hosting_connection_database_hold ON hosting_database_deployments;
+DROP TRIGGER hosting_connection_lease_guard ON run_leases;
+DROP TRIGGER hosting_connection_snapshot_consistency ON hosting_snapshots;
+DROP TRIGGER hosting_connection_plan_consistency ON hosting_apply_plans;
+DROP TRIGGER hosting_appdb_finalize_target ON hosting_task_targets;
+DROP TRIGGER hosting_appdb_finalize_lease ON run_leases;
+DROP TRIGGER hosting_appdb_complete_mode ON hosting_receipts;
+DROP TRIGGER hosting_appdb_proxy_association ON hosting_proxy_operations;
+DROP TRIGGER hosting_appdb_storage_recovery_target ON hosting_task_targets;
+DROP TRIGGER hosting_appdb_storage_recovery_lease ON run_leases;
+DROP TRIGGER hosting_database_backup_deploy_hold ON hosting_database_deployments;
+DROP TRIGGER hosting_database_backup_connection_hold ON hosting_database_bindings;
+DROP TRIGGER hosting_database_backup_secret_hold ON project_managed_secrets;
+DROP TRIGGER hosting_database_backup_lease ON run_leases;
+DROP TRIGGER hosting_database_backup_remote_lease ON run_leases;
+DROP TRIGGER hosting_database_backup_retention_lease ON run_leases;
+DROP TRIGGER hosting_storage_backup_retention_lease ON run_leases;
+DROP TRIGGER hosting_storage_copy_archive ON hosting_storage_archive_plans;
+DROP TRIGGER hosting_storage_backup_deletion_lease ON run_leases;
+DROP TRIGGER hosting_owned_storage_runtime_lease ON run_leases;
+ DROP INDEX hosting_one_storage_recovery_task,hosting_one_finalize_task;
+ -- 0085 fixture tables precede their older dependencies.
+ DROP TABLE hosting_catalog_installations;
+ -- 0083 fixture tables precede their older dependencies.
+ DROP TABLE hosting_storage_backup_retention_resumes,hosting_storage_backup_retention_publications,hosting_storage_backup_retention_deliveries,hosting_storage_backup_retention_receipts,hosting_storage_backup_retention_items,hosting_storage_backup_retention_executions,hosting_storage_backup_retention_previews,hosting_storage_backup_copies,hosting_storage_backup_retention_requests,hosting_storage_backup_retention_policies;
+ -- 0082 fixture tables precede their older dependencies.
+ DROP TABLE hosting_storage_backup_schedule_occurrences,hosting_storage_backup_schedule_requests,hosting_storage_backup_schedule_versions,hosting_storage_backup_schedules;
+ -- 0081 fixture tables precede their older dependencies.
+ DROP TABLE hosting_storage_backup_remote_deliveries,hosting_storage_backup_transfer_receipts,hosting_storage_backup_transfers;
+ -- 0080 fixture tables precede their older dependencies.
+ DROP TABLE hosting_notification_attempts,hosting_notification_deliveries,hosting_notification_events,hosting_notification_source_receipts,hosting_notification_requests,hosting_notification_secrets,hosting_notification_channels;
+ -- 0078 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_backup_retention_resumes,hosting_database_backup_retention_publications,hosting_database_backup_retention_deliveries,hosting_database_backup_retention_receipts,hosting_database_backup_retention_items,hosting_database_backup_retention_executions,hosting_database_backup_retention_previews,hosting_database_backup_copies,hosting_database_backup_retention_requests,hosting_database_backup_retention_policies;
+ -- 0077 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_backup_remote_deliveries,hosting_database_backup_transfer_receipts,hosting_database_backup_transfers,hosting_database_backup_schedule_remote_targets,hosting_database_backup_remote_selections,hosting_database_backup_target_requests,hosting_database_backup_target_versions,hosting_database_backup_remote_credentials,hosting_database_backup_targets;
+ -- 0076 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_backup_schedule_retirements,hosting_database_backup_schedule_occurrences,hosting_database_backup_schedule_requests,hosting_database_backup_schedule_versions,hosting_database_backup_schedules;
+ -- 0075 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_backup_receipts,hosting_database_backups;
+ -- 0074 fixture tables precede their older dependencies.
+ DROP TABLE hosting_application_database_storage_membership_receipts,hosting_application_database_storage_effects,hosting_application_database_storage_recoveries,hosting_application_database_storage_writers,hosting_application_database_storage;
+ -- 0073 fixture tables precede their older dependencies.
+ DROP TABLE hosting_application_database_yields,hosting_application_database_route_continuations;
+ -- 0072 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_connection_recoveries,hosting_application_database_effect_authorizations,hosting_database_membership_receipts,hosting_application_database_retirements,hosting_application_database_stages,hosting_database_network_holds,hosting_database_connection_executions,hosting_database_membership_heads,hosting_database_connections;
+ -- 0071 fixture tables precede their older dependencies.
+ DROP TABLE hosting_database_network_upgrades;
+ DROP FUNCTION nerocd_appdb_finalize_guard(),
+ nerocd_appdb_proxy_association(),
+ nerocd_appdb_route_applied(text),
+ nerocd_appdb_route_complete_guard(),
+ nerocd_appdb_route_effect_guard(),
+ nerocd_appdb_route_reservation_validate(),
+ nerocd_appdb_route_schema_compatible(),
+ nerocd_appdb_storage_create_guard(),
+ nerocd_appdb_storage_effect_guard(),
+ nerocd_appdb_storage_recovery_guard(),
+ nerocd_appdb_storage_recovery_task_guard(),
+ nerocd_appdb_storage_schema_compatible(),
+ nerocd_appdb_storage_writer_defer(),
+ nerocd_appdb_storage_writer_guard(),
+ nerocd_appdb_storage_writer_settlement(),
+ nerocd_appdb_yield_defer(),
+ nerocd_appdb_yield_settlement(),
+ nerocd_appdb_yield_validate(),
+ nerocd_backup_copy_admission(),
+ nerocd_backup_copy_supersession_guard(),
+ nerocd_backup_copy_supersession_receipt(),
+ nerocd_backup_remote_admission(),
+ nerocd_backup_remote_credential_identity(),
+ nerocd_backup_remote_lease(),
+ nerocd_backup_remote_receipt(),
+ nerocd_backup_remote_scope(text,text,text),
+ nerocd_backup_remote_target_identity(),
+ nerocd_backup_remote_target_version(),
+ nerocd_backup_remote_transfer_identity(),
+ nerocd_backup_retention_identity(),
+ nerocd_backup_retention_lease(),
+ nerocd_backup_retention_receipt(),
+ nerocd_database_backup_admission(),
+ nerocd_database_backup_defer_copy_supersession(),
+ nerocd_database_backup_identity(),
+ nerocd_database_backup_lease(),
+ nerocd_database_backup_mutation_hold(),
+ nerocd_database_backup_receipt(),
+ nerocd_database_backup_schedule_identity(),
+ nerocd_database_backup_schedule_occurrence(),
+ nerocd_database_backup_schedule_retirement(),
+ nerocd_database_backup_schedule_version(),
+ nerocd_database_backup_secret_hold(),
+ nerocd_database_connection_consistent(),
+ nerocd_database_connection_defer_admission(),
+ nerocd_database_connection_effect_validate(),
+ nerocd_database_connection_flush(),
+ nerocd_database_connection_hold_guard(),
+ nerocd_database_connection_hold_release(),
+ nerocd_database_connection_identity(),
+ nerocd_database_connection_lease_guard(),
+ nerocd_database_connection_request_validate(),
+ nerocd_database_connection_retirement_validate(),
+ nerocd_database_connection_schema_compatible(),
+ nerocd_database_connection_stage_validate(),
+ nerocd_database_connection_transition_retired(jsonb,jsonb,jsonb),
+ nerocd_database_connection_validate(text,boolean),
+ nerocd_database_membership_advance(),
+ nerocd_database_network_upgrade_consistent(),
+ nerocd_database_network_upgrade_flush(),
+ nerocd_database_network_upgrade_lease(),
+ nerocd_database_network_upgrade_schema_compatible(),
+ nerocd_database_network_upgrade_validate(text,boolean),
+ nerocd_notification_event_source(),
+ nerocd_owned_storage_runtime_lease(),
+ nerocd_storage_backup_remote_admission(),
+ nerocd_storage_backup_schedule_identity(),
+ nerocd_storage_backup_schedule_occurrence(),
+ nerocd_storage_backup_schedule_version(),
+ nerocd_storage_copy_admission(),
+ nerocd_storage_copy_proof(),
+ nerocd_storage_copy_supersession(),
+ nerocd_storage_deletion_lease(),
+ nerocd_storage_retention_defer_copy(),
+ nerocd_storage_retention_identity(),
+ nerocd_storage_retention_lease(),
+ nerocd_storage_retention_receipt();`); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_database_network_capture_lease ON run_leases;
  DROP TABLE hosting_database_network_origin_receipts;
  DROP TABLE hosting_database_network_captures;
