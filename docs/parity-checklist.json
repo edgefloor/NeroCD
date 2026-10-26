@@ -40851,7 +40851,8 @@
     "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged.",
     "Later PostgreSQL retention/recovery is accepted at5003e16c0c0fc48d31c29f444f47a97b94e10339/tree72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618 and recorded under supplemental_assessments/postgresql-retention-recovery-20261026. Five bounded outcomes R46-C07/R47-C03-C06 gain validated profile-specific evidence. Nine physical groups,26markers and five browser profiles pass without failures/skips;493.040seconds is directory-creation-to-terminal elapsed, not exact execution duration. Original core2b6f PostgreSQL audit-rollback proof is retained with unchanged complete relevant dependencies. Historical933 audit, prior assessments and aggregate gates stay unchanged; productionHTTPS/provider breadth, notifications and other engines remain open.",
     "Owned-upload remote recovery is accepted at 58716fea31420f1f10258385de25e2c712e12770/tree e1f2ceaa49af387da72ac71a977f8b44bc206802, recorded under supplemental_assessments/owned-upload-remote-recovery-20261026 and [storage remote qualification](hosting-storage-remote-backups.md#accepted-qualification-and-evidence). The 87.774-second exact-source gate passed three real PostgreSQL groups/four revocation cases, local archive and remote/browser workflows without selected Go failures/skips. Twelve bounded outcomes R46-C03/C04/C13/C14/C16/C20, R47-C01/C02, and R48-C02/C07/C08/C09 gain profile-specific evidence. Five GETs, one PUT, one helper start, application reads/new writes, permissions and unchanged source/host inventory are retained. Qualification is native Linux arm64, trusted rootful classic-store Docker/overlay2 and one same-destination pinned Silo at trusted loopback HTTP. Production S3 HTTPS/provider breadth, storage schedules/retention/notifications, A27 platform recovery and full gates stay open. Historical933/30 audit, prior supplemental records and failed attempts remain unchanged; the optional broad runtime race timeout is not a full CI pass. Existing user UI binary was preserved.",
-    "Scheduled owned-upload backups, two storage failure alerts and verified new-volume recovery are Leader accepted at 733cde407427ef745d57fbb726e001bdb1555d47/tree 5be5cb2d7c937aaea00e76a8a8e128bd6c6fd77a after exact code hygiene, specification and critical security reviews. See supplemental_assessments/owned-upload-schedules-alerts-recovery-20261026 and [schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence). The 123.399-second gate passed ten PG groups/four revocation cases and local/remote/browser groups. Actual SMTP/HTTPS receipt URLs select exact authenticated archive/transfer history without mutation; explicit same-archive retry and new-volume app reads/new writes preserve the source. Helper/PUT counts belong only to the first successful scheduled archive and upload retry. The 52.858-second capacity and 89.464-second admission attempts remain failed with repairs recorded. Native Linux arm64/rootful classic Docker/same-destination Silo loopback HTTP/private-CA limits apply; retention, production S3 HTTPS, arbitrary mounts, broad cron/events/channels, cross-host/in-place/disk-loss recovery and aggregate gates stay open. Six bounded outcomes add no historical score; original 933/30 outcomes, all prior records and user UI binary remain unchanged."
+    "Scheduled owned-upload backups, two storage failure alerts and verified new-volume recovery are Leader accepted at 733cde407427ef745d57fbb726e001bdb1555d47/tree 5be5cb2d7c937aaea00e76a8a8e128bd6c6fd77a after exact code hygiene, specification and critical security reviews. See supplemental_assessments/owned-upload-schedules-alerts-recovery-20261026 and [schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence). The 123.399-second gate passed ten PG groups/four revocation cases and local/remote/browser groups. Actual SMTP/HTTPS receipt URLs select exact authenticated archive/transfer history without mutation; explicit same-archive retry and new-volume app reads/new writes preserve the source. Helper/PUT counts belong only to the first successful scheduled archive and upload retry. The 52.858-second capacity and 89.464-second admission attempts remain failed with repairs recorded. Native Linux arm64/rootful classic Docker/same-destination Silo loopback HTTP/private-CA limits apply; retention, production S3 HTTPS, arbitrary mounts, broad cron/events/channels, cross-host/in-place/disk-loss recovery and aggregate gates stay open. Six bounded outcomes add no historical score; original 933/30 outcomes, all prior records and user UI binary remain unchanged.",
+    "Owned-upload retention and retained-copy recovery are Leader accepted at c9c90429d5633fb6e64656001b21df3bfb6dfa97/tree 892713a0b19c21a2afd973f5e80414fa87925bb9. See supplemental_assessments/owned-upload-retention-recovery-20261026 and [retention qualification](hosting-storage-backup-retention.md#accepted-qualification-and-evidence). The 126.110-second full gate passed local archive (23.75s), retention (48.47s), ten prior PostgreSQL groups/four revocations, browser policy/preview/execute/identical retry/history/availability/viewer denial, two local and one conditional remote deletion, and retained remote restore with application reads/new writes. All 38 containers, 214 volumes, the existing user UI, and cleanup passed preservation. Seven bounded R46-C07/R47-C03\u2013C06/R48-C08\u2013C09 assessments leave the historical 933 eligible/30 verified outcomes and aggregate gates unchanged. R47-C06 specifically retains source PostgreSQL audit rollback at 5f000fff with unchanged relevant dependencies; it is not physical audit injection. The prior 270.530-second restore failure (cause unconfirmed) and 126.285-second preservation failure (plex-patched restart, actor unknown) remain failed. Exact-candidate reviews and identical-tree combined contracts (5.034s)/diff check passed. The owned-upload/native arm64/classic-store/same-destination Silo loopback limits apply. Owner-selected deletion, destructive schedule removal, history erasure, production S3 HTTPS, other engines and full parity remain open. Derived CodeGraph cache activity was observed and preserved. No speedup or cost claim is made."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -47351,6 +47352,333 @@
         "Prior failed attempts and the thirteen-file SQL-placement baseline failure remain recorded; this is not a full CI pass.",
         "Historical 933 eligible/30 verified outcomes and all requirement/acceptance/matrix gate states remain unchanged.",
         "Feature-specific token usage, dollar cost, total labor, speedup and completion forecast are unavailable."
+      ]
+    },
+    {
+      "id": "owned-upload-retention-recovery-20261026",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Seven profile-specific assessments extend owned-upload retention and retained-copy restore evidence. Historical criteria, states, totals, all prior supplemental records and aggregate gates remain unchanged. R48 extends the existing owned-upload realization without duplicate score. Source audit-rollback evidence is explicitly separate from the physical workflow.",
+      "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+      "physical_tree": "892713a0b19c21a2afd973f5e80414fa87925bb9",
+      "acceptance_fixture": "acceptance/runtime-hosting-storage/gate.sh --retention",
+      "source_paths": [
+        "internal/domain/hosting_storage_backup_retention.go",
+        "internal/domain/hosting_storage_backup_retention_test.go",
+        "internal/store/postgres_hosting_storage_backup_retention_test.go",
+        "internal/runnerruntime/hosting_storage_backup_retention_execution.go",
+        "internal/api/hosting_storage_backup_retention_runtime_integration_test.go",
+        "acceptance/runtime-hosting-storage/remote_browser.mjs",
+        "web/app/src/components/hosting/StorageBackupRetention.tsx"
+      ],
+      "evidence_paths": [
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/api-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/store-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/preservation-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/source-blobs",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/safe-receipt.tar.gz"
+      ],
+      "runtime_summary_sha256": "5ebbd81fbe6b9ce12bfa197b61e18e90f60d8585d81201410bfcc16e01e11e6b",
+      "runtime_receipt_sha256": "53aa89f1c12fc30ab6cea919cfcc85f5496ebfee82e7a945f1773f1b36e8aa85",
+      "runtime_summary": {
+        "gate_exit": 0,
+        "elapsed_seconds": 126.11,
+        "local_archive_seconds": 23.75,
+        "retention_group_seconds": 48.47,
+        "postgresql_groups": 10,
+        "revocation_replay_subtests": 4,
+        "no_failed_or_skipped_selected_go_tests": true,
+        "local_copies_deleted": 2,
+        "remote_copies_conditionally_deleted": 1,
+        "browser_policy_preview_execute_identical_retry": true,
+        "browser_history_and_copy_availability": true,
+        "viewer_mutation_denied": true,
+        "retained_remote_restore_republishes_local_generation": true,
+        "application_reads_and_new_writes": true,
+        "source_preserved": true,
+        "browser_widths": [
+          320,
+          390,
+          430,
+          1280
+        ],
+        "browser_request_interception": false,
+        "served_assets_match_manifest": true,
+        "baseline_container_count": 38,
+        "baseline_volume_count": 214,
+        "owned_resources_and_processes_absent": true,
+        "existing_user_ui_identity_unchanged": true
+      },
+      "reviews": {
+        "subject_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+        "code_hygiene": "Leader confirmed passed",
+        "specification": "Leader confirmed passed",
+        "critical_security": "Leader confirmed passed"
+      },
+      "combined_integration": {
+        "subject_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+        "identical_tree": "892713a0b19c21a2afd973f5e80414fa87925bb9",
+        "contracts_seconds": 5.034,
+        "contracts": "Leader confirmed passed",
+        "diff_check": "passed"
+      },
+      "retained_source_evidence": [
+        {
+          "subject_sha": "5f000fff1f3701e31b9107a4ab5da2f633b7f36b",
+          "test": "TestPostgresStorageRetentionCurrentAuthorityAndAuditRollback/audit",
+          "command": "go test -race ./internal/store -run 'TestPostgres(StorageRetention|StorageRemote|StorageArchive)' -count=1",
+          "evidence_path": "/tmp/nerocd-storage-retention-repair-storage-pg-race.log",
+          "elapsed_seconds": 79.54,
+          "package_seconds": 74.941,
+          "original_handle": 47570,
+          "joined_exit": 0,
+          "dependency_proof": "Store/app/domain/hostingjobs/SQL/migration sources and go.mod/go.sum are unchanged through c9. Only a separate new store ACK test file was added; the owning retention audit test file is byte-identical. No physical audit-injection claim."
+        }
+      ],
+      "prior_attempts": [
+        {
+          "source_sha": "5f000fff1f3701e31b9107a4ab5da2f633b7f36b",
+          "elapsed_seconds": 270.53,
+          "result": "failed",
+          "reason": "Shared remote restore failed before retention deletion; underlying helper-identification request error was not retained and cause remains unconfirmed. Diagnostic output is not a restore fix.",
+          "evidence_path": "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/5f000fff1f3701e31b9107a4ab5da2f633b7f36b.RZmFYL/attempt-failure-summary.json"
+        },
+        {
+          "source_sha": "8a464c036bebfe9c5b138f8b7f6e9a2688a58fed",
+          "elapsed_seconds": 126.285,
+          "result": "failed",
+          "reason": "API retention and existing browser passed; whole preservation failed after unrelated plex-patched restarted. Actor unknown; failure is not waived.",
+          "evidence_path": "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/8a464c036bebfe9c5b138f8b7f6e9a2688a58fed.mjwrQa/attempt-observer-summary.json"
+        }
+      ],
+      "outcomes": [
+        {
+          "criterion_id": "R46-C07",
+          "outcome": "Apply backup retention",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "Owner browser saves a resource-bound policy, reviews the exact preview, executes it and reads completion; the runner physically removes two local copies and one remote copy.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract",
+              "TestStorageRetentionPinnedUpstreamUnion",
+              "TestStorageRetentionIndependentLimitsAndProtections"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C03",
+          "outcome": "Apply local retention independently",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "Local count one retains the newest of three backups and physically unlinks both older local copies. Domain tests separately cover count/strict-age/size union and explicit protections.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract",
+              "TestStorageRetentionPinnedUpstreamUnion",
+              "TestStorageRetentionIndependentLimitsAndProtections"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C04",
+          "outcome": "Apply remote retention independently",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "Remote count two retains the two newer remote copies independently of local count one and conditionally deletes the oldest recorded object. Recorded target identity and proof remain distinct from local availability.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract",
+              "TestStorageRetentionPinnedUpstreamUnion",
+              "TestStorageRetentionIndependentLimitsAndProtections"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C05",
+          "outcome": "Replay lost retention response without deleting another batch",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "The fixture loses the committed execution response; the browser retries the identical request and receives the same batch. API replay of the exact preview and execution cannot select another batch.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C06",
+          "outcome": "Commit audit and retention receipt atomically",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "Retained real-PostgreSQL race source evidence at 5f000fff1f3701e31b9107a4ab5da2f633b7f36b covers TestPostgresStorageRetentionCurrentAuthorityAndAuditRollback/audit: audit rejection leaves zero retention receipts and unchanged pending items; retry commits after the rejecting trigger is removed. This is a source PostgreSQL test, not physical fixture audit injection.",
+            "named_tests": [
+              "TestPostgresStorageRetentionCurrentAuthorityAndAuditRollback/audit"
+            ],
+            "evidence_paths": [
+              "/tmp/nerocd-storage-retention-repair-storage-pg-race.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C08",
+          "outcome": "Verify application reads restored data",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "After retention deletes its local copy, restoring the middle retained remote backup republishes an owned local generation into a distinct application volume and the application reads the expected retained bytes.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": [],
+          "prior_owned_upload_acceptance_sha": "58716fea31420f1f10258385de25e2c712e12770"
+        },
+        {
+          "criterion_id": "R48-C09",
+          "outcome": "Verify application writes restored data before passing",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "c9c90429d5633fb6e64656001b21df3bfb6dfa97",
+            "scope": "Resource-bound owned-upload retention and retained-copy same-destination application recovery",
+            "justification": "The application writes and reads new bytes after retained remote restoration while both source applications retain their expected content. This extends prior owned-upload restore evidence without duplicate historical credit.",
+            "named_tests": [
+              "TestHostingStorageBackupRetentionCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestHostingStorageRetentionBrowserExecutionACKContract"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/runtime/retention-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026/c9c90429d5633fb6e64656001b21df3bfb6dfa97.Nh3DOw/browser-safe.json"
+            ],
+            "limits": "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": [],
+          "prior_owned_upload_acceptance_sha": "58716fea31420f1f10258385de25e2c712e12770"
+        }
+      ],
+      "acceptance_cases": [
+        {
+          "id": "A26",
+          "bounded_result": "Retained remote owned-upload backup restores into a distinct same-destination volume; application reads/new writes and source preservation pass.",
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "Owned-upload archives only; native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP and existing private-CA notification fixture. No production S3 HTTPS/provider breadth, arbitrary mounts, other engines, disk loss, in-place/cross-host restore, manual delete-all, destructive schedule removal, history erasure, user UI upgrade, or aggregate R/A/matrix gate.",
+        "Automatic publication deduplication/recovery has source PostgreSQL coverage; physical browser qualification exercised manual review/execution.",
+        "Prior failures and thirteen-file SQL-placement baseline remain; no full-CI claim.",
+        "Historical 933 eligible/30 verified outcomes and aggregate states remain unchanged.",
+        "Feature-specific token usage, dollar cost, total labor and speedup are unavailable."
       ]
     }
   ]

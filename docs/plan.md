@@ -126,11 +126,33 @@ mutation. Explicit same-archive retry and new-volume application reads/new write
 preserve the source. The earlier 52.858-second capacity failure and 89.464-second
 admission failure remain recorded with their repairs. Qualification retains the
 native arm64/rootful classic Docker/same-destination Silo/private-CA profile.
-Production S3 HTTPS, arbitrary mounts, retention, cross-host/in-place recovery,
+Production S3 HTTPS, arbitrary mounts, cross-host/in-place recovery,
 broader cron/events/channels and aggregate R/A/matrix gates remain open. The
 existing user UI is preserved, and workspace gates remain deferred.
 
-Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
+Owned-upload retention is accepted at
+`c9c90429d5633fb6e64656001b21df3bfb6dfa97`, tree
+`892713a0b19c21a2afd973f5e80414fa87925bb9`. The
+[retention qualification](hosting-storage-backup-retention.md#accepted-qualification-and-evidence)
+records a 126.110-second full pass, including real browser policy/preview/execute
+and identical retry, independent local two/remote one deletions, retained-copy
+restore, local generation publication, application reads/new writes, and viewer
+denial. Exact preservation includes all 38 containers, 214 volumes, and the
+existing user UI. Source PostgreSQL audit rollback is separate from physical
+fault injection. Native Linux arm64, trusted rootful classic-store Docker,
+same-destination Silo loopback HTTP, and owned-upload limits remain explicit.
+The original 933-outcome audit and aggregate gates do not change.
+
+The next proposed bounded H2 slice is owner-directed deletion of one selected
+owned-upload backup's local and optional remote copies. Upstream
+`VolumeBackups::deleteBackup` at line 338 provides a separate manual action.
+Require explicit selection/review, exact replay, current owner authority,
+shared/active/recovery protections, truthful copy availability, immutable history,
+and real browser/physical evidence. This proposal does not start implementation.
+Manual delete-all, destructive schedule removal, and history erasure remain
+separate contracts.
+
+Continue H2 from these remaining recovery gaps. Full upstream cron grammar,
 broader notification events and channels, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.
 Broader R42 profiles, rotation,

@@ -325,9 +325,19 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   reuses the archive; new-volume restore proves application reads/new writes and
   source preservation. Qualification uses native Linux arm64, trusted rootful
   classic-store Docker, same-destination pinned Silo at trusted loopback HTTP,
-  and private-CA alert receivers. Retention, production S3 HTTPS, arbitrary mounts,
+  and private-CA alert receivers. Production S3 HTTPS, arbitrary mounts,
   cross-host/in-place recovery, broad cron/events/channels and aggregate gates
   remain open. The existing user UI binary is preserved.
+- [Owned-upload backup retention](docs/hosting-storage-backup-retention.md#accepted-qualification-and-evidence)
+  is accepted at `c9c90429d5633fb6e64656001b21df3bfb6dfa97`. The 126.110-second
+  exact-candidate gate proves independent local/remote limits, immutable preview,
+  identical execution retry, two real local deletions and one conditional remote
+  deletion, browser history/copy availability, and viewer denial. Retained remote
+  restore republishes local ownership and proves application reads/new writes
+  with both sources preserved. All 38 containers, 214 volumes, and the existing
+  user UI were preserved. This is the native arm64/classic-store/same-destination
+  Silo loopback profile, not arbitrary mounts, other providers/engines, owner-selected
+  deletion, history erasure, or full parity. Prior failed attempts remain failed.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
