@@ -161,7 +161,7 @@ func TestStorageRuntimeDockerOutputProcess(t *testing.T) {
 }
 
 func TestStorageRuntimeDockerDirectStartsNeverPull(t *testing.T) {
-	t.Run("remote restore public request", testStorageRemoteRuntimeRestoreRequest)
+	t.Run("remote request contracts", testStorageRemoteRuntimeRequestContracts)
 	t.Run("fixture port separation", testStorageRuntimeFixturePortSeparation)
 	t.Run("closed helper environment diagnostic", testStorageDiagnosticHelperEnvironment)
 	t.Run("owned proxy cleanup", testStorageRuntimeOwnedProxyCleanup)
@@ -632,11 +632,7 @@ func testStorageDiagnosticHelperEnvironment(t *testing.T) {
 // Use the same payload constructor for the physical fixture and the public-decoder contract.
 func storageRemoteRuntimeRestoreRequest(t *testing.T, transferID string, revision int64, name string) domain.HostingStorageRestoreInput {
 	t.Helper()
-	var request [16]byte
-	if _, err := rand.Read(request[:]); err != nil {
-		t.Fatal(err)
-	}
-	return domain.HostingStorageRestoreInput{RequestID: hex.EncodeToString(request[:]), Name: name, RemoteSource: &domain.BackupRemoteSource{TransferID: transferID, ExpectedTargetRevision: revision}}
+	return domain.HostingStorageRestoreInput{RequestID: storageRemoteRuntimeRequestID(t), Name: name, RemoteSource: &domain.BackupRemoteSource{TransferID: transferID, ExpectedTargetRevision: revision}}
 }
 
 func testStorageRemoteRuntimeRestoreRequest(t *testing.T) {
@@ -677,4 +673,90 @@ func testStorageRemoteRuntimeRestoreRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func storageRemoteRuntimeRequestID(t *testing.T) string {
+	t.Helper()
+	var request [16]byte
+	if _, err := rand.Read(request[:]); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(request[:])
+}
+
+func storageRemoteRuntimeBackupRequest(t *testing.T, generation int64, target string, revision int64) domain.HostingStorageBackupInput {
+	t.Helper()
+	return domain.HostingStorageBackupInput{RequestID: storageRemoteRuntimeRequestID(t), ExpectedResourceGeneration: generation, RemoteTarget: &domain.BackupTargetSelection{TargetID: target, Revision: revision}}
+}
+
+func storageRemoteRuntimeRetryRequest(t *testing.T, transferID string) domain.HostingStorageBackupTransferRetryInput {
+	t.Helper()
+	var request [24]byte
+	if _, err := rand.Read(request[:]); err != nil {
+		t.Fatal(err)
+	}
+	return domain.HostingStorageBackupTransferRetryInput{RequestID: hex.EncodeToString(request[:]), ExpectedTransferID: transferID}
+}
+
+func testStorageRemoteRuntimeRequestContracts(t *testing.T) {
+	t.Run("restore", testStorageRemoteRuntimeRestoreRequest)
+	t.Run("backup", func(t *testing.T) {
+		payload := storageRemoteRuntimeBackupRequest(t, 2, "target_storage", 3)
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decode := func(raw []byte) bool {
+			recorder := httptest.NewRecorder()
+			var result domain.HostingStorageBackupInput
+			return decodeStorageArchive(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/resources/resource_storage/storage-backups", bytes.NewReader(raw)), &result) && result.Validate() == nil
+		}
+		if !decode(raw) {
+			t.Fatal("actual remote backup fixture payload rejected by public decoder")
+		}
+		valid := string(raw)
+		for name, invalid := range map[string]string{
+			"48 character request": strings.Replace(valid, payload.RequestID, strings.Repeat("a", 48), 1),
+			"zero generation":      strings.Replace(valid, `"expected_resource_generation":2`, `"expected_resource_generation":0`, 1),
+			"zero revision":        strings.Replace(valid, `"revision":3`, `"revision":0`, 1),
+			"unknown":              strings.TrimSuffix(valid, "}") + `,"unknown":true}`,
+			"duplicate":            strings.TrimSuffix(valid, "}") + `,"request_id":"` + payload.RequestID + `"}`,
+			"case alias":           strings.Replace(valid, `"request_id"`, `"Request_ID"`, 1),
+		} {
+			t.Run(name, func(t *testing.T) {
+				if decode([]byte(invalid)) {
+					t.Fatal("invalid backup accepted")
+				}
+			})
+		}
+	})
+	t.Run("retry", func(t *testing.T) {
+		payload := storageRemoteRuntimeRetryRequest(t, "storage_upload_hsb_ea81121f8616f6636c6bbfc9a8f71a73")
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decode := func(raw []byte) bool {
+			recorder := httptest.NewRecorder()
+			var result domain.HostingStorageBackupTransferRetryInput
+			return decodeDatabaseBackup(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/storage-backups/backup_storage/transfers/retry", bytes.NewReader(raw)), &result) && result.Validate() == nil
+		}
+		if len(payload.RequestID) != 48 || !decode(raw) {
+			t.Fatal("actual retry fixture payload rejected or identity semantics changed")
+		}
+		valid := string(raw)
+		for name, invalid := range map[string]string{
+			"empty request":  strings.Replace(valid, payload.RequestID, "", 1),
+			"empty transfer": strings.Replace(valid, payload.ExpectedTransferID, "", 1),
+			"unknown":        strings.TrimSuffix(valid, "}") + `,"unknown":true}`,
+			"duplicate":      strings.TrimSuffix(valid, "}") + `,"request_id":"` + payload.RequestID + `"}`,
+			"case alias":     strings.Replace(valid, `"request_id"`, `"Request_ID"`, 1),
+		} {
+			t.Run(name, func(t *testing.T) {
+				if decode([]byte(invalid)) {
+					t.Fatal("invalid retry accepted")
+				}
+			})
+		}
+	})
 }

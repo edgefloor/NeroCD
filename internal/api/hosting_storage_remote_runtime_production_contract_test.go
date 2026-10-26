@@ -38,11 +38,7 @@ func TestHostingStorageRemoteProductionContract(t *testing.T) {
 			t.Errorf("required production route missing: %s %s", route.Method, route.Path)
 		}
 	}
-	var backup domain.HostingStorageBackupInput
-	if err := json.Unmarshal([]byte(`{"request_id":"`+strings.Repeat("a", 32)+`","expected_resource_generation":2,"remote_target":{"target_id":"target_storage","revision":3}}`), &backup); err != nil || backup.Validate() != nil || backup.RemoteTarget == nil || backup.RemoteTarget.TargetID != "target_storage" || backup.RemoteTarget.Revision != 3 {
-		t.Fatal("fixture backup request incompatible with production", err)
-	}
-	t.Run("remote restore public request", testStorageRemoteRuntimeRestoreRequest)
+	t.Run("remote request contracts", testStorageRemoteRuntimeRequestContracts)
 	now := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
 	blob := domain.HostingStorageArchiveBlob{BackupID: "backup_storage", DestinationID: "destination_storage", DaemonID: "daemon_storage", SHA256: "sha256:" + strings.Repeat("a", 64), SizeBytes: 4096, Format: domain.HostingStorageArchiveFormat}
 	production := domain.HostingStorageBackupTransfer{ID: "transfer_storage", Version: domain.HostingStorageBackupTransferVersion, ProjectID: "proj_platform", TargetID: "target_storage", TargetRevision: 3, DestinationID: blob.DestinationID, Mode: "download", BackupID: blob.BackupID, RestoreOperationID: "restore_storage", State: "failed", FailureCode: "object_mismatch", Blob: &blob, CreatedAt: now, UpdatedAt: now}

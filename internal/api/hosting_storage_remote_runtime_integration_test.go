@@ -552,7 +552,7 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 		}
 	}
 	observation.set("/nerocd-storage-runtime/nerocd/storage/"+backup.ID+"/"+strings.TrimPrefix(backup.Blob.SHA256, "sha256:")+".tar", "")
-	retryRequest := map[string]string{"request_id": hostingStorageRemoteRuntimeRandom(t), "expected_transfer_id": retryable.ID}
+	retryRequest := storageRemoteRuntimeRetryRequest(t, retryable.ID)
 	recovered := storageRuntimeJSON[hostingStorageRemoteRuntimeTransfer](f.storageRuntimeFixture, "POST", "/api/v1/storage-backups/"+backup.ID+"/transfers/retry", retryRequest, 202)
 	sameRecovered := storageRuntimeJSON[hostingStorageRemoteRuntimeTransfer](f.storageRuntimeFixture, "POST", "/api/v1/storage-backups/"+backup.ID+"/transfers/retry", retryRequest, 202)
 	if recovered.ID != sameRecovered.ID || recovered.RestoreOperationID != heldRestore.Operation.ID {
@@ -668,8 +668,8 @@ func hostingStorageRemoteRuntimeAuthorization(f *hostingStorageRemoteRuntimeFixt
 	for _, path := range paths {
 		storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "GET", path, nil, 200)
 	}
-	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/resources/"+resource.ID+"/storage-backups", map[string]any{"request_id": hostingStorageRemoteRuntimeRandom(f.t), "expected_resource_generation": resource.Generation, "remote_target": map[string]any{"target_id": target, "revision": revision}}, 403)
-	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/storage-backups/"+backup.ID+"/transfers/retry", map[string]any{"request_id": hostingStorageRemoteRuntimeRandom(f.t), "expected_transfer_id": failed.ID}, 403)
+	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/resources/"+resource.ID+"/storage-backups", storageRemoteRuntimeBackupRequest(f.t, resource.Generation, target, revision), 403)
+	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/storage-backups/"+backup.ID+"/transfers/retry", storageRemoteRuntimeRetryRequest(f.t, failed.ID), 403)
 }
 
 // This handshake sequences only the browser test. It never grants hosting
