@@ -310,7 +310,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - [PostgreSQL backup failure notifications](docs/hosting-backup-notifications.md#accepted-qualification-and-durable-evidence)
   are accepted at `1eb2d01c9262c6bad5a03579545226189f88f1be` for SMTP email and generic HTTPS
   webhooks covering backup and upload failures. The live UI configures channels,
-  inspects durable delivery attempts, and opens authenticated recovery without
+  lists delivery outcomes, and opens authenticated recovery without
   starting an operation. Explicit new-target restore proves application reads and
   new writes from the preserved local archive. The physical dump-failure outcome
   is uncertain and retains that label. Qualification uses native Linux arm64,

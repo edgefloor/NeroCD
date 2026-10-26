@@ -21,13 +21,13 @@ If a save or test response is lost, inspect refreshed history before using the r
 
 ## Inspect a failure and recover explicitly
 
-1. Open **Notification delivery history** and identify the backup or upload event. **Inspect delivery** shows the attempts, their safe failure codes, and timestamps. The panel lists the latest 100 deliveries.
+1. Open **Notification delivery history** and identify the backup or upload event. **Inspect delivery** shows the attempts, safe failure guidance, and timestamps. The panel lists the latest 100 deliveries.
 2. Distinguish source outcome from delivery outcome. `delivered` means the receiver acknowledged the notification. A failed or uncertain backup remains failed or uncertain even when its alert was delivered. An upload failure can leave a successful local backup available.
 3. Follow **Open authenticated backup recovery** from the message or history. Sign in if required. The page checks current project, environment, resource, backup, and transfer scope before showing linked history. Opening a link does not retry an upload or start a restore. Viewers can inspect authorized history. Owners perform recovery actions.
 4. For an upload failure with an available local copy, inspect the linked successful backup and failed transfer. Use **Retry upload for** that backup only after checking the target. The retry sends the same archive without another dump. See [remote backup recovery](hosting-database-remote-backups.md).
 5. To recover data, select the completed backup and an available archive source, enter **New database name**, and select **Restore into new database**. See [PostgreSQL backup and restore](hosting-database-backups.md). Verify the restored application can read the snapshot and make new writes. Preserve the source database until that proof is complete.
 
-A failed dump does not create a completed archive to restore. An uncertain source requires inspection before another operation. If delivery ends as `failed` or `suppressed`, inspect its safe error and current channel configuration. Fix configuration and send a distinct explicit test. Three consecutive real-event configuration failures disable the channel. Edit and save it to reset the counter and deliberately enable delivery again. A new test does not replay an old failed real event.
+A failed dump does not create a completed archive to restore. An uncertain source requires inspection before another operation. If delivery ends as `failed` or `suppressed`, inspect its safe failure guidance and current channel configuration. Fix configuration and send a distinct explicit test. Three consecutive real-event configuration failures disable the channel. Edit and save it to reset the counter and deliberately enable delivery again. A new test does not replay an old failed real event.
 
 ## Source events
 

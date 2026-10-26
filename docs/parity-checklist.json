@@ -46311,7 +46311,7 @@
             "acceptance_stage": "Leader_accepted",
             "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
             "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
-            "justification": "Browser reload and inspect show stable delivery/attempt history for the observed exact dump and upload source outcomes.",
+            "justification": "The live browser reloads and lists delivery outcomes for the observed exact dump and upload sources. Detailed attempt persistence is covered separately by API and PostgreSQL tests, and attempt display by component tests.",
             "named_tests": [
               "TestHostingBackupNotificationsCompiledRunner"
             ],
@@ -46519,7 +46519,7 @@
             "acceptance_stage": "Leader_accepted",
             "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
             "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
-            "justification": "Controller restart and browser reload retain the actual source event, channel generation, delivery ID and attempt history.",
+            "justification": "Controller restart and browser reload preserve the actual source event and delivery outcome list. API and PostgreSQL tests separately cover persisted channel generation, delivery identity and detailed attempts; component tests cover attempt display.",
             "named_tests": [
               "TestHostingBackupNotificationsCompiledRunner"
             ],
