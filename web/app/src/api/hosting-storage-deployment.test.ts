@@ -280,3 +280,22 @@ test.each([
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...connectedStorageOptions, application_database_storage: descriptor }))));
   await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
 });
+
+test("Compose authority uses a stack reference with no single storage anchor", async () => {
+  const stack_ref = { generation: 2, hash: `sha256:${"b".repeat(64)}` };
+  for (const body of [
+    { ...initialOptions, stack_ref, storage_ref: null },
+    { ...storageOptions, stack_ref, storage_ref: null },
+  ]) {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    expect(await getStorageDeploymentOptions(scope)).toEqual(body);
+  }
+  for (const body of [
+    { ...initialOptions, stack_ref },
+    { ...initialOptions, stack_ref: { ...stack_ref, generation: 0 }, storage_ref: null },
+    { ...initialOptions, stack_ref: { ...stack_ref, hash: "invalid" }, storage_ref: null },
+  ]) {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
+    await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
+  }
+});

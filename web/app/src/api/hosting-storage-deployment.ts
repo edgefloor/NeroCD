@@ -136,6 +136,7 @@ export function validateStorageDeploymentOptions(
       "reason",
       "routes",
       "storage_route_continuity",
+      ...(Object.hasOwn(value, "stack_ref") ? ["stack_ref"] : []),
       ...(Object.hasOwn(value, "application_database_storage") ? ["application_database_storage"] : []),
     ]) ||
     value.resource_id !== resource ||
@@ -148,6 +149,11 @@ export function validateStorageDeploymentOptions(
     value.routes.length > 32
   )
     fail();
+  if (value.stack_ref !== undefined &&
+    (!closed(value.stack_ref, ["generation", "hash"]) ||
+      !positive(value.stack_ref.generation) ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.stack_ref.hash) ||
+      value.storage_ref !== null || value.application_database_storage != null)) fail();
   if (
     value.storage_ref !== null &&
     (!closed(value.storage_ref, ["storage_id", "generation", "hash"]) ||
@@ -232,7 +238,7 @@ export function validateStorageDeploymentOptions(
     fail();
   if (value.reason === "initial_deployment") {
     if (
-      !value.storage_ref ||
+      !(value.storage_ref || value.stack_ref) ||
       value.previous_healthy_operation_id !== null ||
       value.host_port !== null ||
       value.container_port !== null ||
@@ -243,7 +249,7 @@ export function validateStorageDeploymentOptions(
       fail();
   } else if (value.available) {
     if (
-      !value.storage_ref ||
+      !(value.storage_ref || value.stack_ref) ||
       !value.previous_healthy_operation_id ||
       value.host_port === null ||
       value.container_port === null ||
