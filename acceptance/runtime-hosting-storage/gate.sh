@@ -52,9 +52,9 @@ preload_image() {
  reference=$1; host_manifest=$2; image_tag=$3
  inner_docker pull --platform linux/arm64 "$reference" > "$evidence/preload-$image_tag.log" 2>&1
  inner_docker image inspect "$reference" > "$evidence/preload-$image_tag.json"
- python3 - "$reference" "$host_manifest" "$evidence/preload-$image_tag.json" <<'VERIFY_PRELOAD'
-import json,re,sys
-reference,host_path,guest_path=sys.argv[1:]
+ python3 - "$reference" "$host_manifest" "$evidence/preload-$image_tag.json" "$evidence/preload-$image_tag-proof.json" <<'VERIFY_PRELOAD'
+import hashlib,json,re,sys
+reference,host_path,guest_path,proof_path=sys.argv[1:]
 def canonical(value):
  repository,separator,digest=value.partition("@")
  if not separator or not re.fullmatch("sha256:[a-f0-9]{64}",digest):raise SystemExit("unpinned image prerequisite")
@@ -70,8 +70,31 @@ def pinned(image):return any(canonical(value)==pin for value in image.get("RepoD
 matching=[image for image in hosts if pinned(image)]
 if len(matching)!=1:raise SystemExit("host prerequisite digest missing or ambiguous")
 host,guest=matching[0],guests[0]
-if any(image.get("Os")!="linux" or image.get("Architecture")!="arm64" for image in [host,guest]):raise SystemExit("image prerequisite platform mismatch")
-if not pinned(guest) or not re.fullmatch("sha256:[a-f0-9]{64}",guest.get("Id","")) or guest["Id"]!=host.get("Id") or not isinstance(guest.get("Config"),dict) or guest["Config"]!=host.get("Config"):raise SystemExit("image prerequisite digest/content/config mismatch")
+sha256=lambda value:isinstance(value,str) and re.fullmatch("sha256:[a-f0-9]{64}",value) is not None
+platform=lambda image:(image.get("Os"),image.get("Architecture"),"" if image.get("Variant") is None else image["Variant"])
+if platform(host)!=platform(guest) or platform(host) not in [("linux","arm64",""),("linux","arm64","v8")]:raise SystemExit("image prerequisite platform mismatch")
+if not pinned(guest) or any(not sha256(image.get("Id")) for image in [host,guest]):raise SystemExit("image prerequisite digest/reported ID mismatch")
+if not isinstance(guest.get("Config"),dict) or not guest["Config"] or guest["Config"]!=host.get("Config"):raise SystemExit("image prerequisite executable config mismatch")
+def rootfs(image):
+ value=image.get("RootFS")
+ if not isinstance(value,dict) or value.get("Type")!="layers" or not isinstance(value.get("Layers"),list) or not value["Layers"] or any(not sha256(layer) for layer in value["Layers"]):raise SystemExit("invalid image prerequisite RootFS identity")
+ return value
+if rootfs(host)!=rootfs(guest):raise SystemExit("image prerequisite RootFS content mismatch")
+# Docker Desktop's containerd image store reports the pinned OCI descriptor as
+# Id. The qualified classic overlay2 guest reports its own image ID instead.
+# Admit that representation only with descriptor evidence and identical content.
+def descriptor_id(image):
+ descriptor=image.get("Descriptor")
+ return isinstance(descriptor,dict) and descriptor.get("digest")==image["Id"]==pin.split("@",1)[1] and descriptor.get("mediaType") in ["application/vnd.oci.image.index.v1+json","application/vnd.oci.image.manifest.v1+json"] and type(descriptor.get("size")) is int and descriptor["size"]>0
+for image in [host,guest]:
+ if image.get("Descriptor") is not None and not descriptor_id(image):raise SystemExit("unsupported image prerequisite descriptor identity")
+relation="same_reported_id"
+if host["Id"]!=guest["Id"]:
+ if not descriptor_id(host) or guest.get("Descriptor") is not None or not isinstance(guest.get("GraphDriver"),dict) or guest["GraphDriver"].get("Name")!="overlay2":raise SystemExit("unexplained image prerequisite ID mismatch")
+ relation="host_oci_descriptor_to_classic_overlay2"
+def identity_hash(value):return "sha256:"+hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+proof={"canonical_pin":pin,"platform":list(platform(guest)),"host_reported_id":host["Id"],"guest_reported_id":guest["Id"],"id_relation":relation,"executable_config_hash":identity_hash(guest["Config"]),"rootfs_hash":identity_hash(rootfs(guest)),"rootfs_layers":len(guest["RootFS"]["Layers"])}
+with open(proof_path,"w") as output:json.dump(proof,output,sort_keys=True);output.write("\n")
 VERIFY_PRELOAD
 }
 # IMAGE_PRELOAD_END

@@ -311,13 +311,17 @@ class LauncherTests(unittest.TestCase):
 
 
 class ImagePreloadTest(unittest.TestCase):
-    def run_preload(self, change=None, pull_exit=0):
+    def run_preload(self, change=None, pull_exit=0, images=None):
         source = GATE.read_text().split("# IMAGE_PRELOAD_BEGIN\n", 1)[1].split("# IMAGE_PRELOAD_END", 1)[0]
         digest = "sha256:" + "a" * 64
         reference = "postgres:17.6-alpine@" + digest
         host = {"Id": "sha256:" + "b" * 64, "Os": "linux", "Architecture": "arm64",
-                "RepoDigests": ["postgres@" + digest], "Config": {"Entrypoint": ["entrypoint"], "User": ""}}
+                "RepoDigests": ["postgres@" + digest], "Config": {"Entrypoint": ["entrypoint"], "User": ""},
+                "RootFS": {"Type": "layers", "Layers": ["sha256:" + "c" * 64, "sha256:" + "d" * 64]}}
         guest = json.loads(json.dumps(host))
+        if images is not None:
+            host, guest = json.loads(json.dumps(images))
+            reference = "postgres:17.6-alpine@" + host["RepoDigests"][0].split("@", 1)[1]
         if change:
             change(guest)
         with tempfile.TemporaryDirectory(prefix="nerocd-storage-preload-test-") as temporary:
@@ -335,11 +339,15 @@ inner_docker() {
 """.replace('return "$3"', 'return ' + str(pull_exit)) + '\npreload_image "' + reference + '" "$evidence/host.json" fixture\n')
             result = subprocess.run(["bash", "-e", str(script), str(root)], capture_output=True, text=True, timeout=5)
             calls = (root / "calls").read_text().splitlines()
-            return result, calls
+            proof_path = root / "preload-fixture-proof.json"
+            proof = json.loads(proof_path.read_text()) if proof_path.exists() else None
+            return result, calls, proof
 
     def test_exact_pin_preloaded_before_inspection(self):
-        result, calls = self.run_preload()
+        result, calls, proof = self.run_preload()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(proof["id_relation"], "same_reported_id")
+        self.assertEqual(proof["host_reported_id"], proof["guest_reported_id"])
         self.assertEqual(calls, ["pull --platform linux/arm64 postgres:17.6-alpine@sha256:" + "a" * 64,
                                  "image inspect postgres:17.6-alpine@sha256:" + "a" * 64])
 
@@ -349,19 +357,181 @@ inner_docker() {
             "wrong digest": lambda value: value.update(RepoDigests=["postgres@sha256:" + "c" * 64]),
             "wrong repository": lambda value: value.update(RepoDigests=["foreign/image@sha256:" + "a" * 64]),
             "wrong platform": lambda value: value.update(Architecture="amd64"),
+            "wrong variant": lambda value: value.update(Variant="v8"),
+            "non-string variant": lambda value: value.update(Variant=False),
+            "missing layers": lambda value: value.pop("RootFS"),
+            "empty layers": lambda value: value["RootFS"].update(Layers=[]),
+            "reordered layers": lambda value: value["RootFS"]["Layers"].reverse(),
+            "wrong layers": lambda value: value["RootFS"].update(Layers=["sha256:" + "e" * 64]),
+            "malformed layer": lambda value: value["RootFS"].update(Layers=["not-a-digest"]),
             "wrong content": lambda value: value.update(Id="sha256:" + "c" * 64),
             "wrong config": lambda value: value.update(Config={"User": "unexpected"}),
         }
         for name, change in changes.items():
             with self.subTest(name=name):
-                result, calls = self.run_preload(change)
+                result, calls, proof = self.run_preload(change)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(proof)
                 self.assertEqual(len(calls), 2)
 
     def test_pull_failure_never_inspects_or_starts(self):
-        result, calls = self.run_preload(pull_exit=19)
+        result, calls, proof = self.run_preload(pull_exit=19)
         self.assertEqual(result.returncode, 19)
         self.assertEqual(len(calls), 1)
+
+    def observed_postgres_images(self):
+        # Public fields from c0c4089...1ab232 pinned-host-images and
+        # preload-postgres.json. Host OCI descriptor and classic guest IDs differ.
+        return json.loads(r"""
+[
+  {
+    "Id": "sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
+    "RepoDigests": [
+      "postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+    ],
+    "Os": "linux",
+    "Architecture": "arm64",
+    "Variant": "v8",
+    "Config": {
+      "ExposedPorts": {
+        "5432/tcp": {}
+      },
+      "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "GOSU_VERSION=1.19",
+        "LANG=en_US.utf8",
+        "PG_MAJOR=17",
+        "PG_VERSION=17.6",
+        "PG_SHA256=e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0",
+        "DOCKER_PG_LLVM_DEPS=llvm19-dev \t\tclang19",
+        "PGDATA=/var/lib/postgresql/data"
+      ],
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Cmd": [
+        "postgres"
+      ],
+      "Volumes": {
+        "/var/lib/postgresql/data": {}
+      },
+      "WorkingDir": "/",
+      "StopSignal": "SIGINT"
+    },
+    "RootFS": {
+      "Type": "layers",
+      "Layers": [
+        "sha256:0e64f2360a448b389c83fcbc3705e1364ccf43f004bb55233c689e7ce59a1ae9",
+        "sha256:965e96d0897a96b80fda5e72155305fd47de0e9043fe5cc71cef7d3c6d0f0a90",
+        "sha256:de1383344182e02236dc45d98c1f0db145f05d342a9f6c59cf46c32e91fbf043",
+        "sha256:34c57e72ae2a35ef4791cf9334140c711c8763af9db0aa41fa0767e63e0c455b",
+        "sha256:7da700cd465db8100913d74ca0548e33278e810bd593c65190eb765044e74ad2",
+        "sha256:eea405ba15068b301a24b421e0da949d2cd9ea957d163ce6db2faed3f2e00fc5",
+        "sha256:5ce0dcb85bd093a27df5c52d0f6d76fa914d9dc0d3b9e52b4743d66cd7f9316a",
+        "sha256:b4298a1c153ea6e97a06dfc480ba9702aceef58742c79cd956cebe0e132378a6",
+        "sha256:ad7cdd7f4d2aa089558e8a95739619699515aed99d34719a37894cfe196d8da7",
+        "sha256:9eccf8b57d180ec87635195f28a28d80b16396f6d478b86d58407ef057522b6d"
+      ]
+    },
+    "Descriptor": {
+      "mediaType": "application/vnd.oci.image.index.v1+json",
+      "digest": "sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
+      "size": 10293
+    }
+  },
+  {
+    "Id": "sha256:29e645e20571728f22df398b9954bb6c1cefec390d99ed4e26308fc2f52d6a37",
+    "RepoDigests": [
+      "postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+    ],
+    "Os": "linux",
+    "Architecture": "arm64",
+    "Variant": "v8",
+    "Config": {
+      "ExposedPorts": {
+        "5432/tcp": {}
+      },
+      "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "GOSU_VERSION=1.19",
+        "LANG=en_US.utf8",
+        "PG_MAJOR=17",
+        "PG_VERSION=17.6",
+        "PG_SHA256=e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0",
+        "DOCKER_PG_LLVM_DEPS=llvm19-dev \t\tclang19",
+        "PGDATA=/var/lib/postgresql/data"
+      ],
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Cmd": [
+        "postgres"
+      ],
+      "Volumes": {
+        "/var/lib/postgresql/data": {}
+      },
+      "WorkingDir": "/",
+      "StopSignal": "SIGINT"
+    },
+    "RootFS": {
+      "Type": "layers",
+      "Layers": [
+        "sha256:0e64f2360a448b389c83fcbc3705e1364ccf43f004bb55233c689e7ce59a1ae9",
+        "sha256:965e96d0897a96b80fda5e72155305fd47de0e9043fe5cc71cef7d3c6d0f0a90",
+        "sha256:de1383344182e02236dc45d98c1f0db145f05d342a9f6c59cf46c32e91fbf043",
+        "sha256:34c57e72ae2a35ef4791cf9334140c711c8763af9db0aa41fa0767e63e0c455b",
+        "sha256:7da700cd465db8100913d74ca0548e33278e810bd593c65190eb765044e74ad2",
+        "sha256:eea405ba15068b301a24b421e0da949d2cd9ea957d163ce6db2faed3f2e00fc5",
+        "sha256:5ce0dcb85bd093a27df5c52d0f6d76fa914d9dc0d3b9e52b4743d66cd7f9316a",
+        "sha256:b4298a1c153ea6e97a06dfc480ba9702aceef58742c79cd956cebe0e132378a6",
+        "sha256:ad7cdd7f4d2aa089558e8a95739619699515aed99d34719a37894cfe196d8da7",
+        "sha256:9eccf8b57d180ec87635195f28a28d80b16396f6d478b86d58407ef057522b6d"
+      ]
+    },
+    "GraphDriver": {
+      "Name": "overlay2"
+    }
+  }
+]
+""")
+
+    def test_observed_cross_store_content_and_reported_ids(self):
+        host, guest = self.observed_postgres_images()
+        self.assertNotEqual(host["Id"], guest["Id"])
+        result, calls, proof = self.run_preload(images=[host, guest])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(proof["id_relation"], "host_oci_descriptor_to_classic_overlay2")
+        self.assertEqual(proof["host_reported_id"], host["Id"])
+        self.assertEqual(proof["guest_reported_id"], guest["Id"])
+        self.assertEqual(proof["platform"], ["linux", "arm64", "v8"])
+        self.assertEqual(proof["rootfs_layers"], 10)
+        self.assertEqual(len(calls), 2)
+
+    def test_cross_store_pin_platform_config_layers_and_representation_stay_closed(self):
+        changes = {
+            "pin": lambda host, guest: guest.update(RepoDigests=["postgres@sha256:" + "f" * 64]),
+            "repository": lambda host, guest: guest.update(RepoDigests=["foreign/image@" + host["Id"]]),
+            "platform": lambda host, guest: guest.update(Architecture="amd64"),
+            "variant": lambda host, guest: guest.update(Variant=""),
+            "config": lambda host, guest: guest["Config"].update(Cmd=["foreign-command"]),
+            "layer": lambda host, guest: guest["RootFS"]["Layers"].__setitem__(0, "sha256:" + "f" * 64),
+            "layer order": lambda host, guest: guest["RootFS"]["Layers"].reverse(),
+            "unexplained host ID": lambda host, guest: host.pop("Descriptor"),
+            "wrong host descriptor digest": lambda host, guest: host["Descriptor"].update(digest="sha256:" + "f" * 64),
+            "unsupported descriptor": lambda host, guest: host["Descriptor"].update(mediaType="unsupported"),
+            "invalid descriptor size": lambda host, guest: host["Descriptor"].update(size=0),
+            "unqualified guest store": lambda host, guest: guest["GraphDriver"].update(Name="unknown"),
+            "missing guest store": lambda host, guest: guest.pop("GraphDriver"),
+            "malformed guest ID": lambda host, guest: guest.update(Id="unexplained"),
+        }
+        for name, change in changes.items():
+            with self.subTest(name=name):
+                host, guest = self.observed_postgres_images()
+                change(host, guest)
+                result, calls, proof = self.run_preload(images=[host, guest])
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIsNone(proof)
+                self.assertEqual(len(calls), 2)
 
 
 class BrowserCancellationTest(unittest.TestCase):
