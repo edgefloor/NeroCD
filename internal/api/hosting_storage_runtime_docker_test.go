@@ -3,11 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"nerocd/internal/hostingproxy"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -153,6 +157,8 @@ func TestStorageRuntimeDockerOutputProcess(t *testing.T) {
 }
 
 func TestStorageRuntimeDockerDirectStartsNeverPull(t *testing.T) {
+	t.Run("fixture port separation", testStorageRuntimeFixturePortSeparation)
+	t.Run("owned proxy cleanup", testStorageRuntimeOwnedProxyCleanup)
 	original := []string{"run", "--detach", "pinned@sha256:" + strings.Repeat("a", 64)}
 	before := append([]string(nil), original...)
 	want := append([]string{"run", "--pull=never"}, original[1:]...)
@@ -165,5 +171,333 @@ func TestStorageRuntimeDockerDirectStartsNeverPull(t *testing.T) {
 	inspect := []string{"image", "inspect", "pinned"}
 	if actual := storageRuntimeDockerArguments(inspect); !reflect.DeepEqual(actual, inspect) {
 		t.Fatal("non-start command changed")
+	}
+}
+
+const (
+	storageRuntimeOwner                 = "nerocd-storage-archive-runtime-20261024-f0a618"
+	storageRuntimeApplicationPort       = 20101
+	storageRuntimeUnrelatedPort         = 20102
+	storageRuntimeMissingPort           = 20103
+	storageRuntimeRestorePort           = 20104
+	storageRemoteRuntimeApplicationPort = 20111
+	storageRemoteRuntimeRestorePort     = 20114
+)
+
+var storageRuntimeContainerID = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+type storageRuntimeProxyProfile struct {
+	name, daemon, image, directory string
+	labels                         map[string]string
+	args                           []string
+}
+
+func storageRuntimeProxyProfileFor(root, proxy, server, destination, runnerID, daemon string) (storageRuntimeProxyProfile, error) {
+	var zero storageRuntimeProxyProfile
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || !strings.HasPrefix(filepath.Base(root), storageRuntimeOwner+"-") {
+		return zero, errors.New("fixture root ownership mismatch")
+	}
+	directory := filepath.Join(root, "proxy", proxy)
+	settings := hostingproxy.Settings{Directory: directory, DockerBinary: "/usr/local/bin/docker", DockerSocket: "/var/run/docker.sock", Email: "operator@example.test", CA: hostingproxy.LetsEncryptStaging, ManagementPort: 19080}
+	identity := hostingproxy.Identity{ProxyID: proxy, ServerID: server, DestinationID: destination, RunnerID: runnerID, DaemonID: daemon}
+	plan, err := hostingproxy.Prepare(identity, settings, 1, 0, nil)
+	if err != nil {
+		return zero, errors.New("fixture proxy identity invalid")
+	}
+	return storageRuntimeProxyProfile{
+		name: "/nerocd-proxy-" + proxy, daemon: daemon, image: hostingproxy.Image, directory: directory,
+		labels: map[string]string{"io.nerocd.proxy": proxy, "io.nerocd.server": server, "io.nerocd.destination": destination, "io.nerocd.runner": runnerID, "io.nerocd.daemon": daemon, "io.nerocd.static": plan.StaticHash()},
+		args:   []string{"--global.checknewversion=false", "--global.sendanonymoususage=false", "--api=true", "--api.dashboard=false", "--api.insecure=true", "--entrypoints.traefik.address=127.0.0.1:19080", "--entrypoints.web.address=:80", "--entrypoints.websecure.address=:443", "--providers.file.directory=/dynamic", "--providers.file.watch=true", "--providers.providersthrottleduration=100ms", "--certificatesresolvers.managed.acme.email=operator@example.test", "--certificatesresolvers.managed.acme.storage=/certificates/acme.json", "--certificatesresolvers.managed.acme.caserver=https://localhost:14000/dir", "--certificatesresolvers.managed.acme.httpchallenge.entrypoint=web", "--log.level=ERROR", "--certificatesresolvers.managed.acme.certificatesduration=1"},
+	}, nil
+}
+
+type storageRuntimeProxyContainer struct {
+	ID, Name, Image string
+	Config          struct {
+		Image  string
+		Labels map[string]string
+		Cmd    []string
+	}
+	HostConfig struct {
+		NetworkMode    string
+		ReadonlyRootfs bool
+		RestartPolicy  struct{ Name string }
+	}
+	State  struct{ Running bool }
+	Mounts []struct {
+		Type, Source, Destination string
+		RW                        bool
+	}
+}
+
+func storageRuntimeCheckProxy(raw []byte, p storageRuntimeProxyProfile, id, image string) (storageRuntimeProxyContainer, error) {
+	var c storageRuntimeProxyContainer
+	if len(raw) > 64<<10 || json.Unmarshal(raw, &c) != nil {
+		return c, errors.New("proxy inspection unavailable or bounded")
+	}
+	if !storageRuntimeContainerID.MatchString(id) || c.ID != id || c.Name != p.name || c.Image != image || c.Config.Image != p.image {
+		return c, errors.New("proxy container identity mismatch")
+	}
+	for key, value := range p.labels {
+		if c.Config.Labels[key] != value {
+			return c, errors.New("proxy authority or static profile mismatch")
+		}
+	}
+	if c.HostConfig.NetworkMode != "host" || c.HostConfig.RestartPolicy.Name != "unless-stopped" || !c.HostConfig.ReadonlyRootfs || !reflect.DeepEqual(c.Config.Cmd, p.args) {
+		return c, errors.New("proxy runtime profile mismatch")
+	}
+	expected := map[string]bool{filepath.Join(p.directory, "dynamic") + ":/dynamic:false": true, filepath.Join(p.directory, "certificates") + ":/certificates:true": true}
+	if len(c.Mounts) != 2 {
+		return c, errors.New("proxy bind roots mismatch")
+	}
+	for _, mount := range c.Mounts {
+		key := fmt.Sprintf("%s:%s:%t", mount.Source, mount.Destination, mount.RW)
+		if mount.Type != "bind" || !expected[key] {
+			return c, errors.New("proxy bind roots mismatch")
+		}
+		delete(expected, key)
+	}
+	if len(expected) != 0 {
+		return c, errors.New("proxy bind roots mismatch")
+	}
+	return c, nil
+}
+
+// Cleanup authority is the exact private fixture profile, never a shared label
+// or name alone. Every mutation uses an inspected immutable container ID.
+func storageRuntimeRemoveOwnedProxy(p storageRuntimeProxyProfile, command func(...string) ([]byte, error)) error {
+	daemon := func() error {
+		raw, err := command("info", "--format", "{{.ID}}")
+		if err != nil || strings.TrimSpace(string(raw)) != p.daemon {
+			return errors.New("proxy cleanup daemon mismatch")
+		}
+		return nil
+	}
+	if err := daemon(); err != nil {
+		return err
+	}
+	find := func(filter string) ([]string, error) {
+		raw, err := command("container", "ls", "--all", "--no-trunc", "--filter", filter, "--format", "{{.ID}}")
+		if err != nil || len(raw) > 1024 {
+			return nil, errors.New("proxy inventory unavailable")
+		}
+		return strings.Fields(string(raw)), nil
+	}
+	ids, err := find("name=^" + p.name + "$")
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) != 1 || !storageRuntimeContainerID.MatchString(ids[0]) {
+		return errors.New("proxy inventory identity ambiguous")
+	}
+	id := ids[0]
+	imageRaw, err := command("image", "inspect", p.image, "--format", "{{.Id}}")
+	image := strings.TrimSpace(string(imageRaw))
+	if err != nil || !strings.HasPrefix(image, "sha256:") || !storageRuntimeContainerID.MatchString(strings.TrimPrefix(image, "sha256:")) {
+		return errors.New("pinned proxy image unavailable")
+	}
+	inspect := func() (storageRuntimeProxyContainer, error) {
+		raw, err := command("container", "inspect", id, "--format", "{{json .}}")
+		if err != nil {
+			return storageRuntimeProxyContainer{}, errors.New("proxy inspection unavailable")
+		}
+		return storageRuntimeCheckProxy(raw, p, id, image)
+	}
+	current, err := inspect()
+	if err != nil {
+		return err
+	}
+	if err := daemon(); err != nil {
+		return err
+	}
+	if current.State.Running {
+		if _, err := command("container", "stop", "--time", "5", id); err != nil {
+			return errors.New("owned proxy stop failed")
+		}
+	}
+	current, err = inspect()
+	if err != nil {
+		return err
+	}
+	if current.State.Running {
+		return errors.New("owned proxy stop unconfirmed")
+	}
+	if err := daemon(); err != nil {
+		return err
+	}
+	if _, err := command("container", "rm", id); err != nil {
+		return errors.New("owned proxy removal failed")
+	}
+	if err := daemon(); err != nil {
+		return err
+	}
+	remaining, err := find("id=" + id)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 0 {
+		return errors.New("owned proxy absence unconfirmed")
+	}
+	remaining, err = find("name=^" + p.name + "$")
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 0 {
+		return errors.New("proxy name occupied after owned removal")
+	}
+	return nil
+}
+
+func testStorageRuntimeFixturePortSeparation(t *testing.T) {
+	reserved := map[int]bool{}
+	for _, port := range []int{storageRuntimeApplicationPort, storageRuntimeUnrelatedPort, storageRuntimeMissingPort, storageRuntimeRestorePort, 80, 443, 19080, 18190, 9000, 9001, 25000, 14000, 15000, 8053} {
+		reserved[port] = true
+	}
+	for _, port := range []int{storageRemoteRuntimeApplicationPort, storageRemoteRuntimeRestorePort} {
+		if port < 1024 || port > 65535 || reserved[port] {
+			t.Fatalf("remote fixture port overlaps reserved endpoint: %d", port)
+		}
+		reserved[port] = true
+	}
+}
+
+func testStorageRuntimeOwnedProxyCleanup(t *testing.T) {
+	for _, mode := range []string{"valid", "absent", "already_stopped", "wrong_owner", "wrong_daemon", "changed_daemon", "wrong_bind_root", "duplicate_mount", "wrong_image", "wrong_id", "wrong_name", "wrong_command", "writable_root", "stop_error", "still_running", "changed_after_stop", "remove_error", "absence_unconfirmed", "name_reoccupied"} {
+		t.Run(mode, func(t *testing.T) {
+			profile, err := storageRuntimeProxyProfileFor("/var/lib/"+storageRuntimeOwner+"-unit", "proxy_fixture", "server_fixture", "dest_fixture", "runner_fixture", "daemon_fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, image := strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+			c := storageRuntimeProxyContainer{ID: id, Name: profile.name, Image: image}
+			c.Config.Image = profile.image
+			c.Config.Labels = map[string]string{}
+			for key, value := range profile.labels {
+				c.Config.Labels[key] = value
+			}
+			c.Config.Cmd = append([]string(nil), profile.args...)
+			c.HostConfig.NetworkMode = "host"
+			c.HostConfig.ReadonlyRootfs = true
+			c.HostConfig.RestartPolicy.Name = "unless-stopped"
+			c.State.Running = mode != "already_stopped"
+			c.Mounts = append(c.Mounts, struct {
+				Type, Source, Destination string
+				RW                        bool
+			}{"bind", filepath.Join(profile.directory, "dynamic"), "/dynamic", false}, struct {
+				Type, Source, Destination string
+				RW                        bool
+			}{"bind", filepath.Join(profile.directory, "certificates"), "/certificates", true})
+			switch mode {
+			case "wrong_owner":
+				c.Config.Labels["io.nerocd.server"] = "private-unowned-value"
+			case "wrong_bind_root":
+				c.Mounts[0].Source = "/other/private-root"
+			case "duplicate_mount":
+				c.Mounts[1] = c.Mounts[0]
+			case "wrong_image":
+				c.Config.Image = "unowned:latest"
+			case "wrong_id":
+				c.ID = strings.Repeat("c", 64)
+			case "wrong_name":
+				c.Name = "/other-proxy"
+			case "wrong_command":
+				c.Config.Cmd = []string{"private-unapproved-command"}
+			case "writable_root":
+				c.HostConfig.ReadonlyRootfs = false
+			}
+			present := mode != "absent"
+			mutations := []string{}
+			daemonReads := 0
+			command := func(args ...string) ([]byte, error) {
+				switch args[0] {
+				case "info":
+					daemonReads++
+					if mode == "wrong_daemon" || mode == "changed_daemon" && daemonReads > 1 {
+						return []byte("foreign_daemon"), nil
+					}
+					return []byte(profile.daemon), nil
+				case "image":
+					return []byte(image), nil
+				case "container":
+					switch args[1] {
+					case "ls":
+						filter := args[5]
+						if mode == "name_reoccupied" && !present && strings.HasPrefix(filter, "name=") {
+							return []byte(strings.Repeat("d", 64)), nil
+						}
+						if present {
+							return []byte(id), nil
+						}
+						return nil, nil
+					case "inspect":
+						if args[2] != id {
+							t.Fatal("inspection changed immutable ID")
+						}
+						if mode == "changed_after_stop" && len(mutations) > 0 {
+							c.Config.Labels["io.nerocd.static"] = "changed"
+						}
+						return json.Marshal(c)
+					case "stop":
+						if !reflect.DeepEqual(args, []string{"container", "stop", "--time", "5", id}) {
+							t.Fatal("stop exceeded exact owned ID")
+						}
+						mutations = append(mutations, "stop")
+						if mode == "stop_error" {
+							return nil, errors.New("private daemon diagnostic")
+						}
+						if mode != "still_running" {
+							c.State.Running = false
+						}
+						return []byte(id), nil
+					case "rm":
+						if !reflect.DeepEqual(args, []string{"container", "rm", id}) {
+							t.Fatal("remove exceeded exact owned ID")
+						}
+						mutations = append(mutations, "rm")
+						if mode == "remove_error" {
+							return nil, errors.New("private daemon diagnostic")
+						}
+						if mode != "absence_unconfirmed" {
+							present = false
+						}
+						return []byte(id), nil
+					}
+				}
+				t.Fatalf("unexpected cleanup command family: %q", args[:1])
+				return nil, nil
+			}
+			err = storageRuntimeRemoveOwnedProxy(profile, command)
+			success := mode == "valid" || mode == "absent" || mode == "already_stopped"
+			if (err == nil) != success {
+				t.Fatalf("cleanup status mismatch: success=%t err=%v", success, err)
+			}
+			if err != nil && strings.Contains(err.Error(), "private") {
+				t.Fatal("cleanup error exposed raw payload")
+			}
+			wantMutations := 0
+			switch mode {
+			case "valid", "remove_error", "absence_unconfirmed", "name_reoccupied":
+				wantMutations = 2
+			case "already_stopped", "stop_error", "still_running", "changed_after_stop":
+				wantMutations = 1
+			}
+			if len(mutations) != wantMutations {
+				t.Fatalf("unexpected cleanup effects: %v", mutations)
+			}
+			if success {
+				before := len(mutations)
+				if err := storageRuntimeRemoveOwnedProxy(profile, command); err != nil || len(mutations) != before {
+					t.Fatal("owned absence was not idempotent", err)
+				}
+			}
+		})
+	}
+	for _, root := range []string{"relative", "/var/lib/unowned", "/var/lib/" + storageRuntimeOwner + "-unit/../other"} {
+		if _, err := storageRuntimeProxyProfileFor(root, "proxy_fixture", "server_fixture", "dest_fixture", "runner_fixture", "daemon_fixture"); err == nil {
+			t.Fatal("unowned or noncanonical fixture root accepted")
+		}
 	}
 }

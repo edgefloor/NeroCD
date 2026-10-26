@@ -36,7 +36,6 @@ import (
 	"nerocd/internal/runner"
 )
 
-const storageRuntimeOwner = "nerocd-storage-archive-runtime-20261024-f0a618"
 const storageRuntimeLabel = "io.nerocd.storage-runtime.owner"
 const storageRuntimeImage = "127.0.0.1:25000/nerocd-storage-archive-runtime-20261024-f0a618:"
 
@@ -64,6 +63,8 @@ type storageRuntimeFixture struct {
 	archiveConfig                                       string
 	lastOperation                                       atomic.Pointer[domain.HostingOperation]
 	diagnosticsRegistered                               bool
+	preserveRoot                                        bool
+	proxyCleanupID, proxyCleanupDaemon                  string
 }
 
 func storageRuntimeJSON[T any](f *storageRuntimeFixture, method, path string, body any, status int) T {
@@ -172,14 +173,19 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if err != nil {
 		t.Fatal(err)
 	}
+	var f *storageRuntimeFixture
 	t.Cleanup(func() {
+		if f != nil && f.preserveRoot {
+			t.Log("fixture root preserved after uncertain proxy cleanup")
+			return
+		}
 		if err := os.RemoveAll(root); err != nil {
 			t.Error(err)
 		}
 	})
 	roots, proxyRoots := storageRuntimeTrust(t, root)
 	server, pg, database := newHostingBuildAPIFixture(t)
-	f := &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
+	f = &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
 	control := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/complete" {
 			f.completions.Add(1)
@@ -609,6 +615,38 @@ func (f *storageRuntimeFixture) https(host, method, path string, body []byte, st
 
 func (f *storageRuntimeFixture) awaitLoadedProxy(id, daemon string) domain.HostingProxy {
 	f.t.Helper()
+	if f.proxyCleanupID != "" && (f.proxyCleanupID != id || f.proxyCleanupDaemon != daemon) {
+		f.preserveRoot = true
+		f.t.Fatal("fixture proxy cleanup identity changed")
+	}
+	if f.proxyCleanupID == "" {
+		profile, err := storageRuntimeProxyProfileFor(f.root, id, f.serverID, f.destinationID, "runner_storage_runtime_fixture", daemon)
+		if err != nil {
+			f.preserveRoot = true
+			f.t.Fatal("fixture proxy cleanup profile invalid")
+		}
+		f.proxyCleanupID, f.proxyCleanupDaemon = id, daemon
+		f.t.Cleanup(func() {
+			// A failed runner join must also keep bind roots intact. Preserve
+			// any earlier uncertainty even if this exact proxy is absent.
+			previouslyPreserved := f.preserveRoot
+			f.preserveRoot = true
+			f.stop()
+			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			command := func(args ...string) ([]byte, error) {
+				cmd := exec.CommandContext(cleanup, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, storageRuntimeDockerArguments(args)...)...)
+				return storageRuntimeDockerOutput(cmd)
+			}
+			if err := storageRuntimeRemoveOwnedProxy(profile, command); err != nil {
+				f.preserveRoot = true
+				f.t.Errorf("fixture proxy cleanup failed closed: %v", err)
+				return
+			}
+			f.preserveRoot = previouslyPreserved
+			f.t.Logf("fixture proxy absent before root cleanup: proxy=%s daemon=%s", id, daemon)
+		})
+	}
 	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
 		proxy := storageRuntimeJSON[domain.HostingProxy](f, http.MethodGet, "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
 		if proxy.ID != id {
@@ -739,7 +777,7 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	resource := f.resource("uploaded application A", "a")
 	storage := f.storage(resource, strings.Repeat("1", 32))
 	materializedLoss := f.arm("/api/v1/runners/hosting/storage-materialized")
-	a := f.deploy(resource, "storage-a", "/", 20101, nil)
+	a := f.deploy(resource, "storage-a", "/", storageRuntimeApplicationPort, nil)
 	entry := f.lose(materializedLoss, "storage_materialized", a.ID)
 	if entry.StorageMaterialized == nil || entry.StorageMetadata == nil || entry.StorageMetadata.Validate() != nil || entry.StorageRef != storage.Reference() {
 		t.Fatal("materialized journal lost actual metadata")
@@ -756,7 +794,7 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	}
 	created := f.verifyVolume(storage, origin, a.Result.ContainerID)
 	unrelated := f.resource("unrelated application", "a")
-	u := f.await(f.deploy(unrelated, "unrelated-a", "/", 20102, nil).ID, "succeeded")
+	u := f.await(f.deploy(unrelated, "unrelated-a", "/", storageRuntimeUnrelatedPort, nil).ID, "succeeded")
 	f.stop()
 	proxy := storageRuntimeJSON[domain.HostingProxy](f, http.MethodPost, "/api/v1/servers/"+f.serverID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "storage-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
 	certDir := filepath.Join(f.root, "proxy", proxy.ID, "certificates")
@@ -804,7 +842,7 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 		t.Fatal("rename replaced immutable storage")
 	}
 	completeLoss := f.arm("/api/v1/runners/hosting/complete")
-	b := f.deploy(resource, "storage-b", "/", 20101, f.continuity(resource, a))
+	b := f.deploy(resource, "storage-b", "/", storageRuntimeApplicationPort, f.continuity(resource, a))
 	completed := f.lose(completeLoss, "result", b.ID)
 	if completed.Result == nil || completed.Result.Result.ContainerID == a.Result.ContainerID {
 		t.Fatal("B journal lacks distinct replacement")
@@ -832,7 +870,7 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	if archive {
 		storageRuntimeArchiveRoundtrip(t, f, resource, storage, origin, a, b, upload)
 	}
-	failed := f.await(f.deploy(resource, "storage-unready", "/unready", 20101, f.continuity(resource, b)).ID, "failed")
+	failed := f.await(f.deploy(resource, "storage-unready", "/unready", storageRuntimeApplicationPort, f.continuity(resource, b)).ID, "failed")
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed readiness did not restore exact B", failed.Result)
 	}
@@ -846,7 +884,7 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	negative := f.resource("admitted missing volume", "a")
 	missing := f.storage(negative, strings.Repeat("2", 32))
 	admissionLoss := f.arm("/api/v1/runners/hosting/storage-create-begin")
-	blocked := f.deploy(negative, "missing-volume", "/", 20103, nil)
+	blocked := f.deploy(negative, "missing-volume", "/", storageRuntimeMissingPort, nil)
 	intent := f.lose(admissionLoss, "storage_create_intent", blocked.ID)
 	if intent.StorageCreate == nil {
 		t.Fatal("missing durable creation intent")

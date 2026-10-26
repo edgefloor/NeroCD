@@ -54,7 +54,12 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 	if err != nil {
 		t.Fatal(err)
 	}
+	var f *storageRuntimeFixture
 	t.Cleanup(func() {
+		if f != nil && f.preserveRoot {
+			t.Log("fixture root preserved after uncertain proxy cleanup")
+			return
+		}
 		if err := os.RemoveAll(root); err != nil {
 			t.Error(err)
 		}
@@ -83,7 +88,7 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		t.Fatal("fixture browser bootstrap")
 	}
 	server := NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin})
-	f := &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
+	f = &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
 	keyString := os.Getenv("NEROCD_STORAGE_REMOTE_BROWSER_KEY")
 	if len(keyString) != 64 {
 		t.Fatal("private browser handshake key required")
@@ -389,9 +394,9 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	observation := &hostingStorageRemoteRuntimeObservation{}
 	resource := f.resource("remote uploaded application A", "a")
 	source := f.storage(resource, strings.Repeat("1", 32))
-	a := f.await(f.deploy(resource, "remote-storage-a", "/", 20101, nil).ID, "succeeded")
+	a := f.await(f.deploy(resource, "remote-storage-a", "/", storageRemoteRuntimeApplicationPort, nil).ID, "succeeded")
 	resource = storageRuntimeJSON[domain.Resource](f.storageRuntimeFixture, "PATCH", "/api/v1/resources/"+resource.ID, map[string]any{"expected_generation": resource.Generation, "name": "remote uploaded application B", "source": map[string]any{"kind": "image", "image": domain.ImageSource{Reference: storageRuntimeImage + "b"}}}, 200)
-	b := f.await(f.deploy(resource, "remote-storage-b", "/", 20101, nil).ID, "succeeded")
+	b := f.await(f.deploy(resource, "remote-storage-b", "/", storageRemoteRuntimeApplicationPort, nil).ID, "succeeded")
 	if a.Result == nil || b.Result == nil || b.Release == nil || storageArchiveWriterRunning(t, a.Result.ContainerID) || !storageArchiveWriterRunning(t, b.Result.ContainerID) {
 		t.Fatal("exact initial stopped/running writer inventory")
 	}
@@ -567,7 +572,7 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	if after <= before || restored.Storage.ID == source.ID || restored.Storage.VolumeName == source.VolumeName || restored.Resource.ID == resource.ID || restored.Storage.DestinationID != source.DestinationID || storageArchiveFileEvidence(t, restored.Storage.VolumeName) != metadata {
 		t.Fatal("fresh remote restore GET/identity/permissions contract")
 	}
-	deployed := f.await(f.deploy(restored.Resource, "remote-restored-deploy", "/", 20104, nil).ID, "succeeded")
+	deployed := f.await(f.deploy(restored.Resource, "remote-restored-deploy", "/", storageRemoteRuntimeRestorePort, nil).ID, "succeeded")
 	hostingStorageRemoteRuntimeRoute(f, restored.Resource.ID, "storage-remote-restored.example.test", deployed.ID)
 	if !bytes.Equal(f.https("storage-remote-restored.example.test", "GET", "/download", nil, 200), upload) {
 		t.Fatal("new application did not read restored bytes")
