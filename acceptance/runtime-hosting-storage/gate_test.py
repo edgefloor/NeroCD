@@ -661,6 +661,44 @@ module.exports = {
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=3)
 
+    def test_exact_backup_selection_refreshes_externally_changed_history(self):
+        # Exercise the actual driver helper. No browser/API qualification is claimed.
+        script = r"""
+const fs=require("node:fs"),assert=require("node:assert/strict");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const helper=source.slice(source.indexOf("async function selectBackup(p, id)"),source.indexOf("function deliveredRecoveryURL"));
+const run=new Function("recordDiagnostic","expect",helper+"return selectBackup;");
+(async()=>{
+ for(const scenario of ["new_backup","republished_generation","refresh_denied"]) {
+  const events=[];let fresh=false;
+  const panel={getByRole:(role,options)=>{
+   assert.equal(role,"button");assert.equal(options.exact,true);
+   return {click:async()=>{
+    if(options.name==="Refresh archive status") {
+     events.push("refresh");if(scenario==="refresh_denied")throw Error("denied");fresh=true;
+    } else {
+     assert.equal(options.name,"Backup exact_backup");
+     assert.equal(fresh,true,"external backup/history must be refreshed before exact selection");
+     events.push("select");
+    }
+   }};
+  },locator:selector=>{assert.equal(selector,'dl[aria-label="Selected backup metadata"]');return "metadata";}};
+  const select=run(action=>events.push(action),value=>({toContainText:async id=>{
+   assert.equal(value,"metadata");assert.equal(id,"exact_backup");assert.equal(fresh,true);events.push("verified");
+  }}));
+  if(scenario==="refresh_denied") {
+   await assert.rejects(select(panel,"exact_backup"));
+   assert.deepEqual(events,["refresh_archive_status","refresh"]);
+  } else {
+   await select(panel,"exact_backup");
+   assert.deepEqual(events,["refresh_archive_status","refresh","select_backup","select","verify_backup_metadata","verified"]);
+  }
+ }
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_manual_phase_failures_report_only_safe_action_status_and_class(self):
         # Inert driver failure injection proves diagnostics, not live UI behavior.
         for failure in ["navigation", "checkbox", "preview_status"]:

@@ -12,7 +12,7 @@ if (!/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") || !/^[a-f0-9
 // Diagnostics contain only code-owned labels, numeric statuses and error classes.
 // Never record exception messages, URLs, request bodies or DOM content.
 const diagnosticPhases = new Set(["startup","target","validation","backup","denied","retry","restore","archive_alert","retention","retention_history","deletion","deletion_history","deletion_final","deletion_final_history","complete","viewer","unknown_phase"]);
-const diagnosticActions = new Set(["initialization","await_fixture_phase","fixture_http","fixture_transport","fixture_ready","navigate_projects","select_project","select_environment","locate_application","locate_archive_panel","select_backup","verify_backup_metadata","select_local_copy","select_remote_copy","request_preview","preview_http","verify_preview","request_execution","execution_http","verify_execution","retry_execution","retry_http","verify_retry","verify_history","verify_final_copy_warning","discard_preview","select_final_local_copies","confirm_final_copy","verify_final_history","viewer_sign_in","verify_viewer_history","viewer_denial_http","report_phase","report_http","unknown_action"]);
+const diagnosticActions = new Set(["initialization","await_fixture_phase","fixture_http","fixture_transport","fixture_ready","navigate_projects","select_project","select_environment","locate_application","locate_archive_panel","refresh_archive_status","select_backup","verify_backup_metadata","select_local_copy","select_remote_copy","request_preview","preview_http","verify_preview","request_execution","execution_http","verify_execution","retry_execution","retry_http","verify_retry","verify_history","verify_final_copy_warning","discard_preview","select_final_local_copies","confirm_final_copy","verify_final_history","viewer_sign_in","verify_viewer_history","viewer_denial_http","report_phase","report_http","unknown_action"]);
 const diagnosticTrace = [];
 let diagnosticPhase = "startup", diagnosticAction = "initialization";
 function diagnosticErrorClass(error) {
@@ -94,6 +94,10 @@ async function panel(m, reload = false, targetPage = page) {
   return result;
 }
 async function selectBackup(p, id) {
+  // Same-document navigation can retain this panel while Go creates backups or
+  // republishes copy generations. Use the operator's read-only refresh first.
+  recordDiagnostic("refresh_archive_status");
+  await p.getByRole("button", { name: "Refresh archive status", exact: true }).click();
   recordDiagnostic("select_backup");
   await p.getByRole("button", { name: `Backup ${id}`, exact: true }).click();
   recordDiagnostic("verify_backup_metadata");
