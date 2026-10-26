@@ -72,7 +72,9 @@ Restore uses retained availability and the recorded remote configuration. A remo
 
 ## Qualification limits
 
-Focused source, API, journal, runner, S3 fault, frontend, and PostgreSQL checks provide local evidence. The separate physical mode is `acceptance/runtime-hosting-storage/gate.sh --retention`. It requires a clean committed candidate and fresh authorization for the exact disposable Docker profile. It has not been run for this candidate.
+Focused source, API, journal, runner, S3 fault, frontend, and PostgreSQL checks provide local evidence. The separate physical mode is `acceptance/runtime-hosting-storage/gate.sh --retention`. It requires a clean committed candidate and fresh authorization for the exact disposable Docker profile.
+
+The first physical attempt at `5f000fff1f3701e31b9107a4ab5da2f633b7f36b` failed in the shared remote restore workflow before retention deletion. The runner had durable `helper_identified` intent while the server retained only `helper_intent`; extraction had not started. The underlying request error was not retained, so the cause remains unconfirmed. A focused PostgreSQL and typed-client reproduction of upload retry, download retry, copy reuse, and the restore ACK chain passed. The diagnostic candidate preserves holds and adds only sanitized progress stage, failure class, and HTTP status to runner output. Another physical attempt requires fresh exact-candidate reviews and authorization.
 
 The physical mode extends the accepted remote workflow with actual local unlink, conditional S3 deletion, independent limits, exact preview replay, remote restoration, local generation republication, and application reads and new writes. The retention assertions use the API. The reused browser fixture covers the existing archive workflow; it does not qualify the new retention controls. Retention component tests provide separate source evidence. The physical assertions must pass against the real provider; source compilation is not a substitute. The fixture's static checks do not establish physical qualification.
 

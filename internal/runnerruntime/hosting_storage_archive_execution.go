@@ -3,6 +3,7 @@ package runnerruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -92,6 +93,43 @@ type archiveCoordinator struct {
 	p     domain.HostingStorageArchivePlan
 }
 
+// The boundary diagnostic deliberately omits the underlying error text: HTTP
+// bodies, transport URLs and filesystem errors can contain private data. Keep
+// the cause for classification without rendering it in runner output.
+type storageArchiveProgressError struct {
+	stage  string
+	class  string
+	status int
+	cause  error
+}
+
+func (e *storageArchiveProgressError) Error() string {
+	return fmt.Sprintf("storage archive progress acknowledgement failed: stage=%s class=%s status=%d", e.stage, e.class, e.status)
+}
+func (e *storageArchiveProgressError) Unwrap() error { return e.cause }
+func archiveProgressDiagnostic(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	out := &storageArchiveProgressError{stage: stage, class: "protocol_or_local", cause: err}
+	var api *runnerclient.APIError
+	switch {
+	case errors.Is(err, context.Canceled):
+		out.class = "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		out.class = "deadline"
+	case errors.As(err, &api):
+		out.class = "transport_or_response"
+		if api.StatusCode >= 100 && api.StatusCode <= 599 {
+			out.class = "http"
+			out.status = api.StatusCode
+		}
+	case errors.Is(err, domain.ErrInvalidStorageArchive):
+		out.class = "invalid_request"
+	}
+	return out
+}
+
 func (x *archiveCoordinator) progress(ctx context.Context, phase, suffix string, writers []domain.HostingStorageArchiveWriterState, helper string, blob *domain.HostingStorageArchiveBlob, verified bool) error {
 	entry := archiveRecord(x.j, x.a, x.lease, x.s, x.p, "progress", suffix)
 	request := domain.HostingStorageArchiveProgress{HostingAuthority: x.a, ReceiptID: entry.ID, PlanHash: x.p.Hash, Phase: phase, Writers: writers, HelperContainerID: helper, Blob: blob, RestoreVerified: verified}
@@ -107,10 +145,10 @@ func (x *archiveCoordinator) progress(ctx context.Context, phase, suffix string,
 	}
 	entry.Progress = &request
 	if _, err := x.j.AppendStorageArchive(entry); err != nil {
-		return err
+		return archiveProgressDiagnostic("journal", err)
 	}
 	_, err := x.c.HostingStorageArchiveProgress(ctx, request)
-	return err
+	return archiveProgressDiagnostic("controller", err)
 }
 
 func executeStorageArchiveClaim(s *attemptSupervisor, j *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, config *StorageArchiveExecutionConfig) error {
@@ -319,7 +357,7 @@ func (x *archiveCoordinator) run() error {
 	}
 	// Exact returned identity is durable before ACK or helper execution.
 	if err = x.progress(x.s.Context(), "helper_identified", "helper_identified", nil, id, nil, false); err != nil {
-		return x.fail(owed, id, nonce, "interrupted")
+		return errors.Join(x.fail(owed, id, nonce, "interrupted"), err)
 	}
 	result := domain.HostingStorageArchiveResult{ArchiveOutcome: "succeeded", ResumeOutcome: "not_needed"}
 	if x.p.Mode == "backup" {

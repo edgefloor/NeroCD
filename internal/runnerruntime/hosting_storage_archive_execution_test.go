@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
@@ -50,6 +51,8 @@ type archiveRuntimeController struct {
 	lease        domain.RunLease
 	requests     []string
 	lostPhase    string
+	rejectPhase  string
+	rejectStatus int
 	revoked      bool
 	lostComplete bool
 	storageAck   *domain.HostingStorageCreateAck
@@ -122,6 +125,10 @@ func (c *archiveRuntimeController) serve(w http.ResponseWriter, r *http.Request)
 		var p domain.HostingStorageArchiveProgress
 		if json.Unmarshal(raw, &p) != nil {
 			c.t.Error("invalid progress")
+			return
+		}
+		if c.rejectPhase == p.Phase {
+			http.Error(w, "private_canary_server_detail", c.rejectStatus)
 			return
 		}
 		proof := domain.HostingStorageArchiveProgressEvidence{Receipt: receipt, PlanHash: p.PlanHash, Phase: p.Phase, Writers: p.Writers, HelperContainerID: p.HelperContainerID, Blob: p.Blob, RestoreVerified: p.RestoreVerified}
@@ -637,6 +644,73 @@ func TestStorageArchiveClaimPreservesCloseFailuresWithoutRepeatingSettlement(t *
 			}
 			if !slices.Equal(effects, e.effects) || e.closeCalls != 1 {
 				t.Fatal("cleanup error replay repeated effects or engine cleanup")
+			}
+		})
+	}
+}
+
+func TestStorageArchiveRestoreHelperACKFailureRetainsSafeBoundaryDiagnostic(t *testing.T) {
+	for _, status := range []int{409, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			x, c, e := archiveRestoreRuntimeFixture(t)
+			if status == 409 {
+				c.rejectPhase = "helper_identified"
+				c.rejectStatus = status
+			} else {
+				c.lostPhase = "helper_identified"
+			}
+			err := x.execute(c.op)
+			if !errors.Is(err, errStorageArchiveHeld) {
+				t.Fatalf("lost restore hold: %v", err)
+			}
+			var boundary *storageArchiveProgressError
+			if !errors.As(err, &boundary) || boundary.stage != "controller" || boundary.class != "http" || boundary.status != status {
+				t.Fatalf("missing safe boundary: %v", err)
+			}
+			if slices.Contains(e.effects, "restore") {
+				t.Fatal("extraction ran without helper ACK")
+			}
+			if c.op.StorageArchive.Result == nil || !c.op.StorageArchive.Result.Uncertain || c.op.StorageArchive.Result.RestoreVerified {
+				t.Fatal("ACK failure fabricated verified restore")
+			}
+			for _, secret := range []string{"private_canary", "127.0.0.1", "http://", "/host/private", "lease", "fence"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("diagnostic leaked %s", secret)
+				}
+			}
+			found := false
+			for _, entry := range x.j.Snapshot().StorageArchive {
+				found = found || entry.Progress != nil && entry.Progress.Phase == "helper_identified"
+			}
+			if !found {
+				t.Fatal("failed ACK discarded durable helper evidence")
+			}
+		})
+	}
+}
+func TestStorageArchiveProgressDiagnosticDoesNotRenderPrivateCauses(t *testing.T) {
+	for _, tc := range []struct {
+		name, stage, want string
+		err               error
+		status            int
+	}{
+		{"journal", "journal", "protocol_or_local", errors.New("/host/private journal failure"), 0},
+		{"HTTP", "controller", "http", &runnerclient.APIError{StatusCode: 409, URL: "https://private/fence", Detail: "private_canary", Status: "private_canary"}, 409},
+		{"transport_or_response", "controller", "transport_or_response", &runnerclient.APIError{URL: "https://private/fence", Err: errors.New("private_canary")}, 0},
+		{"deadline", "controller", "deadline", context.DeadlineExceeded, 0},
+		{"cancel", "controller", "canceled", context.Canceled, 0},
+		{"invalid", "controller", "invalid_request", domain.ErrInvalidStorageArchive, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := archiveProgressDiagnostic(tc.stage, tc.err)
+			var boundary *storageArchiveProgressError
+			if !errors.As(err, &boundary) || boundary.class != tc.want || boundary.status != tc.status || !errors.Is(err, tc.err) {
+				t.Fatal("diagnostic changed classification", err)
+			}
+			for _, private := range []string{"private", "https://", "/host/", "fence"} {
+				if strings.Contains(err.Error(), private) {
+					t.Fatal("private cause rendered", err)
+				}
 			}
 		})
 	}
