@@ -1,9 +1,7 @@
 import { DatabaseBackups } from "./DatabaseBackups";
 import { useDatabaseAccess } from "./ResourceDatabase";
 import { getHostingDatabase, validateDatabase } from "@/api/hosting-databases";
-import { listDatabaseBackups } from "@/api/hosting-database-backups";
-import { listDatabaseBackupTransfers } from "@/api/hosting-database-backup-targets";
-import { parseBackupRecoveryLocator, type BackupRecoveryLocator } from "@/api/hosting-backup-notifications";
+import { getNotificationRecoveryTransfer, getNotificationRecoveryBackup, parseBackupRecoveryLocator, type BackupRecoveryLocator } from "@/api/hosting-backup-notifications";
 import { type FormEvent, useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, type Project } from "@/api";
@@ -233,7 +231,7 @@ function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; 
   const access = useDatabaseAccess(locator.project_id, locator.environment_id);
   const [revoked, setRevoked] = useState(false);
   const resolved = useQuery({
-    queryKey: ["backup-notification-recovery", access.scope.actor, locator],
+    queryKey: ["backup-notification-recovery", access.epoch, locator],
     enabled: access.ready && access.viewer && !access.refreshing && !blocked && !revoked,
     retry: false, gcTime: 0,
     queryFn: async ({ signal }) => {
@@ -246,14 +244,9 @@ function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; 
       }
       if (!environmentFound) throw new Error("Recovery environment is unavailable");
       const database = validateDatabase(await getHostingDatabase(locator.resource_id, { signal }), access.scope, locator.resource_id);
-      const backups = await listDatabaseBackups(access.scope, database, signal);
-      const backup = backups.find(b => b.id === locator.backup_id && b.mode === "backup");
-      if (!backup) throw new Error("Recovery backup is unavailable");
-      if (locator.transfer_id) {
-        const transfers = await listDatabaseBackupTransfers(access.scope, backup.id, signal);
-        if (!transfers.some(t => t.id === locator.transfer_id && t.backup_id === backup.id && t.mode === "upload")) throw new Error("Recovery transfer is unavailable");
-      }
-      return database;
+      const backup = await getNotificationRecoveryBackup(access.scope, database, locator.backup_id, signal);
+      const transfer = locator.transfer_id ? await getNotificationRecoveryTransfer(access.scope, backup.id, locator.transfer_id, signal) : undefined;
+      return { database, backup, transfer };
     },
   });
   if (!access.ready || access.refreshing || blocked) return <p role="status">Verifying authenticated backup recovery access...</p>;
@@ -262,7 +255,7 @@ function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; 
     <h3 className="font-semibold">Backup notification recovery</h3>
     <p className="break-all">Backup {locator.backup_id}{locator.transfer_id ? ` · upload ${locator.transfer_id}` : ""}. The link selects history only. Review current state before requesting an upload retry or a restore.</p>
     {resolved.isPending ? <p role="status">Resolving backup history...</p> : null}
-    {resolved.data ? <DatabaseBackups database={resolved.data} scope={access.scope} owner={access.owner} blocked={blocked || access.refreshing} onDenied={() => setRevoked(true)} recovery={locator} /> : null}
+    {resolved.data ? <DatabaseBackups database={resolved.data.database} recoveryBackup={resolved.data.backup} recoveryTransfer={resolved.data.transfer} scope={access.scope} owner={access.owner} blocked={blocked || access.refreshing} onDenied={() => setRevoked(true)} recovery={locator} /> : null}
   </section>;
 }
 

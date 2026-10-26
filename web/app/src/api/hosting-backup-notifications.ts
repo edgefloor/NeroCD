@@ -1,5 +1,11 @@
+import { parseDatabaseBackupTransfer } from "./hosting-database-backup-targets";
 import { request } from "./client";
-import { boundedDatabaseRequest } from "./hosting-databases";
+import {
+  boundedDatabaseRequest,
+  type DatabaseScope,
+  type HostingDatabase,
+} from "./hosting-databases";
+import { parseDatabaseBackup } from "./hosting-database-backups";
 
 export type BackupEvent = "backup_failed" | "upload_failed";
 export type NotificationConfiguration = {
@@ -439,5 +445,33 @@ export async function getNotificationDelivery(
     true,
   );
   if (out.id !== delivery) return fail();
+  return out;
+}
+
+export async function getNotificationRecoveryBackup(
+  scope: DatabaseScope,
+  database: HostingDatabase,
+  backup: string,
+  signal?: AbortSignal,
+) {
+  if (!notificationID(backup)) return fail();
+  const raw = await boundedDatabaseRequest(
+    (s) =>
+      request<unknown>(
+        `/api/v1/database-backups/${encodeURIComponent(backup)}`,
+        { signal: s, cache: "no-store" },
+      ),
+    signal,
+  );
+  const out = parseDatabaseBackup(raw, scope, database);
+  if (out.id !== backup || out.mode !== "backup") return fail();
+  return out;
+}
+
+export async function getNotificationRecoveryTransfer(scope: DatabaseScope, backup: string, transfer: string, signal?: AbortSignal) {
+  if (!notificationID(backup) || !notificationID(transfer)) return fail();
+  const raw = await boundedDatabaseRequest(s => request<unknown>(`/api/v1/database-backup-transfers/${encodeURIComponent(transfer)}`, { signal: s, cache: "no-store" }), signal);
+  const out = parseDatabaseBackupTransfer(raw, scope);
+  if (out.id !== transfer || out.backup_id !== backup || out.mode !== "upload") return fail();
   return out;
 }

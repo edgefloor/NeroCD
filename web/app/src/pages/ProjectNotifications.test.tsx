@@ -355,3 +355,21 @@ test("uncertain source outcome is attention rather than definite backup failure"
   ).toBeTruthy();
   expect(screen.queryByText(/Backup failed · delivered/)).toBeNull();
 });
+
+test.each([
+  "backup_notifications_unavailable",
+  "backup notifications require NEROCD_PUBLIC_ORIGIN as an HTTPS origin and configured managed secrets",
+])("known unavailable setup has an actionable fixed prerequisite: %s", async message => {
+  vi.mocked(api.saveNotificationChannel).mockRejectedValue(new ApiError(503, message, null));
+  setup(); const form = await newWebhook(); fireEvent.submit(form);
+  expect(await screen.findByText(/set NEROCD_PUBLIC_ORIGIN to an absolute HTTPS origin/)).toBeTruthy();
+  expect(screen.getByText(/configure managed secrets and the notification sender/)).toBeTruthy();
+  expect(within(form).getByLabelText<HTMLInputElement>("Webhook URL").value).toBe("");
+});
+test("unknown unavailable response keeps generic uncertain retry guidance and never renders its body", async () => {
+  vi.mocked(api.saveNotificationChannel).mockRejectedValue(new ApiError(503, "private unknown backend body", null));
+  setup(); const form = await newWebhook(); fireEvent.submit(form);
+  expect(await screen.findByText(/Response unconfirmed/)).toBeTruthy();
+  expect(screen.queryByText(/private unknown backend body/)).toBeNull();
+  expect(screen.queryByText(/set NEROCD_PUBLIC_ORIGIN/)).toBeNull();
+});

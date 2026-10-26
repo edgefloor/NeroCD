@@ -1,3 +1,5 @@
+import { request } from "@/api/client";
+vi.mock("@/api/client", () => ({ request: vi.fn() }));
 import { useDatabaseAccess } from "./ResourceDatabase";
 import * as databaseAPI from "@/api/hosting-databases";
 import * as backupAPI from "@/api/hosting-database-backups";
@@ -312,20 +314,23 @@ const recoveryDatabase = {
   credentials: [{ role: "admin", username: "postgres", secret_id: "admin_secret", version: 1 }, { role: "app", username: "ncd_app", secret_id: "app_secret", version: 1 }],
 } as databaseAPI.HostingDatabase;
 const recoveryBackup = { id: "backup", backup_id: "backup", project_id: "one", source_resource_id: "db", source_generation: 1, max_bytes: 1073741824, timeout_seconds: 900, version: "postgresql.logical-local.v1", mode: "backup", state: "succeeded", consistency: "logical_snapshot_source_writable", ownership_held: false, created_at: environment.created_at, updated_at: environment.created_at, blob: { bytes: 65537, digest: "sha256:" + "a".repeat(64), format: "postgresql_custom" } } as backupAPI.DatabaseBackup;
+const recoveryTransfer = { id: "upload", version: "postgresql.logical-s3-transfer.v1", backup_id: "backup", project_id: "one", mode: "upload", state: "failed", failure_code: "remote_unavailable", destination_id: "runner", created_at: environment.created_at, updated_at: environment.created_at, target_id: "target", target_revision: 1, blob: recoveryBackup.blob } as transferAPI.DatabaseBackupTransfer;
 function recoverySetup(owner = true, locator = recoveryLocator) {
   vi.mocked(useDatabaseAccess).mockReturnValue({ ready: true, viewer: true, owner, maintainer: owner, refreshing: false, scope: { actor: "current_member", project: "one", environment: "env" }, epoch: "current", error: undefined });
   vi.mocked(databaseAPI.getHostingDatabase).mockResolvedValue(recoveryDatabase);
   vi.mocked(backupAPI.listDatabaseBackups).mockResolvedValue([recoveryBackup]);
+  vi.mocked(request).mockImplementation(async path => path.includes("/database-backup-transfers/") ? recoveryTransfer : recoveryBackup);
   vi.mocked(transferAPI.listDatabaseBackupTransfers).mockResolvedValue([{ id: "upload", backup_id: "backup", project_id: "one", mode: "upload", state: "failed", created_at: environment.created_at, updated_at: environment.created_at, target_id: "target", target_revision: 1 } as transferAPI.DatabaseBackupTransfer]);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client);
-  return render(<QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => owner} recoverySearch={locator} /></QueryClientProvider>);
+  const element = () => <QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => owner} recoverySearch={locator} /></QueryClientProvider>;
+  return { ...render(element()), element };
 }
 test("authenticated recovery resolves current membership and full relationships before rendering the real backup panel", async () => {
   recoverySetup();
   const linked = await screen.findByRole("listitem", { name: "Linked backup history" });
   expect(within(linked).getByText(/Backup · succeeded · backup/)).toBeTruthy();
   expect(screen.getByLabelText<HTMLSelectElement>("Completed backup").value).toBe("backup");
-  expect(screen.getByRole("button", { name: "Retry upload for backup" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Retry upload for backup" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Restore into new database" })).toBeTruthy();
   expect(databaseAPI.getHostingDatabase).toHaveBeenCalledWith("db", expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(backupAPI.requestDatabaseBackup).not.toHaveBeenCalled(); expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
@@ -338,8 +343,65 @@ test("recovery viewer sees linked history without retry/restore authority even w
 test.each(["project", "environment", "backup", "transfer"])("recovery rejects a foreign %s relationship before any backup controls", async mismatch => {
   recoverySetup();
   if (mismatch === "project" || mismatch === "environment") vi.mocked(databaseAPI.getHostingDatabase).mockResolvedValue({ ...recoveryDatabase, resource: { ...recoveryDatabase.resource, [mismatch === "project" ? "project_id" : "project_environment_id"]: "foreign" } });
-  if (mismatch === "backup") vi.mocked(backupAPI.listDatabaseBackups).mockResolvedValue([]);
-  if (mismatch === "transfer") vi.mocked(transferAPI.listDatabaseBackupTransfers).mockResolvedValue([]);
+  if (mismatch === "backup") vi.mocked(request).mockResolvedValue({ ...recoveryBackup, id: "foreign", backup_id: "foreign" });
+  if (mismatch === "transfer") vi.mocked(request).mockImplementation(async path => path.includes("/database-backup-transfers/") ? { ...recoveryTransfer, backup_id: "foreign" } : recoveryBackup);
   await screen.findByText(/Backup recovery is unavailable for this project/);
   expect(screen.queryByRole("button", { name: "Restore into new database" })).toBeNull(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+
+test("exact recovery includes a retained backup beyond 100 newer operations without automatic mutation", async () => {
+  recoverySetup();
+  vi.mocked(backupAPI.listDatabaseBackups).mockResolvedValue(Array.from({ length: 100 }, (_, n) => ({ ...recoveryBackup, id: `newer_${n}`, backup_id: `newer_${n}` })));
+  await screen.findByRole("listitem", { name: "Linked backup history" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Completed backup").value).toBe("backup");
+  expect(request).toHaveBeenCalledWith("/api/v1/database-backups/backup", expect.objectContaining({ signal: expect.any(AbortSignal), cache: "no-store" }));
+  expect(await screen.findByRole("button", { name: "Retry upload for backup" })).toBeTruthy();
+  expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(backupAPI.requestDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+test.each(["project_id", "source_resource_id", "mode"] as const)("exact backup detail rejects foreign %s before controls", async key => {
+  recoverySetup();
+  vi.mocked(request).mockResolvedValue({ ...recoveryBackup, [key]: key === "mode" ? "restore" : "foreign" });
+  await screen.findByText(/Backup recovery is unavailable for this project/);
+  expect(screen.queryByRole("listitem", { name: "Linked backup history" })).toBeNull();
+  expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+test("retiring recovery access aborts an exact lookup and never exposes the late result", async () => {
+  const view = recoverySetup();
+  let complete!: (value: unknown) => void;
+  let signal: AbortSignal | undefined;
+  vi.mocked(request).mockImplementation((_path, options) => { signal = options?.signal; return new Promise(resolve => { complete = resolve; }); });
+  await waitFor(() => expect(signal).toBeTruthy());
+  vi.mocked(useDatabaseAccess).mockReturnValue({ ready: true, viewer: false, owner: false, maintainer: false, refreshing: false, scope: { actor: "current_member", project: "one", environment: "env" }, epoch: "revoked", error: undefined });
+  view.rerender(view.element());
+  await waitFor(() => expect(signal?.aborted).toBe(true));
+  await act(async () => { complete(recoveryBackup); });
+  expect(screen.queryByRole("listitem", { name: "Linked backup history" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Restore into new database" })).toBeNull();
+});
+
+test("exact linked transfer remains visible beyond 100 newer uploads and does not retry automatically", async () => {
+  recoverySetup();
+  vi.mocked(transferAPI.listDatabaseBackupTransfers).mockResolvedValue(Array.from({ length: 100 }, (_, n) => ({ ...recoveryTransfer, id: `new_upload_${n}`, created_at: "2026-10-26T12:00:00Z" })));
+  const linked = await screen.findByRole("listitem", { name: "Linked upload history" });
+  expect(linked.textContent).toContain("Upload upload");
+  expect(request).toHaveBeenCalledWith("/api/v1/database-backup-transfers/upload", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+test.each(["project_id", "backup_id", "mode"] as const)("exact transfer rejects foreign %s association", async key => {
+  recoverySetup();
+  vi.mocked(request).mockImplementation(async path => path.includes("/database-backup-transfers/") ? { ...recoveryTransfer, [key]: key === "mode" ? "download" : "foreign" } : recoveryBackup);
+  await screen.findByText(/Backup recovery is unavailable for this project/);
+  expect(screen.queryByRole("listitem", { name: "Linked backup history" })).toBeNull();
+  expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+
+test("owner to viewer transition retires recovery mutation controls while retaining authorized history", async () => {
+  const view = recoverySetup();
+  await screen.findByRole("button", { name: "Retry upload for backup" });
+  vi.mocked(useDatabaseAccess).mockReturnValue({ ready: true, viewer: true, owner: false, maintainer: false, refreshing: false, scope: { actor: "current_member", project: "one", environment: "env" }, epoch: "viewer", error: undefined });
+  view.rerender(view.element());
+  expect(screen.queryByRole("button", { name: "Restore into new database" })).toBeNull();
+  await screen.findByRole("listitem", { name: "Linked backup history" });
+  expect(screen.queryByRole("button", { name: "Retry upload for backup" })).toBeNull();
+  expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
 });

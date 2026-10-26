@@ -29,6 +29,14 @@ const selectClass = "w-full min-w-0 rounded-xl border bg-card p-2";
 function failure(cause: unknown) {
   if (databaseDenied(cause))
     return "Notification access is unavailable. Refresh project access.";
+  if (
+    cause instanceof ApiError &&
+    cause.status === 503 &&
+    (cause.message === "backup_notifications_unavailable" ||
+      cause.message ===
+        "backup notifications require NEROCD_PUBLIC_ORIGIN as an HTTPS origin and configured managed secrets")
+  )
+    return "Notification delivery setup is incomplete. Ask an administrator to set NEROCD_PUBLIC_ORIGIN to an absolute HTTPS origin for notification links and configure managed secrets and the notification sender, then refresh settings.";
   if (cause instanceof ApiError && cause.status === 409)
     return "The channel changed or this request conflicts. Refresh current channels and explicitly review the generation before saving again.";
   if (cause instanceof ApiError && cause.status === 400)
