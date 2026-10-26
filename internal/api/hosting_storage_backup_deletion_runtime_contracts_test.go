@@ -55,7 +55,7 @@ func (f *hostingStorageDeletionRuntimeWire) serve(w http.ResponseWriter, r *http
 		f.executionRequests++
 		if f.executionRequests == 1 {
 			f.executionRequest, f.execution = request, execution
-			http.Error(w, "fixture lost committed deletion response", 503)
+			http.Error(w, "fixture lost committed deletion response", http.StatusServiceUnavailable)
 			return true
 		}
 		if request != f.executionRequest || domain.HostingDocumentHash(execution) != domain.HostingDocumentHash(f.execution) {

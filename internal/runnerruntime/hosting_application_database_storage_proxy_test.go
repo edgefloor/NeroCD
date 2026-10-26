@@ -149,7 +149,11 @@ func TestApplicationStorageProxyRefusedReceiptRestartReachesFreshClaim(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer journal.Close()
+			defer func() {
+				if err := journal.Close(); err != nil {
+					t.Error("fixture cleanup failed")
+				}
+			}()
 			legacy.verify = func() error { return errors.New("ordinary verifier rejects stopped selected backend502") }
 			special := &fakeInterruptedStorageProxy{fakeManagedProxy: legacy}
 			special.failVerification.Store(true)
@@ -263,7 +267,11 @@ func TestApplicationStorageProxyRefusedReceiptRestartReachesFreshClaim(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer journal.Close()
+			defer func() {
+				if err := journal.Close(); err != nil {
+					t.Error("fixture cleanup failed")
+				}
+			}()
 			// Dispatch must fail closed before optional verification when the
 			// durable scope, result correlation or local capability changes.
 			_, local, _, prepareErr := prepareProxyEngine(t.Context(), config, *op.Plan, op.Preparation)

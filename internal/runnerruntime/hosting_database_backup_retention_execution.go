@@ -144,7 +144,8 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 	if err != nil {
 		return err
 	}
-	defer e.Close()
+	// Resource teardown must not reclassify a durably recorded operation.
+	defer func() { _ = e.Close() }()
 	before := retentionBefore(c, e, p, a)
 	if err = before(ctx); err != nil {
 		return err

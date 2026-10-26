@@ -25,7 +25,8 @@ func (c *backupRemoteS3) storageDownload(ctx context.Context, bucket, key string
 	if err != nil {
 		return backupRemoteFailure(err)
 	}
-	defer out.Body.Close()
+	// Content length and digest validation determine success; closing only releases the response.
+	defer func() { _ = out.Body.Close() }()
 	if out.ContentLength == nil || *out.ContentLength != blob.SizeBytes {
 		return backupRemoteError("object_mismatch")
 	}

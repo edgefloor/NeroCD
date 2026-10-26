@@ -220,11 +220,3 @@ func executeApplicationStorageRecovery(s *attemptSupervisor, j *runner.AttemptJo
 	}
 	return j.AckHostingConnection(a)
 }
-
-func effectiveApplicationMemberEndpoint(m domain.HostingDatabaseNetworkMemberProof) string {
-	endpoint, _, _, ok := domain.HostingDatabaseMemberEndpoint(m)
-	if !ok {
-		return ""
-	}
-	return endpoint.EndpointID
-}

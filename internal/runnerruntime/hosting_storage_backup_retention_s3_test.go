@@ -30,7 +30,9 @@ func TestStorageRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T
 				body, present := objects[key]
 				if r.Method == "DELETE" && mode == "denied" {
 					w.WriteHeader(403)
-					io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
+					if _, err := io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`); err != nil {
+						t.Error("fixture response write failed")
+					}
 					return
 				}
 				switch r.Method {
@@ -58,7 +60,9 @@ func TestStorageRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T
 					w.Header().Set("ETag", etags[key])
 					w.Header().Set("Content-Length", fmt.Sprint(len(body)))
 					if r.Method == "GET" {
-						w.Write(body)
+						if _, err := w.Write(body); err != nil {
+							t.Error("fixture response write failed")
+						}
 					}
 				case "DELETE":
 					match := r.Header.Get("If-Match")
@@ -67,7 +71,9 @@ func TestStorageRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T
 					}
 					if mode != "ignores_condition" && match != etags[key] {
 						w.WriteHeader(412)
-						io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`)
+						if _, err := io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`); err != nil {
+							t.Error("fixture response write failed")
+						}
 						return
 					}
 					if !strings.Contains(key, "retention-probes") {

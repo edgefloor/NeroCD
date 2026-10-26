@@ -31,7 +31,9 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 				body, present := objects[key]
 				if r.Method == "DELETE" && mode == "denied" {
 					w.WriteHeader(403)
-					io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
+					if _, err := io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`); err != nil {
+						t.Error("fixture response write failed")
+					}
 					return
 				}
 				switch r.Method {
@@ -59,7 +61,9 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 					w.Header().Set("ETag", etags[key])
 					w.Header().Set("Content-Length", fmt.Sprint(len(body)))
 					if r.Method == "GET" {
-						w.Write(body)
+						if _, err := w.Write(body); err != nil {
+							t.Error("fixture response write failed")
+						}
 					}
 				case "DELETE":
 					match := r.Header.Get("If-Match")
@@ -68,7 +72,9 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 					}
 					if mode != "ignores_condition" && match != etags[key] {
 						w.WriteHeader(412)
-						io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`)
+						if _, err := io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`); err != nil {
+							t.Error("fixture response write failed")
+						}
 						return
 					}
 					if !strings.Contains(key, "retention-probes") {
@@ -152,7 +158,9 @@ func TestBackupRetentionS3AdoptionDoesNotGrantDeletion(t *testing.T) {
 			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
 		case "GET":
 			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
-			w.Write(data)
+			if _, err := w.Write(data); err != nil {
+				t.Error("fixture response write failed")
+			}
 		case "DELETE":
 			deletes++
 		default:
@@ -182,7 +190,9 @@ func TestBackupRetentionDownloadedCopyProofDistinguishesCreationAndAdoption(t *t
 			t.Error("download made non-read request")
 		}
 		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			t.Error("fixture response write failed")
+		}
 	})
 	p.Target.Target = target
 	p.Operation.Mode = "download"

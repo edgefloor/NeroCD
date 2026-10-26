@@ -153,7 +153,9 @@ func TestStorageRuntimeDockerOutputProcess(t *testing.T) {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "fixture Docker diagnostic")
-	fmt.Fprintln(os.Stdout, strings.Repeat("a", 64))
+	if _, err := fmt.Fprintln(os.Stdout, strings.Repeat("a", 64)); err != nil {
+		os.Exit(1)
+	}
 	if mode == "failure" {
 		os.Exit(17)
 	}

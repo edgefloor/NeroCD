@@ -61,7 +61,7 @@ func TestStorageRemoteDownloadAlwaysGETAndCodecValidation(t *testing.T) {
 			if wrongFormat {
 				handle, _, openErr := f.e.store.Open(t.Context(), key)
 				if openErr == nil {
-					handle.Close()
+					_ = handle.Close() // The following fatal assertion already rejects this archive.
 					t.Fatal("unverified format entered CAS")
 				}
 			}
@@ -156,7 +156,11 @@ func TestStorageRemoteReplayRetiresReceiptAndExactAbandonedStaging(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("fixture cleanup failed")
+		}
+	}()
 	_, err = j.AppendStorageBackupTransfer(runner.JournalStorageBackupTransfer{ID: request.ReceiptID, Attempt: runner.AttemptIdentity{RunID: a.RunID, LeaseID: a.LeaseID, Attempt: a.Attempt, Fence: a.Fence, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}, Plan: p, Request: request, CreatedAt: now})
 	if err != nil {
 		t.Fatal(err)

@@ -323,7 +323,7 @@ func (f *hostingStorageRetentionRuntimeWire) serve(w http.ResponseWriter, r *htt
 		f.executionRequests++
 		if f.executionRequests == 1 {
 			f.executionRequest, f.execution = request, execution
-			http.Error(w, "fixture lost committed retention response", 503)
+			http.Error(w, "fixture lost committed retention response", http.StatusServiceUnavailable)
 			return true
 		}
 		if request != f.executionRequest || domain.HostingDocumentHash(execution) != domain.HostingDocumentHash(f.execution) {

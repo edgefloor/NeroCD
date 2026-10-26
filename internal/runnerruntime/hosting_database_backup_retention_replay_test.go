@@ -55,7 +55,11 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer j.Close()
+			defer func() {
+				if err := j.Close(); err != nil {
+					t.Error("fixture cleanup failed")
+				}
+			}()
 			mutations, retirements := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -73,7 +77,9 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 					out.LocalState = "succeeded"
 					out.Items[0].State = "deleted"
 					out.Items[0].ReservationHeld = false
-					json.NewEncoder(w).Encode(out)
+					if err := json.NewEncoder(w).Encode(out); err != nil {
+						t.Error("fixture response encoding failed")
+					}
 				case "/api/v1/runners/hosting/database-backup-retention/retirement":
 					retirements++
 					var in domain.HostingDatabaseBackupRetentionRetirementInput
@@ -86,7 +92,9 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 						w.WriteHeader(409)
 						return
 					}
-					json.NewEncoder(w).Encode(domain.HostingDatabaseBackupRetentionRetirement{HostingAuthority: in.HostingAuthority, PlanHash: in.PlanHash, NextAttempt: 2, ReplayOnly: true})
+					if err := json.NewEncoder(w).Encode(domain.HostingDatabaseBackupRetentionRetirement{HostingAuthority: in.HostingAuthority, PlanHash: in.PlanHash, NextAttempt: 2, ReplayOnly: true}); err != nil {
+						t.Error("fixture response encoding failed")
+					}
 				default:
 					t.Errorf("startup attempted effect/claim %s", r.URL.Path)
 					w.WriteHeader(400)

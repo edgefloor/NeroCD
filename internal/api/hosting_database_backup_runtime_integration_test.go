@@ -770,7 +770,8 @@ func backupRuntimeReadGuestExec(ctx context.Context, client *http.Client, id str
 	if err != nil {
 		return value, invalid
 	}
-	defer response.Body.Close()
+	// The bounded read and exact JSON identity determine the observation result.
+	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<10)+1))
 	defer clear(raw)
 	if err != nil || response.StatusCode != http.StatusOK || len(raw) > 16<<10 || json.Unmarshal(raw, &value) != nil || value.ID != id {
@@ -1987,9 +1988,10 @@ func TestDatabaseBackupGrantCleanupResponseBoundaries(t *testing.T) {
 					w.WriteHeader(http.StatusCreated)
 				}
 				body := `{"ok":true}`
-				if kind == "body" {
+				switch kind {
+				case "body":
 					body = "ncr_cleanup_private_canary"
-				} else if kind == "size" {
+				case "size":
 					body = strings.Repeat("x", (1<<20)+1)
 				}
 				_, _ = io.WriteString(w, body)

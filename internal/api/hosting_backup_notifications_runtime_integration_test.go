@@ -222,7 +222,8 @@ func backupNotificationSMTPAddress(argument string) (string, bool) {
 	return value, err == nil && address.Address == value && !strings.ContainsAny(value, "\r\n")
 }
 func (r *backupNotificationReceivers) serveSMTP(conn net.Conn) {
-	defer conn.Close()
+	// Closing cannot repair a completed or rejected SMTP exchange.
+	defer func() { _ = conn.Close() }()
 	if conn.SetDeadline(time.Now().Add(5*time.Second)) != nil {
 		return
 	}

@@ -96,7 +96,8 @@ func applyApplicationStorageProxy(s *attemptSupervisor, c runnerclient.Client, e
 		if err != nil {
 			return err
 		}
-		defer e.Close()
+		// Resource teardown must not reclassify a durably recorded operation.
+		defer func() { _ = e.Close() }()
 		if err = e.bindStorage(state.Operation, state.Storage); err != nil {
 			return err
 		}

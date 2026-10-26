@@ -144,7 +144,8 @@ func executeStorageBackupRetentionClaim(s *attemptSupervisor, j *runner.AttemptJ
 	if err != nil {
 		return err
 	}
-	defer e.Close()
+	// Resource teardown must not reclassify a durably recorded operation.
+	defer func() { _ = e.Close() }()
 	before := storageRetentionBefore(c, e, p, a)
 	if err = before(ctx); err != nil {
 		return err

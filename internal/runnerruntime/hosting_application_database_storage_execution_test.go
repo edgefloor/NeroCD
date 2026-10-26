@@ -321,7 +321,11 @@ func TestApplicationDatabaseStorageJournal17FailureAndFreshResumeReplay(t *testi
 			if err != nil {
 				t.Fatal("journal17 restart", err)
 			}
-			defer f.j.Close()
+			defer func() {
+				if err := f.j.Close(); err != nil {
+					t.Error("fixture cleanup failed")
+				}
+			}()
 			first := f.j.Snapshot().Hosting[0]
 			config := f.config(server.URL)
 			config.Database.ApplicationStorage = true
@@ -357,7 +361,11 @@ func TestApplicationDatabaseStorageJournal17FailureAndFreshResumeReplay(t *testi
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer f.j.Close()
+				defer func() {
+					if err := f.j.Close(); err != nil {
+						t.Error("fixture cleanup failed")
+					}
+				}()
 				first := f.j.Snapshot().Hosting[0]
 				if err = reconcileApplicationDatabaseAttempt(ctx, config, client, f.j, first, func() (applicationDatabaseExecutionEngine, error) {
 					t.Fatal("open removal intent reopened Docker on restart")

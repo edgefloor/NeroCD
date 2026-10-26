@@ -52,7 +52,8 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 	if err != nil {
 		return err
 	}
-	defer e.Close()
+	// Resource teardown must not reclassify a durably recorded operation.
+	defer func() { _ = e.Close() }()
 	daemon, err := e.image.daemonID(ctx)
 	if err != nil || p.DaemonID != "" && p.DaemonID != daemon {
 		return errBackupRemoteHeld
@@ -202,7 +203,8 @@ func executeBackupRemoteObject(ctx context.Context, e *databaseBackupEngine, rem
 		if err != nil {
 			return backupRemoteError("archive_unavailable")
 		}
-		defer file.Close()
+		// Reads or explicit Sync/publication establish the result before descriptor teardown.
+		defer func() { _ = file.Close() }()
 		if stored.Size != blob.Bytes {
 			return backupRemoteError("archive_unavailable")
 		}
@@ -220,7 +222,8 @@ func executeBackupRemoteObject(ctx context.Context, e *databaseBackupEngine, rem
 	if err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
-	defer file.Close()
+	// Reads or explicit Sync/publication establish the result before descriptor teardown.
+	defer func() { _ = file.Close() }()
 	if err = remote.download(ctx, p.Target.Target.Bucket, p.ObjectKey, blob, file); err != nil {
 		return err
 	}

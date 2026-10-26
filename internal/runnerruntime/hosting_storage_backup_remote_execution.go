@@ -52,7 +52,8 @@ func executeStorageBackupTransferWithEngine(s *attemptSupervisor, j *runner.Atte
 	if err != nil {
 		return err
 	}
-	defer e.Close()
+	// Resource teardown must not reclassify a durably recorded operation.
+	defer func() { _ = e.Close() }()
 	daemon, err := e.image.daemonID(ctx)
 	if err != nil || p.DaemonID != "" && p.DaemonID != daemon {
 		return errBackupRemoteHeld
@@ -202,7 +203,8 @@ func executeStorageRemoteObjectOwned(ctx context.Context, e *storageArchiveEngin
 		if err != nil {
 			return backupRemoteError("archive_unavailable")
 		}
-		defer file.Close()
+		// Reads or explicit Sync/publication establish the result before descriptor teardown.
+		defer func() { _ = file.Close() }()
 		if stored.Size != blob.SizeBytes {
 			return backupRemoteError("archive_unavailable")
 		}
@@ -283,7 +285,7 @@ func storageRemotePartialName(id string) (string, error) {
 		return "", backupRemoteError("archive_unavailable")
 	}
 	for _, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 			return "", backupRemoteError("archive_unavailable")
 		}
 	}
