@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -215,6 +216,21 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed candidate did not prove recovery")
 	}
+	// The runner command returns a failed workload after committing restoration.
+	// This fixture starts it without the owned service's restart supervisor.
+	// Prove the expected process exit before joining and restarting for new work.
+	select {
+	case processErr := <-f.process.done:
+		f.process.done <- processErr // Keep the existing stop helper's join receipt.
+		var exitErr *exec.ExitError
+		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage workload failed; committed restoration retained") {
+			t.Fatal("deliberately failed candidate did not produce the expected runner exit")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner did not exit after the deliberately failed candidate")
+	}
+	f.stop()
+	f.start()
 	verifyHTTPS()
 	recovery := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogBookmark(t, recovery, base, false)
@@ -422,6 +438,9 @@ func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, inst
 	f.catalogBrowser.set("backup", installed.Resource.ID)
 	backupID := f.catalogBrowser.await(t, "backed_up")
 	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	backupOperation := storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+backup.OperationID, nil, 200)
+	f.lastOperation.Store(&backupOperation)
+	t.Logf("catalog archive backup operation=%s state=%s", backupOperation.ID, backupOperation.State)
 	entry := storageArchiveRuntimeLose(f, fault, backup.OperationID)
 	if entry.Complete.Result.ArchiveOutcome != "succeeded" || entry.Complete.Result.ResumeOutcome != "resumed" || entry.Complete.Result.Uncertain {
 		t.Fatal("catalog backup did not resume original writer")
@@ -458,6 +477,7 @@ func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, inst
 	if restored.Resource.ID == source.ResourceID || restored.Storage.VolumeName == source.VolumeName || len(restored.Operation.StorageArchive.Plan.Writers) != 0 {
 		t.Fatal("catalog restore reused source target or writer authority")
 	}
+	f.lastOperation.Store(&restored.Operation)
 	restoredEntry := storageArchiveRuntimeLose(f, restoreFault, restoreID)
 	if !restoredEntry.Complete.Result.RestoreVerified || restoredEntry.Complete.Result.Uncertain {
 		t.Fatal("catalog restoration not verified")
