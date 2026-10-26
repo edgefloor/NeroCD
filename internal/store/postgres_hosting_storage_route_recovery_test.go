@@ -108,6 +108,23 @@ func TestHostingStorageRouteRecoveryPostgresQueueReplayAndConcurrentDuplicate(t 
 	for _, terminal := range []string{"loaded", "proxy_failed"} {
 		t.Run(terminal, func(t *testing.T) {
 			f, next, in := storageRouteRecoveryFixture(t)
+			// Completion projects runner task mode onto its response. Compare the
+			// full persisted representation across recovery, including all receipts.
+			if next.op.TaskMode != "deploy" {
+				t.Fatalf("completion task mode: %q", next.op.TaskMode)
+			}
+			persistedBefore, err := f.pg.GetHostingOperation(t.Context(), next.op.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if persistedBefore.TaskMode != "" {
+				t.Fatalf("persisted operation exposed runner task mode: %q", persistedBefore.TaskMode)
+			}
+			runnerResponse := persistedBefore
+			runnerResponse.TaskMode = next.op.TaskMode
+			if !reflect.DeepEqual(runnerResponse, next.op) {
+				t.Fatal("completion response differs from persisted evidence beyond task mode")
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			results := make(chan error, 2) // One result per concurrent recovery caller.
@@ -169,7 +186,7 @@ func TestHostingStorageRouteRecoveryPostgresQueueReplayAndConcurrentDuplicate(t 
 				t.Fatal("replay changed history or repeated queue/writer work")
 			}
 			stored, err := f.pg.GetHostingOperation(t.Context(), next.op.ID)
-			if err != nil || !reflect.DeepEqual(stored, next.op) {
+			if err != nil || !reflect.DeepEqual(stored, persistedBefore) {
 				t.Fatalf("recovery changed deployment receipt/evidence: %v", err)
 			}
 			in.ExpectedCompleteReceiptHash = "sha256:" + strings.Repeat("c", 64)
