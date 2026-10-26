@@ -128,14 +128,6 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 				return zero, err
 			}
 		}
-		if in.Enabled {
-			if err = s.archiveConfigured(ctx, q); err != nil {
-				return zero, err
-			}
-			if err = s.storageBackupScheduleTarget(ctx, tx, actor, storageValue, selection); err != nil {
-				return zero, err
-			}
-		}
 		var remote []byte
 		if selection != nil {
 			remote = buildJSON(selection)
@@ -143,6 +135,17 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		err = q.InsertStorageBackupScheduleVersion(ctx, sqlcgen.InsertStorageBackupScheduleVersionParams{ScheduleID: id, Revision: saved.Revision, ActorID: actor, ExpectedResourceGeneration: in.ExpectedResourceGeneration, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, RemoteTarget: remote})
 		if err != nil {
 			return zero, err
+		}
+
+		// Remote validation forces deferred constraints. Persist the matching version
+		// first, so the schedule/version invariant holds when they are checked.
+		if in.Enabled {
+			if err = s.archiveConfigured(ctx, q); err != nil {
+				return zero, err
+			}
+			if err = s.storageBackupScheduleTarget(ctx, tx, actor, storageValue, selection); err != nil {
+				return zero, err
+			}
 		}
 
 		out := storageBackupScheduleView(saved)

@@ -256,3 +256,78 @@ func TestPostgresStorageBackupScheduleRecoveryKeepsOccurrenceHeld(t *testing.T) 
 		t.Fatalf("recovery transfer lost source hold %#v %v", history, err)
 	}
 }
+
+func TestPostgresStorageBackupScheduleRemoteTargetAdmission(t *testing.T) {
+	f, target := storageRemoteControlFixture(t)
+	if err := f.stopExecution(); err != nil {
+		t.Fatal(err)
+	}
+	in := storageScheduleInput(f, "a")
+	in.RemoteTarget = &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}
+	assertCounts := func(schedules, versions, requests int) {
+		t.Helper()
+		var actualSchedules, actualVersions, actualRequests int
+		if err := f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_storage_backup_schedules),(SELECT count(*) FROM hosting_storage_backup_schedule_versions),(SELECT count(*) FROM hosting_storage_backup_schedule_requests)`).Scan(&actualSchedules, &actualVersions, &actualRequests); err != nil {
+			t.Fatal(err)
+		}
+		if actualSchedules != schedules || actualVersions != versions || actualRequests != requests {
+			t.Fatalf("partial schedule state: schedules=%d versions=%d requests=%d", actualSchedules, actualVersions, actualRequests)
+		}
+	}
+	rejected := in
+	rejected.RequestID = strings.Repeat("b", 32)
+	rejected.RemoteTarget = &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision + 1}
+	if _, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", rejected); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("unvalidated target revision accepted", err)
+	}
+	assertCounts(0, 0, 0)
+	saved, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in)
+	if err != nil {
+		t.Fatal("remote schedule admission", err)
+	}
+	if saved.RemoteTarget == nil || *saved.RemoteTarget != *in.RemoteTarget {
+		t.Fatal("remote schedule lost pinned target")
+	}
+	replay, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in)
+	if err != nil || replay.ID != saved.ID || replay.Revision != saved.Revision {
+		t.Fatal("remote schedule replay", err)
+	}
+	assertCounts(1, 1, 1)
+	update := in
+	update.RequestID = strings.Repeat("c", 32)
+	update.ExpectedVersion = saved.Revision
+	update.Frequency = "* * * * *"
+	changed, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, saved.ID, update)
+	if err != nil || changed.Revision != 2 || changed.RemoteTarget == nil || *changed.RemoteTarget != *in.RemoteTarget {
+		t.Fatal("remote schedule update", err)
+	}
+	replay, err = f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, saved.ID, update)
+	if err != nil || replay.ID != saved.ID || replay.Revision != changed.Revision {
+		t.Fatal("remote update replay", err)
+	}
+	assertCounts(1, 2, 2)
+	rejected.ExpectedVersion = changed.Revision
+	if _, err = f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, saved.ID, rejected); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("invalid remote update accepted", err)
+	}
+	assertCounts(1, 2, 2)
+	current, err := f.service.ListStorageBackupSchedules(f.owner, f.resource.ID)
+	if err != nil || len(current) != 1 || current[0].Revision != changed.Revision || current[0].Frequency != update.Frequency || current[0].RemoteTarget == nil || *current[0].RemoteTarget != *in.RemoteTarget {
+		t.Fatal("rejected remote update changed current schedule", err)
+	}
+	if err = f.pg.ReconcileStorageBackupSchedules(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	occurrences, err := f.service.ListStorageBackupOccurrences(f.owner, f.resource.ID, saved.ID)
+	if err != nil || len(occurrences) != 1 || occurrences[0].ScheduleRevision != changed.Revision || occurrences[0].BackupID == "" || occurrences[0].OperationID == "" {
+		t.Fatal("remote schedule did not create archive", err)
+	}
+	var raw []byte
+	if err = f.db.QueryRow(f.ctx, `SELECT body->'remote_target' FROM hosting_storage_archive_plans WHERE operation_id=$1`, occurrences[0].OperationID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var admitted domain.BackupTargetSelection
+	if json.Unmarshal(raw, &admitted) != nil || admitted != *in.RemoteTarget {
+		t.Fatal("scheduled archive lost immutable remote target")
+	}
+}

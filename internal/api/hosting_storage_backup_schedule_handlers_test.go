@@ -111,3 +111,35 @@ func TestStorageBackupScheduleOpenAPI(t *testing.T) {
 		}
 	}
 }
+
+// storageScheduleResponseCode limits runtime failure evidence to known API codes.
+// Response messages, unknown codes and submitted documents never enter the log.
+func storageScheduleResponseCode(raw []byte) string {
+	var envelope struct {
+		Code string `json:"code"`
+	}
+	if len(raw) > 4096 || json.Unmarshal(raw, &envelope) != nil {
+		return "unknown"
+	}
+	switch envelope.Code {
+	case "invalid_request", "bad_request", "conflict", "not_found", "unauthenticated", "forbidden", "rate_limited", "internal_error", "hosting_storage_archive_unavailable", "hosting_storage_unavailable", "hosting_unavailable", "unavailable", "request_too_large":
+		return envelope.Code
+	default:
+		return "unknown"
+	}
+}
+
+func TestStorageBackupScheduleResponseCodeEvidence(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{`{"code":"conflict","error":"canary_private"}`, "conflict"},
+		{`{"code":"bad_request","error":"canary_private"}`, "bad_request"},
+		{`{"code":"canary_private","error":"canary_private"}`, "unknown"},
+		{`{"code":42}`, "unknown"},
+		{`canary_private`, "unknown"},
+		{strings.Repeat("canary_private", 4096), "unknown"},
+	} {
+		if got := storageScheduleResponseCode([]byte(tc.raw)); got != tc.want {
+			t.Errorf("finite response code got=%s want=%s", got, tc.want)
+		}
+	}
+}

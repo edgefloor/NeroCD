@@ -111,7 +111,7 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 			captured := httptest.NewRecorder()
 			server.ServeHTTP(captured, r)
 			if captured.Code != 200 {
-				t.Error("schedule ACK fault did not commit")
+				t.Errorf("schedule ACK fault did not commit: status=%d code=%s", captured.Code, storageScheduleResponseCode(captured.Body.Bytes()))
 			}
 			checks := make(chan error, 2)
 			for range 2 {
