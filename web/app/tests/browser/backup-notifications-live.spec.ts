@@ -9,6 +9,34 @@ const meta = raw ? JSON.parse(raw) as {
   database_resource_id: string; control_path: string; profile: string; tls_spki: string;
 } : undefined;
 
+// Go's url.Values and the UI's URLSearchParams serialize the same locator in
+// different key orders. Preserve every URL component and parameter occurrence.
+const recoveryTarget = (value: string) => {
+  const url = new URL(value);
+  url.searchParams.sort();
+  return url.href;
+};
+
+test("recovery link comparison preserves identity across query ordering", async ({ page }) => {
+  const origin = "https://127.0.0.1:18443";
+  const delivered = `${origin}/projects?backup_id=dbb_source&environment_id=env_source&project_id=proj_source&resource_id=res_source&transfer_id=upload_source`;
+  const rendered = "/projects?project_id=proj_source&environment_id=env_source&resource_id=res_source&backup_id=dbb_source&transfer_id=upload_source";
+  await page.setContent(`<base href="${origin}/"><a href="${rendered}">Open authenticated backup recovery</a>`);
+  const href = await page.getByRole("link", { name: "Open authenticated backup recovery", exact: true }).evaluate(node => (node as HTMLAnchorElement).href);
+  expect(href).not.toBe(delivered);
+  expect(recoveryTarget(href)).toBe(recoveryTarget(delivered));
+  for (const changed of [
+    delivered.replace(":18443/", ":18444/"),
+    delivered.replace("/projects?", "/other?"),
+    ...["project_id", "environment_id", "resource_id", "backup_id", "transfer_id"].map(key => {
+      const url = new URL(delivered);
+      url.searchParams.set(key, "foreign");
+      return url.href;
+    }),
+    delivered + "&backup_id=dbb_source", delivered + "&extra=value", delivered + "#changed",
+  ]) expect(recoveryTarget(changed)).not.toBe(recoveryTarget(delivered));
+});
+
 test("actual backup notifications configure both transports and recover the retained local archive", async ({ page, browser }) => {
   test.skip(!meta || meta.profile !== "backup_notifications", "requires the separately authorized notification fixture");
   test.setTimeout(600_000);
@@ -122,7 +150,7 @@ test("actual backup notifications configure both transports and recover the reta
   const history = panel.getByRole("region", { name: "Notification delivery history", exact: true });
   const links = history.getByRole("link", { name: "Open authenticated backup recovery", exact: true });
   await expect.poll(async () => {
-    for (const link of await links.all()) if (await link.evaluate(node => (node as HTMLAnchorElement).href) === recovery) return true;
+    for (const link of await links.all()) if (recoveryTarget(await link.evaluate(node => (node as HTMLAnchorElement).href)) === recoveryTarget(recovery)) return true;
     return false;
   }, { timeout: 30_000 }).toBe(true);
   let sourceMutations = 0;
