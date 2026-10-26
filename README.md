@@ -307,6 +307,16 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   Qualification uses PostgreSQL 17.11 on native Linux arm64 with pinned Silo at
   an explicitly trusted loopback HTTP origin. Production S3 HTTPS, notifications,
   other engines and aggregate parity remain open; the running user UI is unchanged.
+- [PostgreSQL backup failure notifications](docs/hosting-backup-notifications.md#accepted-qualification-and-durable-evidence)
+  are accepted at `1eb2d01c9262c6bad5a03579545226189f88f1be` for SMTP email and generic HTTPS
+  webhooks covering backup and upload failures. The live UI configures channels,
+  lists delivery outcomes, and opens authenticated recovery without
+  starting an operation. Explicit new-target restore proves application reads and
+  new writes from the preserved local archive. The physical dump-failure outcome
+  is uncertain and retains that label. Qualification uses native Linux arm64,
+  PostgreSQL 17.11, trusted rootful Docker, pinned Silo over trusted loopback HTTP,
+  and private-CA notification TLS. Other events/channels, public-CA deployment,
+  production S3 HTTPS and full R63/A25 remain open.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

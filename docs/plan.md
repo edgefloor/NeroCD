@@ -97,8 +97,17 @@ uses pinned Silo with trusted loopback HTTP. Production S3 HTTPS remains
 unqualified. This closes the active bounded workflow without a new subsystem or
 UI expansion.
 
+PostgreSQL backup/upload failure notifications are accepted at
+`1eb2d01c9262c6bad5a03579545226189f88f1be`. The [notification qualification](hosting-backup-notifications.md#accepted-qualification-and-durable-evidence)
+proves actual SMTP and HTTPS webhook alerts, durable retry/history and authenticated
+explicit recovery with application reads and new writes. The physical dump
+failure is uncertain and retains its observed source state. The two-event slice
+uses the existing PostgreSQL 17.11/Linux arm64/rootful Docker/Silo profile and
+private-CA notification TLS. Other events/channels, public-CA deployment and
+complete R63/A25 remain open.
+
 Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
-notifications, other engines,
+broader notification events and channels, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.
 Broader R42 profiles, rotation,
 production ACME and aggregate stateful hosting gates remain open. This accepted

@@ -46008,6 +46008,577 @@
         "In-place restore",
         "Full R46/R47/A25/A26/A37/DB01 gates"
       ]
+    },
+    {
+      "id": "postgresql-backup-notifications-20261026",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Nineteen bounded assessments cover only two failure events and two transports. Historical 933 eligible rows, 30 verified rows, all prior supplemental records and the original historical audit remain unchanged. These assessments do not accept full R63, A25 or a notification matrix gate. The script validates historical rows/report; independent specification review checks these supplemental claims.",
+      "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+      "physical_tree": "efd94f19a4cb615056d5ef2273f1990367533088",
+      "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+      "source_paths": [
+        "internal/api/hosting_backup_notifications_runtime_integration_test.go",
+        "internal/store/postgres_hosting_backup_notifications_test.go",
+        "web/app/tests/browser/backup-notifications-live.spec.ts",
+        "internal/notificationtransport/transport.go",
+        "web/app/src/pages/ProjectNotifications.tsx",
+        "web/app/src/pages/ProjectHosting.tsx"
+      ],
+      "evidence_paths": [
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/result",
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/verification-summary.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-source-manifest.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/evidence-sha256.json"
+      ],
+      "runtime_receipt_sha256": "30b9b6da3b40ac5416f8d0281059abf96702ac618ba66447c65eadc6396e8c2a",
+      "runtime_summary": {
+        "gate_exit": 0,
+        "full_workflow_pass": true,
+        "groups": 10,
+        "markers": 33,
+        "browser_profiles": 6,
+        "no_failed_or_skipped_tests": true,
+        "observed_interval_seconds": 675.524,
+        "timing_boundary": "evidence-directory birth to terminal result mtime; not precisely observed command start",
+        "notification_group_seconds": 178.45,
+        "cleanup_actual_changes": [],
+        "baseline_container_count": 35,
+        "baseline_volume_count": 210,
+        "user_ui_recorded_profile_unchanged": true
+      },
+      "retained_evidence": {
+        "backend_sha": "d19b6095f8b639af2f76c856996b2abad65a09e7",
+        "postgresql_race_receipt_sha256": "5e0e59a3efdc3b3bfb2d3f7542e14d2ebb835c7e881afb2be80200c6e4942b19",
+        "postgresql_top_level_notification_tests": 9,
+        "reason": "All 31 approved backend paths, modules, migrations, store and transport remain byte-identical to d19b6095f8b639af2f76c856996b2abad65a09e7. Documentation-only candidate preserves those production sources. Original revisions and receipt hashes remain explicit in original-receipt-mapping.json and verification-summary.json.",
+        "evidence_paths": [
+          "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/retained-backend/nerocd-backup-notifications-core-repair-round1-pg.log",
+          "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/retained-backend/nerocd-backup-notifications-core-repair-round1-local.log",
+          "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/original-receipt-mapping.json",
+          "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/verification-summary.json"
+        ]
+      },
+      "outcomes": [
+        {
+          "criterion_id": "R63-C03",
+          "outcome": "Notify backup failures",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Actual nonzero pg_dump daemon event settles uncertain; both transports and final browser history preserve the observed source_state.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C04",
+          "outcome": "Notify upload failures",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Actual failed upload produces SMTP and HTTPS alerts while the successful local archive and digest remain intact.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C12",
+          "outcome": "Distinguish test delivery from actual-event evidence",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Explicit tests retain event=test; real upload and dump outcomes separately produce accepted source receipts and actual transport messages.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C13",
+          "outcome": "Email: Configure channel-specific scoped endpoint/credentials",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Owner browser saves encrypted write-only SMTP configuration and current project recipients.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C14",
+          "outcome": "Email: Select actual events",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Owner browser selects backup_failed and upload_failed. No broader event selection is qualified.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C15",
+          "outcome": "Email: Deliver actual event",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Actual source events reach the SMTP receiver with stable Message-ID and safe actionable recovery links.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C16",
+          "outcome": "Email: Bound retry and deduplicate durable event identity",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "SMTP transient rejection retains durable delivery identity across retry; PostgreSQL tests cover original retry budgets and expiry. Physical five-attempt exhaustion is a separate webhook test, not actual source exhaustion.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C17",
+          "outcome": "Email: Redact credentials",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Configuration remains write-only; retained redaction assertions check protected credentials and safe messages.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C18",
+          "outcome": "Email: Enforce resource/project authorization",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Browser viewer can inspect authorized history but cannot mutate recovery; forged scope reveals no linked history. SMTP current-member checks suppress a removed recipient, while source actor revocation preserves project alerts.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C19",
+          "outcome": "Email: Retain execution history",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "The live browser reloads and lists delivery outcomes for the observed exact dump and upload sources. Detailed attempt persistence is covered separately by API and PostgreSQL tests.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C20",
+          "outcome": "Email: Report partial outcomes and preserve local recovery data after failed remote upload",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "SMTP upload alert retains local-copy availability and authenticated recovery. Explicit fresh-target restore proves application snapshot reads and new writes.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C21",
+          "outcome": "Generic webhook: Configure channel-specific scoped endpoint/credentials",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Owner browser saves the encrypted write-only HTTPS endpoint, then receives distinct test and actual-source messages.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C22",
+          "outcome": "Generic webhook: Select actual events",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Owner browser selects backup_failed and upload_failed. No broader event selection is qualified.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C23",
+          "outcome": "Generic webhook: Deliver actual event",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Actual source events reach the HTTPS receiver with stable Idempotency-Key and safe actionable recovery links.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C24",
+          "outcome": "Generic webhook: Bound retry and deduplicate durable event identity",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Actual source replay and controller restart preserve identities. A distinct explicit webhook test exhausts five attempts and survives restart; stale generation and disabled channel suppress pending retries.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C25",
+          "outcome": "Generic webhook: Redact credentials",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Write-only endpoint configuration and protected-value redaction keep receiver configuration out of ordinary responses and stored job metadata.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C26",
+          "outcome": "Generic webhook: Enforce resource/project authorization",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Scoped history/recovery checks reject forged project scope; owners explicitly restore and viewers inspect without mutation. Channel generation/disablement suppress obsolete queued sends.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C27",
+          "outcome": "Generic webhook: Retain execution history",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Controller restart and browser reload preserve the actual source event and delivery outcome list. API and PostgreSQL tests separately cover persisted channel generation, delivery identity and detailed attempts.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C28",
+          "outcome": "Generic webhook: Report partial outcomes and preserve local recovery data after failed remote upload",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "1eb2d01c9262c6bad5a03579545226189f88f1be",
+            "scope": "SMTP email and generic HTTPS webhook for PostgreSQL backup_failed and upload_failed only",
+            "justification": "Webhook upload alert retains local-copy availability and authenticated recovery. Explicit fresh-target restore proves application snapshot reads and new writes.",
+            "named_tests": [
+              "TestHostingBackupNotificationsCompiledRunner"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json"
+            ],
+            "limits": "Two PostgreSQL backup/upload failure events only. Physical dump outcome is uncertain; definite failed support is modeled/tested separately. Native Linux arm64, PostgreSQL17.11, trusted rootful classic-store Docker, same-destination pinned Silo at trusted loopback HTTP, private-CA notification TLS. No public-CA deployment, production S3 HTTPS, other engines/channels/events, escalation, in-place/cross-host/disk-loss recovery, or full R63/A25/matrix gate."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "acceptance_cases": [
+        {
+          "case": "successful_dump_failed_upload_actionable_SMTP_and_HTTPS_with_explicit_local_application_recovery",
+          "gate_context": [
+            "A25"
+          ],
+          "status": "validated_bounded",
+          "test": "TestHostingBackupNotificationsCompiledRunner"
+        }
+      ],
+      "unchanged_gaps": [
+        "Other notification events and channels",
+        "Cross-channel escalation and instance fallback",
+        "Production public-CA notification deployment",
+        "Production S3 HTTPS/provider matrix",
+        "Other engines/architectures",
+        "In-place/cross-host/disk-loss recovery",
+        "Full R63/A25/notification matrix gates"
+      ],
+      "archive_manifest_sha256": "a28d163c67819063ba6bd944a6565ebdb9d2e0b61bd62e9057653ddd6c75a7eb"
     }
   ]
 }
