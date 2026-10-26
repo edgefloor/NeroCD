@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
@@ -210,5 +214,91 @@ func TestHostingCatalogPostgresCommitFailureRollsBackEveryComponent(t *testing.T
 	}
 	if after := counts(); after != before {
 		t.Fatal("failed catalog transaction retained a partial component")
+	}
+}
+
+// Exercise the same UTC-local pgx / JSON representation boundary as the Linux
+// runtime fixture without replacing process-global time.Local in shared tests.
+func TestHostingCatalogPostgresReadUTCBindingIdentity(t *testing.T) {
+	if os.Getenv("NEROCD_TEST_DATABASE_URL") == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL for isolated PostgreSQL regression")
+	}
+	const child = "NEROCD_CATALOG_BINDING_UTC_CHILD"
+	if os.Getenv(child) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestHostingCatalogPostgresReadUTCBindingIdentity$", "-test.v")
+		for _, value := range os.Environ() {
+			if !strings.HasPrefix(value, "TZ=") && !strings.HasPrefix(value, child+"=") {
+				cmd.Env = append(cmd.Env, value)
+			}
+		}
+		cmd.Env = append(cmd.Env, "TZ=UTC", child+"=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("UTC catalog read regression: %v\n%s", err, output)
+		}
+		if strings.Contains(string(output), "SKIP") {
+			t.Fatal("UTC catalog regression skipped")
+		}
+		t.Log(string(output))
+		return
+	}
+	pg, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("f", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "UTC retained catalog", TemplateID: "linkding", ImmutableVersion: domain.HostingCatalogLinkdingVersion}
+	installed, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := pg.GetResourceBinding(ctx, installed.Resource.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved domain.HostingCatalogInstallation
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if time.Local == time.UTC || current.CreatedAt.Location() != time.Local || saved.Binding.CreatedAt.Location() != time.UTC || current == saved.Binding || !current.CreatedAt.Equal(saved.Binding.CreatedAt) || domain.HostingDocumentHash(current) != domain.HostingDocumentHash(saved.Binding) {
+		t.Fatal("fixture did not reproduce equal persisted binding with distinct UTC representations")
+	}
+	assertRead := func(t *testing.T) {
+		t.Helper()
+		got, err := s.GetHostingCatalogInstallation(ctx, installed.Resource.ID)
+		if err != nil {
+			t.Fatalf("unchanged UTC binding read: %v", err)
+		}
+		if domain.HostingDocumentHash(got) != domain.HostingDocumentHash(installed) {
+			t.Fatal("read changed immutable installation")
+		}
+	}
+	assertRead(t)
+	replay, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil || domain.HostingDocumentHash(replay) != domain.HostingDocumentHash(installed) {
+		t.Fatalf("UTC retry changed receipt: %v", err)
+	}
+	for _, change := range []struct {
+		name, sql string
+		value     any
+	}{
+		{"namespace", "UPDATE resource_bindings SET runtime_namespace=$1 WHERE resource_id=$2", "ncd_" + strings.Repeat("f", 32)},
+		{"creator", "UPDATE resource_bindings SET created_by=$1 WHERE resource_id=$2", "usr_viewer"},
+		{"timestamp", "UPDATE resource_bindings SET created_at=$1 WHERE resource_id=$2", current.CreatedAt.Add(time.Microsecond)},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			_, err := db.Exec(ctx, change.sql, change.value, installed.Resource.ID)
+			var constraint *pgconn.PgError
+			if !errors.As(err, &constraint) || constraint.Code != "23514" {
+				t.Fatalf("binding immutability guard did not reject change: %v", err)
+			}
+			assertRead(t)
+		})
+	}
+	if _, err := db.Exec(ctx, "UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1", in.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetHostingCatalogInstallation(ctx, installed.Resource.ID); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("revoked destination read accepted: %v", err)
 	}
 }

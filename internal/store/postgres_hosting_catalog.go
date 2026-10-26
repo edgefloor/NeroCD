@@ -202,9 +202,20 @@ func (s *PostgresStore) GetHostingCatalogInstallation(ctx context.Context, actor
 		if err != nil {
 			return zero, err
 		}
-		if v.Resource.ProjectID != r.ProjectID || v.Binding != b {
+		if v.Resource.ProjectID != r.ProjectID || !catalogBindingEqual(v.Binding, b) {
 			return zero, ErrConflict
 		}
 		return v, proxyCheckLegacyToken(ctx, tx, actor)
 	})
+}
+
+func catalogBindingEqual(left, right domain.ResourceBinding) bool {
+	// JSON restores UTC timestamps with time.UTC, while pgx can return the
+	// same instant with time.Local. Compare the instant before aligning its
+	// representation; retain exact equality for every other binding field.
+	if !left.CreatedAt.Equal(right.CreatedAt) {
+		return false
+	}
+	left.CreatedAt = right.CreatedAt
+	return left == right
 }
