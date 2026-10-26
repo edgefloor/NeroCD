@@ -230,7 +230,7 @@ test("owner configures immutable retained storage and recovers exact save across
     await expect(
       panel.getByText("Unknown; configured metadata only", { exact: true }),
     ).toBeVisible();
-    await expect(panel.getByRole("form")).toHaveCount(0);
+    await expect(panel.getByRole("form", { name: "Configure persistent storage", exact: true })).toHaveCount(0);
     const persisted = await (await page.request.get(path)).json();
     expect(persisted.mount_path).toBe("/app/uploads");
     expect(persisted.retention).toBe("retain");

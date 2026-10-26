@@ -87,7 +87,10 @@ test("schedule owner create/replay/edit/disable and viewer history at four width
       url = new URL(request.url()),
       path = url.pathname;
     let body: unknown;
-    if (path === "/api/v1/me")
+    if (request.method() === "GET" && path === "/api/v1/hosting-catalog") body = [];
+    else if (request.method() === "GET" && path === "/api/v1/resources/db_fixture/database-backup-retention") body = null;
+    else if (request.method() === "GET" && path === "/api/v1/resources/db_fixture/database-backup-retention/executions") body = [];
+    else if (path === "/api/v1/me")
       body = {
         id: "actor_fixture",
         provider: "oidc",

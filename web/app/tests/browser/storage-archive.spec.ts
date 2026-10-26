@@ -333,6 +333,9 @@ test("upload archive owner workflow, identical retries and new restore across wi
   await page.route("**/api/v1/storage-backups/backup_fixture", (route) =>
     reply(route, backup),
   );
+  await page.route("**/api/v1/storage-backups/backup_fixture/transfers", (route) =>
+    route.request().method() === "GET" ? reply(route, []) : route.continue(),
+  );
   await page.route("**/api/v1/hosting-operations/archive_fixture", (route) =>
     reply(route, operation),
   );
@@ -382,7 +385,7 @@ test("upload archive owner workflow, identical retries and new restore across wi
     ).toBeVisible();
     const before = writes.length;
     lose = true;
-    await panel.getByRole("checkbox").check();
+    await panel.getByRole("checkbox", { name: "I understand writers may stop and this local backup cannot survive host disk loss.", exact: true }).check();
     const request = panel.getByRole("button", {
       name: "Request upload backup",
       exact: true,

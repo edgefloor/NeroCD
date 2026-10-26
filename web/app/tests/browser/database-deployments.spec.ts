@@ -139,7 +139,15 @@ test("private database deployment retry, recorded status, and read-only history 
     const url = new URL(request.url());
     const path = url.pathname;
     let body: unknown;
-    if (path === "/api/v1/me")
+    if (request.method() === "GET" && path === "/api/v1/hosting-catalog") body = [];
+    else if (request.method() === "GET" && path === "/api/v1/resources/db_fixture/database-backup-retention") body = null;
+    else if (request.method() === "GET" && path === "/api/v1/resources/db_fixture/database-backup-retention/executions") body = [];
+    else if (request.method() === "GET" && [
+      "/api/v1/projects/project_fixture/database-backup-targets",
+      "/api/v1/resources/db_fixture/database-backup-schedules",
+      "/api/v1/resources/db_fixture/database-backups",
+    ].includes(path)) body = [];
+    else if (path === "/api/v1/me")
       body = {
         id: "actor_fixture",
         provider: "oidc",

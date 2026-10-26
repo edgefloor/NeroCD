@@ -8,6 +8,7 @@ async function fixture(page: Page) {
   const list = (items: unknown[]) => ({ items, count: items.length, total: items.length, limit: 100, offset: 0 });
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
+    if (request.method() === "GET" && path === "/api/v1/hosting-catalog") return route.fulfill({ json: [] });
     if (path === "/api/v1/me") return route.fulfill({ json: { id: "operator", provider: "oidc", roles: [], name: "Operator", email: "operator@example.test" } });
     if (path === "/api/v1/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/api/v1/projects") return route.fulfill({ json: list([{ id: "p", name: "Runtime project", description: "", created_at: "2026-10-22T00:00:00Z" }]) });

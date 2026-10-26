@@ -14,6 +14,7 @@ async function fixture(page: Page, connectedStart = false, viewerStart = false) 
   const connection = { id: "hcn_fixture", project_id: "p", application_resource_id: "app", database_resource_id: "db", binding_id: "binding", binding_hash: `sha256:${"a".repeat(64)}`, state: "active", reason_code: "completed", capture_id: "capture_fixture", upgrade_operation_id: "upgrade_fixture", application_operation_id: "application_fixture", membership_revision: 4, created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-24T00:00:00Z" };
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path === "/api/v1/hosting-catalog") return route.fulfill({ json: [] });
     if (path === "/api/v1/me") { authorityReads++; return route.fulfill({ json: { id: "operator", provider: "oidc", roles: [], name: "Fixture operator", email: "fixture@example.test" } }); }
     if (path === "/api/v1/health") return route.fulfill({ json: { status: "ok" } });
     if (path === "/api/v1/projects") return route.fulfill({ json: list([{ id: "p", name: "Intercepted database UI fixture", description: "", created_at: "" }]) });

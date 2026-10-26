@@ -133,7 +133,15 @@ test("database metadata creation and dedicated detail across widths", async ({ p
     return route.fulfill({ status: 201, json: persisted });
   });
   await page.route("**/api/v1/resources/resource_db_fixture/**", route => {
-    if (new URL(route.request().url()).pathname.endsWith("/database")) return route.fulfill({ json: persisted });
+    const request = route.request(), path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path === "/api/v1/resources/resource_db_fixture/database") return route.fulfill({ json: persisted });
+    if (request.method() === "GET" && path === "/api/v1/resources/resource_db_fixture/deployments") return route.fulfill({ json: { items: [], count: 0, total: 0, limit: 20, offset: 0 } });
+    if (request.method() === "GET" && path === "/api/v1/resources/resource_db_fixture/database-backup-retention") return route.fulfill({ json: null });
+    if (request.method() === "GET" && [
+      "/api/v1/resources/resource_db_fixture/database-backup-retention/executions",
+      "/api/v1/resources/resource_db_fixture/database-backup-schedules",
+      "/api/v1/resources/resource_db_fixture/database-backups",
+    ].includes(path)) return route.fulfill({ json: [] });
     genericReads++;
     return route.fulfill({ status: 404, json: {} });
   });
@@ -165,7 +173,7 @@ test("database metadata creation and dedicated detail across widths", async ({ p
     expect(receipts[0].recipe_version).toBe(engine === "postgresql" ? "postgresql-17.11-bookworm.v1" : "redis-8.2.10-bookworm.v1");
     const detail = hosting.getByRole("region", { name: `Database metadata for Database ${width}`, exact: true });
     await expect(detail).toBeVisible();
-    await expect(detail).toContainText("Adapter unqualified");
+    await expect(detail).toContainText('The legacy metadata state "adapter_unqualified" is not a current runner qualification result.');
     await expect(detail).toContainText("storage_db_fixture");
     await expect(detail).toContainText("secret_app_fixture");
     await expect(hosting.getByRole("button", { name: "Edit application", exact: true })).toHaveCount(0);

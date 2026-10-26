@@ -76,7 +76,7 @@ test("public Git and image configuration persist with CAS and roles at mobile an
    const originalSource = git.source.git.source_id;
    expect(JSON.stringify(git)).not.toMatch(/allowed_hosts|allowed_cidrs|fingerprints|repository_policy|"policy"|"image"/);
    const article = region.getByRole("article", { name: gitName, exact: true });
-   await expect(article.getByText(/Deployment of a build artifact is separate and unavailable/)).toBeVisible();
+   await expect(article.getByText(/Public Git build operations available; artifact deployment is separate/)).toBeVisible();
    await expect(article.getByRole("button", { name: "Request image deployment", exact: true })).toHaveCount(0);
    await expect(article.getByRole("region", { name: `Desired destination for ${gitName}`, exact: true })).toBeVisible();
    await expect(article.getByRole("region", { name: `Routes for ${gitName}`, exact: true })).toBeVisible();
