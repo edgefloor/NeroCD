@@ -139,6 +139,11 @@ func TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed := settleStorageRemote(t, f, rows[0].ID, "access_denied")
+	// Drain both River and dispatch recovery before admitting the retry so the
+	// target is revoked while the transfer is still awaiting preparation.
+	if err := f.stopExecution(); err != nil {
+		t.Fatal("stop remote dispatch", err)
+	}
 	input := domain.HostingStorageBackupTransferRetryInput{RequestID: "retry_upload", ExpectedTransferID: failed.ID}
 	retry, err := f.service.RetryStorageBackupTransfer(f.owner, b.ID, input)
 	if err != nil {
@@ -150,6 +155,14 @@ func TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation(t *testing.T) {
 	}
 	if _, err = f.service.RetryStorageBackupTransfer(f.owner, b.ID, domain.HostingStorageBackupTransferRetryInput{RequestID: "stale_retry", ExpectedTransferID: failed.ID}); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("stale predecessor accepted", err)
+	}
+	queued, err := f.service.GetStorageBackupTransfer(f.owner, retry.ID)
+	if err != nil || queued.State != "queued" {
+		t.Fatalf("retry was prepared before revocation: state=%q err=%v", queued.State, err)
+	}
+	var noRun bool
+	if err := f.db.QueryRow(f.ctx, `SELECT run_id IS NULL FROM hosting_storage_backup_transfers WHERE id=$1`, retry.ID).Scan(&noRun); err != nil || !noRun {
+		t.Fatalf("queued retry already has a run: no_run=%t err=%v", noRun, err)
 	}
 	current, err := f.service.GetStorageBackup(f.owner, b.ID)
 	if err != nil || current.State != "succeeded" || domain.HostingDocumentHash(current.Blob) != domain.HostingDocumentHash(b.Blob) {
@@ -163,7 +176,10 @@ func TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation(t *testing.T) {
 	}
 	denied, err := f.service.GetStorageBackupTransfer(f.owner, retry.ID)
 	if err != nil || denied.State != "failed" || denied.FailureCode != "authority_denied" {
-		t.Fatal("disabled target dispatched", err)
+		t.Fatalf("disabled target dispatched: state=%q failure=%q err=%v", denied.State, denied.FailureCode, err)
+	}
+	if err := f.db.QueryRow(f.ctx, `SELECT run_id IS NULL FROM hosting_storage_backup_transfers WHERE id=$1`, retry.ID).Scan(&noRun); err != nil || !noRun {
+		t.Fatalf("denied retry acquired a run: no_run=%t err=%v", noRun, err)
 	}
 }
 func TestPostgresStorageRemoteDownloadFailureAndHeldRetry(t *testing.T) {

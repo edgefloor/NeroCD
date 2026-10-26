@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +29,7 @@ type archiveControlFixture struct {
 	storage                   domain.HostingStorage
 	source                    domain.HostingOperation
 	helper                    domain.HostingStorageArchiveHelper
+	stopExecution             func() error
 }
 
 func newArchiveControlFixture(t *testing.T) archiveControlFixture {
@@ -74,45 +75,20 @@ func newArchiveControlFixture(t *testing.T) archiveControlFixture {
 			t.Fatal("queue migration did not terminate")
 		}
 	}
-	var schema string
-	if err := db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
-		t.Fatal(err)
-	}
 	stop, err := pg.StartHostingExecution(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	stopExecution := sync.OnceValue(func() error {
 		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if stop(cleanup) != nil {
-			t.Error("archive queue did not stop")
-		}
-		closePostgresStore(t, pg)
-		db.Close()
-		if !strings.HasPrefix(schema, "nerocd_owned_storage_") {
-			t.Error("archive cleanup schema ownership mismatch")
-			return
-		}
-		admin, e := pgx.Connect(cleanup, os.Getenv("NEROCD_TEST_DATABASE_URL"))
-		if e != nil {
-			t.Error("archive schema cleanup connection unavailable")
-			return
-		}
-		defer func() {
-			fresh, done := context.WithTimeout(context.Background(), 5*time.Second)
-			defer done()
-			if admin.Close(fresh) != nil {
-				t.Error("archive schema cleanup close failed")
-			}
-		}()
-		if _, e = admin.Exec(cleanup, `DROP SCHEMA `+pgx.Identifier{schema}.Sanitize()+` CASCADE`); e != nil {
-			t.Error("owned archive schema cleanup failed")
-			return
-		}
-		var absent bool
-		if admin.QueryRow(cleanup, `SELECT to_regnamespace($1) IS NULL`, schema).Scan(&absent) != nil || !absent {
-			t.Error("owned archive schema absence not proven")
+		return stop(cleanup)
+	})
+	// Registered last, this drains execution before hostingStorageFixture closes
+	// the store and openPostgresIntegrationStore closes pools and drops its schema.
+	t.Cleanup(func() {
+		if err := stopExecution(); err != nil {
+			t.Errorf("archive queue did not stop: %v", err)
 		}
 	})
 	storage := saveHostingStorage(t, pg, resource.ID, hostingStorageInput())
@@ -158,7 +134,7 @@ func newArchiveControlFixture(t *testing.T) archiveControlFixture {
 	service := hostingDatabaseApplication(t, pg)
 	owner := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
 	runnerCtx := auth.WithPrincipal(ctx, auth.Principal{ID: runner, Provider: domain.PrincipalRunner})
-	return archiveControlFixture{pg: pg, db: db, service: service, ctx: ctx, owner: owner, runnerContext: runnerCtx, runner: runner, resource: resource, storage: storage, source: op, helper: helper}
+	return archiveControlFixture{pg: pg, db: db, service: service, ctx: ctx, owner: owner, runnerContext: runnerCtx, runner: runner, resource: resource, storage: storage, source: op, helper: helper, stopExecution: stopExecution}
 }
 
 // settleImage exercises the ordinary post-restore admission/receipt path. The
