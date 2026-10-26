@@ -394,8 +394,10 @@ export function StorageArchives({
       </p>
       <p>
         Restore always creates a new resource on the same destination. File
-        validation does not prove application read/write behavior. Deployment
-        and application verification remain separate operator steps.
+        validation does not prove application read/write behavior. For an application
+        with runtime configuration, restore copies the backed-up deployment's
+        public variables and exact secret references into the new resource.
+        Deployment and application verification remain separate operator steps.
       </p>
       <DatabaseBackupDestinations {...destinationProps} />
       {owner ? (

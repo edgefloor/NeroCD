@@ -55,6 +55,7 @@ const deadline = Date.now() + 20 * 60 * 1000,
 timer.unref();
 const safe = { status: "failed", intercepted_requests: false };
 let phase = "startup";
+let restoredDeploymentStep = "";
 async function state(expected) {
   phase = expected;
   while (Date.now() < deadline && !stopped) {
@@ -330,12 +331,71 @@ try {
   const route = await routed.json();
   safe.browser_route_selection = true;
   await report("routed", route.operation_id);
+  await state("backup");
+  const archives = application.getByRole("region", {
+    name: "Upload backups and restores", exact: true,
+  });
+  await archives.getByRole("button", { name: "Refresh archive status", exact: true }).click();
+  await archives.getByRole("checkbox", {
+    name: "I understand writers may stop and this local backup cannot survive host disk loss.", exact: true,
+  }).check();
+  const backupWait = response(page, `/api/v1/resources/${installed.resource.id}/storage-backups`);
+  await archives.getByRole("button", { name: "Request upload backup", exact: true }).click();
+  const backupResponse = await backupWait;
+  if (backupResponse.status() !== 202) throw Error("browser backup rejected");
+  const backup = await backupResponse.json();
+  await report("backed_up", backup.id);
+  safe.browser_catalog_backup = true;
+  await state("restore");
+  await archives.getByRole("button", { name: "Refresh archive status", exact: true }).click();
+  const restoreForm = archives.getByRole("form", { name: "Restore backup into a new resource", exact: true });
+  await expect(restoreForm).toBeVisible();
+  for (const width of [1280, 320, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(restoreForm.getByRole("button", { name: "Restore into new resource", exact: true })).toBeVisible();
+    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth))
+      throw Error("archive responsive overflow");
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await restoreForm.getByLabel("New restored resource name", { exact: true }).fill("Restored Linkding acceptance");
+  const restoreWait = response(page, `/api/v1/storage-backups/${backup.id}/restores`);
+  await restoreForm.getByRole("button", { name: "Restore into new resource", exact: true }).click();
+  const restoreResponse = await restoreWait;
+  if (restoreResponse.status() !== 202) throw Error("browser restore rejected");
+  const restored = await restoreResponse.json();
+  await report("restored", restored.operation.id);
+  safe.browser_catalog_restore = true;
+  const target = await state("restore_deploy");
+  if (target.id !== restored.resource.id) throw Error("restored target identity mismatch");
+  restoredDeploymentStep = "navigate_hosting";
+  h = await hosting(page);
+  const restoredApplication = h.getByRole("article", { name: "Restored Linkding acceptance", exact: true });
+  const restoredReview = restoredApplication.getByRole("region", { name: "Persistent upload deployment review", exact: true });
+  restoredDeploymentStep = "configure_first_deployment";
+  await restoredReview.getByLabel("Runner-local host port", { exact: true }).fill("20104");
+  await restoredReview.getByLabel("Container port", { exact: true }).fill("9090");
+  await restoredReview.getByLabel("Readiness path", { exact: true }).fill("/health");
+  await restoredReview.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
+  restoredDeploymentStep = "review_current_storage";
+  await restoredReview.getByRole("button", { name: "Review current storage deployment", exact: true }).click();
+  restoredDeploymentStep = "confirm_review";
+  await restoredReview.getByRole("checkbox").check();
+  const restoredDeployWait = response(page, `/api/v1/resources/${target.id}/deployments`);
+  restoredDeploymentStep = "submit_deployment";
+  await restoredReview.getByRole("button", { name: "Deploy reviewed image with uploads", exact: true }).click();
+  restoredDeploymentStep = "receive_deployment";
+  const restoredDeployResponse = await restoredDeployWait;
+  if (restoredDeployResponse.status() !== 202) throw Error("browser restored deployment rejected");
+  await report("restored_deployed", (await restoredDeployResponse.json()).id);
+  safe.browser_restored_deployment = true;
   await state("complete");
   await report("done", operation.id);
   safe.status = "passed";
 } catch (error) {
   safe.failure = stopped ? "cancelled" : "browser_workflow_failed";
   safe.failed_phase = phase;
+  if (phase === "restore_deploy" && restoredDeploymentStep)
+    safe.failed_step = restoredDeploymentStep;
   safe.error_class = ["TimeoutError", "AssertionError", "TypeError"].includes(
     error?.name,
   )

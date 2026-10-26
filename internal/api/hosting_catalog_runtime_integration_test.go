@@ -9,6 +9,8 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -20,8 +22,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -122,7 +126,7 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") != "disposable-dind" {
 		t.Skip("requires approved isolated catalog runtime gate")
 	}
-	f := newStorageRuntimeFixture(t)
+	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
 	b.set("install", f.destinationID)
 	resourceID := b.await(t, "installed")
@@ -213,12 +217,28 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed candidate did not prove recovery")
 	}
+	// The runner command returns a failed workload after committing restoration.
+	// This fixture starts it without the owned service's restart supervisor.
+	// Prove the expected process exit before joining and restarting for new work.
+	select {
+	case processErr := <-f.process.done:
+		f.process.done <- processErr // Keep the existing stop helper's join receipt.
+		var exitErr *exec.ExitError
+		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage workload failed; committed restoration retained") {
+			t.Fatal("deliberately failed candidate did not produce the expected runner exit")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner did not exit after the deliberately failed candidate")
+	}
+	f.stop()
+	f.start()
 	verifyHTTPS()
 	recovery := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogBookmark(t, recovery, base, false)
 	if *first.Plan.Storage != *second.Plan.Storage || first.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration || first.Snapshot.Storage != second.Snapshot.Storage {
 		t.Fatal("redeploy lost immutable storage/runtime identity")
 	}
+	catalogRuntimeArchiveRoundtrip(t, f, v, first, second, values, base)
 	copy := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "GET", "/api/v1/resources/"+v.Resource.ID+"/catalog-installation", nil, 200)
 	if domain.HostingDocumentHash(copy) != domain.HostingDocumentHash(v) {
 		t.Fatal("installation refreshed in place")
@@ -304,7 +324,7 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 				w.WriteHeader(400)
 				return true
 			}
-			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done"}[phase]
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed"}[phase]
 			if v.Action != expected {
 				w.WriteHeader(409)
 				return true
@@ -389,5 +409,292 @@ func catalogRuntimeState(t *testing.T, op domain.HostingOperation) {
 		t.Log(catalogOOMDiagnostic(counters))
 	} else {
 		t.Log("catalog_cgroup class=unavailable")
+	}
+}
+
+// Extend the existing Linkding fixture through public owner routes, ordinary
+// combined deployment, and fresh application sessions on a separate volume.
+func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, installed domain.HostingCatalogInstallation, old, current domain.HostingOperation, values map[string]string, sourceBase string) {
+	t.Helper()
+	source := storageRuntimeJSON[domain.HostingStorage](f, "GET", "/api/v1/resources/"+installed.Resource.ID+"/storage", nil, 200)
+	if storageArchiveWriterRunning(t, old.Result.ContainerID) || !storageArchiveWriterRunning(t, current.Result.ContainerID) {
+		t.Fatal("catalog source writer inventory changed")
+	}
+	sourceDirectory := catalogArchiveVolumeDirectory(t, source.VolumeName)
+	probe := filepath.Join(sourceDirectory, "nerocd-recovery-probe")
+	if err := os.Mkdir(probe, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(probe, "saved"), []byte("archived ownership probe"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{probe, filepath.Join(probe, "saved")} {
+		if err := os.Chown(path, 12345, 12346); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadata := catalogArchiveProbeEvidence(t, sourceDirectory)
+	since := time.Now().Add(-time.Second).Format(time.RFC3339Nano)
+	fault := f.arm("/api/v1/runners/hosting/storage-archive/complete")
+	f.catalogBrowser.set("backup", installed.Resource.ID)
+	backupID := f.catalogBrowser.await(t, "backed_up")
+	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	backupOperation := storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+backup.OperationID, nil, 200)
+	f.lastOperation.Store(&backupOperation)
+	t.Logf("catalog archive backup operation=%s state=%s", backupOperation.ID, backupOperation.State)
+	entry := storageArchiveRuntimeLose(f, fault, backup.OperationID)
+	if entry.Complete.Result.ArchiveOutcome != "succeeded" || entry.Complete.Result.ResumeOutcome != "resumed" || entry.Complete.Result.Uncertain {
+		t.Fatal("catalog backup did not resume original writer")
+	}
+	for _, h := range entry.Plan.Writers {
+		if h.ContainerID == current.Result.ContainerID && h.Snapshot.RuntimeConfiguration != current.Snapshot.RuntimeConfiguration {
+			t.Fatal("backup lost exact healthy runtime")
+		}
+	}
+	storageArchiveRuntimeReplay(f, backup.OperationID, f.archiveCompletions.Load())
+	if storageArchiveHelperStarts(t, backup.OperationID, since) != 1 {
+		t.Fatal("catalog backup replay ran helper twice")
+	}
+	if storageArchiveWriterRunning(t, old.Result.ContainerID) || !storageArchiveWriterRunning(t, current.Result.ContainerID) {
+		t.Fatal("catalog backup recreated or started wrong writer")
+	}
+	catalogArchiveAwaitReady(t, sourceBase, current)
+	client := catalogSession(t, sourceBase, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
+	catalogArchiveBookmark(t, client, sourceBase, "NeroCD source after backup", true, true)
+	// Change desired metadata after the backup without changing the running
+	// application. Restore must copy the source snapshot, not this latest input.
+	runtime := storageRuntimeJSON[struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}](f, "GET", "/api/v1/resources/"+installed.Resource.ID+"/runtime-configuration", nil, 200).Configuration
+	changed := append([]domain.HostingRuntimeEntry(nil), runtime.Entries...)
+	literal := "after_backup"
+	changed = append(changed, domain.HostingRuntimeEntry{Name: "CATALOG_BACKUP_PROBE", Kind: "literal", Value: &literal})
+	storageRuntimeJSON[struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}](f, "PUT", "/api/v1/resources/"+installed.Resource.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, ExpectedRuntimeGeneration: runtime.RuntimeGeneration, RequestID: strings.Repeat("d", 32), Entries: changed}, 200)
+	restoreFault := f.arm("/api/v1/runners/hosting/storage-archive/complete")
+	f.catalogBrowser.set("restore", backupID)
+	restoreID := f.catalogBrowser.await(t, "restored")
+	restored := storageRuntimeJSON[domain.HostingStorageRestore](f, "GET", "/api/v1/storage-restores/"+restoreID, nil, 200)
+	if restored.Resource.ID == source.ResourceID || restored.Storage.VolumeName == source.VolumeName || len(restored.Operation.StorageArchive.Plan.Writers) != 0 {
+		t.Fatal("catalog restore reused source target or writer authority")
+	}
+	f.lastOperation.Store(&restored.Operation)
+	restoredEntry := storageArchiveRuntimeLose(f, restoreFault, restoreID)
+	if !restoredEntry.Complete.Result.RestoreVerified || restoredEntry.Complete.Result.Uncertain {
+		t.Fatal("catalog restoration not verified")
+	}
+	targetDirectory := catalogArchiveVolumeDirectory(t, restored.Storage.VolumeName)
+	if catalogArchiveProbeEvidence(t, targetDirectory) != metadata {
+		t.Fatal("restored ownership/modes/bytes changed")
+	}
+	created := strings.TrimSpace(string(storageRuntimeDocker(t, "volume", "inspect", "--format", "{{.CreatedAt}}", restored.Storage.VolumeName)))
+	storageArchiveRuntimeReplay(f, restoreID, f.archiveCompletions.Load())
+	if storageArchiveHelperStarts(t, restoreID, since) != 1 || strings.TrimSpace(string(storageRuntimeDocker(t, "volume", "inspect", "--format", "{{.CreatedAt}}", restored.Storage.VolumeName))) != created {
+		t.Fatal("catalog restore replay recreated volume or repeated extraction")
+	}
+	pinned := storageRuntimeJSON[struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}](f, "GET", "/api/v1/resources/"+restored.Resource.ID+"/runtime-configuration", nil, 200).Configuration
+	if pinned.RuntimeGeneration != 1 || domain.HostingDocumentHash(domain.HostingRuntimeDocument{Entries: pinned.Entries}) != current.Snapshot.RuntimeConfiguration.Hash {
+		t.Fatal("target runtime differs from pinned backup source")
+	}
+	storageRuntimeJSON[json.RawMessage](f, "GET", "/api/v1/resources/"+restored.Resource.ID+"/catalog-installation", nil, 404)
+	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+restored.Resource.ID+"/storage-deployment-options", nil, 200)
+	t.Logf("catalog restored deployment options available=%t reason=%s", options.Available, options.Reason)
+	if !options.Available || options.Reason != "initial_deployment" || options.ResourceID != restored.Resource.ID || options.ResourceGeneration != restored.Resource.Generation || options.StorageRef == nil || *options.StorageRef != restored.Storage.Reference() || options.PreviousHealthyOperationID != nil || options.HostPort != nil || options.ContainerPort != nil || options.Readiness != nil {
+		t.Fatal("verified restored target did not offer ordinary first deployment")
+	}
+	f.catalogBrowser.set("restore_deploy", restored.Resource.ID)
+	deployed := f.await(f.catalogBrowser.await(t, "restored_deployed"), "succeeded")
+	if deployed.Plan == nil || deployed.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || deployed.Snapshot.RuntimeConfiguration.Hash != current.Snapshot.RuntimeConfiguration.Hash {
+		t.Fatal("restored ordinary deploy lost runtime identity")
+	}
+	targetBase := "http://127.0.0.1:20104"
+	fresh := catalogSession(t, targetBase, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
+	catalogBookmark(t, fresh, targetBase, false)
+	catalogArchiveBookmark(t, fresh, targetBase, "NeroCD source after backup", false, false)
+	catalogArchiveBookmark(t, fresh, targetBase, "NeroCD restored independent write", true, true)
+	catalogArchiveBookmark(t, client, sourceBase, "NeroCD restored independent write", false, false)
+	catalogArchiveBookmark(t, client, sourceBase, "NeroCD source after backup", false, true)
+	catalogRuntimeResumeFailure(t, f, installed.Resource, current, old)
+	catalogArchiveAwaitReady(t, sourceBase, current)
+	recoveredSession := catalogSession(t, sourceBase, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
+	catalogBookmark(t, recoveredSession, sourceBase, false)
+	catalogArchiveBookmark(t, recoveredSession, sourceBase, "NeroCD source after backup", false, true)
+	raw, _ := json.Marshal([]any{entry.Plan, restoredEntry.Plan, pinned, deployed})
+	for _, value := range values {
+		if bytes.Contains(raw, []byte(value)) || strings.Contains(f.logs.String(), value) {
+			t.Fatal("plaintext escaped catalog archive metadata")
+		}
+	}
+	t.Log("catalog archive: pinned runtime, exact writer reuse, separate restored volume, fresh login/read/write, ownership/modes, replay and owner recovery verified")
+}
+
+func catalogArchiveBookmark(t *testing.T, client *http.Client, base, title string, create, want bool) {
+	t.Helper()
+	req, err := catalogBookmarkRequest(client, base, create)
+	if err != nil {
+		t.Fatal("catalog archive bookmark request")
+	}
+	if create {
+		payload, _ := json.Marshal(map[string]any{"url": "http://127.0.0.1:9090/health?probe=" + url.QueryEscape(title), "title": title, "tag_names": []string{"recovery"}})
+		req.Body = io.NopCloser(bytes.NewReader(payload))
+		req.ContentLength = int64(len(payload))
+	}
+	response, raw := catalogHTTPRead(t, "archive_bookmark", client, req, 1<<20)
+	expected := 200
+	if create {
+		expected = 201
+	}
+	if response.StatusCode != expected || bytes.Contains(raw, []byte(title)) != want {
+		t.Fatal("catalog archive bookmark isolation/read/write mismatch")
+	}
+}
+
+func catalogArchiveVolumeDirectory(t *testing.T, name string) string {
+	t.Helper()
+	var rows []struct{ Name, Mountpoint string }
+	if json.Unmarshal(storageRuntimeDocker(t, "volume", "inspect", name), &rows) != nil || len(rows) != 1 || rows[0].Name != name || rows[0].Mountpoint != "/var/lib/docker/volumes/"+name+"/_data" {
+		t.Fatal("exact owned volume directory unavailable")
+	}
+	return rows[0].Mountpoint
+}
+func catalogArchiveProbeEvidence(t *testing.T, directory string) string {
+	t.Helper()
+	var out strings.Builder
+	for _, relative := range []string{"nerocd-recovery-probe", "nerocd-recovery-probe/saved"} {
+		path := filepath.Join(directory, relative)
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatal("numeric ownership unavailable")
+		}
+		fmt.Fprintf(&out, "%s:%d:%d:%04o;", relative, stat.Uid, stat.Gid, info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(filepath.Join(directory, "nerocd-recovery-probe/saved"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.String() + string(raw)
+}
+
+// The private Docker wrapper fails only the exact source writer's start. All
+// other commands use the real daemon; owner recovery removes this fault first.
+func catalogRuntimeResumeFailure(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, current, old domain.HostingOperation) {
+	t.Helper()
+	f.stop()
+	marker := filepath.Join(f.root, "archive-resume-fault")
+	wrapper := filepath.Join(f.root, "archive-docker")
+	script := "#!/bin/sh\ncase \" $* \" in *\" container start " + current.Result.ContainerID + " \"*) [ ! -f '" + marker + "' ] || exit 47;; esac\nexec /usr/local/bin/docker \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("fail exact owned resume"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(f.archiveConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]json.RawMessage
+	if json.Unmarshal(raw, &config) != nil {
+		t.Fatal("archive fixture config")
+	}
+	config["docker_binary"], _ = json.Marshal(wrapper)
+	raw, err = json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.archiveConfig, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.start()
+	since := time.Now().Add(-time.Second).Format(time.RFC3339Nano)
+	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "POST", "/api/v1/resources/"+resource.ID+"/storage-backups", domain.HostingStorageBackupInput{RequestID: strings.Repeat("e", 32), ExpectedResourceGeneration: 1}, 202)
+	failed := f.await(backup.OperationID, "reconciliation_required")
+	if failed.StorageArchive == nil || failed.StorageArchive.Result == nil || failed.StorageArchive.Result.ResumeOutcome != "uncertain" || !failed.StorageArchive.Result.Uncertain || !failed.MutationHold {
+		t.Fatal("resume failure lost truthful unresolved hold")
+	}
+	stopped := false
+	for _, p := range failed.StorageArchive.Progress {
+		stopped = stopped || p.Phase == "stopped"
+	}
+	if !stopped || storageArchiveWriterRunning(t, current.Result.ContainerID) || storageArchiveWriterRunning(t, old.Result.ContainerID) {
+		t.Fatal("resume fault did not occur after exact writer quiescence")
+	}
+	// The owned service restarts this held exit. The raw fixture process needs
+	// the same explicit supervision before it can claim authorized recovery.
+	select {
+	case processErr := <-f.process.done:
+		f.process.done <- processErr
+		var exitErr *exec.ExitError
+		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage archive evidence remains held for authorized recovery") {
+			t.Fatal("held archive did not produce the expected runner exit")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner did not exit after the held archive")
+	}
+	f.stop()
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	recovery := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/hosting-operations/"+failed.ID+"/storage-archive-recovery", domain.HostingStorageArchiveRecoveryInput{RequestID: strings.Repeat("f", 32), ExpectedPlanHash: failed.StorageArchive.Plan.Hash}, 202)
+	evidence := recovery.StorageArchive.Plan.RecoveryEvidence
+	if evidence == nil || len(evidence.ResumeRequiredContainerIDs) != 1 || evidence.ResumeRequiredContainerIDs[0] != current.Result.ContainerID {
+		t.Fatal("owner recovery widened originally-running writer obligation")
+	}
+	f.start()
+	recovered := f.await(recovery.ID, "succeeded")
+	if recovered.MutationHold || !storageArchiveWriterRunning(t, current.Result.ContainerID) || storageArchiveWriterRunning(t, old.Result.ContainerID) {
+		t.Fatal("owner recovery failed exact writer resume")
+	}
+	if storageArchiveHelperStarts(t, recovery.ID, since) != 0 {
+		t.Fatal("owner recovery repeated archive helper execution")
+	}
+}
+
+// Docker start proves writer resumption, not application readiness. Probe only
+// the exact known local health endpoint within the deployment's readiness budget.
+// Login and bookmark requests remain strict single application operations.
+func catalogArchiveAwaitReady(t *testing.T, base string, op domain.HostingOperation) {
+	t.Helper()
+	if op.Result == nil || op.Plan == nil || op.Release == nil || base != "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort) || op.Snapshot.Readiness.Path != "/health" || op.Snapshot.Readiness.TimeoutSeconds < 1 || op.Snapshot.Readiness.TimeoutSeconds > 120 {
+		t.Fatal("catalog readiness requires the exact settled local application")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(op.Snapshot.Readiness.TimeoutSeconds)*time.Second)
+	defer cancel()
+	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	attempts := 0
+	for {
+		if !storageArchiveWriterRunning(t, op.Result.ContainerID) {
+			t.Fatal("resumed catalog writer stopped during readiness")
+		}
+		attempts++
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/health", nil)
+		if err != nil {
+			t.Fatal("catalog readiness request construction")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
+			closeErr := response.Body.Close()
+			if readErr == nil && closeErr == nil && len(body) <= 4096 && response.StatusCode == 200 && bytes.Contains(body, []byte("1.47.0")) && bytes.Contains(body, []byte("healthy")) {
+				t.Logf("catalog resumed readiness operation=%s attempts=%d", op.ID, attempts)
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("resumed catalog application did not become healthy within its readiness deadline")
+		case <-ticker.C:
+		}
 	}
 }

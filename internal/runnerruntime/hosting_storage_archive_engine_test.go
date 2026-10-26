@@ -1426,3 +1426,33 @@ func archiveObservedEnvironment(f *archiveEngineFake, environment func() []strin
 		return raw, err
 	})
 }
+
+func TestStorageArchiveEngineCombinedWriterStopsAndStartsExactContainer(t *testing.T) {
+	f := archiveFixture(t)
+	p := f.p
+	p.SourceHealthy.Snapshot.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
+	p.SourceHealthy.Snapshot.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{Generation: 4, Hash: "sha256:" + strings.Repeat("a", 64)}
+	p.Writers = []domain.HostingHealthy{p.SourceHealthy}
+	archiveHash(&p)
+	f.p = p
+	if p.Validate() != nil || f.e.Prepare(t.Context(), p) != nil {
+		t.Fatal("combined source preparation rejected")
+	}
+	states, err := f.e.InspectWriters(t.Context(), p)
+	if err != nil || len(states) != 1 || !states[0].Running {
+		t.Fatal("combined writer inventory unavailable", err)
+	}
+	mutations := f.mutations
+	if f.e.StopWriter(t.Context(), p, states[0], f.before) != nil || f.writers[states[0].ContainerID].State.Running {
+		t.Fatal("exact writer did not stop")
+	}
+	if f.e.ResumeWriter(t.Context(), p, states[0], f.before) != nil || !f.writers[states[0].ContainerID].State.Running {
+		t.Fatal("original writer did not resume")
+	}
+	if f.mutations != mutations+2 || len(f.writers) != 1 || len(f.helpers) != 0 || f.starts != 0 {
+		t.Fatal("combined quiescence recreated a container or ran a helper")
+	}
+	if f.e.ResumeWriter(t.Context(), p, states[0], f.before) != nil || f.mutations != mutations+2 {
+		t.Fatal("resume replay duplicated start")
+	}
+}

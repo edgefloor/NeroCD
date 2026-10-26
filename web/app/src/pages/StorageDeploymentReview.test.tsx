@@ -182,6 +182,7 @@ async function initialReview() {
 }
 test("first deployment requires operator settings and reviews exact owned volume and retention", async () => {
   const { fetch, selected } = setup(undefined, initialOptions);
+  expect(screen.getByText(/preserves existing or restored data/)).toBeTruthy();
   expect(
     screen.getByLabelText<HTMLInputElement>("Runner-local host port").value,
   ).toBe("");

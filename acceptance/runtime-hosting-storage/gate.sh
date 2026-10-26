@@ -19,7 +19,7 @@ retention=false
 deletion=false
 catalog=false
 case ${1:-} in
- --catalog) catalog=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
+ --catalog) catalog=true; archive=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
  --remote|--retention|--deletion)

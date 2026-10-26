@@ -528,6 +528,21 @@ test("eligibility rejects foreign operation identity and excludes local builds a
     );
   };
   expect(await check(healthy)).toBe(true);
+  const combined = {
+    ...healthy,
+    snapshot: {
+      ...healthy.snapshot,
+      policy_version: "public-image.owned-storage.runtime-env.release-ports.v1",
+      runtime_configuration: { generation: 7, hash },
+    },
+  };
+  expect(await check(combined)).toBe(true);
+  for (const runtime of [undefined, {}, { generation: 0, hash }, { generation: 1, hash: "wrong" }]) {
+    expect(await check({ ...combined, snapshot: { ...combined.snapshot, runtime_configuration: runtime } })).toBe(false);
+  }
+  expect(await check({ ...healthy, snapshot: { ...healthy.snapshot, runtime_configuration: { generation: 1, hash } } })).toBe(false);
+  expect(await check({ ...combined, snapshot: { ...combined.snapshot, application_database: { binding_id: "foreign" } } })).toBe(false);
+
   await expect(check({ ...healthy, project_id: "foreign" })).rejects.toThrow();
   expect(
     await check({
