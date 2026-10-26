@@ -37,6 +37,11 @@ test("actual backup notifications configure both transports and recover the reta
   const acknowledge = async (phase: string) => {
     expect((await control(phase)).status).toBe(204);
   };
+  // Establish successful TLS negotiation with the exact pin before checking
+  // certificate rejection. A cipher mismatch cannot satisfy either proof.
+  const tlsReady = await page.goto("/api/v1/bootstrap-status");
+  expect(tlsReady?.status()).toBe(200);
+  expect(await tlsReady?.json()).toEqual({ status: "complete" });
   // A different public-key pin must not turn this disposable certificate into
   // a trusted endpoint. The correctly pinned browser is supplied by the config.
   const wrongPin = Buffer.alloc(32, 0).toString("base64");
