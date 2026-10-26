@@ -1211,6 +1211,27 @@ class BackupScheduleSelectionTest(unittest.TestCase):
         self.assertFalse(any('Retention' in v for v in local_names))
         self.assertFalse(any('_RETENTION_' in v for v in local_markers))
 
+    def test_notifications_require_remote_and_all_actual_outcomes(self):
+        ns = self.functions()
+        _, old_names, old_markers = ns["backup_runtime_profile"]("1", "1", "1")
+        pattern, names, markers = ns["backup_runtime_profile"]("1", "1", "1", "1")
+        self.assertEqual(names, old_names + ["TestHostingBackupNotificationsCompiledRunner"])
+        self.assertEqual(markers[:len(old_markers)], old_markers)
+        self.assertRegex("TestHostingBackupNotificationsCompiledRunner", pattern)
+        self.assertNotRegex("TestHostingBackupNotificationsCompiledRunnerForeign", pattern)
+        output = "\n".join(["--- PASS: " + name + " (0.01s)" for name in names] + markers)
+        ns["verify_backup_runtime_output"](output, "1", "1", "1", "1")
+        for marker in markers[len(old_markers):]:
+            with self.subTest(marker=marker), self.assertRaises(RuntimeError):
+                ns["verify_backup_runtime_output"](output.replace(marker, ""), "1", "1", "1", "1")
+            with self.subTest(duplicate=marker), self.assertRaises(RuntimeError):
+                ns["verify_backup_runtime_output"](output + "\n" + marker, "1", "1", "1", "1")
+        for remote, notifications in (("0", "1"), ("1", "foreign")):
+            with self.assertRaises(RuntimeError):
+                ns["backup_runtime_profile"]("0", remote, "0", notifications)
+        with self.assertRaises(RuntimeError):
+            ns["verify_backup_runtime_output"](output.replace("--- PASS: TestHostingBackupNotificationsCompiledRunner", "--- SKIP: TestHostingBackupNotificationsCompiledRunner"), "1", "1", "1", "1")
+
     def test_retention_diagnostic_requires_exact_profile_and_every_case(self):
         ns=self.functions()
         flags=("1","1","1","0","0","0","0")
@@ -1247,13 +1268,17 @@ def stop(*_):
  child.terminate();child.wait(timeout=2);sys.exit(1)
 signal.signal(signal.SIGTERM,stop)
 try:
- profiles = ([('backup_remote','postgresql')] if case.startswith(('backup_remote','backup_retention')) else [])+([('backup_retention','postgresql'),('backup_retention_recovery','postgresql')] if case.startswith('backup_retention') else [])+[('backup','postgresql')]+([('backup_schedule','postgresql')] if case.startswith('backup_schedule') else []) if case.startswith('backup_') else [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else [])
+ profiles = ([('backup_notifications','postgresql')] if case.startswith('backup_notifications') else [])+([('backup_remote','postgresql')] if case.startswith(('backup_remote','backup_retention','backup_notifications')) else [])+([('backup_retention','postgresql'),('backup_retention_recovery','postgresql')] if case.startswith('backup_retention') else [])+[('backup','postgresql')]+([('backup_schedule','postgresql')] if case.startswith('backup_schedule') else []) if case.startswith('backup_') else [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else [])
  for profile,engine in profiles:
   meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
   if profile!='base':meta['profile']=profile
   if profile.startswith('backup'):meta['control_path']='/api/v1/fixture/database-backup/'+'a'*32
   if profile=='backup_schedule' and case=='backup_schedule_unknown':meta['profile']='foreign'
   if profile=='backup_remote' and case=='backup_remote_unknown':meta['profile']='foreign'
+  if profile=='backup_notifications':meta.update(origin='https://127.0.0.1:35002',tls_spki='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+  if profile=='backup_notifications' and case=='backup_notifications_bad_pin':meta['tls_spki']='bad'
+  if profile=='backup_notifications' and case=='backup_notifications_http':meta['origin']='http://127.0.0.1:35002'
+  if profile=='backup_notifications' and case=='backup_notifications_unknown':meta['profile']='foreign'
   if profile=='backup_retention' and case=='backup_retention_unknown':meta['profile']='foreign'
   if profile=='backup_retention_recovery' and case=='backup_retention_recovery_unknown':meta['profile']='foreign'
   if profile=='storage' and case=='storage_unknown_profile':meta['profile']='foreign'
@@ -1263,7 +1288,7 @@ try:
   if case=='duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   if profile=='storage' and case=='storage_duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   while not (root/('done-'+profile+'-'+engine)).exists():time.sleep(.01)
-  if case in ('missing_second','backup_schedule_missing','backup_remote_missing') or case=='backup_retention_missing' and profile=='backup_remote' or case=='backup_retention_recovery_missing' and profile=='backup_retention':break
+  if case in ('missing_second','backup_schedule_missing','backup_remote_missing','backup_notifications_missing') or case=='backup_retention_missing' and profile=='backup_remote' or case=='backup_retention_recovery_missing' and profile=='backup_retention':break
 finally:
  child.terminate();child.wait(timeout=2)
 '''
@@ -1273,8 +1298,13 @@ import json, os, pathlib, signal, subprocess, sys, time
 root=pathlib.Path(__file__).resolve().parent.parent
 case=(root/'case').read_text();meta=json.loads(os.environ['NEROCD_DATABASE_CONNECTION_BROWSER_META'])
 assert 'NEROCD_TEST_DATABASE_URL' not in os.environ
-expected_spec = 'database-backup-retention-live.spec.ts' if meta.get('profile') in ('backup_retention','backup_retention_recovery') else 'database-remote-backups-live.spec.ts' if meta.get('profile')=='backup_remote' else 'database-backup-schedules-live.spec.ts' if meta.get('profile')=='backup_schedule' else 'database-backups-live.spec.ts' if meta.get('profile')=='backup' else 'database-connection-live.spec.ts'
+expected_spec = 'backup-notifications-live.spec.ts' if meta.get('profile')=='backup_notifications' else 'database-backup-retention-live.spec.ts' if meta.get('profile') in ('backup_retention','backup_retention_recovery') else 'database-remote-backups-live.spec.ts' if meta.get('profile')=='backup_remote' else 'database-backup-schedules-live.spec.ts' if meta.get('profile')=='backup_schedule' else 'database-backups-live.spec.ts' if meta.get('profile')=='backup' else 'database-connection-live.spec.ts'
 assert expected_spec in sys.argv
+assert os.environ['PLAYWRIGHT_BASE_URL']==meta['origin']
+if meta.get('profile')=='backup_notifications':
+ assert 'playwright.notifications.config.ts' in sys.argv
+ assert os.environ['NEROCD_NOTIFICATION_BROWSER_SPKI']==meta['tls_spki']
+else:assert 'NEROCD_NOTIFICATION_BROWSER_SPKI' not in os.environ
 child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)',str(root)],start_new_session=case=='detached_cancel')
 with (root/'pids').open('a') as out:out.write(str(os.getpid())+'\n'+str(child.pid)+'\n')
 if case=='detached_cancel':(root/'detached-pid').write_text(str(child.pid))
@@ -1323,7 +1353,8 @@ class BrowserDriverTest(unittest.TestCase):
             environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith('storage_') else '0'
             environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith('backup_') else '0'
             environment['NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME']='1' if case.startswith('backup_schedule') else '0'
-            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME']='1' if case.startswith('backup_notifications') else '0'
             environment['NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME']='1' if case.startswith('backup_retention') else '0'
             process=subprocess.Popen([node,str(driver),'http://127.0.0.1:35002',str(root/'evidence'),'--',sys.executable,str(fixture),str(root)],cwd=Path(__file__).resolve().parents[2],env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
             pids=[]
@@ -1340,7 +1371,8 @@ class BrowserDriverTest(unittest.TestCase):
                     if case.startswith('backup_'):
                         self.assertEqual(output.count('DATABASE_BACKUP_BROWSER_PASS postgresql'),1)
                         self.assertEqual(output.count('DATABASE_BACKUP_SCHEDULE_BROWSER_PASS postgresql'),1 if case.startswith('backup_schedule') else 0)
-                        self.assertEqual(output.count('DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql'),1 if case.startswith(('backup_remote','backup_retention')) else 0)
+                        self.assertEqual(output.count('DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS postgresql'),1 if case.startswith('backup_notifications') else 0)
+                        self.assertEqual(output.count('DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql'),1 if case.startswith(('backup_remote','backup_retention','backup_notifications')) else 0)
                         self.assertEqual(output.count('DATABASE_BACKUP_RETENTION_BROWSER_PASS postgresql'),1 if case.startswith('backup_retention') else 0)
                         self.assertEqual(output.count('DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS postgresql'),1 if case.startswith('backup_retention') else 0)
                     else:
@@ -1381,7 +1413,8 @@ class BrowserDriverTest(unittest.TestCase):
         self.run_driver('backup_schedule_success',0)
         self.run_driver('backup_remote_success',0)
         self.run_driver('backup_retention_success',0)
-        for case in ('backup_schedule_missing','backup_schedule_unknown','backup_remote_missing','backup_remote_unknown','backup_retention_missing','backup_retention_unknown','backup_retention_recovery_missing','backup_retention_recovery_unknown'):
+        self.run_driver('backup_notifications_success',0)
+        for case in ('backup_notifications_bad_pin','backup_notifications_http','backup_notifications_missing','backup_notifications_unknown','backup_schedule_missing','backup_schedule_unknown','backup_remote_missing','backup_remote_unknown','backup_retention_missing','backup_retention_unknown','backup_retention_recovery_missing','backup_retention_recovery_unknown'):
             with self.subTest(case=case):self.run_driver(case,1)
 
     def test_successful_two_engine_driver(self):

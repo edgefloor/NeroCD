@@ -375,7 +375,14 @@ func newDatabaseRunnerFixtureWithCapture(t *testing.T, capture bool) *databaseRu
 	return newDatabaseRunnerFixtureWithProfile(t, capture, false)
 }
 
+type databaseRunnerConfigurator func(*store.PostgresStore, *secretcrypto.Keyring) error
+
 func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, connectedProfile ...bool) *databaseRunnerFixture {
+	t.Helper()
+	return newDatabaseRunnerFixtureConfigured(t, capture, upgrade, nil, connectedProfile...)
+}
+
+func newDatabaseRunnerFixtureConfigured(t *testing.T, capture, upgrade bool, configure databaseRunnerConfigurator, connectedProfile ...bool) *databaseRunnerFixture {
 	t.Helper()
 	connected := len(connectedProfile) > 0 && connectedProfile[0]
 	storage := len(connectedProfile) == 2 && connectedProfile[1]
@@ -396,6 +403,11 @@ func newDatabaseRunnerFixtureWithProfile(t *testing.T, capture, upgrade bool, co
 	clear(key[:])
 	if err != nil {
 		t.Fatal("fixture keyring failed")
+	}
+	if configure != nil {
+		if err := configure(pg, ring); err != nil {
+			t.Fatal("protected fixture configuration failed")
+		}
 	}
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {

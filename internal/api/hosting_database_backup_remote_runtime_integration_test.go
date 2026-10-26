@@ -42,6 +42,7 @@ type databaseRemoteTransfer struct {
 type databaseRemoteBackupWire struct {
 	mu               sync.Mutex
 	backup           string
+	phase            string // Empty preserves the original successful-completion fault.
 	first            bool
 	body, response   [32]byte
 	replays          int
@@ -64,7 +65,14 @@ func (w *databaseRemoteBackupWire) serve(out http.ResponseWriter, r *http.Reques
 	var in struct {
 		Phase string `json:"phase"`
 	}
-	if json.Unmarshal(raw, &in) != nil || in.Phase != "complete" {
+	phase := w.phase
+	if phase == "" {
+		phase = "complete"
+	}
+	if phase != "complete" && phase != "failed" {
+		panic("invalid remote fixture receipt phase")
+	}
+	if json.Unmarshal(raw, &in) != nil || in.Phase != phase {
 		handler.ServeHTTP(out, r)
 		return true
 	}
@@ -467,6 +475,34 @@ func TestDatabaseRemoteBackupWireDropsOnlyCommittedUploadAndRequiresExactReplay(
 				t.Fatal("changed receipt accepted as exact replay")
 			}
 		})
+	}
+}
+
+func TestDatabaseRemoteBackupFailedWireRequiresExactReplay(t *testing.T) {
+	wire := &databaseRemoteBackupWire{backup: "backup", phase: "failed", entered: make(chan struct{}), release: make(chan struct{})}
+	close(wire.release)
+	result := databaseRemoteTransfer{ID: "transfer", Mode: "upload", BackupID: "backup", State: "failed", FailureCode: "access_denied"}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(result) })
+	send := func(body string) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		if !wire.serve(out, httptest.NewRequest("POST", "/api/v1/runners/hosting/database-backup-transfer/mutation", strings.NewReader(body)), handler) {
+			t.Fatal("receipt not forwarded")
+		}
+		return out
+	}
+	body := `{"phase":"failed","receipt_id":"same"}`
+	if first := send(body); first.Body.Len() != 0 || !wire.first {
+		t.Fatal("failed receipt response was not lost")
+	}
+	if replay := send(body); replay.Code != 200 || wire.replays != 1 {
+		t.Fatal("failed receipt exact replay missing")
+	}
+	if changed := send(`{"phase":"failed","receipt_id":"changed"}`); changed.Code != 409 || wire.replays != 1 {
+		t.Fatal("changed failed receipt accepted")
+	}
+	result.FailureCode = "remote_unavailable"
+	if changed := send(body); changed.Code != 409 || wire.replays != 1 {
+		t.Fatal("changed failed response accepted")
 	}
 }
 
