@@ -70,7 +70,7 @@ func catalogSession(t *testing.T, base, user, password string) *http.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	client := catalogSessionClient(t, jar)
 	request, err := http.NewRequest("GET", base+"/login/", nil)
 	if err != nil {
 		t.Fatal(catalogHTTPDiagnostic("login_page", "construct", 0, nil, err, nil))

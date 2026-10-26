@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/http/httptrace"
 	"net/url"
 	"strconv"
@@ -17,6 +18,109 @@ import (
 	"testing"
 	"time"
 )
+
+// The pinned Linkding/uWSGI fixture failed a written POST on a reused socket.
+// Keep session requests on fresh connections without retrying application work.
+func catalogSessionClient(t *testing.T, jar http.CookieJar) *http.Client {
+	t.Helper()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatal("catalog fixture requires the standard HTTP transport")
+	}
+	transport := base.Clone()
+	transport.DisableKeepAlives = true
+	t.Cleanup(transport.CloseIdleConnections)
+	return &http.Client{Transport: transport, Jar: jar, Timeout: 10 * time.Second}
+}
+
+func TestCatalogSessionClientUsesFreshConnectionsAndDeliversPOSTOnce(t *testing.T) {
+	for _, dropPOST := range []bool{false, true} {
+		name := "successful_session"
+		if dropPOST {
+			name = "dropped_post_is_not_retried"
+		}
+		t.Run(name, func(t *testing.T) {
+			type observed struct {
+				address, method string
+				close, cookie   bool
+			}
+			requests := make(chan observed, 8)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				cookie, err := r.Cookie("ld_sessionid")
+				requests <- observed{r.RemoteAddr, r.Method, r.Close, err == nil && cookie.Value == "fixture-session"}
+				if r.Method == "POST" {
+					if dropPOST {
+						connection, _, err := w.(http.Hijacker).Hijack()
+						if err == nil {
+							_ = connection.Close()
+						}
+						return
+					}
+					http.Redirect(w, r, "/bookmarks/", http.StatusSeeOther)
+					return
+				}
+				http.SetCookie(w, &http.Cookie{Name: "ld_sessionid", Value: "fixture-session", Path: "/"})
+				_, _ = io.WriteString(w, "fixture response")
+			}))
+			t.Cleanup(server.Close)
+			jar, err := cookiejar.New(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := catalogSessionClient(t, jar)
+			base := http.DefaultTransport.(*http.Transport)
+			transport := client.Transport.(*http.Transport)
+			if transport == base || client.Jar != jar || client.Timeout != 10*time.Second || client.CheckRedirect != nil {
+				t.Fatal("session transport changed client semantics")
+			}
+			proxyRequest, _ := http.NewRequest("GET", server.URL, nil)
+			wantProxy, wantErr := base.Proxy(proxyRequest)
+			gotProxy, gotErr := transport.Proxy(proxyRequest)
+			if fmt.Sprint(gotProxy) != fmt.Sprint(wantProxy) || (gotErr == nil) != (wantErr == nil) {
+				t.Fatal("session transport changed proxy selection")
+			}
+			response, err := client.Get(server.URL + "/login/")
+			if err != nil {
+				t.Fatal("fixture login page request failed")
+			}
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			response, err = client.Post(server.URL+"/login/", "application/x-www-form-urlencoded", strings.NewReader("fixture=payload"))
+			if dropPOST {
+				if err == nil {
+					_ = response.Body.Close()
+					t.Fatal("dropped POST unexpectedly succeeded")
+				}
+			} else {
+				if err != nil || response.StatusCode != 200 || response.Request.URL.Path != "/bookmarks/" {
+					t.Fatal("session redirect behavior changed")
+				}
+				_, _ = io.Copy(io.Discard, response.Body)
+				_ = response.Body.Close()
+			}
+			addresses := map[string]bool{}
+			posts, count := 0, len(requests)
+			for range count {
+				request := <-requests
+				if !request.close || addresses[request.address] || (request.method == "POST" && !request.cookie) {
+					t.Fatal("session reused a connection or lost its cookie")
+				}
+				addresses[request.address] = true
+				if request.method == "POST" {
+					posts++
+				}
+			}
+			wantCount := 3
+			if dropPOST {
+				wantCount = 2
+			}
+			if posts != 1 || count != wantCount {
+				t.Fatal("POST was retried or expected requests were omitted")
+			}
+		})
+	}
+}
 
 // The exact v1.47.0 API checks query-key presence, not a boolean value:
 // https://github.com/sissbruecker/linkding/blob/v1.47.0/bookmarks/api/routes.py#L67-L75

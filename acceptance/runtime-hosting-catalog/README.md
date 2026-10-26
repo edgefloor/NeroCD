@@ -64,8 +64,21 @@ underlying error was not retained. Correcting CSRF handling does not establish
 that failure's cause. Every login, bookmark and health request records a fixed
 operation, error class, elapsed milliseconds and numeric HTTP status. Connection,
 reuse, write and first-response counters include automatic redirect requests.
-Diagnostics omit error text, URLs, cookies and response bodies. Client transport
-and timeout behavior are preserved.
+Diagnostics omit error text, URLs, cookies and response bodies.
+
+The run at `636acbdd3512214cf617767157eda17ccca6a0ca` completed fresh login,
+then failed the first bookmark POST immediately on a reused connection after
+writing the request and before receiving a response byte. The application stayed
+running with unchanged workers and no OOM or restart. The session client now
+clones the standard transport privately and disables keep-alive reuse; it keeps
+proxy selection, cookie jars, redirects and the ten-second timeout. It does not
+retry POSTs. This is fixture compatibility with that observed connection failure,
+not proof of a universal application defect. The pinned
+[bootstrap](https://github.com/sissbruecker/linkding/blob/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f/bootstrap.sh#L36)
+starts uWSGI's HTTP server with the pinned
+[configuration](https://github.com/sissbruecker/linkding/blob/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f/uwsgi.ini),
+which has no explicit HTTP keep-alive setting. The exact underlying transport
+error remains unknown; physical persistence qualification still requires a pass.
 
 After each settled deployment and before older cleanup callbacks, the fixture
 reads the exact owned application's state, exit/OOM/restart counters and admitted
