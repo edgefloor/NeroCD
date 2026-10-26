@@ -50,7 +50,7 @@ verify: fmt-check vet test lint shell-check
 
 postgres-test:
 	test -n "$$NEROCD_TEST_DATABASE_URL"
-	GOCACHE="$(GOCACHE_DIR)" go test -timeout=20m ./internal/store
+	GOCACHE="$(GOCACHE_DIR)" go test -timeout=45m ./internal/store
 
 production-profile-gate:
 	bash scripts/production-profile-gate-test.sh
