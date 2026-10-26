@@ -119,7 +119,7 @@ async function checkedResponse(pending, status) {
 }
 async function upload(p, name, content) {
   step = "upload_attachment";
-  const pending = appResponse(p, "PUT", /^\/api\/v[12]\/tasks\/\d+\/attachments$/);
+  const pending = appResponse(p, ["PUT", "POST"], /^\/api\/v[12]\/tasks\/\d+\/attachments$/);
   // This is the application's own file input and change handler.
   await p.locator('input[type="file"]#files').setInputFiles({ name, mimeType: "text/plain", buffer: content });
   const result = await pending;
@@ -285,7 +285,7 @@ try {
   step = "create_project";
   await app.goto("/projects/new");
   await app.getByLabel("Title", { exact: true }).fill("Compose persistence");
-  const projectWait = appResponse(app, "PUT", /^\/api\/v[12]\/projects$/);
+  const projectWait = appResponse(app, ["PUT", "POST"], /^\/api\/v[12]\/projects$/);
   await app.getByRole("button", { name: "Create", exact: true }).click();
   const projectResult = await projectWait;
   if (![200, 201].includes(projectResult.status())) throw Error("project creation rejected");
