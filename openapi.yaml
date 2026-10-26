@@ -16006,6 +16006,20 @@ components:
       properties:
         kind: {type: string, enum: [image]}
         image: {$ref: "#/components/schemas/ImageSource"}
+    ComposeResourceSource:
+      type: object
+      additionalProperties: false
+      required: [kind, compose]
+      properties:
+        kind: {type: string, enum: [compose]}
+        compose:
+          type: object
+          additionalProperties: false
+          required: [original, public_component, container_port]
+          properties:
+            original: {type: string, minLength: 1, maxLength: 131072, description: Exact reference-bearing Compose source. Protected values belong in runtime configuration.}
+            public_component: {type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$'}
+            container_port: {type: integer, minimum: 1, maximum: 65535}
     HostingBuildSettings:
       type: object
       additionalProperties: false
@@ -16039,6 +16053,7 @@ components:
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     ResourceSourceInput:
       oneOf:
+        - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object
           additionalProperties: false
@@ -16048,6 +16063,7 @@ components:
             git: {$ref: "#/components/schemas/GitResourceInput"}
     ResourceSource:
       oneOf:
+        - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object
           additionalProperties: false
@@ -16076,6 +16092,7 @@ components:
       additionalProperties: false
       required: [project_id, project_environment_id, name, kind, source]
       properties:
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$', description: Required for Compose resources. Preserve across retries.}
         project_id: {type: string, minLength: 1}
         project_environment_id: {type: string, minLength: 1}
         name: {type: string, minLength: 1, maxLength: 128}

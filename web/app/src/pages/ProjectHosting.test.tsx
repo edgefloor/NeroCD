@@ -406,3 +406,25 @@ test("owner to viewer transition retires recovery mutation controls while retain
   expect(screen.queryByRole("button", { name: "Retry upload for backup" })).toBeNull();
   expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
 });
+
+test("Compose creation preserves exact source and request identity after a lost response", async () => {
+  setup(); await selectEnvironment();
+  const form = screen.getByRole("form", { name: "Create application" });
+  const original = "# keep original bytes\nservices:\n  app:\n    image: nginx:alpine\n";
+  vi.mocked(api.createResource).mockRejectedValueOnce(new ApiError(503, "response unavailable", "req-compose"));
+  fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "compose" } });
+  fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Stack" } });
+  fireEvent.change(within(form).getByLabelText("Compose stack"), { target: { value: original } });
+  fireEvent.change(within(form).getByLabelText("Public component"), { target: { value: "app" } });
+  fireEvent.change(within(form).getByLabelText("Public component container port"), { target: { value: "8080" } });
+  expect(within(form).queryByLabelText("Repository URL")).toBeNull();
+  fireEvent.submit(form);
+  await screen.findByText(/req-compose/);
+  expect(within(form).getByLabelText<HTMLTextAreaElement>("Compose stack").value).toBe(original);
+  const first = vi.mocked(api.createResource).mock.calls[0]![0];
+  expect(first).toMatchObject({ request_id: expect.stringMatching(/^[a-f0-9]{32}$/), source: { kind: "compose", compose: { original, public_component: "app", container_port: 8080 } } });
+  vi.mocked(api.createResource).mockResolvedValueOnce({ ...resource, name: "Stack", source: {kind: "compose", compose: {original, public_component: "app", container_port: 8080}} });
+  fireEvent.submit(form);
+  await screen.findByText("Application configuration saved. Deployment is a separate request.");
+  expect(vi.mocked(api.createResource).mock.calls[1]![0]).toEqual(first);
+});

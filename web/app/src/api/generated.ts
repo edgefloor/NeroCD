@@ -7686,6 +7686,16 @@ export interface components {
             kind: "image";
             image: components["schemas"]["ImageSource"];
         };
+        ComposeResourceSource: {
+            /** @enum {string} */
+            kind: "compose";
+            compose: {
+                /** @description Exact reference-bearing Compose source. Protected values belong in runtime configuration. */
+                original: string;
+                public_component: string;
+                container_port: number;
+            };
+        };
         HostingBuildSettings: {
             /** @enum {string} */
             strategy: "dockerfile" | "railpack" | "static";
@@ -7713,12 +7723,12 @@ export interface components {
             credential_kind: "public" | "https_basic" | "ssh_private_key";
             settings: components["schemas"]["HostingBuildSettings"];
         };
-        ResourceSourceInput: components["schemas"]["ImageResourceSource"] | {
+        ResourceSourceInput: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceInput"];
         };
-        ResourceSource: components["schemas"]["ImageResourceSource"] | {
+        ResourceSource: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceSource"];
@@ -7735,6 +7745,8 @@ export interface components {
             created_at: string;
         };
         ResourceInput: {
+            /** @description Required for Compose resources. Preserve across retries. */
+            request_id?: string;
             project_id: string;
             project_environment_id: string;
             name: string;

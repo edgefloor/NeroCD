@@ -24,6 +24,7 @@ type ProjectEnvironmentInput struct {
 
 // ResourceInput creates desired application configuration.
 type ResourceInput struct {
+	RequestID            string                `json:"request_id,omitempty"`
 	ProjectID            string                `json:"project_id"`
 	ProjectEnvironmentID string                `json:"project_environment_id"`
 	Name                 string                `json:"name"`
@@ -131,7 +132,7 @@ func (s *Service) GetResource(ctx context.Context, id string) (domain.Resource, 
 	return item, nil
 }
 
-// CreateResource validates and stores an image application without starting it.
+// CreateResource validates and stores application configuration without starting it.
 func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.Resource, error) {
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
 	in.ProjectEnvironmentID = strings.TrimSpace(in.ProjectEnvironmentID)
@@ -161,6 +162,14 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 	if err != nil {
 		return domain.Resource{}, err
 	}
+	if in.Source.Kind == "compose" {
+		if !domain.ValidHostingRuntimeDeliveryID(in.RequestID) {
+			return domain.Resource{}, InvalidInput(errors.New("Compose creation requires a 32-character lowercase hexadecimal request_id"))
+		}
+		id = "res_compose_" + domain.HostingStackObjectID(in.ProjectID, "resource", in.RequestID)[4:]
+	} else if in.RequestID != "" {
+		return domain.Resource{}, InvalidInput(errors.New("request_id is supported only for Compose resources"))
+	}
 	now := s.clock().UTC()
 	item := domain.Resource{ID: id, ProjectID: in.ProjectID, ProjectEnvironmentID: in.ProjectEnvironmentID, Name: in.Name, Kind: in.Kind, Source: in.Source, Generation: 1, CreatedBy: principal.ID, CreatedAt: now, UpdatedAt: now}
 	audit, err := s.auditEvent(ctx, principal.ID, "resource.created", id, map[string]any{"project_id": in.ProjectID, "project_environment_id": in.ProjectEnvironmentID, "generation": int64(1)})
@@ -168,6 +177,9 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 		return domain.Resource{}, err
 	}
 	opts := []store.MutationOption{store.WithAudit(audit)}
+	if item.Source.Kind == "compose" {
+		opts = append(opts, store.WithHostingComposeCreate(in.RequestID, domain.HostingDocumentHash(in)))
+	}
 	if item.Source.Kind == "git" {
 		src, sourceErr := s.publicGitSource(item, in.Source, "", 1)
 		if sourceErr != nil {

@@ -7,8 +7,9 @@ import "nerocd/internal/domain"
 type MutationOption func(*mutationOptions)
 
 type mutationOptions struct {
-	audit     *domain.AuditEvent
-	gitSource *domain.HostingGitSource
+	audit         *domain.AuditEvent
+	gitSource     *domain.HostingGitSource
+	composeCreate *hostingComposeCreate
 }
 
 // WithAudit records the event in the same transaction (PostgreSQL) or under
@@ -42,4 +43,13 @@ func resourceMutationOptions(opts []MutationOption) mutationOptions {
 		}
 	}
 	return value
+}
+
+type hostingComposeCreate struct{ RequestID, RequestHash string }
+
+// WithHostingComposeCreate pins the initial resource command to a retry identity.
+func WithHostingComposeCreate(requestID, requestHash string) MutationOption {
+	return func(options *mutationOptions) {
+		options.composeCreate = &hostingComposeCreate{RequestID: requestID, RequestHash: requestHash}
+	}
 }

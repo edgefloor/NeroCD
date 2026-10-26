@@ -111,6 +111,7 @@ type AuditAuthorizationScope struct {
 
 // MemoryStore is an in-memory implementation of the store repository contracts.
 type MemoryStore struct {
+	composeCreates        map[string]hostingComposeCreate
 	mu                    sync.RWMutex
 	users                 []domain.User
 	sessions              []domain.Session

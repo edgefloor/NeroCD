@@ -91,6 +91,14 @@ func (s *MemoryStore) CreateProjectEnvironment(_ context.Context, e domain.Proje
 	return e, nil
 }
 
+func copyHostingResource(item domain.Resource) domain.Resource {
+	if item.Source.Compose != nil {
+		source := *item.Source.Compose
+		item.Source.Compose = &source
+	}
+	return item
+}
+
 // ListResources returns desired configuration, optionally restricted to an environment.
 func (s *MemoryStore) ListResources(_ context.Context, projectID, environmentID string, page Page) (PageResult[domain.Resource], error) {
 	s.mu.RLock()
@@ -98,7 +106,7 @@ func (s *MemoryStore) ListResources(_ context.Context, projectID, environmentID 
 	items := make([]domain.Resource, 0)
 	for _, item := range s.resources {
 		if item.ProjectID == projectID && (environmentID == "" || item.ProjectEnvironmentID == environmentID) {
-			items = append(items, item)
+			items = append(items, copyHostingResource(item))
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -116,7 +124,7 @@ func (s *MemoryStore) GetResource(_ context.Context, id string) (domain.Resource
 	defer s.mu.RUnlock()
 	for _, item := range s.resources {
 		if item.ID == id {
-			return item, nil
+			return copyHostingResource(item), nil
 		}
 	}
 	return domain.Resource{}, ErrNotFound
@@ -133,6 +141,23 @@ func (s *MemoryStore) CreateResource(_ context.Context, item domain.Resource, op
 	if validateResource(item) != nil || !s.hostingProjectExistsLocked(item.ProjectID) || !s.hostingPrincipalExistsLocked(item.CreatedBy) || !s.hostingAuditAvailableLocked(audit) {
 		return domain.Resource{}, ErrConflict
 	}
+	if item.Source.Kind == "compose" {
+		request := resourceMutationOptions(opts).composeCreate
+		if request == nil || !domain.ValidHostingRuntimeDeliveryID(request.RequestID) {
+			return domain.Resource{}, ErrConflict
+		}
+		if prior, ok := s.composeCreates[item.ID]; ok {
+			if prior != *request {
+				return domain.Resource{}, ErrConflict
+			}
+			for _, existing := range s.resources {
+				if existing.ID == item.ID {
+					return copyHostingResource(existing), nil
+				}
+			}
+			return domain.Resource{}, ErrConflict
+		}
+	}
 	found := false
 	for _, e := range s.projectEnvironments {
 		if e.ID == item.ProjectEnvironmentID && e.ProjectID == item.ProjectID {
@@ -148,9 +173,15 @@ func (s *MemoryStore) CreateResource(_ context.Context, item domain.Resource, op
 		}
 	}
 	item.Generation = 1
-	s.resources = append(s.resources, item)
+	s.resources = append(s.resources, copyHostingResource(item))
+	if item.Source.Kind == "compose" {
+		if s.composeCreates == nil {
+			s.composeCreates = map[string]hostingComposeCreate{}
+		}
+		s.composeCreates[item.ID] = *resourceMutationOptions(opts).composeCreate
+	}
 	s.appendHostingAuditLocked(audit)
-	return item, nil
+	return copyHostingResource(item), nil
 }
 
 // UpdateResource performs compare-and-swap and audit insertion under one lock.
@@ -168,7 +199,7 @@ func (s *MemoryStore) UpdateResource(_ context.Context, item domain.Resource, ex
 		if old.ID != item.ID {
 			continue
 		}
-		if old.Generation != expectedGeneration || old.ProjectID != item.ProjectID || old.ProjectEnvironmentID != item.ProjectEnvironmentID || old.Kind != item.Kind || old.CreatedBy != item.CreatedBy || !old.CreatedAt.Equal(item.CreatedAt) || old.Generation == 9223372036854775807 {
+		if old.Source.Kind != item.Source.Kind || old.Generation != expectedGeneration || old.ProjectID != item.ProjectID || old.ProjectEnvironmentID != item.ProjectEnvironmentID || old.Kind != item.Kind || old.CreatedBy != item.CreatedBy || !old.CreatedAt.Equal(item.CreatedAt) || old.Generation == 9223372036854775807 {
 			return domain.Resource{}, ErrConflict
 		}
 		for _, other := range s.resources {
@@ -177,9 +208,9 @@ func (s *MemoryStore) UpdateResource(_ context.Context, item domain.Resource, ex
 			}
 		}
 		item.Generation = old.Generation + 1
-		s.resources[i] = item
+		s.resources[i] = copyHostingResource(item)
 		s.appendHostingAuditLocked(audit)
-		return item, nil
+		return copyHostingResource(item), nil
 	}
 	return domain.Resource{}, ErrNotFound
 }

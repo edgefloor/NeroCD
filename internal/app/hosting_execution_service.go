@@ -27,6 +27,9 @@ func (s *Service) RequestHostingDeployment(ctx context.Context, resourceID strin
 	if resource.Kind != "application" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("database resources require a qualified engine operation"))
 	}
+	if resource.Source.Kind == "compose" {
+		return domain.HostingOperation{}, InvalidInput(errors.New("Compose source is saved; managed stack deployment is not available"))
+	}
 	if resource.Source.Kind != "image" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("git resources cannot use image deployment"))
 	}

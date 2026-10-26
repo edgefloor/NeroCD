@@ -421,6 +421,22 @@ type HostingCleanupTarget struct {
 	PlanHash          string          `json:"plan_hash"`
 }
 
+type HostingComposeCreateReceipt struct {
+	ProjectID   string `json:"project_id"`
+	RequestID   string `json:"request_id"`
+	ResourceID  string `json:"resource_id"`
+	RequestHash string `json:"request_hash"`
+}
+
+type HostingComposeSourceVersion struct {
+	ResourceID     string          `json:"resource_id"`
+	Generation     int64           `json:"generation"`
+	Original       string          `json:"original"`
+	OriginalHash   string          `json:"original_hash"`
+	Definition     json.RawMessage `json:"definition"`
+	DefinitionHash string          `json:"definition_hash"`
+}
+
 type HostingDatabase struct {
 	ResourceID     string    `json:"resource_id"`
 	ProjectID      string    `json:"project_id"`

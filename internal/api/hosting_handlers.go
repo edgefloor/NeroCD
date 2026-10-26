@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"nerocd/internal/app"
@@ -30,17 +31,27 @@ func (s *Server) projectEnvironmentsHandler(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusCreated, result)
 }
+func writeHostingResourceError(w http.ResponseWriter, err error) {
+	var preflight *domain.HostingStackValidationError
+	if errors.Is(err, app.ErrInvalidInput) && errors.As(err, &preflight) {
+		writeErrorEnvelope(w, http.StatusBadRequest, "invalid_compose", preflight.Error())
+		return
+	}
+	writeError(w, err)
+}
+
 func (s *Server) resourcesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		result, err := s.app.ListResources(r.Context(), r.URL.Query().Get("project_id"), r.URL.Query().Get("project_environment_id"), pageFromRequest(r))
 		if err != nil {
-			writeError(w, err)
+			writeHostingResourceError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, paginatedResult(result))
 		return
 	}
 	var req struct {
+		RequestID            string                     `json:"request_id,omitempty"`
 		ProjectID            string                     `json:"project_id"`
 		ProjectEnvironmentID string                     `json:"project_environment_id"`
 		Name                 string                     `json:"name"`
@@ -50,10 +61,10 @@ func (s *Server) resourcesHandler(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	in := app.ResourceInput{ProjectID: req.ProjectID, ProjectEnvironmentID: req.ProjectEnvironmentID, Name: req.Name, Kind: req.Kind, Source: req.Source.Source()}
+	in := app.ResourceInput{RequestID: req.RequestID, ProjectID: req.ProjectID, ProjectEnvironmentID: req.ProjectEnvironmentID, Name: req.Name, Kind: req.Kind, Source: req.Source.Source()}
 	result, err := s.app.CreateResource(r.Context(), in)
 	if err != nil {
-		writeError(w, err)
+		writeHostingResourceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
@@ -62,7 +73,7 @@ func (s *Server) resourceByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		result, err := s.app.GetResource(r.Context(), r.PathValue("id"))
 		if err != nil {
-			writeError(w, err)
+			writeHostingResourceError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
@@ -98,7 +109,7 @@ func (s *Server) resourceByID(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.app.UpdateResource(r.Context(), r.PathValue("id"), in)
 	if err != nil {
-		writeError(w, err)
+		writeHostingResourceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
