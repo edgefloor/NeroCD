@@ -201,6 +201,28 @@ func TestPostgresBackupRetentionInterruptedBatchFreshFence(t *testing.T) {
 	if _, e = f.db.Exec(f.ctx, `UPDATE run_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, old.LeaseID); e != nil {
 		t.Fatal(e)
 	}
+	staleBeforeResume := domain.HostingDatabaseBackupRetentionMutation{HostingAuthority: old, ReceiptID: "expired_new_intent", PlanHash: plan.Hash, CopyID: plan.Copies[1].Item.CopyID, Phase: "intent"}
+	if _, e = f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, staleBeforeResume); !errors.Is(e, store.ErrConflict) {
+		t.Fatal("known expired authority must conflict", e)
+	}
+	for _, unknown := range []domain.HostingAuthority{func() domain.HostingAuthority { v := old; v.Fence = "foreign_fence"; return v }(), func() domain.HostingAuthority { v := old; v.LeaseID = "unknown_lease"; return v }()} {
+		bad := staleBeforeResume
+		bad.HostingAuthority = unknown
+		if _, e = f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, bad); !errors.Is(e, store.ErrNotFound) {
+			t.Fatal("unknown tuple disclosed execution", e)
+		}
+	}
+	if _, e = f.pg.DatabaseBackupRetentionMutation(f.ctx, "foreign_runner", staleBeforeResume); !errors.Is(e, store.ErrNotFound) {
+		t.Fatal("foreign runner disclosed execution", e)
+	}
+	beforeResume, e := f.service.GetDatabaseBackupRetentionExecution(f.ctx, f.resource.ID, execution.ID)
+	if e != nil || !reflect.DeepEqual(beforeResume, committed) {
+		t.Fatal("stale denial changed execution", e)
+	}
+	oldReceipt, e := f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, mutation)
+	if e != nil || !reflect.DeepEqual(oldReceipt, committed) {
+		t.Fatal("expired committed receipt did not replay", e)
+	}
 	input.RequestID = "retry_after_reload"
 	resumed, e := f.service.ExecuteDatabaseBackupRetention(f.ctx, f.resource.ID, input)
 	if e != nil || resumed.ID != execution.ID {
@@ -224,8 +246,8 @@ func TestPostgresBackupRetentionInterruptedBatchFreshFence(t *testing.T) {
 		t.Fatal("resume reselected or lost progress", e)
 	}
 	stale := domain.HostingDatabaseBackupRetentionMutation{HostingAuthority: old, ReceiptID: "stale_new_intent", PlanHash: p.Hash, CopyID: p.Copies[1].Item.CopyID, Phase: "intent"}
-	if _, e = f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, stale); e == nil {
-		t.Fatal("old authority granted new mutation")
+	if _, e = f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, stale); !errors.Is(e, store.ErrConflict) {
+		t.Fatal("old authority must conflict for new mutation", e)
 	}
 	stale.HostingAuthority = fresh
 	stale.ReceiptID = "fresh_intent"

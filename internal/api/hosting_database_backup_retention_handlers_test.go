@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,7 +20,8 @@ type retentionHTTPRepository struct {
 	*archiveHTTPRepository
 	store.HostingDatabaseRepository
 	store.HostingDatabaseBackupRetentionRepository
-	calls int
+	calls         int
+	mutationError error
 }
 
 func (r *retentionHTTPRepository) GetResource(ctx context.Context, id string) (domain.Resource, error) {
@@ -51,6 +53,61 @@ func (r *retentionHTTPRepository) ListDatabaseBackupRetentionExecutions(ctx cont
 func (r *retentionHTTPRepository) GetDatabaseBackupRetentionExecution(ctx context.Context, actor, resource, id string) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	r.calls++
 	return domain.HostingDatabaseBackupRetentionExecution{ID: id}, r.authorize(ctx, actor, domain.RoleViewer)
+}
+
+func (r *retentionHTTPRepository) DatabaseBackupRetentionMutation(ctx context.Context, runner string, in domain.HostingDatabaseBackupRetentionMutation) (domain.HostingDatabaseBackupRetentionExecution, error) {
+	r.calls++
+	if runner != "runner_archive" {
+		return domain.HostingDatabaseBackupRetentionExecution{}, store.ErrNotFound
+	}
+	return domain.HostingDatabaseBackupRetentionExecution{ID: in.OperationID}, r.mutationError
+}
+
+func TestBackupRetentionMutationHTTPAuthorityStatus(t *testing.T) {
+	server, original, owner, _, runner := archiveHTTPFixture(t)
+	repo := &retentionHTTPRepository{archiveHTTPRepository: original}
+	mem := repo.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	path := "/api/v1/runners/hosting/database-backup-retention/mutation"
+	in := domain.HostingDatabaseBackupRetentionMutation{HostingAuthority: domain.HostingAuthority{OperationID: "execution", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence"}, ReceiptID: "receipt", PlanHash: "sha256:" + strings.Repeat("a", 64), CopyID: "copy", Phase: "intent"}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"known_stale_authority", fmt.Errorf("private-canary: %w", store.ErrConflict), 409},
+		{"unknown_or_foreign_tuple", fmt.Errorf("private-canary: %w", store.ErrNotFound), 404},
+		{"database_error", fmt.Errorf("private-canary"), 500},
+		{"exact_committed_replay", nil, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo.mutationError = tc.err
+			before := repo.calls
+			response := archiveHTTPCall(t, server, "POST", path, runner, string(raw), "application/json", tc.status)
+			if repo.calls != before+1 || strings.Contains(response.Body.String(), "private-canary") {
+				t.Fatal("mutation status bypassed repository or leaked internal detail")
+			}
+			if tc.err == nil {
+				var out domain.HostingDatabaseBackupRetentionExecution
+				if json.Unmarshal(response.Body.Bytes(), &out) != nil || out.ID != in.OperationID {
+					t.Fatal("receipt replay response lost execution identity")
+				}
+			}
+		})
+	}
+	before := repo.calls
+	archiveHTTPCall(t, server, "POST", path, owner, string(raw), "application/json", 401)
+	if repo.calls != before {
+		t.Fatal("non-runner reached retention mutation repository")
+	}
 }
 
 func TestBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T) {
