@@ -22,12 +22,15 @@ created by code and consumed by code.
 
 ## Choosing an Error Strategy
 
-1. System boundary (RPC, IPC, storage)? → Wrap with `%v` to avoid leaking internals
-2. Caller needs to match specific conditions? → Sentinel or typed error, wrap with `%w`
-3. Caller just needs debugging context? → `fmt.Errorf("...: %w", err)`
-4. Leaf function, no wrapping needed? → Return the error directly
+1. No useful context to add? → Return the error unchanged
+2. Callers require `errors.Is` or `errors.As` matching? → Preserve the required cause with `%w` when adding context
+3. The contract deliberately hides the underlying cause from matching? → Use `%v` when adding context
+4. An external response needs safe text? → Translate to a safe message separately from the internal error contract
 
-**Default**: wrap with `%w` and place it at the end of the format string.
+Choose `%w` or `%v` from the caller's error contract, including at RPC, IPC,
+and storage boundaries. Both verbs include the underlying error's text. `%v`
+prevents unwrapping; it does not redact secrets or implementation details.
+When wrapping, place `%w` at the end of the format string.
 
 ---
 
@@ -156,8 +159,9 @@ Error encountered?
 | Yes | static | `var ErrFoo = errors.New("...")` |
 | Yes | dynamic | custom `error` type |
 
-**Default**: Wrap with `fmt.Errorf("...: %w", err)`. Escalate to sentinels for
-`errors.Is()`, to custom types for `errors.As()`.
+Use sentinels for `errors.Is()` and custom types for `errors.As()` when callers
+need those contracts. Preserve causes callers require when adding context.
+Return the error unchanged when context adds nothing useful.
 
 ---
 
@@ -165,8 +169,9 @@ Error encountered?
 
 > **Advisory**: Recommended best practice.
 
-- **Use `%v`**: At system boundaries, for logging, to hide internal details
-- **Use `%w`**: To preserve error chain for `errors.Is`/`errors.As`
+- **Use `%v`**: To add context when the contract deliberately excludes underlying-cause matching, or to format an error for logging
+- **Use `%w`**: To add context while preserving causes callers require for `errors.Is` or `errors.As`
+- **External messages**: Translate to safe response text separately. Neither `%v` nor `%w` redacts the underlying error text
 
 **Key rules**: Place `%w` at the end. Add context callers don't have. If
 annotation adds nothing, return `err` directly.

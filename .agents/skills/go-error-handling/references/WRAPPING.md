@@ -9,24 +9,22 @@ adding context to errors, and logging best practices.
 
 > **Advisory**: Recommended best practice.
 
-The choice between `%v` and `%w` significantly impacts how errors are propagated
-and inspected.
+Choose the verb from the caller's error contract. `%w` preserves the underlying
+cause for `errors.Is` and `errors.As`; `%v` does not support unwrapping. Both
+include the underlying error's text, so neither verb redacts sensitive details.
 
 ### Use %v for Simple Annotation
 
 Use `%v` when you want to:
 
 - Add context without preserving the error chain for programmatic inspection
-- Create fresh, independent errors (especially at system boundaries like
-  RPC/IPC)
+- Deliberately exclude underlying-cause matching from the returned error contract
 - Log or display errors to humans
 
 ```go
-// Good: %v at system boundary - hide internal details
-func (s *Server) SuggestFortune(ctx context.Context, req *pb.Request) (*pb.Response, error) {
-    if err != nil {
-        return nil, fmt.Errorf("couldn't find fortune database: %v", err)
-    }
+// The contract deliberately excludes matching the backend error.
+if err != nil {
+	return fmt.Errorf("query fortune database: %v", err)
 }
 ```
 
@@ -52,12 +50,19 @@ if errors.Is(err, fs.ErrNotExist) {
 
 **Use %w when**:
 - Adding context while preserving the original error for programmatic inspection
-- You explicitly document and test the underlying errors you expose
+- Preserving causes that callers already rely on for matching
 
 **Use %v when**:
-- At system boundaries (RPC, IPC, storage) to translate to canonical error space
+- Adding context when the contract deliberately excludes underlying-cause matching
 - Logging or displaying to humans
-- Creating independent errors that hide implementation details
+- Creating an independent error without unwrapping the original cause
+
+RPC, IPC, and storage boundaries do not determine the verb by themselves.
+Preserve required matching causes inside the program. Separately translate the
+error to a canonical external status and safe response message. For example,
+an internal error may preserve `fs.ErrNotExist` with `%w` while the response
+says only `resource not found`. Substituting `%v` would still include the
+original text and could break the caller's matching contract.
 
 ---
 
@@ -107,16 +112,16 @@ information the underlying error already provides:
 
 ```go
 // Good: Adds meaningful context
-if err := os.Open("settings.txt"); err != nil {
-    return fmt.Errorf("launch codes unavailable: %v", err)
+if _, err := os.ReadFile("settings.txt"); err != nil {
+    return fmt.Errorf("load application settings: %w", err)
 }
-// Output: launch codes unavailable: open settings.txt: no such file or directory
+// Output: load application settings: open settings.txt: no such file or directory
 ```
 
 ```go
 // Bad: Duplicates the filename
-if err := os.Open("settings.txt"); err != nil {
-    return fmt.Errorf("could not open settings.txt: %v", err)
+if _, err := os.ReadFile("settings.txt"); err != nil {
+    return fmt.Errorf("could not open settings.txt: %w", err)
 }
 // Output: could not open settings.txt: open settings.txt: no such file or directory
 ```
@@ -176,8 +181,9 @@ log sinks are not appropriate for sensitive user data.
 
 | Pattern | Guidance |
 |---------|----------|
-| `%v` | Use at system boundaries, for logging, to hide details |
-| `%w` | Use to preserve error chain for programmatic inspection |
+| `%v` | Add context without unwrapping when the caller contract permits it; also used for logging |
+| `%w` | Add context while preserving causes required for programmatic inspection |
+| External messages | Translate safe response text separately; neither verb redacts error text |
 | `%w` placement | Always at the end: `"context: %w"` |
 | Adding context | Add new info, don't duplicate existing info |
 | Empty annotation | Just return `err` instead of `fmt.Errorf("failed: %v", err)` |

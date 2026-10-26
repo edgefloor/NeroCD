@@ -48,6 +48,7 @@ allowed-tools: Bash(bash:*)
 
 - [ ] **Handle errors**: No discarded errors with `_`; handle, return, or (exceptionally) panic → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Error strings**: Lowercase, no punctuation (unless starting with proper noun/acronym) → [go-error-handling](../go-error-handling/SKILL.md)
+- [ ] **Error contracts**: In specification review, check required `errors.Is` and `errors.As` matching separately from safe external response text. `%v` prevents unwrapping but does not redact the cause's text → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **In-band errors**: No magic values (-1, "", nil); use multiple returns with error or ok bool → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Indent error flow**: Handle errors first and return; keep normal path at minimal indentation → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Terminal outcomes**: A structured terminal failure stops follow-on work in both live and replayed paths; preserve usable partial data only when its contract explicitly permits it → [FAILURE-BOUNDARIES.md](references/FAILURE-BOUNDARIES.md)
