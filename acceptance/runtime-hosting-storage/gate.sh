@@ -394,27 +394,25 @@ for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binar
 if [[ "$remote" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+# BASE_IMAGE_PRELOAD_BEGIN
+# Qualify digest lookup in the guest itself. Host OCI descriptor IDs are not
+# executable config IDs after transfer into the classic overlay2 image store.
+preload_image "$postgres" "$evidence/pinned-host-images" postgres
+preload_image "$registry" "$evidence/pinned-host-images" registry
+# BASE_IMAGE_PRELOAD_END
 if [[ "$remote" == true ]]; then
- preload_image "$postgres" "$evidence/pinned-host-images" postgres
- preload_image "$registry" "$evidence/pinned-host-images" registry
  preload_image "$traefik" "$evidence/pinned-remote-images" traefik
  preload_image "$pebble" "$evidence/pinned-remote-images" pebble
  preload_image "$silo" "$evidence/pinned-remote-images" silo
  host_docker exec "$outer" mkdir -m 700 /fixture/evidence
 else
- host_docker image save "$postgres" "$registry" -o "$evidence/base-images.tar"
- host_docker cp "$evidence/base-images.tar" "$outer:/fixture/base-images.tar"
- inner_docker image load -i /fixture/base-images.tar
- host_docker exec "$outer" rm /fixture/base-images.tar
  for image in "$traefik" "$pebble"; do inner_docker pull "$image"; done
 fi
+# BASE_SERVICE_START_BEGIN
 pg_image=$postgres; registry_image=$registry
-if [[ "$remote" != true ]]; then
- pg_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[1]["Id"])' "$evidence/pinned-host-images")
- registry_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[2]["Id"])' "$evidence/pinned-host-images")
-fi
 pg=$(inner_docker run --pull=never --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 1536m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=1g --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$pg_image" postgres -c max_wal_size=128MB -c min_wal_size=32MB)
 reg=$(inner_docker run --pull=never --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry_image")
+# BASE_SERVICE_START_END
 printf 'inner_pg=%s\ninner_registry=%s\n' "$pg" "$reg" | tee "$evidence/inner-services"
 for version in a b; do
  host_docker cp "$evidence/$version" "$outer:/fixture/$version"

@@ -540,6 +540,78 @@ inner_docker() {
                 self.assertIsNone(proof)
                 self.assertEqual(len(calls), 2)
 
+    def run_base_services(self, invalid_registry=False, pull_exit=0):
+        source = GATE.read_text()
+        preload = source.split("# IMAGE_PRELOAD_BEGIN\n", 1)[1].split("# IMAGE_PRELOAD_END", 1)[0]
+        transfer = source.split("# BASE_IMAGE_PRELOAD_BEGIN\n", 1)[1].split("# BASE_IMAGE_PRELOAD_END", 1)[0]
+        start = source.split("# BASE_SERVICE_START_BEGIN\n", 1)[1].split("# BASE_SERVICE_START_END", 1)[0]
+        postgres = source.split("\npostgres=", 1)[1].splitlines()[0]
+        registry = source.split("\nregistry=", 1)[1].splitlines()[0]
+        host, guest = self.observed_postgres_images()
+        # PostgreSQL uses the observed host descriptor / guest config pair.
+        # The registry pair is synthetic and exercises selection of the second
+        # independently qualified service without any Docker process.
+        registry_host, registry_guest = json.loads(json.dumps([host, guest]))
+        registry_digest = registry.split("@", 1)[1]
+        registry_host.update(Id=registry_digest, RepoDigests=["registry@" + registry_digest])
+        registry_host["Descriptor"]["digest"] = registry_digest
+        registry_guest.update(Id="sha256:" + "9" * 64, RepoDigests=["registry@" + registry_digest])
+        if invalid_registry:
+            registry_guest["Config"]["Cmd"] = ["unqualified-command"]
+        with tempfile.TemporaryDirectory(prefix="nerocd-storage-service-image-test-") as temporary:
+            root = Path(temporary)
+            (root / "pinned-host-images").write_text(json.dumps([host, registry_host]))
+            (root / "postgres.json").write_text(json.dumps([guest]))
+            (root / "registry.json").write_text(json.dumps([registry_guest]))
+            script = root / "services.sh"
+            script.write_text(preload + r"""
+evidence=$1
+owner=offline-fixture
+postgres='@POSTGRES@'
+registry='@REGISTRY@'
+inner_docker() {
+ printf '%s\n' "$*" >> "$evidence/calls"
+ if [[ "$1" == pull ]]; then return @PULL_EXIT@; fi
+ if [[ "$1 $2" == 'image inspect' ]]; then
+  if [[ "$3" == "$postgres" ]]; then cat "$evidence/postgres.json"
+  elif [[ "$3" == "$registry" ]]; then cat "$evidence/registry.json"
+  else return 88; fi
+ elif [[ "$1" == run ]]; then printf '%064d\n' 1
+ else return 89; fi
+}
+""".replace("@POSTGRES@", postgres).replace("@REGISTRY@", registry).replace("@PULL_EXIT@", str(pull_exit)) + transfer + start)
+            result = subprocess.run(["bash", "-e", str(script), str(root)], capture_output=True, text=True, timeout=5)
+            calls = (root / "calls").read_text().splitlines()
+            proof_path = root / "preload-postgres-proof.json"
+            proof = json.loads(proof_path.read_text()) if proof_path.exists() else None
+            return result, calls, proof, postgres, registry, host, guest
+
+    def test_base_services_start_qualified_digest_with_different_host_and_guest_ids(self):
+        result, calls, proof, postgres, registry, host, guest = self.run_base_services()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotEqual(host["Id"], guest["Id"])
+        self.assertEqual(proof["id_relation"], "host_oci_descriptor_to_classic_overlay2")
+        self.assertEqual(proof["guest_reported_id"], guest["Id"])
+        self.assertEqual(calls[:4], ["pull --platform linux/arm64 " + postgres,
+                                    "image inspect " + postgres,
+                                    "pull --platform linux/arm64 " + registry,
+                                    "image inspect " + registry])
+        self.assertEqual(len(calls), 6)
+        self.assertTrue(calls[4].startswith("run --pull=never "), calls)
+        self.assertIn(" " + postgres + " postgres -c max_wal_size=128MB -c min_wal_size=32MB", calls[4])
+        self.assertTrue(calls[5].startswith("run --pull=never "), calls)
+        self.assertTrue(calls[5].endswith(" " + registry), calls)
+        for call in calls[4:]:
+            self.assertNotIn(" " + host["Id"] + " ", call)
+            self.assertNotIn(" " + guest["Id"] + " ", call)
+
+    def test_base_services_never_start_after_failed_pull_or_content_qualification(self):
+        for options in [{"pull_exit": 19}, {"invalid_registry": True}]:
+            with self.subTest(options=options):
+                result, calls, *_ = self.run_base_services(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(call.startswith("run ") for call in calls), calls)
+
 
 class BrowserCancellationTest(unittest.TestCase):
     """Run the real driver with inert Playwright resources, without a browser."""
