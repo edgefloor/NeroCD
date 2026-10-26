@@ -155,6 +155,11 @@ func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, run
 			return zero, e
 		}
 		if _, e = backupRetentionAuthority(ctx, tx, runner, in.HostingAuthority, true); e != nil {
+			// The exact historical tuple resolved above. Only its live authority
+			// is now absent; unknown or foreign tuples never reach this branch.
+			if errors.Is(e, ErrNotFound) {
+				return zero, ErrConflict
+			}
 			return zero, e
 		}
 		if e = backupRetentionCurrent(ctx, tx, r.plan); e != nil {
