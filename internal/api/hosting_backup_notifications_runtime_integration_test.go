@@ -4,7 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -64,7 +65,10 @@ type backupNotificationReceivers struct {
 
 func backupNotificationCertificate(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
-	_, key, err := ed25519.GenerateKey(rand.Reader)
+	// Chromium does not advertise Ed25519 in its TLS signature schemes.
+	// Use P-256 for both certificates so the browser can negotiate before
+	// the controlled CA or exact SPKI identity is checked.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal("notification fixture CA key failed")
 	}
@@ -78,7 +82,7 @@ func backupNotificationCertificate(t *testing.T) (tls.Certificate, *x509.CertPoo
 	if err != nil {
 		t.Fatal("notification fixture CA parse failed")
 	}
-	_, leafKey, err := ed25519.GenerateKey(rand.Reader)
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal("notification fixture leaf key failed")
 	}
@@ -312,6 +316,16 @@ func TestBackupNotificationFixtureCertificateAndEnvelope(t *testing.T) {
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
 	if err != nil {
 		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(certificate.Certificate[1])
+	if err != nil {
+		t.Fatal("fixture CA certificate parse failed")
+	}
+	for _, cert := range []*x509.Certificate{ca, leaf} {
+		key, ok := cert.PublicKey.(*ecdsa.PublicKey)
+		if !ok || key.Curve != elliptic.P256() || cert.SignatureAlgorithm != x509.ECDSAWithSHA256 {
+			t.Fatal("fixture certificate algorithm is not the Chromium-compatible P-256 chain")
+		}
 	}
 	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "127.0.0.1"}); err != nil {
 		t.Fatal("fixture leaf not trusted for exact loopback")
