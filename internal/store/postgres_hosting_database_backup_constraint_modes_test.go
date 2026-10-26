@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/store"
 	"nerocd/internal/store/sqlcgen"
 )
 
@@ -17,7 +18,7 @@ func TestPostgresDatabaseBackupCopyConstraintModes(t *testing.T) {
 	f := retentionFixture(t)
 	backup := ownedRetentionBackup(t, f, 0)
 	copyID := "dbc_local_" + backup.ID
-	missingID := "missing_successor"
+	missingID := "dbc_download_missing_successor"
 	for _, generated := range []bool{false, true} {
 		name := "statement"
 		if generated {
@@ -106,6 +107,9 @@ func TestPostgresDatabaseBackupAuthorityAttemptDoesNotNarrow(t *testing.T) {
 		if _, err = f.pg.DatabaseBackupPlan(f.ctx, f.runner, a); err != nil {
 			t.Fatal("denied request changed valid backup authority", err)
 		}
+		a.Attempt -= int(overflow)
+		_, err = f.pg.DatabaseBackupPlan(f.ctx, f.runner, a)
+		assertBackupAttemptRangeError(t, err)
 	})
 	t.Run("transfer", func(t *testing.T) {
 		f, target := remoteBackupFixture(t)
@@ -121,6 +125,9 @@ func TestPostgresDatabaseBackupAuthorityAttemptDoesNotNarrow(t *testing.T) {
 		if _, err = f.pg.DatabaseBackupTransferPlan(f.ctx, f.runner, a); err != nil {
 			t.Fatal("denied request changed valid transfer authority", err)
 		}
+		a.Attempt -= int(overflow)
+		_, err = f.pg.DatabaseBackupTransferPlan(f.ctx, f.runner, a)
+		assertBackupAttemptRangeError(t, err)
 	})
 	t.Run("retention", func(t *testing.T) {
 		f, v := admittedRetentionBatch(t)
@@ -142,13 +149,16 @@ func TestPostgresDatabaseBackupAuthorityAttemptDoesNotNarrow(t *testing.T) {
 		if _, err = f.pg.DatabaseBackupRetentionPlan(f.ctx, f.runner, a); err != nil {
 			t.Fatal("denied request changed valid retention authority", err)
 		}
+		a.Attempt -= int(overflow)
+		_, err = f.pg.DatabaseBackupRetentionPlan(f.ctx, f.runner, a)
+		assertBackupAttemptRangeError(t, err)
 	})
 }
 
 func assertBackupAttemptRangeError(t *testing.T, err error) {
 	t.Helper()
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "22003" {
-		t.Fatalf("oversized attempt must fail integer range checking before plan publication: %v", err)
+	if err == nil || errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) || errors.As(err, &pgErr) {
+		t.Fatalf("oversized attempt must retain pgx-style input rejection before plan publication: %v", err)
 	}
 }

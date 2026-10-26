@@ -678,7 +678,7 @@ func (q *Queries) ListQueuedDatabaseBackupTransferIDs(ctx context.Context) ([]st
 }
 
 const lockDatabaseBackupAuthority = `-- name: LockDatabaseBackupAuthority :one
-SELECT b.id FROM hosting_database_backups b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5::text::integer AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l
+SELECT b.id FROM hosting_database_backups b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l
 `
 
 type LockDatabaseBackupAuthorityParams struct {
@@ -686,20 +686,18 @@ type LockDatabaseBackupAuthorityParams struct {
 	RunID    *string     `json:"run_id"`
 	RunnerID string      `json:"runner_id"`
 	ID_2     string      `json:"id_2"`
-	Column5  string      `json:"column_5"`
+	Attempt  int32       `json:"attempt"`
 	Fence    string      `json:"fence"`
 	Column7  interface{} `json:"column_7"`
 }
 
-// Keep the caller's full Go int until PostgreSQL enforces the original int4
-// range. A generated int32 parameter could wrap an oversized plan attempt.
 func (q *Queries) LockDatabaseBackupAuthority(ctx context.Context, arg LockDatabaseBackupAuthorityParams) (string, error) {
 	row := q.db.QueryRow(ctx, lockDatabaseBackupAuthority,
 		arg.ID,
 		arg.RunID,
 		arg.RunnerID,
 		arg.ID_2,
-		arg.Column5,
+		arg.Attempt,
 		arg.Fence,
 		arg.Column7,
 	)
@@ -834,7 +832,7 @@ func (q *Queries) LockDatabaseBackupTargetRevision(ctx context.Context, arg Lock
 }
 
 const lockDatabaseBackupTransferAuthority = `-- name: LockDatabaseBackupTransferAuthority :one
-SELECT b.id FROM hosting_database_backup_transfers b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5::text::integer AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_transfer','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l
+SELECT b.id FROM hosting_database_backup_transfers b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_transfer','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l
 `
 
 type LockDatabaseBackupTransferAuthorityParams struct {
@@ -842,20 +840,18 @@ type LockDatabaseBackupTransferAuthorityParams struct {
 	RunID    *string     `json:"run_id"`
 	RunnerID string      `json:"runner_id"`
 	ID_2     string      `json:"id_2"`
-	Column5  string      `json:"column_5"`
+	Attempt  int32       `json:"attempt"`
 	Fence    string      `json:"fence"`
 	Column7  interface{} `json:"column_7"`
 }
 
-// Keep the caller's full Go int until PostgreSQL enforces the original int4
-// range. A generated int32 parameter could wrap an oversized plan attempt.
 func (q *Queries) LockDatabaseBackupTransferAuthority(ctx context.Context, arg LockDatabaseBackupTransferAuthorityParams) (string, error) {
 	row := q.db.QueryRow(ctx, lockDatabaseBackupTransferAuthority,
 		arg.ID,
 		arg.RunID,
 		arg.RunnerID,
 		arg.ID_2,
-		arg.Column5,
+		arg.Attempt,
 		arg.Fence,
 		arg.Column7,
 	)

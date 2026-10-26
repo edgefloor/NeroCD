@@ -120,9 +120,7 @@ SELECT ($1::timestamptz>clock_timestamp() AND $1::timestamptz<=$2::timestamptz):
 SELECT metadata FROM hosting_database_backup_retention_deliveries WHERE delivery_id=$1 AND execution_id=$2 AND copy_id=$3 AND use_until>clock_timestamp() AND use_until<=$4;
 
 -- name: LockDatabaseBackupRetentionAuthority :one
--- Keep the caller's full Go int until PostgreSQL enforces the original int4
--- range. A generated int32 parameter could wrap an oversized plan attempt.
-SELECT e.id FROM hosting_database_backup_retention_executions e JOIN task_runs t ON t.id=e.run_id JOIN run_leases l ON l.run_id=t.id WHERE e.id=$1 AND e.run_id=$2 AND e.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5::text::integer AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_retention','hosting_operation_id',e.id,'hosting_mode','retention','inputs','{}'::jsonb) FOR UPDATE OF l;
+SELECT e.id FROM hosting_database_backup_retention_executions e JOIN task_runs t ON t.id=e.run_id JOIN run_leases l ON l.run_id=t.id WHERE e.id=$1 AND e.run_id=$2 AND e.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_retention','hosting_operation_id',e.id,'hosting_mode','retention','inputs','{}'::jsonb) FOR UPDATE OF l;
 
 -- name: DispatchDatabaseBackupRetention :exec
 UPDATE hosting_database_backup_retention_executions SET run_id=$2,body=$3 WHERE id=$1;

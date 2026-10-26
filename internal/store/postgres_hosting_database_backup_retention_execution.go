@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -56,7 +55,11 @@ func backupRetentionAuthority(ctx context.Context, tx pgx.Tx, runner string, a d
 		return backupRetentionRow{}, hostingError(e)
 	}
 	var id string
-	id, e := sqlcgen.New(tx).LockDatabaseBackupRetentionAuthority(ctx, sqlcgen.LockDatabaseBackupRetentionAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Column5: strconv.Itoa(a.Attempt), Fence: a.Fence, Column7: live})
+	attempt, e := databaseBackupAuthorityAttempt(a.Attempt)
+	if e != nil {
+		return backupRetentionRow{}, e
+	}
+	id, e = sqlcgen.New(tx).LockDatabaseBackupRetentionAuthority(ctx, sqlcgen.LockDatabaseBackupRetentionAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: attempt, Fence: a.Fence, Column7: live})
 	if e != nil {
 		return backupRetentionRow{}, hostingError(e)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -290,7 +289,11 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 
 func backupRemoteAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (backupRemoteRow, error) {
 	var id string
-	id, err := sqlcgen.New(tx).LockDatabaseBackupTransferAuthority(ctx, sqlcgen.LockDatabaseBackupTransferAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Column5: strconv.Itoa(a.Attempt), Fence: a.Fence, Column7: live})
+	attempt, err := databaseBackupAuthorityAttempt(a.Attempt)
+	if err != nil {
+		return backupRemoteRow{}, err
+	}
+	id, err = sqlcgen.New(tx).LockDatabaseBackupTransferAuthority(ctx, sqlcgen.LockDatabaseBackupTransferAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: attempt, Fence: a.Fence, Column7: live})
 	if err != nil {
 		return backupRemoteRow{}, hostingError(err)
 	}

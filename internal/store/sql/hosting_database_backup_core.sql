@@ -23,9 +23,7 @@ UPDATE hosting_database_backups SET state='uncertain',failure_code='execution_fa
 UPDATE hosting_database_backups SET state='dispatched',run_id=$2,plan=$3,plan_hash=$4,updated_at=clock_timestamp() WHERE id=$1;
 
 -- name: LockDatabaseBackupAuthority :one
--- Keep the caller's full Go int until PostgreSQL enforces the original int4
--- range. A generated int32 parameter could wrap an oversized plan attempt.
-SELECT b.id FROM hosting_database_backups b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5::text::integer AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l;
+SELECT b.id FROM hosting_database_backups b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l;
 
 -- name: SetDatabaseBackupMutationState :exec
 UPDATE hosting_database_backups SET state=$2,ownership_held=$3,blob=$4,failure_code=$5,updated_at=clock_timestamp() WHERE id=$1;
@@ -130,9 +128,7 @@ UPDATE hosting_database_backup_transfers SET state='failed',failure_code='author
 UPDATE hosting_database_backup_transfers SET state='dispatched',run_id=$2,updated_at=clock_timestamp() WHERE id=$1;
 
 -- name: LockDatabaseBackupTransferAuthority :one
--- Keep the caller's full Go int until PostgreSQL enforces the original int4
--- range. A generated int32 parameter could wrap an oversized plan attempt.
-SELECT b.id FROM hosting_database_backup_transfers b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5::text::integer AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_transfer','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l;
+SELECT b.id FROM hosting_database_backup_transfers b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_transfer','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l;
 
 -- name: ReadDatabaseBackupTransferReceipt :one
 SELECT body_hash,response FROM hosting_database_backup_transfer_receipts WHERE operation_id=$1 AND phase=$2;
