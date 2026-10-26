@@ -1,4 +1,4 @@
-import { expect, test, type Page, chromium } from "@playwright/test";
+import { expect, test, type Page, type Locator, chromium } from "@playwright/test";
 
 // This profile consumes actual SMTP/HTTPS receipts and runner events. The
 // private configuration response never enters a trace, screenshot, or report.
@@ -55,7 +55,14 @@ test("actual backup notifications configure both transports and recover the reta
   await page.goto("/projects");
   const panel = page.getByRole("region", { name: "Project backup notifications", exact: true });
   await expect(panel).toBeVisible();
-  await panel.getByLabel("Notifications project", { exact: true }).selectOption(m.project_id);
+  const chooseOption = async (scope: Locator, name: string, value: string) => {
+    const select = scope.getByRole("combobox", { name, exact: true });
+    await expect(select).toBeVisible();
+    await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    await select.selectOption(value, { timeout: 10_000 });
+    await expect(select).toHaveValue(value);
+  };
+  await chooseOption(panel, "Notifications project", m.project_id);
   let configuration: {
     smtp_host: string; smtp_port: number; smtp_security: string;
     smtp_username: string; smtp_password: string; from_address: string;
@@ -70,7 +77,7 @@ test("actual backup notifications configure both transports and recover the reta
     await panel.getByRole("button", { name: "Add notification channel", exact: true }).click();
     const form = panel.getByRole("form", { name: "Create notification channel", exact: true });
     await form.getByLabel("Channel name", { exact: true }).fill(`Runtime ${type}`);
-    await form.getByLabel("Channel type", { exact: true }).selectOption(type);
+    await chooseOption(form, "Channel type", type);
     await form.getByLabel("Channel enabled", { exact: true }).check();
     await form.getByLabel("Backup failed", { exact: true }).check();
     await form.getByLabel("Upload failed, local backup available", { exact: true }).check();
@@ -79,7 +86,7 @@ test("actual backup notifications configure both transports and recover the reta
       if (type === "email") {
         await form.getByLabel("SMTP host", { exact: true }).fill(configuration.smtp_host);
         await form.getByLabel("SMTP port", { exact: true }).fill(String(configuration.smtp_port));
-        await form.getByLabel("SMTP security", { exact: true }).selectOption(configuration.smtp_security);
+        await chooseOption(form, "SMTP security", configuration.smtp_security);
         await form.getByLabel("SMTP username", { exact: true }).fill(configuration.smtp_username);
         await form.getByLabel("SMTP password", { exact: true }).fill(configuration.smtp_password);
         await form.getByLabel("From address", { exact: true }).fill(configuration.from_address);
@@ -111,7 +118,7 @@ test("actual backup notifications configure both transports and recover the reta
   expect(parsed.searchParams.get("backup_id")).toBe(recoveryState.backup_id);
   expect(parsed.searchParams.get("transfer_id")).toMatch(/^[A-Za-z0-9_-]+$/);
   await page.reload();
-  await panel.getByLabel("Notifications project", { exact: true }).selectOption(m.project_id);
+  await chooseOption(panel, "Notifications project", m.project_id);
   const history = panel.getByRole("region", { name: "Notification delivery history", exact: true });
   const links = history.getByRole("link", { name: "Open authenticated backup recovery", exact: true });
   await expect.poll(async () => {
@@ -150,7 +157,8 @@ test("actual backup notifications configure both transports and recover the reta
   }
   expect(sourceMutations).toBe(0);
   await acknowledge("observed");
-  await expect(recover.getByLabel("Completed backup", { exact: true })).toHaveValue(recoveryState.backup_id);
+  await expect(recover.getByRole("combobox", { name: "Completed backup", exact: true })).toHaveValue(recoveryState.backup_id);
+  await expect(recover.getByRole("combobox", { name: "Restore archive source", exact: true })).toHaveValue("");
   await recover.getByLabel("New database name", { exact: true }).fill("Notification recovered database");
   await recover.getByRole("button", { name: "Restore into new database", exact: true }).click();
   await expect.poll(async () => (await state()).phase, { timeout: 240_000, intervals: [250, 500] }).toBe("complete");
@@ -158,7 +166,7 @@ test("actual backup notifications configure both transports and recover the reta
   const complete = await state();
   expect(complete.failed_backup_id).toMatch(/^dbb_/);
   await page.goto("/projects");
-  await panel.getByLabel("Notifications project", { exact: true }).selectOption(m.project_id);
+  await chooseOption(panel, "Notifications project", m.project_id);
   await expect(history).toContainText("Backup failed");
   await expect(history).toContainText("Upload failed, local backup available");
   await acknowledge("done");
