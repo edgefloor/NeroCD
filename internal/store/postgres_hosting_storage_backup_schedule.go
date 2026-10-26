@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
@@ -134,7 +135,7 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		}
 		err = q.InsertStorageBackupScheduleVersion(ctx, sqlcgen.InsertStorageBackupScheduleVersionParams{ScheduleID: id, Revision: saved.Revision, ActorID: actor, ExpectedResourceGeneration: in.ExpectedResourceGeneration, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, RemoteTarget: remote})
 		if err != nil {
-			return zero, err
+			return zero, fmt.Errorf("insert storage backup schedule version: %w", err)
 		}
 
 		// Remote validation forces deferred constraints. Persist the matching version
