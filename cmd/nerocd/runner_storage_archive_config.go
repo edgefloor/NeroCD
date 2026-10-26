@@ -11,11 +11,15 @@ import (
 )
 
 type runnerStorageArchiveConfigFile struct {
-	Version       int                                `json:"version"`
-	ArtifactRoot  string                             `json:"artifact_root"`
-	TemporaryRoot string                             `json:"temporary_root"`
-	DockerBinary  string                             `json:"docker_binary"`
-	Helper        domain.HostingStorageArchiveHelper `json:"helper"`
+	RemoteBackups       bool                               `json:"remote_backups,omitempty"`
+	RemoteEndpoints     []string                           `json:"remote_endpoints,omitempty"`
+	RemoteCIDRs         []string                           `json:"remote_cidrs,omitempty"`
+	RemoteFixtureOrigin string                             `json:"remote_fixture_origin,omitempty"`
+	Version             int                                `json:"version"`
+	ArtifactRoot        string                             `json:"artifact_root"`
+	TemporaryRoot       string                             `json:"temporary_root"`
+	DockerBinary        string                             `json:"docker_binary"`
+	Helper              domain.HostingStorageArchiveHelper `json:"helper"`
 }
 
 func loadRunnerStorageArchiveConfig(path string, execute bool, complete string) (*runnerruntime.StorageArchiveExecutionConfig, error) {
@@ -49,7 +53,7 @@ func loadRunnerStorageArchiveConfig(path string, execute bool, complete string) 
 	if f.ArtifactRoot == f.TemporaryRoot || strings.HasPrefix(f.ArtifactRoot, f.TemporaryRoot+"/") || strings.HasPrefix(f.TemporaryRoot, f.ArtifactRoot+"/") {
 		return nil, invalid
 	}
-	return &runnerruntime.StorageArchiveExecutionConfig{ArtifactRoot: f.ArtifactRoot, TemporaryRoot: f.TemporaryRoot, DockerBinary: f.DockerBinary, Helper: f.Helper}, nil
+	return &runnerruntime.StorageArchiveExecutionConfig{RemoteBackups: f.RemoteBackups, RemoteEndpoints: f.RemoteEndpoints, RemoteCIDRs: f.RemoteCIDRs, RemoteFixtureOrigin: f.RemoteFixtureOrigin, ArtifactRoot: f.ArtifactRoot, TemporaryRoot: f.TemporaryRoot, DockerBinary: f.DockerBinary, Helper: f.Helper}, nil
 }
 
 func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []string) ([]string, error) {

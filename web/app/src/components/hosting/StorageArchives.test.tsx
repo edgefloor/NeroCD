@@ -9,6 +9,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ApiError } from "@/api/errors";
+import * as remote from "@/api/hosting-storage-backup-remote";
+import * as targets from "@/api/hosting-database-backup-targets";
 import * as api from "@/api/hosting-storage-archives";
 import type { HostingStorage } from "@/api/hosting-storage";
 import type { Resource } from "@/api/hosting";
@@ -23,6 +25,18 @@ vi.mock("@/api/hosting-storage-archives", () => ({
   requestArchiveRestore: vi.fn(),
   requestArchiveRecovery: vi.fn(),
   refreshArchiveConfiguration: vi.fn(),
+}));
+vi.mock("@/api/hosting-database-backup-targets", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/api/hosting-database-backup-targets")
+  >()),
+  listDatabaseBackupTargets: vi.fn(async () => []),
+}));
+vi.mock("@/api/hosting-storage-backup-remote", () => ({
+  listStorageValidations: vi.fn(async () => []),
+  validateStorageTarget: vi.fn(),
+  listStorageTransfers: vi.fn(async () => []),
+  retryStorageTransfer: vi.fn(),
 }));
 const hash = `sha256:${"a".repeat(64)}`;
 const resource = {
@@ -65,6 +79,8 @@ const operation: api.ArchiveOperation = {
 };
 let client: QueryClient;
 beforeEach(() => {
+  vi.mocked(remote.listStorageTransfers).mockResolvedValue([]);
+  vi.mocked(targets.listDatabaseBackupTargets).mockResolvedValue([]);
   vi.mocked(api.archiveBackupEligible).mockResolvedValue(true);
   vi.mocked(api.refreshArchiveConfiguration).mockResolvedValue(resource);
   vi.mocked(api.listArchiveBackups).mockResolvedValue({
@@ -113,7 +129,9 @@ test.each([401, 403])(
     vi.stubGlobal("fetch", fetch);
     setup();
     await loaded();
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+    );
     click("Request upload backup");
     await screen.findByText(/Saved backup request/);
     click("Refresh archive status");
@@ -184,7 +202,9 @@ test("owner explicitly consents to local backup; no mutation happens during read
   await loaded();
   expect(api.requestArchiveBackup).not.toHaveBeenCalled();
   expect(screen.getByText(/Host or disk loss/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   click("Request upload backup");
   await screen.findByText(/Archive outcome: succeeded/);
   expect(api.requestArchiveBackup).toHaveBeenCalledTimes(1);
@@ -214,7 +234,9 @@ test("ambiguous backup retry freezes the body and identity, then separate submis
   vi.mocked(api.requestArchiveBackup).mockRejectedValueOnce(new Error("lost"));
   const view = setup();
   await loaded();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   click("Request upload backup");
   await screen.findByText(/Delivery or current status is unknown/);
   view.rerender(
@@ -235,7 +257,9 @@ test("ambiguous backup retry freezes the body and identity, then separate submis
   expect(calls[0]![1]).toBe(calls[1]![1]);
   expect(calls[1]![1].expected_resource_generation).toBe(2);
   await loaded();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   click("Request upload backup");
   await waitFor(() =>
     expect(api.requestArchiveBackup).toHaveBeenCalledTimes(3),
@@ -306,7 +330,9 @@ test("409 refresh reviews remote generation without changing the saved retry; ex
   });
   setup();
   await loaded();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   click("Request upload backup");
   await screen.findByText(/The resource, backup or hold changed/);
   const original = vi.mocked(api.requestArchiveBackup).mock.calls[0]![1];
@@ -319,7 +345,9 @@ test("409 refresh reviews remote generation without changing the saved retry; ex
   expect(vi.mocked(api.requestArchiveBackup).mock.calls[1]![1]).toBe(original);
   expect(original.expected_resource_generation).toBe(2);
   click("Discard saved request and review a separate submission");
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   click("Request upload backup");
   await waitFor(() =>
     expect(api.requestArchiveBackup).toHaveBeenCalledTimes(3),
@@ -386,7 +414,9 @@ test("ineligible deployment cannot request a backup", async () => {
   vi.mocked(api.archiveBackupEligible).mockResolvedValue(false);
   setup();
   await loaded();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /I understand writers may stop/ }),
+  );
   expect(
     screen
       .getByRole("button", { name: "Request upload backup" })
@@ -408,4 +438,44 @@ test("status polling stops and exposes staleness without requesting recovery", a
   });
   expect(screen.getByText(/Status may be stale or unknown/)).toBeTruthy();
   expect(api.requestArchiveRecovery).not.toHaveBeenCalled();
+});
+
+test("remote upload failure retries the immutable archive without another local backup", async () => {
+  const failed = {
+    id: "transfer",
+    version: "owned-upload.s3-transfer.v1",
+    project_id: "p",
+    target_id: "target",
+    target_revision: 1,
+    destination_id: "d",
+    mode: "upload",
+    backup_id: "backup",
+    state: "failed",
+    failure_code: "access_denied",
+    created_at: "2026-10-26",
+    updated_at: "2026-10-26",
+  } as remote.StorageBackupTransfer;
+  vi.mocked(remote.listStorageTransfers).mockResolvedValue([failed]);
+  vi.mocked(remote.retryStorageTransfer).mockResolvedValue({
+    ...failed,
+    id: "retry",
+    state: "queued",
+    failure_code: "",
+  });
+  setup();
+  await loaded();
+  fireEvent.click(screen.getByRole("button", { name: "Backup backup" }));
+  const retry = await screen.findByRole("button", {
+    name: "Retry remote upload of the same archive",
+  });
+  await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(remote.retryStorageTransfer).toHaveBeenCalledTimes(1),
+  );
+  expect(
+    vi.mocked(remote.retryStorageTransfer).mock.calls[0]![2]
+      .expected_transfer_id,
+  ).toBe("transfer");
+  expect(api.requestArchiveBackup).not.toHaveBeenCalled();
 });

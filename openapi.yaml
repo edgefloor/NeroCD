@@ -7552,6 +7552,453 @@ paths:
       }
     }
 
+  /api/v1/projects/{project_id}/database-backup-targets/{target_id}/storage-validations:
+    {
+      "get": {
+        "operationId": "listHostingStorageBackupTargetValidations",
+        "summary": "listHostingStorageBackupTargetValidations",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "validateHostingStorageBackupTarget",
+        "summary": "validateHostingStorageBackupTarget",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "202": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingDatabaseBackupTargetValidationInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/storage-backups/{id}/transfers:
+    {
+      "get": {
+        "operationId": "listHostingStorageBackupTransfers",
+        "summary": "listHostingStorageBackupTransfers",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
+  /api/v1/storage-backups/{id}/transfers/retry:
+    {
+      "post": {
+        "operationId": "retryHostingStorageBackupTransfer",
+        "summary": "retryHostingStorageBackupTransfer",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "202": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupTransferRetryInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/storage-backup-transfers/{id}:
+    {
+      "get": {
+        "operationId": "getHostingStorageBackupTransfer",
+        "summary": "getHostingStorageBackupTransfer",
+        "description": "Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-transfer/credentials:
+    {
+      "post": {
+        "operationId": "deliverStorageRemoteCredentials",
+        "summary": "deliverStorageRemoteCredentials",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRemoteCredentialsWire"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRemoteCredentialRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-transfer/plan:
+    {
+      "post": {
+        "operationId": "getHostingStorageBackupTransferPlan",
+        "summary": "getHostingStorageBackupTransferPlan",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupTransferPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingAuthority"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-transfer/mutation:
+    {
+      "post": {
+        "operationId": "recordHostingStorageBackupTransferMutation",
+        "summary": "recordHostingStorageBackupTransferMutation",
+        "description": "Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.",
+        "responses": {
+          "200": {
+            "description": "Bounded result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupTransferMutation"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
 components:
   securitySchemes:
     bearerAuth:
@@ -13017,6 +13464,9 @@ components:
             "type": "integer",
             "format": "int64",
             "minimum": 1
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
           }
         }
       }
@@ -13037,6 +13487,9 @@ components:
             "type": "string",
             "minLength": 1,
             "maxLength": 128
+          },
+          "remote_source": {
+            "$ref": "#/components/schemas/BackupRemoteSource"
           }
         }
       }
@@ -13335,6 +13788,12 @@ components:
           "hash": {
             "type": "string",
             "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "remote_target": {
+            "$ref": "#/components/schemas/BackupTargetSelection"
+          },
+          "remote_source": {
+            "$ref": "#/components/schemas/BackupRemoteSource"
           }
         },
         "description": "Immutable dedicated authority. Backup writers are eligible platform-owned identities; runner snapshots actual states before stop. Restore writers are empty and source evidence grants no source stop/resume authority."
@@ -17952,3 +18411,329 @@ components:
           }
         }
       }
+
+    HostingStorageBackupTransfer:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "target_id",
+          "target_revision",
+          "destination_id",
+          "mode",
+          "state",
+          "failure_code",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "owned-upload.s3-transfer.v1"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "destination_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "validate",
+              "upload",
+              "download"
+            ]
+          },
+          "backup_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "restore_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "",
+              "access_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "archive_unavailable",
+              "interrupted",
+              "authority_denied"
+            ]
+          },
+          "blob": {
+            "$ref": "#/components/schemas/HostingStorageArchiveBlob"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Safe transfer metadata. Upload and download require backup_id and blob. Download also requires restore_operation_id. Validate omits all three; upload omits restore_operation_id.",
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "const": "validate"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "backup_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "blob"
+                  ]
+                },
+                {
+                  "required": [
+                    "restore_operation_id"
+                  ]
+                }
+              ]
+            },
+            "type": "object",
+            "required": [
+              "mode"
+            ]
+          },
+          {
+            "properties": {
+              "mode": {
+                "const": "upload"
+              },
+              "backup_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              },
+              "blob": {
+                "$ref": "#/components/schemas/HostingStorageArchiveBlob"
+              }
+            },
+            "required": [
+              "backup_id",
+              "blob",
+              "mode"
+            ],
+            "not": {
+              "required": [
+                "restore_operation_id"
+              ]
+            },
+            "type": "object"
+          },
+          {
+            "properties": {
+              "mode": {
+                "const": "download"
+              },
+              "backup_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              },
+              "blob": {
+                "$ref": "#/components/schemas/HostingStorageArchiveBlob"
+              },
+              "restore_operation_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              }
+            },
+            "required": [
+              "backup_id",
+              "blob",
+              "restore_operation_id",
+              "mode"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    HostingStorageBackupTransferPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "target",
+          "actor_id",
+          "runner_id",
+          "server_id",
+          "daemon_id",
+          "location_id",
+          "object_key",
+          "max_bytes",
+          "timeout_seconds",
+          "hash",
+          "limits"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/HostingStorageBackupTransfer"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTargetSnapshot"
+          },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "server_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "daemon_id": {
+            "type": "string"
+          },
+          "location_id": {
+            "type": "string"
+          },
+          "object_key": {
+            "type": "string"
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1073741824
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/HostingStorageArchiveLimits"
+          }
+        }
+      }
+    HostingStorageBackupTransferMutation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt_id",
+          "plan_hash",
+          "phase",
+          "failure_code",
+          "daemon_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "intent",
+              "complete",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "",
+              "access_denied",
+              "network_denied",
+              "remote_unavailable",
+              "object_mismatch",
+              "archive_unavailable",
+              "interrupted",
+              "authority_denied"
+            ]
+          },
+          "daemon_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      }
+
+    HostingStorageBackupTransferRetryInput:
+      {"$ref":"#/components/schemas/HostingDatabaseBackupTransferRetryInput"}

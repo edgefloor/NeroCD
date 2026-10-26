@@ -14,6 +14,9 @@ import (
 // archives. The helper descriptor must come from an explicitly qualified local
 // image; its presence alone does not qualify the runner or advertise capability.
 type StorageArchiveExecutionConfig struct {
+	RemoteBackups                             bool
+	RemoteEndpoints, RemoteCIDRs              []string
+	RemoteFixtureOrigin                       string
 	ArtifactRoot, TemporaryRoot, DockerBinary string
 	Helper                                    domain.HostingStorageArchiveHelper
 	TrustedLoopbackHTTP                       bool
@@ -30,6 +33,9 @@ func (StorageArchiveExecutionConfig) MarshalJSON() ([]byte, error) {
 }
 
 func (c StorageArchiveExecutionConfig) validate() error {
+	if _, err := storageBackupRemotePolicy(c); err != nil {
+		return err
+	}
 	if c.Helper.Validate() != nil {
 		return errors.New("storage archive requires an exact local helper identity")
 	}

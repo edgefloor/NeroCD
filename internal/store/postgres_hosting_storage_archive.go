@@ -172,6 +172,11 @@ func (s *PostgresStore) archiveGate(ctx context.Context, tx pgx.Tx, op domain.Ho
 		return ErrConflict
 	}
 	p := op.StorageArchive.Plan
+	if p.RemoteSource != nil {
+		if err := s.storageRemoteRestoreCurrent(ctx, tx, p, op.CreatedBy); err != nil {
+			return err
+		}
+	}
 	resources := []string{p.SourceStorage.ResourceID}
 	if p.Target != nil {
 		resources = append(resources, p.Target.Resource.ID)
@@ -368,6 +373,12 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 		})
 		backupID := "hsb_" + domain.HostingDocumentHash(struct{ Resource, Request string }{resource, in.RequestID})[7:39]
 		p := domain.HostingStorageArchivePlan{OperationID: id, ProjectID: r.ProjectID, ServerID: healthy.Snapshot.ServerID, DestinationID: b.DestinationID, RunnerID: healthy.Snapshot.RunnerID, Mode: "backup", BackupID: backupID, SourceHealthy: healthy, SourceStorage: st, SourceMaterialization: m, Writers: writers, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits, CompilerVersion: domain.HostingStorageArchiveVersion, PolicyVersion: domain.HostingStorageArchiveVersion}
+		p.RemoteTarget = in.RemoteTarget
+		if in.RemoteTarget != nil {
+			if err = s.storageRemoteSelect(ctx, tx, p, actor, *in.RemoteTarget); err != nil {
+				return zero, err
+			}
+		}
 		p.Hash = domain.HostingDocumentHash(p)
 		if err = archiveRunner(ctx, tx, p); err != nil {
 			return zero, err

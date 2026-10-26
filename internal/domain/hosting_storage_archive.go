@@ -23,14 +23,16 @@ var ErrInvalidStorageArchive = errors.New("invalid storage archive document")
 
 // HostingStorageBackupInput selects the exact saved resource generation.
 type HostingStorageBackupInput struct {
-	RequestID                  string `json:"request_id"`
-	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
+	RequestID                  string                 `json:"request_id"`
+	ExpectedResourceGeneration int64                  `json:"expected_resource_generation"`
 }
 
 // HostingStorageRestoreInput creates a new held resource, never an in-place restore.
 type HostingStorageRestoreInput struct {
-	RequestID string `json:"request_id"`
-	Name      string `json:"name"`
+	RemoteSource *BackupRemoteSource `json:"remote_source,omitempty"`
+	RequestID    string              `json:"request_id"`
+	Name         string              `json:"name"`
 }
 
 // HostingStorageArchiveRecoveryInput selects one immutable unresolved plan.
@@ -41,7 +43,7 @@ type HostingStorageArchiveRecoveryInput struct {
 
 // Validate requires exact request identity and a positive resource generation.
 func (in HostingStorageBackupInput) Validate() error {
-	if !hostingStorageRequest.MatchString(in.RequestID) || in.ExpectedResourceGeneration < 1 {
+	if in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil || !hostingStorageRequest.MatchString(in.RequestID) || in.ExpectedResourceGeneration < 1 {
 		return ErrInvalidStorageArchive
 	}
 	return nil
@@ -49,7 +51,7 @@ func (in HostingStorageBackupInput) Validate() error {
 
 // Validate permits only a request identity and a bounded new display name.
 func (in HostingStorageRestoreInput) Validate() error {
-	if !hostingStorageRequest.MatchString(in.RequestID) || in.Name == "" || len(in.Name) > 128 || strings.TrimSpace(in.Name) != in.Name || strings.ContainsFunc(in.Name, unicode.IsControl) {
+	if in.RemoteSource != nil && in.RemoteSource.Validate() != nil || !hostingStorageRequest.MatchString(in.RequestID) || in.Name == "" || len(in.Name) > 128 || strings.TrimSpace(in.Name) != in.Name || strings.ContainsFunc(in.Name, unicode.IsControl) {
 		return ErrInvalidStorageArchive
 	}
 	return nil
@@ -181,6 +183,8 @@ type HostingStorageArchiveTarget struct {
 // Writers are controller-derived eligible identities. Their actual initial states
 // must be snapshotted durably before the first stop intent is acknowledged.
 type HostingStorageArchivePlan struct {
+	RemoteTarget          *BackupTargetSelection                 `json:"remote_target,omitempty"`
+	RemoteSource          *BackupRemoteSource                    `json:"remote_source,omitempty"`
 	OperationID           string                                 `json:"operation_id"`
 	ProjectID             string                                 `json:"project_id"`
 	ServerID              string                                 `json:"server_id"`
@@ -338,6 +342,9 @@ func ValidateStorageArchiveTask(run TaskRun) error {
 
 // Validate enforces source, helper, target, and origin identity before hashing.
 func (p HostingStorageArchivePlan) Validate() error {
+	if p.RemoteTarget != nil && (p.Mode != "backup" || p.RemoteTarget.Validate() != nil) || p.RemoteSource != nil && (p.Mode != "restore" || p.RemoteSource.Validate() != nil) {
+		return ErrInvalidStorageArchive
+	}
 	for _, id := range []string{p.OperationID, p.ProjectID, p.ServerID, p.DestinationID, p.RunnerID, p.BackupID} {
 		if !hostingProxyID.MatchString(id) {
 			return ErrInvalidStorageArchive

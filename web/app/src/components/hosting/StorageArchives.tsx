@@ -1,3 +1,15 @@
+import {
+  DatabaseBackupDestinations,
+  BackupDestinationSelect,
+  useDatabaseBackupDestinations,
+  validSelectedBackupDestination,
+} from "@/pages/DatabaseBackupDestinations";
+import {
+  listStorageTransfers,
+  retryStorageTransfer,
+  type StorageBackupTransfer,
+} from "@/api/hosting-storage-backup-remote";
+import type { RemoteBackupTarget } from "@/api/hosting-database-backup-targets";
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
@@ -71,8 +83,19 @@ export function StorageArchives({
     scope.binding,
   ] as const;
   const id = useId();
+  const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
+  const [remoteRestore, setRemoteRestore] = useState(false);
+  const [remoteRetry, setRemoteRetry] = useState<{
+    request_id: string;
+    expected_transfer_id: string;
+  }>();
+  const [remoteBusy, setRemoteBusy] = useState(false);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState("");
+  useEffect(() => {
+    setRemoteRetry(undefined);
+    setRemoteRestore(false);
+  }, [selected]);
   const [restoreID, setRestoreID] = useState("");
   const [restoreDraft, setRestoreDraft] = useState("");
   const [name, setName] = useState("");
@@ -103,6 +126,56 @@ export function StorageArchives({
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   } as const;
+  const targetScope = {
+    actor,
+    project: resource.project_id,
+    environment: resource.project_environment_id ?? "",
+  };
+  const destinationProps = {
+    storage: { resource, destination_id: storage.destination_id },
+    scope: targetScope,
+    owner,
+    blocked: paused || lost,
+    onDenied: () => setLost(true),
+  };
+  const destinations = useDatabaseBackupDestinations(destinationProps);
+  const transfers = useQuery({
+    ...base,
+    queryKey: [...key, "remote", selected],
+    enabled: !!selected && !lost,
+    queryFn: ({ signal }) =>
+      listStorageTransfers(targetScope, selected, signal),
+    refetchInterval: polling ? 5000 : false,
+  });
+  const remoteUpload = transfers.data?.find((v) => v.mode === "upload");
+  const remoteSource =
+    remoteRestore && remoteUpload?.state === "succeeded"
+      ? {
+          transfer_id: remoteUpload.id,
+          expected_target_revision: remoteUpload.target_revision,
+        }
+      : undefined;
+  async function retryRemote(
+    transfer: StorageBackupTransfer | undefined = remoteUpload,
+  ) {
+    if (!owner || remoteBusy || lost || !transfer) return;
+    const input = remoteRetry ?? {
+      request_id: storageRequestID(),
+      expected_transfer_id: transfer.id,
+    };
+    setRemoteRetry(input);
+    setRemoteBusy(true);
+    try {
+      await retryStorageTransfer(targetScope, selected, input);
+      setRemoteRetry(undefined);
+      await transfers.refetch();
+    } catch (cause) {
+      setError(message(cause));
+      if (denied(cause)) setLost(true);
+    } finally {
+      setRemoteBusy(false);
+    }
+  }
   const history = useQuery({
     ...base,
     queryKey: [...key, "history", offset],
@@ -180,6 +253,7 @@ export function StorageArchives({
     return () => clearTimeout(timer);
   }, [polling, selected, restoreID, recovery?.id]);
   const queries = [
+    transfers,
     history,
     backup,
     detail,
@@ -200,6 +274,7 @@ export function StorageArchives({
     paused ||
     !polling ||
     busy ||
+    remoteBusy ||
     accessLost ||
     readFailed ||
     queries.some((q) => q.isFetching);
@@ -304,13 +379,24 @@ export function StorageArchives({
       <p>
         Back up the owned upload volume for a single image application. Writers
         may stop during backup. Archives remain on this destination's local
-        disk. Host or disk loss can destroy both the volume and its backups.
+        disk. An optional remote transfer runs after writers resume. Host or
+        disk loss can destroy local archives.
       </p>
       <p>
         Restore always creates a new resource on the same destination. File
         validation does not prove application read/write behavior. Deployment
         and application verification remain separate operator steps.
       </p>
+      <DatabaseBackupDestinations {...destinationProps} />
+      {owner ? (
+        <BackupDestinationSelect
+          label="Remote backup target"
+          value={remoteTarget}
+          onChange={setRemoteTarget}
+          destinations={destinations}
+          disabled={blocked || !!attempt}
+        />
+      ) : null}
       <Button
         type="button"
         variant="outline"
@@ -423,13 +509,20 @@ export function StorageArchives({
           <Button
             type="button"
             className={button}
-            disabled={blocked || !!attempt || !confirmed || !eligibility.data}
+            disabled={
+              blocked ||
+              !!attempt ||
+              !confirmed ||
+              !eligibility.data ||
+              !validSelectedBackupDestination(remoteTarget, destinations)
+            }
             onClick={() =>
               void submit({
                 kind: "backup",
                 body: {
                   request_id: storageRequestID(),
                   expected_resource_generation: generation,
+                  ...(remoteTarget ? { remote_target: remoteTarget } : {}),
                 },
               })
             }
@@ -453,6 +546,56 @@ export function StorageArchives({
           <dd>{backup.data.blob?.size_bytes ?? "unknown"}</dd>
         </dl>
       ) : null}
+      {selected ? (
+        <section
+          aria-label="Remote archive transfers"
+          className="space-y-2 break-all"
+        >
+          <h5>Remote archive transfers</h5>
+          {transfers.data?.length === 0 ? (
+            <p>No remote transfer requested.</p>
+          ) : null}
+          {transfers.data?.map((v) => (
+            <p key={v.id}>
+              {v.mode} {v.id}: {v.state}
+              {v.failure_code ? ` · ${v.failure_code}` : ""}. Local archive
+              remains independent.
+              {owner &&
+              v.mode === "download" &&
+              ["failed", "uncertain"].includes(v.state) ? (
+                <>
+                  <span>
+                    {" "}
+                    Restore remains held until a verified download completes.
+                  </span>
+                  <Button
+                    disabled={blocked || remoteBusy}
+                    onClick={() => void retryRemote(v)}
+                  >
+                    Retry remote download
+                  </Button>
+                </>
+              ) : null}
+            </p>
+          ))}
+          {owner &&
+          remoteUpload &&
+          ["failed", "uncertain"].includes(remoteUpload.state) ? (
+            <Button
+              disabled={blocked || remoteBusy}
+              onClick={() => void retryRemote()}
+            >
+              Retry remote upload of the same archive
+            </Button>
+          ) : null}
+          {remoteRetry ? (
+            <p>
+              Saved remote retry {remoteRetry.request_id}. Retry keeps the same
+              archive and request identity.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
       {operation ? <OperationDetails operation={operation} /> : null}
       {owner &&
       !backup.isError &&
@@ -463,14 +606,29 @@ export function StorageArchives({
           className="min-w-0 space-y-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!attempt && name.trim())
+            if (!attempt && name.trim() && (!remoteRestore || remoteSource))
               void submit({
                 kind: "restore",
                 backup: selected,
-                body: { request_id: storageRequestID(), name },
+                body: {
+                  request_id: storageRequestID(),
+                  name,
+                  ...(remoteSource ? { remote_source: remoteSource } : {}),
+                },
               });
           }}
         >
+          {remoteRestore || remoteUpload?.state === "succeeded" ? (
+            <label className="flex gap-2">
+              <input
+                type="checkbox"
+                checked={remoteRestore}
+                disabled={blocked || !!attempt}
+                onChange={(e) => setRemoteRestore(e.target.checked)}
+              />
+              Download and verify the remote archive before restoring
+            </label>
+          ) : null}
           <label htmlFor={`${id}-name`}>New restored resource name</label>
           <Input
             id={`${id}-name`}
@@ -487,7 +645,12 @@ export function StorageArchives({
           <Button
             type="submit"
             className={button}
-            disabled={blocked || !!attempt || !name.trim()}
+            disabled={
+              blocked ||
+              !!attempt ||
+              !name.trim() ||
+              (remoteRestore && !remoteSource)
+            }
           >
             Restore into new resource
           </Button>

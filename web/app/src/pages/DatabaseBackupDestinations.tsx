@@ -1,3 +1,8 @@
+import {
+  listStorageValidations,
+  validateStorageTarget,
+  type StorageBackupTransfer,
+} from "../api/hosting-storage-backup-remote";
 import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/errors";
@@ -26,7 +31,8 @@ import {
 } from "../api/hosting-database-backup-targets";
 
 type Props = {
-  database: HostingDatabase;
+  database?: HostingDatabase;
+  storage?: { resource: { id: string }; destination_id: string };
   scope: DatabaseScope;
   owner: boolean;
   blocked: boolean;
@@ -34,6 +40,7 @@ type Props = {
 };
 export function useDatabaseBackupDestinations({
   database,
+  storage,
   scope,
   blocked,
   onDenied,
@@ -43,19 +50,27 @@ export function useDatabaseBackupDestinations({
   const targets = useQuery({
     queryKey: databaseBackupTargetsKey(scope),
     queryFn: ({ signal }) => listDatabaseBackupTargets(scope, signal),
-    enabled: !blocked && !accessRevoked && database.engine === "postgresql",
+    enabled:
+      !blocked &&
+      !accessRevoked &&
+      (!!storage || database?.engine === "postgresql"),
     retry: false,
   });
   const validations = useQueries({
     queries: (targets.data ?? []).map((target) => ({
-      queryKey: databaseBackupValidationsKey(scope, target.id),
+      queryKey: [
+        ...databaseBackupValidationsKey(scope, target.id),
+        storage ? "storage" : "database",
+      ],
       queryFn: ({ signal }: { signal: AbortSignal }) =>
-        listDatabaseBackupValidations(scope, target.id, signal),
+        storage
+          ? listStorageValidations(scope, target.id, signal)
+          : listDatabaseBackupValidations(scope, target.id, signal),
       enabled: !blocked && !accessRevoked,
       retry: false,
       refetchInterval: (query: {
         state: {
-          data?: DatabaseBackupTransfer[];
+          data?: (DatabaseBackupTransfer | StorageBackupTransfer)[];
         };
       }) =>
         query.state.data?.some((v) =>
@@ -85,7 +100,8 @@ export function useDatabaseBackupDestinations({
           v.mode === "validate" &&
           v.state === "succeeded" &&
           v.target_revision === target.revision &&
-          v.destination_id === database.binding?.destination_id,
+          v.destination_id ===
+            (storage?.destination_id ?? database?.binding?.destination_id),
       ),
   );
   return {
@@ -150,9 +166,9 @@ export function BackupDestinationSelect({
         ))}
       </select>
       <span className="block text-sm">
-        Only enabled destinations validated from this database's runner at the
-        current revision are selectable. ListObjects validation does not prove
-        upload permission.
+        Only enabled destinations validated from this destination's runner at
+        the current revision are selectable. ListObjects validation does not
+        prove upload permission.
       </span>
       {value && !current ? (
         <span role="alert">
@@ -198,14 +214,14 @@ export function DatabaseBackupDestinations(props: Props) {
       key={JSON.stringify([
         props.scope.actor,
         props.scope.project,
-        props.database.resource.id,
+        props.storage?.resource.id ?? props.database?.resource.id,
       ])}
       {...props}
     />
   );
 }
 function DestinationPanel(props: Props) {
-  const { database, scope, owner, blocked, onDenied } = props;
+  const { database, storage, scope, owner, blocked, onDenied } = props;
   const destinations = useDatabaseBackupDestinations(props);
   const [editing, setEditing] = useState<{ id: string; revision: number }>({
     id: "",
@@ -241,7 +257,7 @@ function DestinationPanel(props: Props) {
       onDenied();
     }
   }, [denied]);
-  if (database.engine !== "postgresql") return null;
+  if (!storage && database?.engine !== "postgresql") return null;
   if (denied)
     return <p role="alert">Backup destination access is unavailable.</p>;
   const unavailable =
@@ -294,15 +310,12 @@ function DestinationPanel(props: Props) {
         setAccessKey("");
         setSecretKey("");
         setAccepted(
-          `Saved destination ${out.name}, revision ${out.revision}. Validate this revision from this database's runner before selecting it.`,
+          `Saved destination ${out.name}, revision ${out.revision}. Validate this revision from this destination's runner before selecting it.`,
         );
       } else {
-        const out = await validateDatabaseBackupTarget(
-          scope,
-          next.target,
-          next.input,
-          controller.signal,
-        );
+        const out = await (
+          storage ? validateStorageTarget : validateDatabaseBackupTarget
+        )(scope, next.target, next.input, controller.signal);
         if (controller.signal.aborted) return;
         setAccepted(
           `Accepted destination validation ${out.id}. Wait for its server status.`,
@@ -333,15 +346,15 @@ function DestinationPanel(props: Props) {
   );
   return (
     <section
-      aria-label="Database backup destinations"
+      aria-label={storage ? "Backup targets" : "Database backup destinations"}
       className="min-w-0 space-y-3 rounded-xl border p-3"
     >
       <h4 className="font-medium">S3-compatible backup destinations</h4>
       <p>
-        Configure project storage here, then choose it for immediate or
-        scheduled backups. Each dump remains a local archive; remote upload has
-        its own status. Validation runs from this database's destination runner
-        and checks ListObjects reachability, not PutObject permission.
+        Configure project backup targets here, then select a validated target.
+        Each backup retains its local archive; remote upload has its own status.
+        Validation runs from this destination's runner and checks ListObjects
+        reachability, not PutObject permission.
       </p>
       {!owner ? (
         <p>
@@ -555,7 +568,10 @@ function DestinationPanel(props: Props) {
                   disabled={
                     unavailable ||
                     !target.enabled ||
-                    !database.binding?.destination_id
+                    !(
+                      storage?.destination_id ??
+                      database?.binding?.destination_id
+                    )
                   }
                   onClick={() =>
                     void submit({
@@ -564,7 +580,8 @@ function DestinationPanel(props: Props) {
                       input: {
                         request_id: databaseRequestID(),
                         expected_revision: target.revision,
-                        destination_id: database.binding.destination_id,
+                        destination_id: (storage?.destination_id ??
+                          database?.binding?.destination_id)!,
                       },
                     })
                   }

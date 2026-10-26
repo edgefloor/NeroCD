@@ -435,6 +435,31 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 			if _, err := q.SetHostingOperationState(ctx, sqlcgen.SetHostingOperationStateParams{ID: p.RecoveryOfOperationID, State: originalState}); err != nil {
 				return err
 			}
+			if published && p.Target == nil {
+				original, found, e := archiveOperation(ctx, tx, p.RecoveryOfOperationID)
+				if e != nil {
+					return e
+				}
+				if !found {
+					return ErrConflict
+				}
+				raw, e := q.ReadStorageArchiveBlob(ctx, p.BackupID)
+				if e != nil {
+					return e
+				}
+				var blob domain.HostingStorageArchiveBlob
+				if json.Unmarshal(raw, &blob) != nil {
+					return ErrConflict
+				}
+				if e = s.storageRemoteLocalComplete(ctx, tx, original.StorageArchive.Plan, original.CreatedBy, blob); e != nil {
+					return e
+				}
+			}
+		}
+		if p.Mode == "backup" && r.ArchiveOutcome == "succeeded" && clearHold {
+			if err := s.storageRemoteLocalComplete(ctx, tx, p, op.CreatedBy, *r.Blob); err != nil {
+				return err
+			}
 		}
 		if _, err := q.CompleteHostingLease(ctx, sqlcgen.CompleteHostingLeaseParams{ID: in.LeaseID, Status: leaseState, CompletionKey: &in.ReceiptID}); err != nil {
 			return err

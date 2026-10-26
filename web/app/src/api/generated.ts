@@ -4366,6 +4366,150 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/storage-validations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingStorageBackupTargetValidations
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["listHostingStorageBackupTargetValidations"];
+        put?: never;
+        /**
+         * validateHostingStorageBackupTarget
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        post: operations["validateHostingStorageBackupTarget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backups/{id}/transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * listHostingStorageBackupTransfers
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["listHostingStorageBackupTransfers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backups/{id}/transfers/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * retryHostingStorageBackupTransfer
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        post: operations["retryHostingStorageBackupTransfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backup-transfers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * getHostingStorageBackupTransfer
+         * @description Project owners request changes; viewers inspect safe metadata. Revision and replay identity are pinned. Cache-Control: no-store.
+         */
+        get: operations["getHostingStorageBackupTransfer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-backup-transfer/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * deliverStorageRemoteCredentials
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["deliverStorageRemoteCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-backup-transfer/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * getHostingStorageBackupTransferPlan
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["getHostingStorageBackupTransferPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-backup-transfer/mutation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * recordHostingStorageBackupTransferMutation
+         * @description Exact current runner, run, lease, attempt and fence authority required. Cache-Control: no-store. Credential delivery requires direct TLS or trusted immediate TLS termination. No credential values in ordinary metadata.
+         */
+        post: operations["recordHostingStorageBackupTransferMutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6760,10 +6904,12 @@ export interface components {
             request_id: string;
             /** Format: int64 */
             expected_resource_generation: number;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingStorageRestoreInput: {
             request_id: string;
             name: string;
+            remote_source?: components["schemas"]["BackupRemoteSource"];
         };
         HostingStorageArchiveRecoveryInput: {
             request_id: string;
@@ -6836,6 +6982,8 @@ export interface components {
             /** @enum {string} */
             policy_version: "owned-upload.local-archive.v1";
             hash: string;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
+            remote_source?: components["schemas"]["BackupRemoteSource"];
         };
         HostingStorageArchiveWriterState: {
             container_id: string;
@@ -9037,6 +9185,73 @@ export interface components {
             probe_only?: boolean;
             probe_key?: string;
         };
+        /** @description Safe transfer metadata. Upload and download require backup_id and blob. Download also requires restore_operation_id. Validate omits all three; upload omits restore_operation_id. */
+        HostingStorageBackupTransfer: {
+            id: string;
+            /** @enum {string} */
+            version: "owned-upload.s3-transfer.v1";
+            project_id: string;
+            target_id: string;
+            /** Format: int64 */
+            target_revision: number;
+            destination_id: string;
+            /** @enum {string} */
+            mode: "validate" | "upload" | "download";
+            backup_id?: string;
+            restore_operation_id?: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "applying" | "succeeded" | "failed" | "uncertain";
+            /** @enum {string} */
+            failure_code: "" | "access_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "archive_unavailable" | "interrupted" | "authority_denied";
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        } & ({
+            /** @constant */
+            mode: "validate";
+        } | {
+            /** @constant */
+            mode: "upload";
+            backup_id: string;
+            blob: components["schemas"]["HostingStorageArchiveBlob"];
+        } | {
+            /** @constant */
+            mode: "download";
+            backup_id: string;
+            blob: components["schemas"]["HostingStorageArchiveBlob"];
+            restore_operation_id: string;
+        });
+        HostingStorageBackupTransferPlan: {
+            operation: components["schemas"]["HostingStorageBackupTransfer"];
+            target: components["schemas"]["HostingDatabaseBackupTargetSnapshot"];
+            actor_id: string;
+            runner_id: string;
+            server_id: string;
+            daemon_id: string;
+            location_id: string;
+            object_key: string;
+            max_bytes: number;
+            timeout_seconds: number;
+            hash: string;
+            limits: components["schemas"]["HostingStorageArchiveLimits"];
+        };
+        HostingStorageBackupTransferMutation: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            receipt_id: string;
+            plan_hash: string;
+            /** @enum {string} */
+            phase: "intent" | "complete" | "failed" | "uncertain";
+            /** @enum {string} */
+            failure_code: "" | "access_denied" | "network_denied" | "remote_unavailable" | "object_mismatch" | "archive_unavailable" | "interrupted" | "authority_denied";
+            daemon_id: string;
+        };
+        HostingStorageBackupTransferRetryInput: components["schemas"]["HostingDatabaseBackupTransferRetryInput"];
     };
     responses: {
         /** @description Stable error envelope. */
@@ -18041,6 +18256,246 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingDatabaseBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingStorageBackupTargetValidations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    validateHostingStorageBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingDatabaseBackupTargetValidationInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listHostingStorageBackupTransfers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    retryHostingStorageBackupTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupTransferRetryInput"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingStorageBackupTransfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverStorageRemoteCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRemoteCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupRemoteCredentialsWire"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingStorageBackupTransferPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransferPlan"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    recordHostingStorageBackupTransferMutation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupTransferMutation"];
+            };
+        };
+        responses: {
+            /** @description Bounded result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupTransfer"];
                 };
             };
             400: components["responses"]["Error"];

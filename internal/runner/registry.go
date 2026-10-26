@@ -57,6 +57,12 @@ func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, err
 		}
 		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
 	}
+	if run.RunSpec.Type == domain.RunTypeStorageBackupTransfer {
+		if err := domain.ValidateStorageBackupTransferTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		if err := domain.ValidateDatabaseBackupTransferTask(run); err != nil {
 			return domain.RunnerPrimitivePlan{}, err
