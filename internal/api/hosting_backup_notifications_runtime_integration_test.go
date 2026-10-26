@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/notificationtransport"
 	"nerocd/internal/secretcrypto"
@@ -705,6 +706,31 @@ func notificationRuntimeSave(f *databaseRunnerFixture, project string, c backupN
 	}
 	return databaseRunnerJSON[backupNotificationChannel](f, f.token, method, path, body, 200)
 }
+
+// The source actor must independently hold the owner role required by backup
+// admission. It is separate from both the alert recipient and browser viewer.
+func notificationRuntimeCreateSourceActor(f *databaseRunnerFixture, project string) app.CreatedServiceAccount {
+	f.t.Helper()
+	expires := time.Now().UTC().Add(time.Hour)
+	created := databaseRunnerJSON[app.CreatedServiceAccount](f, f.token, "POST", "/api/v1/service-accounts", app.ServiceAccountCreateInput{ProjectID: project, Name: "Runtime backup source", Role: domain.RoleOwner, ExpiresAt: &expires}, http.StatusCreated)
+	f.protected = append(f.protected, []byte(created.Token))
+	principal := databaseRunnerJSON[auth.Principal](f, created.Token, "GET", "/api/v1/me", nil, http.StatusOK)
+	role := databaseRunnerJSON[domain.ProjectRole](f, created.Token, "GET", "/api/v1/project-role?project_id="+project, nil, http.StatusOK)
+	if created.Token == "" || principal.ID != created.ServiceAccount.ID || principal.Provider != domain.PrincipalServiceAccount || len(principal.Roles) != 0 || created.ServiceAccount.ProjectID != project || role.ProjectID != project || role.Role != domain.RoleOwner || !role.CanAdmin {
+		f.t.Fatal("source actor lacks distinct scoped owner authority")
+	}
+	return created
+}
+
+func notificationRuntimeRevokeSourceActor(f *databaseRunnerFixture, actor app.CreatedServiceAccount) {
+	f.t.Helper()
+	revoked := databaseRunnerJSON[domain.ServiceAccount](f, f.token, "POST", "/api/v1/service-accounts/revoke", app.ServiceAccountRevokeInput{ServiceAccountID: actor.ServiceAccount.ID}, http.StatusOK)
+	if revoked.ID != actor.ServiceAccount.ID || revoked.Status != domain.ServiceAccountRevoked {
+		f.t.Fatal("source actor revocation was not recorded")
+	}
+	databaseRunnerJSON[json.RawMessage](f, actor.Token, "GET", "/api/v1/me", nil, http.StatusUnauthorized)
+}
+
 func notificationRuntimeRetryAndAuthority(f *databaseRunnerFixture, project string, r *backupNotificationReceivers) {
 	f.t.Helper()
 	// This event is explicitly a test. It cannot satisfy either real source proof.
@@ -943,13 +969,11 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 		}
 		return count == 2
 	})
-	databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", app.ProjectMemberInput{ProjectID: source.Resource.ProjectID, Email: "viewer@example.local", Role: "maintainer"}, 200)
-	actor := createTestSessionFor(t, NewServer(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static()), "viewer@example.local", "viewer")
-	f.protected = append(f.protected, []byte(actor))
+	actor := notificationRuntimeCreateSourceActor(f, source.Resource.ProjectID)
 	receivers.failNext("webhook", 1)
 	receivers.failNext("email", 1)
 	f.stop()
-	backup := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, actor, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: backupRuntimeRequestID(t), ExpectedResourceGeneration: source.Resource.Generation, RemoteTarget: &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}}, 202)
+	backup := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, actor.Token, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: backupRuntimeRequestID(t), ExpectedResourceGeneration: source.Resource.Generation, RemoteTarget: &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}}, 202)
 	diagnosticID = backup.ID
 	wire := &databaseRemoteBackupWire{backup: backup.ID, phase: "failed", entered: make(chan struct{}), release: make(chan struct{})}
 	f.remoteBackupWire.Store(wire)
@@ -966,9 +990,9 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	if failed.FailureCode != "access_denied" || failed.Blob == nil || *failed.Blob != *backup.Blob {
 		t.Fatal("S3 denial did not retain exact successful local dump")
 	}
-	// Both actual source alerts have a rejected attempt before removing the
+	// Both actual source alerts have a rejected attempt before revoking the
 	// source actor. Their retries must authorize current recipients, regardless
-	// of the actor's lost membership, and keep their original event identity.
+	// of the actor's revoked credential, and keep their original event identity.
 	notificationRuntimePoll(f, "both rejected actual alerts", func() bool {
 		values := databaseRunnerJSON[[]backupNotificationDelivery](f, f.token, "GET", notificationRuntimePath(source.Resource.ProjectID), nil, 200)
 		count := 0
@@ -979,10 +1003,8 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 		}
 		return count == 2
 	})
-	changed, err := f.database.Exec(t.Context(), `DELETE FROM project_members WHERE project_id=$1 AND user_id='usr_viewer'`, source.Resource.ProjectID)
-	if err != nil || changed.RowsAffected() != 1 {
-		t.Fatal("source actor revocation failed")
-	}
+	notificationRuntimeRevokeSourceActor(f, actor)
+	databaseRunnerJSON[json.RawMessage](f, actor.Token, "POST", "/api/v1/resources/"+source.Resource.ID+"/database-backups", domain.HostingDatabaseBackupInput{RequestID: backupRuntimeRequestID(t), ExpectedResourceGeneration: source.Resource.Generation}, http.StatusUnauthorized)
 	f.stop()
 	release.Do(func() { close(wire.release) })
 	backupRuntimeRestartController(f)
@@ -1027,7 +1049,6 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 		}
 	}
 	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql source_replay_restart")
-	databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", app.ProjectMemberInput{ProjectID: source.Resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}, 200)
 	browser.set("recovery", backup.ID, recoveryLink)
 	browser.await(browser.observed, "current-scope recovery without automatic action")
 	var restored domain.HostingDatabaseBackupOperation
@@ -1154,4 +1175,70 @@ func TestBackupNotificationFailedDumpRequiresMatchingDaemonExec(t *testing.T) {
 			t.Fatal("unproven dump invocation accepted")
 		}
 	}
+}
+
+// Only durable admission is replaced here. Authentication, scoped owner policy,
+// service-account creation and revocation all use the real HTTP/service path.
+// The physical gate separately qualifies PostgreSQL admission and execution.
+type notificationSourceActorHTTPRepository struct {
+	*databaseBackupHTTPRepository
+	admittedActors []string
+}
+
+func (r *notificationSourceActorHTTPRepository) RequestDatabaseBackup(_ context.Context, id, resource, actor string, _ domain.HostingDatabaseBackupInput, _ domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
+	r.admittedActors = append(r.admittedActors, actor)
+	out := r.value
+	out.ID, out.BackupID, out.SourceResourceID = id, id, resource
+	return out, nil
+}
+
+func TestBackupNotificationSourceActorOwnerAdmissionAndRevocation(t *testing.T) {
+	server, original, owner, viewer, _ := archiveHTTPFixture(t)
+	original.resource.Kind = "database"
+	repo := &notificationSourceActorHTTPRepository{databaseBackupHTTPRepository: &databaseBackupHTTPRepository{archiveHTTPRepository: original}}
+	mem := original.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	transport := httptest.NewTLSServer(server)
+	t.Cleanup(transport.Close)
+	f := &databaseRunnerFixture{t: t, server: transport, client: transport.Client(), token: owner}
+	project, resource := original.resource.ProjectID, original.resource.ID
+	now := time.Now().UTC()
+	repo.value = domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, Version: domain.HostingDatabaseBackupVersion, ProjectID: project, SourceResourceID: resource, SourceGeneration: original.resource.Generation, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
+	path := "/api/v1/resources/" + resource + "/database-backups"
+	input := func() domain.HostingDatabaseBackupInput {
+		return domain.HostingDatabaseBackupInput{RequestID: backupRuntimeRequestID(t), ExpectedResourceGeneration: original.resource.Generation}
+	}
+
+	// Reproduce the original setup: a normal viewer's session is still below
+	// owner authority after a maintainer grant, so no admission may occur.
+	databaseRunnerJSON[domain.ProjectMember](f, owner, "POST", "/api/v1/project-members", app.ProjectMemberInput{ProjectID: project, Email: "viewer@example.local", Role: domain.RoleMaintainer}, http.StatusOK)
+	principal := databaseRunnerJSON[auth.Principal](f, viewer, "GET", "/api/v1/me", nil, http.StatusOK)
+	if principal.ID != "usr_viewer" || len(principal.Roles) != 0 {
+		t.Fatal("viewer unexpectedly acquired global authority")
+	}
+	databaseRunnerJSON[json.RawMessage](f, viewer, "POST", path, input(), http.StatusForbidden)
+	if len(repo.admittedActors) != 0 {
+		t.Fatal("maintainer reached backup admission")
+	}
+	databaseRunnerJSON[domain.ProjectMember](f, owner, "POST", "/api/v1/project-members", app.ProjectMemberInput{ProjectID: project, Email: "viewer@example.local", Role: domain.RoleViewer}, http.StatusOK)
+
+	actor := notificationRuntimeCreateSourceActor(f, project)
+	accepted := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, actor.Token, "POST", path, input(), http.StatusAccepted)
+	if accepted.ID == "" || len(repo.admittedActors) != 1 || repo.admittedActors[0] != actor.ServiceAccount.ID || actor.ServiceAccount.ID == principal.ID {
+		t.Fatal("distinct scoped owner did not reach backup admission")
+	}
+	notificationRuntimeRevokeSourceActor(f, actor)
+	databaseRunnerJSON[json.RawMessage](f, actor.Token, "POST", path, input(), http.StatusUnauthorized)
+	if len(repo.admittedActors) != 1 {
+		t.Fatal("revoked actor reached another backup admission")
+	}
+	viewerRole := databaseRunnerJSON[domain.ProjectRole](f, viewer, "GET", "/api/v1/project-role?project_id="+project, nil, http.StatusOK)
+	if viewerRole.Role != domain.RoleViewer || !viewerRole.CanView || viewerRole.CanAdmin {
+		t.Fatal("source actor lifecycle changed viewer authority")
+	}
+	databaseRunnerJSON[[]domain.HostingDatabaseBackupOperation](f, viewer, "GET", path, nil, http.StatusOK)
 }
