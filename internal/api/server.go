@@ -249,7 +249,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
+	if hostingNotificationPath(r.URL.Path) || hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if hostingStorageRouteRecoveryPath(r.URL.Path) {
@@ -678,6 +678,9 @@ func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
+	case errors.Is(err, store.ErrBackupNotificationsUnavailable):
+		status = http.StatusServiceUnavailable
+		code = "backup_notifications_unavailable"
 	case errors.Is(err, store.ErrHostingDatabaseNetworkCaptureUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_database_network_capture_unavailable"
@@ -722,16 +725,17 @@ func writeError(w http.ResponseWriter, err error) {
 		code = "bad_request"
 	}
 	message := map[string]string{
-		"hosting_control_project_in_use": "this project controls a configured managed proxy and cannot be archived",
-		"hosting_restore_held":           "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
-		"unauthenticated":                "authentication is required",
-		"forbidden":                      "access is denied",
-		"rate_limited":                   "request rate is limited",
-		"invalid_credentials":            "invalid credentials",
-		"not_found":                      "resource not found",
-		"conflict":                       "request conflicts with current state",
-		"bad_request":                    "invalid request",
-		"internal_error":                 "internal server error",
+		"backup_notifications_unavailable": "backup notifications require NEROCD_PUBLIC_ORIGIN as an HTTPS origin and configured managed secrets",
+		"hosting_control_project_in_use":   "this project controls a configured managed proxy and cannot be archived",
+		"hosting_restore_held":             "restored hosting ownership remains held; trusted local journal and process recovery proof is not yet supported",
+		"unauthenticated":                  "authentication is required",
+		"forbidden":                        "access is denied",
+		"rate_limited":                     "request rate is limited",
+		"invalid_credentials":              "invalid credentials",
+		"not_found":                        "resource not found",
+		"conflict":                         "request conflicts with current state",
+		"bad_request":                      "invalid request",
+		"internal_error":                   "internal server error",
 		"hosting_database_network_capture_unavailable": "database capture requires compatible PostgreSQL metadata",
 		"unavailable":                         "managed secrets are unavailable",
 		"hosting_storage_archive_unavailable": "storage archives require qualified configuration and compatible PostgreSQL metadata",

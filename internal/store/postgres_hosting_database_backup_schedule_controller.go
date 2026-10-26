@@ -230,6 +230,13 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='failed',failure_code='interrupted',updated_at=$2 WHERE id=$1 AND state='queued' AND run_id IS NULL`, backup.ID, now); e != nil {
 				return e
 			}
+			receipt, receiptErr := notificationDirectReceipt(ctx, tx, "backup", backup.ID, "schedule_retired")
+			if receiptErr != nil {
+				return receiptErr
+			}
+			if e = notificationBackupFailure(ctx, tx, backup.ID, receipt); e != nil {
+				return e
+			}
 			if e = databaseBackupAudit(ctx, tx, backup.CreatedBy, backup.ID, "schedule_retired", backup.ProjectID); e != nil {
 				return e
 			}
@@ -249,6 +256,13 @@ func (s *PostgresStore) recoverDatabaseBackupScheduleOccurrences(ctx context.Con
 				return e
 			}
 			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='failed',ownership_held=false,failure_code='interrupted',updated_at=$2 WHERE id=$1 AND state='queued' AND run_id IS NULL`, backup.ID, now); e != nil {
+				return e
+			}
+			receipt, receiptErr := notificationDirectReceipt(ctx, tx, "backup", backup.ID, "schedule_retired")
+			if receiptErr != nil {
+				return receiptErr
+			}
+			if e = notificationBackupFailure(ctx, tx, backup.ID, receipt); e != nil {
 				return e
 			}
 			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_schedule_occurrences SET state='missed',reason=$2 WHERE id=$1`, v.id, reason); e != nil {

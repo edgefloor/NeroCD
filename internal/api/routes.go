@@ -3,6 +3,12 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-channels"},
+	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/notification-channels"},
+	{Method: http.MethodPut, Path: "/api/v1/projects/{project_id}/notification-channels/{channel_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/notification-channels/{channel_id}/tests"},
+	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries"},
+	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/retirement"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/credentials"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-retention"},
@@ -342,6 +348,12 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseConnectionState
 	case "/api/v1/projects/{project_id}/database-backup-targets":
 		return s.databaseBackupTargets
+	case "/api/v1/projects/{project_id}/notification-channels", "/api/v1/projects/{project_id}/notification-channels/{channel_id}":
+		return s.notificationChannels
+	case "/api/v1/projects/{project_id}/notification-channels/{channel_id}/tests":
+		return s.testNotificationChannel
+	case "/api/v1/projects/{project_id}/notification-deliveries", "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}":
+		return s.notificationDeliveries
 	case "/api/v1/projects/{project_id}/database-backup-targets/{target_id}":
 		return s.databaseBackupTargets
 	case "/api/v1/projects/{project_id}/database-backup-targets/{target_id}/validations":

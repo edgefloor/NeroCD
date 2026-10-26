@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -21,6 +24,7 @@ import (
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/githubpush"
+	"nerocd/internal/notificationtransport"
 	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 	"nerocd/web"
@@ -239,6 +243,45 @@ func loadRuntimeConfig(addr string) (runtimeConfig, error) {
 	return runtimeConfig{serverBootstrap: serverBootstrap, addr: addr, databaseURL: databaseURL, mode: mode, leaseTTL: ttl, reaperInterval: reaper, cookieSecure: cookieSecure, publicOrigin: publicOrigin, trustedProxyCIDRs: trustedProxyCIDRs, developmentMemory: developmentMemory, devBootstrapEmail: devBootstrapEmail, devBootstrapPassword: devBootstrapPassword, oidcProvider: oidcProvider, secretKeyring: secretKeyring, hostingGitHosts: hostingGitHosts, hostingBuildPolicy: hostingBuildPolicy, hostingStorageArchivePolicy: hostingStorageArchivePolicy}, nil
 }
 
+func configuredBackupNotificationSender() (*notificationtransport.Sender, error) {
+	p := notificationtransport.Policy{PrivateOrigins: map[string][]netip.Prefix{}}
+	if raw := os.Getenv("NEROCD_NOTIFICATION_PRIVATE_ORIGINS"); raw != "" {
+		var grants map[string][]string
+		if len(raw) > 32768 || json.Unmarshal([]byte(raw), &grants) != nil || len(grants) > 32 {
+			return nil, errors.New("notification private origin policy invalid")
+		}
+		for origin, ranges := range grants {
+			for _, value := range ranges {
+				prefix, err := netip.ParsePrefix(value)
+				if err != nil {
+					return nil, errors.New("notification private origin policy invalid")
+				}
+				p.PrivateOrigins[origin] = append(p.PrivateOrigins[origin], prefix)
+			}
+		}
+	}
+	if path := os.Getenv("NEROCD_NOTIFICATION_CA_FILE"); path != "" {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, errors.New("notification CA unavailable")
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(f, 1<<20+1))
+		closeErr := f.Close()
+		if readErr != nil || closeErr != nil || len(raw) > 1<<20 {
+			return nil, errors.New("notification CA invalid")
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(raw) {
+			return nil, errors.New("notification CA invalid")
+		}
+		p.RootCAs = roots
+	}
+	return notificationtransport.New(p)
+}
+
 func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), error) {
 	if cfg.databaseBackupLimits != nil && cfg.databaseBackupLimits.Validate() != nil {
 		return nil, nil, domain.ErrInvalidDatabaseBackup
@@ -255,6 +298,16 @@ func newService(ctx context.Context, cfg runtimeConfig) (*app.Service, func(), e
 			if err := pg.ConfigureDatabaseBackupLimits(*cfg.databaseBackupLimits); err != nil {
 				_ = pg.Close()
 				return nil, nil, err
+			}
+		}
+		if cfg.secretKeyring != nil {
+			sender, notificationErr := configuredBackupNotificationSender()
+			if notificationErr == nil {
+				notificationErr = pg.ConfigureBackupNotifications(cfg.secretKeyring, sender, cfg.publicOrigin)
+			}
+			if notificationErr != nil && !errors.Is(notificationErr, store.ErrBackupNotificationsUnavailable) {
+				_ = pg.Close()
+				return nil, nil, notificationErr
 			}
 		}
 		service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, SecretKeyring: cfg.secretKeyring, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Retention: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg})

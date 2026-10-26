@@ -4,6 +4,92 @@
  */
 
 export interface paths {
+    "/api/v1/projects/{project_id}/notification-channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        get: operations["listNotificationChannels"];
+        put?: never;
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        post: operations["createNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-channels/{channel_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        put: operations["updateNotificationChannel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-channels/{channel_id}/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        post: operations["testNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        get: operations["listNotificationDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store. */
+        get: operations["getNotificationDelivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database-backup-retention": {
         parameters: {
             query?: never;
@@ -4284,6 +4370,90 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Write-only whole configuration, encrypted at rest. Webhook uses only webhook_url; email requires SMTP host/port/security/from and current project member IDs. Username and password must both be supplied or both omitted. No read API returns configuration. */
+        NotificationConfiguration: {
+            webhook_url?: string;
+            smtp_host?: string;
+            smtp_port?: number;
+            /** @enum {string} */
+            smtp_security?: "starttls" | "tls";
+            smtp_username?: string;
+            smtp_password?: string;
+            /** Format: email */
+            from_address?: string;
+            recipient_user_ids?: string[];
+        };
+        NotificationChannelInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_generation: number;
+            name: string;
+            /** @enum {string} */
+            type: "email" | "webhook";
+            enabled: boolean;
+            events: ("backup_failed" | "upload_failed")[];
+            configuration?: components["schemas"]["NotificationConfiguration"];
+        };
+        NotificationChannel: {
+            id: string;
+            project_id: string;
+            name: string;
+            /** @enum {string} */
+            type: "email" | "webhook";
+            enabled: boolean;
+            /** Format: int64 */
+            generation: number;
+            events: ("backup_failed" | "upload_failed")[];
+            configured: boolean;
+            consecutive_failures: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        NotificationTestInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_generation: number;
+        };
+        NotificationAttempt: {
+            number: number;
+            /** @enum {string} */
+            state: "sending" | "delivered" | "failed" | "uncertain" | "suppressed";
+            failure_code: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string;
+        };
+        NotificationDelivery: {
+            id: string;
+            event_id: string;
+            project_id: string;
+            channel_id: string;
+            /** Format: int64 */
+            channel_generation: number;
+            /** @enum {string} */
+            event: "backup_failed" | "upload_failed" | "test";
+            /** @enum {string} */
+            source_kind: "backup" | "transfer" | "test";
+            source_id: string;
+            /** @enum {string} */
+            source_state: "failed" | "uncertain" | "test";
+            /** @enum {string} */
+            state: "pending" | "sending" | "delivered" | "failed" | "suppressed";
+            attempt_count: number;
+            /** @enum {integer} */
+            max_attempts: 5;
+            failure_code: string;
+            local_copy_available: boolean;
+            recovery_url: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            attempts?: components["schemas"]["NotificationAttempt"][];
+        };
         BackupTargetSelection: {
             target_id: string;
             /** Format: int64 */
@@ -8893,6 +9063,189 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listNotificationChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe notification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    createNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelInput"];
+            };
+        };
+        responses: {
+            /** @description Safe notification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    updateNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelInput"];
+            };
+        };
+        responses: {
+            /** @description Safe notification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    testNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationTestInput"];
+            };
+        };
+        responses: {
+            /** @description Safe notification result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listNotificationDeliveries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe notification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDelivery"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getNotificationDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe notification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     getHostingDatabaseBackupRetention: {
         parameters: {
             query?: never;

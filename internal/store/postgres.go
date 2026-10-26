@@ -13,11 +13,16 @@ import (
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
+	"nerocd/internal/notificationtransport"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store/sqlcgen"
 )
 
 // PostgresStore is a PostgreSQL-backed implementation of the store repositories.
 type PostgresStore struct {
+	notificationKeyring            *secretcrypto.Keyring
+	notificationSender             *notificationtransport.Sender
+	notificationPublicOrigin       string
 	databaseBackupLimits           *domain.HostingDatabaseBackupLimits
 	storageArchiveConfiguration    *storageArchiveConfiguration
 	serverBootstrapHandler         func(context.Context, string) error
@@ -94,6 +99,11 @@ func OpenPostgres(ctx context.Context, databaseURL string) (*PostgresStore, erro
 		pool.Close()
 		return nil, fmt.Errorf("database execution schema is incompatible: %w", err)
 	}
+	notificationsCompatible, err := queries.HostingNotificationSchemaCompatible(ctx)
+	if err != nil || notificationsCompatible == nil || !*notificationsCompatible {
+		pool.Close()
+		return nil, errors.New("backup notification schema is incompatible: apply migration 0080")
+	}
 	return &PostgresStore{pool: pool, queries: queries}, nil
 }
 
@@ -119,7 +129,11 @@ func (s *PostgresStore) SchemaCompatible(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("check database execution schema: %w", err)
 	}
-	return executionCompatible, nil
+	if !executionCompatible {
+		return false, nil
+	}
+	notificationsCompatible, err := s.queries.HostingNotificationSchemaCompatible(ctx)
+	return notificationsCompatible != nil && *notificationsCompatible, err
 }
 
 func maxSnapshotAge(value float64) float64 {

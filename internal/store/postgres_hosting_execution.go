@@ -68,6 +68,11 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 				remoteWarningAfter = time.Now().Add(time.Minute)
 			}
 			stopRemote()
+			notificationCtx, stopNotifications := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.recoverBackupNotifications(notificationCtx); err != nil && recoveryCtx.Err() == nil {
+				slog.Warn("backup notification recovery failed")
+			}
+			stopNotifications()
 			// Runtime plaintext retention progresses independently of dispatch
 			// recovery errors, transactions and their timeout budget.
 			purgeAttempt, stopPurge := context.WithTimeout(recoveryCtx, 3*time.Second)
