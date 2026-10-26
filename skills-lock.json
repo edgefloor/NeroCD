@@ -11,7 +11,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "a01cbd15a130c6ca534316e651a5971fb4910d998c06950c9be3be6df4371eb0"
+      "localHash": "4b6279fa922453f4799e5c144f4b661cca92ef5e2ef55691c9942c2d89ee57fc"
     },
     "go-concurrency": {
       "source": "cxuu/golang-skills",

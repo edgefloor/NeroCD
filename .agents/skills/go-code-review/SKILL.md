@@ -21,11 +21,14 @@ allowed-tools: Bash(bash:*)
 
 1. Run the applicable automated checks below to catch mechanical issues first
 2. Read the diff file-by-file; for each file, check the categories below in order
-3. Flag issues with specific line references and the rule name
+3. Before raising a finding, read the owning skill's conditions and exceptions. Cite a specific line and its behavioral consequence or an explicit repository rule
 4. After reviewing all files, re-read flagged items to verify they're genuine issues
 5. Summarize findings grouped by severity (must-fix, should-fix, nit)
 
-> **Validation**: After completing the review, re-read the diff once more to verify every flagged issue is real. Remove any finding you cannot justify with a specific line reference.
+The checklist summarizes the owning skills. It does not override their documented
+exceptions. A preference alone does not establish a defect.
+
+> **Validation**: After completing the review, re-read the diff once more to verify every flagged issue is real. Remove findings that lack a specific line and a behavioral consequence or explicit repository rule.
 
 ---
 
@@ -46,9 +49,9 @@ allowed-tools: Bash(bash:*)
 
 ## Error Handling
 
-- [ ] **Handle errors**: No discarded errors with `_`; handle, return, or (exceptionally) panic → [go-error-handling](../go-error-handling/SKILL.md)
+- [ ] **Handle errors**: Handle, return, or exceptionally panic. An intentionally ignored error needs a comment explaining why ignoring it is safe → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Error strings**: Lowercase, no punctuation (unless starting with proper noun/acronym) → [go-error-handling](../go-error-handling/SKILL.md)
-- [ ] **Error contracts**: In specification review, check required `errors.Is` and `errors.As` matching separately from safe external response text. `%v` prevents unwrapping but does not redact the cause's text → [go-error-handling](../go-error-handling/SKILL.md)
+- [ ] **Error contracts**: In specification review, check required `errors.Is` and `errors.As` matching. Document and test exposed matching causes that form the API contract. Check safe external response text separately; `%v` prevents unwrapping but does not redact the cause's text → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **In-band errors**: No magic values (-1, "", nil); use multiple returns with error or ok bool → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Indent error flow**: Handle errors first and return; keep normal path at minimal indentation → [go-error-handling](../go-error-handling/SKILL.md)
 - [ ] **Terminal outcomes**: A structured terminal failure stops follow-on work in both live and replayed paths; preserve usable partial data only when its contract explicitly permits it → [FAILURE-BOUNDARIES.md](references/FAILURE-BOUNDARIES.md)
@@ -77,7 +80,7 @@ allowed-tools: Bash(bash:*)
 
 ## Interfaces
 
-- [ ] **Interface location**: Define in consumer package, not implementor; return concrete types from producers → [go-interfaces](../go-interfaces/SKILL.md)
+- [ ] **Interface location**: Define interfaces in consumers and usually return concrete types from producers. Returning an interface is appropriate when it hides an implementation with no exported methods beyond that interface → [go-interfaces](../go-interfaces/SKILL.md)
 - [ ] **No premature interfaces**: Don't define before used; don't define "for mocking" on implementor side → [go-interfaces](../go-interfaces/SKILL.md)
 - [ ] **Receiver type**: Use pointer if mutating, has sync fields, or is large; value for small immutable types; don't mix → [go-interfaces](../go-interfaces/SKILL.md)
 
@@ -85,7 +88,7 @@ allowed-tools: Bash(bash:*)
 
 ## Data Structures
 
-- [ ] **Empty slices**: Prefer `var t []string` (nil) over `t := []string{}` (non-nil zero-length) → [go-data-structures](../go-data-structures/SKILL.md)
+- [ ] **Empty slices**: Prefer nil slices unless the contract needs a non-nil empty slice, such as JSON `[]` instead of `null` → [go-data-structures](../go-data-structures/SKILL.md)
 - [ ] **Copying**: Be careful copying structs with pointer/slice fields; don't copy `*T` methods' receivers by value → [go-data-structures](../go-data-structures/SKILL.md)
 
 ---
@@ -162,14 +165,33 @@ allowed-tools: Bash(bash:*)
 
 ## Automated Checks
 
-From the repository root, run automated pre-review checks:
+From the repository root, select the affected local package scope and the full
+base SHA before running the repository-pinned pre-review checks. For example,
+when reviewing runner runtime changes, replace `<full-base-sha>` with the agreed
+base and use:
 
 ```bash
-bash .agents/skills/go-code-review/scripts/pre-review.sh ./...         # text output
-bash .agents/skills/go-code-review/scripts/pre-review.sh --json ./...  # structured JSON output
+bash .agents/skills/go-code-review/scripts/pre-review.sh --base <full-base-sha> ./internal/runnerruntime/...
+bash .agents/skills/go-code-review/scripts/pre-review.sh --json --base <full-base-sha> ./internal/runnerruntime/...
 ```
 
-Or manually: `gofmt -l <path> && go vet ./... && golangci-lint run ./...`
+Use the package paths affected by the actual diff. The script checks formatting
+within that scope and uses the pinned linter for findings added since `--base`.
+Without `--base`, lint reports all findings in the selected scope. Without a
+package argument, the script selects product packages.
+
+Record each check's scope, base where applicable, candidate SHA, status, and
+bounded output or evidence location in `assets/review-template.md`. The pinned
+linter supplies the `govet` analyzer, so report standalone `go vet` as `not_run`
+with that explanation. Do not claim it ran separately. If the pinned linter is
+unavailable, `--force` explicitly permits standalone vet and reports lint as
+`not_run`; this does not satisfy a required lint check.
+
+Scoped pre-review does not replace required wider CI, integration, or release
+checks. Keep each required check and report a missing result as `not_run`.
+Preserve independent `code_hygiene` and `specification` reviews at the same
+candidate SHA, with `critical_security` or `cryptographic_correctness` when
+required by the changed scope. This checklist does not replace those lenses.
 
 Fix any issues before proceeding to the checklist above. For linter setup and configuration, see [go-linting](../go-linting/SKILL.md).
 
