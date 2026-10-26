@@ -62,7 +62,7 @@ try {
   requireActive();
   api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key } });
   requireActive();
-  browser = await chromium.launch({ headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+  browser = await chromium.launch({ headless: true, handleSIGINT: false, handleSIGTERM: false });
   requireActive();
   context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
   requireActive();
