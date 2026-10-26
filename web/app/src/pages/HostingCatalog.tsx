@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCatalog, installCatalog, type CatalogInstallInput, type CatalogInstallation } from "@/api/hosting-catalog";
 import { listDestinations } from "@/api/destinations";
 import { databaseRequestID } from "@/api/hosting-databases";
+import { ApiError } from "@/api/errors";
 import { revealManagedSecret } from "@/api/managed-secrets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,10 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         event.preventDefault();
         if (unavailable || (!attempt && (!selected || !destination)))
             return;
+        if (!attempt && (!name || name.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "") !== name || new TextEncoder().encode(name).length > 128 || /\p{Cc}/u.test(name))) {
+            setError("Enter a name with 1 to 128 UTF-8 bytes, without surrounding whitespace or control characters.");
+            return;
+        }
         const body = attempt ?? { request_id: databaseRequestID(), project_id: projectID, project_environment_id: environmentID, destination_id: destination, name, template_id: selected!.id as "linkding", immutable_version: selected!.immutable_version as CatalogInstallInput["immutable_version"] };
         setAttempt(body);
         setBusy(true);
@@ -67,9 +72,15 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
             setCreated(result);
             await client.invalidateQueries({ queryKey: ["hostingResources", projectID] });
         }
-        catch {
-            if (active.current)
-                setError("Installation unconfirmed. Retry keeps the same request and credentials. Refresh access if permission changed.");
+        catch (cause) {
+            if (active.current) {
+                if (cause instanceof ApiError && cause.status === 400) {
+                    setAttempt(undefined);
+                    setError("Installation settings were rejected. Correct the draft and submit a new request.");
+                } else {
+                    setError("Installation unconfirmed. Retry keeps the same request and credentials. Refresh access if permission changed.");
+                }
+            }
         }
         finally {
             if (active.current)

@@ -1,3 +1,4 @@
+import { ApiError } from "@/api/errors";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -55,4 +56,69 @@ test("response loss retains exact install identity and reveal is explicit", asyn
     await screen.findByText("private-value");
     fireEvent.click(screen.getByRole("button", { name: "Hide credentials" }));
     await waitFor(() => expect(screen.queryByText("private-value")).toBeNull());
+});
+
+async function selectCatalogDraft() {
+  setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), {
+    target: { value: "linkding" },
+  });
+  await screen.findByRole("option", { name: "Docker" });
+  fireEvent.change(screen.getByLabelText("Catalog destination"), {
+    target: { value: "dest" },
+  });
+}
+for (const name of ["   ", " surrounding ", "ár".repeat(65), "control\u0001"]) {
+  test(`invalid name is corrected before freezing a request: ${JSON.stringify(name)}`, async () => {
+    await selectCatalogDraft();
+    fireEvent.change(screen.getByLabelText("Installation name"), {
+      target: { value: name },
+    });
+    fireEvent.submit(
+      screen.getByRole("form", { name: "Install catalog application" }),
+    );
+    await screen.findByText(/Enter a name with 1 to 128 UTF-8 bytes/);
+    expect(api.installCatalog).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Installation name").disabled,
+    ).toBe(false);
+    fireEvent.change(screen.getByLabelText("Installation name"), {
+      target: { value: "Corrected" },
+    });
+    vi.mocked(api.installCatalog).mockRejectedValueOnce(
+      new Error("unconfirmed"),
+    );
+    fireEvent.submit(
+      screen.getByRole("form", { name: "Install catalog application" }),
+    );
+    await screen.findByRole("button", { name: "Retry same installation" });
+    expect(vi.mocked(api.installCatalog).mock.calls[0]![0].name).toBe(
+      "Corrected",
+    );
+  });
+}
+test("definitive validation rejection unlocks correction with a fresh request identity", async () => {
+  await selectCatalogDraft();
+  vi.mocked(api.installCatalog)
+    .mockRejectedValueOnce(new ApiError(400, "rejected", null))
+    .mockRejectedValueOnce(new Error("unconfirmed"));
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Install catalog application" }),
+  );
+  await screen.findByText(/Installation settings were rejected/);
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Installation name").disabled,
+  ).toBe(false);
+  const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
+  fireEvent.change(screen.getByLabelText("Installation name"), {
+    target: { value: "Corrected" },
+  });
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Install catalog application" }),
+  );
+  await screen.findByRole("button", { name: "Retry same installation" });
+  const second = vi.mocked(api.installCatalog).mock.calls[1]![0];
+  expect(second.name).toBe("Corrected");
+  expect(second.request_id).not.toBe(first.request_id);
 });
