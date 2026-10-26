@@ -308,6 +308,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileProxyJournal(config.Server, config.Token, config.RunnerID, journal, proxyReplayConfig, ctx); err != nil {
 		return fmt.Errorf("reconcile proxy journal: %w", err)
 	}
+	if err := reconcileStorageBackupRetentionJournal(ctx, config, journal); err != nil {
+		return err
+	}
 	if err := reconcileDatabaseBackupRetentionJournal(ctx, config, journal); err != nil {
 		return err
 	}
@@ -504,7 +507,11 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
+		if options.storageArchive == nil || !options.storageArchive.BackupRetention || domain.ValidateStorageBackupRetentionTask(claim.Run) != nil {
+			return errors.New("storage retention is unconfigured")
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
 		if options.database == nil || !options.database.BackupRetention || domain.ValidateDatabaseBackupRetentionTask(claim.Run) != nil {
 			return errors.New("backup retention execution not configured")
 		}
@@ -597,7 +604,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -616,6 +623,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	defer watcher.Stop()
 	reporter = startAttemptReporter(supervisor.Context(), supervisor, journal, server, token, claim.Run.ID, claim.Lease)
 	defer reporter.Stop()
+	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
+		return executeStorageBackupRetentionClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.storageArchive)
+	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
 		return executeDatabaseBackupRetentionClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}

@@ -41,14 +41,15 @@ type archiveCAS interface {
 // A single coordinator owns this synchronous engine. Close follows completion
 // of all its calls. No daemon helper is inferred, adopted or removed by Close.
 type storageArchiveEngine struct {
-	image      *imageEngine
-	config     StorageArchiveExecutionConfig
-	host       DatabaseEngineConfig
-	store      archiveCAS
-	temporary  *os.Root
-	dockerRoot string
-	prepared   domain.HostingStorageArchivePlan
-	stream     func(context.Context, []string, io.Reader, io.Writer) error
+	lastBackupProof *domain.BackupLocalCopyProof
+	image           *imageEngine
+	config          StorageArchiveExecutionConfig
+	host            DatabaseEngineConfig
+	store           archiveCAS
+	temporary       *os.Root
+	dockerRoot      string
+	prepared        domain.HostingStorageArchivePlan
+	stream          func(context.Context, []string, io.Reader, io.Writer) error
 }
 
 type archiveDockerCommand struct{ binary string }
@@ -631,7 +632,16 @@ func (e *storageArchiveEngine) Backup(ctx context.Context, p domain.HostingStora
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return blob, errStorageArchiveEngine
 	}
-	if _, err := e.store.Put(ctx, file, strings.TrimPrefix(summary.Digest, "sha256:"), summary.ArchiveBytes); err != nil {
+	e.lastBackupProof = nil
+	if owned, ok := e.store.(interface {
+		PutOwned(context.Context, io.Reader, string, int64) (artifactfs.Blob, artifactfs.Ownership, error)
+	}); ok {
+		_, proof, err := owned.PutOwned(ctx, file, strings.TrimPrefix(summary.Digest, "sha256:"), summary.ArchiveBytes)
+		if err != nil {
+			return blob, errStorageArchiveEngine
+		}
+		e.lastBackupProof = &domain.BackupLocalCopyProof{PoolID: proof.PoolID, Device: proof.Device, Inode: proof.Inode, Bytes: proof.Bytes, Created: proof.Created}
+	} else if _, err := e.store.Put(ctx, file, strings.TrimPrefix(summary.Digest, "sha256:"), summary.ArchiveBytes); err != nil {
 		return blob, errStorageArchiveEngine
 	}
 	return domain.HostingStorageArchiveBlob{BackupID: p.BackupID, DestinationID: p.DestinationID, DaemonID: p.Helper.DaemonID, SHA256: summary.Digest, SizeBytes: summary.ArchiveBytes, Format: summary.Format}, nil
@@ -711,3 +721,11 @@ func (e *storageArchiveEngine) helperPresent(ctx context.Context, id string) (bo
 }
 
 var _ storageArchiveExecutionEngine = (*storageArchiveEngine)(nil)
+
+func (e *storageArchiveEngine) BackupCopyProof() *domain.BackupLocalCopyProof {
+	if e.lastBackupProof == nil {
+		return nil
+	}
+	p := *e.lastBackupProof
+	return &p
+}

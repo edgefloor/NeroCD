@@ -14,6 +14,7 @@ import (
 // archives. The helper descriptor must come from an explicitly qualified local
 // image; its presence alone does not qualify the runner or advertise capability.
 type StorageArchiveExecutionConfig struct {
+	BackupRetention                           bool
 	RemoteBackups                             bool
 	RemoteEndpoints, RemoteCIDRs              []string
 	RemoteFixtureOrigin                       string

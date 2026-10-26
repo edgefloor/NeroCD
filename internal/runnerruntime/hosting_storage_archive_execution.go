@@ -95,6 +95,13 @@ type archiveCoordinator struct {
 func (x *archiveCoordinator) progress(ctx context.Context, phase, suffix string, writers []domain.HostingStorageArchiveWriterState, helper string, blob *domain.HostingStorageArchiveBlob, verified bool) error {
 	entry := archiveRecord(x.j, x.a, x.lease, x.s, x.p, "progress", suffix)
 	request := domain.HostingStorageArchiveProgress{HostingAuthority: x.a, ReceiptID: entry.ID, PlanHash: x.p.Hash, Phase: phase, Writers: writers, HelperContainerID: helper, Blob: blob, RestoreVerified: verified}
+	if phase == "archive_published" {
+		if owned, ok := x.e.(interface {
+			BackupCopyProof() *domain.BackupLocalCopyProof
+		}); ok {
+			request.LocalCopy = owned.BackupCopyProof()
+		}
+	}
 	if entry.Progress != nil && domain.HostingDocumentHash(entry.Progress) != domain.HostingDocumentHash(request) {
 		return errors.New("storage archive progress identity changed")
 	}

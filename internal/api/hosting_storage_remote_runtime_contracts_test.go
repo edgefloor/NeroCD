@@ -101,15 +101,26 @@ func hostingStorageRemoteRuntimeCopy(w http.ResponseWriter, r *httptest.Response
 // The proxy forwards real signed S3 traffic. Faults alter only object GET bytes;
 // policy denial and successful writes are decided by the pinned Silo server.
 type hostingStorageRemoteRuntimeObservation struct {
-	mu         sync.Mutex
-	object     string
-	fault      string
-	gets, puts int
+	mu                  sync.Mutex
+	object              string
+	fault               string
+	gets, puts          int
+	retentionDeletes    map[string]int
+	unconditionedDelete bool
 }
 
 func (o *hostingStorageRemoteRuntimeObservation) observe(r *http.Request) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if r.Method == "DELETE" && strings.Contains(r.URL.Path, "/nerocd/storage/") && !strings.Contains(r.URL.Path, "retention-probes/") {
+		if o.retentionDeletes == nil {
+			o.retentionDeletes = map[string]int{}
+		}
+		o.retentionDeletes[r.URL.Path]++
+		if r.Header.Get("If-Match") == "" || r.Header.Get("If-Match") == "*" {
+			o.unconditionedDelete = true
+		}
+	}
 	if r.URL.Path == o.object {
 		if r.Method == "GET" {
 			o.gets++

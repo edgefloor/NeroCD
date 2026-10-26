@@ -99,6 +99,8 @@ func (p HostingStorageBackupTransferPlan) Validate() error {
 }
 
 type HostingStorageBackupTransferMutation struct {
+	LocalCopy  *BackupLocalCopyProof  `json:"local_copy,omitempty"`
+	RemoteCopy *BackupRemoteCopyProof `json:"remote_copy,omitempty"`
 	HostingAuthority
 	ReceiptID   string `json:"receipt_id"`
 	PlanHash    string `json:"plan_hash"`
@@ -108,6 +110,9 @@ type HostingStorageBackupTransferMutation struct {
 }
 
 func (in HostingStorageBackupTransferMutation) Validate() error {
+	if in.LocalCopy != nil && (in.LocalCopy.Validate() != nil || in.Phase != "complete" || in.RemoteCopy != nil) || in.RemoteCopy != nil && (in.RemoteCopy.Validate() != nil || in.Phase != "complete") {
+		return ErrInvalidStorageBackupRemote
+	}
 	a := in.HostingAuthority
 	if !validRuntimeReferenceID(a.OperationID) || a.RunID != "storage_transfer_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(in.ReceiptID) || !imageSHA256.MatchString(in.PlanHash) || !ValidBackupRemoteFailure(in.FailureCode) || len(in.DaemonID) < 1 || len(in.DaemonID) > 256 {
 		return ErrInvalidStorageBackupRemote
@@ -122,6 +127,15 @@ func (in HostingStorageBackupTransferMutation) Validate() error {
 func ValidateStorageBackupTransferTask(r TaskRun) error {
 	s := r.RunSpec
 	if s.Type != RunTypeStorageBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "storage_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download") || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
+		return ErrInvalidStorageBackupRemote
+	}
+	return nil
+}
+
+// ValidateStorageTransferCopyProof binds additive deletion ownership to the
+// immutable transfer mode and blob. Legacy nil proofs remain restorable.
+func ValidateStorageTransferCopyProof(p HostingStorageBackupTransferPlan, in HostingStorageBackupTransferMutation) error {
+	if in.RemoteCopy != nil && (p.Operation.Mode != "upload" || in.Phase != "complete") || in.LocalCopy != nil && (p.Operation.Mode != "download" || in.Phase != "complete" || p.Operation.Blob == nil || in.LocalCopy.Bytes != p.Operation.Blob.SizeBytes) {
 		return ErrInvalidStorageBackupRemote
 	}
 	return nil

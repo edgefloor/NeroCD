@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	StorageBackupRetention                                                                                                       bool
 	DatabaseBackupRetention                                                                                                      bool
 	RemoteStorageBackups                                                                                                         bool
 	RemoteDatabaseBackups                                                                                                        bool
@@ -257,6 +258,14 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	for _, capability := range result.Capabilities {
 		storageRemoteCap = storageRemoteCap || capability == domain.HostingStorageBackupRemoteCapability
 		storageRemoteTask = storageRemoteTask || capability == domain.RunTypeStorageBackupTransfer
+	}
+	storageRetentionCap, storageRetentionTask := false, false
+	for _, capability := range result.Capabilities {
+		storageRetentionCap = storageRetentionCap || capability == domain.HostingStorageBackupRetentionCapability
+		storageRetentionTask = storageRetentionTask || capability == domain.RunTypeStorageBackupRetention
+	}
+	if storageRetentionCap != options.StorageBackupRetention || storageRetentionTask != options.StorageBackupRetention || storageRetentionCap && (!options.StorageArchive || shellCapable) {
+		return "", errors.New("storage retention capability does not match configuration")
 	}
 	if storageRemoteCap != options.RemoteStorageBackups || storageRemoteTask != options.RemoteStorageBackups || storageRemoteCap && (!options.StorageArchive || shellCapable) {
 		return "", errors.New("storage remote backup capability mismatch")

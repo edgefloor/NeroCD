@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"nerocd/internal/artifactfs"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
@@ -71,9 +72,11 @@ func executeStorageBackupTransferWithEngine(s *attemptSupervisor, j *runner.Atte
 		return nil
 	}
 	var remote *backupRemoteS3
+	var localCopy *domain.BackupLocalCopyProof
+	var remoteCopy *domain.BackupRemoteCopyProof
 	record := func(phase, failure string) (runner.JournalStorageBackupTransfer, error) {
 		id := attemptMutationKey("storageremote", a.LeaseID, a.Attempt, phase)
-		request := domain.HostingStorageBackupTransferMutation{HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, FailureCode: failure, DaemonID: daemon}
+		request := domain.HostingStorageBackupTransferMutation{LocalCopy: localCopy, RemoteCopy: remoteCopy, HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, FailureCode: failure, DaemonID: daemon}
 		return j.AppendStorageBackupTransfer(runner.JournalStorageBackupTransfer{ID: id, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, s), Plan: p, Request: request, CreatedAt: time.Now().UTC()})
 	}
 	policy, err := storageBackupRemotePolicy(*config)
@@ -147,7 +150,7 @@ func executeStorageBackupTransferWithEngine(s *attemptSupervisor, j *runner.Atte
 	} else if !storageRemoteReceiptMatches(p, intent.Request, out) {
 		return errBackupRemoteHeld
 	}
-	err = executeStorageRemoteObject(ctx, e, remote, p, before)
+	err = executeStorageRemoteObjectOwned(ctx, e, remote, p, before, &localCopy, &remoteCopy)
 	phase, failure := "complete", ""
 	if err != nil {
 		phase = "failed"
@@ -181,7 +184,10 @@ func executeStorageBackupTransferWithEngine(s *attemptSupervisor, j *runner.Atte
 	return j.AckStorageBackupTransfer(entry.ID)
 }
 
-func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, remote *backupRemoteS3, p domain.HostingStorageBackupTransferPlan, before func(context.Context) error) (err error) {
+func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, remote *backupRemoteS3, p domain.HostingStorageBackupTransferPlan, before func(context.Context) error) error {
+	return executeStorageRemoteObjectOwned(ctx, e, remote, p, before, nil, nil)
+}
+func executeStorageRemoteObjectOwned(ctx context.Context, e *storageArchiveEngine, remote *backupRemoteS3, p domain.HostingStorageBackupTransferPlan, before func(context.Context) error, local **domain.BackupLocalCopyProof, remoteProof **domain.BackupRemoteCopyProof) (err error) {
 	if before(ctx) != nil {
 		return backupRemoteError("authority_denied")
 	}
@@ -208,7 +214,11 @@ func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, re
 		if err != nil || summary.Digest != blob.SHA256 || summary.ArchiveBytes != blob.SizeBytes {
 			return backupRemoteError("archive_unavailable")
 		}
-		return remote.storageUpload(ctx, p.Target.Target.Bucket, p.ObjectKey, blob, file)
+		proof, err := remote.storageUploadOwned(ctx, p.Target.Target.Bucket, p.ObjectKey, blob, file)
+		if err == nil && remoteProof != nil {
+			*remoteProof = proof
+		}
+		return err
 	}
 	name, err := storageRemotePartialName(p.Operation.ID)
 	if err != nil {
@@ -250,7 +260,17 @@ func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, re
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
-	if _, err = e.store.Put(ctx, file, key, blob.SizeBytes); err != nil {
+	if owned, ok := e.store.(interface {
+		PutOwned(context.Context, io.Reader, string, int64) (artifactfs.Blob, artifactfs.Ownership, error)
+	}); ok {
+		_, proof, putErr := owned.PutOwned(ctx, file, key, blob.SizeBytes)
+		if putErr != nil {
+			return backupRemoteError("archive_unavailable")
+		}
+		if local != nil {
+			*local = &domain.BackupLocalCopyProof{PoolID: proof.PoolID, Device: proof.Device, Inode: proof.Inode, Bytes: proof.Bytes, Created: proof.Created}
+		}
+	} else if _, err = e.store.Put(ctx, file, key, blob.SizeBytes); err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
 	return nil

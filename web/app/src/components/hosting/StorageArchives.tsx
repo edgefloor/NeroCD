@@ -1,3 +1,4 @@
+import { StorageBackupRetention } from "./StorageBackupRetention";
 import { StorageBackupSchedules } from "./StorageBackupSchedules";
 import {
   DatabaseBackupDestinations,
@@ -405,7 +406,25 @@ export function StorageArchives({
           disabled={blocked || !!attempt}
         />
       ) : null}
-      <StorageBackupSchedules key={key.join(":")} scope={scope} resource={{...resource,generation}} owner={owner} blocked={blocked} remoteTarget={remoteTarget} onRemoteTarget={setRemoteTarget} onDenied={()=>setLost(true)} onSelectBackup={setSelected} />
+      <StorageBackupRetention
+        key={"retention:" + key.join(":")}
+        scope={scope}
+        resource={{ ...resource, generation }}
+        owner={owner}
+        blocked={blocked}
+        onDenied={() => setLost(true)}
+      />
+      <StorageBackupSchedules
+        key={key.join(":")}
+        scope={scope}
+        resource={{ ...resource, generation }}
+        owner={owner}
+        blocked={blocked}
+        remoteTarget={remoteTarget}
+        onRemoteTarget={setRemoteTarget}
+        onDenied={() => setLost(true)}
+        onSelectBackup={setSelected}
+      />
       <Button
         type="button"
         variant="outline"
@@ -553,6 +572,19 @@ export function StorageArchives({
           <dd>{backup.data.blob?.sha256 ?? "No published artifact"}</dd>
           <dt>Local artifact bytes</dt>
           <dd>{backup.data.blob?.size_bytes ?? "unknown"}</dd>
+          <dt>Copy availability</dt>
+          <dd>
+            <ul>
+              {backup.data.copies?.map((c) => (
+                <li key={c.copy_id}>
+                  {c.location}: {c.availability}
+                  {c.protected_reasons.length
+                    ? ` · ${c.protected_reasons.join(", ")}`
+                    : ""}
+                </li>
+              ))}
+            </ul>
+          </dd>
         </dl>
       ) : null}
       {selected ? (

@@ -62,12 +62,18 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			stopStorageSchedule()
 
 			retentionCtx, stopRetention := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.ReconcileStorageBackupRetention(retentionCtx); err != nil && recoveryCtx.Err() == nil {
+				slog.Warn("storage retention publication reconciliation failed")
+			}
 			if err := s.ReconcileDatabaseBackupRetention(retentionCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(retentionWarningAfter) {
 				slog.Warn("backup retention publication reconciliation failed")
 				retentionWarningAfter = time.Now().Add(time.Minute)
 			}
 			stopRetention()
 			remoteCtx, stopRemote := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.recoverStorageBackupRetentions(remoteCtx); err != nil && recoveryCtx.Err() == nil {
+				slog.Warn("storage retention recovery failed")
+			}
 			if err := s.recoverDatabaseBackupRetentions(remoteCtx); err != nil && recoveryCtx.Err() == nil {
 				slog.Warn("backup retention dispatch recovery failed")
 			}
@@ -1762,6 +1768,9 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
+		return s.storageBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
 		return s.databaseBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
 	}

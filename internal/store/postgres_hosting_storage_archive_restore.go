@@ -67,6 +67,9 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
+		if err := storageRetentionArchiveAdmission(ctx, tx, backupID, in.RemoteSource); err != nil {
+			return zero, err
+		}
 		original, found, err := archiveOperation(ctx, tx, backup.OperationID)
 		if err != nil {
 			return zero, err

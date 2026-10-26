@@ -274,6 +274,40 @@ func archiveLoadBackup(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.Hosting
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return b, err
 	}
+	rows, e := sqlcgen.New(db).StorageRetentionBackupCopies(ctx, row.ID)
+	if e != nil {
+		return b, e
+	}
+	b.Copies = []domain.BackupRetentionItem{}
+	for _, row := range rows {
+		var copy domain.StorageBackupRetentionCopy
+		if json.Unmarshal(row.Body, &copy) != nil {
+			return b, ErrConflict
+		}
+		item := copy.Item
+		item.Availability = row.Availability
+		item.Selected = false
+		item.ProtectedReasons = []string{}
+		if item.Availability == "unproven" {
+			item.ProtectedReasons = append(item.ProtectedReasons, "unproven_ownership")
+		}
+		if row.Superseded {
+			item.ProtectedReasons = append(item.ProtectedReasons, "superseded")
+		}
+		b.Copies = append(b.Copies, item)
+	}
+	if b.Blob != nil && b.State == "succeeded" {
+		if len(rows) == 0 {
+			b.Copies = append(b.Copies, domain.BackupRetentionItem{CopyID: "sbc_local_" + b.ID, BackupID: b.ID, Location: "local", Digest: b.Blob.SHA256, Bytes: b.Blob.SizeBytes, CreatedAt: b.CreatedAt, Availability: "unproven", ProtectedReasons: []string{"unproven_ownership"}})
+		}
+		legacy, err := sqlcgen.New(db).StorageRetentionLegacyTransfersForBackup(ctx, &b.ID)
+		if err != nil {
+			return b, err
+		}
+		for _, id := range legacy {
+			b.Copies = append(b.Copies, domain.BackupRetentionItem{CopyID: "sbc_remote_" + id, BackupID: b.ID, TransferID: id, Location: "remote", Digest: b.Blob.SHA256, Bytes: b.Blob.SizeBytes, CreatedAt: b.CreatedAt, Availability: "unproven", ProtectedReasons: []string{"unproven_ownership"}})
+		}
+	}
 	return b, nil
 }
 

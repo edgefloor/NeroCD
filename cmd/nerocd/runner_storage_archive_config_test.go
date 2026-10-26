@@ -98,3 +98,32 @@ func TestRunnerStorageArchiveCapabilityNeverFollowsDatabaseFlag(t *testing.T) {
 		t.Fatal("legacy capability changed")
 	}
 }
+
+func TestRunnerStorageRetentionOptInIsIndependent(t *testing.T) {
+	path, raw := runnerArchiveFile(t)
+	c, e := loadRunnerStorageArchiveConfig(path, true, "")
+	if e != nil || c.BackupRetention {
+		t.Fatal("retention enabled by archive alone", e)
+	}
+	var config map[string]any
+	if json.Unmarshal(raw, &config) != nil {
+		t.Fatal("fixture config")
+	}
+	config["backup_retention"] = true
+	body, _ := json.Marshal(config)
+	if e = os.WriteFile(path, body, 0600); e != nil {
+		t.Fatal(e)
+	}
+	c, e = loadRunnerStorageArchiveConfig(path, true, "")
+	if e != nil || !c.BackupRetention || c.RemoteBackups {
+		t.Fatal("storage retention depended on remote or DB execution", e)
+	}
+	config["backup_retention"] = "true"
+	body, _ = json.Marshal(config)
+	if e = os.WriteFile(path, body, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = loadRunnerStorageArchiveConfig(path, true, ""); e == nil {
+		t.Fatal("untyped retention opt-in accepted")
+	}
+}

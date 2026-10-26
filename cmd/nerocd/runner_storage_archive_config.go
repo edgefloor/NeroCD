@@ -11,6 +11,7 @@ import (
 )
 
 type runnerStorageArchiveConfigFile struct {
+	BackupRetention     bool                               `json:"backup_retention,omitempty"`
 	RemoteBackups       bool                               `json:"remote_backups,omitempty"`
 	RemoteEndpoints     []string                           `json:"remote_endpoints,omitempty"`
 	RemoteCIDRs         []string                           `json:"remote_cidrs,omitempty"`
@@ -53,7 +54,7 @@ func loadRunnerStorageArchiveConfig(path string, execute bool, complete string) 
 	if f.ArtifactRoot == f.TemporaryRoot || strings.HasPrefix(f.ArtifactRoot, f.TemporaryRoot+"/") || strings.HasPrefix(f.TemporaryRoot, f.ArtifactRoot+"/") {
 		return nil, invalid
 	}
-	return &runnerruntime.StorageArchiveExecutionConfig{RemoteBackups: f.RemoteBackups, RemoteEndpoints: f.RemoteEndpoints, RemoteCIDRs: f.RemoteCIDRs, RemoteFixtureOrigin: f.RemoteFixtureOrigin, ArtifactRoot: f.ArtifactRoot, TemporaryRoot: f.TemporaryRoot, DockerBinary: f.DockerBinary, Helper: f.Helper}, nil
+	return &runnerruntime.StorageArchiveExecutionConfig{BackupRetention: f.BackupRetention, RemoteBackups: f.RemoteBackups, RemoteEndpoints: f.RemoteEndpoints, RemoteCIDRs: f.RemoteCIDRs, RemoteFixtureOrigin: f.RemoteFixtureOrigin, ArtifactRoot: f.ArtifactRoot, TemporaryRoot: f.TemporaryRoot, DockerBinary: f.DockerBinary, Helper: f.Helper}, nil
 }
 
 func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []string) ([]string, error) {

@@ -14,6 +14,16 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/notification-channels/{channel_id}/tests"},
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries"},
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/retirement"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/credentials"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-retention"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/storage-backup-retention"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backup-retention/previews"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backup-retention/executions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-retention/executions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-retention/executions/{execution_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/mutation"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/retirement"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-backup-retention/credentials"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-retention"},
@@ -313,6 +323,22 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/runners/hosting/storage-backup-retention/retirement":
+		return s.runnerStorageBackupRetentionRetirement
+	case "/api/v1/runners/hosting/storage-backup-retention/credentials":
+		return s.runnerBackupRemoteCredentials
+	case "/api/v1/resources/{id}/storage-backup-retention":
+		return s.hostingStorageBackupRetention
+	case "/api/v1/resources/{id}/storage-backup-retention/previews":
+		return s.previewStorageBackupRetention
+	case "/api/v1/resources/{id}/storage-backup-retention/executions":
+		return s.executeStorageBackupRetention
+	case "/api/v1/resources/{id}/storage-backup-retention/executions/{execution_id}":
+		return s.getStorageBackupRetentionExecution
+	case "/api/v1/runners/hosting/storage-backup-retention/plan":
+		return s.runnerStorageBackupRetentionPlan
+	case "/api/v1/runners/hosting/storage-backup-retention/mutation":
+		return s.runnerStorageBackupRetentionMutation
 	case "/api/v1/runners/hosting/database-backup-retention/retirement":
 		return s.runnerDatabaseBackupRetentionRetirement
 	case "/api/v1/runners/hosting/database-backup-retention/credentials":

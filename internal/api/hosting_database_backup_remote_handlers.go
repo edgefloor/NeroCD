@@ -33,6 +33,12 @@ func (s *Server) runnerBackupRemoteCredentials(w http.ResponseWriter, r *http.Re
 		return
 	}
 	storageRoute := strings.HasPrefix(r.URL.Path, "/api/v1/runners/hosting/storage-backup-transfer/")
+	storageRetentionRoute := strings.HasPrefix(r.URL.Path, "/api/v1/runners/hosting/storage-backup-retention/")
+	storageRetentionAuthority := in.Authority.RunID == "storage_retention_"+in.Authority.OperationID
+	if storageRetentionRoute != storageRetentionAuthority {
+		writeErrorEnvelope(w, 400, "invalid_request", "credential family mismatch")
+		return
+	}
 	storageAuthority := in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID
 	if storageRoute != storageAuthority {
 		writeErrorEnvelope(w, 400, "invalid_request", "credential family mismatch")
@@ -48,7 +54,7 @@ func (s *Server) runnerBackupRemoteCredentials(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var out *domain.BackupRemoteCredentials
-	if r.URL.Path == "/api/v1/runners/hosting/database-backup-retention/credentials" {
+	if storageRetentionRoute || r.URL.Path == "/api/v1/runners/hosting/database-backup-retention/credentials" {
 		out, err = s.app.RunnerBackupRetentionCredentials(r.Context(), in, token)
 	} else {
 		out, err = s.app.RunnerBackupRemoteCredentials(r.Context(), in, token)

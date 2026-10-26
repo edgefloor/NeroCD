@@ -329,7 +329,10 @@ func (s *PostgresStore) StorageArchiveProgress(ctx context.Context, runner strin
 			if err != nil {
 				return err
 			}
-			return sqlcgen.New(tx).InsertStorageArchiveBlob(ctx, sqlcgen.InsertStorageArchiveBlobParams{BackupID: op.StorageArchive.BackupID, OperationID: op.ID, Body: raw})
+			if err := sqlcgen.New(tx).InsertStorageArchiveBlob(ctx, sqlcgen.InsertStorageArchiveBlobParams{BackupID: op.StorageArchive.BackupID, OperationID: op.ID, Body: raw}); err != nil {
+				return err
+			}
+			return storageRetentionRegisterArchive(ctx, tx, op, *in.Blob, in.LocalCopy)
 		}
 		return nil
 	})
@@ -416,6 +419,11 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 				return err
 			}
 		}
+		if p.Mode == "backup" && r.ArchiveOutcome == "succeeded" && clearHold {
+			if err := storageRetentionPublication(ctx, tx, p.SourceStorage.ResourceID, "archive_"+p.BackupID); err != nil {
+				return err
+			}
+		}
 		state := "failed"
 		leaseState := domain.RunFailed
 		if r.Uncertain || !resume {
@@ -455,6 +463,9 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 				var blob domain.HostingStorageArchiveBlob
 				if json.Unmarshal(raw, &blob) != nil {
 					return ErrConflict
+				}
+				if e = storageRetentionPublication(ctx, tx, original.StorageArchive.Plan.SourceStorage.ResourceID, "archive_"+p.BackupID); e != nil {
+					return e
 				}
 				if e = s.storageRemoteLocalComplete(ctx, tx, original.StorageArchive.Plan, original.CreatedBy, blob); e != nil {
 					return e

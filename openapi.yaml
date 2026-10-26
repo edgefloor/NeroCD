@@ -8226,6 +8226,491 @@ paths:
         ]
       }
     }
+  /api/v1/resources/{id}/storage-backup-retention:
+    {
+      "get": {
+        "operationId": "getHostingStorageBackupRetention",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HostingStorageBackupRetentionPolicy"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveHostingStorageBackupRetention",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/storage-backup-retention/previews:
+    {
+      "post": {
+        "operationId": "previewHostingStorageBackupRetention",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionPreviewInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/storage-backup-retention/executions:
+    {
+      "post": {
+        "operationId": "executeHostingStorageBackupRetention",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionExecutionInput"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listHostingStorageBackupRetentionExecutions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/storage-backup-retention/executions/{execution_id}:
+    {
+      "get": {
+        "operationId": "getHostingStorageBackupRetentionExecution",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-retention/retirement:
+    {
+      "post": {
+        "operationId": "getRunnerStorageBackupRetentionRetirement",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionRetirement"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionRetirementInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-retention/plan:
+    {
+      "post": {
+        "operationId": "getRunnerStorageBackupRetentionPlan",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingAuthority"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-retention/mutation:
+    {
+      "post": {
+        "operationId": "recordRunnerStorageBackupRetentionMutation",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionMutation"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/runners/hosting/storage-backup-retention/credentials:
+    {
+      "post": {
+        "operationId": "deliverRunnerStorageBackupRetentionCredentials",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Saved exact retention result; no paths or credentials in public views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRemoteCredentialsWire"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Revision, authority, inventory or reservation conflict"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRemoteCredentialRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -9293,7 +9778,9 @@ components:
             "type": "string",
             "enum": [
               "hosting_postgresql_remote_backup_credentials.v1",
-              "hosting_postgresql_backup_retention_credentials.v1"
+              "hosting_postgresql_backup_retention_credentials.v1",
+              "hosting_storage_remote_backup_credentials.v1",
+              "hosting_storage_backup_retention_credentials.v1"
             ]
           },
           "request": {
@@ -14488,6 +14975,9 @@ components:
           },
           "restore_verified": {
             "type": "boolean"
+          },
+          "local_copy": {
+            "$ref": "#/components/schemas/BackupLocalCopyProof"
           }
         }
       }
@@ -14726,6 +15216,12 @@ components:
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionItem"
+            }
           }
         }
       }
@@ -18253,7 +18749,9 @@ components:
                 "unsupported_conditional",
                 "reserved",
                 "unavailable",
-                "batch_limit"
+                "batch_limit",
+                "active_or_recovery",
+                "superseded"
               ]
             }
           }
@@ -18865,7 +19363,6 @@ components:
           }
         }
       }
-
     HostingStorageBackupTransfer:
       {
         "type": "object",
@@ -19185,9 +19682,647 @@ components:
             "type": "string",
             "minLength": 1,
             "maxLength": 256
+          },
+          "local_copy": {
+            "$ref": "#/components/schemas/BackupLocalCopyProof"
+          },
+          "remote_copy": {
+            "$ref": "#/components/schemas/BackupRemoteCopyProof"
           }
         }
       }
-
     HostingStorageBackupTransferRetryInput:
       {"$ref":"#/components/schemas/HostingDatabaseBackupTransferRetryInput"}
+    HostingStorageBackupRetentionInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_revision",
+          "expected_resource_generation",
+          "enabled",
+          "automatic",
+          "local",
+          "remote"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "automatic": {
+            "type": "boolean"
+          },
+          "local": {
+            "$ref": "#/components/schemas/BackupRetentionLimits"
+          },
+          "remote": {
+            "$ref": "#/components/schemas/BackupRetentionLimits"
+          }
+        }
+      }
+    HostingStorageBackupRetentionPolicy:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "project_id",
+          "resource_id",
+          "revision",
+          "resource_generation",
+          "enabled",
+          "automatic",
+          "local",
+          "remote",
+          "created_at",
+          "updated_at",
+          "storage",
+          "binding_id",
+          "destination_id"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "const": "owned-upload.backup-retention.v1"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resource_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "automatic": {
+            "type": "boolean"
+          },
+          "local": {
+            "$ref": "#/components/schemas/BackupRetentionLimits"
+          },
+          "remote": {
+            "$ref": "#/components/schemas/BackupRetentionLimits"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          }
+        }
+      }
+    HostingStorageBackupRetentionPreviewInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      }
+    HostingStorageBackupRetentionPreview:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "resource_id",
+          "policy_revision",
+          "plan_hash",
+          "local_reference_at",
+          "remote_reference_at",
+          "selection_truncated",
+          "items",
+          "created_at",
+          "evaluated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "const": "owned-upload.backup-retention.v1"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "local_reference_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote_reference_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selection_truncated": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionItem"
+            },
+            "maxItems": 1000
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "evaluated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    HostingStorageBackupRetentionExecutionInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "preview_id",
+          "expected_policy_revision",
+          "expected_plan_hash"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "preview_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expected_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    HostingStorageBackupRetentionExecution:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "resource_id",
+          "preview_id",
+          "policy_revision",
+          "plan_hash",
+          "state",
+          "reservation_held",
+          "local_state",
+          "remote_state",
+          "items",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "const": "owned-upload.backup-retention.v1"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "preview_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "reservation_held": {
+            "type": "boolean"
+          },
+          "local_state": {
+            "type": "string",
+            "enum": [
+              "not_selected",
+              "pending",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "remote_state": {
+            "type": "string",
+            "enum": [
+              "not_selected",
+              "pending",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionExecutionItem"
+            },
+            "maxItems": 100
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    StorageBackupRetentionCopy:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item",
+          "runner_id",
+          "destination_id",
+          "server_id",
+          "daemon_id",
+          "identity_hash",
+          "storage"
+        ],
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/BackupRetentionItem"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "destination_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "server_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "daemon_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "identity_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "local": {
+            "$ref": "#/components/schemas/BackupLocalCopyProof"
+          },
+          "remote": {
+            "$ref": "#/components/schemas/BackupRemoteCopyProof"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupTargetSnapshot"
+          },
+          "object_key": {
+            "type": "string"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/HostingStorageRef"
+          }
+        }
+      }
+    HostingStorageBackupRetentionRetirementInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "plan_hash"
+        ]
+      }
+    HostingStorageBackupRetentionRetirement:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "next_attempt": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "replay_only": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "plan_hash",
+          "next_attempt",
+          "replay_only"
+        ]
+      }
+    HostingStorageBackupRetentionPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "actor_id",
+          "runner_id",
+          "copies",
+          "timeout_seconds",
+          "hash"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+          },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "runner_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageBackupRetentionCopy"
+            },
+            "maxItems": 100,
+            "minItems": 1
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "hash": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionExecutionItem"
+            }
+          }
+        }
+      }
+    HostingStorageBackupRetentionMutation:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "receipt_id",
+          "plan_hash",
+          "copy_id",
+          "phase",
+          "failure_code"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "fence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "receipt_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "copy_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "intent",
+              "deleted",
+              "absent",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "failure_code": {
+            "type": "string",
+            "enum": [
+              "",
+              "authority_denied",
+              "scope_changed",
+              "object_changed",
+              "conditional_unsupported",
+              "interrupted",
+              "storage_unavailable",
+              "remote_unavailable"
+            ]
+          },
+          "probe_only": {
+            "type": "boolean"
+          },
+          "probe_key": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^nerocd/storage/retention-probes/[A-Za-z0-9_-]+/[a-f0-9]{32}$"
+          }
+        }
+      }

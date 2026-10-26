@@ -82,6 +82,7 @@ type Config struct {
 type Client struct {
 	hasBackupNotification       bool
 	hasDatabaseBackupRetention  bool
+	hasStorageBackupRetention   bool
 	hasStorageBackupTransfer    bool
 	hasDatabaseBackupTransfer   bool
 	hasDatabaseBackup           bool
@@ -133,6 +134,10 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	notificationHandler, hasNotification := handler.(BackupNotificationHandler)
 	if hasNotification {
 		river.AddWorker(workers, &backupNotificationWorker{handler: notificationHandler})
+	}
+	storageRetentionHandler, hasStorageRetention := handler.(StorageBackupRetentionHandler)
+	if hasStorageRetention {
+		river.AddWorker(workers, &storageBackupRetentionWorker{handler: storageRetentionHandler})
 	}
 	retentionHandler, hasRetention := handler.(DatabaseBackupRetentionHandler)
 	if hasRetention {
@@ -192,7 +197,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{hasStorageBackupTransfer: hasStorageTransfer, hasBackupNotification: hasNotification, hasDatabaseBackupRetention: hasRetention, hasDatabaseBackupTransfer: hasTransfer, hasDatabaseBackup: hasDatabaseBackup, hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection, hasApplicationDatabaseRoute: hasApplicationDatabaseRoute}, nil
+	return &Client{hasStorageBackupTransfer: hasStorageTransfer, hasBackupNotification: hasNotification, hasDatabaseBackupRetention: hasRetention, hasStorageBackupRetention: hasStorageRetention, hasDatabaseBackupTransfer: hasTransfer, hasDatabaseBackup: hasDatabaseBackup, hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection, hasApplicationDatabaseRoute: hasApplicationDatabaseRoute}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

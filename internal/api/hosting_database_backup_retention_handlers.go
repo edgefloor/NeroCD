@@ -115,11 +115,11 @@ func decodeBackupRetention(w http.ResponseWriter, r *http.Request, out any) bool
 	}
 	keys := []string{}
 	switch out.(type) {
-	case *domain.HostingDatabaseBackupRetentionInput:
+	case *domain.HostingDatabaseBackupRetentionInput, *domain.HostingStorageBackupRetentionInput:
 		keys = []string{"request_id", "expected_revision", "expected_resource_generation", "enabled", "automatic", "local", "remote"}
-	case *domain.HostingDatabaseBackupRetentionPreviewInput:
+	case *domain.HostingDatabaseBackupRetentionPreviewInput, *domain.HostingStorageBackupRetentionPreviewInput:
 		keys = []string{"request_id", "expected_policy_revision"}
-	case *domain.HostingDatabaseBackupRetentionExecutionInput:
+	case *domain.HostingDatabaseBackupRetentionExecutionInput, *domain.HostingStorageBackupRetentionExecutionInput:
 		keys = []string{"request_id", "preview_id", "expected_policy_revision", "expected_plan_hash"}
 	}
 	for _, key := range keys {
@@ -129,7 +129,9 @@ func decodeBackupRetention(w http.ResponseWriter, r *http.Request, out any) bool
 			return false
 		}
 	}
-	if _, ok := out.(*domain.HostingDatabaseBackupRetentionInput); ok {
+	_, dbPolicy := out.(*domain.HostingDatabaseBackupRetentionInput)
+	_, storagePolicy := out.(*domain.HostingStorageBackupRetentionInput)
+	if dbPolicy || storagePolicy {
 		for _, location := range []string{"local", "remote"} {
 			var limits map[string]json.RawMessage
 			if json.Unmarshal(fields[location], &limits) != nil {

@@ -355,6 +355,9 @@ func (s *PostgresStore) StorageBackupTransferMutation(ctx context.Context, runne
 		if in.PlanHash != r.plan.Hash || r.daemon != "" && r.daemon != in.DaemonID {
 			return zero, ErrConflict
 		}
+		if domain.ValidateStorageTransferCopyProof(r.plan, in) != nil {
+			return zero, ErrConflict
+		}
 		state := r.view.State
 		switch in.Phase {
 		case "intent":
@@ -402,6 +405,18 @@ func (s *PostgresStore) StorageBackupTransferMutation(ctx context.Context, runne
 			return zero, err
 		}
 		if in.Phase == "complete" {
+			if r.view.Mode == "upload" {
+				resource, err := sqlcgen.New(tx).StorageRetentionBackupResource(ctx, r.view.BackupID)
+				if err != nil {
+					return zero, err
+				}
+				if err = storageRetentionPublication(ctx, tx, resource, "upload_"+r.view.ID); err != nil {
+					return zero, err
+				}
+			}
+			if err = storageRetentionRegisterTransfer(ctx, tx, r, in); err != nil {
+				return zero, err
+			}
 			if err = s.storageRemoteDownloadComplete(ctx, tx, r.plan); err != nil {
 				return zero, err
 			}

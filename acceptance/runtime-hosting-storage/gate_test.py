@@ -851,5 +851,20 @@ host_docker() {
         self.assertIn("unavailable", evidence)
         self.assertIn("diagnostic_exit=1", evidence)
 
+
+
+class RetentionModeContractTests(unittest.TestCase):
+    def test_retention_is_distinct_and_keeps_exact_remote_profile(self):
+        source = (Path(__file__).parent / "gate.sh").read_text()
+        self.assertIn("--remote|--retention)", source)
+        self.assertIn("owner=nerocd-storage-retention-runtime-20261026-e4db0929", source)
+        self.assertIn('NEROCD_STORAGE_RETENTION_RUNTIME=$retention_mode', source)
+        self.assertIn("TestHostingStorageBackupRetentionCompiledRunnerHTTPS", source)
+        self.assertIn('if sys.argv[2]=="true":required.remove("TestHostingStorageRemoteCompiledRunnerHTTPS")', source)
+        fixture = (Path(__file__).parents[2] / "internal/api/hosting_storage_backup_retention_runtime_integration_test.go").read_text()
+        for requirement in ["storageRetentionRuntimeAwait", "conditional S3 deletion", "remote_restore_republished_local", "source_preserved"]:
+            self.assertIn(requirement, fixture)
+        self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageRetentionRuntimeWorkflow"):])
+
 if __name__ == "__main__":
     unittest.main()

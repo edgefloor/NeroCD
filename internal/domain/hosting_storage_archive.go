@@ -245,6 +245,7 @@ type HostingStorageArchiveApplyBeginRequest struct {
 // HostingStorageArchiveProgress is immutable fenced phase evidence. Each phase
 // has one stable receipt and cannot overwrite an earlier writer snapshot.
 type HostingStorageArchiveProgress struct {
+	LocalCopy *BackupLocalCopyProof `json:"local_copy,omitempty"`
 	HostingAuthority
 	ReceiptID         string                             `json:"receipt_id"`
 	PlanHash          string                             `json:"plan_hash"`
@@ -300,6 +301,7 @@ type HostingStorageArchive struct {
 
 // HostingStorageBackup exposes metadata only. Bytes remain private to the daemon.
 type HostingStorageBackup struct {
+	Copies      []BackupRetentionItem      `json:"copies,omitempty"`
 	ID          string                     `json:"id"`
 	ProjectID   string                     `json:"project_id"`
 	ResourceID  string                     `json:"resource_id"`
@@ -481,6 +483,9 @@ func (in HostingStorageArchiveApplyBeginRequest) Validate() error {
 
 // Validate accepts only closed phase and bounded nonsecret observation fields.
 func (in HostingStorageArchiveProgress) Validate() error {
+	if in.LocalCopy != nil && (in.Phase != "archive_published" || in.LocalCopy.Validate() != nil || in.Blob == nil || in.LocalCopy.Bytes != in.Blob.SizeBytes) {
+		return ErrInvalidStorageArchive
+	}
 	if !validStorageArchiveAuthority(in.HostingAuthority, in.ReceiptID, in.PlanHash) || !slices.Contains([]string{"writer_snapshot", "stop_intent", "stopped", "helper_intent", "helper_identified", "archive_published", "restore_verified", "resume_intent", "resumed"}, in.Phase) || len(in.Writers) > 64 {
 		return ErrInvalidStorageArchive
 	}

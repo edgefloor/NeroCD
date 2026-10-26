@@ -113,7 +113,7 @@ export function archiveBackup(
         "created_by",
         "created_at",
       ],
-      ["blob"],
+      ["blob", "copies"],
     ) ||
     !id(value.id) ||
     (expected !== undefined && value.id !== expected) ||
@@ -126,6 +126,46 @@ export function archiveBackup(
   )
     fail();
   blob(value.blob, scope, value.id);
+  if (value.copies !== undefined) {
+    if (!Array.isArray(value.copies) || value.copies.length > 10000) fail();
+    const seen = new Set<string>();
+    for (const c of value.copies) {
+      if (
+        !keys(
+          c,
+          [
+            "copy_id",
+            "backup_id",
+            "location",
+            "digest",
+            "bytes",
+            "created_at",
+            "availability",
+            "selected",
+            "protected_reasons",
+          ],
+          ["transfer_id"],
+        ) ||
+        !id(c.copy_id) ||
+        seen.has(c.copy_id) ||
+        c.backup_id !== value.id ||
+        !["local", "remote"].includes(c.location) ||
+        !hash(c.digest) ||
+        !Number.isSafeInteger(c.bytes) ||
+        c.bytes < 1 ||
+        !["available", "reserved", "deleted", "uncertain", "unproven"].includes(
+          c.availability,
+        ) ||
+        c.selected !== false ||
+        !Array.isArray(c.protected_reasons) ||
+        !c.protected_reasons.every((r) =>
+          ["unproven_ownership", "superseded"].includes(r),
+        )
+      )
+        fail();
+      seen.add(c.copy_id);
+    }
+  }
   return value;
 }
 function storageScope(

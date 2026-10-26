@@ -43,45 +43,60 @@ func (c *backupRemoteS3) storageDownload(ctx context.Context, bucket, key string
 }
 
 func (c *backupRemoteS3) storageUpload(ctx context.Context, bucket, key string, blob domain.HostingStorageArchiveBlob, src io.ReadSeeker) error {
+	_, err := c.storageUploadOwned(ctx, bucket, key, blob, src)
+	return err
+}
+func (c *backupRemoteS3) storageUploadOwned(ctx context.Context, bucket, key string, blob domain.HostingStorageArchiveBlob, src io.ReadSeeker) (proof *domain.BackupRemoteCopyProof, err error) {
 	ctx, cancel := c.requestContext(ctx)
 	defer cancel()
 	if blob.Validate() != nil || src == nil {
-		return backupRemoteError("archive_unavailable")
+		return nil, backupRemoteError("archive_unavailable")
 	}
 	// Reconcile a lost Put response with the complete body, not its metadata.
-	_, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	head, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
 	if err == nil {
-		return c.storageDownload(ctx, bucket, key, blob, io.Discard)
+		if e := c.storageDownload(ctx, bucket, key, blob, io.Discard); e != nil {
+			return nil, e
+		}
+		adopted := &domain.BackupRemoteCopyProof{ETag: aws.ToString(head.ETag), VersionID: aws.ToString(head.VersionId), Created: false}
+		if adopted.Validate() != nil {
+			return nil, nil
+		}
+		return adopted, nil
 	}
 	if !remoteObjectMissing(err) {
-		return backupRemoteFailure(err)
+		return nil, backupRemoteFailure(err)
 	}
 	if _, err = src.Seek(0, io.SeekStart); err != nil {
-		return backupRemoteError("archive_unavailable")
+		return nil, backupRemoteError("archive_unavailable")
 	}
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(src, blob.SizeBytes+1))
 	if err != nil || n != blob.SizeBytes || "sha256:"+hex.EncodeToString(h.Sum(nil)) != blob.SHA256 {
-		return backupRemoteError("archive_unavailable")
+		return nil, backupRemoteError("archive_unavailable")
 	}
 	if _, err = src.Seek(0, io.SeekStart); err != nil {
-		return backupRemoteError("archive_unavailable")
+		return nil, backupRemoteError("archive_unavailable")
 	}
-	_, err = c.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: src, ContentLength: aws.Int64(blob.SizeBytes), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"sha256": strings.TrimPrefix(blob.SHA256, "sha256:")}})
+	created, err := c.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: src, ContentLength: aws.Int64(blob.SizeBytes), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"sha256": strings.TrimPrefix(blob.SHA256, "sha256:")}})
 	if err != nil {
 		var api smithy.APIError
 		if errors.As(err, &api) && (api.ErrorCode() == "PreconditionFailed" || api.ErrorCode() == "ConditionalRequestConflict") {
-			return c.storageDownload(ctx, bucket, key, blob, io.Discard)
+			return nil, c.storageDownload(ctx, bucket, key, blob, io.Discard)
 		}
 		if ctx.Err() == nil {
 			if verified := c.storageDownload(ctx, bucket, key, blob, io.Discard); verified == nil {
-				return nil
+				return nil, nil
 			}
 		}
-		return backupRemoteFailure(err)
+		return nil, backupRemoteFailure(err)
 	}
 	if err = c.storageDownload(ctx, bucket, key, blob, io.Discard); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	proof = &domain.BackupRemoteCopyProof{ETag: aws.ToString(created.ETag), VersionID: aws.ToString(created.VersionId), Created: true}
+	if proof.Validate() != nil {
+		return nil, nil
+	}
+	return proof, nil
 }

@@ -191,6 +191,10 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		if json.Unmarshal(raw, &cfg) != nil {
 			t.Fatal("archive configuration")
 		}
+		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+			cfg["backup_retention"] = true
+			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability)
+		}
 		cfg["remote_backups"] = true
 		cfg["remote_fixture_origin"] = "http://127.0.0.1:9001"
 		raw, err = json.Marshal(cfg)
@@ -341,6 +345,9 @@ mc admin user add fixture "$FIXTURE_ACCESS" "$FIXTURE_SECRET" >/dev/null
 }
 func (s *hostingStorageRemoteRuntimeSilo) policy(put, attach bool) {
 	actions := []string{"s3:GetObject"}
+	if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+		actions = append(actions, "s3:DeleteObject", "s3:DeleteObjectVersion")
+	}
 	if put {
 		actions = append(actions, "s3:PutObject")
 	}
@@ -667,6 +674,9 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	f.https("storage-remote.example.test", "DELETE", "/oversize", nil, 204)
 	if !bytes.Equal(f.https("storage-remote.example.test", "GET", "/download", nil, 200), upload) {
 		t.Fatal("scheduled archive failure altered source")
+	}
+	if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+		hostingStorageRetentionRuntimeWorkflow(f, silo, observation, restored.Resource, target.ID, target.Revision, replacement, upload)
 	}
 	f.browser.set("complete", resource.ID, target.ID, backup.ID)
 	f.browser.await(t, "done")

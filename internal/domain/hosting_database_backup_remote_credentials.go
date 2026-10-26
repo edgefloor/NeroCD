@@ -12,6 +12,8 @@ import (
 
 var ErrBackupRemoteCredentials = errors.New("remote backup credentials unavailable")
 
+const HostingStorageBackupRetentionCredentialPurpose = "hosting_storage_backup_retention_credentials.v1"
+
 const HostingDatabaseBackupRetentionCredentialPurpose = "hosting_postgresql_backup_retention_credentials.v1"
 
 type BackupRemoteCredentialRequest struct {
@@ -30,7 +32,7 @@ func (r BackupRemoteCredentialRequest) Validate() error {
 	}
 	if r.RetentionCopyID != "" {
 		a := r.Authority
-		if !validRuntimeReferenceID(r.RetentionCopyID) || !validRuntimeReferenceID(a.OperationID) || a.RunID != "db_retention_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(r.DeliveryID) || !imageSHA256.MatchString(r.PlanHash) || len(r.DaemonID) < 1 || len(r.DaemonID) > 256 {
+		if !validRuntimeReferenceID(r.RetentionCopyID) || !validRuntimeReferenceID(a.OperationID) || (a.RunID != "db_retention_"+a.OperationID && a.RunID != "storage_retention_"+a.OperationID) || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(r.DeliveryID) || !imageSHA256.MatchString(r.PlanHash) || len(r.DaemonID) < 1 || len(r.DaemonID) > 256 {
 			return ErrBackupRemoteCredentials
 		}
 		return nil
@@ -64,6 +66,9 @@ func (m BackupRemoteCredentialMetadata) Validate() error {
 	}
 	if m.Request.RetentionCopyID != "" {
 		expected = HostingDatabaseBackupRetentionCredentialPurpose
+		if m.Request.Authority.RunID == "storage_retention_"+m.Request.Authority.OperationID {
+			expected = HostingStorageBackupRetentionCredentialPurpose
+		}
 	}
 	if m.Purpose != expected || m.Request.Validate() != nil || !validRuntimeReferenceID(m.RunnerID) || m.RequestHash != HostingDocumentHash(struct {
 		Runner  string
