@@ -7,23 +7,39 @@ test -f "$repo_root/internal/api/hosting_storage_runtime_integration_test.go"
 head_before=$(git rev-parse HEAD)
 tree_before=$(git rev-parse 'HEAD^{tree}')
 owner=nerocd-storage-archive-runtime-20261024-f0a618
+app_owner=nerocd-storage-archive-runtime-20261024-f0a618
 label=io.nerocd.storage-runtime.owner
 name=$owner-dind
 volume=$owner-docker-data
 docker_host=unix:///var/run/docker.sock
 daemon=e37dd219-b13f-47dd-99ed-21d79442ed0c
 archive=false
+remote=false
 case ${1:-} in
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
- *) echo 'usage: gate.sh [--archive]' >&2; exit 2;;
+ --remote)
+  archive=true; remote=true
+  owner=nerocd-storage-remote-runtime-20261026-8326c344
+  name=$owner-dind; volume=$owner-docker-data
+  test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote.*)$';;
+ *) echo 'usage: gate.sh [--archive|--remote]' >&2; exit 2;;
 esac
 outer=''
 volume_attempted=false
 outer_attempted=false
 returned_outer=''
+test_pid=''
 dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
-evidence=$(mktemp -d /tmp/nerocd-storage-runtime-20261024.XXXXXX)
+if [[ "$remote" == true ]]; then
+ evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026"
+ [[ ! -L "$evidence_parent" ]] || { echo 'evidence parent is a symlink' >&2; exit 1; }
+ mkdir -p "$evidence_parent"
+ chmod 700 "$evidence_parent"
+ evidence=$(mktemp -d "$evidence_parent/$head_before.XXXXXX")
+else
+ evidence=$(mktemp -d /tmp/nerocd-storage-runtime-20261024.XXXXXX)
+fi
 exec > >(tee "$evidence/gate.log") 2>&1
 printf 'evidence=%s\nhead=%s\ntree=%s\nowner=%s\n' "$evidence" "$head_before" "$tree_before" "$owner"
 host_docker() { docker --host "$docker_host" "$@"; }
@@ -70,12 +86,15 @@ if any(not re.fullmatch("[a-f0-9]{64}",u) or u!=sys.argv[6] for u in users) or l
 }
 verify_outer() {
  if ! host_docker inspect "$1" > "$evidence/outer-current-inspect"; then return 1; fi
+ if [[ "$remote" == true ]]; then
+  python3 acceptance/runtime-hosting-storage/remote_evidence.py profile "$evidence" || return 1
+ fi
  python3 -c '
 import json,re,sys
 items=json.load(open(sys.argv[1]));images=json.load(open(sys.argv[2]));volumes=json.load(open(sys.argv[3]))
 if len(items)!=1 or len(images)!=3 or len(volumes)!=1:raise SystemExit("ambiguous outer dependencies")
 c=items[0];image=images[0];v=volumes[0];cfg=c.get("Config",{});h=c.get("HostConfig",{});state=c.get("State",{})
-identity,name,reference,label,owner,volume=sys.argv[4:]
+identity,name,reference,label,owner,volume,remote=sys.argv[4:]
 if not re.fullmatch("sha256:[a-f0-9]{64}",image.get("Id","")) or image.get("Os")!="linux" or image.get("Architecture")!="arm64":raise SystemExit("outer pinned image profile mismatch")
 if not re.fullmatch("[a-f0-9]{64}",identity) or c.get("Id")!=identity or c.get("Name")!="/"+name or c.get("Image")!=image.get("Id") or cfg.get("Image")!=reference:raise SystemExit("outer image/name identity mismatch")
 base=image.get("Config",{});labels=dict(base.get("Labels") or {});labels[label]=owner
@@ -91,19 +110,29 @@ env=environment(base.get("Env") or []);env["DOCKER_TLS_CERTDIR"]=""
 if environment(cfg.get("Env") or [])!=env:raise SystemExit("outer environment mismatch")
 expected={"Privileged":True,"Memory":6<<30,"MemorySwap":12<<30,"NanoCpus":4000000000,"PidsLimit":2048,"NetworkMode":"bridge","PidMode":"","IpcMode":"private","UsernsMode":"","UTSMode":"","CgroupnsMode":"private","PublishAllPorts":False,"AutoRemove":False,"ReadonlyRootfs":False,"RestartPolicy":{"Name":"no","MaximumRetryCount":0}}
 if any(h.get(k)!=value for k,value in expected.items()):raise SystemExit("outer resources/namespace profile mismatch")
-if any(h.get(k) for k in ["Binds","VolumesFrom","PortBindings","Devices","DeviceRequests","CapAdd","CapDrop","GroupAdd","ExtraHosts"]):raise SystemExit("outer has extra host access")
+if any(h.get(k) for k in ["Binds","VolumesFrom","Devices","DeviceRequests","CapAdd","CapDrop","GroupAdd","ExtraHosts"]):raise SystemExit("outer has extra host access")
+if remote!="true" and h.get("PortBindings"):raise SystemExit("unexpected publication")
 if h.get("Mounts")!=[{"Type":"volume","Source":volume,"Target":"/var/lib/docker"}]:raise SystemExit("outer requested mount mismatch")
 mounts=c.get("Mounts") or []
 if len(mounts)!=1:raise SystemExit("outer actual mount count mismatch")
 m=mounts[0]
 if any(m.get(k)!=value for k,value in {"Type":"volume","Name":volume,"Driver":"local","Destination":"/var/lib/docker","Source":v["Mountpoint"],"RW":True}.items()):raise SystemExit("outer actual mount mismatch")
 if state.get("Paused") or state.get("Restarting") or state.get("Status") not in ["created","running","exited"] or state.get("Running")!=(state["Status"]=="running"):raise SystemExit("outer process state uncertain")
-' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume"
+' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$remote"
 }
 
 cleanup() {
  result=$?
  trap - EXIT INT TERM
+ if [[ -n "$test_pid" ]]; then
+  if kill -0 "$test_pid" 2>/dev/null; then
+   kill -TERM "$test_pid" || result=1
+   for _ in $(seq 1 50); do if ! kill -0 "$test_pid" 2>/dev/null; then break; fi; sleep 0.1; done
+   if kill -0 "$test_pid" 2>/dev/null; then kill -KILL "$test_pid" || result=1; fi
+  fi
+  wait "$test_pid" 2>/dev/null || true
+  test_pid=''
+ fi
  if [[ "$outer_attempted" == true ]]; then
   observed=$(outer_inventory) || exit 1
   if [[ -n "$observed" ]]; then
@@ -136,6 +165,11 @@ cleanup() {
    exit 1
   fi
   echo 'owned API and runner processes absent' | tee "$evidence/process-absence"
+  if [[ "$running" == true && "$remote" == true ]]; then
+   # Only the fixture's public archive and closed marker document are exported.
+   mkdir -p "$evidence/runtime"
+   host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime" || result=1
+  fi
   if [[ "$running" == true ]]; then
   host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-final" || result=1
   inner_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/inner-containers-final" || result=1
@@ -168,6 +202,13 @@ cleanup() {
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
+ if [[ "$remote" == true ]]; then
+  if [[ -f "$evidence/preservation-before.private.json" ]]; then
+   python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" || result=1
+  fi
+  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
+  python3 acceptance/runtime-hosting-storage/remote_evidence.py receipt "$evidence" || result=1
+ fi
  echo "gate exit=$result evidence=$evidence"
  exit "$result"
 }
@@ -185,8 +226,19 @@ host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-
 host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"
 host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-before"
 host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-before"
-git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags nerocd_proxy_fixture -c -o "$evidence/api.test" ./internal/api
+if [[ "$remote" == true ]]; then
+ python3 acceptance/runtime-hosting-storage/remote_evidence.py before "$evidence"
+ bun run --cwd web/app build > "$evidence/browser-ui-build.log" 2>&1
+ python3 -B scripts/skills/ui_manifest.py > "$evidence/browser-ui-manifest.json"
+ git ls-files -s web/app/src web/app/package.json web/app/bun.lock web/assets.go > "$evidence/browser-source-blobs"
+fi
+git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
+fixture_tags=nerocd_proxy_fixture
+if [[ "$remote" == true ]]; then fixture_tags=nerocd_proxy_fixture,nerocd_storage_remote_contract; fi
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags "$fixture_tags" -c -o "$evidence/api.test" ./internal/api
+if [[ "$remote" == true ]]; then
+ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "$evidence/store.test" ./internal/store
+fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags nerocd_proxy_fixture -trimpath -o "$evidence/nerocd-proxy-fixture" ./cmd/nerocd
 mkdir "$evidence/a" "$evidence/b"
 for version in a b; do
@@ -205,11 +257,22 @@ shasum -a 256 "$evidence/api.test" "$evidence/nerocd-proxy-fixture" "$evidence/a
 postgres=postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
 registry=registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
 host_docker image inspect "$dind" "$postgres" "$registry" > "$evidence/pinned-host-images"
+traefik=docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368
+pebble=ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+silo=pgsty/silo@sha256:87585bb783b7822318b3e1bcc4497c8427c98e2b021826d20b5f888713299f95
+if [[ "$remote" == true ]]; then
+ # Remote acceptance never pulls. Missing cached dependencies stop before creation.
+ host_docker image inspect "$traefik" "$pebble" "$silo" > "$evidence/pinned-remote-images"
+fi
 volume_attempted=true
 host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
-returned_outer=$(host_docker run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
+outer_run() {
+ if [[ "$remote" == true ]]; then host_docker run --publish 127.0.0.1::18190 "$@"
+ else host_docker run "$@"; fi
+}
+returned_outer=$(outer_run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
 outer=$(outer_inventory)
 [[ -n "$outer" && "$returned_outer" == "$outer" ]] && verify_volume "$outer" && verify_outer "$outer" || { echo 'created outer identity/profile uncertain' >&2; exit 1; }
 cp "$evidence/outer-current-inspect" "$evidence/outer-initial-inspect"
@@ -220,25 +283,32 @@ inner_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}}' | tee "$evide
 inner_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}} {{.Driver}} {{json .DriverStatus}}' | tee "$evidence/inner-storage-profile"
 [[ $(inner_docker info --format '{{.Driver}}') == overlay2 ]]
 printf 'qualification_scope=classic-image-store-overlay2-only\ncontainerd_image_store=not_qualified\n' > "$evidence/image-store-scope"
-host_docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/internal/api /workspace/acceptance/runtime-proxy-control
+host_docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/internal/api /workspace/internal/store /workspace/acceptance/runtime-proxy-control
 for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
+if [[ "$remote" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
 host_docker image save "$postgres" "$registry" -o "$evidence/base-images.tar"
 host_docker cp "$evidence/base-images.tar" "$outer:/fixture/base-images.tar"
 inner_docker image load -i /fixture/base-images.tar
 host_docker exec "$outer" rm /fixture/base-images.tar
-for image in \
- docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368 \
- ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199; do inner_docker pull "$image"; done
+if [[ "$remote" == true ]]; then
+ host_docker image save "$traefik" "$pebble" "$silo" -o "$evidence/remote-images.tar"
+ host_docker cp "$evidence/remote-images.tar" "$outer:/fixture/remote-images.tar"
+ inner_docker image load -i /fixture/remote-images.tar
+ host_docker exec "$outer" rm /fixture/remote-images.tar
+ host_docker exec "$outer" mkdir -m 700 /fixture/evidence
+else
+ for image in "$traefik" "$pebble"; do inner_docker pull "$image"; done
+fi
 pg=$(inner_docker run --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 512m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=256m --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$postgres")
 reg=$(inner_docker run --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry")
 printf 'inner_pg=%s\ninner_registry=%s\n' "$pg" "$reg" | tee "$evidence/inner-services"
 for version in a b; do
  host_docker cp "$evidence/$version" "$outer:/fixture/$version"
- inner_docker build --build-arg "FIXTURE_OWNER=$owner" -t "127.0.0.1:25000/$owner:$version" "/fixture/$version"
- inner_docker push "127.0.0.1:25000/$owner:$version"
- inner_docker image inspect "127.0.0.1:25000/$owner:$version" > "$evidence/app-$version-image"
+ inner_docker build --build-arg "FIXTURE_OWNER=$app_owner" -t "127.0.0.1:25000/$app_owner:$version" "/fixture/$version"
+ inner_docker push "127.0.0.1:25000/$app_owner:$version"
+ inner_docker image inspect "127.0.0.1:25000/$app_owner:$version" > "$evidence/app-$version-image"
 done
 if [[ "$archive" == true ]]; then
  host_docker cp "$evidence/archive-helper" "$outer:/fixture/archive-helper"
@@ -267,7 +337,49 @@ for _ in $(seq 1 60); do
  sleep 1
 done
 [[ "$ready" == true ]]
+remote_mode=''
+if [[ "$remote" == true ]]; then remote_mode=disposable-dind; fi
 archive_mode=''
 if [[ "$archive" == true ]]; then archive_mode=disposable-dind; fi
-host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m
+if [[ "$remote" == true ]]; then
+ store_tests='^(TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay|TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation|TestPostgresStorageRemoteDownloadFailureAndHeldRetry)$'
+ host_docker exec --workdir /workspace/internal/store "$outer" /fixture/store.test -test.list "$store_tests" > "$evidence/store-test-list"
+ python3 - "$evidence/store-test-list" <<'CHECK_STORE_LIST'
+import sys
+expected={"TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry"}
+actual=set(open(sys.argv[1]).read().splitlines())
+if actual != expected:raise SystemExit("required storage PG test names missing")
+CHECK_STORE_LIST
+ host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run "$store_tests" -test.timeout=3m | tee "$evidence/store-tests.log"
+ python3 - "$evidence/store-tests.log" <<'CHECK_STORE_PASS'
+import sys
+text=open(sys.argv[1]).read()
+for name in ["TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry"]:
+ if "--- PASS: "+name+" " not in text:raise SystemExit("required PG test PASS missing")
+if "SKIP" in text:raise SystemExit("required PG test skipped")
+CHECK_STORE_PASS
+ host_docker exec --workdir /workspace/internal/api "$outer" /fixture/api.test -test.list "$test_pattern" > "$evidence/api-test-list"
+ python3 - "$evidence/api-test-list" <<'CHECK_API_LIST'
+import sys
+expected={"TestStorageRuntimeRollback","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"}
+actual=set(open(sys.argv[1]).read().splitlines())
+if actual!=expected:raise SystemExit("required API test names missing or unexpected")
+CHECK_API_LIST
+ browser_origin=$(cat "$evidence/browser-origin")
+ browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
+ docker --host "$docker_host" exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_REMOTE_RUNTIME=$remote_mode" --env "NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_STORAGE_REMOTE_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_REMOTE_EVIDENCE=/fixture/evidence --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=24m > "$evidence/api-tests.log" 2>&1 &
+ test_pid=$!
+ NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN="$browser_origin" NEROCD_STORAGE_REMOTE_BROWSER_KEY="$browser_key" NEROCD_STORAGE_REMOTE_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-storage/remote_browser.mjs > "$evidence/browser.log" 2>&1
+ wait "$test_pid"
+ test_pid=''
+ python3 - "$evidence/api-tests.log" <<'CHECK_API_PASS'
+import sys
+text=open(sys.argv[1]).read()
+for name in ["TestStorageRuntimeRollback","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"]:
+ if "--- PASS: "+name+" " not in text:raise SystemExit("required API runtime PASS missing: "+name)
+if "SKIP" in text:raise SystemExit("required API runtime test skipped")
+CHECK_API_PASS
+else
+ host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m
+fi
 echo 'compiled storage runner / authenticated public API / trusted fixture-CA HTTPS gate passed'
