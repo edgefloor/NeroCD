@@ -26,5 +26,5 @@ UPDATE hosting_compose_volumes SET state='materialized',created_at=$3 WHERE bind
 SELECT EXISTS(SELECT 1 FROM hosting_apply_admissions a JOIN hosting_operations o ON o.id=a.operation_id WHERE o.binding_id=$1)
 OR EXISTS(SELECT 1 FROM hosting_compose_volumes WHERE binding_id=$1)
 OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=$1)
-OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=$1)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=$1 AND state<>'released')
 OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE binding_id=$1) AS recorded;

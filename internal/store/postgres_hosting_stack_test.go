@@ -77,6 +77,21 @@ func TestPostgresHostingStackAuthorityVolumesAndUncertainReplacement(t *testing.
 		return a, prepared
 	}
 	authority, prepared := prepare(op)
+	// An image/variable preflight failure never acquired a writer grant. Its
+	// released port receipt must not strand the initial-deployment UI after a fix.
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: authority, ReceiptID: "compose_unmutated_failure", Result: domain.HostingResult{Outcome: "failed"}}); err != nil {
+		t.Fatal("record unmutated failure", err)
+	}
+	options, err = pg.HostingStorageDeploymentOptions(ctx, resource.ID, "usr_bootstrap")
+	if err != nil || !options.Available || options.Reason != "initial_deployment" {
+		t.Fatalf("unmutated failure stranded retry: reason=%s available=%t err=%v", options.Reason, options.Available, err)
+	}
+	input.IdempotencyKey = "compose-initial-fixed"
+	op, err = pg.RequestHostingDeployment(ctx, "hop_compose_initial_fixed", resource.ID, "usr_bootstrap", input, destinationEvent("compose_initial_fixed"))
+	if err != nil {
+		t.Fatal("retry after unmutated failure", err)
+	}
+	authority, prepared = prepare(op)
 	stale := authority
 	stale.Fence = "stale-fence"
 	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, stale); !errors.Is(err, store.ErrConflict) && !errors.Is(err, store.ErrNotFound) {
