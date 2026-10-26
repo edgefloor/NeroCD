@@ -143,14 +143,18 @@ fault injection. Native Linux arm64, trusted rootful classic-store Docker,
 same-destination Silo loopback HTTP, and owned-upload limits remain explicit.
 The original 933-outcome audit and aggregate gates do not change.
 
-The next proposed bounded H2 slice is owner-directed deletion of one selected
-owned-upload backup's local and optional remote copies. Upstream
-`VolumeBackups::deleteBackup` at line 338 provides a separate manual action.
-Require explicit selection/review, exact replay, current owner authority,
-shared/active/recovery protections, truthful copy availability, immutable history,
-and real browser/physical evidence. This proposal does not start implementation.
-Manual delete-all, destructive schedule removal, and history erasure remain
-separate contracts.
+Owner-selected owned-upload backup-copy deletion is accepted at
+`52f1187a8c42dafd72b68bf7e015c226cc29ec1f`. Its
+[qualification](hosting-storage-backup-deletion.md#accepted-qualification-and-evidence)
+records the 155.120-second physical pass at `da0678eb7a8fdd67865bc328f0773334a47920d2`.
+The real UI selects/reviews copies, retries the exact committed request, confirms
+final-copy removal, and reads preserved history. Local removal retains remote
+recovery; a restored application reads and writes a new volume before the final
+local/recorded-remote deletion. Viewer mutation is denied. Baseline 38 containers,
+214 volumes, and the existing user UI are preserved. Eight supplemental assessments
+add no historical score or aggregate credit. Resource-volume deletion, delete-all,
+destructive schedule removal, history erasure, and broader recovery remain separate
+contracts. The user instance remains at `09a` and schema 74.
 
 Continue H2 from these remaining recovery gaps. Full upstream cron grammar,
 broader notification events and channels, other engines,

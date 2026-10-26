@@ -338,6 +338,17 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   user UI were preserved. This is the native arm64/classic-store/same-destination
   Silo loopback profile, not arbitrary mounts, other providers/engines, owner-selected
   deletion, history erasure, or full parity. Prior failed attempts remain failed.
+- [Owner-selected backup-copy deletion](docs/hosting-storage-backup-deletion.md#accepted-qualification-and-evidence)
+  is accepted at `52f1187a8c42dafd72b68bf7e015c226cc29ec1f`. The 155.120-second
+  physical gate proves real browser selection/review, identical committed-request
+  retry, final-copy confirmation, local and conditional recorded-remote deletion,
+  retained history, viewer denial, and retained-remote restore with application
+  reads/new writes. All 38 baseline containers, 214 volumes, and the existing
+  user UI were preserved. This qualifies owned-upload backup copies on the
+  trusted native arm64/classic Docker/same-destination Silo profile. Resource-volume
+  deletion, production provider breadth, cross-host/in-place recovery, and full
+  parity remain open. Prior failed attempts and the optional broad race timeout
+  remain failed. The user instance remains at `09a` and schema 74.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
