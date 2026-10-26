@@ -138,8 +138,23 @@ func TestPostgresCatalogArchivePinnedRuntimeAndReplay(t *testing.T) {
 		t.Fatal("restore reused source authority")
 	}
 	replay, err := f.service.RequestStorageRestore(f.owner, backup.ID, in)
-	if err != nil || domain.HostingDocumentHash(replay) != domain.HostingDocumentHash(restored) {
-		t.Fatal("restore replay changed identity", err)
+	if err != nil {
+		t.Fatal("restore replay failed", err)
+	}
+	// River can dispatch the queued operation between the restore commit and
+	// this replay. Prove that limited transition, then compare all other fields.
+	if restored.Operation.State != "queued" || restored.Operation.RunID != "" || replay.Operation.State != "queued" && replay.Operation.State != "dispatched" || replay.Operation.UpdatedAt.Before(restored.Operation.UpdatedAt) {
+		t.Fatal("restore replay changed operation outside queue dispatch")
+	}
+	if replay.Operation.State == "queued" && replay.Operation.RunID != "" || replay.Operation.State == "dispatched" && replay.Operation.RunID != "restore_"+restored.Operation.ID {
+		t.Fatal("restore replay changed run identity")
+	}
+	immutableReplay := replay
+	immutableReplay.Operation.State = restored.Operation.State
+	immutableReplay.Operation.RunID = restored.Operation.RunID
+	immutableReplay.Operation.UpdatedAt = restored.Operation.UpdatedAt
+	if domain.HostingDocumentHash(immutableReplay) != domain.HostingDocumentHash(restored) {
+		t.Fatal("restore replay changed immutable resource, storage, plan or receipt identity")
 	}
 	var runtimeVersions, secrets, catalogs int
 	if err := f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_runtime_configuration_versions WHERE resource_id=$1),(SELECT count(*) FROM project_managed_secrets),(SELECT count(*) FROM hosting_catalog_installations WHERE resource_id=$1)`, restored.Resource.ID).Scan(&runtimeVersions, &secrets, &catalogs); err != nil || runtimeVersions != 1 || secrets != 1 || catalogs != 0 {
@@ -172,9 +187,7 @@ func TestPostgresCatalogArchiveCurrentAuthorityAndRollback(t *testing.T) {
 			actor := f.owner
 			switch scenario {
 			case "secret_revoked":
-				if _, err := f.db.Exec(f.ctx, `UPDATE project_managed_secrets SET status='revoked' WHERE id='archive_password'`); err != nil {
-					t.Fatal(err)
-				}
+				catalogArchiveRevokeSecret(t, f)
 			case "grant_revoked":
 				if _, err := f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp()`); err != nil {
 					t.Fatal(err)
@@ -209,9 +222,7 @@ func TestPostgresCatalogArchiveCurrentAuthorityAndRollback(t *testing.T) {
 	if _, err := f.service.RequestStorageRestore(f.owner, backup.ID, in); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.Exec(f.ctx, `UPDATE project_managed_secrets SET status='revoked' WHERE id='archive_password'`); err != nil {
-		t.Fatal(err)
-	}
+	catalogArchiveRevokeSecret(t, f)
 	if _, err := f.service.RequestStorageRestore(f.owner, backup.ID, in); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("restore replay ignored current secret authority", err)
 	}
@@ -231,20 +242,22 @@ func TestPostgresCatalogArchiveReplayRechecksOwnerAndDestination(t *testing.T) {
 			if scenario == "viewer" {
 				// The replay uses the same original actor. Remove its system role and
 				// establish viewer membership, so receipt identity cannot mask lost role.
-				if _, err := f.db.Exec(f.ctx, `UPDATE users SET roles=ARRAY[]::text[] WHERE id='usr_bootstrap'`); err != nil {
+				if _, err := f.db.Exec(f.ctx, `UPDATE users SET global_role='user' WHERE id='usr_bootstrap'`); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.db.Exec(f.ctx, `INSERT INTO project_members(id,project_id,user_id,role) VALUES('archive_replay_viewer','proj_platform','usr_bootstrap','viewer') ON CONFLICT(project_id,user_id) DO UPDATE SET role='viewer'`); err != nil {
-					t.Fatal(err)
+				member, err := f.pg.UpsertProjectMember(f.ctx, domain.ProjectMember{ID: "archive_replay_viewer", ProjectID: f.resource.ProjectID, UserID: "usr_bootstrap", Role: domain.RoleViewer, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+				if err != nil || member.Role != domain.RoleViewer {
+					t.Fatal("original owner membership was not demoted", err)
 				}
-				actor = auth.WithPrincipal(f.ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleViewer}})
+				// Keep the original principal, including its stale system-admin role.
+				// The database must deny replay under current stored authority.
 			} else {
 				if _, err := f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp()`); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.service.RequestStorageRestore(actor, backup.ID, in); err == nil {
-				t.Fatal("identical restore replay retained lost authority")
+			if _, err := f.service.RequestStorageRestore(actor, backup.ID, in); !errors.Is(err, auth.ErrForbidden) {
+				t.Fatal("identical restore replay retained lost authority", err)
 			}
 			var targets int
 			if err := f.db.QueryRow(f.ctx, `SELECT count(*) FROM resources WHERE name=$1`, restored.Resource.Name).Scan(&targets); err != nil || targets != 1 {
@@ -273,5 +286,13 @@ func TestPostgresCatalogArchiveOldRunnerCannotClaim(t *testing.T) {
 				t.Fatal("denied combined claim left lease authority", err)
 			}
 		})
+	}
+}
+
+func catalogArchiveRevokeSecret(t *testing.T, f archiveControlFixture) {
+	t.Helper()
+	revoked, err := f.pg.RevokeManagedSecret(f.ctx, "archive_password", 2, domain.AuditEvent{ID: "aud_catalog_archive_revoke", ActorID: "usr_bootstrap", CreatedAt: time.Now().UTC()})
+	if err != nil || revoked.Status != "revoked" || revoked.RevokedAt == nil {
+		t.Fatal("managed secret lifecycle revocation failed", err)
 	}
 }
