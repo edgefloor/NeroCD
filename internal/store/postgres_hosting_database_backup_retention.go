@@ -181,7 +181,8 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 	}
 	// A no-clobber download can prove a new generation at a previously recorded
 	// location. Preserve the old ownership document; supersession is not deletion.
-	if strings.HasPrefix(copyID, "dbc_download_") && c.Local != nil && c.Local.Created {
+	// Reusing known ownership above does not turn adoption into fresh creation.
+	if strings.HasPrefix(copyID, "dbc_download_") && in.LocalCopy != nil && in.LocalCopy.Created {
 		if e = backupRetentionLock(ctx, tx); e != nil {
 			return e
 		}

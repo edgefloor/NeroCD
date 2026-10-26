@@ -878,3 +878,75 @@ func TestPostgresBackupRetentionRemoteDownloadReplacesAvailableGeneration(t *tes
 		t.Fatal("superseded generation restored current availability", e)
 	}
 }
+
+func TestPostgresBackupRetentionRemoteDownloadAdoptsExactCurrentGeneration(t *testing.T) {
+	f, target := remoteBackupFixture(t)
+	original := ownedRetentionBackupTarget(t, f, 0, &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision})
+	completeOwnedRetentionUpload(t, f, original.ID)
+	var savedCopy []byte
+	if e := f.db.QueryRow(f.ctx, `SELECT body FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID).Scan(&savedCopy); e != nil {
+		t.Fatal(e)
+	}
+	transfers, e := f.service.ListDatabaseBackupTransfers(f.ctx, original.ID, false)
+	if e != nil || len(transfers) != 1 {
+		t.Fatal(e)
+	}
+	restored, e := f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "remote_restore_existing_file", Name: "Existing local recovery", RemoteSource: &domain.BackupRemoteSource{TransferID: transfers[0].ID, ExpectedTargetRevision: target.Revision}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	targetDB, e := f.service.GetHostingDatabase(f.ctx, restored.TargetResourceID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	prepareBackupRestoreChild(t, f, restored, targetDB)
+	transfers, e = f.service.ListDatabaseBackupTransfers(f.ctx, original.ID, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var download string
+	for _, v := range transfers {
+		if v.Mode == "download" {
+			download = v.ID
+		}
+	}
+	if download == "" {
+		t.Fatal("missing download")
+	}
+	a, p := claimRemoteTransfer(t, f, download)
+	mutation := domain.HostingDatabaseBackupTransferMutation{HostingAuthority: a, ReceiptID: "existing_download_intent", PlanHash: p.Hash, Phase: "intent", DaemonID: p.DaemonID}
+	if _, e = f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation); e != nil {
+		t.Fatal(e)
+	}
+	mutation.Phase = "complete"
+	mutation.ReceiptID = "existing_download_complete"
+	mutation.LocalCopy = &domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("a", 64), Device: 1, Inode: 1, Bytes: original.Blob.Bytes, Created: false}
+	result, e := f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation)
+	if e != nil {
+		t.Fatal("verified exact current inode adoption", e)
+	}
+	replay, e := f.pg.DatabaseBackupTransferMutation(f.ctx, f.runner, mutation)
+	if e != nil || !reflect.DeepEqual(result, replay) || mutation.LocalCopy.Created {
+		t.Fatal("adoption replay or incoming proof changed", e)
+	}
+	var after []byte
+	var copies int
+	var successor *string
+	if e = f.db.QueryRow(f.ctx, `SELECT body,superseded_by_copy_id,(SELECT count(*) FROM hosting_database_backup_copies WHERE backup_id=$2 AND location='local') FROM hosting_database_backup_copies WHERE id=$1`, "dbc_local_"+original.ID, original.ID).Scan(&after, &successor, &copies); e != nil || !reflect.DeepEqual(savedCopy, after) || successor != nil || copies != 1 {
+		t.Fatal("adoption replaced or duplicated current ownership", copies, e)
+	}
+	ra, rp := claimBackup(t, f, restored.ID)
+	done := domain.HostingDatabaseBackupMutation{HostingAuthority: ra, ReceiptID: "existing_restore_intent", PlanHash: rp.Hash, Phase: "intent"}
+	if _, e = f.pg.DatabaseBackupMutation(f.ctx, f.runner, done); e != nil {
+		t.Fatal(e)
+	}
+	done.Phase = "complete"
+	done.ReceiptID = "existing_restore_complete"
+	done.Blob = original.Blob
+	if _, e = f.pg.DatabaseBackupMutation(f.ctx, f.runner, done); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.service.RequestDatabaseBackupRestore(f.ctx, original.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "local_after_exact_adoption", Name: "Current local recovery"}); e != nil {
+		t.Fatal("exact adopted copy unavailable for restore", e)
+	}
+}
