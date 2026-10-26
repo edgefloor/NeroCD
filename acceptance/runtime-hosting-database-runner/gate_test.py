@@ -165,9 +165,11 @@ import json, os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(os.environ.get("DATABASE_GATE_TEST_ROOT", pathlib.Path(__file__).resolve().parent.parent))
 case = os.environ.get("DATABASE_GATE_TEST_CASE") or (root / "case").read_text()
 tool, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
-owner = "nerocd-database-runner-20261024-dbr7319"
+backup = os.environ.get("NEROCD_DATABASE_BACKUP_RUNTIME") == "1"
+owner = "nerocd-postgresql-backup-runtime-20261025-pbr7319" if backup else "nerocd-database-runner-20261024-dbr7319"
 name, volume = owner + "-dind", owner + "-docker-data"
-label = "io.nerocd.database-runner.owner"
+label = "io.nerocd.postgresql-backup-runtime.owner" if backup else "io.nerocd.database-runner.owner"
+label_value = "20261025-pbr7319" if backup else owner
 identity = "f" * 64
 state_path = root / "state"
 state = json.loads(state_path.read_text())
@@ -284,7 +286,7 @@ elif tool == "docker":
         print(json.dumps([state["volume"]]))
     elif args[:2] == ["volume", "create"]:
         assert args[-1] == volume
-        state["volume"] = dict(Name=volume, Driver="local", Scope="local", Labels={label: owner},
+        state["volume"] = dict(Name=volume, Driver="local", Scope="local", Labels={label: label_value},
                                Options=None, CreatedAt="2026-10-24T00:00:00Z")
         if case == "foreign_race":
             state["volume"]["Labels"] = {label: "somebody-else"}
@@ -302,11 +304,13 @@ elif tool == "docker":
         if case == "outer_response_loss_absent":
             sys.exit(24)
         state["outer"] = dict(Id=identity, Name="/" + name, Image="sha256:" + "a" * 64,
-            Config=dict(Labels={label: owner}, Cmd=["dockerd", "--host=unix:///var/run/docker.sock"]),
+            Config=dict(Labels={label: label_value}, Cmd=["dockerd", "--host=unix:///var/run/docker.sock"]),
             HostConfig=dict(Privileged=True, PidMode="", UsernsMode="", Binds=None,
                             PortBindings={}, PublishAllPorts=False, NetworkMode="default"),
             Mounts=[dict(Type="volume", Name=volume, Driver="local", Destination="/var/lib/docker", RW=True)],
             State=dict(Running=False))
+        if backup:
+            state["outer"]["HostConfig"].update(NanoCpus=4000000000,Memory=4294967296,PidsLimit=1024)
         if "--publish" in args:
             assert args[args.index("--publish") + 1] == "127.0.0.1::18080"
             state["outer"]["HostConfig"]["PortBindings"] = {"18080/tcp":[dict(HostIp="127.0.0.1",HostPort="")]}
@@ -387,6 +391,20 @@ elif tool == "docker":
             if case == "guest_join_failure":
                 sys.exit(26)
         elif "/fixture/api.test" in args:
+            if case.startswith("retention_diagnostic"):
+                names=["TestHostingDatabaseBackupRetentionFailuresCompiledRunner","TestHostingDatabaseBackupRetentionProtectionsCompiledRunner"]
+                assert args[args.index("-test.run")+1] == "^(?:"+"|".join(names)+")$"
+                entries=names+[names[0]+"/"+kind for kind in ("delete_denied","conditional_unsupported","authorization_revoked")]
+                markers=["DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql "+kind for kind in ("delete_denied","conditional_unsupported","authorization_revoked")]
+                markers += ["DATABASE_BACKUP_RETENTION_PROTECTION_PASS postgresql newest_shared_active_failed_upload_external","DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS postgresql"]
+                if case=="retention_diagnostic_missing_case":entries.pop()
+                if case=="retention_diagnostic_missing_marker":markers.pop()
+                for entry in entries:print("--- PASS: "+entry+" (0.01s)")
+                for marker in markers:print(marker)
+                if case=="retention_diagnostic_skipped":print("--- SKIP: "+entries[-1]+" (0.01s)")
+                if case=="retention_diagnostic_unrelated":print("--- PASS: TestHostingDatabaseBackupCompiledRunner (0.01s)")
+                if case=="retention_diagnostic_duplicate":print(markers[-1])
+                sys.exit(0)
             if case.startswith("cutover_diagnostic"):
                 assert args[args.index("-test.run")+1] == "^TestHostingApplicationDatabaseStorageFailuresCompiledRunner$/^postgresql$/^cutover$"
                 output=(root/"selection-output").read_text()
@@ -437,7 +455,7 @@ elif tool == "docker":
                         if case != "route_missing_capacity": print("DATABASE_CONNECTION_ROUTE_CAPACITY_PASS " + engine + " " + phase)
         elif args[1:3] == [identity, "docker"]:
             if "container" in args and "inspect" in args and "e" * 64 in args:
-                print(json.dumps(dict(Id="e" * 64, Name="/"+owner+"-registry", Config=dict(Image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",Labels={label:"foreign" if case=="registry_foreign" else owner}), State=dict(Running=True), HostConfig=dict(Privileged=False,PortBindings={"5000/tcp":[dict(HostIp="0.0.0.0" if case=="registry_public" else "127.0.0.1",HostPort="")]}), NetworkSettings=dict(Ports={"5000/tcp":[dict(HostIp="127.0.0.1",HostPort="35001")]}))))
+                print(json.dumps(dict(Id="e" * 64, Name="/"+owner+"-registry", Config=dict(Image="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",Labels={label:"foreign" if case=="registry_foreign" else label_value}), State=dict(Running=True), HostConfig=dict(Privileged=False,PortBindings={"5000/tcp":[dict(HostIp="0.0.0.0" if case=="registry_public" else "127.0.0.1",HostPort="")]}), NetworkSettings=dict(Ports={"5000/tcp":[dict(HostIp="127.0.0.1",HostPort="35001")]}))))
             elif "image" in args and "inspect" in args:
                 digest = "b" if any(arg.endswith("-storage") for arg in args) and case != "storage_digest_collision" else "a"
                 print(json.dumps(["127.0.0.1:35001/nerocd-http-app@sha256:"+digest*64] if case!="registry_digest_foreign" else ["foreign/app@sha256:"+"a"*64]))
@@ -490,7 +508,7 @@ class SourceManifestTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
-    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False, mode="full"):
+    def run_gate(self, case, expected, delivered_signal=None, browser=False, routes=False, storage=False, mode="full", retention=False):
         self.installed_closure = None
         gate = Path(os.environ.get("DATABASE_GATE_UNDER_TEST", Path(__file__).with_name("gate.sh"))).resolve()
         with tempfile.TemporaryDirectory(prefix="nerocd-database-gate-test-") as temporary:
@@ -529,6 +547,9 @@ class GateTest(unittest.TestCase):
                                DATABASE_GATE_TEST_ROOT=str(root), DATABASE_GATE_TEST_CASE=case, NEROCD_DATABASE_CONNECTION_BROWSER="bad" if case=="browser_bad_mode" else "1" if browser else "0", NEROCD_DATABASE_CONNECTION_ROUTES="bad" if case=="route_bad_mode" else "1" if routes else "0")
             environment["NEROCD_DATABASE_CONNECTION_STORAGE"] = "bad" if case == "storage_bad_mode" else "1" if storage else "0"
             environment["NEROCD_DATABASE_RUNNER_MODE"] = mode
+            for key in ("NEROCD_DATABASE_BACKUP_RUNTIME","NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME","NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME"):
+                environment[key] = "1" if retention else "0"
+            environment["NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME"] = "0"
             process = subprocess.Popen(["bash", str(gate)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -880,6 +901,23 @@ class GateTest(unittest.TestCase):
         state,_,_=self.run_gate("outer_unexpected_port",1)
         self.assertIn("outer",state)
 
+    def test_retention_diagnostic_is_closed_and_has_no_browser_or_full_receipt(self):
+        state, commands, _ = self.run_gate("retention_diagnostic_success", 0, mode="retention-failures-diagnostic", retention=True)
+        self.assertEqual(state, {})
+        self.assertIn("full_workflow_pass=0\ndiagnostic_pass=1", self.receipt)
+        self.assertIn("gate_mode=retention-failures-diagnostic", self.receipt)
+        runtime = next(args for args in commands if "/fixture/api.test" in args)
+        self.assertEqual(runtime[runtime.index("-test.run")+1], "^(?:TestHostingDatabaseBackupRetentionFailuresCompiledRunner|TestHostingDatabaseBackupRetentionProtectionsCompiledRunner)$")
+        self.assertFalse(any("browser-driver.mjs" in " ".join(args) or "bun" in args or "NEROCD_DATABASE_CONNECTION_BROWSER=1" in args for args in commands))
+        self.assertEqual(sum("/fixture/api.test" in args for args in commands),1)
+        for case in ("retention_diagnostic_missing_case","retention_diagnostic_missing_marker","retention_diagnostic_skipped","retention_diagnostic_unrelated","retention_diagnostic_duplicate"):
+            with self.subTest(case=case):
+                state, _, _ = self.run_gate(case,1,mode="retention-failures-diagnostic",retention=True)
+                self.assertEqual(state,{})
+                self.assertIn("full_workflow_pass=0\ndiagnostic_pass=0", self.receipt)
+        _, commands, _ = self.run_gate("retention_diagnostic_success",1,mode="retention-failures-diagnostic")
+        self.assert_no_creation(commands)
+
     def test_cutover_diagnostic_is_fixed_and_has_no_full_receipt(self):
         state, commands, output = self.run_gate("cutover_diagnostic_success", 0, browser=True, routes=True, storage=True, mode="storage-cutover-diagnostic")
         self.assertEqual(state, {})
@@ -1111,7 +1149,7 @@ class OuterPublicationTest(unittest.TestCase):
 class BackupScheduleSelectionTest(unittest.TestCase):
     def functions(self):
         source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
-        names = {"backup_runtime_profile", "verify_backup_runtime_output"}
+        names = {"backup_runtime_profile", "verify_backup_runtime_output", "retention_failure_diagnostic_profile", "verify_retention_failure_diagnostic_output"}
         definitions = [node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name in names]
         namespace = dict(re=__import__("re"), Failure=RuntimeError)
         exec(compile(ast.Module(body=definitions,type_ignores=[]),"gate.sh","exec"),namespace)
@@ -1172,6 +1210,32 @@ class BackupScheduleSelectionTest(unittest.TestCase):
         _,local_names,local_markers=ns['backup_runtime_profile']('1','1')
         self.assertFalse(any('Retention' in v for v in local_names))
         self.assertFalse(any('_RETENTION_' in v for v in local_markers))
+
+    def test_retention_diagnostic_requires_exact_profile_and_every_case(self):
+        ns=self.functions()
+        flags=("1","1","1","0","0","0","0")
+        pattern,names,markers=ns['retention_failure_diagnostic_profile'](*flags)
+        self.assertEqual(len(names),2)
+        self.assertEqual(len(markers),5)
+        for i in range(len(flags)):
+            changed=list(flags);changed[i]="0" if flags[i]=="1" else "1"
+            with self.assertRaises(RuntimeError):ns['retention_failure_diagnostic_profile'](*changed)
+        entries=names+[names[0]+"/"+kind for kind in ("delete_denied","conditional_unsupported","authorization_revoked")]
+        output="\n".join(["--- PASS: "+entry+" (0.01s)" for entry in entries]+markers)
+        ns['verify_retention_failure_diagnostic_output'](output)
+        for entry in entries:
+            with self.assertRaises(RuntimeError):ns['verify_retention_failure_diagnostic_output'](output.replace("--- PASS: "+entry+" (0.01s)",""))
+        for marker in markers:
+            with self.assertRaises(RuntimeError):ns['verify_retention_failure_diagnostic_output'](output.replace(marker,""))
+            with self.assertRaises(RuntimeError):ns['verify_retention_failure_diagnostic_output'](output+"\n"+marker)
+        for suffix in ("\n--- SKIP: selected (0.01s)","\n--- FAIL: selected (0.01s)","\n--- PASS: unrelated (0.01s)","\nDATABASE_BACKUP_REMOTE_PASS postgresql"):
+            with self.assertRaises(RuntimeError):ns['verify_retention_failure_diagnostic_output'](output+suffix)
+        with self.assertRaises(RuntimeError):ns['verify_backup_runtime_output'](output,"1","1","1")
+        _,full_names,full_markers=ns['backup_runtime_profile']("1","1","1")
+        full_output="\n".join(["--- PASS: "+entry+" (0.01s)" for entry in full_names]+full_markers)
+        with self.assertRaises(RuntimeError):ns['verify_retention_failure_diagnostic_output'](full_output)
+        self.assertRegex(names[0],pattern)
+        self.assertNotRegex(names[0]+"Foreign",pattern)
 
 
 DRIVER_FIXTURE = r'''
