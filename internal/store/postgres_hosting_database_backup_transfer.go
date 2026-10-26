@@ -65,7 +65,10 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 	}
 	var enabled bool
 	var project string
-	if err := tx.QueryRow(ctx, `SELECT enabled,project_id FROM hosting_database_backup_targets WHERE id=$1 FOR SHARE`, p.Operation.TargetID).Scan(&enabled, &project); err != nil {
+	lockDatabaseBackupTargetAuthorityRow, err := sqlcgen.New(tx).LockDatabaseBackupTargetAuthority(ctx, p.Operation.TargetID)
+	enabled = lockDatabaseBackupTargetAuthorityRow.Enabled
+	project = lockDatabaseBackupTargetAuthorityRow.ProjectID
+	if err != nil {
 		return hostingError(err)
 	}
 	if !enabled || project != p.Operation.ProjectID {
@@ -84,14 +87,16 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 		}
 	}
 	var server, runner string
-	if err = tx.QueryRow(ctx, `SELECT d.server_id,s.runner_id FROM destinations d JOIN servers s ON s.id=d.server_id WHERE d.id=$1 FOR SHARE OF d,s`, p.Operation.DestinationID).Scan(&server, &runner); err != nil {
+	lockDatabaseBackupRemoteDestinationRow, err := sqlcgen.New(tx).LockDatabaseBackupRemoteDestination(ctx, p.Operation.DestinationID)
+	server = lockDatabaseBackupRemoteDestinationRow.ServerID
+	runner = lockDatabaseBackupRemoteDestinationRow.RunnerID
+	if err != nil {
 		return hostingError(err)
 	}
 	if server != p.ServerID || runner != p.RunnerID {
 		return ErrConflict
 	}
-	var eligible string
-	err = tx.QueryRow(ctx, `SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash AND $2=ANY(r.capabilities) AND $3=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) FOR SHARE OF r,e`, runner, domain.HostingDatabaseBackupRemoteCapability, domain.RunTypeDatabaseBackupTransfer).Scan(&eligible)
+	_, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: runner, Column2: domain.HostingDatabaseBackupRemoteCapability, Column3: domain.RunTypeDatabaseBackupTransfer})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -112,11 +117,11 @@ func (s *PostgresStore) backupRemoteInsert(ctx context.Context, tx pgx.Tx, p dom
 	if p.Operation.RestoreOperationID != "" {
 		restore = &p.Operation.RestoreOperationID
 	}
-	var blob any
+	var blob []byte
 	if p.Operation.Blob != nil {
 		blob = buildJSON(p.Operation.Blob)
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO hosting_database_backup_transfers(id,project_id,target_id,target_revision,destination_id,actor_id,request_id,request_hash,mode,backup_id,restore_operation_id,predecessor_id,state,runner_id,daemon_id,blob,plan,plan_hash,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'queued',$13,$14,$15,$16,$17,$18,$18)`, p.Operation.ID, p.Operation.ProjectID, p.Operation.TargetID, p.Operation.TargetRevision, p.Operation.DestinationID, p.ActorID, request, hash, p.Operation.Mode, backup, restore, predecessor, p.RunnerID, p.DaemonID, blob, buildJSON(p), p.Hash, p.Operation.CreatedAt)
+	err := sqlcgen.New(tx).CreateDatabaseBackupTransfer(ctx, sqlcgen.CreateDatabaseBackupTransferParams{ID: p.Operation.ID, ProjectID: p.Operation.ProjectID, TargetID: p.Operation.TargetID, TargetRevision: int64(p.Operation.TargetRevision), DestinationID: p.Operation.DestinationID, ActorID: p.ActorID, RequestID: request, RequestHash: hash, Mode: p.Operation.Mode, BackupID: backup, RestoreOperationID: restore, PredecessorID: predecessor, RunnerID: p.RunnerID, DaemonID: p.DaemonID, Blob: blob, Plan: buildJSON(p), PlanHash: p.Hash, CreatedAt: p.Operation.CreatedAt})
 	if err != nil {
 		return hostingError(err)
 	}
@@ -135,8 +140,8 @@ func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, pr
 		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleOwner, false); err != nil {
 			return zero, err
 		}
-		var locked string
-		if err := tx.QueryRow(ctx, `SELECT id FROM projects WHERE id=$1 FOR UPDATE`, project).Scan(&locked); err != nil {
+		_, err := sqlcgen.New(tx).LockDatabaseBackupTargetProject(ctx, project)
+		if err != nil {
 			return zero, hostingError(err)
 		}
 		hash := domain.HostingDocumentHash(struct {
@@ -144,7 +149,9 @@ func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, pr
 			Input         domain.HostingDatabaseBackupTargetValidationInput
 		}{actor, target, in})
 		var prior, priorHash string
-		err := tx.QueryRow(ctx, `SELECT id,request_hash FROM hosting_database_backup_transfers WHERE project_id=$1 AND request_id=$2`, project, in.RequestID).Scan(&prior, &priorHash)
+		findDatabaseBackupTransferRequestRow, err := sqlcgen.New(tx).FindDatabaseBackupTransferRequest(ctx, sqlcgen.FindDatabaseBackupTransferRequestParams{ProjectID: project, RequestID: in.RequestID})
+		prior = findDatabaseBackupTransferRequestRow.ID
+		priorHash = findDatabaseBackupTransferRequestRow.RequestHash
 		if err == nil {
 			if priorHash != hash {
 				return zero, ErrConflict
@@ -156,7 +163,8 @@ func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, pr
 			return zero, err
 		}
 		var revision int64
-		if err = tx.QueryRow(ctx, `SELECT revision FROM hosting_database_backup_targets WHERE id=$1 AND project_id=$2 FOR SHARE`, target, project).Scan(&revision); err != nil {
+		revision, err = sqlcgen.New(tx).LockDatabaseBackupTargetRevision(ctx, sqlcgen.LockDatabaseBackupTargetRevisionParams{ID: target, ProjectID: project})
+		if err != nil {
 			return zero, hostingError(err)
 		}
 		if revision != in.ExpectedRevision {
@@ -167,7 +175,10 @@ func (s *PostgresStore) ValidateDatabaseBackupTarget(ctx context.Context, id, pr
 			return zero, err
 		}
 		var server, runner string
-		if err = tx.QueryRow(ctx, `SELECT d.server_id,s.runner_id FROM destinations d JOIN servers s ON s.id=d.server_id WHERE d.id=$1`, in.DestinationID).Scan(&server, &runner); err != nil {
+		readDatabaseBackupRemoteDestinationRow, err := sqlcgen.New(tx).ReadDatabaseBackupRemoteDestination(ctx, in.DestinationID)
+		server = readDatabaseBackupRemoteDestinationRow.ServerID
+		runner = readDatabaseBackupRemoteDestinationRow.RunnerID
+		if err != nil {
 			return zero, hostingError(err)
 		}
 		now := time.Now().UTC()
@@ -202,37 +213,28 @@ func (s *PostgresStore) GetDatabaseBackupTransfer(ctx context.Context, actor, id
 }
 func (s *PostgresStore) ListDatabaseBackupTransfers(ctx context.Context, actor, id string, validation bool) ([]domain.HostingDatabaseBackupTransfer, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupTransfer, error) {
+		q := sqlcgen.New(tx)
 		var project string
-		query := `SELECT project_id FROM hosting_database_backups WHERE id=$1`
+		var err error
 		if validation {
-			query = `SELECT project_id FROM hosting_database_backup_targets WHERE id=$1`
+			project, err = q.ReadDatabaseBackupValidationProject(ctx, id)
+		} else {
+			project, err = q.ReadDatabaseBackupTransferProject(ctx, id)
 		}
-		if err := tx.QueryRow(ctx, query, id).Scan(&project); err != nil {
+		if err != nil {
 			return nil, hostingError(err)
 		}
-		if err := proxyAuthorize(ctx, tx, actor, project, domain.RoleViewer, false); err != nil {
-			return nil, err
-		}
-		query = `SELECT id FROM hosting_database_backup_transfers WHERE backup_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100`
-		if validation {
-			query = `SELECT id FROM hosting_database_backup_transfers WHERE target_id=$1 AND mode='validate' ORDER BY created_at DESC,id DESC LIMIT 100`
-		}
-		rows, err := tx.Query(ctx, query, id)
-		if err != nil {
+		if err = proxyAuthorize(ctx, tx, actor, project, domain.RoleViewer, false); err != nil {
 			return nil, err
 		}
 		var ids []string
-		for rows.Next() {
-			var id string
-			if err = rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			ids = append(ids, id)
+		if validation {
+			ids, err = q.ListDatabaseBackupValidationIDs(ctx, id)
+		} else {
+			ids, err = q.ListDatabaseBackupTransferIDs(ctx, &id)
 		}
-		rows.Close()
-		if rows.Err() != nil {
-			return nil, rows.Err()
+		if err != nil {
+			return nil, err
 		}
 		out := make([]domain.HostingDatabaseBackupTransfer, 0, len(ids))
 		for _, id := range ids {
@@ -260,7 +262,7 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 		}
 		if err = backupRemoteCurrent(ctx, tx, r.plan); err != nil {
 			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) {
-				_, e := tx.Exec(ctx, `UPDATE hosting_database_backup_transfers SET state='failed',failure_code='authority_denied',updated_at=clock_timestamp() WHERE id=$1`, id)
+				e := sqlcgen.New(tx).FailDatabaseBackupTransferAuthority(ctx, id)
 				if e == nil && r.view.Mode == "upload" {
 					receipt, receiptErr := notificationDirectReceipt(ctx, tx, "transfer", id, "authority_denied")
 					e = receiptErr
@@ -279,7 +281,7 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 		if _, err = sqlcgen.New(tx).CreateHostingTask(ctx, sqlcgen.CreateHostingTaskParams{ID: run.ID, ProjectID: run.ProjectID, RunSpec: buildJSON(run.RunSpec), RequestedBy: r.plan.ActorID}); err != nil {
 			return false, err
 		}
-		_, err = tx.Exec(ctx, `UPDATE hosting_database_backup_transfers SET state='dispatched',run_id=$2,updated_at=clock_timestamp() WHERE id=$1`, id, run.ID)
+		err = sqlcgen.New(tx).DispatchDatabaseBackupTransfer(ctx, sqlcgen.DispatchDatabaseBackupTransferParams{ID: id, RunID: &run.ID})
 		return err == nil, err
 	})
 	return err
@@ -287,7 +289,7 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 
 func backupRemoteAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (backupRemoteRow, error) {
 	var id string
-	err := tx.QueryRow(ctx, `SELECT b.id FROM hosting_database_backup_transfers b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_transfer','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l`, a.OperationID, a.RunID, runner, a.LeaseID, a.Attempt, a.Fence, live).Scan(&id)
+	id, err := sqlcgen.New(tx).LockDatabaseBackupTransferAuthority(ctx, sqlcgen.LockDatabaseBackupTransferAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: int32(a.Attempt), Fence: a.Fence, Column7: live})
 	if err != nil {
 		return backupRemoteRow{}, hostingError(err)
 	}
@@ -318,7 +320,9 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		}
 		var hash string
 		var response []byte
-		err = tx.QueryRow(ctx, `SELECT body_hash,response FROM hosting_database_backup_transfer_receipts WHERE operation_id=$1 AND phase=$2`, r.view.ID, in.Phase).Scan(&hash, &response)
+		readDatabaseBackupTransferReceiptRow, err := sqlcgen.New(tx).ReadDatabaseBackupTransferReceipt(ctx, sqlcgen.ReadDatabaseBackupTransferReceiptParams{OperationID: r.view.ID, Phase: in.Phase})
+		hash = readDatabaseBackupTransferReceiptRow.BodyHash
+		response = readDatabaseBackupTransferReceiptRow.Response
 		if err == nil {
 			if hash != domain.HostingDocumentHash(in) || json.Unmarshal(response, &zero) != nil {
 				return zero, ErrConflict
@@ -369,7 +373,7 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 			}
 			state = "uncertain"
 		}
-		if _, err = tx.Exec(ctx, `UPDATE hosting_database_backup_transfers SET state=$2,failure_code=$3,daemon_id=$4,updated_at=clock_timestamp() WHERE id=$1`, r.view.ID, state, in.FailureCode, in.DaemonID); err != nil {
+		if err = sqlcgen.New(tx).SetDatabaseBackupTransferMutationState(ctx, sqlcgen.SetDatabaseBackupTransferMutationStateParams{ID: r.view.ID, State: state, FailureCode: in.FailureCode, DaemonID: in.DaemonID}); err != nil {
 			return zero, err
 		}
 		if in.Phase != "intent" && !expired {
@@ -377,10 +381,10 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 			if state == "succeeded" {
 				status = "succeeded"
 			}
-			if _, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, in.RunID, status); err != nil {
+			if err = sqlcgen.New(tx).CompleteDatabaseBackupTransferTask(ctx, sqlcgen.CompleteDatabaseBackupTransferTaskParams{ID: in.RunID, Status: status}); err != nil {
 				return zero, err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE run_leases SET status=$2,completed_at=clock_timestamp(),completion_key=$3 WHERE id=$1 AND status='active'`, in.LeaseID, status, in.ReceiptID); err != nil {
+			if err = sqlcgen.New(tx).CompleteDatabaseBackupTransferLease(ctx, sqlcgen.CompleteDatabaseBackupTransferLeaseParams{ID: in.LeaseID, Status: status, CompletionKey: &in.ReceiptID}); err != nil {
 				return zero, err
 			}
 		}
@@ -401,7 +405,8 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		}
 		if r.view.Mode == "upload" && in.Phase == "complete" {
 			var resource string
-			if err = tx.QueryRow(ctx, `SELECT source_resource_id FROM hosting_database_backups WHERE id=$1`, r.view.BackupID).Scan(&resource); err != nil {
+			resource, err = sqlcgen.New(tx).ReadDatabaseBackupSourceResource(ctx, r.view.BackupID)
+			if err != nil {
 				return zero, err
 			}
 			if err = backupRetentionPublication(ctx, tx, resource, "remote_"+r.view.ID); err != nil {
@@ -412,7 +417,7 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		if err != nil {
 			return zero, err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_transfer_receipts(operation_id,phase,receipt_id,authority,body,body_hash,response,expired_classification) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.view.ID, in.Phase, in.ReceiptID, buildJSON(in.HostingAuthority), buildJSON(in), domain.HostingDocumentHash(in), buildJSON(updated.view), expired)
+		err = sqlcgen.New(tx).CreateDatabaseBackupTransferReceipt(ctx, sqlcgen.CreateDatabaseBackupTransferReceiptParams{OperationID: r.view.ID, Phase: in.Phase, ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), Response: buildJSON(updated.view), ExpiredClassification: expired})
 		if err != nil {
 			return zero, err
 		}
@@ -444,12 +449,12 @@ func backupRemoteExpiredUploadClassification(ctx context.Context, tx pgx.Tx, run
 	if in.Phase != "uncertain" || in.FailureCode != "interrupted" || r.view.Mode != "upload" || r.view.State != "applying" || in.PlanHash != r.plan.Hash || r.daemon != in.DaemonID {
 		return false
 	}
-	var current string
-	if tx.QueryRow(ctx, `SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.credential_hash=r.token_hash AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) FOR SHARE OF r,e`, runner).Scan(&current) != nil {
+	_, err := sqlcgen.New(tx).LockExpiredDatabaseBackupUploadRunner(ctx, runner)
+	if err != nil {
 		return false
 	}
 	var allowed bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_leases l JOIN runners r ON r.id=l.runner_id JOIN runner_enrollments e ON e.runner_id=r.id JOIN hosting_database_backup_transfer_receipts i ON i.operation_id=$1 AND i.phase='intent' WHERE l.id=$2 AND l.run_id=$3 AND l.runner_id=$4 AND l.attempt=$5 AND l.fence=$6 AND l.expires_at<=clock_timestamp() AND l.status IN ('active','expired') AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) AND i.authority=$7 AND i.body->>'plan_hash'=$8 AND i.body->>'daemon_id'=$9 AND NOT EXISTS(SELECT 1 FROM run_leases newer WHERE newer.run_id=l.run_id AND newer.attempt>l.attempt))`, in.OperationID, in.LeaseID, in.RunID, runner, in.Attempt, in.Fence, buildJSON(in.HostingAuthority), in.PlanHash, in.DaemonID).Scan(&allowed)
+	allowed, err = sqlcgen.New(tx).ExpiredDatabaseBackupUploadAllowed(ctx, sqlcgen.ExpiredDatabaseBackupUploadAllowedParams{OperationID: in.OperationID, ID: in.LeaseID, RunID: in.RunID, RunnerID: runner, Attempt: int32(in.Attempt), Fence: in.Fence, Authority: buildJSON(in.HostingAuthority), Column8: in.PlanHash, Column9: in.DaemonID})
 	return err == nil && allowed
 }
 
@@ -462,22 +467,9 @@ func (s *PostgresStore) recoverDatabaseBackupTransfers(ctx context.Context) erro
 		return nil
 	}
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		rows, err := tx.Query(ctx, `SELECT id FROM hosting_database_backup_transfers WHERE state='queued' ORDER BY created_at,id LIMIT 100`)
+		ids, err := sqlcgen.New(tx).ListQueuedDatabaseBackupTransferIDs(ctx)
 		if err != nil {
 			return false, err
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err = rows.Scan(&id); err != nil {
-				rows.Close()
-				return false, err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if rows.Err() != nil {
-			return false, rows.Err()
 		}
 		for _, id := range ids {
 			if _, err = s.hostingJobs.EnqueueDatabaseBackupTransferTx(ctx, tx, hostingjobs.DatabaseBackupTransferArgs{OperationID: id}); err != nil {

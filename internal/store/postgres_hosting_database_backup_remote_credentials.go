@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
 )
 
 type BackupRemoteCredentialAuthorization struct {
@@ -36,7 +37,7 @@ func backupRemoteDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, token
 	if err = backupRemoteCurrent(ctx, tx, r.plan); err != nil {
 		return r, expiry, err
 	}
-	err = tx.QueryRow(ctx, `SELECT least(l.expires_at,clock_timestamp()+interval '1 minute') FROM run_leases l JOIN runners r ON r.id=l.runner_id WHERE l.id=$1 AND r.id=$2 AND r.token_hash=$3 AND r.token_hash<>'' AND r.status='active' FOR SHARE OF r`, in.Authority.LeaseID, runner, tokenHash).Scan(&expiry)
+	expiry, err = sqlcgen.New(tx).ReadDatabaseBackupRemoteCredentialExpiry(ctx, sqlcgen.ReadDatabaseBackupRemoteCredentialExpiryParams{ID: in.Authority.LeaseID, ID_2: runner, TokenHash: tokenHash})
 	return r, expiry, hostingError(err)
 }
 
@@ -52,14 +53,14 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 			Request domain.BackupRemoteCredentialRequest
 		}{runner, in})
 		var raw []byte
-		err = tx.QueryRow(ctx, `SELECT metadata FROM hosting_database_backup_remote_deliveries WHERE delivery_id=$1`, in.DeliveryID).Scan(&raw)
+		raw, err = sqlcgen.New(tx).ReadDatabaseBackupRemoteDelivery(ctx, in.DeliveryID)
 		if err == nil {
 			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.Validate() != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in {
 				return out, ErrConflict
 			}
 		} else if errors.Is(err, pgx.ErrNoRows) {
 			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRemoteCredentialPurpose, Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
-			_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_remote_deliveries(delivery_id,operation_id,run_id,lease_id,attempt,fence,runner_id,request_hash,metadata,use_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, in.DeliveryID, in.Authority.OperationID, in.Authority.RunID, in.Authority.LeaseID, in.Authority.Attempt, in.Authority.Fence, runner, hash, buildJSON(out.Metadata), expiry)
+			err = sqlcgen.New(tx).CreateDatabaseBackupRemoteDelivery(ctx, sqlcgen.CreateDatabaseBackupRemoteDeliveryParams{DeliveryID: in.DeliveryID, OperationID: in.Authority.OperationID, RunID: in.Authority.RunID, LeaseID: in.Authority.LeaseID, Attempt: int32(in.Authority.Attempt), Fence: in.Authority.Fence, RunnerID: runner, RequestHash: hash, Metadata: buildJSON(out.Metadata), UseUntil: expiry})
 			if err != nil {
 				return out, hostingError(err)
 			}
@@ -70,7 +71,14 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 			return out, err
 		}
 		var valid bool
-		if err = tx.QueryRow(ctx, `SELECT $1::timestamptz>clock_timestamp() AND $1::timestamptz<=$2::timestamptz`, out.Metadata.UseUntil, expiry).Scan(&valid); err != nil {
+		databaseBackupRemoteDeliveryValidRow, err := sqlcgen.New(tx).DatabaseBackupRemoteDeliveryValid(ctx, sqlcgen.DatabaseBackupRemoteDeliveryValidParams{Column1: out.Metadata.UseUntil, Column2: expiry})
+		if err == nil && databaseBackupRemoteDeliveryValidRow == nil {
+			err = pgx.ScanArgError{ColumnIndex: 0, FieldName: "?column?", Err: errors.New("cannot scan NULL into *bool")}
+		}
+		if err == nil {
+			valid = *databaseBackupRemoteDeliveryValidRow
+		}
+		if err != nil {
 			return out, err
 		}
 		if !valid {
@@ -92,7 +100,8 @@ func (s *PostgresStore) RevalidateBackupRemoteCredentials(ctx context.Context, r
 			return false, e
 		}
 		var raw []byte
-		if e = tx.QueryRow(ctx, `SELECT metadata FROM hosting_database_backup_remote_deliveries WHERE delivery_id=$1 AND operation_id=$2 AND runner_id=$3 AND use_until>clock_timestamp() AND use_until<=$4`, in.DeliveryID, in.Authority.OperationID, runner, expiry).Scan(&raw); e != nil {
+		raw, e = sqlcgen.New(tx).ReadValidDatabaseBackupRemoteDelivery(ctx, sqlcgen.ReadValidDatabaseBackupRemoteDeliveryParams{DeliveryID: in.DeliveryID, OperationID: in.Authority.OperationID, RunnerID: runner, UseUntil: expiry})
+		if e != nil {
 			return false, hostingError(e)
 		}
 		var saved domain.BackupRemoteCredentialMetadata

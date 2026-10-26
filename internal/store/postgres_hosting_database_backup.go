@@ -185,7 +185,8 @@ func databaseBackupCurrent(ctx context.Context, tx pgx.Tx, r sqlcgen.HostingData
 // target; a separate live backup may not use it until import settles.
 func databaseBackupSourceRole(ctx context.Context, tx pgx.Tx, binding string) error {
 	var held bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backups WHERE target_binding_id=$1 AND ownership_held)`, binding).Scan(&held); err != nil {
+	held, err := sqlcgen.New(tx).DatabaseBackupTargetOwnershipHeld(ctx, &binding)
+	if err != nil {
 		return err
 	}
 	if held {
@@ -194,7 +195,7 @@ func databaseBackupSourceRole(ctx context.Context, tx pgx.Tx, binding string) er
 	return nil
 }
 func databaseBackupFinalizeActor(ctx context.Context, tx pgx.Tx, actor string) error {
-	if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+	if err := sqlcgen.New(tx).FlushHostingDatabaseBindingConstraints(ctx); err != nil {
 		return err
 	}
 	return proxyCheckLegacyToken(ctx, tx, actor)
@@ -231,7 +232,7 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 		Input domain.HostingDatabaseBackupInput
 	}{actor, in})
 	var existing string
-	err = tx.QueryRow(ctx, `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND request_id=$2`, resource, in.RequestID).Scan(&existing)
+	existing, err = sqlcgen.New(tx).FindDatabaseBackupSourceRequest(ctx, sqlcgen.FindDatabaseBackupSourceRequestParams{SourceResourceID: resource, RequestID: in.RequestID})
 	if err == nil {
 		r, e := q.ReadDatabaseBackup(ctx, existing)
 		if e != nil {
@@ -282,12 +283,12 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 			return zero, err
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,runner_id,plan,plan_hash) VALUES($1,$2,$3,$4,$5,$1,'backup',$6,$7,$8,'queued',$9,$10,$11)`, id, view.ProjectID, resource, h.Snapshot.BindingID, view.SourceGeneration, in.RequestID, hash, actor, p.RunnerID, buildJSON(p), p.Hash)
+	err = sqlcgen.New(tx).CreateDatabaseBackup(ctx, sqlcgen.CreateDatabaseBackupParams{ID: id, ProjectID: view.ProjectID, SourceResourceID: resource, SourceBindingID: h.Snapshot.BindingID, SourceGeneration: int64(view.SourceGeneration), RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor, RunnerID: p.RunnerID, Plan: buildJSON(p), PlanHash: p.Hash})
 	if err != nil {
 		return zero, hostingError(err)
 	}
 	if in.RemoteTarget != nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_remote_selections(operation_id,target_id,target_revision) VALUES($1,$2,$3)`, id, in.RemoteTarget.TargetID, in.RemoteTarget.Revision); err != nil {
+		if err = sqlcgen.New(tx).CreateDatabaseBackupRemoteSelection(ctx, sqlcgen.CreateDatabaseBackupRemoteSelectionParams{OperationID: id, TargetID: in.RemoteTarget.TargetID, TargetRevision: int64(in.RemoteTarget.Revision)}); err != nil {
 			return zero, err
 		}
 	}
@@ -440,7 +441,7 @@ func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, ba
 		p.ActorID = actor
 		p.Hash = ""
 		p.Hash = domain.HostingDocumentHash(p)
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backups(id,project_id,source_resource_id,source_binding_id,source_generation,backup_id,mode,request_id,request_hash,created_by,state,target_resource_id,target_binding_id,deployment_operation_id,runner_id,plan,plan_hash,blob) VALUES($1,$2,$3,$4,$5,$6,'restore',$7,$8,$9,'waiting_target',$10,$11,$12,$13,$14,$15,$16)`, id, view.ProjectID, view.SourceResourceID, original.SourceBindingID, view.SourceGeneration, backup, in.RequestID, hash, actor, target.Resource.ID, target.Binding.ID, child, p.RunnerID, buildJSON(p), p.Hash, original.Blob)
+		err = sqlcgen.New(tx).CreateDatabaseBackupRestore(ctx, sqlcgen.CreateDatabaseBackupRestoreParams{ID: id, ProjectID: view.ProjectID, SourceResourceID: view.SourceResourceID, SourceBindingID: original.SourceBindingID, SourceGeneration: int64(view.SourceGeneration), BackupID: backup, RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor, TargetResourceID: &target.Resource.ID, TargetBindingID: &target.Binding.ID, DeploymentOperationID: &child, RunnerID: p.RunnerID, Plan: buildJSON(p), PlanHash: p.Hash, Blob: original.Blob})
 		if err != nil {
 			return zero, hostingError(err)
 		}
@@ -476,13 +477,13 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 		}
 		if r.Mode == "restore" {
 			var downloadState string
-			e := tx.QueryRow(ctx, `SELECT state FROM hosting_database_backup_transfers WHERE restore_operation_id=$1`, r.ID).Scan(&downloadState)
+			downloadState, e := sqlcgen.New(tx).ReadDatabaseBackupDownloadState(ctx, &r.ID)
 			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 				return false, e
 			}
 			if e == nil && downloadState != "succeeded" {
 				if downloadState == "failed" || downloadState == "uncertain" {
-					_, err = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='uncertain',failure_code='execution_failed',updated_at=clock_timestamp() WHERE id=$1`, r.ID)
+					err = sqlcgen.New(tx).MarkDatabaseBackupExecutionUncertain(ctx, r.ID)
 					return err == nil, err
 				}
 				waiting = true
@@ -494,7 +495,7 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 			}
 			if child.State != "succeeded" {
 				if child.State == "failed" || child.State == "canceled" {
-					_, err = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='uncertain',failure_code='execution_failed',updated_at=clock_timestamp() WHERE id=$1`, id)
+					err = sqlcgen.New(tx).MarkDatabaseBackupExecutionUncertain(ctx, id)
 					return err == nil, err
 				}
 				waiting = true
@@ -528,7 +529,7 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 		if _, err = q.CreateHostingTask(ctx, sqlcgen.CreateHostingTaskParams{ID: run.ID, ProjectID: r.ProjectID, RunSpec: buildJSON(run.RunSpec), RequestedBy: r.CreatedBy}); err != nil {
 			return false, err
 		}
-		_, err = tx.Exec(ctx, `UPDATE hosting_database_backups SET state='dispatched',run_id=$2,plan=$3,plan_hash=$4,updated_at=clock_timestamp() WHERE id=$1`, id, run.ID, buildJSON(p), p.Hash)
+		err = sqlcgen.New(tx).DispatchDatabaseBackup(ctx, sqlcgen.DispatchDatabaseBackupParams{ID: id, RunID: &run.ID, Plan: buildJSON(p), PlanHash: p.Hash})
 		if err != nil {
 			return false, err
 		}
@@ -563,7 +564,8 @@ func (s *PostgresStore) databaseBackupClaimAllowed(ctx context.Context, tx pgx.T
 }
 func databaseBackupAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (sqlcgen.HostingDatabaseBackup, error) {
 	var r sqlcgen.HostingDatabaseBackup
-	err := tx.QueryRow(ctx, `SELECT b.id FROM hosting_database_backups b JOIN task_runs t ON t.id=b.run_id JOIN run_leases l ON l.run_id=t.id WHERE b.id=$1 AND b.run_id=$2 AND b.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup','hosting_operation_id',b.id,'hosting_mode',b.mode,'inputs','{}'::jsonb) FOR UPDATE OF l`, a.OperationID, a.RunID, runner, a.LeaseID, a.Attempt, a.Fence, live).Scan(&r.ID)
+	lockDatabaseBackupAuthorityRow, err := sqlcgen.New(tx).LockDatabaseBackupAuthority(ctx, sqlcgen.LockDatabaseBackupAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: int32(a.Attempt), Fence: a.Fence, Column7: live})
+	r.ID = lockDatabaseBackupAuthorityRow
 	if err != nil {
 		return r, hostingError(err)
 	}
@@ -649,7 +651,7 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 		if in.Blob != nil {
 			blob = buildJSON(in.Blob)
 		}
-		_, err = tx.Exec(ctx, `UPDATE hosting_database_backups SET state=$2,ownership_held=$3,blob=$4,failure_code=$5,updated_at=clock_timestamp() WHERE id=$1`, r.ID, state, hold, blob, in.FailureCode)
+		err = sqlcgen.New(tx).SetDatabaseBackupMutationState(ctx, sqlcgen.SetDatabaseBackupMutationStateParams{ID: r.ID, State: state, OwnershipHeld: hold, Blob: blob, FailureCode: in.FailureCode})
 		if err != nil {
 			return zero, err
 		}
@@ -658,11 +660,11 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 			if state == "succeeded" {
 				status = "succeeded"
 			}
-			_, err = tx.Exec(ctx, `UPDATE task_runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, in.RunID, status)
+			err = sqlcgen.New(tx).CompleteDatabaseBackupTask(ctx, sqlcgen.CompleteDatabaseBackupTaskParams{ID: in.RunID, Status: status})
 			if err != nil {
 				return zero, err
 			}
-			_, err = tx.Exec(ctx, `UPDATE run_leases SET status=$3,completed_at=clock_timestamp(),completion_key=$2 WHERE id=$1 AND status='active'`, in.LeaseID, in.ReceiptID, status)
+			err = sqlcgen.New(tx).CompleteDatabaseBackupLease(ctx, sqlcgen.CompleteDatabaseBackupLeaseParams{ID: in.LeaseID, CompletionKey: &in.ReceiptID, Status: status})
 			if err != nil {
 				return zero, err
 			}
@@ -689,7 +691,7 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 		if err != nil {
 			return zero, err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_receipts(operation_id,phase,receipt_id,authority,body,body_hash,response) VALUES($1,$2,$3,$4,$5,$6,$7)`, r.ID, in.Phase, in.ReceiptID, buildJSON(in.HostingAuthority), buildJSON(in), domain.HostingDocumentHash(in), buildJSON(view))
+		err = sqlcgen.New(tx).CreateDatabaseBackupReceipt(ctx, sqlcgen.CreateDatabaseBackupReceiptParams{OperationID: r.ID, Phase: in.Phase, ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), Response: buildJSON(view)})
 		if err != nil {
 			return zero, err
 		}

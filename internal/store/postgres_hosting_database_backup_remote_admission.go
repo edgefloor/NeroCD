@@ -16,7 +16,8 @@ func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabase
 		return zero, ErrConflict
 	}
 	var current int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM hosting_database_backup_targets WHERE id=$1 AND project_id=$2 FOR SHARE`, selection.TargetID, p.Operation.ProjectID).Scan(&current); err != nil {
+	current, err := sqlcgen.New(tx).LockDatabaseBackupTargetRevision(ctx, sqlcgen.LockDatabaseBackupTargetRevisionParams{ID: selection.TargetID, ProjectID: p.Operation.ProjectID})
+	if err != nil {
 		return zero, hostingError(err)
 	}
 	if current != selection.Revision {
@@ -27,7 +28,7 @@ func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabase
 		return zero, err
 	}
 	var validated bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backup_transfers WHERE target_id=$1 AND target_revision=$2 AND destination_id=$3 AND runner_id=$4 AND daemon_id=$5 AND mode='validate' AND state='succeeded')`, selection.TargetID, selection.Revision, p.Source.Snapshot.DestinationID, p.RunnerID, p.Source.Release.DaemonID).Scan(&validated)
+	validated, err = sqlcgen.New(tx).DatabaseBackupRemoteTargetValidated(ctx, sqlcgen.DatabaseBackupRemoteTargetValidatedParams{TargetID: selection.TargetID, TargetRevision: int64(selection.Revision), DestinationID: p.Source.Snapshot.DestinationID, RunnerID: p.RunnerID, DaemonID: p.Source.Release.DaemonID})
 	if err != nil {
 		return zero, err
 	}
@@ -88,7 +89,9 @@ func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, act
 			Input         domain.HostingDatabaseBackupTransferRetryInput
 		}{actor, backup, in})
 		var prior, priorHash string
-		err = tx.QueryRow(ctx, `SELECT id,request_hash FROM hosting_database_backup_transfers WHERE project_id=$1 AND request_id=$2`, b.ProjectID, in.RequestID).Scan(&prior, &priorHash)
+		findDatabaseBackupTransferRequestRow, err := sqlcgen.New(tx).FindDatabaseBackupTransferRequest(ctx, sqlcgen.FindDatabaseBackupTransferRequestParams{ProjectID: b.ProjectID, RequestID: in.RequestID})
+		prior = findDatabaseBackupTransferRequestRow.ID
+		priorHash = findDatabaseBackupTransferRequestRow.RequestHash
 		if err == nil {
 			if priorHash != hash {
 				return zero, ErrConflict
@@ -100,7 +103,8 @@ func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, act
 			return zero, err
 		}
 		var latest string
-		if err = tx.QueryRow(ctx, `SELECT id FROM hosting_database_backup_transfers WHERE backup_id=$1 AND mode='upload' ORDER BY created_at DESC,id DESC LIMIT 1`, backup).Scan(&latest); err != nil {
+		latest, err = sqlcgen.New(tx).ReadLatestDatabaseBackupUpload(ctx, &backup)
+		if err != nil {
 			return zero, hostingError(err)
 		}
 		if latest != in.ExpectedTransferID {
