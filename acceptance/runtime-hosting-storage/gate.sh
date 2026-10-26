@@ -294,14 +294,19 @@ cleanup() {
  host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-after" || result=1
  host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-after" || result=1
  host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-after" || result=1
- cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+ if [[ "$remote" != true ]]; then
+  cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+ fi
  cmp "$evidence/host-volume-names-before" "$evidence/host-volume-names-after" || result=1
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
  if [[ "$remote" == true ]]; then
   if [[ -f "$evidence/preservation-before.private.json" ]]; then
-   python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" || result=1
+   python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" "$owner" "$name" "$volume" || result=1
+  else
+   echo 'baseline preservation evidence unavailable' >&2
+   result=1
   fi
   printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
   python3 acceptance/runtime-hosting-storage/remote_evidence.py receipt "$evidence" || result=1

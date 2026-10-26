@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import tarfile
@@ -53,6 +54,122 @@ class ProfileTest(unittest.TestCase):
             changed = copy.deepcopy(new)
             changed["State"][field] = False
             self.assertNotEqual(evidence.selected(value), evidence.selected(changed))
+
+    def preservation_fixture(self):
+        container = {"Id": "a" * 64, "Name": "/baseline", "Image": "image",
+                     "Config": {"Env": ["protected=private"], "Labels": {}}, "HostConfig": {},
+                     "Mounts": [], "State": {"Running": True}, "NetworkSettings": {"Network": "baseline"}}
+        return {"containers": {container["Id"]: container}, "volumes": {"baseline-volume": {"Name": "baseline-volume", "Labels": {}}},
+                "ui_files": {"binary": {"sha256": "original", "inode": 1}}, "ui_root": [1, 2, 3, 4, 5],
+                "ui_listener": "original listener", "ui_health": {"/": {"status": 200, "sha256": "original body"}}}
+
+    def preservation(self, before, after):
+        return evidence.preservation(before, after, "task-owner", "task-owner-dind", "task-owner-docker-data")
+
+    def test_reports_non_task_additions_without_changing_or_attributing_them(self):
+        before = self.preservation_fixture()
+        after = copy.deepcopy(before)
+        added = copy.deepcopy(after["containers"]["a" * 64])
+        added.update(Id="b" * 64, Name="/concurrent-addition")
+        added["Config"]["Labels"] = {"unrelated-owner": "private"}
+        after["containers"][added["Id"]] = added
+        original = copy.deepcopy(after)
+        result = self.preservation(before, after)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["non_task_added_container_ids"], ["b" * 64])
+        self.assertEqual(result["task_owned_or_task_volume_addition_ids"], [])
+        self.assertNotIn("private", json.dumps(result))
+        self.assertNotIn("concurrent-addition", json.dumps(result))
+        self.assertEqual(after, original)
+
+    def test_rejects_deleted_or_modified_baseline_container_profiles(self):
+        before = self.preservation_fixture()
+        for key in [None, "Name", "Image", "Config", "HostConfig", "Mounts", "State", "NetworkSettings"]:
+            after = copy.deepcopy(before)
+            if key is None:
+                del after["containers"]["a" * 64]
+            else:
+                after["containers"]["a" * 64][key] = "modified"
+            with self.subTest(key=key):
+                self.assertEqual(self.preservation(before, after)["status"], "failed")
+
+    def test_rejects_any_volume_inventory_or_profile_change(self):
+        before = self.preservation_fixture()
+        for kind in ["deleted", "added", "modified"]:
+            after = copy.deepcopy(before)
+            if kind == "deleted":
+                after["volumes"].clear()
+            elif kind == "added":
+                after["volumes"]["unowned-new-volume"] = {"Name": "unowned-new-volume"}
+            else:
+                after["volumes"]["baseline-volume"]["Labels"] = {"changed": "true"}
+            with self.subTest(kind=kind):
+                self.assertEqual(self.preservation(before, after)["status"], "failed")
+
+    def test_rejects_task_label_name_and_task_volume_users_among_additions(self):
+        before = self.preservation_fixture()
+        for kind in ["label", "name", "actual_volume", "requested_volume"]:
+            after = copy.deepcopy(before)
+            added = copy.deepcopy(after["containers"]["a" * 64])
+            added.update(Id="b" * 64, Name="/addition")
+            if kind == "label":
+                added["Config"]["Labels"] = {"io.nerocd.storage-runtime.owner": "task-owner"}
+            elif kind == "name":
+                added["Name"] = "/task-owner-dind"
+            elif kind == "actual_volume":
+                added["Mounts"] = [{"Type": "volume", "Name": "task-owner-docker-data"}]
+            else:
+                added["HostConfig"]["Mounts"] = [{"Type": "volume", "Source": "task-owner-docker-data"}]
+            after["containers"][added["Id"]] = added
+            with self.subTest(kind=kind):
+                result = self.preservation(before, after)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["task_owned_or_task_volume_addition_ids"], ["b" * 64])
+                self.assertEqual(result["non_task_added_container_ids"], [])
+
+    def test_rejects_additions_without_sufficient_ownership_profile(self):
+        before = self.preservation_fixture()
+        for key, invalid in [("Name", None), ("Config", None), ("HostConfig", None), ("Mounts", None)]:
+            after = copy.deepcopy(before)
+            added = copy.deepcopy(after["containers"]["a" * 64])
+            added.update(Id="b" * 64, Name="/addition")
+            added[key] = invalid
+            after["containers"][added["Id"]] = added
+            with self.subTest(key=key):
+                result = self.preservation(before, after)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["unclassified_added_container_ids"], ["b" * 64])
+                self.assertEqual(result["non_task_added_container_ids"], [])
+
+    def test_after_action_writes_classification_and_retains_failed_baseline_evidence(self):
+        before = self.preservation_fixture()
+        for changed in [False, True]:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                original = json.dumps(before)
+                (root / "preservation-before.private.json").write_text(original)
+                after = copy.deepcopy(before)
+                if changed: after["containers"].clear()
+                with patch.object(evidence, "snapshot", return_value=after), patch("sys.argv", ["remote_evidence.py", "after", directory, "task-owner", "task-owner-dind", "task-owner-docker-data"]):
+                    if changed:
+                        with self.assertRaises(ValueError): evidence.main()
+                    else: evidence.main()
+                self.assertEqual((root / "preservation-before.private.json").read_text(), original)
+                self.assertTrue((root / "preservation-after.private.json").is_file())
+                result = json.loads((root / "preservation-safe.json").read_text())
+                self.assertEqual(result["status"], "failed" if changed else "passed")
+
+    def test_rejects_ui_identity_listener_health_or_content_change(self):
+        before = self.preservation_fixture()
+        for key in ["ui_files", "ui_root", "ui_listener", "ui_health"]:
+            after = copy.deepcopy(before)
+            after[key] = {} if key != "ui_listener" else "changed listener"
+            with self.subTest(key=key):
+                self.assertEqual(self.preservation(before, after)["status"], "failed")
+        for change in [{"status": 500, "sha256": "original body"}, {"status": 200, "sha256": "changed body"}]:
+            after = copy.deepcopy(before)
+            after["ui_health"]["/"] = change
+            self.assertEqual(self.preservation(before, after)["status"], "failed")
 
     def test_receipt_contains_only_explicit_safe_members(self):
         with tempfile.TemporaryDirectory() as directory:
