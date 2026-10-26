@@ -96,9 +96,10 @@ The accepted sequence covers:
 
 The [physical fixture](../internal/api/hosting_database_backup_retention_runtime_integration_test.go)
 defines the main, replay, protection, failure and unknown-delete groups. The live
-browser checks policy/preview/confirmation and explicit recovery from history,
-including viewer denial and 320, 390, 430 and 1440-pixel layouts. Its fixture
-setup and API assertions are separate from browser actions. Physical count and
+Desktop Chrome browser checks the owner policy, preview, confirmation and
+explicit recovery from history. Fixture setup and API authorization assertions
+are separate from those browser actions. This live scenario does not establish
+viewer denial or responsive viewport coverage. Physical count and
 protection checks do not by themselves qualify every age/size edge case; the
 selection algorithm and its threshold limits are documented above.
 
