@@ -9,16 +9,31 @@ const origin = process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN;
 const key = process.env.NEROCD_STORAGE_REMOTE_BROWSER_KEY;
 const evidence = process.env.NEROCD_STORAGE_REMOTE_HOST_EVIDENCE;
 if (!/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") || !/^[a-f0-9]{64}$/.test(key ?? "") || !evidence?.startsWith("/")) throw Error("exact private browser profile required");
-const api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key } });
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
-const page = await context.newPage();
-page.setDefaultTimeout(30000);
+let api, browser, context, page;
+let stopped = false;
+async function closeOwned() {
+  await Promise.allSettled([context?.close(), browser?.close(), api?.dispose()]);
+}
+function stop(code) {
+  if (stopped) return;
+  stopped = true;
+  process.exitCode = code;
+  void closeOwned();
+}
+const onInterrupt = () => stop(130);
+const onTerminate = () => stop(143);
+process.once("SIGINT", onInterrupt);
+process.once("SIGTERM", onTerminate);
 const deadline = Date.now() + 24 * 60 * 1000;
+const deadlineTimer = setTimeout(() => stop(1), 24 * 60 * 1000);
+deadlineTimer.unref();
+function requireActive() { if (stopped) throw Error("browser workflow cancelled"); }
 const pause = () => new Promise(resolve => setTimeout(resolve, 250));
 async function state(phase) {
   while (Date.now() < deadline) {
+    requireActive();
     try { const response = await api.get("/__storage_remote_fixture/state"); if (response.status() === 200) { const value = await response.json(); if (value.phase === phase) return value; } } catch {}
+    requireActive();
     await pause();
   }
   throw Error("fixture phase deadline: " + phase);
@@ -44,6 +59,15 @@ async function selectBackup(p, id) {
 }
 const safe = { status: "failed", served_candidate_ui: true, intercepted_requests: false };
 try {
+  requireActive();
+  api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key } });
+  requireActive();
+  browser = await chromium.launch({ headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+  requireActive();
+  context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
+  requireActive();
+  page = await context.newPage();
+  page.setDefaultTimeout(30000);
   let initial = await state("target");
   const manifest=JSON.parse(await readFile(resolve(evidence,"browser-ui-manifest.json"),"utf8"));
   if(manifest.schema!=="nerocd.ui-assets/v1" || !manifest.files["index.html"]) throw Error("candidate UI manifest absent");
@@ -155,8 +179,15 @@ try {
   safe.status = "passed";
   await report("done", restored.operation.id);
 } catch {
-  process.exitCode=1; safe.failure="browser_workflow_failed";
+  if (!process.exitCode) process.exitCode=1; safe.failure=stopped?"browser_workflow_cancelled":"browser_workflow_failed";
 } finally {
-  await writeFile(resolve(evidence, "browser-safe.json"), JSON.stringify(safe, null, 2) + "\n", { mode: 0o600 });
-  await context.close(); await browser.close(); await api.dispose();
+  clearTimeout(deadlineTimer);
+  if (stopped) {safe.status="failed"; safe.failure="browser_workflow_cancelled";}
+  try {
+    await writeFile(resolve(evidence, "browser-safe.json"), JSON.stringify(safe, null, 2) + "\n", { mode: 0o600 });
+  } finally {
+    await closeOwned();
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onTerminate);
+  }
 }

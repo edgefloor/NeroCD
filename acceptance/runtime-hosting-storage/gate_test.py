@@ -363,5 +363,75 @@ inner_docker() {
         self.assertEqual(len(calls), 1)
 
 
+class BrowserCancellationTest(unittest.TestCase):
+    """Run the real driver with inert Playwright resources, without a browser."""
+    def run_driver(self, delivered_signal=None):
+        driver = GATE.with_name("remote_browser.mjs")
+        with tempfile.TemporaryDirectory(prefix="nerocd-storage-browser-stop-test-") as temporary:
+            root = Path(temporary)
+            module = root / "web/app/node_modules/@playwright/test"
+            module.mkdir(parents=True)
+            (root / "web/app/package.json").write_text("{}")
+            (module / "index.js").write_text(r"""
+const fs = require("node:fs");
+const root = process.env.NEROCD_STORAGE_REMOTE_HOST_EVIDENCE;
+const mark = value => fs.appendFileSync(root + "/closed", value + "\n");
+let rejectPending, pendingHandle;
+const api = {
+ get: async () => {
+  fs.writeFileSync(root + "/started", "polling");
+  if (process.env.STORAGE_BROWSER_TEST_EXPIRE === "1") {
+   const expired = Date.now() + 25 * 60 * 1000;
+   Date.now = () => expired;
+   return {status: () => 403};
+  }
+  return new Promise((resolve, reject) => {rejectPending = reject; pendingHandle = setInterval(() => {}, 1000);});
+ },
+ dispose: async () => {mark("api"); clearInterval(pendingHandle); rejectPending?.(Error("owned API disposed"));}
+};
+const context = {newPage: async () => ({setDefaultTimeout: () => {}}), close: async () => mark("context")};
+module.exports = {
+ request: {newContext: async () => api},
+ chromium: {launch: async () => ({newContext: async () => context, close: async () => mark("browser")})},
+ expect: () => {throw Error("UI must not execute in cancellation test");}
+};
+""")
+            environment = os.environ.copy()
+            environment.update(NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN="https://127.0.0.1:49155",
+                               NEROCD_STORAGE_REMOTE_BROWSER_KEY="a" * 64,
+                               NEROCD_STORAGE_REMOTE_HOST_EVIDENCE=str(root),
+                               STORAGE_BROWSER_TEST_EXPIRE="0" if delivered_signal else "1")
+            process = subprocess.Popen(["node", str(driver)], cwd=root, env=environment,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, start_new_session=True)
+            try:
+                deadline = time.monotonic() + 5
+                while not (root / "started").exists():
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        self.fail("driver did not reach pending phase request")
+                    time.sleep(0.01)
+                if delivered_signal:
+                    process.send_signal(delivered_signal)
+                output, _ = process.communicate(timeout=3)
+                self.assertEqual(process.returncode, 128 + delivered_signal if delivered_signal else 1, output)
+                self.assertEqual(set((root / "closed").read_text().splitlines()), {"api", "context", "browser"})
+                safe = json.loads((root / "browser-safe.json").read_text())
+                self.assertEqual(safe["status"], "failed")
+                self.assertEqual(safe["failure"], "browser_workflow_cancelled" if delivered_signal else "browser_workflow_failed")
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.communicate(timeout=3)
+
+    def test_sigterm_stops_pending_poll_and_joins_owned_resources(self):
+        self.run_driver(signal.SIGTERM)
+
+    def test_sigint_stops_pending_poll_and_joins_owned_resources(self):
+        self.run_driver(signal.SIGINT)
+
+    def test_phase_deadline_closes_owned_resources(self):
+        self.run_driver()
+
+
 if __name__ == "__main__":
     unittest.main()
