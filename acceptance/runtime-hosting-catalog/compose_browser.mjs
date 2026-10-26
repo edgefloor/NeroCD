@@ -203,14 +203,14 @@ try {
     const n = index + 1;
     await runtime.getByRole("button", { name: "Add runtime variable", exact: true }).click();
     await runtime.getByLabel(`Variable name ${n}`, { exact: true }).fill(name);
-    await runtime.getByLabel(`Value type ${n}`, { exact: true }).selectOption(kind);
+    await runtime.getByRole("combobox", { name: `Value type ${n}`, exact: true }).selectOption(kind);
     if (kind === "literal") await runtime.getByLabel(`Nonsecret value ${n}`, { exact: true }).fill(value);
     else {
-      const select = runtime.getByLabel(`Existing managed secret for ${name}`, { exact: true });
+      const select = runtime.getByRole("combobox", { name: `Existing managed secret for ${name}`, exact: true });
       const option = select.getByRole("option").filter({ hasText: `${value} · ` });
       await expect(option).toHaveCount(1);
       await select.selectOption(await option.getAttribute("value"));
-      await runtime.getByLabel(`Exact secret version for ${name}`, { exact: true }).selectOption("1");
+      await runtime.getByRole("combobox", { name: `Exact secret version for ${name}`, exact: true }).selectOption("1");
     }
   }
   const runtimeWait = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/runtime-configuration`);
