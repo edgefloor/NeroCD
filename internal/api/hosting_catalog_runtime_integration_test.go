@@ -500,6 +500,11 @@ func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, inst
 		t.Fatal("target runtime differs from pinned backup source")
 	}
 	storageRuntimeJSON[json.RawMessage](f, "GET", "/api/v1/resources/"+restored.Resource.ID+"/catalog-installation", nil, 404)
+	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+restored.Resource.ID+"/storage-deployment-options", nil, 200)
+	t.Logf("catalog restored deployment options available=%t reason=%s", options.Available, options.Reason)
+	if !options.Available || options.Reason != "initial_deployment" || options.ResourceID != restored.Resource.ID || options.ResourceGeneration != restored.Resource.Generation || options.StorageRef == nil || *options.StorageRef != restored.Storage.Reference() || options.PreviousHealthyOperationID != nil || options.HostPort != nil || options.ContainerPort != nil || options.Readiness != nil {
+		t.Fatal("verified restored target did not offer ordinary first deployment")
+	}
 	f.catalogBrowser.set("restore_deploy", restored.Resource.ID)
 	deployed := f.await(f.catalogBrowser.await(t, "restored_deployed"), "succeeded")
 	if deployed.Plan == nil || deployed.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || deployed.Snapshot.RuntimeConfiguration.Hash != current.Snapshot.RuntimeConfiguration.Hash {

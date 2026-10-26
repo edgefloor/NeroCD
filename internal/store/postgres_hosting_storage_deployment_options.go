@@ -45,6 +45,13 @@ func storageDeploymentOrdinaryReason(ctx context.Context, q *sqlcgen.Queries, de
 	return "available", nil
 }
 
+func storageDeploymentSameRestoredStorage(target, current domain.HostingStorage) bool {
+	// PostgreSQL and JSON may represent the same instant with different locations.
+	target.CreatedAt = target.CreatedAt.UTC()
+	current.CreatedAt = current.CreatedAt.UTC()
+	return target == current
+}
+
 // A restore initializes binding state without creating an application writer.
 // Only its exact completed origin may be excluded from initial writer history.
 func storageDeploymentRestoredInitial(ctx context.Context, tx pgx.Tx, storage domain.HostingStorage, daemon *string) (bool, error) {
@@ -65,7 +72,7 @@ func storageDeploymentRestoredInitial(ctx context.Context, tx pgx.Tx, storage do
 		return false, err
 	}
 	a := op.StorageArchive
-	if op.State != "succeeded" || op.ResourceID != storage.ResourceID || op.BindingID != storage.BindingID || op.ProjectID != storage.ProjectID || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || a.Mode != "restore" || a.Plan.Target == nil || a.Plan.Hash != m.CreationPlanHash || !reflect.DeepEqual(a.Plan.Target.Storage, storage) || a.Plan.Target.Plan.CreationNonce != m.CreationNonce || a.Result == nil || a.Result.ArchiveOutcome != "succeeded" || !a.Result.RestoreVerified || a.Result.Uncertain {
+	if op.State != "succeeded" || op.ResourceID != storage.ResourceID || op.BindingID != storage.BindingID || op.ProjectID != storage.ProjectID || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || a.Mode != "restore" || a.Plan.Target == nil || a.Plan.Hash != m.CreationPlanHash || !storageDeploymentSameRestoredStorage(a.Plan.Target.Storage, storage) || a.Plan.Target.Plan.CreationNonce != m.CreationNonce || a.Result == nil || a.Result.ArchiveOutcome != "succeeded" || !a.Result.RestoreVerified || a.Result.Uncertain {
 		return false, nil
 	}
 	materialized, err := q.ReadStorageRestoreMaterialized(ctx, storage.ID)

@@ -55,6 +55,7 @@ const deadline = Date.now() + 20 * 60 * 1000,
 timer.unref();
 const safe = { status: "failed", intercepted_requests: false };
 let phase = "startup";
+let restoredDeploymentStep = "";
 async function state(expected) {
   phase = expected;
   while (Date.now() < deadline && !stopped) {
@@ -366,17 +367,23 @@ try {
   safe.browser_catalog_restore = true;
   const target = await state("restore_deploy");
   if (target.id !== restored.resource.id) throw Error("restored target identity mismatch");
+  restoredDeploymentStep = "navigate_hosting";
   h = await hosting(page);
   const restoredApplication = h.getByRole("article", { name: "Restored Linkding acceptance", exact: true });
   const restoredReview = restoredApplication.getByRole("region", { name: "Persistent upload deployment review", exact: true });
+  restoredDeploymentStep = "configure_first_deployment";
   await restoredReview.getByLabel("Runner-local host port", { exact: true }).fill("20104");
   await restoredReview.getByLabel("Container port", { exact: true }).fill("9090");
   await restoredReview.getByLabel("Readiness path", { exact: true }).fill("/health");
   await restoredReview.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
+  restoredDeploymentStep = "review_current_storage";
   await restoredReview.getByRole("button", { name: "Review current storage deployment", exact: true }).click();
+  restoredDeploymentStep = "confirm_review";
   await restoredReview.getByRole("checkbox").check();
   const restoredDeployWait = response(page, `/api/v1/resources/${target.id}/deployments`);
+  restoredDeploymentStep = "submit_deployment";
   await restoredReview.getByRole("button", { name: "Deploy reviewed image with uploads", exact: true }).click();
+  restoredDeploymentStep = "receive_deployment";
   const restoredDeployResponse = await restoredDeployWait;
   if (restoredDeployResponse.status() !== 202) throw Error("browser restored deployment rejected");
   await report("restored_deployed", (await restoredDeployResponse.json()).id);
@@ -387,6 +394,8 @@ try {
 } catch (error) {
   safe.failure = stopped ? "cancelled" : "browser_workflow_failed";
   safe.failed_phase = phase;
+  if (phase === "restore_deploy" && restoredDeploymentStep)
+    safe.failed_step = restoredDeploymentStep;
   safe.error_class = ["TimeoutError", "AssertionError", "TypeError"].includes(
     error?.name,
   )

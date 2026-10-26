@@ -20,6 +20,36 @@ type archiveRuntimeRow struct {
 	err    error
 }
 
+func TestArchiveRestoredStorageIdentityPreservesInstantAndAttribution(t *testing.T) {
+	original := domain.HostingStorage{ID: "storage", ResourceID: "resource", BindingID: "binding", DestinationID: "destination", Hash: "hash", CreatedBy: "owner", CreatedAt: time.Date(2026, time.October, 26, 12, 30, 0, 123000, time.UTC)}
+	for _, scenario := range []string{"utc_location", "positive_offset", "negative_offset", "changed_instant", "changed_identity", "changed_attribution"} {
+		t.Run(scenario, func(t *testing.T) {
+			current := original
+			want := true
+			switch scenario {
+			case "utc_location":
+				current.CreatedAt = original.CreatedAt.In(time.FixedZone("local UTC", 0))
+			case "positive_offset":
+				current.CreatedAt = original.CreatedAt.In(time.FixedZone("east", 5*60*60))
+			case "negative_offset":
+				current.CreatedAt = original.CreatedAt.In(time.FixedZone("west", -7*60*60))
+			case "changed_instant":
+				current.CreatedAt = original.CreatedAt.Add(time.Microsecond)
+				want = false
+			case "changed_identity":
+				current.BindingID = "different_binding"
+				want = false
+			case "changed_attribution":
+				current.CreatedBy = "different_owner"
+				want = false
+			}
+			if storageDeploymentSameRestoredStorage(original, current) != want {
+				t.Fatalf("restored storage comparison changed %s contract", scenario)
+			}
+		})
+	}
+}
+
 func (r archiveRuntimeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err

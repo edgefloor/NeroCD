@@ -399,8 +399,8 @@ export function StorageDeploymentReview({
       {initial ? (
         <p>
           This first deployment creates the configured platform-owned upload
-          volume. Data retention is retain. Existing uploads and image files are
-          not imported. Image rollback does not undo upload writes. Public
+          volume when needed and preserves existing or restored data. Data
+          retention is retain. Image rollback does not undo upload writes. Public
           routes and HTTPS are not created by this request.
         </p>
       ) : (

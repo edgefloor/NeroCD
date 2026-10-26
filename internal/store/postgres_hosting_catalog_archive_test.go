@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,30 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
+
+func TestPostgresCatalogArchiveUTCInitialDeployment(t *testing.T) {
+	if os.Getenv("NEROCD_TEST_DATABASE_URL") == "" {
+		t.Skip("set NEROCD_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	if os.Getenv("NEROCD_CATALOG_ARCHIVE_UTC_CHILD") == "1" {
+		if time.Local.String() != "UTC" {
+			t.Fatal("UTC child did not load the requested timezone")
+		}
+		TestPostgresCatalogArchivePinnedRuntimeAndReplay(t)
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable, "-test.run=^TestPostgresCatalogArchiveUTCInitialDeployment$", "-test.v")
+	command.Env = append(os.Environ(), "TZ=UTC", "NEROCD_CATALOG_ARCHIVE_UTC_CHILD=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("UTC restored deployment failed: %v\n%s", err, output)
+	}
+}
 
 // Reuse the existing archive fixture and ordinary image protocol. No container
 // or secret delivery is simulated by mutating healthy state directly.
