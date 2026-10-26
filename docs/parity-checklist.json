@@ -40849,7 +40849,8 @@
     "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit.",
     "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open.",
     "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged.",
-    "Later PostgreSQL retention/recovery is accepted at5003e16c0c0fc48d31c29f444f47a97b94e10339/tree72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618 and recorded under supplemental_assessments/postgresql-retention-recovery-20261026. Five bounded outcomes R46-C07/R47-C03-C06 gain validated profile-specific evidence. Nine physical groups,26markers and five browser profiles pass without failures/skips;493.040seconds is directory-creation-to-terminal elapsed, not exact execution duration. Original core2b6f PostgreSQL audit-rollback proof is retained with unchanged complete relevant dependencies. Historical933 audit, prior assessments and aggregate gates stay unchanged; productionHTTPS/provider breadth, notifications and other engines remain open."
+    "Later PostgreSQL retention/recovery is accepted at5003e16c0c0fc48d31c29f444f47a97b94e10339/tree72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618 and recorded under supplemental_assessments/postgresql-retention-recovery-20261026. Five bounded outcomes R46-C07/R47-C03-C06 gain validated profile-specific evidence. Nine physical groups,26markers and five browser profiles pass without failures/skips;493.040seconds is directory-creation-to-terminal elapsed, not exact execution duration. Original core2b6f PostgreSQL audit-rollback proof is retained with unchanged complete relevant dependencies. Historical933 audit, prior assessments and aggregate gates stay unchanged; productionHTTPS/provider breadth, notifications and other engines remain open.",
+    "Owned-upload remote recovery is accepted at 58716fea31420f1f10258385de25e2c712e12770/tree e1f2ceaa49af387da72ac71a977f8b44bc206802, recorded under supplemental_assessments/owned-upload-remote-recovery-20261026 and [storage remote qualification](hosting-storage-remote-backups.md#accepted-qualification-and-evidence). The 87.774-second exact-source gate passed three real PostgreSQL groups/four revocation cases, local archive and remote/browser workflows without selected Go failures/skips. Twelve bounded outcomes R46-C03/C04/C13/C14/C16/C20, R47-C01/C02, and R48-C02/C07/C08/C09 gain profile-specific evidence. Five GETs, one PUT, one helper start, application reads/new writes, permissions and unchanged source/host inventory are retained. Qualification is native Linux arm64, trusted rootful classic-store Docker/overlay2 and one same-destination pinned Silo at trusted loopback HTTP. Production S3 HTTPS/provider breadth, storage schedules/retention/notifications, A27 platform recovery and full gates stay open. Historical933/30 audit, prior supplemental records and failed attempts remain unchanged; the optional broad runtime race timeout is not a full CI pass. Existing user UI binary was preserved."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -46579,6 +46580,452 @@
         "Full R63/A25/notification matrix gates"
       ],
       "archive_manifest_sha256": "a28d163c67819063ba6bd944a6565ebdb9d2e0b61bd62e9057653ddd6c75a7eb"
+    },
+    {
+      "id": "owned-upload-remote-recovery-20261026",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Twelve bounded assessments extend owned-upload remote recovery evidence only. Historical criteria, prior supplemental records, original totals, and aggregate gates remain unchanged. Prior PostgreSQL assessments are separate resource realizations, not extra historical score. The original validator checks historical evidence; exact-candidate specification review checks this supplemental record.",
+      "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+      "physical_tree": "e1f2ceaa49af387da72ac71a977f8b44bc206802",
+      "acceptance_fixture": "acceptance/runtime-hosting-storage/gate.sh --remote",
+      "source_paths": [
+        "internal/api/hosting_storage_remote_runtime_integration_test.go",
+        "internal/api/hosting_storage_archive_runtime_integration_test.go",
+        "internal/store/postgres_hosting_storage_backup_remote_test.go",
+        "internal/runnerruntime/hosting_storage_backup_remote_execution.go",
+        "internal/domain/hosting_storage_backup_remote.go",
+        "web/app/src/components/hosting/StorageArchives.tsx",
+        "acceptance/runtime-hosting-storage/remote_browser.mjs"
+      ],
+      "evidence_paths": [
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/api-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/store-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/browser-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/preservation-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/source-blobs",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/safe-receipt.tar.gz"
+      ],
+      "runtime_receipt_sha256": "25d5ffc6701efc999bd9493ea686196889fee086b5f4f631d9e7af609d4814bd",
+      "runtime_summary": {
+        "gate_exit": 0,
+        "elapsed_seconds": 87.774,
+        "local_archive_seconds": 23.3,
+        "remote_group_seconds": 23.88,
+        "postgresql_groups": 3,
+        "revocation_replay_subtests": 4,
+        "no_failed_or_skipped_selected_go_tests": true,
+        "object_gets": 5,
+        "upload_puts": 1,
+        "local_helper_starts": 1,
+        "receipt_replayed": true,
+        "source_preserved": true,
+        "browser_widths": [
+          320,
+          390,
+          430,
+          1280
+        ],
+        "browser_request_interception": false,
+        "served_assets_match_manifest": true,
+        "baseline_container_count": 35,
+        "baseline_volume_count": 210,
+        "owned_resources_and_processes_absent": true,
+        "existing_user_ui_identity_unchanged": true
+      },
+      "outcomes": [
+        {
+          "criterion_id": "R46-C03",
+          "outcome": "Record backup target",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "The uploads-only UI creates and validates a project target, then explicitly selects its saved revision.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C04",
+          "outcome": "Record backup format",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "The retained blob and transfer plan identify the versioned nerocd-storage-v1 archive format; PostgreSQL formats remain separate.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C13",
+          "outcome": "Record backup digest",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "Retained local and remote blobs preserve SHA-256 through failed upload, retry, download verification, and restore.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C14",
+          "outcome": "Record available backup locations",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "Backup and transfer history distinguish retained local CAS from the selected immutable remote object.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C16",
+          "outcome": "Upload to configured S3-compatible target",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "A real pinned Silo accepts the archive through one conditional PUT; lost ACK reconciliation does not repeat it.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C20",
+          "outcome": "Resume only previously running writers after success",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "The fixture checks exact writers resumed before upload; receipt markers record zero upload-before-resume violations.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C01",
+          "outcome": "Distinguish dump/archive result from remote-upload result",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "Local archive success remains distinct from denied remote upload in API history and the reloaded live browser.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C02",
+          "outcome": "Preserve local artifact after failed upload",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "Failed upload preserves local bytes/digest; explicit retry uses the same archive with one helper start.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C02",
+          "outcome": "Restore volume into new resource for validation",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "Fresh remote GET restores into a distinct owned volume and new resource on the same destination.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C07",
+          "outcome": "Restore ownership and permissions",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "The restored volume preserves UID12345/GID12346, file0640 and directory0750 metadata.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C08",
+          "outcome": "Verify application reads restored data",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "A deployed restored application reads the original archived upload over the real fixture route.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C09",
+          "outcome": "Verify application writes restored data before passing",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "58716fea31420f1f10258385de25e2c712e12770",
+            "scope": "Owned-upload remote backup, same-archive retry, and verified same-destination new-volume restore",
+            "justification": "The restored application accepts and reads a new upload while source bytes and metadata remain unchanged.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay",
+              "TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation",
+              "TestPostgresStorageRemoteDownloadFailureAndHeldRetry"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan/runtime/remote-markers.json"
+            ],
+            "limits": "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "acceptance_cases": [
+        {
+          "id": "A25",
+          "bounded_result": "Local recovery data and explicit retry UI survive failed upload. No storage notification event is implemented or credited.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A26",
+          "bounded_result": "Owned-upload remote new-resource restore has application reads/new writes and permissions proof; broader engine/profile coverage stays open.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A27",
+          "bounded_result": "No control-plane restart/restore qualification. Remote uploaded-file recovery is not platform recovery.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A37",
+          "bounded_result": "The rerun local archive group covers bounded writer recovery; remote upload follows durable resume. Broader quiescence/recovery profiles remain open.",
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged.",
+        "Earlier failed attempts remain failed. The optional broader runtime race diagnostic timeout remains failed and is not a full CI pass.",
+        "Feature-specific token usage/cost and a delivery ETA are unavailable."
+      ]
     }
   ]
 }

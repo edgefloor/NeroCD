@@ -106,6 +106,17 @@ uses the existing PostgreSQL 17.11/Linux arm64/rootful Docker/Silo profile and
 private-CA notification TLS. Other events/channels, public-CA deployment and
 complete R63/A25 remain open.
 
+Owned-upload remote backup and verified new-volume recovery are accepted at
+`58716fea31420f1f10258385de25e2c712e12770`. The
+[storage remote workflow](hosting-storage-remote-backups.md) qualifies direct
+uploads-only target setup and validation, separate local/upload outcomes,
+same-archive retry, fresh GET before extraction, and application reads/new writes
+with source preservation. The 87.774-second gate includes real PostgreSQL
+atomicity/replay/revocation tests and live browser evidence. It qualifies one
+native Linux arm64 trusted classic-store Docker/Silo same-destination profile,
+not production S3 HTTPS, storage schedules/retention/notifications, cross-host
+recovery, or full A25–A27/A37. The existing user UI binary was preserved.
+
 Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
 broader notification events and channels, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.

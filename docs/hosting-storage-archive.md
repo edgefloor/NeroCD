@@ -11,12 +11,15 @@ Archive UI code/browser acceptance is recorded below. Bounded native Linux arm64
 classic-store owned-upload application backup/new-target restore is physically
 accepted; broader recovery and full A26/A37 remain unfinished.
 
-The source-bound runner handoff is
-`/tmp/nerocd-archive-runner-integrated-handoff.json`, with promotion recorded in
-`/tmp/nerocd-main-archive-runner-promotion.json`. It records focused race, vet,
-introduced-code lint and Go build passes, not a whole-repository lint-clean or
-physical A26/A37 result. Previous database physical qualification remains at
-`c731f708e62e2376d174041957b8654fe83d5bcf`; R42 application binding remains open.
+Earlier runner and UI acceptance referred to receipts under `/tmp`. Those
+files are no longer present and are historical references, not current pass
+artifacts. The accepted remote workflow at
+`58716fea31420f1f10258385de25e2c712e12770` reruns the local archive group and
+retains durable evidence in the [remote backup guide](hosting-storage-remote-backups.md#accepted-qualification-and-evidence).
+Application binding is separately qualified at
+`09a432407c41671517fa342d28c07e9c79978aea` for the bounded PostgreSQL/Redis
+profile in [database connections](hosting-database-connections.md). Broader R42
+profiles remain open.
 
 The server's archive controller is disabled by default. Set
 `NEROCD_HOSTING_STORAGE_ARCHIVE_POLICY_FILE` to an operator-provisioned JSON file
@@ -37,9 +40,9 @@ Archive UI source `d98e88c64f84924bd36fb2d4c7c29ad723e80ced` is accepted at
 `a99a75517c018caa9aa9965cf451f9f826e7b3d6`. Retained evidence records 1,426
 frontend tests, TypeScript, generated API, Go/frontend builds, a 75-file embedded
 manifest and 74 matching served assets. Browser responses are intercepted and
-qualify UI behavior, not physical archive backup/restore. Exact evidence is in
+qualify UI behavior, not physical archive backup/restore. Historical receipt paths were
 `/tmp/nerocd-archive-ui-integrated-handoff.json` and
-`/tmp/nerocd-main-archive-ui-promotion.json`. The new built artifact remains in the
+`/tmp/nerocd-main-archive-ui-promotion.json`; those files are no longer present. The new built artifact remains in the
 integration checkout; root ignored assets were untouched.
 
 The current helper identity path uses a Docker image configuration ID. A Docker
@@ -52,11 +55,12 @@ claimed. The bounded physical uploaded-file slice is accepted below; full A26/A3
 
 Bounded physical uploaded-file recovery is accepted at
 `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, with exact source/tree equality to
-`2ba8041359576a32d616d7f83e0c7eafe4ee4d91`. The 25.38-second pass is retained in
+`2ba8041359576a32d616d7f83e0c7eafe4ee4d91`. The historical 25.38-second pass was recorded in
 `/tmp/nerocd-storage-runtime-20261024.iWwXss/gate.log`, with
 `/tmp/nerocd-archive-physical-integrated-handoff.json`,
 `/tmp/nerocd-archive-physical-integrated-physical-retention.json` and
-`/tmp/nerocd-archive-physical-integrated-main-promotion.json`. The application
+`/tmp/nerocd-archive-physical-integrated-main-promotion.json`. Those temporary receipts are no longer present. Current local and remote
+physical evidence is linked in the remote backup guide. The historical fixture
 retains 65,537 uploaded bytes through redeploy. Committed backup and restore ACK
 loss each recover with one helper start. A new resource/volume reads restored
 application data and accepts a new write; the source remains unchanged with
@@ -67,10 +71,11 @@ and host inventories are unchanged. The tested helper image was removed and is
 not an installed reusable pin. Earlier failures remain historical.
 
 This is native Linux arm64, rootful same-host owned uploads on the classic Docker
-image store/overlay2 with trusted fixture CA and local CAS. It does not qualify
+image store/overlay2 with trusted fixture CA and local CAS. That historical run does not qualify
 database backup, S3, host disk loss, in-place restore, containerd image store,
-production TLS, browser-to-real-archive flow, full A26/A37 or full parity. R42
-PostgreSQL/Redis application binding is under implementation and unaccepted.
+production TLS, browser-to-real-archive flow, full A26/A37 or full parity.
+The later bounded PostgreSQL/Redis application-binding acceptance is recorded in
+[database connections](hosting-database-connections.md).
 
 ## Provision an exact helper identity
 
@@ -149,9 +154,10 @@ export NEROCD_HOSTING_STORAGE_ARCHIVE_POLICY_FILE=/etc/nerocd/storage-archive.js
 nerocd server
 ```
 
-Archives use the versioned uncompressed `nerocd-storage-v1` format and remain in
-the destination-local private artifact store. This controller concerns owned
-upload volumes and restore into a new volume. It does not provide database
-backups, S3 storage, in-place restore, or application database bindings. Public
-API and runner code are accepted, but application-verified A26 and A37 require
-separate physical end-to-end evidence.
+Archives use the versioned uncompressed `nerocd-storage-v1` format. The local
+controller concerns owned upload volumes and restore into a new volume.
+[Remote backups](hosting-storage-remote-backups.md) add independent S3 transfer
+and verified download before new-volume extraction. Database backups and
+application database bindings have separate contracts. Full A26/A37 and broader
+recovery profiles remain open even though bounded local and remote application
+read/write workflows have physical acceptance.
