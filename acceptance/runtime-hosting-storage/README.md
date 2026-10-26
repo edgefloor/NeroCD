@@ -16,7 +16,7 @@ The outer gate removes only the exact verified owned outer container and its ver
 
 Run `bash acceptance/runtime-hosting-storage/gate.sh --remote` only after the Leader authorizes the exact committed combined candidate and this physical profile. The standalone acceptance commit needs the storage remote product commit. Its `nerocd_storage_remote_contract` build tag deliberately fails if production routes or request types are absent.
 
-The fresh outer target is `nerocd-storage-remote-runtime-20261026-8326c344-dind`, with data volume `nerocd-storage-remote-runtime-20261026-8326c344-docker-data`. It uses the pinned daemon and DinD image above, four CPUs, 6 GiB memory, 12 GiB memory plus swap, and 2048 PIDs. It has one Docker volume mount, no host binds or socket, and one dynamically assigned publication `127.0.0.1::18190`. That port reaches only the authenticated fixture API and candidate UI. Admission and cleanup verify the requested and assigned publication. Extra ports, non-loopback bindings, or a changed assignment stop cleanup and preserve uncertain resources.
+The fresh outer target is `nerocd-storage-schedules-runtime-20261026-5d45412a-dind`, with data volume `nerocd-storage-schedules-runtime-20261026-5d45412a-docker-data`. It uses the pinned daemon and DinD image above, four CPUs, 6 GiB memory, 12 GiB memory plus swap, and 2048 PIDs. It has one Docker volume mount, no host binds or socket, and one dynamically assigned publication `127.0.0.1::18190`. That port reaches only the authenticated fixture API and candidate UI. Admission and cleanup verify the requested and assigned publication. Extra ports, non-loopback bindings, or a changed assignment stop cleanup and preserve uncertain resources.
 
 All prerequisites must already exist in the host image cache for comparison. Remote mode explicitly pulls the existing exact PostgreSQL, registry, Traefik, Pebble, and Silo pins into the disposable guest before any workload starts. Each guest image must retain the exact canonical repository digest and match the host's native platform variant, executable configuration, and ordered RootFS layer identities. Reported image IDs must match unless the host explicitly reports its pinned OCI descriptor as `Id` and the guest reports classic overlay2 metadata. That supported cross-store representation retains both independent IDs. Other unexplained ID differences fail qualification. `preload-<image>-proof.json` records the IDs, representation, platform, and configuration and RootFS hashes without copying environment values into the comparison proof. Saving and loading an image tar alone does not preserve lookup by repository digest. Direct fixture starts use `--pull=never` and consume stdout separately from Docker diagnostics.
 
@@ -54,8 +54,28 @@ bash -n acceptance/runtime-hosting-storage/gate.sh
 node --check acceptance/runtime-hosting-storage/remote_browser.mjs
 ```
 
-The gate writes private evidence under `$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/<candidate-sha>.<random>/`. It preserves `runtime/owned-upload.tar` and closed markers before deleting the guest. Full baseline inspections remain private. Before and after comparisons cover host container identity, configuration, state, mounts, and network, with only rotating health log entries excluded. They also cover volume profiles, the existing user UI's executable and configuration fingerprints, listener identity, and successful HTTP responses on port 18081. The gate never changes `/Users/bubble/.local/share/nerocd/user-ui-20261025`.
+The gate writes private evidence under `$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/<candidate-sha>.<random>/`. It preserves `runtime/owned-upload.tar` and closed markers before deleting the guest. Full baseline inspections remain private. Before and after comparisons cover host container identity, configuration, state, mounts, and network, with only rotating health log entries excluded. They also cover volume profiles, the existing user UI's executable and configuration fingerprints, listener identity, and successful HTTP responses on port 18081. The gate never changes `/Users/bubble/.local/share/nerocd/user-ui-20261025`.
 
 `safe-receipt.tar.gz` includes only explicitly allowed result, binary hash, helper provenance, UI manifest, preservation summary, browser summary, remote marker, and fixture archive files. It excludes inventories, private baseline documents, browser logs, environment files, and credentials. Missing required runtime evidence remains `not_run`; a standalone fixture compile is not physical qualification.
 
-The comparison reference is Coolify commit `b12d1386f3d458618b4c579babcd1e339c6c40b3`. `VolumeBackupJob` provides stop, archive, resume, then upload behavior. `VolumeBackupRecoveryJob` recovers stopped containers and cleans partial uploads. It is backup-failure recovery, not a new-volume restore implementation. `ScheduledVolumeBackup` records target selection and backup policy, while `VolumeBackupsController` and Livewire `VolumeBackups` expose authorized configuration and actions. This fixture exercises NeroCD's immediate owned-upload path, separate transfer history, and safe new-volume restore. It does not qualify schedules, arbitrary host directories, public S3 providers, or production DNS and ACME.
+The comparison reference is Coolify commit `b12d1386f3d458618b4c579babcd1e339c6c40b3`. `VolumeBackupJob` provides stop, archive, resume, then upload behavior. `VolumeBackupRecoveryJob` recovers stopped containers and cleans partial uploads. It is backup-failure recovery, not a new-volume restore implementation. `ScheduledVolumeBackup` records target selection and backup policy, while `VolumeBackupsController` and Livewire `VolumeBackups` expose authorized configuration and actions. This fixture exercises NeroCD's scheduled owned-upload path, separate transfer history, and safe new-volume restore. It does not qualify arbitrary host directories, public S3 providers, or production DNS and ACME.
+
+
+## Scheduled workflow extension
+
+The remote path now creates a schedule in the existing upload panel. A committed
+create response is lost deliberately. The browser retries the saved request,
+then edits and disables the same schedule and reads its occurrence history.
+Concurrent controller passes must retain one archive operation and helper.
+The fixture stops, joins, and restarts the hosting controller before admission.
+Viewer schedule reads succeed and viewer schedule creation fails.
+
+The scheduled archive follows the existing denied-upload and retry workflow.
+Real SMTP and HTTPS webhook receivers accept the resulting upload failure.
+A second scheduled archive encounters an oversized source file. Its actual
+archive failure must resume the active writer and send both notifications.
+Each transport receipt must contain the exact persisted event and delivery IDs.
+No download or restore failure enters the backup notification stream.
+
+Run the gate only after authorization for its exact committed candidate.
+Compilation and local PostgreSQL checks do not establish physical qualification.

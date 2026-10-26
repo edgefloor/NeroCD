@@ -47,7 +47,7 @@ export type NotificationDelivery = {
   channel_id: string;
   channel_generation: number;
   event: BackupEvent | "test";
-  source_kind: "backup" | "transfer" | "test";
+  source_kind: "backup" | "transfer" | "test" | "storage_backup" | "storage_transfer";
   source_id: string;
   source_state: "failed" | "uncertain" | "test";
   state: "pending" | "sending" | "delivered" | "failed" | "suppressed";
@@ -74,6 +74,7 @@ export type BackupRecoveryLocator = {
   resource_id: string;
   backup_id: string;
   transfer_id?: string;
+  source_kind?: "storage_backup" | "storage_transfer";
 };
 export const notificationID = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
@@ -101,7 +102,9 @@ export function parseBackupRecoveryLocator(
   ] as const;
   if (
     !keys.every((k) => notificationID(raw[k])) ||
-    (raw.transfer_id !== undefined && !notificationID(raw.transfer_id))
+    (raw.transfer_id !== undefined && !notificationID(raw.transfer_id)) ||
+    (raw.source_kind !== undefined && !["storage_backup","storage_transfer"].includes(String(raw.source_kind))) ||
+    (raw.source_kind === "storage_transfer" && !notificationID(raw.transfer_id))
   )
     return;
   return {
@@ -110,6 +113,7 @@ export function parseBackupRecoveryLocator(
     resource_id: String(raw.resource_id),
     backup_id: String(raw.backup_id),
     ...(raw.transfer_id ? { transfer_id: String(raw.transfer_id) } : {}),
+    ...(raw.source_kind ? {source_kind: raw.source_kind as "storage_backup" | "storage_transfer"}: {}),
   };
 }
 export function safeRecoveryURL(
@@ -129,6 +133,7 @@ export function safeRecoveryURL(
     "resource_id",
     "backup_id",
     "transfer_id",
+    "source_kind",
   ];
   if (
     [...url.searchParams.keys()].some(
@@ -236,14 +241,7 @@ export function parseNotificationDelivery(
     !["failed", "uncertain", "test"].includes(String(v.source_state)) ||
     !integer(v.channel_generation, 1) ||
     !["backup_failed", "upload_failed", "test"].includes(String(v.event)) ||
-    v.source_kind !==
-      (
-        {
-          backup_failed: "backup",
-          upload_failed: "transfer",
-          test: "test",
-        } as Record<string, string>
-      )[String(v.event)] ||
+    !(v.event === "test" ? v.source_kind === "test" : v.event === "backup_failed" ? ["backup","storage_backup"].includes(String(v.source_kind)) : ["transfer","storage_transfer"].includes(String(v.source_kind))) ||
     !["pending", "sending", "delivered", "failed", "suppressed"].includes(
       String(v.state),
     ) ||

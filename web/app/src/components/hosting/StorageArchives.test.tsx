@@ -39,6 +39,7 @@ vi.mock("@/api/hosting-storage-backup-remote", () => ({
   listStorageTransfers: vi.fn(async () => []),
   retryStorageTransfer: vi.fn(),
 }));
+vi.mock("@/api/hosting-storage-backup-schedules",async(importOriginal)=>({...await importOriginal<typeof import("@/api/hosting-storage-backup-schedules")>(),listStorageBackupSchedules:vi.fn(async()=>[]),listStorageBackupOccurrences:vi.fn(async()=>[])}));
 const hash = `sha256:${"a".repeat(64)}`;
 const resource = {
   id: "r",

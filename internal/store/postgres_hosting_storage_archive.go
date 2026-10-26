@@ -283,132 +283,137 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 		return domain.HostingStorageBackup{}, domain.ErrInvalidStorageArchive
 	}
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackup, error) {
-		var zero domain.HostingStorageBackup
-		q := sqlcgen.New(tx)
-		if err := s.archiveConfigured(ctx, q); err != nil {
-			return zero, err
-		}
-		if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
-			return zero, err
-		}
-		r, b, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleOwner)
-		if err != nil {
-			return zero, err
-		}
-		hash := domain.HostingDocumentHash(struct {
-			Actor, Resource string
-			Input           domain.HostingStorageBackupInput
-		}{actor, resource, in})
-		prior, err := q.ReadStorageBackupRequest(ctx, sqlcgen.ReadStorageBackupRequestParams{ResourceID: resource, RequestID: in.RequestID})
-		if err == nil {
-			if prior.CreatedBy != actor || prior.RequestHash != hash {
-				return zero, ErrConflict
-			}
-			return archiveLoadBackup(ctx, tx, prior)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return zero, err
-		}
-		if r.Generation != in.ExpectedResourceGeneration {
-			return zero, ErrConflict
-		}
-		state, err := q.LockHostingPortReservation(ctx, b.ID)
-		if err != nil {
-			return zero, hostingError(err)
-		}
-		if !state.RestoreAdmitted || state.HoldOperationID != nil {
-			return zero, ErrConflict
-		}
-		busy, err := q.HostingBindingBusy(ctx, b.ID)
-		if err != nil {
-			return zero, err
-		}
-		if busy {
-			return zero, ErrConflict
-		}
-		st, err := currentHostingStorage(ctx, tx, r.ProjectID, resource)
-		if err != nil {
-			return zero, err
-		}
-		m, err := readHostingStorageMaterialization(ctx, tx, st)
-		if err != nil {
-			return zero, err
-		}
-		raw, err := q.GetHostingHealthy(ctx, b.ID)
-		if err != nil {
-			return zero, err
-		}
-		var healthy domain.HostingHealthy
-		if json.Unmarshal(raw, &healthy) != nil || healthy.Storage == nil {
-			return zero, ErrConflict
-		}
-		if err = archiveImageCleanupPending(ctx, tx, healthy); err != nil {
-			return zero, err
-		}
-		writers := []domain.HostingHealthy{healthy}
-		retained, err := q.GetHostingRetainedReleases(ctx, b.ID)
-		if err != nil {
-			return zero, err
-		}
-		for _, row := range retained {
-			var h domain.HostingHealthy
-			if json.Unmarshal(row.Body, &h) != nil {
-				return zero, ErrConflict
-			}
-			if h.ContainerID != healthy.ContainerID {
-				if row.State == "cleanup_pending" {
-					return zero, ErrConflict
-				}
-				writers = append(writers, h)
-			}
-		}
-		slices.SortFunc(writers, func(a, b domain.HostingHealthy) int {
-			if a.ContainerID < b.ContainerID {
-				return -1
-			}
-			if a.ContainerID > b.ContainerID {
-				return 1
-			}
-			return 0
-		})
-		backupID := "hsb_" + domain.HostingDocumentHash(struct{ Resource, Request string }{resource, in.RequestID})[7:39]
-		p := domain.HostingStorageArchivePlan{OperationID: id, ProjectID: r.ProjectID, ServerID: healthy.Snapshot.ServerID, DestinationID: b.DestinationID, RunnerID: healthy.Snapshot.RunnerID, Mode: "backup", BackupID: backupID, SourceHealthy: healthy, SourceStorage: st, SourceMaterialization: m, Writers: writers, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits, CompilerVersion: domain.HostingStorageArchiveVersion, PolicyVersion: domain.HostingStorageArchiveVersion}
-		p.RemoteTarget = in.RemoteTarget
-		if in.RemoteTarget != nil {
-			if err = s.storageRemoteSelect(ctx, tx, p, actor, *in.RemoteTarget); err != nil {
-				return zero, err
-			}
-		}
-		p.Hash = domain.HostingDocumentHash(p)
-		if err = archiveRunner(ctx, tx, p); err != nil {
-			return zero, err
-		}
-		if err = archiveInsertPlan(ctx, tx, p, actor, "storage_backup_"+in.RequestID, hash); err != nil {
-			return zero, err
-		}
-		if err = q.InsertStorageBackup(ctx, sqlcgen.InsertStorageBackupParams{ID: backupID, OperationID: id, ProjectID: r.ProjectID, ResourceID: resource, RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor}); err != nil {
-			return zero, err
-		}
-		if err = q.AdmitStorageArchiveHold(ctx, sqlcgen.AdmitStorageArchiveHoldParams{BindingID: b.ID, OperationID: id}); err != nil {
-			return zero, err
-		}
-		op, _, err := archiveOperation(ctx, tx, id)
-		if err != nil {
-			return zero, err
-		}
-		if err = archiveAudit(ctx, tx, actor, "requested", op); err != nil {
-			return zero, err
-		}
-		if _, err = s.hostingJobs.EnqueueStorageArchiveTx(ctx, tx, hostingjobs.PrepareStorageArchiveArgs{OperationID: id}); err != nil {
-			return zero, err
-		}
-		row, err := q.ReadStorageBackup(ctx, backupID)
-		if err != nil {
-			return zero, err
-		}
-		_ = event
-		return archiveLoadBackup(ctx, tx, row)
+		return s.requestStorageBackupTx(ctx, tx, id, resource, actor, in)
 	})
+}
+
+// requestStorageBackupTx permits schedule cursor, occurrence and ordinary archive
+// admission to commit together without nesting a public transaction.
+func (s *PostgresStore) requestStorageBackupTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, in domain.HostingStorageBackupInput) (domain.HostingStorageBackup, error) {
+	var zero domain.HostingStorageBackup
+	q := sqlcgen.New(tx)
+	if err := s.archiveConfigured(ctx, q); err != nil {
+		return zero, err
+	}
+	if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
+		return zero, err
+	}
+	r, b, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleOwner)
+	if err != nil {
+		return zero, err
+	}
+	hash := domain.HostingDocumentHash(struct {
+		Actor, Resource string
+		Input           domain.HostingStorageBackupInput
+	}{actor, resource, in})
+	prior, err := q.ReadStorageBackupRequest(ctx, sqlcgen.ReadStorageBackupRequestParams{ResourceID: resource, RequestID: in.RequestID})
+	if err == nil {
+		if prior.CreatedBy != actor || prior.RequestHash != hash {
+			return zero, ErrConflict
+		}
+		return archiveLoadBackup(ctx, tx, prior)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return zero, err
+	}
+	if r.Generation != in.ExpectedResourceGeneration {
+		return zero, ErrConflict
+	}
+	state, err := q.LockHostingPortReservation(ctx, b.ID)
+	if err != nil {
+		return zero, hostingError(err)
+	}
+	if !state.RestoreAdmitted || state.HoldOperationID != nil {
+		return zero, ErrConflict
+	}
+	busy, err := q.HostingBindingBusy(ctx, b.ID)
+	if err != nil {
+		return zero, err
+	}
+	if busy {
+		return zero, ErrConflict
+	}
+	st, err := currentHostingStorage(ctx, tx, r.ProjectID, resource)
+	if err != nil {
+		return zero, err
+	}
+	m, err := readHostingStorageMaterialization(ctx, tx, st)
+	if err != nil {
+		return zero, err
+	}
+	raw, err := q.GetHostingHealthy(ctx, b.ID)
+	if err != nil {
+		return zero, err
+	}
+	var healthy domain.HostingHealthy
+	if json.Unmarshal(raw, &healthy) != nil || healthy.Storage == nil {
+		return zero, ErrConflict
+	}
+	if err = archiveImageCleanupPending(ctx, tx, healthy); err != nil {
+		return zero, err
+	}
+	writers := []domain.HostingHealthy{healthy}
+	retained, err := q.GetHostingRetainedReleases(ctx, b.ID)
+	if err != nil {
+		return zero, err
+	}
+	for _, row := range retained {
+		var h domain.HostingHealthy
+		if json.Unmarshal(row.Body, &h) != nil {
+			return zero, ErrConflict
+		}
+		if h.ContainerID != healthy.ContainerID {
+			if row.State == "cleanup_pending" {
+				return zero, ErrConflict
+			}
+			writers = append(writers, h)
+		}
+	}
+	slices.SortFunc(writers, func(a, b domain.HostingHealthy) int {
+		if a.ContainerID < b.ContainerID {
+			return -1
+		}
+		if a.ContainerID > b.ContainerID {
+			return 1
+		}
+		return 0
+	})
+	backupID := "hsb_" + domain.HostingDocumentHash(struct{ Resource, Request string }{resource, in.RequestID})[7:39]
+	p := domain.HostingStorageArchivePlan{OperationID: id, ProjectID: r.ProjectID, ServerID: healthy.Snapshot.ServerID, DestinationID: b.DestinationID, RunnerID: healthy.Snapshot.RunnerID, Mode: "backup", BackupID: backupID, SourceHealthy: healthy, SourceStorage: st, SourceMaterialization: m, Writers: writers, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits, CompilerVersion: domain.HostingStorageArchiveVersion, PolicyVersion: domain.HostingStorageArchiveVersion}
+	p.RemoteTarget = in.RemoteTarget
+	if in.RemoteTarget != nil {
+		if err = s.storageRemoteSelect(ctx, tx, p, actor, *in.RemoteTarget); err != nil {
+			return zero, err
+		}
+	}
+	p.Hash = domain.HostingDocumentHash(p)
+	if err = archiveRunner(ctx, tx, p); err != nil {
+		return zero, err
+	}
+	if err = archiveInsertPlan(ctx, tx, p, actor, "storage_backup_"+in.RequestID, hash); err != nil {
+		return zero, err
+	}
+	if err = q.InsertStorageBackup(ctx, sqlcgen.InsertStorageBackupParams{ID: backupID, OperationID: id, ProjectID: r.ProjectID, ResourceID: resource, RequestID: in.RequestID, RequestHash: hash, CreatedBy: actor}); err != nil {
+		return zero, err
+	}
+	if err = q.AdmitStorageArchiveHold(ctx, sqlcgen.AdmitStorageArchiveHoldParams{BindingID: b.ID, OperationID: id}); err != nil {
+		return zero, err
+	}
+	op, _, err := archiveOperation(ctx, tx, id)
+	if err != nil {
+		return zero, err
+	}
+	if err = archiveAudit(ctx, tx, actor, "requested", op); err != nil {
+		return zero, err
+	}
+	if _, err = s.hostingJobs.EnqueueStorageArchiveTx(ctx, tx, hostingjobs.PrepareStorageArchiveArgs{OperationID: id}); err != nil {
+		return zero, err
+	}
+	row, err := q.ReadStorageBackup(ctx, backupID)
+	if err != nil {
+		return zero, err
+	}
+	return archiveLoadBackup(ctx, tx, row)
 }
 
 // GetStorageBackup rechecks current viewer membership and destination grant.

@@ -3,6 +3,11 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-schedules"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backup-schedules"},
+	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}/occurrences"},
+
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-channels"},
 	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/notification-channels"},
 	{Method: http.MethodPut, Path: "/api/v1/projects/{project_id}/notification-channels/{channel_id}"},
@@ -394,6 +399,13 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseBackupTransferMutation
 	case "/api/v1/resources/{id}/database-backups":
 		return s.hostingDatabaseBackups
+
+	case "/api/v1/resources/{id}/storage-backup-schedules":
+		return s.hostingStorageBackupSchedules
+	case "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}":
+		return s.saveStorageBackupSchedule
+	case "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}/occurrences":
+		return s.hostingStorageBackupOccurrences
 	case "/api/v1/resources/{id}/database-backup-schedules":
 		return s.hostingDatabaseBackupSchedules
 	case "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}":

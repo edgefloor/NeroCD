@@ -1,3 +1,4 @@
+import { StorageBackupSchedules } from "./StorageBackupSchedules";
 import {
   DatabaseBackupDestinations,
   BackupDestinationSelect,
@@ -59,12 +60,14 @@ export function StorageArchives({
   storage,
   owner,
   paused,
+  recoveryBackup,
 }: {
   actor: string;
   resource: Resource;
   storage: HostingStorage;
   owner: boolean;
   paused: boolean;
+  recoveryBackup?: string;
 }) {
   const client = useQueryClient();
   const scope: ArchiveScope = {
@@ -91,7 +94,7 @@ export function StorageArchives({
   }>();
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(recoveryBackup ?? "");
   useEffect(() => {
     setRemoteRestore(false);
   }, [selected]);
@@ -402,6 +405,7 @@ export function StorageArchives({
           disabled={blocked || !!attempt}
         />
       ) : null}
+      <StorageBackupSchedules key={key.join(":")} scope={scope} resource={{...resource,generation}} owner={owner} blocked={blocked} remoteTarget={remoteTarget} onRemoteTarget={setRemoteTarget} onDenied={()=>setLost(true)} onSelectBackup={setSelected} />
       <Button
         type="button"
         variant="outline"

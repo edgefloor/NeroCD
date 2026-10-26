@@ -219,3 +219,21 @@ func NotificationMessage(event string, sourceState ...string) string {
 		return "Test backup notification"
 	}
 }
+
+// NotificationSourceMessage preserves database wording while naming storage
+// evidence accurately. SourceState never upgrades an uncertain receipt to failure.
+func NotificationSourceMessage(event, kind, state string) string {
+	if kind != "storage_backup" && kind != "storage_transfer" {
+		return NotificationMessage(event, state)
+	}
+	if event == "upload_failed" {
+		if state == "uncertain" {
+			return "Storage backup succeeded locally, remote upload outcome uncertain; needs attention"
+		}
+		return "Storage backup succeeded locally, remote upload failed"
+	}
+	if state == "uncertain" {
+		return "Storage backup outcome uncertain; needs attention"
+	}
+	return "Storage backup failed"
+}

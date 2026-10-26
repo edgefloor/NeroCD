@@ -243,10 +243,15 @@ function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; 
         if (offset + page.items.length >= page.total || !page.items.length) break;
       }
       if (!environmentFound) throw new Error("Recovery environment is unavailable");
+      if (locator.source_kind) {
+        const resource=await getResource(locator.resource_id,{signal});
+        if(resource.id!==locator.resource_id||resource.project_id!==locator.project_id||resource.project_environment_id!==locator.environment_id||resource.kind!=="application"||resource.source.kind!=="image") throw new Error("Storage recovery resource mismatch");
+        return {kind:"storage" as const,resource};
+      }
       const database = validateDatabase(await getHostingDatabase(locator.resource_id, { signal }), access.scope, locator.resource_id);
       const backup = await getNotificationRecoveryBackup(access.scope, database, locator.backup_id, signal);
       const transfer = locator.transfer_id ? await getNotificationRecoveryTransfer(access.scope, backup.id, locator.transfer_id, signal) : undefined;
-      return { database, backup, transfer };
+      return { kind:"database" as const, database, backup, transfer };
     },
   });
   if (!access.ready || access.refreshing || blocked) return <p role="status">Verifying authenticated backup recovery access...</p>;
@@ -255,7 +260,8 @@ function BackupRecovery({ locator, blocked }: { locator: BackupRecoveryLocator; 
     <h3 className="font-semibold">Backup notification recovery</h3>
     <p className="break-all">Backup {locator.backup_id}{locator.transfer_id ? ` · upload ${locator.transfer_id}` : ""}. The link selects history only. Review current state before requesting an upload retry or a restore.</p>
     {resolved.isPending ? <p role="status">Resolving backup history...</p> : null}
-    {resolved.data ? <DatabaseBackups database={resolved.data.database} recoveryBackup={resolved.data.backup} recoveryTransfer={resolved.data.transfer} scope={access.scope} owner={access.owner} blocked={blocked || access.refreshing} onDenied={() => setRevoked(true)} recovery={locator} /> : null}
+    {resolved.data?.kind === "storage" ? <ResourceStorage resource={resolved.data.resource} blocked={blocked || access.refreshing} recoveryBackup={locator.backup_id} /> : null}
+    {resolved.data?.kind === "database" ? <DatabaseBackups database={resolved.data.database} recoveryBackup={resolved.data.backup} recoveryTransfer={resolved.data.transfer} scope={access.scope} owner={access.owner} blocked={blocked || access.refreshing} onDenied={() => setRevoked(true)} recovery={locator} /> : null}
   </section>;
 }
 

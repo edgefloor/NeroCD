@@ -843,3 +843,115 @@ func TestPostgresBackupNotificationSMTPChangedAddressRetriesCurrentMember(t *tes
 		})
 	}
 }
+
+func TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(strconv.FormatBool(uncertain), func(t *testing.T) {
+			f := newArchiveControlFixture(t)
+			payload := make(chan domain.NotificationPayload, 2)
+			receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var p domain.NotificationPayload
+				if json.NewDecoder(r.Body).Decode(&p) != nil {
+					t.Error("invalid payload")
+				}
+				payload <- p
+				w.WriteHeader(204)
+			}))
+			defer receiver.Close()
+			pg, service := notificationStore(t, networkCaptureFixture{storageMaterializationFixture: storageMaterializationFixture{db: f.db}}, receiver)
+			notificationChannel(t, service, f.owner, f.resource.ProjectID, receiver.URL)
+			b := f.backup(t)
+			op, a := f.claim(t, b.OperationID, "backup")
+			in := domain.HostingStorageArchiveCompleteRequest{HostingAuthority: a, ReceiptID: "storage_notification_failed", PlanHash: op.StorageArchive.Plan.Hash, Result: domain.HostingStorageArchiveResult{ArchiveOutcome: "failed", ResumeOutcome: "not_needed", FailureCode: "helper_failed"}}
+			if uncertain {
+				in.Result.ResumeOutcome = "uncertain"
+				in.Result.Uncertain = true
+				in.Result.FailureCode = "resume_failed"
+			}
+			if _, err := f.db.Exec(f.ctx, `CREATE FUNCTION reject_storage_notification() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture notification failure'; END $$; CREATE TRIGGER reject_storage_notification BEFORE INSERT ON hosting_notification_events FOR EACH ROW EXECUTE FUNCTION reject_storage_notification()`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.service.RunnerStorageArchiveComplete(f.runnerContext, in); err == nil {
+				t.Fatal("notification failure committed source")
+			}
+			var state string
+			var count int
+			if err := f.db.QueryRow(f.ctx, `SELECT state,(SELECT count(*) FROM hosting_storage_archive_receipts WHERE operation_id=$1 AND phase='complete') FROM hosting_operations WHERE id=$1`, b.OperationID).Scan(&state, &count); err != nil || state != "prepared" || count != 0 {
+				t.Fatalf("partial terminal commit %s %d %v", state, count, err)
+			}
+			if _, err := f.db.Exec(f.ctx, `DROP TRIGGER reject_storage_notification ON hosting_notification_events`); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				out, err := f.service.RunnerStorageArchiveComplete(f.runnerContext, in)
+				if err != nil || out.MutationHold != uncertain {
+					t.Fatalf("terminal evidence hold %v %v", out.MutationHold, err)
+				}
+			}
+			deliveries, err := service.ListNotificationDeliveries(f.owner, f.resource.ProjectID)
+			if err != nil || len(deliveries) != 1 {
+				t.Fatalf("deliveries %#v %v", deliveries, err)
+			}
+			d := deliveries[0]
+			if d.SourceKind != "storage_backup" || d.SourceID != b.OperationID || d.LocalCopyAvailable || uncertain && (d.SourceState != "uncertain") {
+				t.Fatalf("wrong source %#v", d)
+			}
+			if err = pg.SendBackupNotification(f.ctx, d.ID); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-payload:
+				if got.EventID != d.EventID || got.DeliveryID != d.ID || !strings.HasPrefix(got.Message, "Storage backup") || !strings.Contains(got.RecoveryURL, "source_kind=storage_backup") {
+					t.Fatalf("wrong payload %#v", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("webhook not delivered")
+			}
+			if err = pg.SendBackupNotification(f.ctx, d.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_notification_events`).Scan(&count); err != nil || count != 1 {
+				t.Fatal("event replay duplicated", count, err)
+			}
+		})
+	}
+}
+func TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload(t *testing.T) {
+	f, target := storageRemoteControlFixture(t)
+	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer receiver.Close()
+	_, service := notificationStore(t, networkCaptureFixture{storageMaterializationFixture: storageMaterializationFixture{db: f.db}}, receiver)
+	notificationChannel(t, service, f.owner, f.resource.ProjectID, receiver.URL)
+	b := f.finishBackup(t, requestRemoteStorageBackup(t, f, target))
+	transfers, err := f.service.ListStorageBackupTransfers(f.owner, b.ID, false)
+	if err != nil || len(transfers) != 1 {
+		t.Fatal(err)
+	}
+	failed := settleStorageRemote(t, f, transfers[0].ID, "access_denied")
+	d, err := service.ListNotificationDeliveries(f.owner, f.resource.ProjectID)
+	if err != nil || len(d) != 1 || d[0].SourceKind != "storage_transfer" || d[0].SourceID != failed.ID || !d[0].LocalCopyAvailable {
+		t.Fatalf("upload source %#v %v", d, err)
+	}
+	current, err := f.service.GetStorageBackup(f.owner, b.ID)
+	if err != nil || current.State != "succeeded" || domain.HostingDocumentHash(current.Blob) != domain.HostingDocumentHash(b.Blob) {
+		t.Fatal("local archive changed", err)
+	}
+	retry, err := f.service.RetryStorageBackupTransfer(f.owner, b.ID, domain.HostingStorageBackupTransferRetryInput{RequestID: "notify_upload_retry", ExpectedTransferID: failed.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := settleStorageRemote(t, f, retry.ID, "")
+	restored, err := f.service.RequestStorageRestore(f.owner, b.ID, domain.HostingStorageRestoreInput{RequestID: strings.Repeat("9", 32), Name: "alert exclusion", RemoteSource: &domain.BackupRemoteSource{TransferID: uploaded.ID, ExpectedTargetRevision: target.Revision}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var download string
+	if err = f.db.QueryRow(f.ctx, `SELECT id FROM hosting_storage_backup_transfers WHERE restore_operation_id=$1`, restored.Operation.ID).Scan(&download); err != nil {
+		t.Fatal(err)
+	}
+	settleStorageRemote(t, f, download, "object_mismatch")
+	d, err = service.ListNotificationDeliveries(f.owner, f.resource.ProjectID)
+	if err != nil || len(d) != 1 {
+		t.Fatalf("download emitted backup failure %#v %v", d, err)
+	}
+}

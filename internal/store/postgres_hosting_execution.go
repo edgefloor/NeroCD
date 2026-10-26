@@ -44,6 +44,7 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 	go func() {
 		defer close(done)
 		var scheduleObserver databaseBackupScheduleObserver
+		var storageScheduleWarningAfter time.Time
 		var remoteWarningAfter time.Time
 		var retentionWarningAfter time.Time
 		ticker := time.NewTicker(5 * time.Second)
@@ -53,6 +54,13 @@ func (s *PostgresStore) StartHostingExecution(ctx context.Context) (func(context
 			_ = s.recoverHostingDispatch(recoveryAttempt)
 			stop()
 			scheduleObserver.run(recoveryCtx, time.Now(), slog.Default(), s.ReconcileDatabaseBackupSchedules)
+			storageScheduleCtx, stopStorageSchedule := context.WithTimeout(recoveryCtx, 3*time.Second)
+			if err := s.ReconcileStorageBackupSchedules(storageScheduleCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(storageScheduleWarningAfter) {
+				slog.Warn("storage backup schedule discovery unavailable")
+				storageScheduleWarningAfter = time.Now().Add(time.Minute)
+			}
+			stopStorageSchedule()
+
 			retentionCtx, stopRetention := context.WithTimeout(recoveryCtx, 3*time.Second)
 			if err := s.ReconcileDatabaseBackupRetention(retentionCtx); err != nil && recoveryCtx.Err() == nil && time.Now().After(retentionWarningAfter) {
 				slog.Warn("backup retention publication reconciliation failed")

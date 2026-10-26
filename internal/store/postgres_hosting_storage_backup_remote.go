@@ -265,6 +265,13 @@ func (s *PostgresStore) PrepareStorageBackupTransfer(ctx context.Context, id str
 				if e == nil {
 					e = storageRemoteDownloadFailed(ctx, tx, r.plan)
 				}
+				if e == nil && r.view.Mode == "upload" {
+					var receipt string
+					receipt, e = notificationStorageDirectReceipt(ctx, tx, id, "authority_denied")
+					if e == nil {
+						e = notificationStorageUploadFailure(ctx, tx, id, receipt)
+					}
+				}
 				return e == nil, e
 			}
 			return false, err
@@ -406,6 +413,11 @@ func (s *PostgresStore) StorageBackupTransferMutation(ctx context.Context, runne
 		err = sqlcgen.New(tx).InsertStorageRemoteReceipt(ctx, sqlcgen.InsertStorageRemoteReceiptParams{OperationID: r.view.ID, Phase: in.Phase, ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), Response: buildJSON(updated.view), ExpiredClassification: expired})
 		if err != nil {
 			return zero, err
+		}
+		if in.Phase == "failed" || in.Phase == "uncertain" {
+			if err = notificationStorageUploadFailure(ctx, tx, r.view.ID, in.ReceiptID); err != nil {
+				return zero, err
+			}
 		}
 		if expired {
 			return updated.view, nil

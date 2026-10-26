@@ -60,3 +60,19 @@ func TestNotificationEmailValidationAndSelectors(t *testing.T) {
 		t.Fatal("duplicate selector accepted")
 	}
 }
+
+func TestNotificationSourceMessage(t *testing.T) {
+	for _, event := range []string{"backup_failed", "upload_failed", "test"} {
+		for _, state := range []string{"failed", "uncertain"} {
+			if NotificationSourceMessage(event, "backup", state) != NotificationMessage(event, state) {
+				t.Fatal("database wording changed")
+			}
+		}
+	}
+	if got := NotificationSourceMessage("backup_failed", "storage_backup", "uncertain"); got != "Storage backup outcome uncertain; needs attention" {
+		t.Fatal(got)
+	}
+	if got := NotificationSourceMessage("upload_failed", "storage_transfer", "failed"); got != "Storage backup succeeded locally, remote upload failed" {
+		t.Fatal(got)
+	}
+}

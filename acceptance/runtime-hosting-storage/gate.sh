@@ -20,7 +20,7 @@ case ${1:-} in
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
  --remote)
   archive=true; remote=true
-  owner=nerocd-storage-remote-runtime-20261026-8326c344
+  owner=nerocd-storage-schedules-runtime-20261026-5d45412a
   name=$owner-dind; volume=$owner-docker-data
   test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote.*)$';;
  *) echo 'usage: gate.sh [--archive|--remote]' >&2; exit 2;;
@@ -32,7 +32,7 @@ returned_outer=''
 test_pid=''
 dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
 if [[ "$remote" == true ]]; then
- evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026"
+ evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026"
  [[ ! -L "$evidence_parent" ]] || { echo 'evidence parent is a symlink' >&2; exit 1; }
  mkdir -p "$evidence_parent"
  chmod 700 "$evidence_parent"
@@ -403,11 +403,11 @@ if [[ "$remote" == true ]]; then remote_mode=disposable-dind; fi
 archive_mode=''
 if [[ "$archive" == true ]]; then archive_mode=disposable-dind; fi
 if [[ "$remote" == true ]]; then
- store_tests='^(TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay|TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation|TestPostgresStorageRemoteDownloadFailureAndHeldRetry)$'
+ store_tests='^(TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay|TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation|TestPostgresStorageRemoteDownloadFailureAndHeldRetry|TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable|TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback|TestPostgresStorageBackupScheduleSafeProjection|TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty|TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload|TestPostgresStorageBackupScheduleGenerationAndFrozenSource|TestPostgresStorageBackupScheduleRecoveryKeepsOccurrenceHeld)$'
  host_docker exec --workdir /workspace/internal/store "$outer" /fixture/store.test -test.list "$store_tests" > "$evidence/store-test-list"
  python3 - "$evidence/store-test-list" <<'CHECK_STORE_LIST'
 import sys
-expected={"TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry"}
+expected={"TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry","TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable","TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback","TestPostgresStorageBackupScheduleSafeProjection","TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty","TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload","TestPostgresStorageBackupScheduleGenerationAndFrozenSource","TestPostgresStorageBackupScheduleRecoveryKeepsOccurrenceHeld"}
 actual=set(open(sys.argv[1]).read().splitlines())
 if actual != expected:raise SystemExit("required storage PG test names missing")
 CHECK_STORE_LIST
@@ -415,7 +415,7 @@ CHECK_STORE_LIST
  python3 - "$evidence/store-tests.log" <<'CHECK_STORE_PASS'
 import sys
 text=open(sys.argv[1]).read()
-for name in ["TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry"]:
+for name in ["TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation","TestPostgresStorageRemoteDownloadFailureAndHeldRetry","TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable","TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback","TestPostgresStorageBackupScheduleSafeProjection","TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty","TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload","TestPostgresStorageBackupScheduleGenerationAndFrozenSource","TestPostgresStorageBackupScheduleRecoveryKeepsOccurrenceHeld"]:
  if "--- PASS: "+name+" " not in text:raise SystemExit("required PG test PASS missing")
 if "SKIP" in text:raise SystemExit("required PG test skipped")
 CHECK_STORE_PASS

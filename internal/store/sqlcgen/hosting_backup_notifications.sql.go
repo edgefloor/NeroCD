@@ -317,6 +317,21 @@ func (q *Queries) InsertNotificationSecret(ctx context.Context, arg InsertNotifi
 	return err
 }
 
+const insertNotificationStorageUploadSourceReceipt = `-- name: InsertNotificationStorageUploadSourceReceipt :exec
+INSERT INTO hosting_notification_source_receipts(id,source_kind,source_id,reason,source_snapshot) SELECT $1,'storage_transfer',t.id,$3,jsonb_build_object('state',t.state,'failure_code',t.failure_code,'plan_hash',t.plan_hash) FROM hosting_storage_backup_transfers t WHERE t.id=$2 AND t.mode='upload' AND t.state IN ('failed','uncertain') ON CONFLICT(id) DO NOTHING
+`
+
+type InsertNotificationStorageUploadSourceReceiptParams struct {
+	ID     string `json:"id"`
+	ID_2   string `json:"id_2"`
+	Reason string `json:"reason"`
+}
+
+func (q *Queries) InsertNotificationStorageUploadSourceReceipt(ctx context.Context, arg InsertNotificationStorageUploadSourceReceiptParams) error {
+	_, err := q.db.Exec(ctx, insertNotificationStorageUploadSourceReceipt, arg.ID, arg.ID_2, arg.Reason)
+	return err
+}
+
 const insertNotificationTestRequest = `-- name: InsertNotificationTestRequest :exec
 INSERT INTO hosting_notification_requests(project_id,request_id,actor_id,operation,request_hash,response) VALUES($1,$2,$3,'test',$4,$5)
 `
@@ -988,6 +1003,69 @@ func (q *Queries) ReadNotificationSecret(ctx context.Context, arg ReadNotificati
 		&i.EnvelopeVersion,
 		&i.KeyID,
 		&i.Ciphertext,
+	)
+	return i, err
+}
+
+const readNotificationStorageBackupSource = `-- name: ReadNotificationStorageBackupSource :one
+SELECT o.project_id,p.source_resource_id,r.project_environment_id,p.backup_id,o.state,coalesce(receipt.body->'result'->>'failure_code','')::text AS failure_code,EXISTS(SELECT 1 FROM hosting_storage_archive_blobs b WHERE b.backup_id=p.backup_id)::boolean AS local_copy_available FROM hosting_operations o JOIN hosting_storage_archive_plans p ON p.operation_id=o.id JOIN resources r ON r.id=p.source_resource_id JOIN hosting_storage_archive_receipts receipt ON receipt.operation_id=o.id AND receipt.phase='complete' AND receipt.receipt_id=$2 WHERE o.id=$1 AND p.mode='backup' AND o.state IN ('failed','reconciliation_required')
+`
+
+type ReadNotificationStorageBackupSourceParams struct {
+	ID        string `json:"id"`
+	ReceiptID string `json:"receipt_id"`
+}
+
+type ReadNotificationStorageBackupSourceRow struct {
+	ProjectID            string `json:"project_id"`
+	SourceResourceID     string `json:"source_resource_id"`
+	ProjectEnvironmentID string `json:"project_environment_id"`
+	BackupID             string `json:"backup_id"`
+	State                string `json:"state"`
+	FailureCode          string `json:"failure_code"`
+	LocalCopyAvailable   bool   `json:"local_copy_available"`
+}
+
+func (q *Queries) ReadNotificationStorageBackupSource(ctx context.Context, arg ReadNotificationStorageBackupSourceParams) (ReadNotificationStorageBackupSourceRow, error) {
+	row := q.db.QueryRow(ctx, readNotificationStorageBackupSource, arg.ID, arg.ReceiptID)
+	var i ReadNotificationStorageBackupSourceRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.SourceResourceID,
+		&i.ProjectEnvironmentID,
+		&i.BackupID,
+		&i.State,
+		&i.FailureCode,
+		&i.LocalCopyAvailable,
+	)
+	return i, err
+}
+
+const readNotificationStorageUploadSource = `-- name: ReadNotificationStorageUploadSource :one
+SELECT t.project_id,b.resource_id,r.project_environment_id,b.id AS backup_id,t.state,t.failure_code,EXISTS(SELECT 1 FROM hosting_storage_archive_blobs blob WHERE blob.backup_id=b.id)::boolean AS local_copy_available FROM hosting_storage_backup_transfers t JOIN hosting_storage_backups b ON b.id=t.backup_id JOIN resources r ON r.id=b.resource_id WHERE t.id=$1 AND t.mode='upload' AND t.state IN ('failed','uncertain')
+`
+
+type ReadNotificationStorageUploadSourceRow struct {
+	ProjectID            string `json:"project_id"`
+	ResourceID           string `json:"resource_id"`
+	ProjectEnvironmentID string `json:"project_environment_id"`
+	BackupID             string `json:"backup_id"`
+	State                string `json:"state"`
+	FailureCode          string `json:"failure_code"`
+	LocalCopyAvailable   bool   `json:"local_copy_available"`
+}
+
+func (q *Queries) ReadNotificationStorageUploadSource(ctx context.Context, id string) (ReadNotificationStorageUploadSourceRow, error) {
+	row := q.db.QueryRow(ctx, readNotificationStorageUploadSource, id)
+	var i ReadNotificationStorageUploadSourceRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.ResourceID,
+		&i.ProjectEnvironmentID,
+		&i.BackupID,
+		&i.State,
+		&i.FailureCode,
+		&i.LocalCopyAvailable,
 	)
 	return i, err
 }

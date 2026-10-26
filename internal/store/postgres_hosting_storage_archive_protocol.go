@@ -132,6 +132,11 @@ func (s *PostgresStore) archiveMutation(ctx context.Context, runner string, a do
 		if err = archiveWriteReceipt(ctx, tx, op, a, runner, phase, receipt, body); err != nil {
 			return zero, err
 		}
+		if phase == "complete" && op.StorageArchive.Mode == "backup" {
+			if err = notificationStorageBackupFailure(ctx, tx, op.ID, receipt); err != nil {
+				return zero, err
+			}
+		}
 		// Recheck the fenced lease after all fallible audit/receipt writes and lock waits.
 		if _, err = s.archiveAuthority(ctx, tx, runner, a, phase != "complete"); err != nil {
 			return zero, err

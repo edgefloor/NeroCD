@@ -218,6 +218,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage-backup-schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted storage backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; real archive and upload failure notifications reuse existing project channels; retention is deferred. Cache-Control no-store.
+         */
+        get: operations["listHostingStorageBackupSchedules"];
+        put?: never;
+        /**
+         * Hosted storage backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; real archive and upload failure notifications reuse existing project channels; retention is deferred. Cache-Control no-store.
+         */
+        post: operations["createHostingStorageBackupSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Hosted storage backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; real archive and upload failure notifications reuse existing project channels; retention is deferred. Cache-Control no-store.
+         */
+        put: operations["updateHostingStorageBackupSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}/occurrences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hosted storage backup schedule
+         * @description Owner edits require request replay identity and expected_version; viewers inspect safe history. Explicit IANA timezone. Newest due within ten minutes only. Disable preserves accepted work. Saved actor and destination authority are rechecked. Local backups with optional pinned S3 target; real archive and upload failure notifications reuse existing project channels; retention is deferred. Cache-Control no-store.
+         */
+        get: operations["listHostingStorageBackupOccurrences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database-backup-schedules": {
         parameters: {
             query?: never;
@@ -4580,7 +4644,7 @@ export interface components {
             /** @enum {string} */
             event: "backup_failed" | "upload_failed" | "test";
             /** @enum {string} */
-            source_kind: "backup" | "transfer" | "test";
+            source_kind: "backup" | "transfer" | "test" | "storage_backup" | "storage_transfer";
             source_id: string;
             /** @enum {string} */
             source_state: "failed" | "uncertain" | "test";
@@ -4765,6 +4829,63 @@ export interface components {
              * @description Base64 of the exact secret key bytes, emitted only by the protected transport codec.
              */
             secret_key: string;
+        };
+        HostingStorageBackupScheduleInput: {
+            request_id: string;
+            /** Format: int64 */
+            expected_resource_generation: number;
+            /** Format: int64 */
+            expected_version: number;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            enabled: boolean;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
+        };
+        HostingStorageBackupSchedule: {
+            id: string;
+            /** @constant */
+            version: "hosting.storage-backup.schedule.v1";
+            project_id: string;
+            resource_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            enabled: boolean;
+            /** Format: date-time */
+            last_scheduled_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            remote_target?: components["schemas"]["BackupTargetSelection"];
+        };
+        HostingStorageBackupOccurrence: {
+            id: string;
+            schedule_id: string;
+            project_id: string;
+            resource_id: string;
+            /** Format: int64 */
+            schedule_revision: number;
+            /** Format: date-time */
+            scheduled_at: string;
+            /** @description Five-field cron or every_minute/hourly/daily/weekly/monthly/yearly and supported @aliases. No seconds or inline timezone. */
+            frequency: string;
+            /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
+            timezone: string;
+            operation_id?: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "preparing" | "prepared" | "applying" | "succeeded" | "failed" | "cancel_requested" | "canceled" | "reconciliation_required" | "denied" | "skipped";
+            /** @enum {string} */
+            reason: "" | "authority_denied" | "source_unavailable" | "source_busy" | "placement_changed" | "authority_lost" | "ownership_mismatch" | "helper_failed" | "archive_invalid" | "limit_exceeded" | "resume_failed" | "canceled" | "interrupted";
+            ownership_held: boolean;
+            /** Format: date-time */
+            created_at: string;
+            backup_id?: string;
         };
         HostingDatabaseBackupScheduleInput: {
             request_id: string;
@@ -10044,6 +10165,244 @@ export interface operations {
                 content?: never;
             };
             /** @description Revision, authority, inventory or reservation conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostingStorageBackupSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupSchedule"][];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createHostingStorageBackupSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupSchedule"];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateHostingStorageBackupSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupSchedule"];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostingStorageBackupOccurrences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe resource-scoped schedule metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupOccurrence"][];
+                };
+            };
+            /** @description Invalid or undeclared request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource or schedule unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale version, generation or placement */
             409: {
                 headers: {
                     [name: string]: unknown;

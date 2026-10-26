@@ -148,3 +148,10 @@ INSERT INTO hosting_notification_source_receipts(id,source_kind,source_id,reason
 
 -- name: InsertNotificationUploadSourceReceipt :exec
 INSERT INTO hosting_notification_source_receipts(id,source_kind,source_id,reason,source_snapshot) SELECT $1,'transfer',t.id,$3,jsonb_build_object('state',t.state,'failure_code',t.failure_code,'plan_hash',t.plan_hash) FROM hosting_database_backup_transfers t WHERE t.id=$2 AND t.mode='upload' AND t.state IN ('failed','uncertain') ON CONFLICT(id) DO NOTHING;
+
+-- name: ReadNotificationStorageBackupSource :one
+SELECT o.project_id,p.source_resource_id,r.project_environment_id,p.backup_id,o.state,coalesce(receipt.body->'result'->>'failure_code','')::text AS failure_code,EXISTS(SELECT 1 FROM hosting_storage_archive_blobs b WHERE b.backup_id=p.backup_id)::boolean AS local_copy_available FROM hosting_operations o JOIN hosting_storage_archive_plans p ON p.operation_id=o.id JOIN resources r ON r.id=p.source_resource_id JOIN hosting_storage_archive_receipts receipt ON receipt.operation_id=o.id AND receipt.phase='complete' AND receipt.receipt_id=$2 WHERE o.id=$1 AND p.mode='backup' AND o.state IN ('failed','reconciliation_required');
+-- name: ReadNotificationStorageUploadSource :one
+SELECT t.project_id,b.resource_id,r.project_environment_id,b.id AS backup_id,t.state,t.failure_code,EXISTS(SELECT 1 FROM hosting_storage_archive_blobs blob WHERE blob.backup_id=b.id)::boolean AS local_copy_available FROM hosting_storage_backup_transfers t JOIN hosting_storage_backups b ON b.id=t.backup_id JOIN resources r ON r.id=b.resource_id WHERE t.id=$1 AND t.mode='upload' AND t.state IN ('failed','uncertain');
+-- name: InsertNotificationStorageUploadSourceReceipt :exec
+INSERT INTO hosting_notification_source_receipts(id,source_kind,source_id,reason,source_snapshot) SELECT $1,'storage_transfer',t.id,$3,jsonb_build_object('state',t.state,'failure_code',t.failure_code,'plan_hash',t.plan_hash) FROM hosting_storage_backup_transfers t WHERE t.id=$2 AND t.mode='upload' AND t.state IN ('failed','uncertain') ON CONFLICT(id) DO NOTHING;

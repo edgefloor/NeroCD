@@ -235,3 +235,11 @@ test("test delivery uses a project-only locator and absent detail attempts norma
     ).attempts[0]?.state,
   ).toBe("uncertain");
 });
+
+test("storage recovery selector is closed and preserves source family",()=>{
+ const q={project_id:"p",environment_id:"e",resource_id:"r",backup_id:"b",source_kind:"storage_transfer",transfer_id:"t"};
+ expect(parseBackupRecoveryLocator(q)).toEqual(q);
+ expect(parseBackupRecoveryLocator({...q,source_kind:"unknown"})).toBeUndefined();
+ expect(parseBackupRecoveryLocator({...q,transfer_id:undefined})).toBeUndefined();
+ expect(safeRecoveryURL("/projects?"+new URLSearchParams(q),"p")).toContain("source_kind=storage_transfer");
+});

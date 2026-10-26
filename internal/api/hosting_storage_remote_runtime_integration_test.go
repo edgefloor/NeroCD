@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,11 +34,17 @@ import (
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
+	"nerocd/internal/notificationtransport"
 	"nerocd/internal/secretcrypto"
+	"nerocd/internal/store"
 	"nerocd/web"
 )
 
 type hostingStorageRemoteRuntimeFixture struct {
+	pg               *store.PostgresStore
+	notifications    *backupNotificationReceivers
+	scheduleACK      atomic.Bool
+	stopJobs         func(context.Context) error
 	uploadChecks     atomic.Int64
 	uploadViolations atomic.Int64
 	*storageRuntimeFixture
@@ -93,9 +100,27 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 	if len(keyString) != 64 {
 		t.Fatal("private browser handshake key required")
 	}
-	remote := &hostingStorageRemoteRuntimeFixture{storageRuntimeFixture: f, browser: &hostingStorageRemoteRuntimeBrowser{key: keyString, phase: "starting", reports: make(chan hostingStorageRemoteRuntimeReport, 8)}}
+	remote := &hostingStorageRemoteRuntimeFixture{pg: pg, storageRuntimeFixture: f, browser: &hostingStorageRemoteRuntimeBrowser{key: keyString, phase: "starting", reports: make(chan hostingStorageRemoteRuntimeReport, 8)}}
 	control := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if remote.browser.serve(w, r) {
+			return
+		}
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/storage-backup-schedules") && remote.scheduleACK.CompareAndSwap(true, false) {
+			captured := httptest.NewRecorder()
+			server.ServeHTTP(captured, r)
+			if captured.Code != 200 {
+				t.Error("schedule ACK fault did not commit")
+			}
+			checks := make(chan error, 2)
+			for range 2 {
+				go func() { checks <- remote.pg.ReconcileStorageBackupSchedules(r.Context()) }()
+			}
+			for range 2 {
+				if err := <-checks; err != nil {
+					t.Error("concurrent scheduled discovery", err)
+				}
+			}
+			http.Error(w, "fixture lost schedule response", 503)
 			return
 		}
 		if wire := remote.wire.Load(); wire != nil && wire.serve(w, r, server) {
@@ -204,14 +229,23 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 			break
 		}
 	}
+	remote.notifications = startBackupNotificationReceivers(t)
+	sender, notificationErr := notificationtransport.New(notificationtransport.Policy{FixtureTLSOrigins: []string{remote.notifications.webhookOrigin, remote.notifications.smtpOrigin}, RootCAs: remote.notifications.roots})
+	if notificationErr != nil {
+		t.Fatal("storage notification sender")
+	}
+	if err = pg.ConfigureBackupNotifications(ring, sender, origin); err != nil {
+		t.Fatal("storage notification configuration")
+	}
 	stopJobs, err := pg.StartHostingExecution(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	remote.stopJobs = stopJobs
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := stopJobs(ctx); err != nil {
+		if err := remote.stopJobs(ctx); err != nil {
 			t.Error(err)
 		}
 	})
@@ -442,12 +476,28 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	f.browser.set("validation", resource.ID, target.ID, "")
 	validationID := f.browser.await(t, "validation")
 	hostingStorageRemoteRuntimeAwaitID(f, validationID, "succeeded")
+	// Stop and join the complete controller/consumer lifetime, then restart it
+	// before owner UI admission. No overlapping scheduler lifetime is retained.
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	if err := f.stopJobs(stopCtx); err != nil {
+		stopCancel()
+		t.Fatal("storage scheduler join", err)
+	}
+	stopCancel()
+	var restartErr error
+	f.stopJobs, restartErr = f.pg.StartHostingExecution(t.Context())
+	if restartErr != nil {
+		t.Fatal("storage scheduler restart", restartErr)
+	}
+	hostingStorageRemoteRuntimeChannels(f)
+	f.scheduleACK.Store(true)
 	since := time.Now().Add(-time.Second).Format(time.RFC3339Nano)
 	f.browser.set("backup", resource.ID, target.ID, "")
 	backupID := f.browser.await(t, "backup")
 	backup := storageRuntimeJSON[domain.HostingStorageBackup](f.storageRuntimeFixture, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
 	local := f.await(backup.OperationID, "succeeded")
 	failed := hostingStorageRemoteRuntimeAwait(f, backup.ID, "upload", "failed")
+	hostingStorageRemoteRuntimeAlerts(f, failed.ID, "storage_transfer", "upload_failed", true)
 	backup = storageRuntimeJSON[domain.HostingStorageBackup](f.storageRuntimeFixture, "GET", "/api/v1/storage-backups/"+backup.ID, nil, 200)
 	if local.StorageArchive == nil || local.StorageArchive.Result == nil || local.StorageArchive.Result.ResumeOutcome != "resumed" || backup.Blob == nil || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.FailureCode != "access_denied" || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
 		t.Fatal("denied PUT must retain exact successful local archive and resumed writer")
@@ -587,9 +637,23 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("new-volume writes changed source or failed read/write")
 	}
 	hostingStorageRemoteRuntimeAuthorization(f, resource, backup, failed, target.ID, target.Revision)
+	// The failed archive is also admitted through the durable schedule path.
+	f.https("storage-remote.example.test", "POST", "/oversize", nil, 201)
+	failedSchedule := storageRuntimeJSON[domain.HostingStorageBackupSchedule](f.storageRuntimeFixture, "POST", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules", domain.HostingStorageBackupScheduleInput{RequestID: hostingStorageScheduleRuntimeID(t), ExpectedResourceGeneration: resource.Generation, Frequency: fmt.Sprintf("%d %d * * *", time.Now().UTC().Minute(), time.Now().UTC().Hour()), Timezone: "UTC", Enabled: true}, 200)
+	failedOccurrence := hostingStorageRemoteRuntimeOccurrence(f, resource.ID, failedSchedule.ID)
+	failedArchive := f.await(failedOccurrence.OperationID, "failed")
+	if failedArchive.StorageArchive == nil || failedArchive.StorageArchive.Result == nil || failedArchive.StorageArchive.Result.ResumeOutcome != "resumed" || failedArchive.MutationHold {
+		t.Fatal("scheduled archive failure did not compensate writers")
+	}
+	storageRuntimeJSON[domain.HostingStorageBackupSchedule](f.storageRuntimeFixture, "PUT", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules/"+failedSchedule.ID, domain.HostingStorageBackupScheduleInput{RequestID: hostingStorageScheduleRuntimeID(t), ExpectedResourceGeneration: resource.Generation, ExpectedVersion: failedSchedule.Revision, Frequency: failedSchedule.Frequency, Timezone: failedSchedule.Timezone, Enabled: false}, 200)
+	hostingStorageRemoteRuntimeAlerts(f, failedOccurrence.OperationID, "storage_backup", "backup_failed", false)
+	f.https("storage-remote.example.test", "DELETE", "/oversize", nil, 204)
+	if !bytes.Equal(f.https("storage-remote.example.test", "GET", "/download", nil, 200), upload) {
+		t.Fatal("scheduled archive failure altered source")
+	}
 	f.browser.set("complete", resource.ID, target.ID, backup.ID)
 	f.browser.await(t, "done")
-	markers := map[string]any{"backup_id": backup.ID, "upload_transfer_id": uploaded.ID, "restore_operation_id": restored.Operation.ID, "source_volume": source.VolumeName, "restored_volume": restored.Storage.VolumeName, "archive_sha256": backup.Blob.SHA256, "archive_bytes": len(archive), "source_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(upload)), "new_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(replacement)), "source_metadata": metadata, "object_gets": after, "upload_puts": puts, "receipt_replayed": true, "put_resume_checks": f.uploadChecks.Load(), "put_resume_violations": f.uploadViolations.Load(), "local_helper_starts": 1, "source_preserved": true}
+	markers := map[string]any{"backup_id": backup.ID, "upload_transfer_id": uploaded.ID, "restore_operation_id": restored.Operation.ID, "source_volume": source.VolumeName, "restored_volume": restored.Storage.VolumeName, "archive_sha256": backup.Blob.SHA256, "archive_bytes": len(archive), "source_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(upload)), "new_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(replacement)), "source_metadata": metadata, "object_gets": after, "first_scheduled_archive_upload_puts": puts, "receipt_replayed": true, "put_resume_checks": f.uploadChecks.Load(), "put_resume_violations": f.uploadViolations.Load(), "first_scheduled_archive_helper_starts": 1, "source_preserved": true, "scheduled_archive": true, "scheduled_backup_failure_alerts": true, "scheduled_upload_failure_alerts": true, "scheduler_join_restart": true}
 	raw, err := json.MarshalIndent(markers, "", "  ")
 	if err != nil || os.WriteFile(filepath.Join(evidence, "remote-markers.json"), append(raw, '\n'), 0600) != nil {
 		t.Fatal("safe marker export")
@@ -599,7 +663,7 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 			t.Fatal("fixture evidence contains protected credential")
 		}
 	}
-	t.Logf("remote owned-upload workflow backup=%s transfer=%s restored=%s GET=%d PUT=%d helper_starts=1 source_preserved=true", backup.ID, uploaded.ID, restored.Operation.ID, after, puts)
+	t.Logf("remote owned-upload workflow backup=%s transfer=%s restored=%s GET=%d first_scheduled_archive_PUT=%d first_scheduled_archive_helper_starts=1 source_preserved=true", backup.ID, uploaded.ID, restored.Operation.ID, after, puts)
 }
 
 func hostingStorageRemoteRuntimeAwaitID(f *hostingStorageRemoteRuntimeFixture, id, state string) hostingStorageRemoteRuntimeTransfer {
@@ -668,6 +732,10 @@ func hostingStorageRemoteRuntimeAuthorization(f *hostingStorageRemoteRuntimeFixt
 	for _, path := range paths {
 		storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "GET", path, nil, 200)
 	}
+	schedulePath := "/api/v1/resources/" + resource.ID + "/storage-backup-schedules"
+	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "GET", schedulePath, nil, 200)
+	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", schedulePath, domain.HostingStorageBackupScheduleInput{RequestID: hostingStorageScheduleRuntimeID(f.t), ExpectedResourceGeneration: resource.Generation, Frequency: "daily", Timezone: "UTC", Enabled: true}, 403)
+
 	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/resources/"+resource.ID+"/storage-backups", storageRemoteRuntimeBackupRequest(f.t, resource.Generation, target, revision), 403)
 	storageRuntimeAuthorizedJSON[json.RawMessage](f.storageRuntimeFixture, login.Token, "POST", "/api/v1/storage-backups/"+backup.ID+"/transfers/retry", storageRemoteRuntimeRetryRequest(f.t, failed.ID), 403)
 }
@@ -782,4 +850,95 @@ func (b *hostingStorageRemoteRuntimeBrowser) targetSetup(resource, access, secre
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.phase, b.resource, b.access, b.secret = "target", resource, access, secret
+}
+
+func hostingStorageScheduleRuntimeID(t *testing.T) string {
+	t.Helper()
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatal("schedule request identity")
+	}
+	return hex.EncodeToString(b[:])
+}
+func hostingStorageRemoteRuntimeOccurrence(f *hostingStorageRemoteRuntimeFixture, resource, schedule string) domain.HostingStorageBackupOccurrence {
+	f.t.Helper()
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		rows := storageRuntimeJSON[[]domain.HostingStorageBackupOccurrence](f.storageRuntimeFixture, "GET", "/api/v1/resources/"+resource+"/storage-backup-schedules/"+schedule+"/occurrences", nil, 200)
+		if len(rows) > 0 {
+			if len(rows) != 1 || rows[0].OperationID == "" || rows[0].BackupID == "" {
+				f.t.Fatal("scheduled admission identity")
+			}
+			return rows[0]
+		}
+		select {
+		case <-deadline.C:
+			f.t.Fatal("scheduled occurrence deadline")
+		case <-tick.C:
+		}
+	}
+}
+func hostingStorageRemoteRuntimeChannels(f *hostingStorageRemoteRuntimeFixture) {
+	f.t.Helper()
+	receiver := f.notifications
+	parsed, err := url.Parse(receiver.smtpOrigin)
+	if err != nil {
+		f.t.Fatal("SMTP origin")
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		f.t.Fatal("SMTP port")
+	}
+	actor := storageRuntimeJSON[auth.Principal](f.storageRuntimeFixture, "GET", "/api/v1/me", nil, 200)
+	for _, kind := range []string{"webhook", "email"} {
+		configuration := map[string]any{"webhook_url": receiver.webhookOrigin + "/backup-events"}
+		if kind == "email" {
+			configuration = map[string]any{"smtp_host": "127.0.0.1", "smtp_port": port, "smtp_security": "tls", "smtp_username": receiver.username, "smtp_password": receiver.password, "from_address": "fixture@example.local", "recipient_user_ids": []string{actor.ID}}
+		}
+		storageRuntimeJSON[domain.NotificationChannel](f.storageRuntimeFixture, "POST", "/api/v1/projects/proj_platform/notification-channels", map[string]any{"request_id": hostingStorageScheduleRuntimeID(f.t), "expected_generation": 0, "name": "Storage " + kind, "type": kind, "enabled": true, "events": []string{"backup_failed", "upload_failed"}, "configuration": configuration}, 200)
+	}
+}
+func hostingStorageRemoteRuntimeAlerts(f *hostingStorageRemoteRuntimeFixture, source, kind, event string, local bool) {
+	f.t.Helper()
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		rows := storageRuntimeJSON[[]domain.NotificationDelivery](f.storageRuntimeFixture, "GET", "/api/v1/projects/proj_platform/notification-deliveries", nil, 200)
+		found := []domain.NotificationDelivery{}
+		for _, v := range rows {
+			if v.SourceID == source {
+				if v.SourceKind != kind || v.Event != event || v.SourceState != "failed" || v.LocalCopyAvailable != local {
+					f.t.Fatal("storage failure delivery source mismatch")
+				}
+				if v.State == "delivered" {
+					found = append(found, v)
+				}
+			}
+		}
+		if len(found) == 2 {
+			receipts := f.notifications.snapshot()
+			for _, d := range found {
+				matches := 0
+				for _, receipt := range receipts {
+					if receipt.Accepted && bytes.Contains(receipt.Body, []byte(d.EventID)) && bytes.Contains(receipt.Body, []byte(d.ID)) {
+						matches++
+					}
+				}
+				if matches != 1 {
+					f.t.Fatal("storage alert stable IDs did not reach exactly one real transport", matches)
+				}
+			}
+			return
+		}
+		select {
+		case <-deadline.C:
+			f.t.Fatal("storage SMTP/webhook failure notification deadline")
+		case <-tick.C:
+		}
+	}
 }

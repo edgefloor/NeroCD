@@ -226,7 +226,7 @@ func (s *PostgresStore) claimBackupNotification(ctx context.Context, tx pgx.Tx, 
 		return claim, false, err
 	}
 	link := s.notificationPublicOrigin + v.RecoveryURL
-	claim.Payload = domain.NotificationPayload{EventID: v.EventID, DeliveryID: v.ID, Event: v.Event, Message: domain.NotificationMessage(v.Event, v.SourceState), SourceKind: v.SourceKind, SourceID: v.SourceID, SourceState: v.SourceState, FailureCode: failure, LocalCopyAvailable: v.LocalCopyAvailable, RecoveryURL: link}
+	claim.Payload = domain.NotificationPayload{EventID: v.EventID, DeliveryID: v.ID, Event: v.Event, Message: domain.NotificationSourceMessage(v.Event, v.SourceKind, v.SourceState), SourceKind: v.SourceKind, SourceID: v.SourceID, SourceState: v.SourceState, FailureCode: failure, LocalCopyAvailable: v.LocalCopyAvailable, RecoveryURL: link}
 	return claim, true, nil
 }
 func notificationClaimCurrent(ctx context.Context, tx pgx.Tx, c notificationClaim) error {

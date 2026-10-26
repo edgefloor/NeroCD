@@ -155,3 +155,7 @@ Six earlier full candidate attempts failed while repairing the acceptance fixtur
 | `5b08349d6cc5286656522f44075cb7ade327f06e` | `bnzw0315` | 210.574 | Wrong history outcome assertion |
 
 Fixture reviews at `1a8b4d1b13972fef2a4665b535ed0ae6ae4bd9bc` took 52, 50, and 60 seconds concurrently. Adding those durations does not measure elapsed review time. Backend and UI work each had one earlier review repair. Token and dollar allocation is unavailable, and these measurements do not identify a model or infrastructure bottleneck.
+
+Recurring owned-upload archives use the same qualified storage runner and project
+notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
+for scheduling, safe retry, history, and source-specific failure evidence.

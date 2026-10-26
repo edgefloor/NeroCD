@@ -47,9 +47,11 @@ function boundedStorageRead<T>(
 export function ResourceStorage({
   resource,
   blocked,
+  recoveryBackup,
 }: {
   resource: Resource;
   blocked: boolean;
+  recoveryBackup?: string;
 }) {
   const identity = useQuery(principalQuery());
   if (resource.kind !== "application" || resource.source.kind !== "image")
@@ -62,6 +64,7 @@ export function ResourceStorage({
       key={JSON.stringify([actor, resource.project_id, resource.id])}
       actor={actor}
       resource={resource}
+      recoveryBackup={recoveryBackup}
       paused={blocked || identity.isFetching}
     />
   );
@@ -70,10 +73,12 @@ function StorageAccess({
   resource,
   actor,
   paused,
+  recoveryBackup,
 }: {
   resource: Resource;
   actor: string;
   paused: boolean;
+  recoveryBackup?: string;
 }) {
   const principal = useQuery(principalQuery());
   const members = useQuery({
@@ -155,6 +160,7 @@ function StorageAccess({
           actor={actor}
           resource={resource}
           owner={owner}
+          recoveryBackup={recoveryBackup}
           paused={paused || members.isFetching}
         />
       )}
@@ -166,11 +172,13 @@ function StorageValues({
   resource,
   owner,
   paused,
+  recoveryBackup,
 }: {
   actor: string;
   resource: Resource;
   owner: boolean;
   paused: boolean;
+  recoveryBackup?: string;
 }) {
   const id = useId();
   const client = useQueryClient();
@@ -590,6 +598,7 @@ function StorageValues({
           resource={resource}
           storage={storage.data}
           owner={owner}
+          recoveryBackup={recoveryBackup}
           paused={blocked || accessDenied}
         />
       ) : null}

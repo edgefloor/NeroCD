@@ -1449,6 +1449,58 @@ type HostingStorageBackupRemoteDelivery struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+type HostingStorageBackupSchedule struct {
+	ID                  string     `json:"id"`
+	ProjectID           string     `json:"project_id"`
+	ResourceID          string     `json:"resource_id"`
+	BindingID           string     `json:"binding_id"`
+	DestinationID       string     `json:"destination_id"`
+	StorageID           string     `json:"storage_id"`
+	SourceReferenceHash string     `json:"source_reference_hash"`
+	ActorID             string     `json:"actor_id"`
+	Revision            int64      `json:"revision"`
+	Frequency           string     `json:"frequency"`
+	Timezone            string     `json:"timezone"`
+	Enabled             bool       `json:"enabled"`
+	LastScheduledAt     *time.Time `json:"last_scheduled_at"`
+	CheckedAt           time.Time  `json:"checked_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+type HostingStorageBackupScheduleOccurrence struct {
+	ID               string    `json:"id"`
+	ScheduleID       string    `json:"schedule_id"`
+	ScheduleRevision int64     `json:"schedule_revision"`
+	ScheduledAt      time.Time `json:"scheduled_at"`
+	OperationID      *string   `json:"operation_id"`
+	State            string    `json:"state"`
+	Reason           string    `json:"reason"`
+	EnqueuedAt       time.Time `json:"enqueued_at"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type HostingStorageBackupScheduleRequest struct {
+	ResourceID  string          `json:"resource_id"`
+	RequestID   string          `json:"request_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestHash string          `json:"request_hash"`
+	ScheduleID  string          `json:"schedule_id"`
+	Revision    int64           `json:"revision"`
+	Response    json.RawMessage `json:"response"`
+}
+
+type HostingStorageBackupScheduleVersion struct {
+	ScheduleID                 string `json:"schedule_id"`
+	Revision                   int64  `json:"revision"`
+	ActorID                    string `json:"actor_id"`
+	ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
+	Frequency                  string `json:"frequency"`
+	Timezone                   string `json:"timezone"`
+	Enabled                    bool   `json:"enabled"`
+	RemoteTarget               []byte `json:"remote_target"`
+}
+
 type HostingStorageBackupTransfer struct {
 	ID                 string          `json:"id"`
 	ProjectID          string          `json:"project_id"`

@@ -382,7 +382,7 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 	if err = client.Rcpt(recipient); err != nil {
 		return smtpFailure(err, false)
 	}
-	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: NeroCD: %s\r\nMessage-ID: <%s@nerocd.invalid>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\nEvent: %s\r\nEvent ID: %s\r\nDelivery ID: %s\r\nSource: %s/%s\r\nSource state: %s\r\nFailure code: %s\r\n%s\r\n", c.FromAddress, recipient, domain.NotificationMessage(p.Event, p.SourceState), p.DeliveryID, domain.NotificationMessage(p.Event, p.SourceState), p.Event, p.EventID, p.DeliveryID, p.SourceKind, p.SourceID, p.SourceState, p.FailureCode, p.RecoveryURL)
+	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: NeroCD: %s\r\nMessage-ID: <%s@nerocd.invalid>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\nEvent: %s\r\nEvent ID: %s\r\nDelivery ID: %s\r\nSource: %s/%s\r\nSource state: %s\r\nFailure code: %s\r\n%s\r\n", c.FromAddress, recipient, domain.NotificationSourceMessage(p.Event, p.SourceKind, p.SourceState), p.DeliveryID, domain.NotificationSourceMessage(p.Event, p.SourceKind, p.SourceState), p.Event, p.EventID, p.DeliveryID, p.SourceKind, p.SourceID, p.SourceState, p.FailureCode, p.RecoveryURL)
 	if len(body) > 16384 || strings.ContainsAny(p.DeliveryID+p.FailureCode+p.RecoveryURL, "\r\n\x00") {
 		return Result{Code: "payload_invalid", Permanent: true}
 	}

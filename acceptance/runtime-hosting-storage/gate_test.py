@@ -579,11 +579,13 @@ const page = new Proxy({}, {get: (_, name) => {
  if (name === "then") return undefined;
  if (["getByRole","getByLabel","locator"].includes(name)) return () => page;
  if (name === "evaluateAll") return async () => "target:1";
+ if (name === "textContent") return async () => "View scheduled archive backup";
  if (name === "evaluate") return async () => false;
  if (name === "waitForResponse") return async () => {
   const index=responseIndex++;
-  const values=[{id:"target"},{id:"validation"},{id:"backup"},{id:"upload"},{operation:{id:"restore"}}];
-  return {status: () => index === 0 ? 200 : 202,json: async () => values[index],
+  const values=[{id:"target"},{id:"validation"},{},{id:"schedule",revision:1,remote_target:{target_id:"target"}},{id:"schedule",revision:2},{id:"schedule",revision:3,enabled:false},{id:"upload"},{operation:{id:"restore"}}];
+  const statuses=[200,202,503,200,200,200,202,202];
+  return {status: () => statuses[index],json: async () => values[index],
    request: () => ({postDataJSON: () => ({remote_target:{target_id:"target"},remote_source:{transfer_id:"upload"}})})};
  };
  return async () => {};

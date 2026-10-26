@@ -157,3 +157,7 @@ not qualified by this run. No complete requirement, acceptance,
 or matrix gate or new parity percentage is declared. Earlier failed attempts
 remain failed. The optional broader runtime race diagnostic that timed out is
 not a full CI pass. Feature-specific cost and token usage are unavailable.
+
+Recurring owned-upload archives use the same qualified storage runner and project
+notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
+for scheduling, safe retry, history, and source-specific failure evidence.
