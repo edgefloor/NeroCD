@@ -28,7 +28,12 @@ func FuzzAdd(f *testing.F) { /* ... */ }
 
 ## Table-driven tests
 
-Use a table when cases share setup and assertions. Name cases when separate reporting helps identify the failing behavior.
+Use a table when cases share one test procedure and vary inputs and expected
+results. Name cases when separate reporting helps identify the failing behavior.
+Split cases into separate tests or groups when flags, conditional assertions, or
+elaborate setup in each row create different procedures. A simple branch that
+checks an expected error does not by itself require a split; keep the table when
+the cases still follow the same procedure.
 
 ```go
 func TestCalculatePrice(t *testing.T) {

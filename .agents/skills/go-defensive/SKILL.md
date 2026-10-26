@@ -9,7 +9,7 @@ description: Harden Go API boundaries, cleanup, mutable ownership, and panic han
 
 ## Resource Routing
 
-- `references/BOUNDARY-COPYING.md` - Read when copying slices/maps across API boundaries.
+- `references/BOUNDARY-COPYING.md` - Read when deciding mutable ownership and copying slices or maps across API boundaries.
 - `references/GLOBAL-STATE.md` - Read when introducing or removing package globals.
 - `references/MUST-FUNCTIONS.md` - Read when deciding whether a panic-on-error helper is acceptable.
 - `references/PANIC-RECOVER.md` - Read when evaluating panic, recover, or crash containment.
@@ -22,8 +22,8 @@ When hardening code at API boundaries, check in this order:
 ```
 Reviewing an API boundary?
 ├─ 1. Error handling     → Return errors; don't panic (see go-error-handling)
-├─ 2. Input validation   → Copy slices/maps received from callers
-├─ 3. Output safety      → Copy slices/maps before returning to callers
+├─ 2. Mutable ownership  → Check retained inputs and nested aliases; copy unless a safe ownership contract permits sharing
+├─ 3. Output safety      → Check exposed internal state and nested aliases under the same ownership contract
 ├─ 4. Resource cleanup   → Use defer for Close/Unlock/Cancel
 ├─ 5. Interface checks   → Route compile-time assertions to go-interfaces
 ├─ 6. Time correctness   → Use time.Time and time.Duration, not int/float
@@ -37,7 +37,7 @@ Reviewing an API boundary?
 
 | Pattern | Rule | Details |
 |---------|------|---------|
-| Boundary copies | Copy slices/maps on receive and return | [BOUNDARY-COPYING.md](references/BOUNDARY-COPYING.md) |
+| Mutable ownership | Copy retained or exposed mutable data unless an explicit safe ownership or immutability contract permits sharing | [BOUNDARY-COPYING.md](references/BOUNDARY-COPYING.md) |
 | Defer cleanup | `defer f.Close()` right after `os.Open` | Below |
 | Interface check | Compile-time satisfaction assertion | See go-interfaces |
 | Time types | `time.Time` / `time.Duration`, never raw int | [TIME-ENUMS-TAGS.md](references/TIME-ENUMS-TAGS.md) |
@@ -55,9 +55,13 @@ Route compile-time interface assertions to [go-interfaces](../go-interfaces/SKIL
 Use this skill only to notice API-boundary robustness risk; the interface skill
 owns when an assertion is appropriate and the exact assertion shape.
 
-## Copy Slices and Maps at Boundaries
+## Establish Mutable Ownership at Boundaries
 
-Slices and maps contain pointers to underlying data. Copy at API boundaries to prevent unintended modifications.
+Slices and maps refer to underlying data. Check whether the callee retains an
+input or exposes internal state through an output. Copy mutable data unless an
+explicit safe ownership or immutability contract permits sharing. A shallow copy
+still aliases nested slices, maps, and pointers; inspect the reachable mutable
+state too. Copying does not validate the input's contents.
 
 ```go
 // Receiving: copy incoming slice
@@ -68,6 +72,16 @@ copy(d.trips, trips)
 result := make(map[string]int, len(s.counters))
 for k, v := range s.counters { result[k] = v }
 ```
+
+These copies isolate only the outer collection. If `Trip` contains mutable
+references, copy those too or document the safe sharing contract. Profiling can
+justify reducing copy cost, but cost alone does not prove sharing is safe.
+
+When ownership behavior changes, add a focused mutation-isolation test. Mutate
+the original input after retention or the returned value after exposure, then
+assert that the protected state remains unchanged. Cover nested mutable data
+when present. For an intentional transfer or shared immutable value, test the
+observable behavior promised by that contract.
 
 ## Defer to Clean Up
 

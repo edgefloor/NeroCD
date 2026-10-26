@@ -77,7 +77,7 @@
       "provenanceStatus": "upstream-commit-unknown",
       "normalizationVersion": 1,
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "8d6b98725a18a381f3e06f3eab31cee2e8f7b689c4cd40d665aad95bb8bde697"
+      "localHash": "1453c695e1438636df093ef3210a51014024d804dc2e6cb8889b7eb11c9c9e0e"
     },
     "go-documentation": {
       "source": "cxuu/golang-skills",
@@ -233,7 +233,7 @@
       "license": "MIT",
       "upstreamLocalHash": "8dc90b6844c55a1bf424fbc86e51e63d22a2c2443950e52e041a62f2bc58ebc8",
       "hashAlgorithm": "sha256-path-content-v1",
-      "localHash": "85e81675369061849318b5f859be2e8769d644db416aa828ab4793e8df96e79f"
+      "localHash": "21e0b72c0d5f59d486d15dd88d5a747ed8f0b4861f950fffcd683227581d778b"
     },
     "nerocd-runner-lifecycle": {
       "source": "NeroCD",
