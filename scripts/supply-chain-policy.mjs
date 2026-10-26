@@ -27,15 +27,21 @@ const allowedWebRuntimeDependencies = new Set([
 ]);
 const allowedWebDevDependencies = new Set(["@playwright/test", "@tailwindcss/vite", "@tanstack/router-plugin", "@testing-library/react", "@testing-library/user-event", "@types/node", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "jsdom", "openapi-typescript", "tailwindcss", "typescript", "vite", "vitest"]);
 const allowedGoDirectDependencies = new Set([
+  "github.com/aws/aws-sdk-go-v2",
+  "github.com/aws/aws-sdk-go-v2/service/s3",
+  "github.com/aws/smithy-go",
   "github.com/coreos/go-oidc/v3",
   "github.com/distribution/reference",
   "github.com/getkin/kin-openapi",
+  "github.com/go-jose/go-jose/v4",
   "github.com/jackc/pgx/v5",
   "github.com/riverqueue/river",
   "github.com/riverqueue/river/riverdriver/riverpgxv5",
   "github.com/riverqueue/river/rivertype",
+  "github.com/robfig/cron/v3",
   "github.com/sqlc-dev/sqlc",
   "golang.org/x/crypto",
+  "golang.org/x/net",
   "golang.org/x/oauth2",
   "golang.org/x/sys",
 ]);
