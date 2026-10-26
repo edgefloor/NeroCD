@@ -946,6 +946,95 @@ type HostingGithubPushPolicy struct {
 	CreatedAt             time.Time       `json:"created_at"`
 }
 
+type HostingNotificationAttempt struct {
+	DeliveryID  string     `json:"delivery_id"`
+	Number      int32      `json:"number"`
+	Fence       string     `json:"fence"`
+	State       string     `json:"state"`
+	FailureCode string     `json:"failure_code"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at"`
+}
+
+type HostingNotificationChannel struct {
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	Name                string    `json:"name"`
+	Type                string    `json:"type"`
+	Enabled             bool      `json:"enabled"`
+	Generation          int64     `json:"generation"`
+	Events              []string  `json:"events"`
+	SecretID            string    `json:"secret_id"`
+	SecretVersion       int64     `json:"secret_version"`
+	ConsecutiveFailures int32     `json:"consecutive_failures"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type HostingNotificationDelivery struct {
+	ID                string     `json:"id"`
+	EventID           string     `json:"event_id"`
+	ProjectID         string     `json:"project_id"`
+	ChannelID         string     `json:"channel_id"`
+	ChannelGeneration int64      `json:"channel_generation"`
+	SecretID          string     `json:"secret_id"`
+	SecretVersion     int64      `json:"secret_version"`
+	State             string     `json:"state"`
+	AttemptCount      int32      `json:"attempt_count"`
+	FailureCode       string     `json:"failure_code"`
+	Fence             string     `json:"fence"`
+	ClaimExpiresAt    *time.Time `json:"claim_expires_at"`
+	DeadlineAt        time.Time  `json:"deadline_at"`
+	NextAttemptAt     time.Time  `json:"next_attempt_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+type HostingNotificationEvent struct {
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"project_id"`
+	Event              string    `json:"event"`
+	SourceKind         string    `json:"source_kind"`
+	SourceID           string    `json:"source_id"`
+	TerminalEvent      string    `json:"terminal_event"`
+	SourceState        string    `json:"source_state"`
+	SourceReceipt      string    `json:"source_receipt"`
+	FailureCode        string    `json:"failure_code"`
+	LocalCopyAvailable bool      `json:"local_copy_available"`
+	RecoveryUrl        string    `json:"recovery_url"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type HostingNotificationRequest struct {
+	ProjectID     string          `json:"project_id"`
+	RequestID     string          `json:"request_id"`
+	ActorID       string          `json:"actor_id"`
+	Operation     string          `json:"operation"`
+	RequestHash   string          `json:"request_hash"`
+	SecretID      string          `json:"secret_id"`
+	SecretVersion int64           `json:"secret_version"`
+	Response      json.RawMessage `json:"response"`
+}
+
+type HostingNotificationSecret struct {
+	ID              string `json:"id"`
+	Version         int64  `json:"version"`
+	ProjectID       string `json:"project_id"`
+	Status          string `json:"status"`
+	EnvelopeVersion int32  `json:"envelope_version"`
+	KeyID           string `json:"key_id"`
+	Ciphertext      []byte `json:"ciphertext"`
+}
+
+type HostingNotificationSourceReceipt struct {
+	ID             string          `json:"id"`
+	SourceKind     string          `json:"source_kind"`
+	SourceID       string          `json:"source_id"`
+	Reason         string          `json:"reason"`
+	SourceSnapshot json.RawMessage `json:"source_snapshot"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
 type HostingOperation struct {
 	ID                  string    `json:"id"`
 	ProjectID           string    `json:"project_id"`

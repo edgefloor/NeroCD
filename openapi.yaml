@@ -21,6 +21,356 @@ security:
   - bearerAuth: []
   - browserSession: []
 paths:
+  /api/v1/projects/{project_id}/notification-channels:
+    {
+      "get": {
+        "operationId": "listNotificationChannels",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationChannel"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createNotificationChannel",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannel"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/notification-channels/{channel_id}:
+    {
+      "put": {
+        "operationId": "updateNotificationChannel",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannel"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationChannelInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/notification-channels/{channel_id}/tests:
+    {
+      "post": {
+        "operationId": "testNotificationChannel",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationTestInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/notification-deliveries:
+    {
+      "get": {
+        "operationId": "listNotificationDeliveries",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationDelivery"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}:
+    {
+      "get": {
+        "operationId": "getNotificationDelivery",
+        "description": "Project owners configure, disable and test; viewers read safe metadata. Configuration is write-only. Lists are direct JSON arrays bounded at 100 rows. Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe notification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
   /api/v1/resources/{id}/database-backup-retention:
     {
       "get": {
@@ -7248,6 +7598,366 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    NotificationConfiguration:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "webhook_url": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "smtp_host": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "smtp_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "smtp_security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls"
+            ]
+          },
+          "smtp_username": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "smtp_password": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "from_address": {
+            "type": "string",
+            "format": "email"
+          },
+          "recipient_user_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        },
+        "writeOnly": true,
+        "description": "Write-only whole configuration, encrypted at rest. Webhook uses only webhook_url; email requires SMTP host/port/security/from and current project member IDs. Username and password must both be supplied or both omitted. No read API returns configuration."
+      }
+    NotificationChannelInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_generation",
+          "name",
+          "type",
+          "enabled",
+          "events"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "email",
+              "webhook"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "backup_failed",
+                "upload_failed"
+              ]
+            }
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/NotificationConfiguration"
+          }
+        }
+      }
+    NotificationChannel:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "type",
+          "enabled",
+          "generation",
+          "events",
+          "configured",
+          "consecutive_failures",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "email",
+              "webhook"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "backup_failed",
+                "upload_failed"
+              ]
+            }
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    NotificationTestInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_generation"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      }
+    NotificationAttempt:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "number",
+          "state",
+          "failure_code",
+          "started_at"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "sending",
+              "delivered",
+              "failed",
+              "uncertain",
+              "suppressed"
+            ]
+          },
+          "failure_code": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    NotificationDelivery:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "event_id",
+          "project_id",
+          "channel_id",
+          "channel_generation",
+          "event",
+          "source_kind",
+          "source_id",
+          "source_state",
+          "state",
+          "attempt_count",
+          "max_attempts",
+          "failure_code",
+          "local_copy_available",
+          "recovery_url",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "event_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "channel_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "channel_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "backup_failed",
+              "upload_failed",
+              "test"
+            ]
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "backup",
+              "transfer",
+              "test"
+            ]
+          },
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "source_state": {
+            "type": "string",
+            "enum": [
+              "failed",
+              "uncertain",
+              "test"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sending",
+              "delivered",
+              "failed",
+              "suppressed"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "max_attempts": {
+            "type": "integer",
+            "enum": [
+              5
+            ]
+          },
+          "failure_code": {
+            "type": "string"
+          },
+          "local_copy_available": {
+            "type": "boolean"
+          },
+          "recovery_url": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attempts": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/NotificationAttempt"
+            }
+          }
+        }
+      }
     BackupTargetSelection:
       {
         "type": "object",

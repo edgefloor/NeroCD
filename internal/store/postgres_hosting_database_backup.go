@@ -693,6 +693,11 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 		if err != nil {
 			return zero, err
 		}
+		if r.Mode == "backup" && (in.Phase == "failed" || in.Phase == "uncertain") {
+			if err = notificationBackupFailure(ctx, tx, r.ID, in.ReceiptID); err != nil {
+				return zero, err
+			}
+		}
 		if _, err = databaseBackupCurrent(ctx, tx, updated); err != nil {
 			return zero, err
 		}

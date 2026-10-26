@@ -80,6 +80,7 @@ type Config struct {
 
 // Client owns a private River client. Construction neither migrates nor starts it.
 type Client struct {
+	hasBackupNotification       bool
 	hasDatabaseBackupRetention  bool
 	hasDatabaseBackupTransfer   bool
 	hasDatabaseBackup           bool
@@ -128,6 +129,10 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 	}
 	cfg.Schema = schema
 	workers := river.NewWorkers()
+	notificationHandler, hasNotification := handler.(BackupNotificationHandler)
+	if hasNotification {
+		river.AddWorker(workers, &backupNotificationWorker{handler: notificationHandler})
+	}
 	retentionHandler, hasRetention := handler.(DatabaseBackupRetentionHandler)
 	if hasRetention {
 		river.AddWorker(workers, &databaseBackupRetentionWorker{handler: retentionHandler})
@@ -182,7 +187,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, handler Handler, cfg Config) (
 		return nil, ErrInvalidConfiguration
 	}
 	connection := pool.Config().ConnConfig
-	return &Client{hasDatabaseBackupRetention: hasRetention, hasDatabaseBackupTransfer: hasTransfer, hasDatabaseBackup: hasDatabaseBackup, hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection, hasApplicationDatabaseRoute: hasApplicationDatabaseRoute}, nil
+	return &Client{hasBackupNotification: hasNotification, hasDatabaseBackupRetention: hasRetention, hasDatabaseBackupTransfer: hasTransfer, hasDatabaseBackup: hasDatabaseBackup, hasStorageArchive: hasStorageArchive, river: client, pool: pool, schema: schema, host: connection.Host, port: connection.Port, database: connection.Database, drainTimeout: cfg.DrainTimeout, hasProxy: hasProxy, hasBuild: hasBuild, hasGitHubPush: hasGitHubPush, hasAutoDeploy: hasAutoDeploy, hasServerBootstrap: hasServerBootstrap, hasDatabaseConnection: hasDatabaseConnection, hasApplicationDatabaseRoute: hasApplicationDatabaseRoute}, nil
 }
 
 // EnqueueTx inserts in the caller's application transaction. Commit/rollback remain the caller's responsibility.

@@ -261,6 +261,13 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 		if err = backupRemoteCurrent(ctx, tx, r.plan); err != nil {
 			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) {
 				_, e := tx.Exec(ctx, `UPDATE hosting_database_backup_transfers SET state='failed',failure_code='authority_denied',updated_at=clock_timestamp() WHERE id=$1`, id)
+				if e == nil && r.view.Mode == "upload" {
+					receipt, receiptErr := notificationDirectReceipt(ctx, tx, "transfer", id, "authority_denied")
+					e = receiptErr
+					if e == nil {
+						e = notificationUploadFailure(ctx, tx, id, receipt)
+					}
+				}
 				return e == nil, e
 			}
 			return false, err
@@ -408,6 +415,11 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		_, err = tx.Exec(ctx, `INSERT INTO hosting_database_backup_transfer_receipts(operation_id,phase,receipt_id,authority,body,body_hash,response,expired_classification) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, r.view.ID, in.Phase, in.ReceiptID, buildJSON(in.HostingAuthority), buildJSON(in), domain.HostingDocumentHash(in), buildJSON(updated.view), expired)
 		if err != nil {
 			return zero, err
+		}
+		if r.view.Mode == "upload" && (in.Phase == "failed" || in.Phase == "uncertain") {
+			if err = notificationUploadFailure(ctx, tx, r.view.ID, in.ReceiptID); err != nil {
+				return zero, err
+			}
 		}
 		if expired {
 			return updated.view, nil
