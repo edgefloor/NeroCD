@@ -44,6 +44,7 @@ import (
 type hostingStorageRemoteRuntimeFixture struct {
 	operatorMutations atomic.Int64
 	retentionWire     atomic.Pointer[hostingStorageRetentionRuntimeWire]
+	deletionWire      atomic.Pointer[hostingStorageDeletionRuntimeWire]
 	pg                *store.PostgresStore
 	notifications     *backupNotificationReceivers
 	scheduleACK       atomic.Bool
@@ -129,6 +130,9 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		if r.Method != "GET" && r.Method != "HEAD" && (strings.HasPrefix(r.URL.Path, "/api/v1/resources/") || strings.HasPrefix(r.URL.Path, "/api/v1/storage-backups/") || strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/")) {
 			remote.operatorMutations.Add(1)
 		}
+		if wire := remote.deletionWire.Load(); wire != nil && wire.serve(w, r, server) {
+			return
+		}
 		if wire := remote.retentionWire.Load(); wire != nil && wire.serve(w, r, server) {
 			return
 		}
@@ -197,7 +201,7 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		}
 		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
 			cfg["backup_retention"] = true
-			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability)
+			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability, domain.HostingStorageBackupDeletionCapability)
 		}
 		cfg["remote_backups"] = true
 		cfg["remote_fixture_origin"] = "http://127.0.0.1:9001"
@@ -682,6 +686,9 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
 		hostingStorageRetentionRuntimeWorkflow(f, silo, observation, restored.Resource, target.ID, target.Revision, replacement, upload)
 	}
+	if os.Getenv("NEROCD_STORAGE_DELETION_RUNTIME") == "disposable-dind" {
+		hostingStorageDeletionRuntimeWorkflow(f, restored.Resource, target.ID, target.Revision, replacement, upload, observation)
+	}
 	f.browser.set("complete", resource.ID, target.ID, backup.ID)
 	f.browser.await(t, "done")
 	markers := map[string]any{"backup_id": backup.ID, "upload_transfer_id": uploaded.ID, "restore_operation_id": restored.Operation.ID, "source_volume": source.VolumeName, "restored_volume": restored.Storage.VolumeName, "archive_sha256": backup.Blob.SHA256, "archive_bytes": len(archive), "source_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(upload)), "new_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(replacement)), "source_metadata": metadata, "object_gets": after, "first_scheduled_archive_upload_puts": puts, "receipt_replayed": true, "put_resume_checks": f.uploadChecks.Load(), "put_resume_violations": f.uploadViolations.Load(), "first_scheduled_archive_helper_starts": 1, "source_preserved": true, "scheduled_archive": true, "scheduled_backup_failure_alerts": true, "scheduled_upload_failure_alerts": true, "scheduler_join_restart": true, "delivered_upload_recovery_link_verified": true, "delivered_archive_recovery_link_verified": true, "delivered_upload_recovery_url_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(uploadRecoveryURL))), "delivered_archive_recovery_url_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(archiveRecoveryURL)))}
@@ -802,6 +809,12 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
 			state["retention_mode"] = "true"
 		}
+		if os.Getenv("NEROCD_STORAGE_DELETION_RUNTIME") == "disposable-dind" {
+			state["deletion_mode"] = "true"
+		}
+		if strings.HasPrefix(b.phase, "deletion") {
+			state["resource_name"], state["deletion_execution_id"] = b.retentionName, b.retentionExecution
+		}
 		if strings.HasPrefix(b.phase, "retention") {
 			state["resource_name"], state["retention_backup_ids"], state["retention_execution_id"] = b.retentionName, b.retentionBackups, b.retentionExecution
 		}
@@ -825,7 +838,7 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		b.mu.Lock()
 		phase := b.phase
 		b.mu.Unlock()
-		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done", "archive_alert": "archive_warning", "retention": "retention", "retention_history": "retention_history"}[phase]
+		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done", "archive_alert": "archive_warning", "retention": "retention", "retention_history": "retention_history", "deletion": "deletion", "deletion_history": "deletion_history", "deletion_final": "deletion_final", "deletion_final_history": "deletion_final_history"}[phase]
 		if report.Action != expected {
 			w.WriteHeader(409)
 			return true

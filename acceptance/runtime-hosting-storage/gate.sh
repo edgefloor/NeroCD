@@ -16,21 +16,28 @@ daemon=e37dd219-b13f-47dd-99ed-21d79442ed0c
 archive=false
 remote=false
 retention=false
+deletion=false
 case ${1:-} in
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
- --remote|--retention)
+ --remote|--retention|--deletion)
   archive=true; remote=true
   owner=nerocd-storage-schedules-runtime-20261026-5d45412a
   name=$owner-dind; volume=$owner-docker-data
   test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote.*)$'
-  if [[ "$1" == --retention ]]; then
+  if [[ "$1" == --retention || "$1" == --deletion ]]; then
    retention=true
    owner=nerocd-storage-retention-runtime-20261026-e4db0929
    name=$owner-dind; volume=$owner-docker-data
    test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupRetentionCompiledRunnerHTTPS)$'
+   if [[ "$1" == --deletion ]]; then
+    deletion=true
+    owner=nerocd-storage-deletion-runtime-20261026
+    name=$owner-dind; volume=$owner-docker-data
+    test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
+   fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion]' >&2; exit 2;;
 esac
 outer=''
 pg=''
@@ -42,6 +49,7 @@ dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06d
 if [[ "$remote" == true ]]; then
  evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026"
  if [[ "$retention" == true ]]; then evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-retention-20261026"; fi
+ if [[ "$deletion" == true ]]; then evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-deletion-20261026"; fi
  [[ ! -L "$evidence_parent" ]] || { echo 'evidence parent is a symlink' >&2; exit 1; }
  mkdir -p "$evidence_parent"
  chmod 700 "$evidence_parent"
@@ -205,6 +213,11 @@ if state.get("Paused") or state.get("Restarting") or state.get("Status") not in 
 ' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$remote"
 }
 
+collect_runtime_evidence() {
+ mkdir -p "$evidence/runtime" || return 1
+ host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime"
+}
+
 cleanup() {
  result=$?
  trap - EXIT INT TERM
@@ -251,8 +264,7 @@ cleanup() {
   echo 'owned API and runner processes absent' | tee "$evidence/process-absence"
   if [[ "$running" == true && "$remote" == true ]]; then
    # Only the fixture's public archive and closed marker document are exported.
-   mkdir -p "$evidence/runtime"
-   host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime" || result=1
+   collect_runtime_evidence || result=1
   fi
   if [[ "$running" == true ]]; then
   postgres_capacity final || result=1
@@ -282,14 +294,19 @@ cleanup() {
  host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-after" || result=1
  host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-after" || result=1
  host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-after" || result=1
- cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+ if [[ "$remote" != true ]]; then
+  cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+ fi
  cmp "$evidence/host-volume-names-before" "$evidence/host-volume-names-after" || result=1
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
  if [[ "$remote" == true ]]; then
   if [[ -f "$evidence/preservation-before.private.json" ]]; then
-   python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" || result=1
+   python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" "$owner" "$name" "$volume" || result=1
+  else
+   echo 'baseline preservation evidence unavailable' >&2
+   result=1
   fi
   printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
   python3 acceptance/runtime-hosting-storage/remote_evidence.py receipt "$evidence" || result=1
@@ -317,7 +334,7 @@ if [[ "$remote" == true ]]; then
  python3 -B scripts/skills/ui_manifest.py > "$evidence/browser-ui-manifest.json"
  git ls-files -s web/app/src web/app/package.json web/app/bun.lock web/assets.go > "$evidence/browser-source-blobs"
 fi
-git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
+git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go internal/api/hosting_storage_backup_deletion_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
 fixture_tags=nerocd_proxy_fixture
 if [[ "$remote" == true ]]; then fixture_tags=nerocd_proxy_fixture,nerocd_storage_remote_contract; fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags "$fixture_tags" -c -o "$evidence/api.test" ./internal/api
@@ -429,6 +446,8 @@ for _ in $(seq 1 60); do
 done
 [[ "$ready" == true ]]
 postgres_capacity before-test
+deletion_mode=''
+if [[ "$deletion" == true ]]; then deletion_mode=disposable-dind; fi
 retention_mode=''
 if [[ "$retention" == true ]]; then retention_mode=disposable-dind; fi
 remote_mode=''
@@ -452,30 +471,56 @@ for name in ["TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay","T
  if "--- PASS: "+name+" " not in text:raise SystemExit("required PG test PASS missing")
 if "SKIP" in text:raise SystemExit("required PG test skipped")
 CHECK_STORE_PASS
+ if [[ "$deletion" == true ]]; then
+  host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgresStorageBackupDeletion' -test.timeout=3m | tee "$evidence/store-deletion-tests.log"
+  python3 - "$evidence/store-deletion-tests.log" <<'CHECK_DELETION_PG'
+import sys
+text=open(sys.argv[1]).read()
+for suffix in ['ManualDeleteSelectedBackupLocalKeepsRemoteAndHistory','CommittedResponseLossRetriesExactSelection','RestartAfterIntent','RejectsStaleAuthorityAndProtectedCopies','RemoteUsesRecordedTargetBothCopiesReportsPartialOutcome','RechecksFinalCopyAtExecution','RevocationAfterAdmission','DisabledPolicyDoesNotSelectCopies']:
+ if '--- PASS: TestPostgresStorageBackupDeletion'+suffix+' ' not in text:raise SystemExit('manual deletion PG proof missing: '+suffix)
+if 'SKIP' in text:raise SystemExit('manual deletion PG proof skipped')
+CHECK_DELETION_PG
+ fi
  host_docker exec --workdir /workspace/internal/api "$outer" /fixture/api.test -test.list "$test_pattern" > "$evidence/api-test-list"
- python3 - "$evidence/api-test-list" "$retention" <<'CHECK_API_LIST'
+ python3 - "$evidence/api-test-list" "$retention" "$deletion" <<'CHECK_API_LIST'
 import sys
 expected={"TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"}
 if sys.argv[2]=="true":expected.remove("TestHostingStorageRemoteCompiledRunnerHTTPS");expected.add("TestHostingStorageBackupRetentionCompiledRunnerHTTPS")
+if sys.argv[3]=="true":expected.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");expected.add("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
 actual=set(open(sys.argv[1]).read().splitlines())
 if actual!=expected:raise SystemExit("required API test names missing or unexpected")
 CHECK_API_LIST
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
- docker --host "$docker_host" exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_REMOTE_RUNTIME=$remote_mode" --env "NEROCD_STORAGE_RETENTION_RUNTIME=$retention_mode" --env "NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_STORAGE_REMOTE_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_REMOTE_EVIDENCE=/fixture/evidence --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=24m > "$evidence/api-tests.log" 2>&1 &
+ docker --host "$docker_host" exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_REMOTE_RUNTIME=$remote_mode" --env "NEROCD_STORAGE_RETENTION_RUNTIME=$retention_mode" --env "NEROCD_STORAGE_DELETION_RUNTIME=$deletion_mode" --env "NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_STORAGE_REMOTE_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_REMOTE_EVIDENCE=/fixture/evidence --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=24m > "$evidence/api-tests.log" 2>&1 &
  test_pid=$!
  NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN="$browser_origin" NEROCD_STORAGE_REMOTE_BROWSER_KEY="$browser_key" NEROCD_STORAGE_REMOTE_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-storage/remote_browser.mjs > "$evidence/browser.log" 2>&1
  wait "$test_pid"
  test_pid=''
- python3 - "$evidence/api-tests.log" "$retention" <<'CHECK_API_PASS'
+ python3 - "$evidence/api-tests.log" "$retention" "$deletion" <<'CHECK_API_PASS'
 import sys
 text=open(sys.argv[1]).read()
 required=["TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"]
 if sys.argv[2]=="true":required.remove("TestHostingStorageRemoteCompiledRunnerHTTPS");required.append("TestHostingStorageBackupRetentionCompiledRunnerHTTPS")
+if sys.argv[3]=="true":required.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");required.append("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
 for name in required:
  if "--- PASS: "+name+" " not in text:raise SystemExit("required API runtime PASS missing: "+name)
 if "SKIP" in text:raise SystemExit("required API runtime test skipped")
 CHECK_API_PASS
+ if [[ "$deletion" == true ]]; then
+  collect_runtime_evidence
+  python3 - "$evidence/runtime/deletion-markers.json" "$evidence/browser-safe.json" <<'CHECK_DELETION_MARKERS'
+import json,sys
+v=json.load(open(sys.argv[1]))
+for k in ['local_absent','remote_retained','history_retained','remaining_remote_restore','new_volume_application_reads_and_writes','source_preserved','manual_remote_conditional_delete','final_copy_confirmation','final_history_retained']:
+ if v.get(k) is not True:raise SystemExit('manual deletion proof missing: '+k)
+if v.get('status')!='passed':raise SystemExit('manual deletion failed')
+b=json.load(open(sys.argv[2]))
+if b.get('status')!='passed':raise SystemExit('connected browser manual deletion failed')
+for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_and_final_copy_warning','manual_deletion_viewer_history_and_denied','manual_deletion_remote_and_final_confirmation','manual_deletion_final_history']:
+ if b.get(k) is not True:raise SystemExit('connected browser manual deletion proof missing: '+k)
+CHECK_DELETION_MARKERS
+ fi
 else
  host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m
 fi

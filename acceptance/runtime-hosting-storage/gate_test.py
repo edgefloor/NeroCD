@@ -536,7 +536,7 @@ inner_docker() {
 
 class BrowserCancellationTest(unittest.TestCase):
     """Run the real driver with inert Playwright resources, without a browser."""
-    def run_driver(self, delivered_signal=None, cleanup_failure="", complete=False, retention=False):
+    def run_driver(self, delivered_signal=None, cleanup_failure="", complete=False, retention=False, diagnostic_failure=""):
         driver = GATE.with_name("remote_browser.mjs")
         with tempfile.TemporaryDirectory(prefix="nerocd-storage-browser-stop-test-") as temporary:
             root = Path(temporary)
@@ -557,13 +557,15 @@ const close = async value => {
 };
 const complete = process.env.STORAGE_BROWSER_TEST_COMPLETE === "1";
 const retention=process.env.STORAGE_BROWSER_TEST_RETENTION==="1";
-const phases = ["target", "validation", "backup", "denied", "retry", "restore", "archive_alert", ...(retention?["retention","retention_history"]:[]), "complete"];
+const diagnosticFailure=process.env.STORAGE_BROWSER_TEST_DIAGNOSTIC_FAILURE;
+let activePhase="";
+const phases = ["target", "validation", "backup", "denied", "retry", "restore", "archive_alert", ...(retention?["retention","retention_history"]:[]), ...(diagnosticFailure?["deletion"]:[]), "complete"];
 let rejectPending, pendingHandle;
 const api = {
  get: async path => {
   fs.writeFileSync(root + "/started", "polling");
   if (complete) return path.includes("/__storage_remote_fixture/")
-   ? {status: () => 200, json: async () => {const phase=phases.shift();const archive=phase==="archive_alert";return {phase,retention_mode:retention?"true":"",resource_name:"retention resource",retention_backup_ids:"retention_old,retention_middle,retention_new",retention_execution_id:"retention_execution",resource_id:"resource",environment_id:"environment",target_id:"target",backup_id:archive?"failed_backup":"backup",source_id:archive?"failed_archive":"failed_upload",recovery_url:process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id="+(archive?"failed_backup&source_kind=storage_backup":"backup&source_kind=storage_transfer&transfer_id=failed_upload"),access_key:"fixture",secret_key:"fixture"}}}
+   ? {status: () => 200, json: async () => {const phase=phases.shift();activePhase=phase;const archive=phase==="archive_alert";return {phase,deletion_mode:diagnosticFailure?"true":"",retention_mode:retention?"true":"",resource_name:"retention resource",retention_backup_ids:"retention_old,retention_middle,retention_new",retention_execution_id:"retention_execution",resource_id:"resource",environment_id:"environment",target_id:"target",backup_id:archive?"failed_backup":"backup",source_id:archive?"failed_archive":"failed_upload",recovery_url:process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id="+(archive?"failed_backup&source_kind=storage_backup":"backup&source_kind=storage_transfer&transfer_id=failed_upload"),access_key:"fixture",secret_key:"fixture"}}}
    : {status: () => 200, body: async () => Buffer.from("fixture")};
   if (process.env.STORAGE_BROWSER_TEST_EXPIRE === "1") {
    const expired = Date.now() + 25 * 60 * 1000;
@@ -578,20 +580,28 @@ const api = {
 let responseIndex = 0, contextIndex = 0, browserClosed = false, currentURL="";
 const page = new Proxy({}, {get: (_, name) => {
  if (name === "then") return undefined;
- if (name === "goto") return async value=>{currentURL=value};
+ if (name === "goto") return async value=>{currentURL=value;if(activePhase==="deletion"&&diagnosticFailure==="navigation"){const error=Error("private diagnostic secret URL body DOM");error.name="TimeoutError";throw error;}};
+ if (name === "check" && activePhase==="deletion" && diagnosticFailure==="checkbox") return async()=>{const error=Error("private diagnostic secret URL body DOM");error.name="private diagnostic secret class";throw error;};
  if (name === "url") return ()=>currentURL;
+ if (name === "page") return ()=>page;
  if (["getByRole","getByLabel","locator","filter"].includes(name)) return () => page;
  if (name === "evaluateAll") return async () => "target:1";
  if (name === "textContent") return async () => "View scheduled archive backup";
  if (name === "evaluate") return async () => false;
- if (name === "waitForResponse") return async () => {
+ if (name === "waitForResponse") return async predicate => {
+  // Backup GETs are independent of the mutation response sequence below.
+  for(const id of ["backup","failed_backup","retention_old","retention_middle","retention_new"]) {
+   const read={status:()=>200,url:()=>process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/api/v1/storage-backups/"+id,
+    request:()=>({method:()=>"GET",timing:()=>({startTime:Date.now()+1})}),json:async()=>({id,copies:[]})};
+   if(predicate(read))return read;
+  }
   const index=responseIndex++;
   const values=[{id:"target"},{id:"validation"},{},{id:"schedule",revision:1,remote_target:{target_id:"target"}},{id:"schedule",revision:2},{id:"schedule",revision:3,enabled:false},{id:"upload"},{operation:{id:"restore"}}];
   values.push({enabled:true,automatic:false,revision:1,local:{keep_count:1},remote:{keep_count:2}},
    {id:"retention_preview",policy_revision:1,plan_hash:"sha256:"+"a".repeat(64),evaluated_at:"2026-10-26T12:00:00Z",items:[{backup_id:"retention_old",location:"local",selected:true},{backup_id:"retention_middle",location:"local",selected:true},{backup_id:"retention_old",location:"remote",selected:true}]},
    {},{id:"retention_execution",preview_id:"retention_preview",plan_hash:"sha256:"+"a".repeat(64)});
   const statuses=[200,202,503,200,200,200,202,202,200,200,503,202];
-  return {status: () => statuses[index],json: async () => values[index],
+  return {status: () => index===12&&diagnosticFailure==="preview_status"?409:statuses[index],json: async () => values[index],
    request: () => ({postDataJSON: () => index>=10?{request_id:"same_request",preview_id:"retention_preview",expected_policy_revision:1,expected_plan_hash:"sha256:"+"a".repeat(64)}:({remote_target:{target_id:"target"},remote_source:{transfer_id:"upload"}})})};
  };
  return async () => {};
@@ -614,7 +624,8 @@ module.exports = {
                                STORAGE_BROWSER_TEST_EXPIRE="0" if delivered_signal or complete else "1",
                                STORAGE_BROWSER_TEST_CLOSE_FAILURE=cleanup_failure,
                                STORAGE_BROWSER_TEST_COMPLETE="1" if complete else "0",
-                               STORAGE_BROWSER_TEST_RETENTION="1" if retention else "0")
+                               STORAGE_BROWSER_TEST_RETENTION="1" if retention else "0",
+                               STORAGE_BROWSER_TEST_DIAGNOSTIC_FAILURE=diagnostic_failure)
             process = subprocess.Popen(["node", str(driver)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -627,19 +638,28 @@ module.exports = {
                 if delivered_signal:
                     process.send_signal(delivered_signal)
                 output, _ = process.communicate(timeout=3)
-                expected_code = 128 + delivered_signal if delivered_signal else (1 if cleanup_failure or not complete else 0)
+                expected_code = 128 + delivered_signal if delivered_signal else (1 if cleanup_failure or diagnostic_failure or not complete else 0)
                 self.assertEqual(process.returncode, expected_code, output)
-                expected_closed = {"api", "context", "browser", "viewer"} if complete else {"api", "context", "browser"}
+                expected_closed = {"api", "context", "browser", "viewer"} if complete and not diagnostic_failure else {"api", "context", "browser"}
                 self.assertEqual(set((root / "closed").read_text().splitlines()), expected_closed)
                 self.assertFalse((root / "receipt-before-cleanup").exists(), "receipt was published before cleanup")
                 safe = json.loads((root / "browser-safe.json").read_text())
                 self.assertEqual(safe["status"], "passed" if expected_code == 0 else "failed")
                 if expected_code:
-                    expected_failure = "browser_workflow_cancelled" if delivered_signal else ("browser_cleanup_failed" if complete else "browser_workflow_failed")
+                    expected_failure = "browser_workflow_cancelled" if delivered_signal else ("browser_cleanup_failed" if complete and not diagnostic_failure else "browser_workflow_failed")
                     self.assertEqual(safe["failure"], expected_failure)
                 if retention:
-                    for marker in ["retention_policy_and_exact_preview", "retention_identical_execution_retry", "retention_history_and_copy_availability", "retention_viewer_read_only_and_denied"]:
+                    for marker in ["retention_policy_and_exact_preview", "retention_identical_execution_retry", "retention_history_and_copy_availability"] + ([] if diagnostic_failure else ["retention_viewer_read_only_and_denied"]):
                         self.assertTrue(safe.get(marker), marker)
+                if diagnostic_failure:
+                    expected_action = {"navigation":"navigate_projects","checkbox":"select_local_copy","preview_status":"preview_http"}[diagnostic_failure]
+                    expected_class = "TimeoutError" if diagnostic_failure == "navigation" else "Error"
+                    self.assertEqual(safe["diagnostics"][-1], {"phase":"deletion","action":expected_action,"error_class":expected_class})
+                    if diagnostic_failure == "preview_status":
+                        self.assertIn({"phase":"deletion","action":"preview_http","http_status":409}, safe["diagnostics"])
+                    self.assertIn('"browser_diagnostic"', output)
+                    self.assertNotIn("private diagnostic secret", output + json.dumps(safe))
+                    self.assertNotIn("manual_deletion_selection_and_exact_retry", safe)
                 if cleanup_failure:
                     self.assertEqual(safe["cleanup_failures"], [cleanup_failure])
                     self.assertNotIn("private close failure", json.dumps(safe))
@@ -647,6 +667,93 @@ module.exports = {
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=3)
+
+    def test_exact_backup_selection_waits_for_delayed_same_id_copy_refresh(self):
+        # The old button and same-ID metadata stay actionable throughout both gates.
+        script = r"""
+const fs=require("node:fs"),assert=require("node:assert/strict");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const helper=source.slice(source.indexOf("async function selectBackup(p, id)"),source.indexOf("function deliveredRecoveryURL"));
+const run=new Function("recordDiagnostic","expect",helper+"return selectBackup;");
+const tick=()=>new Promise(setImmediate);
+(async()=>{
+ for(const scenario of ["republished_generation","refresh_denied","http_denied"]) {
+  const events=[];let finishHTTP,finishDOM,settled=false;
+  const network=new Promise(resolve=>{finishHTTP=resolve;});
+  const rendered=new Promise(resolve=>{finishDOM=resolve;});
+  const response={status:()=>scenario==="http_denied"?403:200,
+   json:async()=>({id:"exact_backup",copies:[
+    {location:"local",availability:"deleted",protected_reasons:["superseded"]},
+    {location:"remote",availability:"available",protected_reasons:[]},
+    {location:"local",availability:"available",protected_reasons:[]}]})};
+  const metadata={locator:selector=>{assert.equal(selector,"ul > li");return "copies";}};
+  const panel={page:()=>({waitForResponse:predicate=>{
+   events.push("armed");
+   const sample=(method,id,startTime)=>({url:()=>"https://fixture/api/v1/storage-backups/"+id,request:()=>({method:()=>method,timing:()=>({startTime})})});
+   assert.equal(predicate(sample("GET","exact_backup",0)),false);
+   assert.equal(predicate(sample("POST","exact_backup",Date.now()+1)),false);
+   assert.equal(predicate(sample("GET","foreign",Date.now()+1)),false);
+   assert.equal(predicate(sample("GET","exact_backup",Date.now()+1)),true);
+   return network;
+  }}),getByRole:(role,options)=>{
+   assert.equal(role,"button");assert.equal(options.exact,true);
+   return {click:async()=>{
+    if(options.name==="Refresh archive status") {events.push("refresh_clicked");if(scenario==="refresh_denied")throw Error("denied");}
+    else {assert.equal(options.name,"Backup exact_backup");events.push("old_button_clicked");}
+   }};
+  },locator:selector=>{assert.equal(selector,'dl[aria-label="Selected backup metadata"]');return metadata;}};
+  const select=run(action=>events.push(action),value=>({toContainText:async id=>{
+   assert.equal(value,metadata);assert.equal(id,"exact_backup");events.push("same_id_metadata_present");
+  },toHaveText:async expected=>{
+   assert.equal(value,"copies");assert.deepEqual(expected,["local: deleted · superseded","remote: available","local: available"]);
+   events.push("waiting_for_render");await rendered;events.push("fresh_copies_rendered");
+  }}));
+  const outcome=select(panel,"exact_backup").then(()=>{settled=true;return "passed";},()=>{settled=true;return "failed";});
+  await tick();
+  if(scenario==="refresh_denied") {
+   assert.equal(await outcome,"failed");assert.equal(events.includes("old_button_clicked"),false);finishHTTP(response);continue;
+  }
+  assert.equal(events.includes("old_button_clicked"),true);
+  assert.equal(settled,false,"old same-ID button must not complete selection before refreshed GET");
+  finishHTTP(response);await tick();
+  if(scenario==="http_denied") {assert.equal(await outcome,"failed");assert.equal(events.includes("same_id_metadata_present"),false);continue;}
+  assert.equal(events.includes("same_id_metadata_present"),true);
+  assert.equal(events.includes("waiting_for_render"),true);
+  assert.equal(settled,false,"same-ID metadata must not complete selection before fresh copy inventory renders");
+  finishDOM();assert.equal(await outcome,"passed");
+  assert.equal(events.at(-1),"fresh_copies_rendered");
+ }
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_manual_phase_failures_report_only_safe_action_status_and_class(self):
+        # Inert driver failure injection proves diagnostics, not live UI behavior.
+        for failure in ["navigation", "checkbox", "preview_status"]:
+            with self.subTest(failure=failure):
+                self.run_driver(complete=True, retention=True, diagnostic_failure=failure)
+
+    def test_diagnostic_labels_status_and_storage_are_bounded(self):
+        script = r"""
+const fs=require("node:fs"),assert=require("node:assert/strict");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const diagnostics=source.slice(source.indexOf("const diagnosticPhases"),source.indexOf("let api, browser, context, page;"));
+new Function("assert", "let stopped=false;"+diagnostics+`
+ setDiagnosticPhase("private diagnostic secret");
+ recordDiagnostic("private diagnostic secret", "private diagnostic secret", {name:"private diagnostic secret"});
+ assert.deepEqual(diagnosticTrace.at(-1),{phase:"unknown_phase",action:"unknown_action",error_class:"Error"});
+ for(let i=0;i<100;i++) recordDiagnostic("preview_http",200);
+ assert.equal(diagnosticTrace.length,64);
+ assert.equal(JSON.stringify(diagnosticTrace).includes("private diagnostic secret"),false);
+ for(const status of [NaN,Infinity,-1,99,600,200.5,"409"]) {
+  recordDiagnostic("preview_http",status);
+  assert.equal(Object.hasOwn(diagnosticTrace.at(-1),"http_status"),false);
+ }
+`)(assert);
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_retention_phase_driver_wiring_with_inert_browser_resources(self):
         # This tests sequencing and cleanup only; it is not browser qualification.
@@ -868,7 +975,7 @@ host_docker() {
 class RetentionModeContractTests(unittest.TestCase):
     def test_retention_is_distinct_and_keeps_exact_remote_profile(self):
         source = (Path(__file__).parent / "gate.sh").read_text()
-        self.assertIn("--remote|--retention)", source)
+        self.assertIn("--remote|--retention|--deletion)", source)
         self.assertIn("owner=nerocd-storage-retention-runtime-20261026-e4db0929", source)
         self.assertIn('NEROCD_STORAGE_RETENTION_RUNTIME=$retention_mode', source)
         self.assertIn("TestHostingStorageBackupRetentionCompiledRunnerHTTPS", source)
@@ -877,6 +984,62 @@ class RetentionModeContractTests(unittest.TestCase):
         for requirement in ["storageRetentionRuntimeAwait", "conditional S3 deletion", "remote_restore_republished_local", "source_preserved"]:
             self.assertIn(requirement, fixture)
         self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageRetentionRuntimeWorkflow"):])
+
+class DeletionModeContractTests(unittest.TestCase):
+    def test_collects_joined_guest_markers_before_validating_and_rejects_bad_evidence(self):
+        source = (Path(__file__).parent / "gate.sh").read_text()
+        start = source.index("collect_runtime_evidence() {")
+        collect = source[start:source.index("\n}\n", start) + 3]
+        start = source.index(' if [[ "$deletion" == true ]]; then\n  collect_runtime_evidence')
+        validation = source[start:source.index("\n fi\nelse", start) + len("\n fi")]
+        required = ['local_absent','remote_retained','history_retained','remaining_remote_restore','new_volume_application_reads_and_writes','source_preserved','manual_remote_conditional_delete','final_copy_confirmation','final_history_retained']
+        browser_required = ['manual_deletion_selection_and_exact_retry','manual_deletion_history_and_final_copy_warning','manual_deletion_viewer_history_and_denied','manual_deletion_remote_and_final_confirmation','manual_deletion_final_history']
+        for kind in ["valid", "missing", "malformed", "missing_flag", "false_flag", "numeric_flag", "failed_status", "browser_missing_flag", "browser_failed", "browser_missing", "browser_malformed"]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                guest = root / "guest"
+                guest.mkdir()
+                output = root / "evidence"
+                output.mkdir()
+                marker = {"status": "passed", **dict.fromkeys(required, True)}
+                browser = {"status": "passed", **dict.fromkeys(browser_required, True)}
+                if kind == "missing_flag": del marker[required[0]]
+                if kind == "false_flag": marker[required[0]] = False
+                if kind == "numeric_flag": marker[required[0]] = 1
+                if kind == "failed_status": marker["status"] = "failed"
+                if kind == "browser_missing_flag": del browser[browser_required[0]]
+                if kind == "browser_failed": browser["status"] = "failed"
+                if kind != "missing":
+                    (guest / "deletion-markers.json").write_text("invalid JSON" if kind == "malformed" else json.dumps(marker))
+                if kind != "browser_missing":
+                    (output / "browser-safe.json").write_text("invalid JSON" if kind == "browser_malformed" else json.dumps(browser))
+                # Execute the actual collection function and validation block with
+                # an inert copy tool. No Docker or runtime fixture is launched.
+                script = """set -euo pipefail
+evidence=$GATE_MARKER_EVIDENCE
+outer=owned-id
+deletion=true
+host_docker() {
+ [[ "$1" == cp && "$2" == 'owned-id:/fixture/evidence/.' && "$3" == "$evidence/runtime" ]]
+ cp -R "$GATE_MARKER_GUEST/." "$3"
+}
+""" + collect + "\n" + validation
+                env = os.environ.copy()
+                env.update(GATE_MARKER_EVIDENCE=str(output), GATE_MARKER_GUEST=str(guest))
+                result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
+                self.assertFalse((output / "deletion-markers.json").exists())
+                if kind != "missing": self.assertTrue((output / "runtime/deletion-markers.json").is_file())
+
+
+    def test_deletion_requires_its_own_profile_and_physical_recovery_evidence(self):
+        source = (Path(__file__).parent / "gate.sh").read_text()
+        for requirement in ["owner=nerocd-storage-deletion-runtime-20261026", "NEROCD_STORAGE_DELETION_RUNTIME=$deletion_mode", "TestHostingStorageBackupDeletionCompiledRunnerHTTPS", "CHECK_DELETION_PG", "CHECK_DELETION_MARKERS", "deletion-markers.json"]:
+            self.assertIn(requirement, source)
+        fixture = (Path(__file__).parents[2] / "internal/api/hosting_storage_backup_deletion_runtime_integration_test.go").read_text()
+        for requirement in ["ManualDeleteSelectedBackupLocalKeepsRemoteAndHistory", "remaining_remote_restore", "new_volume_application_reads_and_writes", "os.ErrNotExist"]:
+            self.assertIn(requirement, fixture)
+        self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageDeletionRuntimeWorkflow"):])
 
 if __name__ == "__main__":
     unittest.main()

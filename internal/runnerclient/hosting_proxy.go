@@ -259,10 +259,15 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		storageRemoteCap = storageRemoteCap || capability == domain.HostingStorageBackupRemoteCapability
 		storageRemoteTask = storageRemoteTask || capability == domain.RunTypeStorageBackupTransfer
 	}
+	storageDeletionCap := false
 	storageRetentionCap, storageRetentionTask := false, false
 	for _, capability := range result.Capabilities {
+		storageDeletionCap = storageDeletionCap || capability == domain.HostingStorageBackupDeletionCapability
 		storageRetentionCap = storageRetentionCap || capability == domain.HostingStorageBackupRetentionCapability
 		storageRetentionTask = storageRetentionTask || capability == domain.RunTypeStorageBackupRetention
+	}
+	if storageDeletionCap && !options.StorageBackupRetention {
+		return "", errors.New("storage deletion capability requires explicit retention opt-in")
 	}
 	if storageRetentionCap != options.StorageBackupRetention || storageRetentionTask != options.StorageBackupRetention || storageRetentionCap && (!options.StorageArchive || shellCapable) {
 		return "", errors.New("storage retention capability does not match configuration")

@@ -27,7 +27,7 @@ func storageRetentionBoundary(ctx context.Context, tx pgx.Tx, id string) error {
 	}
 	return storageRetentionLock(ctx, tx)
 }
-func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx, id, actor, resource string, in domain.HostingStorageBackupRetentionExecutionInput, requestHash string) (domain.HostingStorageBackupRetentionExecution, error) {
+func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx, id, actor, resource string, in domain.HostingStorageBackupRetentionExecutionInput, requestHash, kind string) (domain.HostingStorageBackupRetentionExecution, error) {
 	var zero domain.HostingStorageBackupRetentionExecution
 	// Caller already holds placement and pool locks. Lock the task before leases.
 	prior, e := storageRetentionLoad(ctx, tx, id, false)
@@ -50,7 +50,7 @@ func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx,
 		return zero, e
 	}
 	if r.view.State == "succeeded" || r.view.State == "failed" && !r.view.ReservationHeld || r.run == nil {
-		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, "execution", in.RequestID, requestHash, r.view); e != nil {
+		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, kind, in.RequestID, requestHash, r.view); e != nil {
 			return zero, e
 		}
 		return r.view, nil
@@ -60,7 +60,7 @@ func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx,
 		return zero, e
 	}
 	if live {
-		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, "execution", in.RequestID, requestHash, r.view); e != nil {
+		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, kind, in.RequestID, requestHash, r.view); e != nil {
 			return zero, e
 		}
 		return r.view, nil
@@ -72,7 +72,7 @@ func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx,
 	// A dispatched task without a first lease is already claimable; do not create
 	// a duplicate attempt or another reservation while the runner is starting.
 	if nextAttempt == 1 {
-		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, "execution", in.RequestID, requestHash, r.view); e != nil {
+		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, kind, in.RequestID, requestHash, r.view); e != nil {
 			return zero, e
 		}
 		return r.view, nil
@@ -109,7 +109,7 @@ func (s *PostgresStore) storageRetentionResumeTx(ctx context.Context, tx pgx.Tx,
 	if e = storageRetentionAudit(ctx, tx, actor, id, "retention_resume_"+in.RequestID, r.view.ProjectID); e != nil {
 		return zero, e
 	}
-	if e = storageRetentionSaveRequest(ctx, tx, resource, actor, "execution", in.RequestID, requestHash, r.view); e != nil {
+	if e = storageRetentionSaveRequest(ctx, tx, resource, actor, kind, in.RequestID, requestHash, r.view); e != nil {
 		return zero, e
 	}
 	return r.view, archiveFinalizeActor(ctx, tx, actor)

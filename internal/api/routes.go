@@ -14,6 +14,10 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/projects/{project_id}/notification-channels/{channel_id}/tests"},
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries"},
 	{Method: http.MethodGet, Path: "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backups/{backup_id}/deletion-previews"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions/{execution_id}"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/retirement"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-retention/credentials"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-retention"},
@@ -323,6 +327,12 @@ func PublicRoutes() []PublicRoute {
 
 func (s *Server) handlerFor(path string) http.HandlerFunc {
 	switch path {
+	case "/api/v1/resources/{id}/storage-backups/{backup_id}/deletion-previews":
+		return s.previewStorageBackupDeletion
+	case "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions":
+		return s.executeStorageBackupDeletion
+	case "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions/{execution_id}":
+		return s.getStorageBackupDeletion
 	case "/api/v1/runners/hosting/storage-backup-retention/retirement":
 		return s.runnerStorageBackupRetentionRetirement
 	case "/api/v1/runners/hosting/storage-backup-retention/credentials":

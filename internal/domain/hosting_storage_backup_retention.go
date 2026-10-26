@@ -63,6 +63,10 @@ func (in HostingStorageBackupRetentionPreviewInput) Validate() error {
 }
 
 type HostingStorageBackupRetentionPreview struct {
+	Origin             string                `json:"origin,omitempty"`
+	BackupID           string                `json:"backup_id,omitempty"`
+	ResourceGeneration int64                 `json:"resource_generation,omitempty"`
+	FinalCopy          bool                  `json:"final_copy,omitempty"`
 	ID                 string                `json:"id"`
 	Version            string                `json:"version"`
 	ProjectID          string                `json:"project_id"`
@@ -91,20 +95,24 @@ func (in HostingStorageBackupRetentionExecutionInput) Validate() error {
 }
 
 type HostingStorageBackupRetentionExecution struct {
-	ID              string                         `json:"id"`
-	Version         string                         `json:"version"`
-	ProjectID       string                         `json:"project_id"`
-	ResourceID      string                         `json:"resource_id"`
-	PreviewID       string                         `json:"preview_id"`
-	PolicyRevision  int64                          `json:"policy_revision"`
-	PlanHash        string                         `json:"plan_hash"`
-	State           string                         `json:"state"`
-	ReservationHeld bool                           `json:"reservation_held"`
-	LocalState      string                         `json:"local_state"`
-	RemoteState     string                         `json:"remote_state"`
-	Items           []BackupRetentionExecutionItem `json:"items"`
-	CreatedAt       time.Time                      `json:"created_at"`
-	UpdatedAt       time.Time                      `json:"updated_at"`
+	Origin             string                         `json:"origin,omitempty"`
+	BackupID           string                         `json:"backup_id,omitempty"`
+	ResourceGeneration int64                          `json:"resource_generation,omitempty"`
+	FinalCopy          bool                           `json:"final_copy,omitempty"`
+	ID                 string                         `json:"id"`
+	Version            string                         `json:"version"`
+	ProjectID          string                         `json:"project_id"`
+	ResourceID         string                         `json:"resource_id"`
+	PreviewID          string                         `json:"preview_id"`
+	PolicyRevision     int64                          `json:"policy_revision"`
+	PlanHash           string                         `json:"plan_hash"`
+	State              string                         `json:"state"`
+	ReservationHeld    bool                           `json:"reservation_held"`
+	LocalState         string                         `json:"local_state"`
+	RemoteState        string                         `json:"remote_state"`
+	Items              []BackupRetentionExecutionItem `json:"items"`
+	CreatedAt          time.Time                      `json:"created_at"`
+	UpdatedAt          time.Time                      `json:"updated_at"`
 }
 
 type StorageBackupRetentionCopy struct {
@@ -149,11 +157,14 @@ func (p HostingStorageBackupRetentionPlan) Validate() error {
 	h := p.Hash
 	p.Progress = nil
 	p.Hash = ""
-	if h != HostingDocumentHash(p) || p.Operation.Version != HostingStorageBackupRetentionVersion || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.RunnerID) || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || len(p.Copies) == 0 || len(p.Copies) > BackupRetentionBatchLimit || len(p.Copies) != len(p.Operation.Items) {
+	if h != HostingDocumentHash(p) || !ValidStorageBackupDeletionOperation(p.Operation) || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.RunnerID) || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || len(p.Copies) == 0 || len(p.Copies) > BackupRetentionBatchLimit || len(p.Copies) != len(p.Operation.Items) {
 		return ErrInvalidStorageBackupRetention
 	}
 	seen := map[string]bool{}
 	for i, c := range p.Copies {
+		if p.Operation.Origin == StorageBackupManualSelection && c.Item.BackupID != p.Operation.BackupID {
+			return ErrInvalidStorageBackupRetention
+		}
 		if !validRuntimeReferenceID(c.DestinationID) || !validRuntimeReferenceID(c.ServerID) || !validRuntimeReferenceID(c.DaemonID) || !c.Item.Selected || len(c.Item.ProtectedReasons) > 0 || !validRuntimeReferenceID(c.Storage.StorageID) || c.Storage.Generation < 1 || !imageSHA256.MatchString(c.Storage.Hash) || seen[c.Item.CopyID] || !validRuntimeReferenceID(c.Item.CopyID) || c.RunnerID != p.RunnerID || !imageSHA256.MatchString(c.IdentityHash) || !imageSHA256.MatchString(c.Item.Digest) || c.Item.Bytes < 5 || c.Item.Bytes > HostingStorageArchiveMaxBytes || c.Item.CopyID != p.Operation.Items[i].CopyID {
 			return ErrInvalidStorageBackupRetention
 		}

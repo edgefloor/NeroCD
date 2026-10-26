@@ -11,6 +11,35 @@ import (
 	"time"
 )
 
+const storageDeletionListExecutions = `-- name: StorageDeletionListExecutions :many
+SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 AND body->>'backup_id'=$2::text AND body->>'origin'='manual_selection' ORDER BY created_at DESC,id DESC LIMIT 100
+`
+
+type StorageDeletionListExecutionsParams struct {
+	ResourceID string `json:"resource_id"`
+	BackupID   string `json:"backup_id"`
+}
+
+func (q *Queries) StorageDeletionListExecutions(ctx context.Context, arg StorageDeletionListExecutionsParams) ([]json.RawMessage, error) {
+	rows, err := q.db.Query(ctx, storageDeletionListExecutions, arg.ResourceID, arg.BackupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []json.RawMessage{}
+	for rows.Next() {
+		var body json.RawMessage
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		items = append(items, body)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const storageRetentionActiveUse = `-- name: StorageRetentionActiveUse :one
 SELECT COALESCE((EXISTS(SELECT 1 FROM hosting_storage_archive_plans p JOIN hosting_operations o ON o.id=p.operation_id WHERE p.body->>'runner_id'=$1::text AND (o.state IN ('queued','dispatched','preparing','prepared','applying') OR p.backup_id=$2::text AND (o.state='reconciliation_required' OR EXISTS(SELECT 1 FROM hosting_binding_state WHERE hold_operation_id=o.id)))) OR EXISTS(SELECT 1 FROM hosting_storage_backup_transfers WHERE runner_id=$1::text AND (state IN ('queued','dispatched','applying') OR backup_id=$2::text AND state='uncertain'))),false)::boolean AS active
 `
@@ -513,7 +542,7 @@ func (q *Queries) StorageRetentionLegacyTransfersForBackup(ctx context.Context, 
 }
 
 const storageRetentionListExecutions = `-- name: StorageRetentionListExecutions :many
-SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
+SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 AND body->>'version'='owned-upload.backup-retention.v1' ORDER BY created_at DESC,id DESC LIMIT 100
 `
 
 func (q *Queries) StorageRetentionListExecutions(ctx context.Context, resourceID string) ([]json.RawMessage, error) {

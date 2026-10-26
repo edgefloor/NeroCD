@@ -33,3 +33,19 @@ func TestStorageRetentionIdentityRequiresSeparateOptInAndNoDatabase(t *testing.T
 		})
 	}
 }
+func TestStorageBackupDeletionIdentityRequiresSharedDestructiveOptIn(t *testing.T) {
+	for _, opted := range []bool{false, true} {
+		caps := []string{domain.HostingOwnedStorageCapability, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability, domain.HostingStorageBackupDeletionCapability}
+		if opted {
+			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability)
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+		}))
+		_, e := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{StorageArchive: true, StorageArchiveTrustedLoopbackHTTP: true, StorageBackupRetention: opted})
+		server.Close()
+		if (e == nil) != opted {
+			t.Fatal("deletion capability bypassed opt-in", opted, e)
+		}
+	}
+}

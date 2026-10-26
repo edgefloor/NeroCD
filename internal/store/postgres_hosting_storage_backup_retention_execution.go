@@ -39,7 +39,7 @@ func storageRetentionLoad(ctx context.Context, tx pgx.Tx, id string, lock bool) 
 		return r, ErrConflict
 	}
 	initial := r.plan.Operation
-	if r.view.Version != initial.Version || r.view.ProjectID != initial.ProjectID || r.view.ResourceID != initial.ResourceID || r.view.PreviewID != initial.PreviewID || r.view.PolicyRevision != initial.PolicyRevision || r.view.PlanHash != initial.PlanHash || !r.view.CreatedAt.Equal(initial.CreatedAt) {
+	if r.view.Origin != initial.Origin || r.view.BackupID != initial.BackupID || r.view.ResourceGeneration != initial.ResourceGeneration || r.view.FinalCopy != initial.FinalCopy || r.view.Version != initial.Version || r.view.ProjectID != initial.ProjectID || r.view.ResourceID != initial.ResourceID || r.view.PreviewID != initial.PreviewID || r.view.PolicyRevision != initial.PolicyRevision || r.view.PlanHash != initial.PlanHash || !r.view.CreatedAt.Equal(initial.CreatedAt) {
 		return r, ErrConflict
 	}
 	validated := r.plan

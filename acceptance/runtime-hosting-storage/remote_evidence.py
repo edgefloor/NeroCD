@@ -49,7 +49,7 @@ def selected(value):
     health = result.get("State", {}).get("Health")
     if isinstance(health, dict):
         health.pop("Log", None)
-    return {key: result.get(key) for key in ("Id", "Image", "Config", "HostConfig", "Mounts", "State", "NetworkSettings")}
+    return {key: result.get(key) for key in ("Id", "Name", "Image", "Config", "HostConfig", "Mounts", "State", "NetworkSettings")}
 
 
 def snapshot():
@@ -88,6 +88,60 @@ def snapshot():
             "ui_listener": listeners, "ui_health": health}
 
 
+def preservation(before, after, owner, name, volume):
+    """Preserve baseline objects exactly; report concurrent non-task additions."""
+    if any(not isinstance(v, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", v)
+           for v in (owner, name, volume)):
+        raise ValueError("task preservation identity unavailable")
+    old = before["containers"]
+    current = after["containers"]
+    additions = sorted(set(current) - set(old))
+    blocked = []
+    uncertain = []
+    for identity in additions:
+        value = current[identity]
+        if not isinstance(value, dict):
+            uncertain.append(identity)
+            continue
+        config = value.get("Config")
+        host = value.get("HostConfig")
+        mounts = value.get("Mounts")
+        if (value.get("Id") != identity or not isinstance(value.get("Name"), str) or not re.fullmatch(r"/[A-Za-z0-9][A-Za-z0-9_.-]*", value["Name"])
+                or not isinstance(config, dict) or not isinstance(host, dict)
+                or not isinstance(mounts, list) or any(not isinstance(m, dict) for m in mounts)):
+            uncertain.append(identity)
+            continue
+        labels = config.get("Labels")
+        requested = host.get("Mounts")
+        labels = {} if labels is None else labels
+        requested = [] if requested is None else requested
+        if not isinstance(labels, dict) or not isinstance(requested, list) or any(not isinstance(m, dict) for m in requested):
+            uncertain.append(identity)
+            continue
+        volume_user = any(m.get("Name") == volume or m.get("Source") == volume for m in mounts + requested)
+        if labels.get("io.nerocd.storage-runtime.owner") == owner or value.get("Name") == "/" + name or volume_user:
+            blocked.append(identity)
+    containers_unchanged = all(identity in current and current[identity] == value for identity, value in old.items())
+    volumes_unchanged = before["volumes"] == after["volumes"]
+    # Retain exact file/root/listener/HTTP content comparison, including unknown
+    # snapshot fields. Container additions are the only permitted difference.
+    other_unchanged = ({k: v for k, v in before.items() if k != "containers"} ==
+                       {k: v for k, v in after.items() if k != "containers"})
+    healthy = bool(after["ui_health"]) and all(value["status"] == 200 for value in after["ui_health"].values())
+    passed = containers_unchanged and volumes_unchanged and other_unchanged and healthy and not blocked and not uncertain
+    return {"status": "passed" if passed else "failed",
+            "baseline_containers": len(old), "baseline_volumes": len(before["volumes"]),
+            "baseline_container_profiles_unchanged": containers_unchanged,
+            "volume_inventory_and_profiles_unchanged": volumes_unchanged,
+            "non_container_snapshot_unchanged": other_unchanged,
+            "non_task_added_container_ids": [identity for identity in additions if identity not in blocked and identity not in uncertain],
+            "task_owned_or_task_volume_addition_ids": blocked,
+            "unclassified_added_container_ids": uncertain,
+            "user_ui_identity_unchanged": all(before[k] == after[k] for k in ("ui_files", "ui_root", "ui_listener")),
+            "user_ui_http_content_unchanged": before["ui_health"] == after["ui_health"],
+            "user_ui_http_healthy": healthy}
+
+
 def write(path, value):
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
     path.chmod(0o600)
@@ -113,18 +167,16 @@ def main():
         before = json.loads((root / "preservation-before.private.json").read_text())
         after = snapshot()
         write(root / "preservation-after.private.json", after)
-        passed = before == after
-        write(root / "preservation-safe.json", {"status": "passed" if passed else "failed",
-              "baseline_containers": len(before["containers"]), "baseline_volumes": len(before["volumes"]),
-              "user_ui_identity_unchanged": before["ui_files"] == after["ui_files"] and before["ui_root"] == after["ui_root"] and before["ui_listener"] == after["ui_listener"],
-              "user_ui_http_healthy": all(value["status"] == 200 for value in after["ui_health"].values())})
-        if not passed:
-            raise ValueError("baseline identity/configuration/state/network or user UI changed")
+        owner, name, volume = sys.argv[3:6]
+        result = preservation(before, after, owner, name, volume)
+        write(root / "preservation-safe.json", result)
+        if result["status"] != "passed":
+            raise ValueError("baseline profile/user UI changed or task-owned addition remains")
         return
     if mode == "receipt":
         # Explicit allowlist, never recurse over private evidence or inventories.
         names = ["result", "binary-sha256", "archive-helper-provenance", "image-store-scope",
-                 "preservation-safe.json", "runtime/remote-markers.json", "runtime/retention-markers.json", "runtime/owned-upload.tar",
+                 "preservation-safe.json", "runtime/remote-markers.json", "runtime/retention-markers.json", "runtime/deletion-markers.json", "runtime/owned-upload.tar",
                  "browser-safe.json", "browser-ui-manifest.json"]
         with tarfile.open(root / "safe-receipt.tar.gz", "w:gz") as archive:
             for name in names:
