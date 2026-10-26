@@ -158,6 +158,7 @@ func TestStorageRuntimeDockerOutputProcess(t *testing.T) {
 
 func TestStorageRuntimeDockerDirectStartsNeverPull(t *testing.T) {
 	t.Run("fixture port separation", testStorageRuntimeFixturePortSeparation)
+	t.Run("closed helper environment diagnostic", testStorageDiagnosticHelperEnvironment)
 	t.Run("owned proxy cleanup", testStorageRuntimeOwnedProxyCleanup)
 	original := []string{"run", "--detach", "pinned@sha256:" + strings.Repeat("a", 64)}
 	before := append([]string(nil), original...)
@@ -499,5 +500,126 @@ func testStorageRuntimeOwnedProxyCleanup(t *testing.T) {
 		if _, err := storageRuntimeProxyProfileFor(root, "proxy_fixture", "server_fixture", "dest_fixture", "runner_fixture", "daemon_fixture"); err == nil {
 			t.Fatal("unowned or noncanonical fixture root accepted")
 		}
+	}
+}
+
+type storageHelperEnvironmentDiagnostic struct {
+	State            string   `json:"state"`
+	EntryCount       int      `json:"entry_count"`
+	Entries          []string `json:"entries"`
+	EntriesTruncated bool     `json:"entries_truncated"`
+	RootPathCount    int      `json:"root_path_count"`
+	RootHomeCount    int      `json:"root_home_count"`
+	DuplicateKeys    bool     `json:"duplicate_keys"`
+	ExactOrder       bool     `json:"exact_order"`
+	ExactPair        bool     `json:"exact_pair"`
+}
+
+// Project only fixed categories, never environment values or unknown key names.
+func storageDiagnosticHelperEnvironment(raw json.RawMessage) storageHelperEnvironmentDiagnostic {
+	result := storageHelperEnvironmentDiagnostic{State: "invalid_or_bounded"}
+	if len(raw) > 16<<10 {
+		return result
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '[' {
+		return result
+	}
+	var environment []string
+	if json.Unmarshal(raw, &environment) != nil || len(environment) > 64 {
+		return result
+	}
+	result.State = "valid_array"
+	result.EntryCount = len(environment)
+	seen := map[string]bool{}
+	for _, entry := range environment {
+		key, value, formed := strings.Cut(entry, "=")
+		category := "malformed"
+		if formed && key != "" {
+			if seen[key] {
+				result.DuplicateKeys = true
+			}
+			seen[key] = true
+			switch key {
+			case "PATH":
+				switch value {
+				case "/":
+					category = "path_root"
+					result.RootPathCount++
+				case "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin":
+					category = "path_image_default"
+				default:
+					category = "path_other"
+				}
+			case "HOME":
+				if value == "/" {
+					category = "home_root"
+					result.RootHomeCount++
+				} else {
+					category = "home_other"
+				}
+			default:
+				category = "other_key"
+			}
+		}
+		if len(result.Entries) < 8 {
+			result.Entries = append(result.Entries, category)
+		} else {
+			result.EntriesTruncated = true
+		}
+	}
+	result.ExactPair = len(environment) == 2 && result.RootPathCount == 1 && result.RootHomeCount == 1
+	result.ExactOrder = len(environment) == 2 && environment[0] == "PATH=/" && environment[1] == "HOME=/"
+	return result
+}
+
+func testStorageDiagnosticHelperEnvironment(t *testing.T) {
+	const secret = "private_environment_canary"
+	for _, tc := range []struct {
+		name                   string
+		value                  any
+		pair, order, duplicate bool
+	}{
+		{"canonical", []string{"PATH=/", "HOME=/"}, true, true, false},
+		{"reversed", []string{"HOME=/", "PATH=/"}, true, false, false},
+		{"empty", []string{}, false, false, false},
+		{"missing", []string{"PATH=/"}, false, false, false},
+		{"duplicate", []string{"PATH=/", "PATH=/"}, false, false, true},
+		{"extra", []string{"PATH=/", "HOME=/", secret + "=" + secret}, false, false, false},
+		{"duplicate_unknown", []string{secret + "=" + secret, secret + "=changed"}, false, false, true},
+		{"changed_path", []string{"PATH=" + secret, "HOME=/"}, false, false, false},
+		{"changed_home", []string{"PATH=/", "HOME=" + secret}, false, false, false},
+		{"image_default", []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/"}, false, false, false},
+		{"malformed", []string{secret, "=" + secret}, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			summary := storageDiagnosticHelperEnvironment(raw)
+			encoded, err := json.Marshal(summary)
+			if err != nil || strings.Contains(string(encoded), secret) || summary.State != "valid_array" || summary.ExactPair != tc.pair || summary.ExactOrder != tc.order || summary.DuplicateKeys != tc.duplicate {
+				t.Fatal("environment diagnostic changed closed classification or leaked payload")
+			}
+			for _, category := range summary.Entries {
+				switch category {
+				case "path_root", "path_image_default", "path_other", "home_root", "home_other", "other_key", "malformed":
+				default:
+					t.Fatal("unapproved environment diagnostic category")
+				}
+			}
+		})
+	}
+	for _, raw := range []string{"{", `null`, `{"PATH":"` + secret + `"}`, `[1]`, strings.Repeat(" ", (16<<10)+1), strings.Repeat(" ", 16<<10) + `[]`, `["` + strings.Repeat("x", 16<<10) + `"]`, `[` + strings.Repeat(`"OTHER=private",`, 64) + `"OTHER=private"]`} {
+		if summary := storageDiagnosticHelperEnvironment(json.RawMessage(raw)); summary.State != "invalid_or_bounded" || len(summary.Entries) != 0 {
+			t.Fatal("malformed or unbounded environment diagnostic accepted")
+		}
+	}
+	raw, _ := json.Marshal([]string{"PATH=/", "HOME=/", "X=" + secret, "Y=" + secret, "Z=" + secret, "A=" + secret, "B=" + secret, "C=" + secret, "D=" + secret})
+	summary := storageDiagnosticHelperEnvironment(raw)
+	encoded, _ := json.Marshal(summary)
+	if summary.EntryCount != 9 || !summary.EntriesTruncated || len(summary.Entries) != 8 || strings.Contains(string(encoded), secret) {
+		t.Fatal("environment projection bound or secrecy failed")
 	}
 }

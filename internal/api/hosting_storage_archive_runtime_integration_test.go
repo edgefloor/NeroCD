@@ -166,6 +166,8 @@ func storageArchiveHelperFailureProfile(f *storageRuntimeFixture, complete runne
 		f.t.Log("archive helper diagnostic unavailable: operation/plan/nonce/image ownership mismatch")
 		return
 	}
+	environmentSummary, _ := json.Marshal(storageDiagnosticHelperEnvironment(config["Env"]))
+	f.t.Logf("archive helper closed environment projection=%s", environmentSummary)
 	mode, caps := "create", []string{"DAC_READ_SEARCH"}
 	if p.Mode == "restore" {
 		mode, caps = "restore", []string{"CHOWN", "FOWNER"}

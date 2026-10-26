@@ -438,6 +438,12 @@ type archiveHelperContainer struct {
 	}
 }
 
+// Unique environment keys have no ordering authority. Keep the permitted
+// values and cardinality exact; duplicate or additional entries remain invalid.
+func archiveHelperEnvironmentMatches(environment []string) bool {
+	return len(environment) == 2 && slices.Contains(environment, "PATH=/") && slices.Contains(environment, "HOME=/")
+}
+
 func (e *storageArchiveEngine) helper(ctx context.Context, p domain.HostingStorageArchivePlan, id, nonce string) (archiveHelperContainer, error) {
 	var h archiveHelperContainer
 	if !dockerObjectID.MatchString(id) || !archiveNonce(nonce) || p.Mode != "backup" && p.Mode != "restore" {
@@ -458,7 +464,7 @@ func (e *storageArchiveEngine) helper(ctx context.Context, p domain.HostingStora
 	sort.Strings(caps)
 	expectedCaps := archiveHelperCaps(p)
 	sort.Strings(expectedCaps)
-	if h.ID != id || h.Name != "/"+archiveHelperName(p, nonce) || h.Image != p.Helper.ImageID || !maps.Equal(h.Config.Labels, archiveHelperLabels(p, nonce)) || !slices.Equal(h.Config.Cmd, archiveHelperCommand(p)) || !slices.Equal(h.Config.Entrypoint, []string{"/nerocd-storage-archive"}) || !slices.Equal(h.Config.Env, []string{"PATH=/", "HOME=/"}) || h.Config.User != "0:0" || h.Config.Hostname != "nerocd-archive" || h.Config.Tty || !c.ReadonlyRootfs || c.Privileged || c.PublishAllPorts || c.AutoRemove || c.NetworkMode != "none" || c.PidMode != "" || c.IpcMode != "private" || c.UsernsMode != "" || c.UtsMode != "" || c.CgroupnsMode != "private" || c.Runtime != "" && c.Runtime != "runc" || len(c.Binds) != 0 || len(c.VolumesFrom) != 0 || len(c.PortBindings) != 0 || len(c.Devices) != 0 || len(c.DeviceRequests) != 0 || len(c.GroupAdd) != 0 || !slices.Equal(c.CapDrop, []string{"ALL"}) || !slices.Equal(caps, expectedCaps) || !slices.Equal(c.SecurityOpt, []string{"no-new-privileges"}) || c.Memory != memory || c.MemorySwap != memory || c.NanoCpus != 1000000000 || c.PidsLimit != 64 || c.LogConfig.Type != "none" || c.RestartPolicy.Name != "no" || !maps.Equal(c.Tmpfs, map[string]string{"/tmp": archiveTmpfs(p)}) {
+	if h.ID != id || h.Name != "/"+archiveHelperName(p, nonce) || h.Image != p.Helper.ImageID || !maps.Equal(h.Config.Labels, archiveHelperLabels(p, nonce)) || !slices.Equal(h.Config.Cmd, archiveHelperCommand(p)) || !slices.Equal(h.Config.Entrypoint, []string{"/nerocd-storage-archive"}) || !archiveHelperEnvironmentMatches(h.Config.Env) || h.Config.User != "0:0" || h.Config.Hostname != "nerocd-archive" || h.Config.Tty || !c.ReadonlyRootfs || c.Privileged || c.PublishAllPorts || c.AutoRemove || c.NetworkMode != "none" || c.PidMode != "" || c.IpcMode != "private" || c.UsernsMode != "" || c.UtsMode != "" || c.CgroupnsMode != "private" || c.Runtime != "" && c.Runtime != "runc" || len(c.Binds) != 0 || len(c.VolumesFrom) != 0 || len(c.PortBindings) != 0 || len(c.Devices) != 0 || len(c.DeviceRequests) != 0 || len(c.GroupAdd) != 0 || !slices.Equal(c.CapDrop, []string{"ALL"}) || !slices.Equal(caps, expectedCaps) || !slices.Equal(c.SecurityOpt, []string{"no-new-privileges"}) || c.Memory != memory || c.MemorySwap != memory || c.NanoCpus != 1000000000 || c.PidsLimit != 64 || c.LogConfig.Type != "none" || c.RestartPolicy.Name != "no" || !maps.Equal(c.Tmpfs, map[string]string{"/tmp": archiveTmpfs(p)}) {
 		return h, errStorageArchiveEngine
 	}
 	volume, destination, writable := p.SourceStorage.VolumeName, "/source", false

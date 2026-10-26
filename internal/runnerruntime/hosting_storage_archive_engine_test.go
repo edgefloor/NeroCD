@@ -1306,3 +1306,123 @@ func TestStorageArchiveOSStreamCancellationJoinsProcess(t *testing.T) {
 		t.Fatal("owned archive command did not join on cancellation")
 	}
 }
+
+func TestStorageArchiveEngineHelperEnvironmentOrder(t *testing.T) {
+	for _, mode := range []string{"backup", "restore"} {
+		for _, order := range []string{"canonical", "reversed"} {
+			t.Run(mode+"/"+order, func(t *testing.T) {
+				f := archiveEnvironmentFixture(t, mode)
+				environment := []string{"PATH=/", "HOME=/"}
+				if order == "reversed" {
+					environment[0], environment[1] = environment[1], environment[0]
+				}
+				archiveObservedEnvironment(f, func() []string { return environment })
+				starts := f.starts
+				id, err := f.e.CreateHelper(t.Context(), f.p, "helper_receipt", f.before)
+				if err != nil || id == "" {
+					t.Fatal("exact unique environment reordered by inspection was rejected", err)
+				}
+				if mode == "backup" {
+					blob, err := f.e.Backup(t.Context(), f.p, id, "helper_receipt", f.before)
+					if err != nil || blob.Validate() != nil {
+						t.Fatal("reordered backup helper failed", err)
+					}
+				} else if err := f.e.Restore(t.Context(), f.p, id, "helper_receipt", f.before); err != nil {
+					t.Fatal("reordered restore helper failed", err)
+				}
+				if f.starts != starts+1 || f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) != nil || len(f.helpers) != 0 {
+					t.Fatal("reordered helper duplicated execution or could not clean exact owned helper")
+				}
+				if mode == "backup" {
+					h := f.p.SourceHealthy
+					state := domain.HostingStorageArchiveWriterState{ContainerID: h.ContainerID, OperationID: h.OperationID, ImageID: h.Release.ImageID, ReleaseHash: h.Release.Hash, PlanHash: h.PlanHash, Running: true}
+					if f.e.ResumeWriter(t.Context(), f.p, state, f.before) != nil || !f.writers[state.ContainerID].State.Running {
+						t.Fatal("valid helper cleanup could not resume the original writer")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestStorageArchiveEngineHelperEnvironmentRejectsAndDrift(t *testing.T) {
+	for _, mode := range []string{"backup", "restore"} {
+		for _, drift := range []bool{false, true} {
+			for name, invalid := range map[string][]string{
+				"nil": nil, "empty": {}, "missing_home": {"PATH=/"}, "missing_path": {"HOME=/"},
+				"duplicate_path": {"PATH=/", "PATH=/"}, "duplicate_home": {"HOME=/", "HOME=/"},
+				"extra":        {"PATH=/", "HOME=/", "PRIVATE=environment_canary"},
+				"changed_path": {"PATH=/bin", "HOME=/"}, "changed_home": {"PATH=/", "HOME=/tmp"},
+				"image_default": {"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/"},
+				"malformed":     {"PATH", "HOME=/"}, "whitespace": {"PATH=/ ", "HOME=/"}, "case": {"path=/", "HOME=/"},
+			} {
+				t.Run(mode+"/drift="+strconv.FormatBool(drift)+"/"+name, func(t *testing.T) {
+					f := archiveEnvironmentFixture(t, mode)
+					environment := invalid
+					if drift {
+						environment = []string{"HOME=/", "PATH=/"}
+					}
+					archiveObservedEnvironment(f, func() []string { return environment })
+					starts, mutations := f.starts, f.mutations
+					id, err := f.e.CreateHelper(t.Context(), f.p, "helper_receipt", f.before)
+					if (err == nil) != drift || id == "" || f.mutations != mutations+1 || f.starts != starts {
+						t.Fatal("invalid environment gained creation verification or started a helper")
+					}
+					environment = invalid
+					mutations = f.mutations
+					if mode == "backup" {
+						if _, err := f.e.Backup(t.Context(), f.p, id, "helper_receipt", f.before); err == nil {
+							t.Fatal("invalid environment gained backup execution")
+						}
+					} else if err := f.e.Restore(t.Context(), f.p, id, "helper_receipt", f.before); err == nil {
+						t.Fatal("invalid environment gained restore execution")
+					}
+					if f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before) == nil || f.mutations != mutations || f.starts != starts || len(f.helpers) != 1 {
+						t.Fatal("invalid or drifted environment mutated/discarded held helper")
+					}
+				})
+			}
+		}
+	}
+}
+
+func archiveEnvironmentFixture(t *testing.T, mode string) *archiveEngineFake {
+	t.Helper()
+	f := archiveFixture(t)
+	id := f.stoppedHelper()
+	var blob domain.HostingStorageArchiveBlob
+	if mode == "restore" {
+		var err error
+		blob, err = f.e.Backup(t.Context(), f.p, id, "helper_receipt", f.before)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.e.CleanupHelper(t.Context(), f.p, id, "helper_receipt", f.before); err != nil {
+		t.Fatal(err)
+	}
+	if mode == "restore" {
+		f.restorePlan(blob)
+		req := archiveTargetRequest(f.p)
+		req.CreatePermitted = true
+		if _, err := f.e.EnsureRestoreVolume(t.Context(), req, f.before); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return f
+}
+
+func archiveObservedEnvironment(f *archiveEngineFake, environment func() []string) {
+	f.e.image.command = imageCommandFunc(func(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
+		raw, err := f.command(ctx, binary, args, dir, env)
+		if err == nil && len(args) > 6 && args[4] == "container" && args[5] == "inspect" && args[6] == strings.Repeat("d", 64) {
+			var h archiveHelperContainer
+			if json.Unmarshal(raw, &h) != nil {
+				f.t.Fatal("helper inspection fixture failed")
+			}
+			h.Config.Env = environment()
+			return json.Marshal(h)
+		}
+		return raw, err
+	})
+}
