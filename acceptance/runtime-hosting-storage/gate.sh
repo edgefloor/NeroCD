@@ -22,7 +22,7 @@ case ${1:-} in
   archive=true; remote=true
   owner=nerocd-storage-remote-runtime-20261026-8326c344
   name=$owner-dind; volume=$owner-docker-data
-  test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote.*)$';;
+  test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote.*)$';;
  *) echo 'usage: gate.sh [--archive|--remote]' >&2; exit 2;;
 esac
 outer=''
@@ -44,6 +44,38 @@ exec > >(tee "$evidence/gate.log") 2>&1
 printf 'evidence=%s\nhead=%s\ntree=%s\nowner=%s\n' "$evidence" "$head_before" "$tree_before" "$owner"
 host_docker() { docker --host "$docker_host" "$@"; }
 inner_docker() { host_docker exec "$outer" docker --host unix:///var/run/docker.sock "$@"; }
+
+# IMAGE_PRELOAD_BEGIN
+# Pull only an existing exact pin, then verify its native content and config
+# against the host prerequisite. A saved image tar does not retain digest lookup.
+preload_image() {
+ reference=$1; host_manifest=$2; image_tag=$3
+ inner_docker pull --platform linux/arm64 "$reference" > "$evidence/preload-$image_tag.log" 2>&1
+ inner_docker image inspect "$reference" > "$evidence/preload-$image_tag.json"
+ python3 - "$reference" "$host_manifest" "$evidence/preload-$image_tag.json" <<'VERIFY_PRELOAD'
+import json,re,sys
+reference,host_path,guest_path=sys.argv[1:]
+def canonical(value):
+ repository,separator,digest=value.partition("@")
+ if not separator or not re.fullmatch("sha256:[a-f0-9]{64}",digest):raise SystemExit("unpinned image prerequisite")
+ parts=repository.split("/")
+ parts[-1]=parts[-1].split(":",1)[0]
+ if "." not in parts[0] and ":" not in parts[0] and parts[0]!="localhost":parts.insert(0,"docker.io")
+ if parts[0]=="docker.io" and len(parts)==2:parts.insert(1,"library")
+ return "/".join(parts)+"@"+digest
+pin=canonical(reference)
+hosts=json.load(open(host_path));guests=json.load(open(guest_path))
+if not isinstance(hosts,list) or not isinstance(guests,list) or len(guests)!=1:raise SystemExit("ambiguous image prerequisite")
+def pinned(image):return any(canonical(value)==pin for value in image.get("RepoDigests",[]))
+matching=[image for image in hosts if pinned(image)]
+if len(matching)!=1:raise SystemExit("host prerequisite digest missing or ambiguous")
+host,guest=matching[0],guests[0]
+if any(image.get("Os")!="linux" or image.get("Architecture")!="arm64" for image in [host,guest]):raise SystemExit("image prerequisite platform mismatch")
+if not pinned(guest) or not re.fullmatch("sha256:[a-f0-9]{64}",guest.get("Id","")) or guest["Id"]!=host.get("Id") or not isinstance(guest.get("Config"),dict) or guest["Config"]!=host.get("Config"):raise SystemExit("image prerequisite digest/content/config mismatch")
+VERIFY_PRELOAD
+}
+# IMAGE_PRELOAD_END
+
 # Inventory failures are uncertainty, never proof that an exact name is absent.
 outer_inventory() {
  if ! host_docker ps -a --no-trunc --format '{{.ID}} {{.Names}}' > "$evidence/outer-inventory"; then
@@ -261,7 +293,7 @@ traefik=docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a
 pebble=ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
 silo=pgsty/silo@sha256:87585bb783b7822318b3e1bcc4497c8427c98e2b021826d20b5f888713299f95
 if [[ "$remote" == true ]]; then
- # Remote acceptance never pulls. Missing cached dependencies stop before creation.
+ # Host cache supplies the exact content/config baseline, not guest digest lookup.
  host_docker image inspect "$traefik" "$pebble" "$silo" > "$evidence/pinned-remote-images"
 fi
 volume_attempted=true
@@ -269,8 +301,8 @@ host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
 outer_run() {
- if [[ "$remote" == true ]]; then host_docker run --publish 127.0.0.1::18190 "$@"
- else host_docker run "$@"; fi
+ if [[ "$remote" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
+ else host_docker run --pull=never "$@"; fi
 }
 returned_outer=$(outer_run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
 outer=$(outer_inventory)
@@ -288,21 +320,27 @@ for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binar
 if [[ "$remote" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
-host_docker image save "$postgres" "$registry" -o "$evidence/base-images.tar"
-host_docker cp "$evidence/base-images.tar" "$outer:/fixture/base-images.tar"
-inner_docker image load -i /fixture/base-images.tar
-host_docker exec "$outer" rm /fixture/base-images.tar
 if [[ "$remote" == true ]]; then
- host_docker image save "$traefik" "$pebble" "$silo" -o "$evidence/remote-images.tar"
- host_docker cp "$evidence/remote-images.tar" "$outer:/fixture/remote-images.tar"
- inner_docker image load -i /fixture/remote-images.tar
- host_docker exec "$outer" rm /fixture/remote-images.tar
+ preload_image "$postgres" "$evidence/pinned-host-images" postgres
+ preload_image "$registry" "$evidence/pinned-host-images" registry
+ preload_image "$traefik" "$evidence/pinned-remote-images" traefik
+ preload_image "$pebble" "$evidence/pinned-remote-images" pebble
+ preload_image "$silo" "$evidence/pinned-remote-images" silo
  host_docker exec "$outer" mkdir -m 700 /fixture/evidence
 else
+ host_docker image save "$postgres" "$registry" -o "$evidence/base-images.tar"
+ host_docker cp "$evidence/base-images.tar" "$outer:/fixture/base-images.tar"
+ inner_docker image load -i /fixture/base-images.tar
+ host_docker exec "$outer" rm /fixture/base-images.tar
  for image in "$traefik" "$pebble"; do inner_docker pull "$image"; done
 fi
-pg=$(inner_docker run --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 512m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=256m --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$postgres")
-reg=$(inner_docker run --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry")
+pg_image=$postgres; registry_image=$registry
+if [[ "$remote" != true ]]; then
+ pg_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[1]["Id"])' "$evidence/pinned-host-images")
+ registry_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[2]["Id"])' "$evidence/pinned-host-images")
+fi
+pg=$(inner_docker run --pull=never --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 512m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=256m --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$pg_image")
+reg=$(inner_docker run --pull=never --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry_image")
 printf 'inner_pg=%s\ninner_registry=%s\n' "$pg" "$reg" | tee "$evidence/inner-services"
 for version in a b; do
  host_docker cp "$evidence/$version" "$outer:/fixture/$version"
@@ -361,7 +399,7 @@ CHECK_STORE_PASS
  host_docker exec --workdir /workspace/internal/api "$outer" /fixture/api.test -test.list "$test_pattern" > "$evidence/api-test-list"
  python3 - "$evidence/api-test-list" <<'CHECK_API_LIST'
 import sys
-expected={"TestStorageRuntimeRollback","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"}
+expected={"TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"}
 actual=set(open(sys.argv[1]).read().splitlines())
 if actual!=expected:raise SystemExit("required API test names missing or unexpected")
 CHECK_API_LIST
@@ -375,7 +413,7 @@ CHECK_API_LIST
  python3 - "$evidence/api-tests.log" <<'CHECK_API_PASS'
 import sys
 text=open(sys.argv[1]).read()
-for name in ["TestStorageRuntimeRollback","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"]:
+for name in ["TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"]:
  if "--- PASS: "+name+" " not in text:raise SystemExit("required API runtime PASS missing: "+name)
 if "SKIP" in text:raise SystemExit("required API runtime test skipped")
 CHECK_API_PASS

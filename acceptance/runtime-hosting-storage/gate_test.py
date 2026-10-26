@@ -309,5 +309,59 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("owned outer volume absent",output)
 
 
+class ImagePreloadTest(unittest.TestCase):
+    def run_preload(self, change=None, pull_exit=0):
+        source = GATE.read_text().split("# IMAGE_PRELOAD_BEGIN\n", 1)[1].split("# IMAGE_PRELOAD_END", 1)[0]
+        digest = "sha256:" + "a" * 64
+        reference = "postgres:17.6-alpine@" + digest
+        host = {"Id": "sha256:" + "b" * 64, "Os": "linux", "Architecture": "arm64",
+                "RepoDigests": ["postgres@" + digest], "Config": {"Entrypoint": ["entrypoint"], "User": ""}}
+        guest = json.loads(json.dumps(host))
+        if change:
+            change(guest)
+        with tempfile.TemporaryDirectory(prefix="nerocd-storage-preload-test-") as temporary:
+            root = Path(temporary)
+            (root / "host.json").write_text(json.dumps([host]))
+            (root / "guest.json").write_text(json.dumps([guest]))
+            script = root / "preload.sh"
+            script.write_text(source + r"""
+evidence=$1
+inner_docker() {
+ printf '%s\n' "$*" >> "$evidence/calls"
+ if [[ "$1" == pull ]]; then return "$3"; fi
+ cat "$evidence/guest.json"
+}
+""".replace('return "$3"', 'return ' + str(pull_exit)) + '\npreload_image "' + reference + '" "$evidence/host.json" fixture\n')
+            result = subprocess.run(["bash", "-e", str(script), str(root)], capture_output=True, text=True, timeout=5)
+            calls = (root / "calls").read_text().splitlines()
+            return result, calls
+
+    def test_exact_pin_preloaded_before_inspection(self):
+        result, calls = self.run_preload()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls, ["pull --platform linux/arm64 postgres:17.6-alpine@sha256:" + "a" * 64,
+                                 "image inspect postgres:17.6-alpine@sha256:" + "a" * 64])
+
+    def test_bad_digest_platform_content_or_config_blocks(self):
+        changes = {
+            "lost digest lookup": lambda value: value.update(RepoDigests=[]),
+            "wrong digest": lambda value: value.update(RepoDigests=["postgres@sha256:" + "c" * 64]),
+            "wrong repository": lambda value: value.update(RepoDigests=["foreign/image@sha256:" + "a" * 64]),
+            "wrong platform": lambda value: value.update(Architecture="amd64"),
+            "wrong content": lambda value: value.update(Id="sha256:" + "c" * 64),
+            "wrong config": lambda value: value.update(Config={"User": "unexpected"}),
+        }
+        for name, change in changes.items():
+            with self.subTest(name=name):
+                result, calls = self.run_preload(change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(len(calls), 2)
+
+    def test_pull_failure_never_inspects_or_starts(self):
+        result, calls = self.run_preload(pull_exit=19)
+        self.assertEqual(result.returncode, 19)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -109,9 +109,9 @@ func storageRuntimeDocker(t *testing.T, args ...string) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...).CombinedOutput()
+	output, err := storageRuntimeDockerOutput(exec.CommandContext(ctx, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, storageRuntimeDockerArguments(args)...)...))
 	if err != nil {
-		t.Fatalf("owned Docker %s failed: %v: %s", args[0], err, output)
+		t.Fatalf("owned Docker %s failed: %v", args[0], err)
 	}
 	return output
 }
