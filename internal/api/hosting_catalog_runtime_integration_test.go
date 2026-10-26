@@ -101,38 +101,31 @@ func catalogSession(t *testing.T, base, user, password string) *http.Client {
 
 func catalogBookmark(t *testing.T, client *http.Client, base string, create bool) {
 	t.Helper()
-	var body io.Reader
-	method := "GET"
-	path := "/api/bookmarks/"
-	if create {
-		method = "POST"
-		path += "?disable_scraping&disable_html_snapshot"
-		body = strings.NewReader(`{"url":"http://127.0.0.1:9090/health","title":"NeroCD retained catalog bookmark","tag_names":["acceptance"]}`)
-	}
-	req, err := http.NewRequest(method, base+path, body)
+	req, err := catalogBookmarkRequest(client, base, create)
 	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Referer", base+"/bookmarks/")
-	u, _ := url.Parse(base)
-	for _, cookie := range client.Jar.Cookies(u) {
-		if cookie.Name == "csrftoken" {
-			req.Header.Set("X-CSRFToken", cookie.Value)
-		}
+		t.Fatalf("bookmark request construction failed: class=%s", catalogHTTPFailureClass(err))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatal("bookmark request failed")
+		t.Fatalf("bookmark request failed: class=%s status=%d", catalogHTTPFailureClass(err), catalogHTTPStatus(resp))
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	resp.Body.Close()
+	closeErr := resp.Body.Close()
 	status := 200
 	if create {
 		status = 201
 	}
-	if err != nil || resp.StatusCode != status || !bytes.Contains(raw, []byte("NeroCD retained catalog bookmark")) {
-		t.Fatal("bookmark persistence assertion failed")
+	if err != nil {
+		t.Fatalf("bookmark response read failed: class=%s status=%d", catalogHTTPFailureClass(err), catalogHTTPStatus(resp))
+	}
+	if closeErr != nil {
+		t.Fatalf("bookmark response close failed: class=%s status=%d", catalogHTTPFailureClass(closeErr), catalogHTTPStatus(resp))
+	}
+	if resp.StatusCode != status {
+		t.Fatalf("bookmark persistence assertion failed: class=http_status status=%d expected=%d", catalogHTTPStatus(resp), status)
+	}
+	if !bytes.Contains(raw, []byte("NeroCD retained catalog bookmark")) {
+		t.Fatalf("bookmark persistence assertion failed: class=missing_saved_bookmark status=%d", catalogHTTPStatus(resp))
 	}
 }
 

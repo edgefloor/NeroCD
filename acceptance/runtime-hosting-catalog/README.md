@@ -22,7 +22,8 @@ Inside that daemon, the established PostgreSQL fixture uses
 one CPU, 1536 MiB memory, 128 PIDs, a 1 GiB data tmpfs, WAL targets 128/32 MiB,
 and default durability. The existing pinned registry, Traefik, Pebble and local
 storage helper images remain prerequisites of the reused fixture, although the
-catalog test does not create application routes or run backup/delete machinery.
+catalog test exercises a managed HTTPS application route and does not run
+backup/delete machinery.
 The new exact image pull is the Linkding digest in [the catalog contract](../../docs/hosting-catalog.md).
 All application mutations occur inside the owned guest. Guest API TLS uses the
 existing fixture CA. The compiled runner uses the actual public API and journal.
@@ -43,14 +44,25 @@ the real candidate API and runner. It separately verifies the managed route at
 1.47.0, preserving the route across redeploy and failed-candidate recovery. This
 application HTTPS evidence is distinct from browser-to-API TLS. It also checks
 runner-local `/health`, submits Linkding's real login form,
-and saves a bookmark using its session-authenticated API. Scraping and HTML
-snapshots are disabled for the fixture bookmark, so no external website is fetched.
+and saves a bookmark using its session-authenticated API. The bare query flags
+are valid [presence-based switches](https://github.com/sissbruecker/linkding/blob/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f/bookmarks/api/routes.py#L67-L75).
+They suppress only the documented metadata-scraping and automatic HTML-snapshot
+paths. Bookmark creation still [queues archive, favicon and preview work](https://github.com/sissbruecker/linkding/blob/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f/bookmarks/services/bookmarks.py#L36-L47)
+according to Linkding's existing settings; the flags do not guarantee absence of
+background network requests. The fixture uses the pinned version's
+[`ld_csrftoken` cookie](https://github.com/sissbruecker/linkding/blob/24b5ad6cc9bde497b5d1b1e86aed5a2fb7d25c2f/bookmarks/settings/base.py#L110-L112)
+for session-authenticated API requests.
 It starts a fresh cookie jar after runner restart/redeploy and after a failed
 candidate restores the predecessor. It verifies bookmark data, volume origin,
 secret IDs, versions and values, original template copy, and absence of plaintext
 in operation metadata, runner logs and journal. The local unit, API and PostgreSQL
 checks separately cover malformed requests, concurrent installation, permission
 and destination denial, and revoked replay.
+
+The original bookmark transport failure remains unexplained because its
+underlying error was not retained. Correcting CSRF handling does not establish
+that failure's cause. The fixture now records fixed transport-error classes and
+numeric HTTP statuses without error text, URLs, cookies or response bodies.
 
 The gate must report the exact test as passed with no skip. Reviewers must still
 assess `code_hygiene`, `specification` and `critical_security` at the exact SHA.
