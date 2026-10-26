@@ -46,6 +46,9 @@ func claimStorageRemote(t *testing.T, f archiveControlFixture, id string) (domai
 	if err != nil {
 		t.Fatal(err)
 	}
+	if p.Operation.Mode == "validate" && (p.Limits.Validate() != nil || p.Limits.ArchiveBytes != p.MaxBytes) {
+		t.Fatal("validation plan omitted configured positive limits")
+	}
 	return a, p
 }
 func settleStorageRemote(t *testing.T, f archiveControlFixture, id, failure string) domain.HostingStorageBackupTransfer {
@@ -128,6 +131,7 @@ func TestPostgresStorageRemoteLocalCompletionAtomicEnqueueAndReplay(t *testing.T
 	}
 }
 func TestPostgresStorageRemoteRetryPreservesArchiveAndRevocation(t *testing.T) {
+	t.Run("committed_receipt_after_revocation", testStorageRemoteCommittedReceiptAfterRevocation)
 	f, target := storageRemoteControlFixture(t)
 	b := f.finishBackup(t, requestRemoteStorageBackup(t, f, target))
 	rows, err := f.service.ListStorageBackupTransfers(f.owner, b.ID, false)
@@ -263,5 +267,70 @@ func testStorageRemoteRecoveredUpload(t *testing.T) {
 	saved, err := f.service.GetStorageBackup(f.owner, b.ID)
 	if err != nil || saved.State != "succeeded" || domain.HostingDocumentHash(saved.Blob) != domain.HostingDocumentHash(published) {
 		t.Fatal("recovery changed archive identity", err)
+	}
+}
+
+func testStorageRemoteCommittedReceiptAfterRevocation(t *testing.T) {
+	for _, kind := range []string{"target", "key", "actor", "grant"} {
+		t.Run(kind, func(t *testing.T) {
+			f, target := storageRemoteControlFixture(t)
+			b := f.finishBackup(t, requestRemoteStorageBackup(t, f, target))
+			rows, err := f.service.ListStorageBackupTransfers(f.owner, b.ID, false)
+			if err != nil || len(rows) != 1 {
+				t.Fatal(err)
+			}
+			a, p := claimStorageRemote(t, f, rows[0].ID)
+			intent := domain.HostingStorageBackupTransferMutation{HostingAuthority: a, ReceiptID: "revoke_intent", PlanHash: p.Hash, Phase: "intent", DaemonID: f.helper.DaemonID}
+			if _, err = f.pg.StorageBackupTransferMutation(f.ctx, f.runner, intent); err != nil {
+				t.Fatal(err)
+			}
+			complete := intent
+			complete.Phase = "complete"
+			complete.ReceiptID = "revoke_complete"
+			committed, err := f.pg.StorageBackupTransferMutation(f.ctx, f.runner, complete)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The result was committed but its response was lost before the journal ACK.
+			pending, err := f.service.ValidateStorageBackupTarget(f.owner, target.ProjectID, target.ID, domain.HostingDatabaseBackupTargetValidationInput{RequestID: "pending_before_revoke", ExpectedRevision: target.Revision, DestinationID: f.storage.DestinationID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pendingAuthority, pendingPlan := claimStorageRemote(t, f, pending.ID)
+			switch kind {
+			case "target":
+				_, err = f.service.SaveDatabaseBackupTarget(f.owner, target.ProjectID, target.ID, domain.HostingDatabaseBackupTargetInput{RequestID: "receipt_disable", ExpectedRevision: target.Revision, Name: target.Name, Endpoint: target.Endpoint, Bucket: target.Bucket, Region: target.Region, Enabled: false}, nil)
+			case "key":
+				_, err = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_remote_credentials SET status='revoked' WHERE id=$1`, p.Target.Secret.SecretID)
+			case "actor":
+				_, err = f.db.Exec(f.ctx, `UPDATE users SET status='disabled' WHERE id=$1`, p.ActorID)
+			case "grant":
+				_, err = f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1 AND project_id=$2`, p.Operation.DestinationID, p.Operation.ProjectID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay, err := f.pg.StorageBackupTransferMutation(f.ctx, f.runner, complete)
+			if err != nil || domain.HostingDocumentHash(replay) != domain.HostingDocumentHash(committed) {
+				t.Fatal("revocation blocked exact receipt ACK", err)
+			}
+			for _, changed := range []domain.HostingStorageBackupTransferMutation{func() domain.HostingStorageBackupTransferMutation {
+				v := complete
+				v.ReceiptID = "changed_receipt"
+				return v
+			}(), func() domain.HostingStorageBackupTransferMutation { v := complete; v.Fence = "changed_fence"; return v }()} {
+				if _, err = f.pg.StorageBackupTransferMutation(f.ctx, f.runner, changed); err == nil {
+					t.Fatal("changed body or tuple replayed")
+				}
+			}
+			fresh := domain.HostingStorageBackupTransferMutation{HostingAuthority: pendingAuthority, ReceiptID: "fresh_after_revoke", PlanHash: pendingPlan.Hash, Phase: "intent", DaemonID: f.helper.DaemonID}
+			if _, err = f.pg.StorageBackupTransferMutation(f.ctx, f.runner, fresh); err == nil {
+				t.Fatal("revoked authority admitted new effect")
+			}
+			var receipts int
+			if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_storage_backup_transfer_receipts WHERE operation_id=$1`, pending.ID).Scan(&receipts); err != nil || receipts != 0 {
+				t.Fatal("revoked effect wrote receipt", err)
+			}
+		})
 	}
 }

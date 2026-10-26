@@ -181,7 +181,7 @@ func executeStorageBackupTransferWithEngine(s *attemptSupervisor, j *runner.Atte
 	return j.AckStorageBackupTransfer(entry.ID)
 }
 
-func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, remote *backupRemoteS3, p domain.HostingStorageBackupTransferPlan, before func(context.Context) error) error {
+func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, remote *backupRemoteS3, p domain.HostingStorageBackupTransferPlan, before func(context.Context) error) (err error) {
 	if before(ctx) != nil {
 		return backupRemoteError("authority_denied")
 	}
@@ -210,11 +210,19 @@ func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, re
 		}
 		return remote.storageUpload(ctx, p.Target.Target.Bucket, p.ObjectKey, blob, file)
 	}
-	file, err := e.temporary.OpenFile(p.Operation.ID+".partial", os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	name, err := storageRemotePartialName(p.Operation.ID)
+	if err != nil {
+		return err
+	}
+	file, err := e.temporary.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return backupRemoteError("archive_unavailable")
 	}
-	defer file.Close()
+	defer func() {
+		if cleanupErr := removeStorageRemotePartial(e.temporary, name, file); cleanupErr != nil {
+			err = cleanupErr
+		}
+	}()
 	if err = remote.storageDownload(ctx, p.Target.Target.Bucket, p.ObjectKey, blob, file); err != nil {
 		return err
 	}
@@ -247,6 +255,88 @@ func executeStorageRemoteObject(ctx context.Context, e *storageArchiveEngine, re
 	}
 	return nil
 }
+
+// Partial names come only from the immutable transfer identity. No caller path,
+// directory scan or remote object key participates in cleanup.
+func storageRemotePartialName(id string) (string, error) {
+	if len(id) == 0 || len(id) > 128 {
+		return "", backupRemoteError("archive_unavailable")
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return "", backupRemoteError("archive_unavailable")
+		}
+	}
+	return id + ".partial", nil
+}
+func removeStorageRemotePartial(root *os.Root, name string, file *os.File) error {
+	// Compare the opened inode with the rooted directory entry before unlinking.
+	// Refuse symlinks, foreign ownership, hard links and replaced entries.
+	info, err := file.Stat()
+	if err == nil {
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			err = errBackupRemoteHeld
+		}
+	}
+	if err == nil {
+		var entry os.FileInfo
+		entry, err = root.Lstat(name)
+		if err == nil && (!os.SameFile(info, entry) || !entry.Mode().IsRegular()) {
+			err = errBackupRemoteHeld
+		}
+	}
+	if err == nil {
+		err = root.Remove(name)
+	}
+	closeErr := file.Close()
+	if err != nil || closeErr != nil {
+		return backupRemoteError("archive_unavailable")
+	}
+	return nil
+}
+
+// Replay may reclaim only the exact private staging entry named by its durable
+// download plan. It does not open Docker or request execution credentials.
+func cleanupStorageRemoteReplay(c *StorageArchiveExecutionConfig, p domain.HostingStorageBackupTransferPlan) (err error) {
+	if p.Operation.Mode != "download" {
+		return nil
+	}
+	name, err := storageRemotePartialName(p.Operation.ID)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(c.TemporaryRoot)
+	if err != nil {
+		return backupRemoteError("archive_unavailable")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 || stat.Uid != uint32(os.Geteuid()) {
+		return backupRemoteError("archive_unavailable")
+	}
+	root, err := os.OpenRoot(c.TemporaryRoot)
+	if err != nil {
+		return backupRemoteError("archive_unavailable")
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = backupRemoteError("archive_unavailable")
+		}
+	}()
+	current, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, current) {
+		return backupRemoteError("archive_unavailable")
+	}
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return backupRemoteError("archive_unavailable")
+	}
+	return removeStorageRemotePartial(root, name, file)
+}
+
 func openStorageRemoteEngine(ctx context.Context, c StorageArchiveExecutionConfig, endpoint string) (*storageArchiveEngine, error) {
 	e, err := openStorageArchiveEngine(ctx, c, endpoint)
 	if err != nil {
@@ -297,6 +387,9 @@ func reconcileStorageBackupTransferJournal(ctx context.Context, c Config, j *run
 				if !storageRemoteReceiptMatches(entry.Plan, request, out) {
 					return errBackupRemoteHeld
 				}
+				if err = cleanupStorageRemoteReplay(c.StorageArchive, entry.Plan); err != nil {
+					return err
+				}
 				if err = j.AckStorageBackupTransfer(entry.ID); err != nil {
 					return err
 				}
@@ -312,6 +405,9 @@ func reconcileStorageBackupTransferJournal(ctx context.Context, c Config, j *run
 		}
 		if !storageRemoteReceiptMatches(entry.Plan, entry.Request, out) {
 			return errBackupRemoteHeld
+		}
+		if err = cleanupStorageRemoteReplay(c.StorageArchive, entry.Plan); err != nil {
+			return err
 		}
 		for _, intent := range entries {
 			if intent.Request.Phase == "intent" && intent.Request.HostingAuthority == entry.Request.HostingAuthority && intent.Plan.Hash == entry.Plan.Hash {

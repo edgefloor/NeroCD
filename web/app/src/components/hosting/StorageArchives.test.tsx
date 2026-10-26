@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -478,4 +479,58 @@ test("remote upload failure retries the immutable archive without another local 
       .expected_transfer_id,
   ).toBe("transfer");
   expect(api.requestArchiveBackup).not.toHaveBeenCalled();
+});
+
+test("lost retry response stays bound to its held download rather than another row", async () => {
+  const download = (id: string) =>
+    ({
+      id,
+      version: "owned-upload.s3-transfer.v1",
+      project_id: "p",
+      target_id: "target",
+      target_revision: 1,
+      destination_id: "d",
+      mode: "download",
+      backup_id: "backup",
+      restore_operation_id: "restore_" + id,
+      state: "failed",
+      failure_code: "object_mismatch",
+      created_at: "2026-10-26",
+      updated_at: "2026-10-26",
+    }) as remote.StorageBackupTransfer;
+  vi.mocked(remote.listStorageTransfers).mockResolvedValue([
+    download("A"),
+    download("B"),
+  ]);
+  vi.mocked(remote.retryStorageTransfer)
+    .mockRejectedValueOnce(new Error("response lost"))
+    .mockResolvedValue(download("A"));
+  setup();
+  await loaded();
+  click("Backup backup");
+  await screen.findAllByRole("button", { name: "Retry remote download" });
+  const rowA = () => screen.getByText(/download A: failed/);
+  const rowB = () => screen.getByText(/download B: failed/);
+  const buttonA = () =>
+    within(rowA()).getByRole("button", { name: "Retry remote download" });
+  const buttonB = () =>
+    within(rowB()).getByRole("button", { name: "Retry remote download" });
+  await waitFor(() => expect(buttonA().hasAttribute("disabled")).toBe(false));
+  fireEvent.click(buttonA());
+  await screen.findByText(/Saved remote retry/);
+  await waitFor(() => expect(buttonA().hasAttribute("disabled")).toBe(false));
+  expect(buttonB().hasAttribute("disabled")).toBe(true);
+  fireEvent.click(buttonB());
+  expect(remote.retryStorageTransfer).toHaveBeenCalledTimes(1);
+  const first = vi.mocked(remote.retryStorageTransfer).mock.calls[0]!;
+  expect(first[1]).toBe("backup");
+  expect(first[2].expected_transfer_id).toBe("A");
+  fireEvent.click(buttonA());
+  await waitFor(() =>
+    expect(remote.retryStorageTransfer).toHaveBeenCalledTimes(2),
+  );
+  expect(vi.mocked(remote.retryStorageTransfer).mock.calls[1]![2]).toEqual(
+    first[2],
+  );
+  expect(api.requestArchiveRestore).not.toHaveBeenCalled();
 });

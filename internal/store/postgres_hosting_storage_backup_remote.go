@@ -184,7 +184,7 @@ func (s *PostgresStore) ValidateStorageBackupTarget(ctx context.Context, id, pro
 		}
 		limits := s.storageArchiveConfiguration.limits
 		view := domain.HostingStorageBackupTransfer{ID: id, Version: domain.HostingStorageBackupTransferVersion, ProjectID: project, TargetID: target, TargetRevision: revision, DestinationID: in.DestinationID, Mode: "validate", State: "queued", CreatedAt: now, UpdatedAt: now}
-		p := domain.HostingStorageBackupTransferPlan{Operation: view, Target: snapshot, ActorID: actor, RunnerID: runner, ServerID: server, MaxBytes: limits.ArchiveBytes, TimeoutSeconds: 3600}
+		p := domain.HostingStorageBackupTransferPlan{Operation: view, Target: snapshot, ActorID: actor, RunnerID: runner, ServerID: server, Limits: limits, MaxBytes: limits.ArchiveBytes, TimeoutSeconds: 3600}
 		p.Hash = domain.HostingDocumentHash(p)
 		if err = storageRemoteCurrent(ctx, tx, p); err != nil {
 			return zero, err
@@ -314,9 +314,9 @@ func (s *PostgresStore) StorageBackupTransferMutation(ctx context.Context, runne
 		if err != nil {
 			return zero, err
 		}
-		if err = storageRemoteCurrent(ctx, tx, r.plan); err != nil {
-			return zero, err
-		}
+		// Exact committed receipts acknowledge history under authenticated fenced
+		// authority. Revoked execution inputs cannot prevent retirement of that
+		// history, and a receipt never authorizes another effect.
 		var hash string
 		var response []byte
 		readStorageRemoteReceiptRow, err := sqlcgen.New(tx).ReadStorageRemoteReceipt(ctx, sqlcgen.ReadStorageRemoteReceiptParams{OperationID: r.view.ID, Phase: in.Phase})

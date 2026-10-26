@@ -86,14 +86,13 @@ export function StorageArchives({
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [remoteRestore, setRemoteRestore] = useState(false);
   const [remoteRetry, setRemoteRetry] = useState<{
-    request_id: string;
-    expected_transfer_id: string;
+    backup: string;
+    input: { request_id: string; expected_transfer_id: string };
   }>();
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState("");
   useEffect(() => {
-    setRemoteRetry(undefined);
     setRemoteRestore(false);
   }, [selected]);
   const [restoreID, setRestoreID] = useState("");
@@ -159,11 +158,17 @@ export function StorageArchives({
     transfer: StorageBackupTransfer | undefined = remoteUpload,
   ) {
     if (!owner || remoteBusy || lost || !transfer) return;
-    const input = remoteRetry ?? {
+    if (
+      remoteRetry &&
+      (remoteRetry.backup !== selected ||
+        remoteRetry.input.expected_transfer_id !== transfer.id)
+    )
+      return;
+    const input = remoteRetry?.input ?? {
       request_id: storageRequestID(),
       expected_transfer_id: transfer.id,
     };
-    setRemoteRetry(input);
+    setRemoteRetry({ backup: selected, input });
     setRemoteBusy(true);
     try {
       await retryStorageTransfer(targetScope, selected, input);
@@ -569,7 +574,13 @@ export function StorageArchives({
                     Restore remains held until a verified download completes.
                   </span>
                   <Button
-                    disabled={blocked || remoteBusy}
+                    disabled={
+                      blocked ||
+                      remoteBusy ||
+                      (!!remoteRetry &&
+                        (remoteRetry.backup !== selected ||
+                          remoteRetry.input.expected_transfer_id !== v.id))
+                    }
                     onClick={() => void retryRemote(v)}
                   >
                     Retry remote download
@@ -582,7 +593,13 @@ export function StorageArchives({
           remoteUpload &&
           ["failed", "uncertain"].includes(remoteUpload.state) ? (
             <Button
-              disabled={blocked || remoteBusy}
+              disabled={
+                blocked ||
+                remoteBusy ||
+                (!!remoteRetry &&
+                  (remoteRetry.backup !== selected ||
+                    remoteRetry.input.expected_transfer_id !== remoteUpload.id))
+              }
               onClick={() => void retryRemote()}
             >
               Retry remote upload of the same archive
@@ -590,8 +607,10 @@ export function StorageArchives({
           ) : null}
           {remoteRetry ? (
             <p>
-              Saved remote retry {remoteRetry.request_id}. Retry keeps the same
-              archive and request identity.
+              Saved remote retry {remoteRetry.input.request_id} for transfer{" "}
+              {remoteRetry.input.expected_transfer_id} in backup{" "}
+              {remoteRetry.backup}. Retry that transfer to keep the same archive
+              and request identity.
             </p>
           ) : null}
         </section>
