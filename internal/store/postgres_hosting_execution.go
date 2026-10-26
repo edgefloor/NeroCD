@@ -1864,11 +1864,12 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 			return false, nil
 		}
 	}
-	if mode == "observe" {
+	switch mode {
+	case "observe":
 		if !op.ReconcileRequested || op.ReconciliationRunID != run.ID {
 			return false, nil
 		}
-	} else if mode == "storage_recover" {
+	case "storage_recover":
 		if !storageRecoveryRun(ctx, tx, op, run.ID) || op.State != "failed" || !op.MutationHold {
 			return false, nil
 		}
@@ -1879,7 +1880,7 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		if !fresh {
 			return false, nil
 		}
-	} else if mode == "finalize" {
+	case "finalize":
 		if !continuityFinalizeRun(op, run.ID) || op.ApplicationDatabaseYield == nil || !op.MutationHold || op.State != "applying" && op.State != "verifying" {
 			return false, nil
 		}
@@ -1896,7 +1897,7 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 			}
 			return false, err
 		}
-	} else {
+	default:
 		if op.RunID != run.ID || op.MutationHold || (op.State != "dispatched" && op.State != "prepared" && op.State != "preparing") {
 			return false, nil
 		}

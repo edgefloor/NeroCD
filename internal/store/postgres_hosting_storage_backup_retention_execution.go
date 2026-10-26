@@ -212,16 +212,17 @@ func (s *PostgresStore) StorageBackupRetentionMutation(ctx context.Context, runn
 			item.State = "intent"
 			r.view.State = "applying"
 		} else {
-			if item.State != "intent" && item.State != "uncertain" && !(in.Phase == "failed" && item.State == "pending") {
+			if item.State != "intent" && item.State != "uncertain" && (in.Phase != "failed" || item.State != "pending") {
 				return zero, ErrConflict
 			}
 			item.State = in.Phase
 			item.FailureCode = in.FailureCode
 			item.ReservationHeld = in.Phase == "uncertain"
 			availability := "available"
-			if in.Phase == "deleted" || in.Phase == "absent" {
+			switch in.Phase {
+			case "deleted", "absent":
 				availability = "deleted"
-			} else if in.Phase == "uncertain" {
+			case "uncertain":
 				availability = "uncertain"
 			}
 			if e = sqlcgen.New(tx).StorageRetentionSetCopyAvailability(ctx, sqlcgen.StorageRetentionSetCopyAvailabilityParams{ID: in.CopyID, Availability: availability}); e != nil {

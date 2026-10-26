@@ -241,7 +241,7 @@ func TestPostgresApplicationDatabaseStorageFailedProxyForwardRecovery(t *testing
 			if err != nil || f.appOperation.RunID != yielded.RunID {
 				t.Fatal("finalize consumed wrong association", err)
 			}
-			f.connectionFixture = f.connectionFixture.retire(t)
+			f.connectionFixture = f.retire(t)
 			f.connectionFixture = completeStorageRecoveryDuringPublicRead(t, f.connectionFixture)
 			final, err := f.pg.GetHostingOperation(f.ctx, op.ID)
 			if err != nil || final.ApplicationDatabaseStorageState.RecoveryState != "succeeded" || final.ApplicationDatabaseRouteContinuity.ProxyOperationID != p.ID {
@@ -292,7 +292,7 @@ func readyRoutedStorageFixture(t *testing.T, engine string) (connectedStorageFix
 	f = f.prepare(t).write(t, "stop_intent", nil)
 	f.effect(t, "stop_predecessor")
 	f = f.write(t, "stopped", nil)
-	f.connectionFixture = f.connectionFixture.ready(t)
+	f.connectionFixture = f.ready(t)
 	yielded, err := f.pg.HostingApplicationDatabaseYield(f.ctx, f.runner, f.credential, routeYield(f.connectionFixture))
 	if err != nil {
 		t.Fatal("storage yield", err)

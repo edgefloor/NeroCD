@@ -100,7 +100,7 @@ func (s *PostgresStore) HostingApplicationDatabaseStorageWriter(ctx context.Cont
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
-		if op.ApplicationDatabaseStorage == nil || op.Plan == nil || op.Plan.PreviousHealthy == nil || in.Receipt.PlanHash != op.Plan.Hash || in.Receipt.StorageRef != op.Snapshot.Storage || in.Receipt.PredecessorHash != domain.HostingDocumentHash(op.Plan.PreviousHealthy) || !op.MutationHold || op.Result != nil || op.ApplicationDatabaseYield != nil || op.State != "applying" && op.State != "verifying" && !(op.State == "failed" && storageRecoveryRun(ctx, tx, op, in.RunID)) {
+		if op.ApplicationDatabaseStorage == nil || op.Plan == nil || op.Plan.PreviousHealthy == nil || in.Receipt.PlanHash != op.Plan.Hash || in.Receipt.StorageRef != op.Snapshot.Storage || in.Receipt.PredecessorHash != domain.HostingDocumentHash(op.Plan.PreviousHealthy) || !op.MutationHold || op.Result != nil || op.ApplicationDatabaseYield != nil || op.State != "applying" && op.State != "verifying" && (op.State != "failed" || !storageRecoveryRun(ctx, tx, op, in.RunID)) {
 			return zero, ErrConflict
 		}
 		recovery := storageRecoveryRun(ctx, tx, op, in.RunID)

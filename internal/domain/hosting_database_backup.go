@@ -211,15 +211,16 @@ func (o HostingDatabaseBackupOperation) Validate() error {
 	default:
 		return ErrInvalidDatabaseBackup
 	}
-	if o.Mode == "backup" {
+	switch o.Mode {
+	case "backup":
 		if o.BackupID != o.ID || o.TargetResourceID != "" {
 			return ErrInvalidDatabaseBackup
 		}
-	} else if o.Mode == "restore" {
+	case "restore":
 		if o.BackupID == o.ID || !validRuntimeReferenceID(o.TargetResourceID) || o.TargetResourceID == o.SourceResourceID {
 			return ErrInvalidDatabaseBackup
 		}
-	} else {
+	default:
 		return ErrInvalidDatabaseBackup
 	}
 	if o.Blob != nil && o.Blob.Validate() != nil || o.State == "succeeded" && (o.Blob == nil || o.OwnershipHeld) || o.State == "uncertain" && !o.OwnershipHeld {

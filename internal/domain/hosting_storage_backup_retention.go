@@ -188,15 +188,16 @@ func (p HostingStorageBackupRetentionPlan) Validate() error {
 			return ErrInvalidStorageBackupRetention
 		}
 		seen[c.Item.CopyID] = true
-		if c.Item.Location == "local" {
+		switch c.Item.Location {
+		case "local":
 			if c.Local == nil || c.Local.Validate() != nil || c.Local.Bytes != c.Item.Bytes || !c.Local.Created || c.Remote != nil || c.Target != nil || c.ObjectKey != "" {
 				return ErrInvalidStorageBackupRetention
 			}
-		} else if c.Item.Location == "remote" {
+		case "remote":
 			if c.Remote == nil || c.Remote.Validate() != nil || !c.Remote.Created || c.Local != nil || c.Target == nil || c.Target.Validate() != nil || c.ObjectKey != StorageRemoteObjectKey(c.Item.BackupID, HostingStorageArchiveBlob{BackupID: c.Item.BackupID, DestinationID: c.DestinationID, DaemonID: c.DaemonID, SHA256: c.Item.Digest, SizeBytes: c.Item.Bytes, Format: HostingStorageArchiveFormat}) {
 				return ErrInvalidStorageBackupRetention
 			}
-		} else {
+		default:
 			return ErrInvalidStorageBackupRetention
 		}
 	}
@@ -224,7 +225,7 @@ func (in HostingStorageBackupRetentionMutation) Validate() error {
 			return ErrInvalidStorageBackupRetention
 		}
 		for _, r := range strings.TrimPrefix(in.ProbeKey, prefix) {
-			if !(r >= 'a' && r <= 'f' || r >= '0' && r <= '9') {
+			if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
 				return ErrInvalidStorageBackupRetention
 			}
 		}

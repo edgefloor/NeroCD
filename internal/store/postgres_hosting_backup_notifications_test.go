@@ -295,7 +295,11 @@ func TestPostgresBackupNotificationSMTPUsesCurrentMembersAfterActorRevocation(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error("close SMTP fixture listener", err)
+		}
+	}()
 	pg, err := store.OpenPostgres(t.Context(), f.db.Config().ConnString())
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +349,11 @@ func TestPostgresBackupNotificationSMTPUsesCurrentMembersAfterActorRevocation(t 
 		if e != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Error("close SMTP fixture connection", err)
+			}
+		}()
 		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 		reader := bufio.NewReader(conn)
 		_, _ = io.WriteString(conn, "220 fixture ESMTP\r\n")
@@ -610,7 +618,11 @@ func newNotificationSMTPRepairPeer(t *testing.T, mode string, drops int, beforeA
 			}
 			attempt := int(accepted.Add(1))
 			err = func() error {
-				defer connection.Close()
+				defer func(connection net.Conn) {
+					if err := connection.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+						t.Error("close SMTP repair fixture connection", err)
+					}
+				}(connection)
 				_ = connection.SetDeadline(time.Now().Add(3 * time.Second))
 				reader := bufio.NewReader(connection)
 				write := func(value string) error { _, err := io.WriteString(connection, value); return err }

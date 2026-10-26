@@ -20,7 +20,7 @@ type HostingApplicationDatabaseRouteContinuityInput struct {
 // CanonicalHostingApplicationDatabaseRouteContinuityInput normalizes application database routing
 // input through the storage route contract.
 func CanonicalHostingApplicationDatabaseRouteContinuityInput(in HostingApplicationDatabaseRouteContinuityInput) (HostingApplicationDatabaseRouteContinuityInput, error) {
-	c, err := CanonicalHostingStorageRouteContinuityInput(HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: in.ExpectedLoadedGeneration, ExpectedLoadedProxyOperationID: in.ExpectedLoadedProxyOperationID, Routes: in.Routes})
+	c, err := CanonicalHostingStorageRouteContinuityInput(HostingStorageRouteContinuityInput(in))
 	if err != nil {
 		return HostingApplicationDatabaseRouteContinuityInput{}, err
 	}

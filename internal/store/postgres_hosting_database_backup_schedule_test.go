@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"reflect"
 	"strings"
@@ -91,7 +92,13 @@ func TestPostgresDatabaseBackupScheduleRetirementRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blocker.Rollback(context.Background())
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := blocker.Rollback(cleanupCtx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error("rollback schedule fixture blocker", err)
+		}
+	}()
 	if _, err = blocker.Exec(f.ctx, `SELECT id FROM hosting_database_backups WHERE id=$1 FOR UPDATE`, b.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +134,8 @@ func TestPostgresDatabaseBackupScheduleRetirementRace(t *testing.T) {
 	if f.db.QueryRow(f.ctx, `SELECT run_id,(SELECT count(*) FROM hosting_database_backup_schedule_retirements WHERE operation_id=b.id),(SELECT count(*) FROM run_leases l JOIN task_runs r ON r.id=l.run_id WHERE r.run_spec->>'hosting_operation_id'=b.id) FROM hosting_database_backups b WHERE b.id=$1`, b.ID).Scan(&run, &decisions, &attempts) != nil {
 		t.Fatal("race identity unavailable")
 	}
-	if current.State == "failed" {
+	switch current.State {
+	case "failed":
 		if run != nil || decisions != 1 || attempts != 0 || current.OwnershipHeld {
 			t.Fatal("retirement crossed run/hold authority")
 		}
@@ -137,7 +145,7 @@ func TestPostgresDatabaseBackupScheduleRetirementRace(t *testing.T) {
 		if _, err = f.pg.ClaimRun(f.ctx, f.runner, time.Now(), time.Minute); !errors.Is(err, store.ErrNotFound) {
 			t.Fatal("stale delivery recreated a task", err)
 		}
-	} else if current.State == "dispatched" {
+	case "dispatched":
 		if run == nil || decisions != 0 || !current.OwnershipHeld {
 			t.Fatal("dispatch raced a retirement receipt")
 		}
@@ -152,7 +160,7 @@ func TestPostgresDatabaseBackupScheduleRetirementRace(t *testing.T) {
 		if err != nil || !current.OwnershipHeld || current.State != "dispatched" {
 			t.Fatal("active attempt retired", err)
 		}
-	} else {
+	default:
 		t.Fatal("unexpected race settlement", current.State)
 	}
 	_ = s

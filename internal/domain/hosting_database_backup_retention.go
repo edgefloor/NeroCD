@@ -383,15 +383,16 @@ func (p HostingDatabaseBackupRetentionPlan) Validate() error {
 			return ErrInvalidDatabaseBackupRetention
 		}
 		seen[c.Item.CopyID] = true
-		if c.Item.Location == "local" {
+		switch c.Item.Location {
+		case "local":
 			if c.Local == nil || c.Local.Validate() != nil || !c.Local.Created || c.Remote != nil || c.Target != nil || c.ObjectKey != "" {
 				return ErrInvalidDatabaseBackupRetention
 			}
-		} else if c.Item.Location == "remote" {
+		case "remote":
 			if c.Remote == nil || c.Remote.Validate() != nil || !c.Remote.Created || c.Local != nil || c.Target == nil || c.Target.Validate() != nil || c.ObjectKey != BackupRemoteObjectKey(c.Item.BackupID, HostingDatabaseBackupBlob{Digest: c.Item.Digest, Bytes: c.Item.Bytes, Format: "postgresql_custom"}) {
 				return ErrInvalidDatabaseBackupRetention
 			}
-		} else {
+		default:
 			return ErrInvalidDatabaseBackupRetention
 		}
 	}
@@ -419,7 +420,7 @@ func (in HostingDatabaseBackupRetentionMutation) Validate() error {
 			return ErrInvalidDatabaseBackupRetention
 		}
 		for _, r := range strings.TrimPrefix(in.ProbeKey, prefix) {
-			if !(r >= 'a' && r <= 'f' || r >= '0' && r <= '9') {
+			if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
 				return ErrInvalidDatabaseBackupRetention
 			}
 		}

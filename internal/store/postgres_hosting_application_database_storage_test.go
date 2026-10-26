@@ -253,7 +253,7 @@ func TestPostgresApplicationDatabaseStorageBootstrapAndFailureRecovery(t *testin
 			if err = f.db.QueryRow(f.ctx, `SELECT members FROM hosting_database_membership_heads WHERE database_binding_id=$1`, f.appOperation.ApplicationDatabase.Binding.DatabaseBindingID).Scan(&raw); err != nil || json.Unmarshal(raw, &members) != nil || len(members) != 1 || members[0].Resume == nil || members[0].Resume.WriterReceipt.Hash != f.writer.Receipt.Hash {
 				t.Fatal("missing dedicated resumed member evidence", err)
 			}
-			f.connectionFixture = f.connectionFixture.maintenance(t, 3, "maintenance_after_resume")
+			f.connectionFixture = f.maintenance(t, 3, "maintenance_after_resume")
 		})
 	}
 }
@@ -268,7 +268,7 @@ func TestPostgresApplicationDatabaseStorageSuccessfulBootstrapAndMaintenance(t *
 			if f.appOperation.Plan.Storage == nil {
 				t.Fatal("missing composed storage")
 			}
-			f.connectionFixture = f.connectionFixture.maintenance(t, 4, "storage_member_maintenance")
+			f.connectionFixture = f.maintenance(t, 4, "storage_member_maintenance")
 		})
 	}
 }

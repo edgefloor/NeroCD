@@ -145,11 +145,11 @@ func TestHostingCatalogPostgresAtomicReplaySecretsAndDeployment(t *testing.T) {
 	if _, err = pg.HostingApplyBegin(ctx, op.Snapshot.RunnerID, a); err != nil {
 		t.Fatal("combined apply admission", err)
 	}
-	for _, entry := range v.Credentials {
+	if len(v.Credentials) > 0 {
+		entry := v.Credentials[0]
 		if _, err = s.RevokeManagedSecret(ctx, entry.Secret.SecretID, app.ManagedSecretRevokeInput{ExpectedVersion: 1}); err != nil {
 			t.Fatal(err)
 		}
-		break
 	}
 	if _, err = s.InstallHostingCatalog(ctx, in); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("revoked secret replay admitted %v", err)
