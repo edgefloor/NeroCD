@@ -280,3 +280,81 @@ func TestHostingStorageRemoteObservationFaultContract(t *testing.T) {
 		})
 	}
 }
+
+// The real browser receives one lost execution ACK after the production handler
+// commits. Capture only safe typed request/response metadata for exact replay.
+type hostingStorageRetentionRuntimeWire struct {
+	mu                sync.Mutex
+	resource          string
+	previewRequest    domain.HostingStorageBackupRetentionPreviewInput
+	preview           domain.HostingStorageBackupRetentionPreview
+	executionRequest  domain.HostingStorageBackupRetentionExecutionInput
+	execution         domain.HostingStorageBackupRetentionExecution
+	executionRequests int
+	failed            bool
+}
+
+func (f *hostingStorageRetentionRuntimeWire) serve(w http.ResponseWriter, r *http.Request, next http.Handler) bool {
+	base := "/api/v1/resources/" + f.resource + "/storage-backup-retention"
+	if r.Method != "POST" || (r.URL.Path != base+"/previews" && r.URL.Path != base+"/executions") {
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 8193))
+	if err != nil || len(raw) > 8192 {
+		w.WriteHeader(400)
+		return true
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	response := httptest.NewRecorder()
+	next.ServeHTTP(response, r)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r.URL.Path == base+"/previews" && response.Code == 200 {
+		if json.Unmarshal(raw, &f.previewRequest) != nil || json.Unmarshal(response.Body.Bytes(), &f.preview) != nil {
+			f.failed = true
+		}
+	}
+	if r.URL.Path == base+"/executions" && response.Code == 202 {
+		var request domain.HostingStorageBackupRetentionExecutionInput
+		var execution domain.HostingStorageBackupRetentionExecution
+		if json.Unmarshal(raw, &request) != nil || json.Unmarshal(response.Body.Bytes(), &execution) != nil {
+			f.failed = true
+		}
+		f.executionRequests++
+		if f.executionRequests == 1 {
+			f.executionRequest, f.execution = request, execution
+			http.Error(w, "fixture lost committed retention response", 503)
+			return true
+		}
+		if request != f.executionRequest || domain.HostingDocumentHash(execution) != domain.HostingDocumentHash(f.execution) {
+			f.failed = true
+		}
+	}
+	hostingStorageRemoteRuntimeCopy(w, response)
+	return true
+}
+func TestHostingStorageRetentionBrowserExecutionACKContract(t *testing.T) {
+	wire := &hostingStorageRetentionRuntimeWire{resource: "resource"}
+	request := domain.HostingStorageBackupRetentionExecutionInput{RequestID: "request", PreviewID: "preview", ExpectedPolicyRevision: 1, ExpectedPlanHash: "sha256:" + strings.Repeat("a", 64)}
+	execution := domain.HostingStorageBackupRetentionExecution{ID: "execution", PreviewID: "preview", PlanHash: request.ExpectedPlanHash}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(202)
+		_ = json.NewEncoder(w).Encode(execution)
+	})
+	for i, want := range []int{503, 202} {
+		raw, _ := json.Marshal(request)
+		out := httptest.NewRecorder()
+		if !wire.serve(out, httptest.NewRequest("POST", "/api/v1/resources/resource/storage-backup-retention/executions", bytes.NewReader(raw)), handler) || out.Code != want {
+			t.Fatalf("browser ACK round %d status %d", i, out.Code)
+		}
+	}
+	if wire.failed || wire.executionRequests != 2 || wire.executionRequest != request || wire.execution.ID != "execution" {
+		t.Fatal("browser retry did not preserve exact batch")
+	}
+	if wire.serve(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/resources/another/storage-backup-retention/executions", nil), handler) {
+		t.Fatal("fault escaped exact resource")
+	}
+	if wire.serve(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v1/resources/resource/storage-backup-retention/executions", nil), handler) {
+		t.Fatal("fault intercepted history")
+	}
+}

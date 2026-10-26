@@ -536,7 +536,7 @@ inner_docker() {
 
 class BrowserCancellationTest(unittest.TestCase):
     """Run the real driver with inert Playwright resources, without a browser."""
-    def run_driver(self, delivered_signal=None, cleanup_failure="", complete=False):
+    def run_driver(self, delivered_signal=None, cleanup_failure="", complete=False, retention=False):
         driver = GATE.with_name("remote_browser.mjs")
         with tempfile.TemporaryDirectory(prefix="nerocd-storage-browser-stop-test-") as temporary:
             root = Path(temporary)
@@ -556,13 +556,14 @@ const close = async value => {
  if (process.env.STORAGE_BROWSER_TEST_CLOSE_FAILURE === value) throw Error("private close failure must not appear in receipt");
 };
 const complete = process.env.STORAGE_BROWSER_TEST_COMPLETE === "1";
-const phases = ["target", "validation", "backup", "denied", "retry", "restore", "archive_alert", "complete"];
+const retention=process.env.STORAGE_BROWSER_TEST_RETENTION==="1";
+const phases = ["target", "validation", "backup", "denied", "retry", "restore", "archive_alert", ...(retention?["retention","retention_history"]:[]), "complete"];
 let rejectPending, pendingHandle;
 const api = {
  get: async path => {
   fs.writeFileSync(root + "/started", "polling");
   if (complete) return path.includes("/__storage_remote_fixture/")
-   ? {status: () => 200, json: async () => {const phase=phases.shift();const archive=phase==="archive_alert";return {phase,resource_id:"resource",environment_id:"environment",target_id:"target",backup_id:archive?"failed_backup":"backup",source_id:archive?"failed_archive":"failed_upload",recovery_url:process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id="+(archive?"failed_backup&source_kind=storage_backup":"backup&source_kind=storage_transfer&transfer_id=failed_upload"),access_key:"fixture",secret_key:"fixture"}}}
+   ? {status: () => 200, json: async () => {const phase=phases.shift();const archive=phase==="archive_alert";return {phase,retention_mode:retention?"true":"",resource_name:"retention resource",retention_backup_ids:"retention_old,retention_middle,retention_new",retention_execution_id:"retention_execution",resource_id:"resource",environment_id:"environment",target_id:"target",backup_id:archive?"failed_backup":"backup",source_id:archive?"failed_archive":"failed_upload",recovery_url:process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id="+(archive?"failed_backup&source_kind=storage_backup":"backup&source_kind=storage_transfer&transfer_id=failed_upload"),access_key:"fixture",secret_key:"fixture"}}}
    : {status: () => 200, body: async () => Buffer.from("fixture")};
   if (process.env.STORAGE_BROWSER_TEST_EXPIRE === "1") {
    const expired = Date.now() + 25 * 60 * 1000;
@@ -579,20 +580,23 @@ const page = new Proxy({}, {get: (_, name) => {
  if (name === "then") return undefined;
  if (name === "goto") return async value=>{currentURL=value};
  if (name === "url") return ()=>currentURL;
- if (["getByRole","getByLabel","locator"].includes(name)) return () => page;
+ if (["getByRole","getByLabel","locator","filter"].includes(name)) return () => page;
  if (name === "evaluateAll") return async () => "target:1";
  if (name === "textContent") return async () => "View scheduled archive backup";
  if (name === "evaluate") return async () => false;
  if (name === "waitForResponse") return async () => {
   const index=responseIndex++;
   const values=[{id:"target"},{id:"validation"},{},{id:"schedule",revision:1,remote_target:{target_id:"target"}},{id:"schedule",revision:2},{id:"schedule",revision:3,enabled:false},{id:"upload"},{operation:{id:"restore"}}];
-  const statuses=[200,202,503,200,200,200,202,202];
+  values.push({enabled:true,automatic:false,revision:1,local:{keep_count:1},remote:{keep_count:2}},
+   {id:"retention_preview",policy_revision:1,plan_hash:"sha256:"+"a".repeat(64),evaluated_at:"2026-10-26T12:00:00Z",items:[{backup_id:"retention_old",location:"local",selected:true},{backup_id:"retention_middle",location:"local",selected:true},{backup_id:"retention_old",location:"remote",selected:true}]},
+   {},{id:"retention_execution",preview_id:"retention_preview",plan_hash:"sha256:"+"a".repeat(64)});
+  const statuses=[200,202,503,200,200,200,202,202,200,200,503,202];
   return {status: () => statuses[index],json: async () => values[index],
-   request: () => ({postDataJSON: () => ({remote_target:{target_id:"target"},remote_source:{transfer_id:"upload"}})})};
+   request: () => ({postDataJSON: () => index>=10?{request_id:"same_request",preview_id:"retention_preview",expected_policy_revision:1,expected_plan_hash:"sha256:"+"a".repeat(64)}:({remote_target:{target_id:"target"},remote_source:{transfer_id:"upload"}})})};
  };
  return async () => {};
 }});
-const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer";return {newPage: async () => page,close: async () => {
+const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer";return {newPage: async () => page,request:{post:async()=>({status:()=>403})},close: async () => {
  await new Promise(resolve => setTimeout(resolve, 10));
  if (browserClosed) throw Error("parent closed before child settled");
  await close(name);
@@ -600,7 +604,7 @@ const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer
 module.exports = {
  request: {newContext: async () => api},
  chromium: {launch: async () => ({newContext: async () => makeContext(), close: async () => {browserClosed = true; await close("browser");}})},
- expect: () => new Proxy({}, {get: () => async () => {if (!complete) throw Error("UI must not execute in cancellation test");}})
+ expect: () => {let assertion;assertion=new Proxy({}, {get: (_,name) => name==="not"?assertion:async () => {if (!complete) throw Error("UI must not execute in cancellation test");}});return assertion}
 };
 """)
             environment = os.environ.copy()
@@ -609,7 +613,8 @@ module.exports = {
                                NEROCD_STORAGE_REMOTE_HOST_EVIDENCE=str(root),
                                STORAGE_BROWSER_TEST_EXPIRE="0" if delivered_signal or complete else "1",
                                STORAGE_BROWSER_TEST_CLOSE_FAILURE=cleanup_failure,
-                               STORAGE_BROWSER_TEST_COMPLETE="1" if complete else "0")
+                               STORAGE_BROWSER_TEST_COMPLETE="1" if complete else "0",
+                               STORAGE_BROWSER_TEST_RETENTION="1" if retention else "0")
             process = subprocess.Popen(["node", str(driver)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -632,6 +637,9 @@ module.exports = {
                 if expected_code:
                     expected_failure = "browser_workflow_cancelled" if delivered_signal else ("browser_cleanup_failed" if complete else "browser_workflow_failed")
                     self.assertEqual(safe["failure"], expected_failure)
+                if retention:
+                    for marker in ["retention_policy_and_exact_preview", "retention_identical_execution_retry", "retention_history_and_copy_availability", "retention_viewer_read_only_and_denied"]:
+                        self.assertTrue(safe.get(marker), marker)
                 if cleanup_failure:
                     self.assertEqual(safe["cleanup_failures"], [cleanup_failure])
                     self.assertNotIn("private close failure", json.dumps(safe))
@@ -639,6 +647,10 @@ module.exports = {
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=3)
+
+    def test_retention_phase_driver_wiring_with_inert_browser_resources(self):
+        # This tests sequencing and cleanup only; it is not browser qualification.
+        self.run_driver(complete=True, retention=True)
 
     def test_overlapping_cleanup_joins_children_and_late_resources(self):
         # Evaluate the actual cleanup function without starting the workflow.

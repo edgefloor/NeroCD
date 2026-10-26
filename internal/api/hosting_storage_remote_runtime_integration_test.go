@@ -43,6 +43,7 @@ import (
 
 type hostingStorageRemoteRuntimeFixture struct {
 	operatorMutations atomic.Int64
+	retentionWire     atomic.Pointer[hostingStorageRetentionRuntimeWire]
 	pg                *store.PostgresStore
 	notifications     *backupNotificationReceivers
 	scheduleACK       atomic.Bool
@@ -127,6 +128,9 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		}
 		if r.Method != "GET" && r.Method != "HEAD" && (strings.HasPrefix(r.URL.Path, "/api/v1/resources/") || strings.HasPrefix(r.URL.Path, "/api/v1/storage-backups/") || strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/")) {
 			remote.operatorMutations.Add(1)
+		}
+		if wire := remote.retentionWire.Load(); wire != nil && wire.serve(w, r, server) {
+			return
 		}
 		if wire := remote.wire.Load(); wire != nil && wire.serve(w, r, server) {
 			return
@@ -774,11 +778,12 @@ type hostingStorageRemoteRuntimeReport struct {
 	ID     string `json:"id"`
 }
 type hostingStorageRemoteRuntimeBrowser struct {
-	mu                                   sync.Mutex
-	key, phase, resource, target, backup string
-	access, secret                       string
-	environment, source, recoveryURL     string
-	reports                              chan hostingStorageRemoteRuntimeReport
+	mu                                                  sync.Mutex
+	key, phase, resource, target, backup                string
+	retentionName, retentionBackups, retentionExecution string
+	access, secret                                      string
+	environment, source, recoveryURL                    string
+	reports                                             chan hostingStorageRemoteRuntimeReport
 }
 
 func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request) bool {
@@ -794,6 +799,12 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		state := map[string]string{"phase": b.phase, "resource_id": b.resource, "target_id": b.target, "backup_id": b.backup}
+		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+			state["retention_mode"] = "true"
+		}
+		if strings.HasPrefix(b.phase, "retention") {
+			state["resource_name"], state["retention_backup_ids"], state["retention_execution_id"] = b.retentionName, b.retentionBackups, b.retentionExecution
+		}
 		if b.recoveryURL != "" {
 			state["recovery_url"], state["environment_id"], state["source_id"] = b.recoveryURL, b.environment, b.source
 		}
@@ -814,7 +825,7 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		b.mu.Lock()
 		phase := b.phase
 		b.mu.Unlock()
-		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done", "archive_alert": "archive_warning"}[phase]
+		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done", "archive_alert": "archive_warning", "retention": "retention", "retention_history": "retention_history"}[phase]
 		if report.Action != expected {
 			w.WriteHeader(409)
 			return true

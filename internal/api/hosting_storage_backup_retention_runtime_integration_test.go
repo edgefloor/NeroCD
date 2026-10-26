@@ -65,9 +65,21 @@ func hostingStorageRetentionRuntimeWorkflow(f *hostingStorageRemoteRuntimeFixtur
 		backups = append(backups, backup)
 		uploads = append(uploads, hostingStorageRemoteRuntimeAwait(f, backup.ID, "upload", "succeeded"))
 	}
-	policy := storageRuntimeJSON[domain.HostingStorageBackupRetentionPolicy](f.storageRuntimeFixture, "PUT", base, domain.HostingStorageBackupRetentionInput{RequestID: hostingStorageScheduleRuntimeID(t), ExpectedResourceGeneration: resource.Generation, Enabled: true, Local: domain.BackupRetentionLimits{KeepCount: 1}, Remote: domain.BackupRetentionLimits{KeepCount: 2}}, 200)
-	request := domain.HostingStorageBackupRetentionPreviewInput{RequestID: hostingStorageScheduleRuntimeID(t), ExpectedPolicyRevision: policy.Revision}
-	preview := storageRuntimeJSON[domain.HostingStorageBackupRetentionPreview](f.storageRuntimeFixture, "POST", base+"/previews", request, 200)
+	wire := &hostingStorageRetentionRuntimeWire{resource: resource.ID}
+	f.retentionWire.Store(wire)
+	f.browser.setRetention("retention", resource, target, backups, "")
+	browserExecution := f.browser.await(t, "retention")
+	f.retentionWire.Store(nil)
+	wire.mu.Lock()
+	request, preview, execute, admitted, requests, wireFailed := wire.previewRequest, wire.preview, wire.executionRequest, wire.execution, wire.executionRequests, wire.failed
+	wire.mu.Unlock()
+	if wireFailed || requests != 2 || admitted.ID != browserExecution || execute.PreviewID != preview.ID || execute.ExpectedPlanHash != preview.PlanHash {
+		t.Fatal("real browser retention replay did not preserve exact request and preview")
+	}
+	policy := storageRuntimeJSON[domain.HostingStorageBackupRetentionPolicy](f.storageRuntimeFixture, "GET", base, nil, 200)
+	if !policy.Enabled || policy.Automatic || policy.Local != (domain.BackupRetentionLimits{KeepCount: 1}) || policy.Remote != (domain.BackupRetentionLimits{KeepCount: 2}) {
+		t.Fatal("browser did not save independent resource retention limits")
+	}
 	replay := storageRuntimeJSON[domain.HostingStorageBackupRetentionPreview](f.storageRuntimeFixture, "POST", base+"/previews", request, 200)
 	if domain.HostingDocumentHash(preview) != domain.HostingDocumentHash(replay) {
 		t.Fatal("physical preview replay selected another batch")
@@ -85,8 +97,6 @@ func hostingStorageRetentionRuntimeWorkflow(f *hostingStorageRemoteRuntimeFixtur
 	if local != 2 || remote != 1 {
 		t.Fatalf("independent physical retention selection local=%d remote=%d items=%+v", local, remote, preview.Items)
 	}
-	execute := domain.HostingStorageBackupRetentionExecutionInput{RequestID: hostingStorageScheduleRuntimeID(t), PreviewID: preview.ID, ExpectedPolicyRevision: policy.Revision, ExpectedPlanHash: preview.PlanHash}
-	admitted := storageRuntimeJSON[domain.HostingStorageBackupRetentionExecution](f.storageRuntimeFixture, "POST", base+"/executions", execute, 202)
 	settled := storageRetentionRuntimeAwait(f, resource.ID, admitted.ID)
 	repeated := storageRuntimeJSON[domain.HostingStorageBackupRetentionExecution](f.storageRuntimeFixture, "POST", base+"/executions", execute, 202)
 	if repeated.ID != settled.ID {
@@ -152,10 +162,27 @@ func hostingStorageRetentionRuntimeWorkflow(f *hostingStorageRemoteRuntimeFixtur
 	// additional scenario. The source application above was never changed.
 	f.https("storage-remote-restored.example.test", "PUT", "/upload", restoredBefore, 201)
 	f.https("storage-remote-restored.example.test", "POST", "/rename", nil, 204)
+	f.browser.setRetention("retention_history", resource, target, backups, settled.ID)
+	if f.browser.await(t, "retention_history") != settled.ID {
+		t.Fatal("browser did not verify retention history and copy availability")
+	}
 	evidence := os.Getenv("NEROCD_STORAGE_REMOTE_EVIDENCE")
-	raw, _ := json.Marshal(map[string]any{"status": "passed", "execution_id": settled.ID, "preview_hash": preview.PlanHash, "local_deleted": local, "remote_deleted": remote, "conditional_s3_delete": true, "remote_restore_republished_local": true, "application_reads_and_new_writes": true, "source_preserved": true})
+	raw, _ := json.Marshal(map[string]any{"status": "passed", "execution_id": settled.ID, "preview_hash": preview.PlanHash, "local_deleted": local, "remote_deleted": remote, "conditional_s3_delete": true, "remote_restore_republished_local": true, "application_reads_and_new_writes": true, "source_preserved": true, "browser_policy_preview_execute_replay": true, "browser_history_and_copy_availability": true})
 	if evidence == "" || os.WriteFile(filepath.Join(evidence, "retention-markers.json"), append(raw, '\n'), 0600) != nil {
 		t.Fatal("retention safe evidence unavailable")
 	}
 	t.Log(fmt.Sprintf("physical retention batch=%s local=%d remote=%d source_preserved=true", settled.ID, local, remote))
+}
+
+func (b *hostingStorageRemoteRuntimeBrowser) setRetention(phase string, resource domain.Resource, target string, backups []domain.HostingStorageBackup, execution string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.phase, b.resource, b.target, b.backup = phase, resource.ID, target, backups[0].ID
+	b.access, b.secret = "", ""
+	b.environment, b.source, b.recoveryURL = "", "", ""
+	ids := make([]string, len(backups))
+	for i, backup := range backups {
+		ids[i] = backup.ID
+	}
+	b.retentionName, b.retentionBackups, b.retentionExecution = resource.Name, strings.Join(ids, ","), execution
 }

@@ -58,7 +58,7 @@ async function panel(m, reload = false, targetPage = page) {
   const hosting = targetPage.getByRole("region", { name: "Project hosting", exact: true });
   await hosting.getByLabel("Hosting project", { exact: true }).selectOption("proj_platform");
   await hosting.getByRole("button", { name: "storage runtime fixture", exact: true }).click();
-  const application = hosting.getByRole("article", { name: "remote uploaded application B", exact: true });
+  const application = hosting.getByRole("article", { name: m.resource_name ?? "remote uploaded application B", exact: true });
   const result = application.getByRole("region", { name: "Upload backups and restores", exact: true });
   await expect(result).toBeVisible();
   return result;
@@ -115,6 +115,8 @@ try {
   page = await context.newPage();
   page.setDefaultTimeout(30000);
   let initial = await state("target");
+  const retentionMode=initial.retention_mode==="true";
+  let retentionState,retentionPolicy,retentionExecution,retentionBackupIDs;
   const manifest=JSON.parse(await readFile(resolve(evidence,"browser-ui-manifest.json"),"utf8"));
   if(manifest.schema!=="nerocd.ui-assets/v1" || !manifest.files["index.html"]) throw Error("candidate UI manifest absent");
   for(const [path,sha] of Object.entries(manifest.files)) {
@@ -215,6 +217,69 @@ try {
   await report("archive_warning",archiveAlert.backup_id);
   safe.delivered_archive_recovery_selection=true;
   safe.delivered_links_opened_without_mutation=true;
+  if(retentionMode){
+    retentionState=await state("retention");
+    retentionBackupIDs=retentionState.retention_backup_ids.split(",");
+    if(retentionBackupIDs.length!==3||new Set(retentionBackupIDs).size!==3)throw Error("exact retention backup inventory absent");
+    p=await panel(retentionState);
+    const retention=p.getByRole("region",{name:"Backup retention",exact:true});
+    const save=retention.getByRole("button",{name:"Save retention policy",exact:true});
+    await expect(save).toBeEnabled();
+    await expect(retention.getByRole("checkbox",{name:"Enable retention",exact:true})).not.toBeChecked();
+    for(const location of ["local","remote"]){
+      await expect(retention.getByLabel(`${location} keep_count`,{exact:true})).toHaveValue("7");
+      await expect(retention.getByLabel(`${location} keep_days`,{exact:true})).toHaveValue("0");
+      await expect(retention.getByLabel(`${location} max_bytes`,{exact:true})).toHaveValue("0");
+    }
+    await retention.getByRole("checkbox",{name:"Enable retention",exact:true}).check();
+    await retention.getByLabel("local keep_count",{exact:true}).fill("1");
+    await retention.getByLabel("remote keep_count",{exact:true}).fill("2");
+    const base=`/resources/${retentionState.resource_id}/storage-backup-retention`;
+    const policyResponse=page.waitForResponse(response=>response.request().method()==="PUT"&&response.url().endsWith(base));
+    await save.click();const policyHTTP=await policyResponse;
+    if(policyHTTP.status()!==200)throw Error("browser retention policy save failed");
+    retentionPolicy=await policyHTTP.json();
+    if(!retentionPolicy.enabled||retentionPolicy.automatic||retentionPolicy.local.keep_count!==1||retentionPolicy.remote.keep_count!==2)throw Error("browser retention independent limits changed");
+    const previewResponse=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(base+"/previews"));
+    await retention.getByRole("button",{name:"Review deletion preview",exact:true}).click();
+    const previewHTTP=await previewResponse;if(previewHTTP.status()!==200)throw Error("browser retention preview failed");
+    const preview=await previewHTTP.json();
+    const selected=preview.items.filter(copy=>copy.selected);
+    const actual=selected.map(copy=>`${copy.backup_id}:${copy.location}`).sort();
+    const expected=[`${retentionBackupIDs[0]}:local`,`${retentionBackupIDs[1]}:local`,`${retentionBackupIDs[0]}:remote`].sort();
+    if(JSON.stringify(actual)!==JSON.stringify(expected)||preview.policy_revision!==retentionPolicy.revision)throw Error("browser preview selected another copy batch");
+    await expect(retention).toContainText(`Batch ${preview.id}`);
+    await expect(retention).toContainText(preview.evaluated_at);
+    for(const copy of selected){
+      const row=retention.getByRole("listitem").filter({hasText:copy.backup_id}).filter({hasText:`· ${copy.location} ·`}).filter({hasText:"Selected for deletion"});
+      await expect(row).toHaveCount(1);await expect(row).toBeVisible();
+    }
+    safe.retention_policy_and_exact_preview=true;
+    const executeResponse=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(base+"/executions"));
+    await retention.getByRole("button",{name:"Delete selected copies",exact:true}).click();
+    const lost=await executeResponse;if(lost.status()!==503)throw Error("retention execution ACK loss fixture absent");
+    const savedExecution=lost.request().postDataJSON();
+    if(savedExecution.preview_id!==preview.id||savedExecution.expected_plan_hash!==preview.plan_hash||savedExecution.expected_policy_revision!==preview.policy_revision)throw Error("browser execution departed reviewed preview");
+    const retryResponse=page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(base+"/executions"));
+    await retention.getByRole("button",{name:"Retry saved retention request",exact:true}).click();
+    const replay=await retryResponse;
+    if(replay.status()!==202||JSON.stringify(replay.request().postDataJSON())!==JSON.stringify(savedExecution))throw Error("browser retention retry changed exact request");
+    retentionExecution=await replay.json();
+    if(retentionExecution.preview_id!==preview.id||retentionExecution.plan_hash!==preview.plan_hash)throw Error("browser retention replay selected another batch");
+    safe.retention_identical_execution_retry=true;
+    await report("retention",retentionExecution.id);
+    retentionState=await state("retention_history");
+    if(retentionState.retention_execution_id!==retentionExecution.id)throw Error("retention history fixture batch mismatch");
+    p=await panel(retentionState);
+    await expect(p.getByRole("region",{name:"Backup retention",exact:true})).toContainText(`Batch ${retentionExecution.id}: succeeded`);
+    await selectBackup(p,retentionBackupIDs[0]);
+    const metadata=p.locator('dl[aria-label="Selected backup metadata"]');
+    await expect(metadata).toContainText("local: deleted");await expect(metadata).toContainText("remote: deleted");
+    await selectBackup(p,retentionBackupIDs[1]);
+    await expect(metadata).toContainText("local: available");await expect(metadata).toContainText("remote: available");
+    safe.retention_history_and_copy_availability=true;
+    await report("retention_history",retentionExecution.id);
+  }
   await state("complete");
   p = await panel(restoreState, true);
   await selectBackup(p, backup.id);
@@ -251,6 +316,17 @@ try {
     await expect(viewerSchedules).toContainText(backup.id);
     await expect(viewerSchedules.getByRole("button",{name:"Disable schedule",exact:true})).toHaveCount(0);
     await expect(viewerSchedules.getByRole("form",{name:"Save recurring upload backup",exact:true})).toHaveCount(0);
+    if(retentionMode){
+      const retainedPanel=await panel(retentionState,false,viewer);
+      const retained=retainedPanel.getByRole("region",{name:"Backup retention",exact:true});
+      await expect(retained).toContainText(`Batch ${retentionExecution.id}: succeeded`);
+      for(const name of ["Save retention policy","Review deletion preview","Delete selected copies"]){await expect(retained.getByRole("button",{name,exact:true})).toHaveCount(0)}
+      await selectBackup(retainedPanel,retentionBackupIDs[1]);
+      await expect(retainedPanel.locator('dl[aria-label="Selected backup metadata"]')).toContainText("remote: available");
+      const denied=await viewerContext.request.post(`/api/v1/resources/${retentionState.resource_id}/storage-backup-retention/previews`,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:{request_id:"f".repeat(32),expected_policy_revision:retentionPolicy.revision}});
+      if(denied.status()!==403)throw Error("viewer retention mutation was not denied");
+      safe.retention_viewer_read_only_and_denied=true;
+    }
     safe.viewer_schedule_read_only=true;
     safe.viewer_history_and_controls=true;
   } finally {await viewerContext.close();}
