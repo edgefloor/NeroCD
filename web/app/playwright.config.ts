@@ -9,6 +9,18 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
 const browserRunID = randomBytes(12).toString("hex");
 process.env.NEROCD_BROWSER_RUN_ID = browserRunID;
 
+// These workflows require the owned images, runner endpoint, and other
+// prerequisites prepared by their existing hosting-*-fixture.sh wrappers.
+const fixtureDirectory = process.env.NEROCD_HOSTING_UI_FIXTURE_DIR;
+if (fixtureDirectory !== undefined && !/^\/tmp\/nerocd-(?:hosting|proxy)-ui\.[A-Za-z0-9]+$/.test(fixtureDirectory)) {
+  throw new Error("NEROCD_HOSTING_UI_FIXTURE_DIR must identify a prepared hosting or proxy fixture");
+}
+const preparedFixtureTests = [
+  "hosting-builds.spec.ts",
+  "hosting-deployments.spec.ts",
+  "hosting-proxy.spec.ts",
+];
+
 export default defineConfig({
   testDir: "./tests/browser",
   metadata: {
@@ -43,7 +55,7 @@ export default defineConfig({
     {
       name: "chromium",
       dependencies: ["oidc-setup"],
-      testIgnore: "oidc.spec.ts",
+      testIgnore: ["oidc.spec.ts", ...(fixtureDirectory === undefined ? preparedFixtureTests : [])],
       use: { ...devices["Desktop Chrome"] },
     },
   ],
