@@ -61,8 +61,18 @@ and destination denial, and revoked replay.
 
 The original bookmark transport failure remains unexplained because its
 underlying error was not retained. Correcting CSRF handling does not establish
-that failure's cause. The fixture now records fixed transport-error classes and
-numeric HTTP statuses without error text, URLs, cookies or response bodies.
+that failure's cause. Every login, bookmark and health request records a fixed
+operation, error class, elapsed milliseconds and numeric HTTP status. Connection,
+reuse, write and first-response counters include automatic redirect requests.
+Diagnostics omit error text, URLs, cookies and response bodies. Client transport
+and timeout behavior are preserved.
+
+After each settled deployment and before older cleanup callbacks, the fixture
+reads the exact owned application's state, exit/OOM/restart counters and admitted
+CPU/memory/PID limits. It also records numeric uWSGI PIDs and allowlisted cgroup
+OOM counters. Each of the three diagnostic Docker commands has a five-second
+bound; raw inspect, environment, application logs and process arguments are not
+recorded.
 
 The gate must report the exact test as passed with no skip. Reviewers must still
 assess `code_hygiene`, `specification` and `critical_security` at the exact SHA.

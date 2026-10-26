@@ -4,16 +4,20 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -67,65 +71,50 @@ func catalogSession(t *testing.T, base, user, password string) *http.Client {
 		t.Fatal(err)
 	}
 	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
-	resp, err := client.Get(base + "/login/")
+	request, err := http.NewRequest("GET", base+"/login/", nil)
 	if err != nil {
-		t.Fatal("login page unavailable")
+		t.Fatal(catalogHTTPDiagnostic("login_page", "construct", 0, nil, err, nil))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	resp.Body.Close()
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatal("login page invalid")
+	resp, body := catalogHTTPRead(t, "login_page", client, request, 1<<20)
+	if resp.StatusCode != 200 {
+		t.Fatalf("catalog_http operation=login_page class=http_status status=%d expected=200", catalogHTTPStatus(resp))
 	}
 	match := regexp.MustCompile(`name="csrfmiddlewaretoken" value="([^"]+)"`).FindSubmatch(body)
 	if len(match) != 2 {
-		t.Fatal("login CSRF token missing")
+		t.Fatal("catalog_http operation=login_page class=missing_csrf_token")
 	}
 	form := url.Values{"username": {user}, "password": {password}, "csrfmiddlewaretoken": {string(match[1])}}
 	req, err := http.NewRequest("POST", base+"/login/", strings.NewReader(form.Encode()))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal(catalogHTTPDiagnostic("login_submit", "construct", 0, nil, err, nil))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Referer", base+"/login/")
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatal("login request failed")
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	resp, _ = catalogHTTPRead(t, "login_submit", client, req, 1<<20)
 	if resp.StatusCode != 200 || !strings.Contains(resp.Request.URL.Path, "/bookmarks") {
-		t.Fatal("retained credentials failed fresh login")
+		t.Fatalf("catalog_http operation=login_submit class=unexpected_login_result status=%d expected=200", catalogHTTPStatus(resp))
 	}
 	return client
 }
 
 func catalogBookmark(t *testing.T, client *http.Client, base string, create bool) {
 	t.Helper()
-	req, err := catalogBookmarkRequest(client, base, create)
-	if err != nil {
-		t.Fatalf("bookmark request construction failed: class=%s", catalogHTTPFailureClass(err))
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("bookmark request failed: class=%s status=%d", catalogHTTPFailureClass(err), catalogHTTPStatus(resp))
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	closeErr := resp.Body.Close()
+	operation := "bookmark_list"
 	status := 200
 	if create {
+		operation = "bookmark_create"
 		status = 201
 	}
+	req, err := catalogBookmarkRequest(client, base, create)
 	if err != nil {
-		t.Fatalf("bookmark response read failed: class=%s status=%d", catalogHTTPFailureClass(err), catalogHTTPStatus(resp))
+		t.Fatal(catalogHTTPDiagnostic(operation, "construct", 0, nil, err, nil))
 	}
-	if closeErr != nil {
-		t.Fatalf("bookmark response close failed: class=%s status=%d", catalogHTTPFailureClass(closeErr), catalogHTTPStatus(resp))
-	}
+	resp, raw := catalogHTTPRead(t, operation, client, req, 1<<20)
 	if resp.StatusCode != status {
-		t.Fatalf("bookmark persistence assertion failed: class=http_status status=%d expected=%d", catalogHTTPStatus(resp), status)
+		t.Fatalf("catalog_http operation=%s class=http_status status=%d expected=%d", operation, catalogHTTPStatus(resp), status)
 	}
 	if !bytes.Contains(raw, []byte("NeroCD retained catalog bookmark")) {
-		t.Fatalf("bookmark persistence assertion failed: class=missing_saved_bookmark status=%d", catalogHTTPStatus(resp))
+		t.Fatalf("catalog_http operation=%s class=missing_saved_bookmark status=%d", operation, catalogHTTPStatus(resp))
 	}
 }
 
@@ -157,6 +146,9 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	if first.Plan == nil || first.Release == nil || first.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || first.Result == nil {
 		t.Fatal("wrong runtime family")
 	}
+	currentDiagnosticOperation := first
+	catalogRuntimeState(t, currentDiagnosticOperation)
+	t.Cleanup(func() { catalogRuntimeState(t, currentDiagnosticOperation) })
 	b.set("healthy", v.Resource.ID)
 	b.await(t, "healthy")
 	// Reuse the ordinary managed proxy and hostname grant. API TLS above and
@@ -181,20 +173,29 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	routeOperation := b.await(t, "routed")
 	f.proxyAwait(routeOperation)
 	verifyHTTPS := func() {
-		if body := f.https("catalog-runtime.example.test", "GET", "/health", nil, 200); !bytes.Contains(body, []byte("1.47.0")) || !bytes.Contains(body, []byte("healthy")) {
-			t.Fatal("trusted application HTTPS/version/database health missing")
+		transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: f.roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:443")
+		}}
+		defer transport.CloseIdleConnections()
+		client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		req, err := http.NewRequest("GET", "https://catalog-runtime.example.test/health", nil)
+		if err != nil {
+			t.Fatal(catalogHTTPDiagnostic("managed_health", "construct", 0, nil, err, nil))
+		}
+		response, body := catalogHTTPRead(t, "managed_health", client, req, 2<<20)
+		if response.StatusCode != 200 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || !bytes.Contains(body, []byte("1.47.0")) || !bytes.Contains(body, []byte("healthy")) {
+			t.Fatalf("catalog_http operation=managed_health class=invalid_trusted_health status=%d", catalogHTTPStatus(response))
 		}
 	}
 	verifyHTTPS()
 	base := "http://127.0.0.1:20101"
-	health, err := http.Get(base + "/health")
+	request, err := http.NewRequest("GET", base+"/health", nil)
 	if err != nil {
-		t.Fatal("Linkding health unavailable")
+		t.Fatal(catalogHTTPDiagnostic("health", "construct", 0, nil, err, nil))
 	}
-	healthBody, err := io.ReadAll(io.LimitReader(health.Body, 4096))
-	health.Body.Close()
-	if err != nil || health.StatusCode != 200 || !bytes.Contains(healthBody, []byte("1.47.0")) || !bytes.Contains(healthBody, []byte("healthy")) {
-		t.Fatal("Linkding version/database health not proven")
+	health, healthBody := catalogHTTPRead(t, "health", http.DefaultClient, request, 4096)
+	if health.StatusCode != 200 || !bytes.Contains(healthBody, []byte("1.47.0")) || !bytes.Contains(healthBody, []byte("healthy")) {
+		t.Fatalf("catalog_http operation=health class=invalid_version_or_database_health status=%d", catalogHTTPStatus(health))
 	}
 
 	client := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
@@ -202,6 +203,8 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	f.stop()
 	f.start()
 	second := f.await(deploy("catalog_redeploy", "/health", 120).ID, "succeeded")
+	currentDiagnosticOperation = second
+	catalogRuntimeState(t, currentDiagnosticOperation)
 	f.awaitContinuity(v.Resource.ID, second.ID)
 	verifyHTTPS()
 	fresh := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
@@ -349,4 +352,42 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 		return true
 	}
 	return false
+}
+
+// Capture only the settled, exactly owned container before older cleanup
+// callbacks stop the runner or remove its guest. No raw inspect or logs escape.
+func catalogRuntimeState(t *testing.T, op domain.HostingOperation) {
+	t.Helper()
+	if op.Result == nil || op.Plan == nil || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(op.Result.ContainerID) {
+		t.Log("catalog_container class=target_unavailable")
+		return
+	}
+	id := op.Result.ContainerID
+	output := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return exec.CommandContext(ctx, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...).Output()
+	}
+	format := `{"ID":{{json .Id}},"Binding":{{json (index .Config.Labels "io.nerocd.binding")}},"Operation":{{json (index .Config.Labels "io.nerocd.operation")}},"Plan":{{json (index .Config.Labels "io.nerocd.plan")}},"Running":{{.State.Running}},"Restarting":{{.State.Restarting}},"OOMKilled":{{.State.OOMKilled}},"Dead":{{.State.Dead}},"ExitCode":{{.State.ExitCode}},"RestartCount":{{.RestartCount}},"Memory":{{.HostConfig.Memory}},"MemorySwap":{{.HostConfig.MemorySwap}},"NanoCPUs":{{.HostConfig.NanoCpus}},"PidsLimit":{{if .HostConfig.PidsLimit}}{{.HostConfig.PidsLimit}}{{else}}0{{end}}}`
+	raw, err := output("inspect", "--format", format, id)
+	if err != nil {
+		t.Logf("catalog_container class=%s", catalogHTTPFailureClass(err))
+		return
+	}
+	diagnostic, owned := catalogContainerDiagnostic(raw, id, op.BindingID, op.ID, op.Plan.Hash)
+	clear(raw)
+	t.Log(diagnostic)
+	if !owned {
+		return
+	}
+	if workers, err := output("top", id, "-eo", "pid,comm"); err == nil {
+		t.Log(catalogWorkerDiagnostic(workers))
+	} else {
+		t.Log("catalog_workers class=unavailable")
+	}
+	if counters, err := output("exec", id, "cat", "/sys/fs/cgroup/memory.events"); err == nil {
+		t.Log(catalogOOMDiagnostic(counters))
+	} else {
+		t.Log("catalog_cgroup class=unavailable")
+	}
 }
