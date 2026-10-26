@@ -937,13 +937,24 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 					Token string `json:"token"`
 				}](x.f, "", "POST", "/api/v1/sessions", map[string]string{"email": "viewer@example.local", "password": "viewer"}, 201)
 				x.f.protected = append(x.f.protected, []byte(viewer.Token))
+				beforeDenial := x.admissionInventory()
 				x.execute(p, viewer.Token, 403)
+				if x.admissionInventory() != beforeDenial {
+					t.Fatal("viewer denial allocated retention work or changed copy inventory")
+				}
 
 				backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID)
 				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "POST", "/api/v1/destinations/"+x.f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: x.source.Resource.ProjectID}, 200)
-				x.execute(p, x.f.token, 403)
+				// Project ownership remains valid; the revoked placement is a conflict.
+				x.execute(p, x.f.token, 409)
+				if x.admissionInventory() != beforeDenial {
+					t.Fatal("revoked placement allocated retention work or changed copy inventory")
+				}
 				if backupRuntimeRestoreGrant(x.f, x.source.Resource.ProjectID) != nil {
 					t.Fatal("owned grant restore failed")
+				}
+				if !retentionSameInventory(p.Items, x.preview().Items) {
+					t.Fatal("denied admission or grant cleanup changed the exact copy selection")
 				}
 				x.assertCopies(p, map[string]bool{})
 			} else {
@@ -962,6 +973,23 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 			fmt.Println("DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql " + kind)
 		})
 	}
+}
+
+type databaseRetentionAdmissionInventory struct{ Executions, Copies, Items, Tasks int }
+
+func (x *databaseRetentionFixture) admissionInventory() databaseRetentionAdmissionInventory {
+	ctx, cancel := context.WithTimeout(x.f.t.Context(), 3*time.Second)
+	defer cancel()
+	var inventory databaseRetentionAdmissionInventory
+	err := x.f.database.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM hosting_database_backup_retention_executions WHERE resource_id=$1),
+ (SELECT count(*) FROM hosting_database_backup_copies WHERE resource_id=$1),
+ (SELECT count(*) FROM hosting_database_backup_retention_items i JOIN hosting_database_backup_retention_executions e ON e.id=i.execution_id WHERE e.resource_id=$1),
+ (SELECT count(*) FROM task_runs WHERE project_id=$2 AND run_spec->>'type'='database_backup_retention')`, x.source.Resource.ID, x.source.Resource.ProjectID).Scan(&inventory.Executions, &inventory.Copies, &inventory.Items, &inventory.Tasks)
+	if err != nil {
+		x.f.t.Fatal("owned retention allocation observation unavailable")
+	}
+	return inventory
 }
 
 func retentionQualificationHeld(preview databaseRetentionPreview, execution databaseRetentionExecution) bool {
@@ -993,12 +1021,12 @@ func retentionQualificationHeld(preview databaseRetentionPreview, execution data
 }
 
 func retentionDumpShadowScripts() (string, string) {
-	// The pinned PG17 image exposes its real executable through this PATH entry.
-	// Shadow only a previously absent earlier PATH location; never move the binary.
+	// The exact pinned arm64 image was observed selecting /usr/bin/pg_dump,
+	// resolved to pg_wrapper and reporting major17. Never move that executable.
 	const wrapper = "#!/bin/sh\n# nerocd-owned-retention-duplicate\nexec cat /tmp/nerocd-retention-duplicate.dump\n"
 	quoted := "'" + wrapper + "'"
-	install := "set -eu\ntest \"$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump\ntest -x /usr/lib/postgresql/17/bin/pg_dump\ntest ! -e /usr/local/bin/pg_dump\ntest ! -L /usr/local/bin/pg_dump\n(set -C; printf '%s' " + quoted + " >/usr/local/bin/pg_dump)\nchmod 0755 /usr/local/bin/pg_dump\nhash -r\ntest \"$(command -v pg_dump)\" = /usr/local/bin/pg_dump\n"
-	cleanup := "set -eu\nif test -e /usr/local/bin/pg_dump || test -L /usr/local/bin/pg_dump; then\n  test ! -L /usr/local/bin/pg_dump\n  test \"$(cat /usr/local/bin/pg_dump)\" = \"$(printf '%s' " + quoted + ")\"\n  rm /usr/local/bin/pg_dump\nfi\ntest \"$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump\nrm -f /tmp/nerocd-retention-duplicate.dump\n"
+	install := "set -eu\ntest \"$(command -v pg_dump)\" = /usr/bin/pg_dump\ntest -x /usr/bin/pg_dump\ntest \"$(readlink -f /usr/bin/pg_dump)\" = /usr/share/postgresql-common/pg_wrapper\ncase \"$(pg_dump --version)\" in \"pg_dump (PostgreSQL) 17.\"*) ;; *) exit 1 ;; esac\ntest ! -e /usr/local/bin/pg_dump\ntest ! -L /usr/local/bin/pg_dump\n(set -C; printf '%s' " + quoted + " >/usr/local/bin/pg_dump)\nchmod 0755 /usr/local/bin/pg_dump\nhash -r\ntest \"$(command -v pg_dump)\" = /usr/local/bin/pg_dump\n"
+	cleanup := "set -eu\nif test -e /usr/local/bin/pg_dump || test -L /usr/local/bin/pg_dump; then\n  test ! -L /usr/local/bin/pg_dump\n  test \"$(cat /usr/local/bin/pg_dump)\" = \"$(printf '%s' " + quoted + ")\"\n  rm /usr/local/bin/pg_dump\nfi\ntest \"$(command -v pg_dump)\" = /usr/bin/pg_dump\nrm -f /tmp/nerocd-retention-duplicate.dump\n"
 	return install, cleanup
 }
 
@@ -1668,12 +1696,82 @@ func TestDatabaseBackupRetentionDumpShadowGuard(t *testing.T) {
 			t.Fatal("dump shadow altered the real executable")
 		}
 	}
-	for _, guard := range []string{"test ! -e /usr/local/bin/pg_dump", "test ! -L /usr/local/bin/pg_dump", "set -C", "hash -r", "$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump", "$(command -v pg_dump)\" = /usr/local/bin/pg_dump"} {
+	for _, guard := range []string{"test ! -e /usr/local/bin/pg_dump", "test ! -L /usr/local/bin/pg_dump", "set -C", "hash -r", "$(command -v pg_dump)\" = /usr/bin/pg_dump", "$(command -v pg_dump)\" = /usr/local/bin/pg_dump"} {
 		if !strings.Contains(install, guard) {
 			t.Fatal("dump shadow installation lost an executable ownership guard")
 		}
 	}
 	if !strings.Contains(cleanup, "test ! -L /usr/local/bin/pg_dump") || !strings.Contains(cleanup, "$(cat /usr/local/bin/pg_dump)") || !strings.Contains(cleanup, "nerocd-owned-retention-duplicate") {
 		t.Fatal("dump shadow cleanup lost exact-content guards")
+	}
+}
+
+func TestDatabaseBackupRetentionDumpShadowLifecycle(t *testing.T) {
+	for _, preexisting := range []bool{false, true} {
+		t.Run(fmt.Sprint(preexisting), func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal("shadow unit fixture canonical path failed")
+			}
+			localBin, bin, share := filepath.Join(root, "usr/local/bin"), filepath.Join(root, "usr/bin"), filepath.Join(root, "usr/share/postgresql-common")
+			for _, dir := range []string{localBin, bin, share} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal("shadow unit fixture directory failed")
+				}
+			}
+			real := filepath.Join(share, "pg_wrapper")
+			realBytes := []byte("#!/bin/sh\nprintf '%s\\n' 'pg_dump (PostgreSQL) 17.11'\n")
+			if os.WriteFile(real, realBytes, 0700) != nil || os.Symlink(real, filepath.Join(bin, "pg_dump")) != nil {
+				t.Fatal("shadow unit fixture executable failed")
+			}
+			archive := filepath.Join(root, "archive.dump")
+			payload := []byte("owned archive bytes for shell lifecycle regression")
+			if os.WriteFile(archive, payload, 0600) != nil {
+				t.Fatal("shadow unit fixture archive failed")
+			}
+			shadow := filepath.Join(localBin, "pg_dump")
+			if preexisting && os.WriteFile(shadow, []byte("unrelated"), 0600) != nil {
+				t.Fatal("shadow preexisting fixture failed")
+			}
+			install, cleanup := retentionDumpShadowScripts()
+			rewrite := strings.NewReplacer("/usr/local/bin", localBin, "/usr/bin", bin, "/usr/share/postgresql-common", share, "/tmp/nerocd-retention-duplicate.dump", archive)
+			run := func(script string) ([]byte, error) {
+				command := exec.CommandContext(t.Context(), "/bin/sh", "-c", rewrite.Replace(script))
+				command.Env = append(os.Environ(), "PATH="+localBin+":"+bin+":/usr/bin:/bin")
+				return command.Output()
+			}
+			_, installed := run(install)
+			if preexisting {
+				if installed == nil {
+					t.Fatal("shadow installation overwrote an existing executable")
+				}
+				if _, err := run(cleanup); err == nil {
+					t.Fatal("shadow cleanup accepted an unrelated file")
+				}
+				raw, err := os.ReadFile(shadow)
+				if err != nil || string(raw) != "unrelated" {
+					t.Fatal("shadow cleanup removed an unrelated file")
+				}
+				return
+			}
+			if installed != nil {
+				t.Fatal("observed executable layout rejected by shadow installation")
+			}
+			if raw, err := run("pg_dump"); err != nil || !bytes.Equal(raw, payload) {
+				t.Fatal("shadow was not the executable selected by PATH")
+			}
+			if _, err := run(cleanup); err != nil {
+				t.Fatal("owned shadow cleanup failed")
+			}
+			if _, err := run(cleanup); err != nil {
+				t.Fatal("owned shadow cleanup was not idempotent")
+			}
+			if _, err := os.Lstat(shadow); !os.IsNotExist(err) {
+				t.Fatal("owned shadow survived cleanup")
+			}
+			if raw, err := os.ReadFile(real); err != nil || !bytes.Equal(raw, realBytes) {
+				t.Fatal("real executable changed during shadow lifecycle")
+			}
+		})
 	}
 }

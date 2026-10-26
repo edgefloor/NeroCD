@@ -461,6 +461,31 @@ def verify_backup_runtime_output(output, schedule, remote="0", retention="0"):
         raise Failure("backup runtime test missing or skipped")
 
 
+def retention_failure_diagnostic_profile(backup, remote, retention, schedule, browser, routes, storage):
+    if (backup, remote, retention, schedule, browser, routes, storage) != ("1", "1", "1", "0", "0", "0", "0"):
+        raise Failure("retention failure diagnostic requires its exact non-browser backup profile")
+    names = ["TestHostingDatabaseBackupRetentionFailuresCompiledRunner", "TestHostingDatabaseBackupRetentionProtectionsCompiledRunner"]
+    markers = ["DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql " + kind for kind in
+               ("delete_denied", "conditional_unsupported", "authorization_revoked")]
+    markers += ["DATABASE_BACKUP_RETENTION_PROTECTION_PASS postgresql newest_shared_active_failed_upload_external",
+                "DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS postgresql"]
+    return "^(?:" + "|".join(names) + ")$", names, markers
+
+
+def verify_retention_failure_diagnostic_output(output):
+    _, names, markers = retention_failure_diagnostic_profile("1", "1", "1", "0", "0", "0", "0")
+    required = set(names + [names[0] + "/" + kind for kind in
+                           ("delete_denied", "conditional_unsupported", "authorization_revoked")])
+    passed = re.findall(r"^\s*--- PASS: ([^ ]+) ", output, re.MULTILINE)
+    if set(passed) != required or len(passed) != len(required) or re.search(r"^\s*--- (?:SKIP|FAIL): ", output, re.MULTILINE):
+        raise Failure("retention failure diagnostic cases missing, repeated, skipped, failed or unrelated")
+    for marker in markers:
+        if output.splitlines().count(marker) != 1:
+            raise Failure("retention failure diagnostic proof missing or repeated")
+    if any(re.match(r"^DATABASE_[A-Z_]+_PASS ", line) and line not in markers for line in output.splitlines()):
+        raise Failure("retention failure diagnostic contains unrelated qualification markers")
+
+
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
     if retention_mode not in ("0", "1") or retention_mode == "1" and remote_mode != "1":
@@ -469,7 +494,7 @@ def main():
         raise Failure("remote mode requires the reviewed backup profile")
     if schedule_mode not in ("0", "1") or schedule_mode == "1" and backup_mode != "1":
         raise Failure("schedule mode requires the reviewed backup profile")
-    if backup_mode not in ("0", "1") or backup_mode == "1" and (browser_mode != "1" or routes_mode != "0" or storage_mode != "0" or gate_mode != "full"):
+    if backup_mode not in ("0", "1") or backup_mode == "1" and (browser_mode != ("0" if gate_mode == "retention-failures-diagnostic" else "1") or routes_mode != "0" or storage_mode != "0" or gate_mode not in ("full", "retention-failures-diagnostic")):
         raise Failure("backup mode requires its exact private database/browser profile")
     if browser_mode not in ("0", "1"):
         raise Failure("invalid browser mode")
@@ -477,8 +502,11 @@ def main():
         raise Failure("invalid route mode")
     if storage_mode not in ("0", "1") or storage_mode == "1" and (routes_mode != "1" or browser_mode != "1"):
         raise Failure("storage mode requires reviewed route and live browser profiles")
-    if gate_mode not in ("full", "storage-cutover-diagnostic"):
+    if gate_mode not in ("full", "storage-cutover-diagnostic", "retention-failures-diagnostic"):
         raise Failure("invalid fixed runtime mode")
+    if gate_mode == "retention-failures-diagnostic":
+        retention_failure_diagnostic_profile(backup_mode, remote_mode, retention_mode, schedule_mode, browser_mode, routes_mode, storage_mode)
+        say("diagnostic-only retention failures and protections; full workflow qualification disabled")
     if gate_mode == "storage-cutover-diagnostic" and storage_mode != "1":
         raise Failure("cutover diagnostic requires the reviewed storage profile")
     if gate_mode == "storage-cutover-diagnostic":
@@ -741,6 +769,8 @@ def main():
         pattern = STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR
     if backup_mode == "1":
         pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode, retention_mode)
+    if gate_mode == "retention-failures-diagnostic":
+        pattern, _, _ = retention_failure_diagnostic_profile(backup_mode, remote_mode, retention_mode, schedule_mode, browser_mode, routes_mode, storage_mode)
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
@@ -750,6 +780,11 @@ def main():
     else:
         runtime_output = run(runtime_args, timeout=2410, output="runtime-test")
     say(runtime_output)
+    if gate_mode == "retention-failures-diagnostic":
+        verify_retention_failure_diagnostic_output(runtime_output)
+        diagnostic_pass = True
+        say("DATABASE_BACKUP_RETENTION_FAILURE_DIAGNOSTIC_PASS postgresql")
+        return
     if backup_mode == "1":
         verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode)
         full_workflow_pass = True
@@ -909,10 +944,10 @@ finally:
     except Exception as error:
         say("final inventory/check failed: " + str(error))
         status = status or 1
-    receipt_mode = gate_mode if gate_mode in ("full", "storage-cutover-diagnostic") else "invalid"
+    receipt_mode = gate_mode if gate_mode in ("full", "storage-cutover-diagnostic", "retention-failures-diagnostic") else "invalid"
     result_name, exit_key = ("result", "gate_exit") if gate_mode == "full" else ("diagnostic-result", "diagnostic_exit")
     (evidence / result_name).write_text(exit_key + "=" + str(status) + "\ngate_mode=" + receipt_mode +
-                                   "\nfull_workflow_pass=" + str(int(full_workflow_pass and status == 0)) +
+                                   "\nfull_workflow_pass=" + str(int(full_workflow_pass and gate_mode == "full" and status == 0)) +
                                    "\ndiagnostic_pass=" + str(int(diagnostic_pass and status == 0)) + "\nouter_id=" + outer +
                                    "\nouter_volume=" + VOLUME + "\ncleanup_failure=" + cleanup_failure + "\n")
     say(("gate exit=" if gate_mode == "full" else "diagnostic exit=") + str(status) + " evidence=" + str(evidence))
