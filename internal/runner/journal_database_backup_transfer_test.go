@@ -47,7 +47,11 @@ func TestBackupRemoteJournalVersion19RestartAndExplicitRetirement(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	if entries := j.Snapshot().DatabaseBackupTransfers; len(entries) != 1 || !reflect.DeepEqual(entries[0], entry) {
 		t.Fatal("journal19 changed authority")
 	}
@@ -98,7 +102,11 @@ func TestBackupRetentionDownloadProofJournal20(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	if got := j.Snapshot().DatabaseBackupTransfers; len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
 		t.Fatal("download proof lost at restart")
 	}

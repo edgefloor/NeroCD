@@ -23,7 +23,11 @@ func TestOwnedPublicationAndExactRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	data := []byte("PGDMP fixture")
 	key := fmt.Sprintf("%x", sha256.Sum256(data))
 	_, proof, err := s.PutOwned(t.Context(), bytes.NewReader(data), key, int64(len(data)))
@@ -67,7 +71,11 @@ func TestOwnedRemovalAbsenceMustSyncAfterUncertainUnlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	body := []byte("PGDMP retained")
 	key := fmt.Sprintf("%x", sha256.Sum256(body))
 	_, proof, err := s.PutOwned(t.Context(), bytes.NewReader(body), key, int64(len(body)))

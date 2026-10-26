@@ -23,7 +23,9 @@ func TestStorageRetentionIdentityRequiresSeparateOptInAndNoDatabase(t *testing.T
 				caps = append(caps, "shell")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps}); err != nil {
+					t.Error("encode identity response:", err)
+				}
 			}))
 			defer server.Close()
 			_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{StorageArchive: true, StorageArchiveTrustedLoopbackHTTP: true, StorageBackupRetention: tc.configured})
@@ -40,7 +42,9 @@ func TestStorageBackupDeletionIdentityRequiresSharedDestructiveOptIn(t *testing.
 			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability)
 		}
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+			if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps}); err != nil {
+				t.Error("encode identity response:", err)
+			}
 		}))
 		_, e := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{StorageArchive: true, StorageArchiveTrustedLoopbackHTTP: true, StorageBackupRetention: opted})
 		server.Close()

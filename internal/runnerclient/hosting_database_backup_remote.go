@@ -35,6 +35,7 @@ func (r *backupRemoteMutationResponse) decodeResponse(body io.Reader) error {
 	}
 	return nil
 }
+
 // HostingDatabaseBackupTransferPlan fetches and validates a remote backup transfer plan.
 func (c Client) HostingDatabaseBackupTransferPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingDatabaseBackupTransferPlan, error) {
 	var response backupRemotePlanResponse
@@ -50,6 +51,7 @@ func (c Client) HostingDatabaseBackupTransferPlan(ctx context.Context, a domain.
 	}
 	return p, nil
 }
+
 // HostingDatabaseBackupTransferMutation submits a receipt and validates the transfer outcome.
 func (c Client) HostingDatabaseBackupTransferMutation(ctx context.Context, in domain.HostingDatabaseBackupTransferMutation) (domain.HostingDatabaseBackupTransfer, error) {
 	var response backupRemoteMutationResponse
@@ -75,6 +77,7 @@ func (c Client) HostingDatabaseBackupTransferMutation(ctx context.Context, in do
 func (c Client) HostingBackupRemoteCredentials(ctx context.Context, runner string, in domain.BackupRemoteCredentialRequest, options RuntimeEnvironmentTransport) (*domain.BackupRemoteCredentials, error) {
 	return c.hostingBackupCredentials(ctx, runner, in, options, false)
 }
+
 // HostingBackupRetentionCredentials fetches credentials bound to the runner and retention request.
 // The caller must close the returned credentials after use.
 func (c Client) HostingBackupRetentionCredentials(ctx context.Context, runner string, in domain.BackupRemoteCredentialRequest, options RuntimeEnvironmentTransport) (*domain.BackupRemoteCredentials, error) {
@@ -127,7 +130,11 @@ func (c Client) hostingBackupCredentials(ctx context.Context, runner string, in 
 	if e != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
-	defer response.Body.Close()
+	defer func() {
+		// Validation below determines the credential result; closing the response
+		// only releases transport resources and cannot invalidate decoded metadata.
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
 		return nil, domain.ErrBackupRemoteCredentials
 	}

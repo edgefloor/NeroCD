@@ -215,7 +215,7 @@ func validateApplicationDatabaseJournalChain(entries []JournalHosting) error {
 			if e.ApplicationStorageWriter != nil {
 				w := e.ApplicationStorageWriter
 				if c.writer == nil {
-					if w.Receipt.Phase != "stop_intent" && !(e.ApplicationStorageRecovery != nil && w.Receipt.Phase == "resume_intent") {
+					if w.Receipt.Phase != "stop_intent" && (e.ApplicationStorageRecovery == nil || w.Receipt.Phase != "resume_intent") {
 						return errJournalConnection
 					}
 				} else if w.Receipt.PreviousStateHash != c.writer.Receipt.Hash || !applicationStorageJournalWriterPhase(c.writer.Receipt.Phase, w.Receipt.Phase) {

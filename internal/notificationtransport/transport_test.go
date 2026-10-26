@@ -61,10 +61,14 @@ func TestNotificationWebhookStableRetryRedirectAndSafeErrors(t *testing.T) {
 	var seen []domain.NotificationPayload
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if redirect.Load() {
-			http.Redirect(w, r, "https://169.254.169.254/metadata", 302)
+			http.Redirect(w, r, "https://169.254.169.254/metadata", http.StatusFound)
 			return
 		}
-		defer r.Body.Close()
+		defer func() {
+			if err := r.Body.Close(); err != nil {
+				t.Error("close request body:", err)
+			}
+		}()
 		var p domain.NotificationPayload
 		if json.NewDecoder(io.LimitReader(r.Body, 16385)).Decode(&p) != nil {
 			w.WriteHeader(400)
@@ -138,12 +142,51 @@ func TestNotificationWebhookCertificateAndDNSRebinding(t *testing.T) {
 		t.Fatal("DNS rebinding dialed")
 	}
 }
+func TestNotificationWebhookStatusSurvivesTruncatedResponseBody(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   Result
+	}{
+		{name: "accepted", status: http.StatusOK},
+		{name: "configuration", status: http.StatusForbidden, want: Result{Code: "receiver_configuration", ConfigurationFailure: true}},
+		{name: "retryable", status: http.StatusServiceUnavailable, want: Result{Code: "receiver_rejected"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Advertise more bytes than are sent, making the drain return unexpected EOF.
+				w.Header().Set("Content-Length", "100")
+				w.WriteHeader(tc.status)
+				if _, err := io.WriteString(w, "short"); err != nil {
+					t.Error("write truncated response:", err)
+				}
+			}))
+			defer receiver.Close()
+			sender, err := New(tlsPolicy(t, receiver))
+			if err != nil {
+				t.Fatal(err)
+			}
+			configuration := &domain.NotificationConfiguration{WebhookURL: receiver.URL}
+			got := sender.Send(t.Context(), configuration, notificationTestPayload(), func(context.Context) ([]string, error) {
+				return nil, nil
+			})
+			if got != tc.want {
+				t.Fatalf("truncated response changed status result: got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNotificationSMTPRejectsSTARTTLSDowngradeBeforeCredentials(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error("close SMTP listener:", err)
+		}
+	}()
 	host, port, _ := net.SplitHostPort(listener.Addr().String())
 	number, _ := strconv.Atoi(port)
 	s, _ := New(Policy{FixtureTLSOrigins: []string{"smtp+starttls://" + listener.Addr().String()}})
@@ -155,7 +198,10 @@ func TestNotificationSMTPRejectsSTARTTLSDowngradeBeforeCredentials(t *testing.T)
 			done <- false
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			// The sender closes this connection after the STARTTLS rejection.
+			_ = conn.Close()
+		}()
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 		reader := bufio.NewReader(conn)
 		_, _ = io.WriteString(conn, "220 fixture ESMTP\r\n")
@@ -184,7 +230,11 @@ func TestNotificationSMTPVerifiedTLSStableMessageAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Error("close TLS listener:", err)
+		}
+	}()
 	root := x509.NewCertPool()
 	root.AddCert(certSource.Certificate())
 	host, port, _ := net.SplitHostPort(listener.Addr().String())
@@ -199,7 +249,10 @@ func TestNotificationSMTPVerifiedTLSStableMessageAndCancellation(t *testing.T) {
 		if e != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			// Cancellation may already have torn down the TLS session.
+			_ = conn.Close()
+		}()
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		r := bufio.NewReader(conn)
 		_, _ = io.WriteString(conn, "220 fixture ESMTP\r\n")
@@ -327,7 +380,10 @@ func newSMTPRepairFixture(t *testing.T, mode, fault string) smtpRepairFixture {
 			return
 		}
 		accepted.Add(1)
-		defer connection.Close()
+		defer func() {
+			// Fault modes intentionally terminate the session before normal shutdown.
+			_ = connection.Close()
+		}()
 		_ = connection.SetDeadline(time.Now().Add(3 * time.Second))
 		read := bufio.NewReader(connection)
 		write := func(value string) bool {

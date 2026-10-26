@@ -38,6 +38,7 @@ func databaseBackupProtectedContext(ctx context.Context) context.Context {
 	}
 	return ctx
 }
+
 // HostingDatabaseBackupPlan fetches and validates a plan for the supplied authority.
 func (c Client) HostingDatabaseBackupPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingDatabaseBackupPlan, error) {
 	var p domain.HostingDatabaseBackupPlan
@@ -58,6 +59,7 @@ func (c Client) HostingDatabaseBackupPlan(ctx context.Context, a domain.HostingA
 	}
 	return p, nil
 }
+
 // HostingDatabaseBackupMutation submits a receipt and validates the returned backup state.
 func (c Client) HostingDatabaseBackupMutation(ctx context.Context, in domain.HostingDatabaseBackupMutation) (domain.HostingDatabaseBackupOperation, error) {
 	var out domain.HostingDatabaseBackupOperation

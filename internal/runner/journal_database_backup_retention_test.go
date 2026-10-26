@@ -46,7 +46,11 @@ func TestBackupRetentionJournal20RestartAndExplicitRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	if got := j.Snapshot().DatabaseBackupRetentions; len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
 		t.Fatal("journal restart changed immutable batch")
 	}

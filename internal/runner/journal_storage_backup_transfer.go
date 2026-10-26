@@ -38,6 +38,7 @@ func cloneStorageBackupTransfers(v []JournalStorageBackupTransfer) []JournalStor
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+
 // AppendStorageBackupTransfer durably retains a validated storage transfer receipt, rejecting conflicting IDs.
 func (j *AttemptJournal) AppendStorageBackupTransfer(e JournalStorageBackupTransfer) (JournalStorageBackupTransfer, error) {
 	if err := validateJournalStorageBackupTransfer(e); err != nil {

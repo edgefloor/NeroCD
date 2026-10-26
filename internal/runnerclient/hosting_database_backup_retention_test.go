@@ -28,7 +28,9 @@ func TestBackupRetentionIdentityRequiresCompleteExplicitProfile(t *testing.T) {
 				caps = append(caps, "shell")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps}); err != nil {
+					t.Error("encode identity response:", err)
+				}
 			}))
 			defer server.Close()
 			options := RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: true, RemoteDatabaseBackups: true, DatabaseBackupRetention: flag, DatabaseTrustedLoopbackHTTP: true}

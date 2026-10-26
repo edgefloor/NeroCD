@@ -32,7 +32,7 @@ func validateJournalDatabaseBackupRetention(e JournalDatabaseBackupRetention) er
 					return errors.New("invalid retention probe identity")
 				}
 				for _, r := range strings.TrimPrefix(e.ProbeKey, prefix) {
-					if !(r >= 'a' && r <= 'f' || r >= '0' && r <= '9') {
+					if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
 						return errors.New("invalid retention probe identity")
 					}
 				}
@@ -62,6 +62,7 @@ func cloneDatabaseBackupRetentions(v []JournalDatabaseBackupRetention) []Journal
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+
 // AppendDatabaseBackupRetention durably retains a validated retention receipt, rejecting conflicting IDs.
 func (j *AttemptJournal) AppendDatabaseBackupRetention(e JournalDatabaseBackupRetention) (JournalDatabaseBackupRetention, error) {
 	if err := validateJournalDatabaseBackupRetention(e); err != nil {

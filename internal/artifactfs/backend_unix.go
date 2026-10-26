@@ -205,7 +205,10 @@ func (d *directoryBackend) ownership(key string, max int64) (Ownership, error) {
 	if err != nil {
 		return Ownership{}, err
 	}
-	defer file.Close()
+	defer func() {
+		// This read-only descriptor has no pending writes; metadata is already captured.
+		_ = file.Close()
+	}()
 	return Ownership{PoolID: pool, Device: meta.device, Inode: meta.inode, Bytes: meta.size}, nil
 }
 

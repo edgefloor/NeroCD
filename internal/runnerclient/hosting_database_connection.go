@@ -170,7 +170,7 @@ func (c Client) HostingApplicationDatabaseRetirement(ctx context.Context, reques
 func (c Client) HostingApplicationDatabaseAuthorize(ctx context.Context, request domain.HostingApplicationDatabaseEffectRequest, expected domain.HostingOperation, revision int64, leaseExpiry time.Time) (domain.HostingApplicationDatabaseEffectAuthorization, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseEffectAuthorization]
 	in, err := applicationConnectionInput(expected, request.HostingAuthority)
-	if err != nil || revision != in.MembershipRevision || request.Validate() != nil || expected.TaskMode != "deploy" && !(expected.TaskMode == "finalize" && request.Action == "retire") || expected.Result != nil || expected.RestoreOwnershipHeld || !expected.MutationHold || expected.State != "applying" && expected.State != "verifying" || !time.Now().Before(leaseExpiry) {
+	if err != nil || revision != in.MembershipRevision || request.Validate() != nil || expected.TaskMode != "deploy" && (expected.TaskMode != "finalize" || request.Action != "retire") || expected.Result != nil || expected.RestoreOwnershipHeld || !expected.MutationHold || expected.State != "applying" && expected.State != "verifying" || !time.Now().Before(leaseExpiry) {
 		return reply.value, errDatabaseConnection
 	}
 	if err = c.connectionPost(ctx, "authorize", request, &reply); err != nil {

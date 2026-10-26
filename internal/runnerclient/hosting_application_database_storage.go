@@ -22,6 +22,7 @@ func (c Client) HostingApplicationDatabaseStorageWriter(ctx context.Context, req
 	}
 	return out, nil
 }
+
 // HostingApplicationDatabaseStorageAuthorize requests effect permission bounded by the lease expiry.
 func (c Client) HostingApplicationDatabaseStorageAuthorize(ctx context.Context, request domain.HostingApplicationDatabaseStorageEffectRequest, expected domain.HostingOperation, expiry time.Time) (domain.HostingApplicationDatabaseStorageEffectAuthorization, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseStorageEffectAuthorization]
@@ -38,6 +39,7 @@ func (c Client) HostingApplicationDatabaseStorageAuthorize(ctx context.Context, 
 	}
 	return out, nil
 }
+
 // HostingApplicationDatabaseStorageProxyPlan fetches and validates a stopped-writer proxy plan.
 func (c Client) HostingApplicationDatabaseStorageProxyPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingApplicationDatabaseStorageProxyPlan, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseStorageProxyPlan]

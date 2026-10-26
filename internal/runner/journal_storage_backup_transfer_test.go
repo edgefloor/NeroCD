@@ -47,7 +47,11 @@ func TestStorageRemoteJournalVersion21RestartAndExplicitRetirement(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	if entries := j.Snapshot().StorageBackupTransfers; len(entries) != 1 || !reflect.DeepEqual(entries[0], entry) {
 		t.Fatal("journal21 changed authority")
 	}

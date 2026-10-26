@@ -39,6 +39,7 @@ type Sender struct {
 	policy Policy
 	lookup func(context.Context, string, string) ([]netip.Addr, error)
 }
+
 // Result classifies delivery success, retryability, and configuration failures.
 type Result struct {
 	Permanent            bool
@@ -222,8 +223,13 @@ func (s *Sender) webhook(ctx context.Context, c *domain.NotificationConfiguratio
 		}
 		return Result{Code: "delivery_uncertain", Uncertain: true}
 	}
-	defer response.Body.Close()
-	_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 4097))
+	defer func() {
+		// The received HTTP status determines delivery; cleanup cannot undo it.
+		_ = response.Body.Close()
+	}()
+	// Drain only a bounded prefix as best-effort cleanup. The status remains
+	// authoritative even if the receiver truncates or fails its response body.
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4097))
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return Result{}
 	}
@@ -331,7 +337,10 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 	if err != nil {
 		return smtpFailure(err, false)
 	}
-	defer conn.Close()
+	defer func() {
+		// Release the socket without replacing the SMTP exchange result.
+		_ = conn.Close()
+	}()
 	deadline, _ := ctx.Deadline()
 	if err = conn.SetDeadline(deadline); err != nil {
 		return smtpFailure(err, false)
@@ -356,7 +365,10 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 	if err != nil {
 		return smtpFailure(err, false)
 	}
-	defer client.Close()
+	defer func() {
+		// DATA acceptance or the exchange error already determines the result.
+		_ = client.Close()
+	}()
 	if err = client.Hello("nerocd.invalid"); err != nil {
 		return smtpFailure(err, false)
 	}

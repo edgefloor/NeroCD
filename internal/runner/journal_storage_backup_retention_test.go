@@ -46,7 +46,11 @@ func TestStorageBackupRetentionJournal20RestartAndExplicitRetirement(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	if got := j.Snapshot().StorageBackupRetentions; len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
 		t.Fatal("journal restart changed immutable batch")
 	}
@@ -106,7 +110,11 @@ func TestStorageBackupDeletionJournalRestartPreservesManualOrigin(t *testing.T) 
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer j.Close()
+	defer func() {
+		if err := j.Close(); err != nil {
+			t.Error("close fixture:", err)
+		}
+	}()
 	got := j.Snapshot().StorageBackupRetentions
 	if len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
 		t.Fatal("manual selection changed across restart")

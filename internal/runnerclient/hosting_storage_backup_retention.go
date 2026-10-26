@@ -31,6 +31,7 @@ func (r *storageRetentionMutationResponse) decodeResponse(body io.Reader) error 
 	}
 	return domain.DecodeHostingStorageProtocolJSON(raw, &r.value)
 }
+
 // HostingStorageBackupRetentionPlan fetches and validates a storage backup retention plan.
 func (c Client) HostingStorageBackupRetentionPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingStorageBackupRetentionPlan, error) {
 	var r storageRetentionPlanResponse
@@ -45,6 +46,7 @@ func (c Client) HostingStorageBackupRetentionPlan(ctx context.Context, a domain.
 	}
 	return r.value, nil
 }
+
 // HostingStorageBackupRetentionMutation submits a receipt and validates the retained item state.
 func (c Client) HostingStorageBackupRetentionMutation(ctx context.Context, in domain.HostingStorageBackupRetentionMutation) (domain.HostingStorageBackupRetentionExecution, error) {
 	var r storageRetentionMutationResponse
@@ -86,6 +88,7 @@ func (r *storageRetentionRetirementResponse) decodeResponse(body io.Reader) erro
 	}
 	return domain.DecodeHostingStorageProtocolJSON(raw, &r.value)
 }
+
 // HostingStorageBackupRetentionRetirement requests and validates a replay-only continuation.
 func (c Client) HostingStorageBackupRetentionRetirement(ctx context.Context, in domain.HostingStorageBackupRetentionRetirementInput) (domain.HostingStorageBackupRetentionRetirement, error) {
 	var r storageRetentionRetirementResponse

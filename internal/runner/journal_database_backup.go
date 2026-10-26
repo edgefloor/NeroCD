@@ -35,6 +35,7 @@ func cloneDatabaseBackups(v []JournalDatabaseBackup) []JournalDatabaseBackup {
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+
 // AppendDatabaseBackup durably retains a validated backup receipt, rejecting conflicting IDs.
 func (j *AttemptJournal) AppendDatabaseBackup(e JournalDatabaseBackup) (JournalDatabaseBackup, error) {
 	if err := validateJournalDatabaseBackup(e); err != nil {
