@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,6 +28,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -854,14 +856,82 @@ func notificationRuntimeFailedDumpExec(raw []byte, container string) bool {
 	return count == 1
 }
 
-func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.HostingDatabase, deployed domain.HostingOperation) domain.HostingDatabaseBackupOperation {
-	f.t.Helper()
-	container := deployed.Result.ContainerID
-	if !backupRuntimeValidExecID(container) {
-		f.t.Fatal("exact owned source container missing")
+// Connecting the application retires the initial V1 database container. Only
+// the active connection's scoped, completed upgrade can supply the source ID.
+func notificationRuntimeDumpSourceMatches(source domain.HostingDatabase, initial, current domain.HostingOperation, connection domain.HostingDatabaseConnection, application, destination string) bool {
+	if initial.Result == nil || current.Result == nil || current.Release == nil || current.Plan == nil || current.DatabaseUpgrade == nil || current.State != "succeeded" || !current.Result.Ready || !backupRuntimeValidExecID(initial.Result.ContainerID) || !backupRuntimeValidExecID(current.Result.ContainerID) || current.Result.ContainerID == initial.Result.ContainerID {
+		return false
 	}
+	return connection.State == "active" && connection.HoldOperationID == "" && connection.MembershipRevision >= 2 && connection.ProjectID == source.Resource.ProjectID && connection.DatabaseResourceID == source.Resource.ID && connection.ApplicationResourceID == application && connection.UpgradeOperationID == current.ID &&
+		source.Binding.ResourceID == source.Resource.ID && source.Binding.DestinationID == destination && initial.ProjectID == source.Resource.ProjectID && initial.ResourceID == source.Resource.ID && initial.BindingID == source.Binding.ID &&
+		current.ProjectID == source.Resource.ProjectID && current.ResourceID == source.Resource.ID && current.BindingID == source.Binding.ID && current.Snapshot.ResourceID == source.Resource.ID && current.Snapshot.BindingID == source.Binding.ID && current.Snapshot.DestinationID == destination &&
+		current.Plan.Snapshot.ResourceID == source.Resource.ID && current.Plan.Snapshot.BindingID == source.Binding.ID && current.Plan.Snapshot.DestinationID == destination &&
+		current.DatabaseUpgrade.PreviousHealthy.OperationID == initial.ID && current.DatabaseUpgrade.PreviousHealthy.ContainerID == initial.Result.ContainerID && current.Result.PreviousContainerID == initial.Result.ContainerID
+}
+
+func notificationRuntimeDumpContainerMatches(current domain.HostingOperation, container databaseRunnerContainer) bool {
+	return current.Result != nil && current.Release != nil && current.Plan != nil && container.ID == current.Result.ContainerID && container.State.Running && container.Image == current.Release.ImageID && container.Config.Labels["io.nerocd.binding"] == current.BindingID && container.Config.Labels["io.nerocd.operation"] == current.ID && container.Config.Labels["io.nerocd.plan"] == current.Plan.Hash && container.Config.Labels["io.nerocd.release"] == current.Release.Hash
+}
+
+func notificationRuntimeDumpDockerError(step string, contextErr, commandErr error) error {
+	switch step {
+	case "inspect_source", "read_original", "disable_connections", "read_events", "restore_connections":
+	default:
+		step = "unknown"
+	}
+	code, class := -1, "command_failed"
+	var exit *exec.ExitError
+	if errors.As(commandErr, &exit) {
+		code = exit.ExitCode()
+	}
+	if errors.Is(contextErr, context.DeadlineExceeded) {
+		class = "deadline"
+	} else if errors.Is(contextErr, context.Canceled) {
+		class = "canceled"
+	}
+	// Neither raw command errors, arguments nor stderr enter fixture evidence.
+	return fmt.Errorf("notification dump step=%s exit=%d class=%s", step, code, class)
+}
+
+func notificationRuntimeDumpDocker(parent context.Context, step string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...)
+	cmd.Stdin = bytes.NewReader(nil)
+	var out databaseRunnerBoundedOutput
+	cmd.Stdout, cmd.Stderr = &out, io.Discard
+	if err := cmd.Run(); err != nil {
+		clear(out.data)
+		return nil, notificationRuntimeDumpDockerError(step, ctx.Err(), err)
+	}
+	return out.data, nil
+}
+
+func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.HostingDatabase, initial, application domain.HostingOperation) domain.HostingDatabaseBackupOperation {
+	f.t.Helper()
+	connection := f.activeConnection(application.ResourceID)
+	deployed := databaseRunnerJSON[domain.HostingOperation](f, f.token, "GET", "/api/v1/hosting-operations/"+connection.UpgradeOperationID, nil, http.StatusOK)
+	if !notificationRuntimeDumpSourceMatches(source, initial, deployed, connection, application.ResourceID, f.destination) {
+		f.t.Fatal("notification dump current source scope or predecessor mismatch")
+	}
+	container := deployed.Result.ContainerID
+	docker := func(step string, args ...string) []byte {
+		f.t.Helper()
+		raw, err := notificationRuntimeDumpDocker(f.t.Context(), step, args...)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		return raw
+	}
+	var inspected databaseRunnerContainer
+	raw := docker("inspect_source", "container", "inspect", container, "--format", `{"Id":{{json .Id}},"Image":{{json .Image}},"Config":{"Labels":{{json .Config.Labels}}},"State":{"Running":{{json .State.Running}}}}`)
+	if json.Unmarshal(raw, &inspected) != nil || !notificationRuntimeDumpContainerMatches(deployed, inspected) {
+		clear(raw)
+		f.t.Fatal("notification dump current source container ownership or running state mismatch")
+	}
+	clear(raw)
 	// Read and preserve the original setting before changing only the owned app DB.
-	original := strings.TrimSpace(string(f.docker("exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT datallowconn FROM pg_database WHERE datname='app';")))
+	original := strings.TrimSpace(string(docker("read_original", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT datallowconn FROM pg_database WHERE datname='app';")))
 	if original != "t" {
 		f.t.Fatal("source app database must initially allow connections")
 	}
@@ -870,17 +940,17 @@ func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.Host
 		once.Do(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			raw, err := databaseRunnerDocker(ctx, nil, "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS true;")
+			raw, err := notificationRuntimeDumpDocker(ctx, "restore_connections", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS true;")
 			clear(raw)
 			if err != nil {
-				f.t.Error("owned source connection setting restore failed")
+				f.t.Error(err)
 			}
 		})
 	}
 	f.t.Cleanup(restore)
 	defer restore()
 	started := time.Now().UTC().Format(time.RFC3339Nano)
-	f.docker("exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS false;")
+	docker("disable_connections", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS false;")
 	wire := &databaseBackupRuntimeWire{mode: "backup", pause: true, entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
 	var release sync.Once
@@ -897,7 +967,7 @@ func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.Host
 		return requested.State == "failed" || requested.State == "uncertain"
 	})
 	f.backupWire.Store(nil)
-	events := f.docker("events", "--since", started, "--until", time.Now().UTC().Format(time.RFC3339Nano), "--filter", "container="+container, "--filter", "event=exec_create", "--filter", "event=exec_die", "--format", "{{json .}}")
+	events := docker("read_events", "events", "--since", started, "--until", time.Now().UTC().Format(time.RFC3339Nano), "--filter", "container="+container, "--filter", "event=exec_create", "--filter", "event=exec_die", "--format", "{{json .}}")
 	if !notificationRuntimeFailedDumpExec(events, container) {
 		clear(events)
 		f.t.Fatal("no actual pinned pg_dump invocation with a failed exit was observed")
@@ -1071,7 +1141,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	f.appRecord(application, "GET", "before", "notification_snapshot_origin")
 	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql local_restore_app")
 	notificationRuntimeRetryAndAuthority(f, source.Resource.ProjectID, receivers)
-	dump := notificationRuntimeDumpFailure(f, source, deployed)
+	dump := notificationRuntimeDumpFailure(f, source, deployed, application)
 	diagnosticID = dump.ID
 	dumpDeliveries := notificationRuntimeSource(f, source.Resource.ProjectID, dump.ID, "backup_failed", channels)
 	notificationRuntimeVerifyReceipts(f, receivers, dumpDeliveries, channels, source, dump.ID, false, dump.FailureCode)
@@ -1241,4 +1311,106 @@ func TestBackupNotificationSourceActorOwnerAdmissionAndRevocation(t *testing.T) 
 		t.Fatal("source actor lifecycle changed viewer authority")
 	}
 	databaseRunnerJSON[[]domain.HostingDatabaseBackupOperation](f, viewer, "GET", path, nil, http.StatusOK)
+}
+
+func TestBackupNotificationDumpSourceRejectsRetiredAndForeignTargets(t *testing.T) {
+	fixture := func() (domain.HostingDatabase, domain.HostingOperation, domain.HostingOperation, domain.HostingDatabaseConnection) {
+		source := domain.HostingDatabase{Resource: domain.Resource{ID: "database", ProjectID: "project"}, Binding: domain.ResourceBinding{ID: "binding", ResourceID: "database", DestinationID: "destination"}}
+		initial := domain.HostingOperation{ID: "initial", ProjectID: "project", ResourceID: "database", BindingID: "binding", Result: &domain.HostingResult{ContainerID: strings.Repeat("a", 64)}}
+		current := domain.HostingOperation{ID: "upgrade", ProjectID: "project", ResourceID: "database", BindingID: "binding", State: "succeeded", Snapshot: domain.HostingSnapshot{ResourceID: "database", BindingID: "binding", DestinationID: "destination"}, Release: &domain.HostingRelease{ImageID: "image", Hash: "release"}, Plan: &domain.HostingApplyPlan{Hash: "plan"}, Result: &domain.HostingResult{ContainerID: strings.Repeat("b", 64), PreviousContainerID: initial.Result.ContainerID, Ready: true}, DatabaseUpgrade: &domain.HostingDatabaseUpgradeProof{PreviousHealthy: domain.HostingHealthy{OperationID: initial.ID, ContainerID: initial.Result.ContainerID}}}
+		current.Plan.Snapshot = current.Snapshot
+		connection := domain.HostingDatabaseConnection{State: "active", MembershipRevision: 2, ProjectID: "project", DatabaseResourceID: "database", ApplicationResourceID: "application", UpgradeOperationID: current.ID}
+		return source, initial, current, connection
+	}
+	source, initial, current, connection := fixture()
+	if !notificationRuntimeDumpSourceMatches(source, initial, current, connection, "application", "destination") || current.Result.ContainerID == initial.Result.ContainerID {
+		t.Fatal("current connected writer not selected independently of retired initial ID")
+	}
+	for _, field := range []string{"retired", "project", "resource", "binding", "destination", "plan", "application", "upgrade", "predecessor_operation", "predecessor_container", "result_predecessor", "inactive", "held", "incomplete"} {
+		t.Run(field, func(t *testing.T) {
+			source, initial, current, connection := fixture()
+			switch field {
+			case "retired":
+				current.Result.ContainerID = initial.Result.ContainerID
+			case "project":
+				current.ProjectID = "foreign"
+			case "resource":
+				current.ResourceID = "foreign"
+			case "binding":
+				current.BindingID = "foreign"
+			case "destination":
+				current.Snapshot.DestinationID = "foreign"
+			case "plan":
+				current.Plan.Snapshot.ResourceID = "foreign"
+			case "application":
+				connection.ApplicationResourceID = "foreign"
+			case "upgrade":
+				connection.UpgradeOperationID = "foreign"
+			case "predecessor_operation":
+				current.DatabaseUpgrade.PreviousHealthy.OperationID = "foreign"
+			case "predecessor_container":
+				current.DatabaseUpgrade.PreviousHealthy.ContainerID = strings.Repeat("c", 64)
+			case "result_predecessor":
+				current.Result.PreviousContainerID = strings.Repeat("c", 64)
+			case "inactive":
+				connection.State = "held"
+			case "held":
+				connection.HoldOperationID = "foreign"
+			case "incomplete":
+				current.Result = nil
+			}
+			if notificationRuntimeDumpSourceMatches(source, initial, current, connection, "application", "destination") {
+				t.Fatal("unproven current source selected")
+			}
+		})
+	}
+	var container databaseRunnerContainer
+	container.ID, container.Image, container.State.Running = current.Result.ContainerID, current.Release.ImageID, true
+	container.Config.Labels = map[string]string{"io.nerocd.binding": current.BindingID, "io.nerocd.operation": current.ID, "io.nerocd.plan": current.Plan.Hash, "io.nerocd.release": current.Release.Hash}
+	if !notificationRuntimeDumpContainerMatches(current, container) {
+		t.Fatal("exact current container rejected")
+	}
+	for _, field := range []string{"retired", "stopped", "image", "io.nerocd.binding", "io.nerocd.operation", "io.nerocd.plan", "io.nerocd.release"} {
+		changed := container
+		changed.Config.Labels = make(map[string]string)
+		for k, v := range container.Config.Labels {
+			changed.Config.Labels[k] = v
+		}
+		switch field {
+		case "retired":
+			changed.ID = initial.Result.ContainerID
+		case "stopped":
+			changed.State.Running = false
+		case "image":
+			changed.Image = "foreign"
+		default:
+			changed.Config.Labels[field] = "foreign"
+		}
+		if notificationRuntimeDumpContainerMatches(current, changed) {
+			t.Fatalf("container mismatch %s accepted", field)
+		}
+	}
+}
+
+func TestBackupNotificationDumpDiagnosticsExcludeCommandMaterial(t *testing.T) {
+	poison := "SECRET-CANARY postgres://private:password@private.invalid/database"
+	for _, test := range []struct {
+		step       string
+		contextErr error
+		want       string
+	}{
+		{"read_original", nil, "notification dump step=read_original exit=-1 class=command_failed"},
+		{poison, nil, "notification dump step=unknown exit=-1 class=command_failed"},
+		{"disable_connections", context.DeadlineExceeded, "notification dump step=disable_connections exit=-1 class=deadline"},
+		{"restore_connections", context.Canceled, "notification dump step=restore_connections exit=-1 class=canceled"},
+	} {
+		got := notificationRuntimeDumpDockerError(test.step, test.contextErr, errors.New(poison)).Error()
+		if got != test.want || strings.Contains(got, poison) {
+			t.Fatal("unbounded or secret-bearing diagnostic")
+		}
+	}
+	err := exec.Command("/bin/sh", "-c", "exit 7").Run()
+	if err == nil || notificationRuntimeDumpDockerError("read_events", nil, err).Error() != "notification dump step=read_events exit=7 class=command_failed" {
+		t.Fatal("safe subprocess exit classification missing")
+	}
 }
