@@ -3,7 +3,7 @@
 - [Product specification](product-spec.md): full hosting target, R01–R68 and A01–A37.
 - [Implementation plan](plan.md): accepted P00–P18 packages and M0–M4 gates.
 - [Compatibility ledger](compatibility.md): pinned reference, current limits and planned fixtures.
-- [Hosting parity audit](parity-audit.md): atomic checklist, conservative verified coverage, and reproducible calculator.
+- [Hosting parity audit](parity-audit.md): one effective atomic checklist, cumulative accepted bounded-profile coverage of 78/933 = 8.36% through `f96d8c6267fcab2273b6f748d09801931660ceaf`, retained historical audit, and reproducible calculator.
 - [Accepted hosting foundations](compatibility.md#accepted-foundations-and-evidence):
   dated progress, source tests and the remaining runtime boundaries.
 - [Hosting destinations](hosting-destinations.md): manual enrollment, server
