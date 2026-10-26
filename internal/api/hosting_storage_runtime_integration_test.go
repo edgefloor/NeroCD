@@ -50,6 +50,7 @@ type storageRuntimeFault struct {
 
 type storageRuntimeFixture struct {
 	t                                                   *testing.T
+	catalogBrowser                                      *catalogRuntimeBrowser
 	control                                             *httptest.Server
 	client                                              *http.Client
 	root, token, serverID, destinationID, environmentID string
@@ -189,7 +190,13 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		server = catalogRuntimeServer(t, pg)
 	}
 	f = &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
+		f.catalogBrowser = newCatalogRuntimeBrowser(t)
+	}
 	control := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if f.catalogBrowser != nil && f.catalogBrowser.serve(w, r, server) {
+			return
+		}
 		if r.URL.Path == "/api/v1/runners/hosting/complete" {
 			f.completions.Add(1)
 		}
@@ -215,7 +222,11 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			t.Error("response-loss process did not cancel request")
 		}
 	}))
-	listener, err := net.Listen("tcp", "127.0.0.1:18190")
+	listenAddress := "127.0.0.1:18190"
+	if f.catalogBrowser != nil {
+		listenAddress = "0.0.0.0:18190"
+	}
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +235,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	}
 	control.Listener = listener
 	control.StartTLS()
+	if f.catalogBrowser != nil {
+		control.URL = "https://127.0.0.1:18190"
+	}
 	f.control, f.client = control, control.Client()
 	f.client.Timeout = 10 * time.Second
 	t.Cleanup(control.Close)

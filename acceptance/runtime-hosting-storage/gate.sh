@@ -41,6 +41,8 @@ case ${1:-} in
   fi;;
  *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog]' >&2; exit 2;;
 esac
+browser_publication=false
+if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
 outer=''
 pg=''
 volume_attempted=false
@@ -180,7 +182,7 @@ if any(not re.fullmatch("[a-f0-9]{64}",u) or u!=sys.argv[6] for u in users) or l
 }
 verify_outer() {
  if ! host_docker inspect "$1" > "$evidence/outer-current-inspect"; then return 1; fi
- if [[ "$remote" == true ]]; then
+ if [[ "$browser_publication" == true ]]; then
   python3 acceptance/runtime-hosting-storage/remote_evidence.py profile "$evidence" || return 1
  fi
  python3 -c '
@@ -212,7 +214,7 @@ if len(mounts)!=1:raise SystemExit("outer actual mount count mismatch")
 m=mounts[0]
 if any(m.get(k)!=value for k,value in {"Type":"volume","Name":volume,"Driver":"local","Destination":"/var/lib/docker","Source":v["Mountpoint"],"RW":True}.items()):raise SystemExit("outer actual mount mismatch")
 if state.get("Paused") or state.get("Restarting") or state.get("Status") not in ["created","running","exited"] or state.get("Running")!=(state["Status"]=="running"):raise SystemExit("outer process state uncertain")
-' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$remote"
+' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$browser_publication"
 }
 
 collect_runtime_evidence() {
@@ -336,7 +338,7 @@ if [[ "$remote" == true || "$catalog" == true ]]; then
  python3 -B scripts/skills/ui_manifest.py > "$evidence/browser-ui-manifest.json"
  git ls-files -s web/app/src web/app/package.json web/app/bun.lock web/assets.go > "$evidence/browser-source-blobs"
 fi
-git ls-files -s acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go internal/api/hosting_storage_backup_deletion_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
+git ls-files -s acceptance/runtime-hosting-catalog internal/api/hosting_catalog_runtime_integration_test.go internal/domain/hosting_catalog.go internal/domain/hosting_catalog_linkding.yaml acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go internal/api/hosting_storage_backup_deletion_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
 fixture_tags=nerocd_proxy_fixture
 if [[ "$remote" == true ]]; then fixture_tags=nerocd_proxy_fixture,nerocd_storage_remote_contract; fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags "$fixture_tags" -c -o "$evidence/api.test" ./internal/api
@@ -373,7 +375,7 @@ host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
 outer_run() {
- if [[ "$remote" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
+ if [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
  else host_docker run --pull=never "$@"; fi
 }
 returned_outer=$(outer_run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
@@ -528,6 +530,23 @@ for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_a
  if b.get(k) is not True:raise SystemExit('connected browser manual deletion proof missing: '+k)
 CHECK_DELETION_MARKERS
  fi
+elif [[ "$catalog" == true ]]; then
+ browser_origin=$(cat "$evidence/browser-origin")
+ browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
+ host_docker exec --workdir /workspace/internal/api --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
+ test_pid=$!
+ NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/browser.mjs > "$evidence/browser.log" 2>&1
+ wait "$test_pid"
+ test_pid=''
+ python3 - "$evidence/api-tests.log" "$evidence/catalog-browser-safe.json" <<'CATALOG_BROWSER_PASS'
+import json,pathlib,sys
+text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
+if "--- PASS: TestHostingCatalogLinkdingCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required catalog runtime test did not pass without skips")
+if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected catalog browser did not pass")
+for key in ["served_assets_match_manifest","catalog_install_identical_retry","explicit_reveal_and_hide","browser_deployment","healthy_resource_result","current_viewer_denied_replay","browser_route_selection"]:
+ if browser.get(key) is not True:raise SystemExit("connected catalog browser proof missing: "+key)
+if browser.get("responsive_widths")!=[1280,320,390,430]:raise SystemExit("catalog responsive proof missing")
+CATALOG_BROWSER_PASS
 else
  catalog_mode=""; if [[ "${1:-}" == --catalog ]]; then catalog_mode=disposable-dind; fi
  host_docker exec --workdir /workspace/internal/api --env "NEROCD_CATALOG_RUNTIME=$catalog_mode" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m | tee "$evidence/api-tests.log"

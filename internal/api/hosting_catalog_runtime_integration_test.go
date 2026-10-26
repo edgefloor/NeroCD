@@ -5,16 +5,19 @@ package api
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,7 +44,18 @@ func catalogRuntimeServer(t *testing.T, pg *store.PostgresStore) *Server {
 	if err != nil {
 		t.Fatal("fixture service")
 	}
-	return NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+	origin := os.Getenv("NEROCD_CATALOG_BROWSER_ORIGIN")
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" || parsed.Path != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		t.Fatal("exact loopback catalog browser origin required")
+	}
+	if _, err := service.BootstrapAdmin(t.Context(), app.BootstrapAdminInput{Email: "catalog-bootstrap@example.local", Name: "Catalog bootstrap", Password: hostingStorageRemoteRuntimeRandom(t)}); err != nil {
+		t.Fatal("catalog bootstrap")
+	}
+	if _, err := pg.UpsertProjectMember(t.Context(), domain.ProjectMember{ID: "member_catalog_viewer", ProjectID: "proj_platform", UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
+		t.Fatal("catalog viewer membership")
+	}
+	return NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin})
 }
 
 // catalogSession starts with an empty cookie jar and submits Linkding's real
@@ -127,15 +141,15 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 		t.Skip("requires approved isolated catalog runtime gate")
 	}
 	f := newStorageRuntimeFixture(t)
-	templates := storageRuntimeJSON[[]domain.HostingCatalogTemplate](f, "GET", "/api/v1/hosting-catalog?project_id=proj_platform", nil, 200)
-	if len(templates) != 1 {
-		t.Fatal("expected one qualified template")
-	}
-	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, DestinationID: f.destinationID, Name: "Linkding acceptance", TemplateID: "linkding", ImmutableVersion: domain.HostingCatalogLinkdingVersion}
-	v := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "POST", "/api/v1/hosting-catalog/installations", in, 201)
-	retry := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "POST", "/api/v1/hosting-catalog/installations", in, 201)
-	if domain.HostingDocumentHash(retry) != domain.HostingDocumentHash(v) {
-		t.Fatal("duplicate install changed saved copy")
+	b := f.catalogBrowser
+	b.set("install", f.destinationID)
+	resourceID := b.await(t, "installed")
+	v := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "GET", "/api/v1/resources/"+resourceID+"/catalog-installation", nil, 200)
+	b.mu.Lock()
+	original, retried := b.original, b.retried
+	b.mu.Unlock()
+	if original == nil || retried == nil || domain.HostingDocumentHash(original) != domain.HostingDocumentHash(v) || domain.HostingDocumentHash(retried) != domain.HostingDocumentHash(v) {
+		t.Fatal("browser response-loss retry changed saved installation")
 	}
 	values := map[string]string{}
 	for _, ref := range v.Credentials {
@@ -143,12 +157,42 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 		values[ref.Name] = secret.Value
 	}
 	deploy := func(key, path string, seconds int) domain.HostingOperation {
-		return storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+v.Resource.ID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: key, ContainerPort: 9090, HostPort: 20101, Readiness: domain.HostingReadiness{Path: path, TimeoutSeconds: seconds}}, 202)
+		return storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+v.Resource.ID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: key, ContainerPort: 9090, HostPort: 20101, Readiness: domain.HostingReadiness{Path: path, TimeoutSeconds: seconds}, StorageRouteContinuity: storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+v.Resource.ID+"/storage-deployment-options", nil, 200).StorageRouteContinuity}, 202)
 	}
-	first := f.await(deploy("catalog_first", "/health", 120).ID, "succeeded")
-	if first.Plan == nil || first.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || first.Result == nil {
+	b.set("deploy", v.Resource.ID)
+	first := f.await(b.await(t, "deployed"), "succeeded")
+	if first.Plan == nil || first.Release == nil || first.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || first.Result == nil {
 		t.Fatal("wrong runtime family")
 	}
+	b.set("healthy", v.Resource.ID)
+	b.await(t, "healthy")
+	// Reuse the ordinary managed proxy and hostname grant. API TLS above and
+	// application HTTPS below prove distinct trust boundaries.
+	f.stop()
+	proxy := storageRuntimeJSON[domain.HostingProxy](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "catalog-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
+	certDir := filepath.Join(f.root, "proxy", proxy.ID, "certificates")
+	if err := os.MkdirAll(certDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	publicRoot, err := os.ReadFile(filepath.Join(f.root, "minica.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "root.pem"), publicRoot, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.start()
+	f.awaitLoadedProxy(proxy.ID, first.Release.DaemonID)
+	storageRuntimeJSON[domain.HostingHostnameGrant](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: "catalog-runtime.example.test"}, 201)
+	b.set("route", v.Resource.ID)
+	routeOperation := b.await(t, "routed")
+	f.proxyAwait(routeOperation)
+	verifyHTTPS := func() {
+		if body := f.https("catalog-runtime.example.test", "GET", "/health", nil, 200); !bytes.Contains(body, []byte("1.47.0")) || !bytes.Contains(body, []byte("healthy")) {
+			t.Fatal("trusted application HTTPS/version/database health missing")
+		}
+	}
+	verifyHTTPS()
 	base := "http://127.0.0.1:20101"
 	health, err := http.Get(base + "/health")
 	if err != nil {
@@ -165,12 +209,15 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	f.stop()
 	f.start()
 	second := f.await(deploy("catalog_redeploy", "/health", 120).ID, "succeeded")
+	f.awaitContinuity(v.Resource.ID, second.ID)
+	verifyHTTPS()
 	fresh := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogBookmark(t, fresh, base, false)
 	failed := f.await(deploy("catalog_failed_candidate", "/catalog-required-missing", 3).ID, "failed")
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed candidate did not prove recovery")
 	}
+	verifyHTTPS()
 	recovery := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogBookmark(t, recovery, base, false)
 	if *first.Plan.Storage != *second.Plan.Storage || first.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration || first.Snapshot.Storage != second.Snapshot.Storage {
@@ -199,4 +246,114 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	}
 
 	t.Log("catalog login/bookmark; fresh login after runner restart and redeploy; failed candidate recovery; stable references; secret scan passed")
+	b.set("complete", v.Resource.ID)
+	b.await(t, "done")
+
+}
+
+// This private handshake sequences the browser; production handlers alone
+// authorize catalog, reveal and deployment requests. No credentials enter it.
+type catalogRuntimeBrowser struct {
+	mu                sync.Mutex
+	key, phase, id    string
+	reports           chan hostingStorageRemoteRuntimeReport
+	original, retried *domain.HostingCatalogInstallation
+}
+
+func newCatalogRuntimeBrowser(t *testing.T) *catalogRuntimeBrowser {
+	t.Helper()
+	key := os.Getenv("NEROCD_CATALOG_BROWSER_KEY")
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(key) {
+		t.Fatal("private catalog browser key required")
+	}
+	return &catalogRuntimeBrowser{key: key, reports: make(chan hostingStorageRemoteRuntimeReport, 1)}
+}
+func (b *catalogRuntimeBrowser) set(phase, id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.phase, b.id = phase, id
+}
+func (b *catalogRuntimeBrowser) await(t *testing.T, action string) string {
+	t.Helper()
+	select {
+	case v := <-b.reports:
+		if v.Action != action || v.ID == "" {
+			t.Fatal("catalog browser phase mismatch")
+		}
+		return v.ID
+	case <-time.After(90 * time.Second):
+		t.Fatalf("catalog browser did not complete %s", action)
+	}
+	return ""
+}
+func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, server http.Handler) bool {
+	if strings.HasPrefix(r.URL.Path, "/__catalog_fixture/") {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-NeroCD-Fixture-Key")), []byte(b.key)) != 1 {
+			w.WriteHeader(403)
+			return true
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		b.mu.Lock()
+		phase, id := b.phase, b.id
+		b.mu.Unlock()
+		if r.Method == "GET" && r.URL.Path == "/__catalog_fixture/state" {
+			writeJSON(w, 200, map[string]string{"phase": phase, "id": id})
+			return true
+		}
+		if r.Method == "POST" && r.URL.Path == "/__catalog_fixture/report" {
+			var v hostingStorageRemoteRuntimeReport
+			decoder := json.NewDecoder(io.LimitReader(r.Body, 1025))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&v) != nil || decoder.Decode(new(any)) != io.EOF || len(v.ID) > 128 || v.ID == "" {
+				w.WriteHeader(400)
+				return true
+			}
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done"}[phase]
+			if v.Action != expected {
+				w.WriteHeader(409)
+				return true
+			}
+			select {
+			case b.reports <- v:
+				w.WriteHeader(204)
+			default:
+				w.WriteHeader(409)
+			}
+			return true
+		}
+		w.WriteHeader(404)
+		return true
+	}
+	if r.Method == "POST" && r.URL.Path == "/api/v1/hosting-catalog/installations" {
+		// Commit the real first request, then simulate its lost response. The
+		// browser must retry the unchanged request through current authorization.
+		receipt := httptest.NewRecorder()
+		server.ServeHTTP(receipt, r)
+		if receipt.Code == 201 {
+			var v domain.HostingCatalogInstallation
+			if json.Unmarshal(receipt.Body.Bytes(), &v) != nil {
+				w.WriteHeader(500)
+				return true
+			}
+			b.mu.Lock()
+			first := b.original == nil
+			if first {
+				b.original = &v
+			} else {
+				b.retried = &v
+			}
+			b.mu.Unlock()
+			if first {
+				writeJSON(w, 503, map[string]string{"code": "unavailable"})
+				return true
+			}
+		}
+		for name, values := range receipt.Header() {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(receipt.Code)
+		_, _ = w.Write(receipt.Body.Bytes())
+		return true
+	}
+	return false
 }

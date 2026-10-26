@@ -73,11 +73,18 @@ class GateExitTest(unittest.TestCase):
                 text=True, start_new_session=True,
             )
             try:
-                deadline = time.monotonic() + 5
+                # This setup runs a fresh Python interpreter for each Git/Docker
+                # stub before the compiler handshake. SDK/interpreter startup
+                # on macOS can exceed five seconds without any gate work hung.
+                # Keep a bounded setup budget separate from the unchanged
+                # compiler release, exact signal/exit and cleanup deadlines.
+                setup_started = time.monotonic()
+                deadline = setup_started + 15
                 while not (root / "started").exists():
                     if process.poll() is not None or time.monotonic() >= deadline:
                         self.fail("gate did not reach fake compiler handshake")
                     time.sleep(0.01)
+                print(f"gate fake compiler ready after {time.monotonic()-setup_started:.3f}s", flush=True)
                 if delivered_signal:
                     process.send_signal(delivered_signal)
                 (root / "release").touch()
@@ -991,7 +998,7 @@ class DeletionModeContractTests(unittest.TestCase):
         start = source.index("collect_runtime_evidence() {")
         collect = source[start:source.index("\n}\n", start) + 3]
         start = source.index(' if [[ "$deletion" == true ]]; then\n  collect_runtime_evidence')
-        validation = source[start:source.index("\n fi\nelse", start) + len("\n fi")]
+        validation = source[start:source.index("\n fi\nelif", start) + len("\n fi")]
         required = ['local_absent','remote_retained','history_retained','remaining_remote_restore','new_volume_application_reads_and_writes','source_preserved','manual_remote_conditional_delete','final_copy_confirmation','final_history_retained']
         browser_required = ['manual_deletion_selection_and_exact_retry','manual_deletion_history_and_final_copy_warning','manual_deletion_viewer_history_and_denied','manual_deletion_remote_and_final_confirmation','manual_deletion_final_history']
         for kind in ["valid", "missing", "malformed", "missing_flag", "false_flag", "numeric_flag", "failed_status", "browser_missing_flag", "browser_failed", "browser_missing", "browser_malformed"]:
@@ -1040,6 +1047,36 @@ host_docker() {
         for requirement in ["ManualDeleteSelectedBackupLocalKeepsRemoteAndHistory", "remaining_remote_restore", "new_volume_application_reads_and_writes", "os.ErrNotExist"]:
             self.assertIn(requirement, fixture)
         self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageDeletionRuntimeWorkflow"):])
+
+class CatalogModeContractTests(unittest.TestCase):
+    def test_catalog_requires_connected_browser_and_exact_loopback_profile(self):
+        source = Path(__file__).with_name("gate.sh").read_text()
+        self.assertIn('if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi', source)
+        self.assertIn('if [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190', source)
+        self.assertIn('"$owner" "$volume" "$browser_publication"', source)
+        self.assertIn('node acceptance/runtime-hosting-catalog/browser.mjs', source)
+        self.assertIn('wait "$test_pid"', source[source.index('elif [[ "$catalog" == true ]]; then'):])
+
+    def test_catalog_rejects_missing_false_skipped_or_intercepted_browser_evidence(self):
+        source = Path(__file__).with_name("gate.sh").read_text()
+        validator = source.split("<<'CATALOG_BROWSER_PASS'\n", 1)[1].split("\nCATALOG_BROWSER_PASS", 1)[0]
+        required = ["served_assets_match_manifest", "catalog_install_identical_retry", "explicit_reveal_and_hide", "browser_deployment", "healthy_resource_result", "current_viewer_denied_replay", "browser_route_selection"]
+        for kind in ["valid", "missing", "false", "numeric", "intercepted", "skipped", "missing_runtime_pass", "wrong_widths", "malformed"]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                marker = {"status": "passed", "intercepted_requests": False, "responsive_widths": [1280, 320, 390, 430], **dict.fromkeys(required, True)}
+                if kind == "missing": del marker[required[0]]
+                if kind == "false": marker[required[0]] = False
+                if kind == "numeric": marker[required[0]] = 1
+                if kind == "intercepted": marker["intercepted_requests"] = True
+                if kind == "wrong_widths": marker["responsive_widths"] = [1280]
+                browser = root / "browser.json"
+                browser.write_text("invalid JSON" if kind == "malformed" else json.dumps(marker))
+                runtime = root / "runtime.log"
+                runtime.write_text("PASS" if kind == "missing_runtime_pass" else "--- PASS: TestHostingCatalogLinkdingCompiledRunnerHTTPS (1s)\n" + ("SKIP" if kind == "skipped" else ""))
+                result = subprocess.run([sys.executable, "-c", validator, str(runtime), str(browser)], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

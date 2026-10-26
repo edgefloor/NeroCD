@@ -12,8 +12,10 @@ The physical target is `unix:///var/run/docker.sock`, daemon
 volume suffix `-docker-data`, label `io.nerocd.storage-runtime.owner`. It uses
 `docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`,
 four CPUs, 6 GiB memory, 2048 PIDs, and the existing privileged DinD profile.
-The outer container has no host bind or Docker socket mount and no published
-port. Existing host containers, volumes and the user UI remain outside this target.
+The outer container has no host bind or Docker socket mount. It publishes only
+API port 18190 to one dynamically assigned `127.0.0.1` host port for the connected
+browser. The gate verifies the exact requested and assigned binding before use
+and before cleanup; no application port is published on the host. Existing host containers, volumes and the user UI remain outside this target.
 
 Inside that daemon, the established PostgreSQL fixture uses
 `postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`,
@@ -25,9 +27,22 @@ The new exact image pull is the Linkding digest in [the catalog contract](../../
 All application mutations occur inside the owned guest. Guest API TLS uses the
 existing fixture CA. The compiled runner uses the actual public API and journal.
 
-`TestHostingCatalogLinkdingCompiledRunnerHTTPS` installs from the catalog,
-replays the same request, explicitly reveals the managed references, deploys the
-ordinary image, checks `/health` and version 1.47.0, submits Linkding's login form,
+The connected Playwright browser loads the candidate Go-served UI and compares
+all served asset hashes with the candidate build manifest. It signs in, selects
+the catalog entry, checks desktop and 320/390/430 px layouts, installs, observes a
+server-side lost-response fault after the real commit, and retries identical
+request bytes. It explicitly reveals and hides credentials, deploys through the
+ordinary deployment review, checks the recorded successful readiness result,
+and verifies a fresh viewer session cannot install or replay the request. It
+selects the existing managed route to the settled Linkding release. No browser
+responses are intercepted and no credential values or DOM are recorded.
+
+`TestHostingCatalogLinkdingCompiledRunnerHTTPS` sequences that browser against
+the real candidate API and runner. It separately verifies the managed route at
+`https://catalog-runtime.example.test/health` with the fixture CA and version
+1.47.0, preserving the route across redeploy and failed-candidate recovery. This
+application HTTPS evidence is distinct from browser-to-API TLS. It also checks
+runner-local `/health`, submits Linkding's real login form,
 and saves a bookmark using its session-authenticated API. Scraping and HTML
 snapshots are disabled for the fixture bookmark, so no external website is fetched.
 It starts a fresh cookie jar after runner restart/redeploy and after a failed
@@ -40,3 +55,7 @@ and destination denial, and revoked replay.
 The gate must report the exact test as passed with no skip. Reviewers must still
 assess `code_hygiene`, `specification` and `critical_security` at the exact SHA.
 Runtime and browser qualification remain pending until their evidence exists.
+The browser writes only fixed boolean markers, viewport widths, a fixed phase
+and an error class to `catalog-browser-safe.json`; the gate requires every marker
+and the exact runtime PASS with no skip. Compilation and syntax checks do not
+establish that these physical assertions pass.

@@ -84,3 +84,27 @@ to recreate a container. Image rollback cannot undo application writes to data.
 
 Archive, restore and backup qualification for this combined family is separate
 scope. This change does not imply that existing storage archive adapters accept it.
+
+
+A catalog draft validates the installation name before assigning an immutable
+request ID. A definitive HTTP 400 rejection permits correction and a new request.
+An ambiguous response retains the original request and disables edits so a retry
+cannot silently create a second installation.
+
+After a combined owned-storage/runtime-environment deployment is prepared, a
+runner restart retains an explicit ownership barrier. It does not request a new
+secret delivery, create storage, or recreate a container. Owner-requested
+read-only reconciliation is checked before that barrier and may retire journal
+evidence only when the controller returns an exact trusted terminal receipt.
+The runner cannot accept unrelated work while this unresolved global startup
+barrier remains. Observation does not itself release uncertain or restored
+ownership; the existing trusted recovery boundary still applies.
+
+The catalog acceptance gate includes a connected browser against the candidate
+Go-served assets, an identical retry after a committed response is lost, explicit
+credential reveal, ordinary deployment review, viewer denial and responsive
+layouts. The same fixture selects an ordinary managed route and separately
+verifies private-CA application HTTPS and route continuity across replacement.
+Actual Linkding login and bookmark persistence use fresh HTTP cookie jars after
+each replacement. These are distinct evidence layers; source checks and fixture
+compilation alone do not qualify the physical workflow.
