@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/mail"
 	"net/url"
 	"os"
 	"os/exec"
@@ -41,12 +42,13 @@ import (
 )
 
 type hostingStorageRemoteRuntimeFixture struct {
-	pg               *store.PostgresStore
-	notifications    *backupNotificationReceivers
-	scheduleACK      atomic.Bool
-	stopJobs         func(context.Context) error
-	uploadChecks     atomic.Int64
-	uploadViolations atomic.Int64
+	operatorMutations atomic.Int64
+	pg                *store.PostgresStore
+	notifications     *backupNotificationReceivers
+	scheduleACK       atomic.Bool
+	stopJobs          func(context.Context) error
+	uploadChecks      atomic.Int64
+	uploadViolations  atomic.Int64
 	*storageRuntimeFixture
 	wire    atomic.Pointer[hostingStorageRemoteRuntimeWire]
 	browser *hostingStorageRemoteRuntimeBrowser
@@ -122,6 +124,9 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 			}
 			http.Error(w, "fixture lost schedule response", 503)
 			return
+		}
+		if r.Method != "GET" && r.Method != "HEAD" && (strings.HasPrefix(r.URL.Path, "/api/v1/resources/") || strings.HasPrefix(r.URL.Path, "/api/v1/storage-backups/") || strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/")) {
+			remote.operatorMutations.Add(1)
 		}
 		if wire := remote.wire.Load(); wire != nil && wire.serve(w, r, server) {
 			return
@@ -497,7 +502,7 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	backup := storageRuntimeJSON[domain.HostingStorageBackup](f.storageRuntimeFixture, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
 	local := f.await(backup.OperationID, "succeeded")
 	failed := hostingStorageRemoteRuntimeAwait(f, backup.ID, "upload", "failed")
-	hostingStorageRemoteRuntimeAlerts(f, failed.ID, "storage_transfer", "upload_failed", true)
+	uploadRecoveryURL := hostingStorageRemoteRuntimeAlerts(f, resource, backup.ID, failed.ID, "storage_transfer", "upload_failed", true)
 	backup = storageRuntimeJSON[domain.HostingStorageBackup](f.storageRuntimeFixture, "GET", "/api/v1/storage-backups/"+backup.ID, nil, 200)
 	if local.StorageArchive == nil || local.StorageArchive.Result == nil || local.StorageArchive.Result.ResumeOutcome != "resumed" || backup.Blob == nil || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.FailureCode != "access_denied" || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
 		t.Fatal("denied PUT must retain exact successful local archive and resumed writer")
@@ -531,9 +536,13 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 	if survived.Blob == nil || *survived.Blob != *backup.Blob || !bytes.Equal(hostingStorageRemoteRuntimeArchive(f, *backup.Blob), archive) {
 		t.Fatal("restart changed retained local archive")
 	}
-	f.browser.set("denied", resource.ID, target.ID, backup.ID)
+	beforeRecoveryMutations := f.operatorMutations.Load()
+	f.browser.setRecovery("denied", resource.ID, target.ID, backup.ID, f.environmentID, failed.ID, uploadRecoveryURL)
 	if f.browser.await(t, "warning") != backup.ID {
 		t.Fatal("browser reloaded wrong backup")
+	}
+	if f.operatorMutations.Load() != beforeRecoveryMutations {
+		t.Fatal("opening delivered upload recovery link caused an operator mutation")
 	}
 	silo.policy(true, false)
 	wire := &hostingStorageRemoteRuntimeWire{backup: backup.ID, entered: make(chan struct{}), release: make(chan struct{})}
@@ -646,14 +655,22 @@ func TestHostingStorageRemoteCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("scheduled archive failure did not compensate writers")
 	}
 	storageRuntimeJSON[domain.HostingStorageBackupSchedule](f.storageRuntimeFixture, "PUT", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules/"+failedSchedule.ID, domain.HostingStorageBackupScheduleInput{RequestID: hostingStorageScheduleRuntimeID(t), ExpectedResourceGeneration: resource.Generation, ExpectedVersion: failedSchedule.Revision, Frequency: failedSchedule.Frequency, Timezone: failedSchedule.Timezone, Enabled: false}, 200)
-	hostingStorageRemoteRuntimeAlerts(f, failedOccurrence.OperationID, "storage_backup", "backup_failed", false)
+	archiveRecoveryURL := hostingStorageRemoteRuntimeAlerts(f, resource, failedOccurrence.BackupID, failedOccurrence.OperationID, "storage_backup", "backup_failed", false)
+	beforeArchiveRecoveryMutations := f.operatorMutations.Load()
+	f.browser.setRecovery("archive_alert", resource.ID, target.ID, failedOccurrence.BackupID, f.environmentID, failedOccurrence.OperationID, archiveRecoveryURL)
+	if f.browser.await(t, "archive_warning") != failedOccurrence.BackupID {
+		t.Fatal("browser selected wrong failed archive from delivered link")
+	}
+	if f.operatorMutations.Load() != beforeArchiveRecoveryMutations {
+		t.Fatal("opening delivered archive recovery link caused an operator mutation")
+	}
 	f.https("storage-remote.example.test", "DELETE", "/oversize", nil, 204)
 	if !bytes.Equal(f.https("storage-remote.example.test", "GET", "/download", nil, 200), upload) {
 		t.Fatal("scheduled archive failure altered source")
 	}
 	f.browser.set("complete", resource.ID, target.ID, backup.ID)
 	f.browser.await(t, "done")
-	markers := map[string]any{"backup_id": backup.ID, "upload_transfer_id": uploaded.ID, "restore_operation_id": restored.Operation.ID, "source_volume": source.VolumeName, "restored_volume": restored.Storage.VolumeName, "archive_sha256": backup.Blob.SHA256, "archive_bytes": len(archive), "source_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(upload)), "new_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(replacement)), "source_metadata": metadata, "object_gets": after, "first_scheduled_archive_upload_puts": puts, "receipt_replayed": true, "put_resume_checks": f.uploadChecks.Load(), "put_resume_violations": f.uploadViolations.Load(), "first_scheduled_archive_helper_starts": 1, "source_preserved": true, "scheduled_archive": true, "scheduled_backup_failure_alerts": true, "scheduled_upload_failure_alerts": true, "scheduler_join_restart": true}
+	markers := map[string]any{"backup_id": backup.ID, "upload_transfer_id": uploaded.ID, "restore_operation_id": restored.Operation.ID, "source_volume": source.VolumeName, "restored_volume": restored.Storage.VolumeName, "archive_sha256": backup.Blob.SHA256, "archive_bytes": len(archive), "source_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(upload)), "new_upload_sha256": fmt.Sprintf("%x", sha256.Sum256(replacement)), "source_metadata": metadata, "object_gets": after, "first_scheduled_archive_upload_puts": puts, "receipt_replayed": true, "put_resume_checks": f.uploadChecks.Load(), "put_resume_violations": f.uploadViolations.Load(), "first_scheduled_archive_helper_starts": 1, "source_preserved": true, "scheduled_archive": true, "scheduled_backup_failure_alerts": true, "scheduled_upload_failure_alerts": true, "scheduler_join_restart": true, "delivered_upload_recovery_link_verified": true, "delivered_archive_recovery_link_verified": true, "delivered_upload_recovery_url_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(uploadRecoveryURL))), "delivered_archive_recovery_url_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(archiveRecoveryURL)))}
 	raw, err := json.MarshalIndent(markers, "", "  ")
 	if err != nil || os.WriteFile(filepath.Join(evidence, "remote-markers.json"), append(raw, '\n'), 0600) != nil {
 		t.Fatal("safe marker export")
@@ -750,6 +767,7 @@ type hostingStorageRemoteRuntimeBrowser struct {
 	mu                                   sync.Mutex
 	key, phase, resource, target, backup string
 	access, secret                       string
+	environment, source, recoveryURL     string
 	reports                              chan hostingStorageRemoteRuntimeReport
 }
 
@@ -766,6 +784,9 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		state := map[string]string{"phase": b.phase, "resource_id": b.resource, "target_id": b.target, "backup_id": b.backup}
+		if b.recoveryURL != "" {
+			state["recovery_url"], state["environment_id"], state["source_id"] = b.recoveryURL, b.environment, b.source
+		}
 		if b.phase == "target" {
 			state["access_key"], state["secret_key"] = b.access, b.secret
 		}
@@ -783,7 +804,7 @@ func (b *hostingStorageRemoteRuntimeBrowser) serve(w http.ResponseWriter, r *htt
 		b.mu.Lock()
 		phase := b.phase
 		b.mu.Unlock()
-		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done"}[phase]
+		expected := map[string]string{"target": "target", "validation": "validation", "backup": "backup", "denied": "warning", "retry": "retry", "restore": "restore", "complete": "done", "archive_alert": "archive_warning"}[phase]
 		if report.Action != expected {
 			w.WriteHeader(409)
 			return true
@@ -804,6 +825,7 @@ func (b *hostingStorageRemoteRuntimeBrowser) set(phase, resource, target, backup
 	defer b.mu.Unlock()
 	b.phase, b.resource, b.target, b.backup = phase, resource, target, backup
 	b.access, b.secret = "", ""
+	b.environment, b.source, b.recoveryURL = "", "", ""
 }
 func (b *hostingStorageRemoteRuntimeBrowser) await(t *testing.T, action string) string {
 	t.Helper()
@@ -901,7 +923,7 @@ func hostingStorageRemoteRuntimeChannels(f *hostingStorageRemoteRuntimeFixture) 
 		storageRuntimeJSON[domain.NotificationChannel](f.storageRuntimeFixture, "POST", "/api/v1/projects/proj_platform/notification-channels", map[string]any{"request_id": hostingStorageScheduleRuntimeID(f.t), "expected_generation": 0, "name": "Storage " + kind, "type": kind, "enabled": true, "events": []string{"backup_failed", "upload_failed"}, "configuration": configuration}, 200)
 	}
 }
-func hostingStorageRemoteRuntimeAlerts(f *hostingStorageRemoteRuntimeFixture, source, kind, event string, local bool) {
+func hostingStorageRemoteRuntimeAlerts(f *hostingStorageRemoteRuntimeFixture, resource domain.Resource, backup, source, kind, event string, local bool) string {
 	f.t.Helper()
 	deadline := time.NewTimer(20 * time.Second)
 	defer deadline.Stop()
@@ -922,18 +944,41 @@ func hostingStorageRemoteRuntimeAlerts(f *hostingStorageRemoteRuntimeFixture, so
 		}
 		if len(found) == 2 {
 			receipts := f.notifications.snapshot()
+			actualURL := ""
+			transports := map[string]bool{}
 			for _, d := range found {
 				matches := 0
 				for _, receipt := range receipts {
 					if receipt.Accepted && bytes.Contains(receipt.Body, []byte(d.EventID)) && bytes.Contains(receipt.Body, []byte(d.ID)) {
 						matches++
+						if transports[receipt.Transport] {
+							f.t.Fatal("duplicate storage notification transport")
+						}
+						transports[receipt.Transport] = true
+						delivered, err := hostingStorageRemoteRuntimeReceiptURL(receipt, d)
+						if err != nil {
+							f.t.Fatal("delivered storage alert URL unavailable", err)
+						}
+						if err = hostingStorageRemoteRuntimeRecoveryURL(delivered, os.Getenv("NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN"), resource, backup, source, kind); err != nil {
+							f.t.Fatal("delivered storage alert URL association", err)
+						}
+						if delivered != os.Getenv("NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN")+d.RecoveryURL {
+							f.t.Fatal("delivered URL differs from persisted event")
+						}
+						if actualURL != "" && actualURL != delivered {
+							f.t.Fatal("SMTP and webhook recovery URLs differ")
+						}
+						actualURL = delivered
 					}
 				}
 				if matches != 1 {
 					f.t.Fatal("storage alert stable IDs did not reach exactly one real transport", matches)
 				}
 			}
-			return
+			if !transports["email"] || !transports["webhook"] || actualURL == "" {
+				f.t.Fatal("accepted SMTP and webhook recovery URLs required")
+			}
+			return actualURL
 		}
 		select {
 		case <-deadline.C:
@@ -941,4 +986,83 @@ func hostingStorageRemoteRuntimeAlerts(f *hostingStorageRemoteRuntimeFixture, so
 		case <-tick.C:
 		}
 	}
+}
+
+func (b *hostingStorageRemoteRuntimeBrowser) setRecovery(phase, resource, target, backup, environment, source, delivered string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.phase, b.resource, b.target, b.backup = phase, resource, target, backup
+	b.environment, b.source, b.recoveryURL = environment, source, delivered
+	b.access, b.secret = "", ""
+}
+
+// Return bytes extracted from the accepted transport receipt. Expected metadata
+// validates association; it never supplies a replacement for the delivered URL.
+func hostingStorageRemoteRuntimeReceiptURL(receipt backupNotificationReceipt, d domain.NotificationDelivery) (string, error) {
+	if receipt.Transport == "webhook" {
+		var p domain.NotificationPayload
+		if json.Unmarshal(receipt.Body, &p) != nil || p.EventID != d.EventID || p.DeliveryID != d.ID || p.SourceID != d.SourceID || p.SourceKind != d.SourceKind || p.Event != d.Event || p.SourceState != d.SourceState || p.LocalCopyAvailable != d.LocalCopyAvailable {
+			return "", fmt.Errorf("webhook source identity mismatch")
+		}
+		return p.RecoveryURL, nil
+	}
+	if receipt.Transport != "email" {
+		return "", fmt.Errorf("unknown receipt transport")
+	}
+	message, err := mail.ReadMessage(bytes.NewReader(receipt.Body))
+	if err != nil {
+		return "", fmt.Errorf("SMTP message invalid")
+	}
+	if message.Header.Get("Message-ID") != "<"+d.ID+"@nerocd.invalid>" {
+		return "", fmt.Errorf("SMTP delivery identity mismatch")
+	}
+	body, err := io.ReadAll(io.LimitReader(message.Body, backupNotificationMessageLimit+1))
+	if err != nil || len(body) > backupNotificationMessageLimit {
+		return "", fmt.Errorf("SMTP body invalid")
+	}
+	text := strings.ReplaceAll(string(body), "\r\n", "\n")
+	for _, line := range []string{"Event: " + d.Event, "Event ID: " + d.EventID, "Delivery ID: " + d.ID, "Source: " + d.SourceKind + "/" + d.SourceID, "Source state: " + d.SourceState} {
+		if strings.Count("\n"+text, "\n"+line+"\n") != 1 {
+			return "", fmt.Errorf("SMTP source identity mismatch")
+		}
+	}
+	delivered := ""
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "https://") {
+			if delivered != "" {
+				return "", fmt.Errorf("multiple SMTP recovery links")
+			}
+			delivered = line
+		}
+	}
+	if delivered == "" {
+		return "", fmt.Errorf("SMTP recovery link missing")
+	}
+	return delivered, nil
+}
+func hostingStorageRemoteRuntimeRecoveryURL(delivered, origin string, resource domain.Resource, backup, source, kind string) error {
+	u, err := url.Parse(delivered)
+	if err != nil || u.Scheme+"://"+u.Host != origin || u.Scheme != "https" || u.User != nil || u.Fragment != "" || u.EscapedPath() != "/projects" {
+		return fmt.Errorf("recovery origin or path mismatch")
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return fmt.Errorf("recovery query invalid")
+	}
+	expected := map[string]string{"project_id": resource.ProjectID, "environment_id": resource.ProjectEnvironmentID, "resource_id": resource.ID, "backup_id": backup, "source_kind": kind}
+	if kind == "storage_transfer" {
+		expected["transfer_id"] = source
+	} else if kind != "storage_backup" {
+		return fmt.Errorf("recovery source family mismatch")
+	}
+	if len(q) != len(expected) {
+		return fmt.Errorf("recovery query fields mismatch")
+	}
+	for key, value := range expected {
+		if len(q[key]) != 1 || q.Get(key) != value {
+			return fmt.Errorf("recovery selection mismatch")
+		}
+	}
+	return nil
 }

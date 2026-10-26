@@ -67,6 +67,42 @@ async function selectBackup(p, id) {
   await p.getByRole("button", { name: `Backup ${id}`, exact: true }).click();
   await expect(p.locator('dl[aria-label="Selected backup metadata"]')).toContainText(id);
 }
+function deliveredRecoveryURL(m, kind) {
+  if(typeof m.source_id!=="string"||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(m.source_id))throw Error("delivered source identity missing");
+  const delivered=new URL(m.recovery_url);
+  const expected={project_id:"proj_platform",environment_id:m.environment_id,resource_id:m.resource_id,backup_id:m.backup_id,source_kind:kind};
+  if(kind==="storage_transfer") expected.transfer_id=m.source_id;
+  else if(kind!=="storage_backup") throw Error("unknown storage recovery family");
+  if(Object.values(expected).some(value=>typeof value!=="string"||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)))throw Error("recovery selection identity missing");
+  if(delivered.origin!==origin||delivered.username||delivered.password||delivered.hash||delivered.pathname!=="/projects"||delivered.searchParams.size!==Object.keys(expected).length)throw Error("delivered recovery URL outside exact scope");
+  for(const [name,value] of Object.entries(expected))if(delivered.searchParams.getAll(name).length!==1||delivered.searchParams.get(name)!==value)throw Error("delivered recovery URL selection mismatch");
+  return m.recovery_url;
+}
+async function deliveredPanel(m,kind) {
+  const delivered=deliveredRecoveryURL(m,kind);
+  const mutations=[];
+  const observe=request=>{if(!["GET","HEAD","OPTIONS"].includes(request.method())&&/^\/api\/v1\/(resources|storage-backups|hosting-operations)\//.test(new URL(request.url()).pathname))mutations.push(request.method())};
+  page.on("request",observe);
+  try {
+    await page.goto(delivered);
+    deliveredRecoveryURL({...m,recovery_url:page.url()},kind);
+    const recovery=page.getByRole("region",{name:"Backup notification recovery",exact:true});
+    await expect(recovery).toBeVisible();
+    await expect(recovery).toContainText(`Backup ${m.backup_id}`);
+    const result=recovery.getByRole("region",{name:"Upload backups and restores",exact:true});
+    await expect(result.locator('dl[aria-label="Selected backup metadata"]')).toContainText(m.backup_id);
+    if(kind==="storage_transfer"){
+      await expect(recovery).toContainText(`upload ${m.source_id}`);
+      await expect(result.getByRole("region",{name:"Remote archive transfers",exact:true})).toContainText(m.source_id);
+    }else{
+      const operation=result.getByRole("region",{name:`backup operation ${m.source_id}`,exact:true});
+      await expect(operation).toContainText("failed");
+      await expect(operation).toContainText("Writer resumption: resumed");
+    }
+    if(mutations.length)throw Error("opening a delivered recovery URL caused a mutation");
+    return result;
+  }finally{page.off("request",observe)}
+}
 const safe = { status: "failed", served_candidate_ui: true, intercepted_requests: false };
 try {
   requireActive();
@@ -146,8 +182,8 @@ try {
   safe.schedule_owner_create_replay_edit_disable_history=true;
   safe.target_selected = true;
   const denied = await state("denied");
-  p = await panel(denied, true);
-  await selectBackup(p, backup.id);
+  p = await deliveredPanel(denied,"storage_transfer");
+  safe.delivered_upload_recovery_selection=true;
   const transfers = p.getByRole("region", { name: "Remote archive transfers", exact: true });
   await expect(transfers).toContainText("access_denied");
   await expect(transfers).toContainText("Local archive remains independent");
@@ -163,8 +199,7 @@ try {
   await report("retry", retry.id);
   safe.real_upload_retry = true;
   const restoreState = await state("restore");
-  p = await panel(restoreState, true);
-  await selectBackup(p, backup.id);
+  p = await deliveredPanel(denied,"storage_transfer");
   const form = p.getByRole("form", { name: "Restore backup into a new resource", exact: true });
   await form.getByRole("checkbox", { name: "Download and verify the remote archive before restoring", exact: true }).check();
   await form.getByLabel("New restored resource name", { exact: true }).fill("remote restored uploads");
@@ -175,6 +210,11 @@ try {
   const restored = await restoreHTTP.json();
   await report("restore", restored.operation.id);
   safe.remote_restore_requested = true;
+  const archiveAlert=await state("archive_alert");
+  await deliveredPanel(archiveAlert,"storage_backup");
+  await report("archive_warning",archiveAlert.backup_id);
+  safe.delivered_archive_recovery_selection=true;
+  safe.delivered_links_opened_without_mutation=true;
   await state("complete");
   p = await panel(restoreState, true);
   await selectBackup(p, backup.id);

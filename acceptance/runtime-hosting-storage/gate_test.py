@@ -556,13 +556,13 @@ const close = async value => {
  if (process.env.STORAGE_BROWSER_TEST_CLOSE_FAILURE === value) throw Error("private close failure must not appear in receipt");
 };
 const complete = process.env.STORAGE_BROWSER_TEST_COMPLETE === "1";
-const phases = ["target", "validation", "backup", "denied", "retry", "restore", "complete"];
+const phases = ["target", "validation", "backup", "denied", "retry", "restore", "archive_alert", "complete"];
 let rejectPending, pendingHandle;
 const api = {
  get: async path => {
   fs.writeFileSync(root + "/started", "polling");
   if (complete) return path.includes("/__storage_remote_fixture/")
-   ? {status: () => 200, json: async () => ({phase:phases.shift(),resource_id:"resource",target_id:"target",backup_id:"backup",access_key:"fixture",secret_key:"fixture"})}
+   ? {status: () => 200, json: async () => {const phase=phases.shift();const archive=phase==="archive_alert";return {phase,resource_id:"resource",environment_id:"environment",target_id:"target",backup_id:archive?"failed_backup":"backup",source_id:archive?"failed_archive":"failed_upload",recovery_url:process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id="+(archive?"failed_backup&source_kind=storage_backup":"backup&source_kind=storage_transfer&transfer_id=failed_upload"),access_key:"fixture",secret_key:"fixture"}}}
    : {status: () => 200, body: async () => Buffer.from("fixture")};
   if (process.env.STORAGE_BROWSER_TEST_EXPIRE === "1") {
    const expired = Date.now() + 25 * 60 * 1000;
@@ -574,9 +574,11 @@ const api = {
  post: async () => ({status: () => 204}),
  dispose: async () => {clearInterval(pendingHandle); rejectPending?.(Error("owned API disposed")); await close("api");}
 };
-let responseIndex = 0, contextIndex = 0, browserClosed = false;
+let responseIndex = 0, contextIndex = 0, browserClosed = false, currentURL="";
 const page = new Proxy({}, {get: (_, name) => {
  if (name === "then") return undefined;
+ if (name === "goto") return async value=>{currentURL=value};
+ if (name === "url") return ()=>currentURL;
  if (["getByRole","getByLabel","locator"].includes(name)) return () => page;
  if (name === "evaluateAll") return async () => "target:1";
  if (name === "textContent") return async () => "View scheduled archive backup";
@@ -715,6 +717,51 @@ const run = new Function("exercise", cleanup + `
                 with self.subTest(signal=delivered_signal, resource=resource):
                     self.run_driver(delivered_signal, cleanup_failure=resource)
 
+
+
+class DeliveredRecoveryURLTest(unittest.TestCase):
+    def test_delivered_panel_rejects_automatic_operator_mutation(self):
+        script = r"""
+const fs=require("node:fs"),assert=require("node:assert/strict");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const start=source.indexOf("function deliveredRecoveryURL(");
+const end=source.indexOf("const safe =",start);
+const value={resource_id:"resource",environment_id:"environment",backup_id:"backup",source_id:"transfer",recovery_url:"https://127.0.0.1:49155/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id=backup&source_kind=storage_transfer&transfer_id=transfer"};
+(async()=>{
+ for(const mutate of [false,true]){
+  let observer,detached=false,opened="";const scopes=[];
+  const locator={getByRole:(role,options)=>{scopes.push(options.name);return locator},locator:()=>locator};
+  const page={...locator,on:(event,callback)=>{assert.equal(event,"request");observer=callback},off:(event,callback)=>{assert.equal(callback,observer);detached=true},url:()=>opened,goto:async url=>{opened=url;if(mutate)observer({method:()=>"POST",url:()=>"https://127.0.0.1:49155/api/v1/storage-backups/backup/transfers/retry"})}};
+  const expect=()=>({toBeVisible:async()=>{},toContainText:async()=>{}});
+  const run=new Function("origin","page","expect",source.slice(start,end)+"return deliveredPanel;")("https://127.0.0.1:49155",page,expect);
+  if(mutate)await assert.rejects(run(value,"storage_transfer"),/caused a mutation/);else await run(value,"storage_transfer");
+  assert.equal(opened,value.recovery_url);assert(detached);assert(scopes.includes("Backup notification recovery"));assert(scopes.includes("Remote archive transfers"));
+ }
+})().catch(error=>{console.error(error);process.exitCode=1});
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_exact_delivered_selection_and_rejections(self):
+        script = r"""
+const fs=require("node:fs"),assert=require("node:assert/strict");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const start=source.indexOf("function deliveredRecoveryURL(");
+const end=source.indexOf("async function deliveredPanel(",start);
+const validate=new Function("origin",source.slice(start,end)+"return deliveredRecoveryURL;")("https://127.0.0.1:49155");
+const upload={resource_id:"resource",environment_id:"environment",backup_id:"backup",source_id:"transfer",recovery_url:"https://127.0.0.1:49155/projects?project_id=proj_platform&environment_id=environment&resource_id=resource&backup_id=backup&source_kind=storage_transfer&transfer_id=transfer"};
+assert.equal(validate(upload,"storage_transfer"),upload.recovery_url);
+const archive={...upload,source_id:"operation",recovery_url:upload.recovery_url.replace("storage_transfer&transfer_id=transfer","storage_backup")};
+assert.equal(validate(archive,"storage_backup"),archive.recovery_url);
+assert.throws(()=>validate({...archive,source_id:undefined},"storage_backup"));
+for(const [field,value] of Object.entries({project_id:"foreign",environment_id:"foreign",resource_id:"foreign",backup_id:"foreign",transfer_id:"foreign",source_kind:"storage_backup"})){
+ const url=new URL(upload.recovery_url);url.searchParams.set(field,value);assert.throws(()=>validate({...upload,recovery_url:url.href},"storage_transfer"));
+}
+for(const changed of [upload.recovery_url.replace(":49155",":49156"),upload.recovery_url.replace("https:","http:"),upload.recovery_url+"&backup_id=backup",upload.recovery_url+"&token=secret",upload.recovery_url+"#fragment",upload.recovery_url.replace("/projects?","/other?"),upload.recovery_url.replace("127.0.0.1","user@127.0.0.1")])assert.throws(()=>validate({...upload,recovery_url:changed},"storage_transfer"));
+assert.throws(()=>validate({...archive,recovery_url:archive.recovery_url+"&transfer_id=transfer"},"storage_backup"));
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 if __name__ == "__main__":
     unittest.main()
