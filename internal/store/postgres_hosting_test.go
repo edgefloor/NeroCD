@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"nerocd/internal/app"
@@ -26,6 +27,7 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if _, err := database.Exec(ctx, `ALTER TABLE resources ENABLE TRIGGER resources_immutable_identity`); err != nil {
 		t.Fatal(err)
 	}
+	resourceSchema := captureHostingResourceSchema(t, database)
 	if _, err := database.Exec(ctx, `DROP TABLE resources CASCADE; DROP TABLE project_environments; DROP FUNCTION nerocd_hosting_resource_update(); DROP FUNCTION nerocd_hosting_schema_compatible()`); err != nil {
 		t.Fatal(err)
 	}
@@ -39,39 +41,43 @@ func TestPostgresHostingSchemaReadinessAndConstraints(t *testing.T) {
 	if err := applyEmbeddedMigrations(ctx, database, "0039_service_accounts.sql", "0040_hosting_resources.sql"); err != nil {
 		t.Fatal(err)
 	}
-	// The intentional 0040 teardown removes this later migration's dependent FK.
-	if _, err := database.Exec(ctx, `ALTER TABLE resource_bindings ADD CONSTRAINT resource_bindings_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT`); err != nil {
-		t.Fatal(err)
+	// Replaying 0040 alone cannot repair protections added by later migrations.
+	if ok, err := pg.SchemaCompatible(ctx); ok {
+		t.Fatalf("incomplete restoration accepted: %v %v", ok, err)
 	}
-	// The0056 policy/command/delivery resource references are also removed by
-	// this intentional resources CASCADE. Restore those exact later FKs rather
-	// than relaxing the aggregate compatibility check.
-	if _, err := database.Exec(ctx, `ALTER TABLE hosting_github_push_policies ADD CONSTRAINT hosting_github_push_policies_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE;
- ALTER TABLE hosting_github_push_commands ADD CONSTRAINT hosting_github_push_commands_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE;
- ALTER TABLE hosting_github_push_deliveries ADD CONSTRAINT hosting_github_push_deliveries_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE`); err != nil {
-		t.Fatal(err)
-	}
-	// Restore the 0060 resource references removed by the same deliberate teardown.
-	if _, err := database.Exec(ctx, `ALTER TABLE hosting_auto_deploy_controls ADD CONSTRAINT hosting_auto_deploy_controls_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT;
- ALTER TABLE hosting_auto_deploy_demands ADD CONSTRAINT hosting_auto_deploy_demands_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT;
- ALTER TABLE hosting_auto_deploy_origins ADD CONSTRAINT hosting_auto_deploy_origins_resource_id_fkey FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE RESTRICT`); err != nil {
-		t.Fatal(err)
-	}
-	var restored bool
-	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
-		t.Fatalf("restored binding FK: %v %v", restored, err)
-	}
-	// Reinstall only the additive0049 resource triggers removed by the deliberate
-	// resources-table teardown. Existing historical checksums stay untouched.
+	// Replay the original Git source check as well. Rebuilding CHECK expressions
+	// from deparsed SQL can change their grouping, so retain migration definitions.
 	if _, err := database.Exec(ctx, `DROP TRIGGER hosting_sources_resource_reference ON hosting_build_sources; DROP TRIGGER hosting_source_versions_resource_reference ON hosting_build_source_versions; DROP FUNCTION nerocd_hosting_git_reference_consistent(),nerocd_hosting_source_kind_immutable(),nerocd_hosting_git_resource_schema_compatible()`); err != nil {
 		t.Fatal(err)
 	}
 	if err := applyEmbeddedMigrations(ctx, database, "0048_hosting_build_schema_binding.sql", "0049_hosting_git_resources.sql"); err != nil {
 		t.Fatal(err)
 	}
+	if ok, err := pg.SchemaCompatible(ctx); ok {
+		t.Fatalf("partial later restoration accepted: %v %v", ok, err)
+	}
+	resourceSchema.restore(t, database)
+	if restored := captureHostingResourceSchema(t, database); !reflect.DeepEqual(restored, resourceSchema) {
+		for n, statement := range resourceSchema.constraints {
+			if n >= len(restored.constraints) || statement != restored.constraints[n] {
+				t.Logf("different resource constraint: %s", statement)
+			}
+		}
+		t.Fatal("restored resources constraints, references, triggers, or functions differ from the complete schema")
+	}
+	t.Logf("restored exact resources metadata: %d constraints, %d inbound foreign keys, %d triggers, %d functions", len(resourceSchema.constraints), len(resourceSchema.references), len(resourceSchema.triggers), len(resourceSchema.functions))
+	var restored bool
+	if err := database.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='resource_bindings'::regclass AND conname='resource_bindings_resource_id_fkey' AND contype='f' AND convalidated) AND NOT EXISTS(SELECT 1 FROM resource_bindings b LEFT JOIN resources r ON r.id=b.resource_id WHERE r.id IS NULL)`).Scan(&restored); err != nil || !restored {
+		t.Fatalf("restored binding FK: %v %v", restored, err)
+	}
 	if ok, err := pg.SchemaCompatible(ctx); err != nil || !ok {
 		t.Fatalf("restored 0040 readiness: %v %v", ok, err)
 	}
+	reopened, err := store.OpenPostgres(ctx, database.Config().ConnConfig.ConnString())
+	if err != nil {
+		t.Fatalf("startup rejected restored schema: %v", err)
+	}
+	closePostgresStore(t, reopened)
 	if _, err := database.Exec(ctx, `INSERT INTO project_environments VALUES ('env_constraint','proj_platform','production',now()); INSERT INTO resources (id,project_id,project_environment_id,name,kind,source,created_by,created_at,updated_at) VALUES ('res_constraint','proj_platform','env_constraint','web','application','{"kind":"image","image":{"reference":"nginx:v1"}}','usr_bootstrap',now(),now())`); err != nil {
 		t.Fatal(err)
 	}
