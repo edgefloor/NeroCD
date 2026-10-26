@@ -66,7 +66,7 @@ func validateHostingJournalStorage(entry JournalHosting) error {
 	if domain.ValidateHostingStorageSnapshot(domain.HostingSnapshot{Storage: ref, PolicyVersion: domain.HostingOwnedStoragePolicyVersion}) != nil {
 		return errors.New("journal storage reference missing or invalid")
 	}
-	if entry.RuntimeEnvironment || entry.LocalBuild || HostingJournalUsesRuntimeEnvironment(entry) || HostingJournalUsesLocalBuild(entry) {
+	if entry.LocalBuild || HostingJournalUsesLocalBuild(entry) {
 		return errors.New("journal storage cannot mix unsupported execution families")
 	}
 	if entry.Plan != nil {

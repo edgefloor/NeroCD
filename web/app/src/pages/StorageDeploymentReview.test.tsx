@@ -667,3 +667,32 @@ test.each([
       expect(screen.getByText(/does not confirm current routes/)).toBeTruthy();
   },
 );
+
+test("catalog first deployment prefills image settings and pins saved runtime generation", async () => {
+  const { fetch, selected } = setup((url, init) => {
+    if (url.endsWith("/catalog-installation")) return json({
+      id: "resource", resource: { id: "resource", project_id: "project" },
+      binding: { resource_id: "resource" },
+      template: { definition: { container_port: 9090, readiness: { path: "/health", timeout_seconds: 120 } } },
+    });
+    if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: {
+      project_id: "project", resource_id: "resource", runtime_generation: 1,
+    } });
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      const input=JSON.parse(init.body as string);
+      return json({id:"hop",binding_id:"binding",project_id:"project",resource_id:"resource",snapshot:{resource_generation:1,host_port:input.host_port,container_port:input.container_port,readiness:input.readiness,storage:options.storage_ref,runtime_configuration:{generation:1,hash:"runtime"}}},202);
+    }
+    return undefined;
+  }, initialOptions);
+  await vi.waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Container port").value).toBe("9090"));
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/health");
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("120");
+  fireEvent.change(screen.getByLabelText("Runner-local host port"),{target:{value:"20101"}});
+  fireEvent.submit(screen.getByRole("form",{name:"Configure first storage deployment"}));
+  await screen.findByRole("button",{name:"Deploy reviewed image with uploads"});
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
+  fireEvent.click(screen.getByRole("button",{name:"Deploy reviewed image with uploads"}));
+  await vi.waitFor(()=>expect(selected).toHaveBeenCalledWith("hop"));
+  const body=JSON.parse(fetch.mock.calls.find(([,init])=>init.method==="POST")![1].body as string);
+  expect(body).toMatchObject({expected_runtime_configuration_generation:1,container_port:9090,host_port:20101,readiness:{path:"/health",timeout_seconds:120}});
+});

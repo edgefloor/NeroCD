@@ -122,7 +122,15 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 		return view, err
 	}
 	if runtime > 0 {
-		return finish("runtime_configuration_unsupported")
+		for _, capability := range []string{domain.HostingOwnedStorageRuntimeCapability, domain.HostingRuntimeEnvironmentCapability} {
+			capable, err := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: placement.RunnerID, Capability: capability})
+			if err != nil {
+				return view, err
+			}
+			if !capable {
+				return finish("runner_ineligible")
+			}
+		}
 	}
 	eligible, err := q.StorageDeploymentRunnerEligible(ctx, sqlcgen.StorageDeploymentRunnerEligibleParams{BindingID: placement.BindingID, ResourceID: resource, DestinationID: placement.DestinationID, ServerID: placement.ServerID, RunnerID: placement.RunnerID, ImageCapability: domain.RunTypeImageDeploy, StorageCapability: domain.HostingOwnedStorageCapability, ReleaseCapability: domain.HostingReleasePortsCapability})
 	if err != nil {

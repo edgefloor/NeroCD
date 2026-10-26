@@ -175,7 +175,7 @@ func HostingJournalUsesRuntimeEnvironment(entry JournalHosting) bool {
 }
 
 func hostingJournalHasRuntimeCompiler(entry JournalHosting) bool {
-	return entry.Plan != nil && (entry.Plan.CompilerVersion == domain.HostingRuntimeCompilerVersion || entry.Plan.CompilerVersion == domain.HostingLocalBuildRuntimeCompilerVersion)
+	return entry.Plan != nil && (entry.Plan.CompilerVersion == domain.HostingRuntimeCompilerVersion || entry.Plan.CompilerVersion == domain.HostingOwnedStorageRuntimeCompilerVersion || entry.Plan.CompilerVersion == domain.HostingLocalBuildRuntimeCompilerVersion)
 }
 
 func hostingJournalSnapshots(entry JournalHosting) []domain.HostingSnapshot {

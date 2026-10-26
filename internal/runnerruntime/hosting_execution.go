@@ -141,7 +141,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
-		return executeHostingStoragePrepared(supervisor, journal, storageDrain, client, engine, a, claim.Lease, op)
+		return executeHostingStoragePrepared(supervisor, journal, storageDrain, client, engine, a, claim.Lease, op, environmentConfig)
 	}
 	intentID := attemptMutationKey("hosting_intent", a.LeaseID, a.Attempt, "apply")
 	intent := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "apply_intent", Plan: op.Plan, CreatedAt: time.Now().UTC()}

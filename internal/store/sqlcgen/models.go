@@ -403,6 +403,17 @@ type HostingBuildTask struct {
 	RunnerID string `json:"runner_id"`
 }
 
+type HostingCatalogInstallation struct {
+	ProjectID   string          `json:"project_id"`
+	RequestID   string          `json:"request_id"`
+	ResourceID  string          `json:"resource_id"`
+	ActorID     string          `json:"actor_id"`
+	RequestHash string          `json:"request_hash"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
 type HostingCleanupTarget struct {
 	OperationID       string          `json:"operation_id"`
 	TargetOperationID string          `json:"target_operation_id"`

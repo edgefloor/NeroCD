@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
 )
@@ -65,8 +66,8 @@ func storageVolumeRequest(op domain.HostingOperation, ack domain.HostingStorageC
 	return request, request.validate()
 }
 
-func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, client runnerclient.Client, engine hostingStorageEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation) error {
-	if !storageOperationMatches(op, a, op.Snapshot.Storage) || op.State != "prepared" || op.RestoreOwnershipHeld || op.Result != nil || op.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || supervisor.Context().Err() != nil {
+func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, client runnerclient.Client, engine hostingStorageEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation, runtimeConfig ...*RuntimeEnvironmentConfig) error {
+	if !storageOperationMatches(op, a, op.Snapshot.Storage) || op.State != "prepared" || op.RestoreOwnershipHeld || op.Result != nil || op.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || supervisor.Context().Err() != nil {
 		return errors.New("storage execution requires a live exact prepared plan")
 	}
 	if storageArchiveConflict(journal.Snapshot(), op.Snapshot.Storage, op.BindingID, op.ID, "") {
@@ -75,6 +76,7 @@ func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runne
 	plan := op.Plan
 	create := domain.HostingStorageCreateRequest{HostingAuthority: a, PlanHash: plan.Hash, StorageRef: op.Snapshot.Storage, CreationNonce: plan.Storage.CreationNonce}
 	entry := runner.JournalHosting{ID: attemptMutationKey("hosting_storage", a.LeaseID, a.Attempt, "create"), Attempt: journalAttemptIdentity(a.RunID, lease, supervisor), OperationID: a.OperationID, Phase: "storage_create_intent", Plan: plan, StorageRef: op.Snapshot.Storage, StorageCreate: &create, CreatedAt: time.Now().UTC()}
+	markHostingRuntimeEntry(&entry, op.Snapshot.RuntimeConfiguration)
 	entry, err := storageExistingEntry(journal, entry)
 	if err != nil {
 		return err
@@ -113,6 +115,7 @@ func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runne
 	}
 	proof := domain.HostingStorageMaterializedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_storage", a.LeaseID, a.Attempt, "materialized"), PlanHash: plan.Hash, StorageRef: evidence.Storage, CreationOperationID: evidence.OriginOperationID, CreationPlanHash: evidence.OriginPlanHash, CreationNonce: evidence.CreationNonce, DaemonID: evidence.DaemonID, VolumeName: evidence.VolumeName, Driver: evidence.Driver, Scope: evidence.Scope, Labels: evidence.Labels, Options: evidence.Options}
 	materialized := runner.JournalHosting{ID: proof.ReceiptID, Attempt: entry.Attempt, OperationID: a.OperationID, Phase: "storage_materialized", Plan: plan, StorageRef: op.Snapshot.Storage, StorageMaterialized: &proof, StorageMetadata: &ack.Storage, CreatedAt: time.Now().UTC()}
+	markHostingRuntimeEntry(&materialized, op.Snapshot.RuntimeConfiguration)
 	materialized, err = storageExistingEntry(journal, materialized)
 	if err != nil {
 		return err
@@ -132,12 +135,31 @@ func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runne
 		return err
 	}
 	intent := runner.JournalHosting{ID: attemptMutationKey("hosting_intent", a.LeaseID, a.Attempt, "apply"), Attempt: entry.Attempt, OperationID: a.OperationID, Phase: "apply_intent", Plan: plan, StorageRef: op.Snapshot.Storage, CreatedAt: time.Now().UTC()}
+	markHostingRuntimeEntry(&intent, op.Snapshot.RuntimeConfiguration)
+	if intent.RuntimeEnvironment {
+		intent.DeliveryID, err = newRuntimeDeliveryID()
+		if err != nil {
+			return err
+		}
+	}
 	intent, err = storageExistingEntry(journal, intent)
 	if err != nil {
 		return err
 	}
 	if _, err = journal.AppendHosting(intent); err != nil {
 		return err
+	}
+	var environment *hostingruntimeprotocol.Environment
+	deadline := runtimeDeliveryDeadline(supervisor)
+	if intent.RuntimeEnvironment {
+		if len(runtimeConfig) != 1 || runtimeConfig[0] == nil {
+			return errors.New("owned storage runtime configuration missing")
+		}
+		environment, err = fetchHostingRuntimeEnvironment(supervisor, client, lease.RunnerID, domain.HostingRuntimeEnvironmentRequest{Authority: a, PlanHash: plan.Hash, RuntimeConfiguration: op.Snapshot.RuntimeConfiguration, DeliveryID: intent.DeliveryID}, *runtimeConfig[0], deadline)
+		if err != nil {
+			return err
+		}
+		defer environment.Close()
 	}
 	var admitted domain.HostingOperation
 	if err = retryAttemptRequest(supervisor, func(ctx context.Context) error {
@@ -159,8 +181,19 @@ func executeHostingStoragePrepared(supervisor *attemptSupervisor, journal *runne
 			return requestErr
 		})
 	}
-	result := engine.ApplyWithOwnedStorage(supervisor.Context(), op.ID, *plan, volume, evidence, verifying)
-	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, drain, false, domain.HostingRuntimeConfigurationRef{}, op.Snapshot.Storage)
+	var result domain.HostingResult
+	if intent.RuntimeEnvironment {
+		combined, ok := engine.(interface {
+			ApplyWithOwnedStorageRuntimeEnvironment(context.Context, string, domain.HostingApplyPlan, hostingOwnedVolumeRequest, hostingOwnedVolumeEvidence, *hostingruntimeprotocol.Environment, time.Time, ...func() error) domain.HostingResult
+		})
+		if !ok {
+			return errors.New("owned storage runtime executor unavailable")
+		}
+		result = combined.ApplyWithOwnedStorageRuntimeEnvironment(supervisor.Context(), op.ID, *plan, volume, evidence, environment, deadline, verifying)
+	} else {
+		result = engine.ApplyWithOwnedStorage(supervisor.Context(), op.ID, *plan, volume, evidence, verifying)
+	}
+	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, lease, result, drain, false, op.Snapshot.RuntimeConfiguration, op.Snapshot.Storage)
 	if err != nil {
 		return err
 	}

@@ -60,13 +60,20 @@ func requireHostingStorageAgent(ctx context.Context, tx pgx.Tx, snap domain.Host
 	if err := requireHostingReleaseAgent(ctx, tx, snap.RunnerID); err != nil {
 		return err
 	}
-	capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: snap.RunnerID, Capability: domain.HostingOwnedStorageCapability})
-	if err != nil {
-		return err
+	capabilities := []string{domain.HostingOwnedStorageCapability}
+	if snap.PolicyVersion == domain.HostingOwnedStorageRuntimePolicyVersion {
+		capabilities = append(capabilities, domain.HostingOwnedStorageRuntimeCapability)
 	}
-	if !capable {
-		return ErrConflict
+	for _, capability := range capabilities {
+		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: snap.RunnerID, Capability: capability})
+		if err != nil {
+			return err
+		}
+		if !capable {
+			return ErrConflict
+		}
 	}
+
 	return nil
 }
 
@@ -182,6 +189,9 @@ func compileHostingStoragePlan(ctx context.Context, tx pgx.Tx, op domain.Hosting
 		}
 		database := domain.HostingDatabasePlan{Reference: op.Snapshot.Database, NetworkName: domain.HostingDatabaseNetworkName(op.BindingID), Credentials: view.Credentials}
 		return domain.CompileHostingDatabasePlan(op.Snapshot, release, previous, descriptor, database)
+	}
+	if op.Snapshot.PolicyVersion == domain.HostingOwnedStorageRuntimePolicyVersion {
+		return domain.CompileHostingOwnedStorageRuntimePlan(op.Snapshot, release, previous, retained, descriptor)
 	}
 	return domain.CompileHostingOwnedStoragePlan(op.Snapshot, release, previous, retained, descriptor)
 }

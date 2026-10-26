@@ -6,6 +6,10 @@ The [specification](product-spec.md) retains all R01–R102 and A01–A66.
 Prioritize R01–R68, A01–A37 and the declared hosting matrices. The broader
 revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
+Catalog slice: [Linkding installation and combined image runtime/storage](hosting-catalog.md)
+implements source and isolated acceptance coverage. Runtime qualification and final
+acceptance remain gated on exact-candidate reviews and the approved physical fixture.
+
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Historical accepted application/source assessment:
 `9a69228f9a2a8324e25b1c366ee4eba913b8dba2`, 2026-10-25, through migration 0072.

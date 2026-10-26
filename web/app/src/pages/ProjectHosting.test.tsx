@@ -1,3 +1,4 @@
+vi.mock("./HostingCatalog", () => ({ HostingCatalog: () => null }));
 import { request } from "@/api/client";
 vi.mock("@/api/client", () => ({ request: vi.fn() }));
 import { useDatabaseAccess } from "./ResourceDatabase";

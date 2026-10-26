@@ -55,7 +55,7 @@ func ValidateHostingStorageRouteContinuitySnapshot(s HostingSnapshot) error {
 	if s.StorageRouteContinuity == (HostingStorageRouteContinuityRef{}) {
 		return nil
 	}
-	if !imageSHA256.MatchString(s.StorageRouteContinuity.Hash) || s.Storage == (HostingStorageRef{}) || s.PolicyVersion != HostingOwnedStoragePolicyVersion || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) {
+	if !imageSHA256.MatchString(s.StorageRouteContinuity.Hash) || s.Storage == (HostingStorageRef{}) || (s.PolicyVersion != HostingOwnedStoragePolicyVersion && s.PolicyVersion != HostingOwnedStorageRuntimePolicyVersion) || s.LocalBuild != (HostingLocalBuildSource{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
 		return errors.New("invalid storage route continuity snapshot")
 	}
 	return nil

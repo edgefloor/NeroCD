@@ -153,6 +153,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if environmentCap != options.RuntimeEnvironment || environmentCap && (!imageCap || !releaseCap || shellCapable) {
 		return "", errors.New("authenticated runtime environment capabilities do not match explicit configuration")
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingOwnedStorageRuntimeCapability && (!options.RuntimeEnvironment || !imageCap || !releaseCap || shellCapable) {
+			return "", errors.New("owned storage runtime capability requires configured image runtime environment")
+		}
+	}
 	observationCap := false
 	for _, capability := range result.Capabilities {
 		observationCap = observationCap || capability == domain.HostingObservationCapability

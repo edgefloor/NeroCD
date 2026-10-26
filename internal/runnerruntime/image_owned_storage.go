@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingruntimeprotocol"
 )
 
 type imageMount struct {
@@ -29,7 +30,7 @@ type ownedStorageExecution struct {
 // admission first. This method never creates a volume or grants writer authority.
 func (e *imageEngine) ApplyWithOwnedStorage(ctx context.Context, operationID string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, materialized hostingOwnedVolumeEvidence, verifying ...func() error) domain.HostingResult {
 	storage := &ownedStorageExecution{request: req, materialized: materialized}
-	if storage.validate(operationID, plan) != nil {
+	if plan.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || storage.validate(operationID, plan) != nil {
 		return domain.HostingResult{Outcome: "failed", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, ImageID: plan.Release.ImageID}
 	}
 	return e.apply(ctx, operationID, plan, nil, time.Time{}, storage, verifying...)
@@ -37,8 +38,8 @@ func (e *imageEngine) ApplyWithOwnedStorage(ctx context.Context, operationID str
 
 func (s *ownedStorageExecution) validate(operationID string, plan domain.HostingApplyPlan) error {
 	r := s.request
-	if !hostingVolumeReference.MatchString(operationID) || r.CreatePermitted || r.validate() != nil || verifyImagePlan(plan) != nil || plan.Storage == nil || plan.RetainPrevious || plan.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || plan.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) || plan.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
-		return errors.New("owned storage requires an admitted public image plan without runtime environment")
+	if !hostingVolumeReference.MatchString(operationID) || r.CreatePermitted || r.validate() != nil || verifyImagePlan(plan) != nil || plan.Storage == nil || plan.RetainPrevious || plan.Snapshot.LocalBuild != (domain.HostingLocalBuildSource{}) || plan.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+		return errors.New("owned storage requires an admitted public image plan with exact storage provenance")
 	}
 	p := plan.Storage
 	if r.Storage.Reference() != p.Reference || r.Storage.BindingID != plan.Snapshot.BindingID || r.Storage.ResourceID != plan.Snapshot.ResourceID || r.Storage.DestinationID != plan.Snapshot.DestinationID || r.Storage.VolumeName != p.VolumeName || r.Storage.MountPath != p.MountPath || r.DaemonID != p.DaemonID || r.OriginOperationID != p.CreationOperationID || r.CreationNonce != p.CreationNonce || operationID == r.OriginOperationID && r.OriginPlanHash != plan.Hash {
@@ -219,4 +220,13 @@ func (e *imageEngine) verifyStorageObservation(ctx context.Context, expected dom
 		return errors.New("healthy storage writer mount is missing")
 	}
 	return ctx.Err()
+}
+
+// ApplyWithOwnedStorageRuntimeEnvironment borrows protected values and admitted volume evidence.
+func (e *imageEngine) ApplyWithOwnedStorageRuntimeEnvironment(ctx context.Context, operationID string, plan domain.HostingApplyPlan, req hostingOwnedVolumeRequest, materialized hostingOwnedVolumeEvidence, environment *hostingruntimeprotocol.Environment, deadline time.Time, verifying ...func() error) domain.HostingResult {
+	storage := &ownedStorageExecution{request: req, materialized: materialized}
+	if plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || storage.validate(operationID, plan) != nil {
+		return domain.HostingResult{Outcome: "failed", DaemonID: plan.Release.DaemonID, PlanHash: plan.Hash, ImageID: plan.Release.ImageID}
+	}
+	return e.apply(ctx, operationID, plan, environment, deadline, storage, verifying...)
 }

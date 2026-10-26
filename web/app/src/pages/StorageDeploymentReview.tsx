@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
+import { getCatalogInstallation } from "@/api/hosting-catalog";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import {
   requestHostingDeployment,
@@ -139,6 +140,22 @@ export function StorageDeploymentReview({
   const [containerPort, setContainerPort] = useState("");
   const [readinessPath, setReadinessPath] = useState("");
   const [readinessTimeout, setReadinessTimeout] = useState("");
+  const catalog = useQuery({
+    queryKey: ["catalogInstallation", scope.actor, resource.id],
+    queryFn: ({ signal }) => getCatalogInstallation(resource.id, signal),
+    retry: false,
+    gcTime: 0,
+  });
+  const catalogDefaults = useRef(false);
+  useEffect(() => {
+    if (!catalog.data || catalogDefaults.current) return;
+    catalogDefaults.current = true;
+    if (catalog.data.resource.project_id !== scope.project || containerPort || readinessPath || readinessTimeout) return;
+    setContainerPort(String(catalog.data.template.definition.container_port));
+    setReadinessPath(catalog.data.template.definition.readiness.path);
+    setReadinessTimeout(String(catalog.data.template.definition.readiness.timeout_seconds));
+  }, [catalog.data, scope.project, containerPort, readinessPath, readinessTimeout]);
+
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -191,10 +208,10 @@ export function StorageDeploymentReview({
         runtime.project_id !== scope.project ||
         runtime.resource_id !== scope.resource ||
         !Number.isSafeInteger(runtime.runtime_generation) ||
-        runtime.runtime_generation !== 0
+        runtime.runtime_generation < 0
       )
         throw new Error(
-          "Storage deployment requires the supported untouched runtime configuration.",
+          "Saved runtime configuration identity is invalid.",
         );
       if (!active.current || controller.signal.aborted) return;
       const initial = current.reason === "initial_deployment";
@@ -237,6 +254,7 @@ export function StorageDeploymentReview({
       if (!active.current || controller.signal.aborted) return;
       const input: HostingDeploymentInput = {
         expected_generation: current.resource_generation,
+        ...(runtime.runtime_generation > 0 ? {expected_runtime_configuration_generation:runtime.runtime_generation}:{}),
         idempotency_key: crypto.randomUUID(),
         ...settings,
         ...(current.storage_route_continuity
@@ -322,6 +340,7 @@ export function StorageDeploymentReview({
         operation.project_id !== scope.project ||
         operation.resource_id !== scope.resource ||
         operation.binding_id !== bindingID ||
+        (review.input.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== review.input.expected_runtime_configuration_generation) ||
         operation.snapshot.resource_generation !==
           review.input.expected_generation ||
         operation.snapshot.host_port !== review.input.host_port ||

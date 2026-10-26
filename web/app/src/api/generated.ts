@@ -744,6 +744,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/hosting-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the pinned hosting catalog under project viewer authority */
+        get: operations["getHostingCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosting-catalog/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Atomically install an immutable template into ordinary image hosting
+         * @description Requires project owner and current destination grant. Saves generated encrypted credential versions and retained storage without starting a container. Exact retries preserve original template bytes and references. Arbitrary Compose import remains incomplete.
+         */
+        post: operations["installHostingCatalog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/catalog-installation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the original installation copy under current viewer and destination authority */
+        get: operations["getHostingCatalogInstallation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/databases": {
         parameters: {
             query?: never;
@@ -7015,7 +7069,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"] | components["schemas"]["HostingDatabaseReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "database.private.owned-storage.v1" | "public-image.runtime-env.database.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "public-image.owned-storage.runtime-env.release-ports.v1" | "database.private.owned-storage.v1" | "public-image.runtime-env.database.release-ports.v1";
         } & ({
             /** @enum {string} */
             policy_version?: "database.private.owned-storage.v1";
@@ -7026,7 +7080,7 @@ export interface components {
             readiness?: components["schemas"]["HostingDatabaseReadiness"];
         } | {
             /** @enum {string} */
-            policy_version?: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1";
+            policy_version?: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "public-image.owned-storage.runtime-env.release-ports.v1";
             readiness?: components["schemas"]["HostingReadiness"];
         } | {
             /** @enum {string} */
@@ -7081,7 +7135,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "database-hosting.private.owned-storage.v1" | "database-hosting.private.membership.v2" | "image-hosting.runtime-env.database.v1";
+            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "image-hosting.owned-storage.runtime-env.v1" | "database-hosting.private.owned-storage.v1" | "database-hosting.private.membership.v2" | "image-hosting.runtime-env.database.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -7694,6 +7748,49 @@ export interface components {
             /** Format: int64 */
             expected_generation: number;
         } | unknown | unknown;
+        HostingCatalogInstallInput: {
+            request_id: string;
+            project_id: string;
+            project_environment_id: string;
+            destination_id: string;
+            name: string;
+            /** @enum {string} */
+            template_id: "linkding";
+            /** @enum {string} */
+            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1";
+        };
+        HostingCatalogDefinition: {
+            image_reference: string;
+            container_port: number;
+            mount_path: string;
+            readiness: components["schemas"]["HostingReadiness"];
+            credential_names: string[];
+        };
+        HostingCatalogTemplate: {
+            id: string;
+            immutable_version: string;
+            name: string;
+            upstream_repository: string;
+            upstream_commit: string;
+            upstream_path: string;
+            original: string;
+            original_hash: string;
+            definition: components["schemas"]["HostingCatalogDefinition"];
+            definition_hash: string;
+        };
+        HostingCatalogInstallation: {
+            id: string;
+            request: components["schemas"]["HostingCatalogInstallInput"];
+            template: components["schemas"]["HostingCatalogTemplate"];
+            resource: components["schemas"]["Resource"];
+            binding: components["schemas"]["ResourceBinding"];
+            storage_ref: components["schemas"]["HostingStorageRef"];
+            runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
+            credentials: components["schemas"]["HostingRuntimeEntry"][];
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         HostingDatabaseCreateInput: {
             request_id: string;
             project_id: components["schemas"]["HostingIdentifier"];
@@ -11981,6 +12078,87 @@ export interface operations {
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    getHostingCatalog: {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pinned typed templates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingCatalogTemplate"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    installHostingCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingCatalogInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Saved installation or identical replay */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingCatalogInstallation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getHostingCatalogInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable installation metadata without credential values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingCatalogInstallation"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     createHostingDatabase: {

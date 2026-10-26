@@ -239,6 +239,11 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 		return errors.New("invalid immutable image apply plan")
 	}
 	switch plan.CompilerVersion {
+	case domain.HostingOwnedStorageRuntimeCompilerVersion:
+		expected, err := domain.CompileHostingOwnedStorageRuntimePlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases, *plan.Storage)
+		if err != nil || expected.Hash != hash {
+			return errors.New("invalid owned storage runtime image apply plan")
+		}
 	case domain.HostingOwnedStorageCompilerVersion:
 		expected, err := domain.CompileHostingOwnedStoragePlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases, *plan.Storage)
 		if err != nil || expected.Hash != hash {
@@ -389,7 +394,7 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 	if plan.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
 		args = append(args, "--pull=never")
 	}
-	if storage != nil {
+	if storage != nil && !currentEnvironment {
 		args = append(args, "--mount", "type=volume,src="+plan.Storage.VolumeName+",dst="+plan.Storage.MountPath+",volume-nocopy")
 	}
 	args = append(args, hostingReleaseImage(plan.Release))
@@ -411,7 +416,17 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 				values[entry.Name] = entry.Value
 			}
 			var createErr error
-			id, createErr = e.createWithRuntimeEnvironment(createCtx, plan.Release.DaemonID, args[2:len(args)-1], hostingReleaseImage(plan.Release), values)
+			if storage != nil {
+				before := func(check context.Context) error {
+					if check.Err() != nil || !time.Now().Before(metadata.UseUntil) || !localDeadline.IsZero() && !time.Now().Before(localDeadline) {
+						return errors.New("runtime environment expired")
+					}
+					return storage.verify(check, e, plan, nil, "")
+				}
+				id, createErr = e.createWithAuthorizedOwnedStorageRuntimeEnvironment(createCtx, plan.Release.DaemonID, args[2:len(args)-1], hostingReleaseImage(plan.Release), values, hostingEnvironmentOwnedStorage{Volume: storage.request, Plan: *plan.Storage}, before)
+			} else {
+				id, createErr = e.createWithRuntimeEnvironment(createCtx, plan.Release.DaemonID, args[2:len(args)-1], hostingReleaseImage(plan.Release), values)
+			}
 			return createErr
 		})
 		raw = []byte(id)

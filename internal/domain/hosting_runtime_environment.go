@@ -30,14 +30,14 @@ func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
 		return ErrInvalidHostingApplicationDatabasePlan
 	}
 	ref := s.RuntimeConfiguration
-	runtimePolicy := s.PolicyVersion == HostingRuntimePolicyVersion || s.PolicyVersion == HostingLocalBuildRuntimePolicyVersion || combined
+	runtimePolicy := s.PolicyVersion == HostingRuntimePolicyVersion || s.PolicyVersion == HostingLocalBuildRuntimePolicyVersion || combined || s.PolicyVersion == HostingOwnedStorageRuntimePolicyVersion
 	if ref == (HostingRuntimeConfigurationRef{}) {
 		if runtimePolicy {
 			return errors.New("runtime policy requires configuration reference")
 		}
 		return nil
 	}
-	if ref.Generation < 1 || !imageSHA256.MatchString(ref.Hash) || !runtimePolicy || (s.LocalBuild == (HostingLocalBuildSource{})) != (s.PolicyVersion == HostingRuntimePolicyVersion || combined) {
+	if ref.Generation < 1 || !imageSHA256.MatchString(ref.Hash) || !runtimePolicy || (s.LocalBuild == (HostingLocalBuildSource{})) != (s.PolicyVersion == HostingRuntimePolicyVersion || combined || s.PolicyVersion == HostingOwnedStorageRuntimePolicyVersion) {
 		return errors.New("invalid runtime configuration reference policy")
 	}
 	return nil
@@ -73,6 +73,8 @@ func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
 	}
 	compiler := ""
 	switch s.PolicyVersion {
+	case HostingOwnedStorageRuntimePolicyVersion:
+		compiler = HostingOwnedStorageRuntimeCompilerVersion
 	case HostingOwnedStoragePolicyVersion:
 		compiler = HostingOwnedStorageCompilerVersion
 	case HostingPolicyVersion:

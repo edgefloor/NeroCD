@@ -185,6 +185,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	})
 	roots, proxyRoots := storageRuntimeTrust(t, root)
 	server, pg, database := newHostingBuildAPIFixture(t)
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
+		server = catalogRuntimeServer(t, pg)
+	}
 	f = &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
 	control := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/runners/hosting/complete" {
@@ -238,6 +241,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if len(archive) > 0 && archive[0] {
 		storageRuntimeConfigureArchive(t, f, pg)
 		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
+	}
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
+		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 	}
 	f.capabilities = append([]string(nil), caps...)
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, http.MethodPost, "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
@@ -352,6 +358,9 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 	}
 	ctx, cancel := context.WithCancel(f.t.Context())
 	command := exec.CommandContext(ctx, "/fixture/nerocd-proxy-fixture", "runner", "--server", f.control.URL, "--credential-file", filepath.Join(f.root, "credential"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "runner"), "--poll-interval", "100ms", "--cancel-poll-interval", "100ms", "--capabilities", strings.Join(capabilities, ","), "--proxy-state-root", filepath.Join(f.root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch")
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
+		command.Args = append(command.Args, "--hosting-runtime-env")
+	}
 	if f.archiveConfig != "" {
 		command.Args = append(command.Args, "--storage-archive-config-file", f.archiveConfig)
 	}

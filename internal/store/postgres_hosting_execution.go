@@ -380,15 +380,16 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if snap.Storage != (domain.HostingStorageRef{}) && snap.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
-		return domain.HostingOperation{}, ErrConflict
-	}
+
 	snap.PolicyVersion = domain.HostingPolicyVersion
 	if snap.RuntimeConfiguration.Generation > 0 {
 		snap.PolicyVersion = domain.HostingRuntimePolicyVersion
 	}
 	if snap.Storage != (domain.HostingStorageRef{}) {
 		snap.PolicyVersion = domain.HostingOwnedStoragePolicyVersion
+		if snap.RuntimeConfiguration.Generation > 0 {
+			snap.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
+		}
 	}
 	if err = requireHostingStorageAgent(ctx, tx, snap); err != nil {
 		return domain.HostingOperation{}, err
@@ -962,7 +963,7 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		plan, err = domain.CompileHostingApplicationDatabasePlan(op.Snapshot, in.Release, previous, nil, input)
 	} else if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
 		plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, nil)
-	} else if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
+	} else if op.Snapshot.PolicyVersion == domain.HostingOwnedStoragePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingOwnedStorageRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingReleasePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildPolicyVersion || op.Snapshot.PolicyVersion == domain.HostingRuntimePolicyVersion || op.Snapshot.PolicyVersion == domain.HostingLocalBuildRuntimePolicyVersion {
 		var retained []domain.HostingHealthy
 		rows, readErr := sqlcgen.New(tx).GetHostingRetainedReleases(ctx, op.BindingID)
 		if readErr != nil {

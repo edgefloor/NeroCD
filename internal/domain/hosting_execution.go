@@ -368,7 +368,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
 		return HostingApplyPlan{}, err
 	}
-	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion {
+	if ValidateHostingStorageSnapshot(snapshot) != nil || snapshot.Storage != (HostingStorageRef{}) && policy != HostingOwnedStoragePolicyVersion && policy != HostingOwnedStorageRuntimePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion {
 		return HostingApplyPlan{}, ErrInvalidHostingStorage
 	}
 	if err := ValidateHostingSnapshotRelease(snapshot, release); err != nil {
@@ -380,7 +380,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: compiler, RetainedReleases: append([]HostingHealthy(nil), retained...)}
 	seen := map[string]bool{}
 	for _, old := range plan.RetainedReleases {
-		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(old) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingOwnedStorageRuntimePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && old.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if old.OperationID == "" || seen[old.OperationID] || old.Snapshot.HostPort < 1024 || old.Snapshot.HostPort > 65535 || old.Snapshot.BindingID != snapshot.BindingID || old.Snapshot.DestinationID != snapshot.DestinationID || old.Release.DaemonID != release.DaemonID || old.ContainerID == "" || ValidateHostingSnapshotRelease(old.Snapshot, old.Release) != nil {
@@ -389,7 +389,7 @@ func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 		seen[old.OperationID] = true
 	}
 	if previous != nil {
-		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Storage != nil {
+		if policy != HostingApplicationDatabasePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || ValidateHostingHealthyStorage(*previous) != nil || policy != HostingOwnedStoragePolicyVersion && policy != HostingOwnedStorageRuntimePolicyVersion && policy != HostingApplicationDatabaseStoragePolicyVersion && previous.Storage != nil {
 			return HostingApplyPlan{}, ErrInvalidHostingStorage
 		}
 		if ValidateHostingSnapshotRelease(previous.Snapshot, previous.Release) != nil || previous.OperationID == "" || previous.Snapshot.HostPort < 1024 || previous.Snapshot.HostPort > 65535 || previous.Snapshot.BindingID != snapshot.BindingID || previous.Snapshot.DestinationID != snapshot.DestinationID || previous.Release.DaemonID != release.DaemonID || previous.ContainerID == "" || seen[previous.OperationID] {

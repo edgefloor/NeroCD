@@ -17,7 +17,9 @@ archive=false
 remote=false
 retention=false
 deletion=false
+catalog=false
 case ${1:-} in
+ --catalog) catalog=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
  --remote|--retention|--deletion)
@@ -37,7 +39,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog]' >&2; exit 2;;
 esac
 outer=''
 pg=''
@@ -301,7 +303,7 @@ cleanup() {
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"
- if [[ "$remote" == true ]]; then
+ if [[ "$remote" == true || "$catalog" == true ]]; then
   if [[ -f "$evidence/preservation-before.private.json" ]]; then
    python3 acceptance/runtime-hosting-storage/remote_evidence.py after "$evidence" "$owner" "$name" "$volume" || result=1
   else
@@ -328,7 +330,7 @@ host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-
 host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"
 host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-before"
 host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-before"
-if [[ "$remote" == true ]]; then
+if [[ "$remote" == true || "$catalog" == true ]]; then
  python3 acceptance/runtime-hosting-storage/remote_evidence.py before "$evidence"
  bun run --cwd web/app build > "$evidence/browser-ui-build.log" 2>&1
  python3 -B scripts/skills/ui_manifest.py > "$evidence/browser-ui-manifest.json"
@@ -435,6 +437,11 @@ h['hash']='sha256:'+hashlib.sha256(json.dumps(h,separators=(',',':')).encode()).
 " "$evidence" "$head_before" "$helper_sha"
  host_docker cp "$evidence/archive-helper.json" "$outer:/fixture/archive-helper.json"
 fi
+if [[ "${1:-}" == --catalog ]]; then
+ linkding=docker.io/sissbruecker/linkding@sha256:e35cb50e0581178f245125ffaa909c565416c94c9f22ace305a7d234a4345522
+ inner_docker pull "$linkding"
+ inner_docker image inspect "$linkding" > "$evidence/linkding-image.json"
+fi
 inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/inner-images-before-test"
 host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-before-test"
 host_docker exec "$outer" df -Pi / /var/lib/docker /tmp > "$evidence/guest-inodes-before-test"
@@ -522,6 +529,15 @@ for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_a
 CHECK_DELETION_MARKERS
  fi
 else
- host_docker exec --workdir /workspace/internal/api --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m
+ catalog_mode=""; if [[ "${1:-}" == --catalog ]]; then catalog_mode=disposable-dind; fi
+ host_docker exec --workdir /workspace/internal/api --env "NEROCD_CATALOG_RUNTIME=$catalog_mode" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env "NEROCD_STORAGE_ARCHIVE_RUNTIME=$archive_mode" --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=12m | tee "$evidence/api-tests.log"
+ if [[ "$catalog" == true ]]; then
+  python3 - "$evidence/api-tests.log" <<'CATALOG_PASS'
+import pathlib,sys
+text=pathlib.Path(sys.argv[1]).read_text()
+if "--- PASS: TestHostingCatalogLinkdingCompiledRunnerHTTPS " not in text or "SKIP" in text:
+ raise SystemExit("required catalog runtime test did not pass without skips")
+CATALOG_PASS
+ fi
 fi
 echo 'compiled storage runner / authenticated public API / trusted fixture-CA HTTPS gate passed'

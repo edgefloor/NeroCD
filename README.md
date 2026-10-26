@@ -42,6 +42,11 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
 - Encrypted project-secret versions with create, rotate, protected owner reveal
   and revoke. [Broader execution delivery and value scopes](docs/secrets.md)
   remain planned; existing runner-file bindings have their own contract.
+- A pinned [Linkding catalog installation](docs/hosting-catalog.md) saves an ordinary
+  image application, generated managed credentials, retained owned storage and
+  immutable upstream provenance atomically. Combined runtime/storage execution
+  has a dedicated policy family; [physical qualification](acceptance/runtime-hosting-catalog/README.md)
+  remains pending the reviewed candidate run.
 - Desired runtime configuration through resource GET/PUT APIs, with generation
   compare-and-swap, idempotent requests, explicit public nonsecret literals and
   exact managed-secret version references. Current owners write and viewers read.

@@ -12,10 +12,13 @@ import (
 
 // These versions identify explicit owned-storage admission and compilation.
 const (
-	HostingOwnedStorageCapability      = "hosting_owned_storage_v1"
-	HostingOwnedStoragePolicyVersion   = "public-image.owned-storage.release-ports.v1"
-	HostingOwnedStorageCompilerVersion = "image-hosting.owned-storage.v1"
-	HostingStorageProtocolJSONLimit    = 32 << 10
+	HostingOwnedStorageRuntimeCapability      = "hosting_owned_storage_runtime_v1"
+	HostingOwnedStorageRuntimePolicyVersion   = "public-image.owned-storage.runtime-env.release-ports.v1"
+	HostingOwnedStorageRuntimeCompilerVersion = "image-hosting.owned-storage.runtime-env.v1"
+	HostingOwnedStorageCapability             = "hosting_owned_storage_v1"
+	HostingOwnedStoragePolicyVersion          = "public-image.owned-storage.release-ports.v1"
+	HostingOwnedStorageCompilerVersion        = "image-hosting.owned-storage.v1"
+	HostingStorageProtocolJSONLimit           = 32 << 10
 )
 
 // HostingStoragePlan is frozen before its containing plan is hashed. Its origin
@@ -169,7 +172,13 @@ func ValidateHostingStorageSnapshot(s HostingSnapshot) error {
 	}
 	has := s.Storage != (HostingStorageRef{})
 	if !has {
-		if s.PolicyVersion == HostingOwnedStoragePolicyVersion || s.PolicyVersion == HostingDatabasePolicyVersion || s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion {
+		if s.PolicyVersion == HostingOwnedStoragePolicyVersion || s.PolicyVersion == HostingOwnedStorageRuntimePolicyVersion || s.PolicyVersion == HostingDatabasePolicyVersion || s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion {
+			return ErrInvalidHostingStorage
+		}
+		return nil
+	}
+	if s.PolicyVersion == HostingOwnedStorageRuntimePolicyVersion {
+		if !validHostingStorageRef(s.Storage) || s.LocalBuild != (HostingLocalBuildSource{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.Database != (HostingDatabaseExecutionRef{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
 			return ErrInvalidHostingStorage
 		}
 		return nil
@@ -279,4 +288,20 @@ func (in HostingStorageMaterializedRequest) Matches(storage HostingStorage, m Ho
 // HostingStorageLabelsHash hashes only the canonical controller-derived map.
 func HostingStorageLabelsHash(storage HostingStorage, m HostingStorageMaterialization) string {
 	return HostingDocumentHash(ExpectedHostingStorageLabels(storage, m))
+}
+
+// CompileHostingOwnedStorageRuntimePlan pins runtime metadata and owned storage in one image plan.
+func CompileHostingOwnedStorageRuntimePlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, storage HostingStoragePlan) (HostingApplyPlan, error) {
+	if snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || snapshot.Database != (HostingDatabaseExecutionRef{}) || snapshot.LocalBuild != (HostingLocalBuildSource{}) || release.LocalBuild != (HostingBuildArtifact{}) || storage.Validate(snapshot, release) != nil {
+		return HostingApplyPlan{}, ErrInvalidHostingStorage
+	}
+	plan, err := compileRetainedHostingPlan(snapshot, release, previous, retained, HostingOwnedStorageRuntimePolicyVersion, HostingOwnedStorageRuntimeCompilerVersion)
+	if err != nil {
+		return plan, err
+	}
+	plan.Storage = &storage
+	plan.RetainPrevious = false
+	plan.Hash = ""
+	plan.Hash = HostingDocumentHash(plan)
+	return plan, nil
 }

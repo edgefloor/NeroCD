@@ -22,6 +22,7 @@ import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 
 import { ResourceStorage } from "./ResourceStorage";
 import { ResourceDatabase } from "./ResourceDatabase";
+import { HostingCatalog } from "./HostingCatalog";
 import { DatabaseCreateForm } from "./DatabaseCreateForm";
 
 const pageSize = 20;
@@ -184,6 +185,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}
     </form> : null}
+    <HostingCatalog projectID={projectID} environmentID={environment.id} blocked={blocked || resources.isError || resources.isPending} />
     <DatabaseCreateForm projectID={projectID} environmentID={environment.id} blocked={blocked || resources.isError || resources.isPending || environment.project_id !== projectID} accessError={resources.isError ? resources.error : undefined} />
     {notice ? <p role="status">{notice}</p> : null}
   </section>;

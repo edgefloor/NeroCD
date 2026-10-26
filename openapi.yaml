@@ -2674,6 +2674,59 @@ paths:
         }
       }
     }
+  "/api/v1/hosting-catalog":
+    get:
+      operationId: getHostingCatalog
+      summary: Read the pinned hosting catalog under project viewer authority
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Pinned typed templates
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/HostingCatalogTemplate"}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  "/api/v1/hosting-catalog/installations":
+    post:
+      operationId: installHostingCatalog
+      summary: Atomically install an immutable template into ordinary image hosting
+      description: Requires project owner and current destination grant. Saves generated encrypted credential versions and retained storage without starting a container. Exact retries preserve original template bytes and references. Arbitrary Compose import remains incomplete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HostingCatalogInstallInput"}
+      responses:
+        "201":
+          description: Saved installation or identical replay
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingCatalogInstallation"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  "/api/v1/resources/{id}/catalog-installation":
+    get:
+      operationId: getHostingCatalogInstallation
+      summary: Read the original installation copy under current viewer and destination authority
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Immutable installation metadata without credential values
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingCatalogInstallation"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   "/api/v1/databases":
     post:
       operationId: createHostingDatabase
@@ -13994,6 +14047,7 @@ components:
                 - public-image.runtime-env.release-ports.v1
                 - local-build.runtime-env.release-ports.v1
                 - public-image.owned-storage.release-ports.v1
+                - public-image.owned-storage.runtime-env.release-ports.v1
             readiness: {$ref: '#/components/schemas/HostingReadiness'}
         - required: [application_database, runtime_configuration]
           properties:
@@ -14059,6 +14113,7 @@ components:
             - public-image.runtime-env.release-ports.v1
             - local-build.runtime-env.release-ports.v1
             - public-image.owned-storage.release-ports.v1
+            - public-image.owned-storage.runtime-env.release-ports.v1
             - database.private.owned-storage.v1
             - public-image.runtime-env.database.release-ports.v1
     HostingRelease:
@@ -14185,6 +14240,7 @@ components:
             - image-hosting.runtime-env.v1
             - local-build-hosting.runtime-env.v1
             - image-hosting.owned-storage.v1
+            - image-hosting.owned-storage.runtime-env.v1
             - database-hosting.private.owned-storage.v1
             - database-hosting.private.membership.v2
             - image-hosting.runtime-env.database.v1
@@ -16036,6 +16092,58 @@ components:
         name: {type: string, minLength: 1, maxLength: 128}
         source: {$ref: "#/components/schemas/ResourceSourceInput"}
         expected_generation: {type: integer, format: int64, minimum: 1}
+    HostingCatalogInstallInput:
+      type: object
+      additionalProperties: false
+      required: [request_id, project_id, project_environment_id, destination_id, name, template_id, immutable_version]
+      properties:
+        request_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        project_id: {type: string}
+        project_environment_id: {type: string}
+        destination_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 128}
+        template_id: {type: string, enum: [linkding]}
+        immutable_version: {type: string, enum: [coolify-b12d1386.linkding-1.47.0.v1]}
+    HostingCatalogDefinition:
+      type: object
+      additionalProperties: false
+      required: [image_reference, container_port, mount_path, readiness, credential_names]
+      properties:
+        image_reference: {type: string}
+        container_port: {type: integer}
+        mount_path: {type: string}
+        readiness: {$ref: "#/components/schemas/HostingReadiness"}
+        credential_names: {type: array, items: {type: string}}
+    HostingCatalogTemplate:
+      type: object
+      additionalProperties: false
+      required: [id, immutable_version, name, upstream_repository, upstream_commit, upstream_path, original, original_hash, definition, definition_hash]
+      properties:
+        id: {type: string}
+        immutable_version: {type: string}
+        name: {type: string}
+        upstream_repository: {type: string}
+        upstream_commit: {type: string}
+        upstream_path: {type: string}
+        original: {type: string}
+        original_hash: {type: string}
+        definition: {$ref: "#/components/schemas/HostingCatalogDefinition"}
+        definition_hash: {type: string}
+    HostingCatalogInstallation:
+      type: object
+      additionalProperties: false
+      required: [id, request, template, resource, binding, storage_ref, runtime_configuration, credentials, created_by, created_at]
+      properties:
+        id: {type: string}
+        request: {$ref: "#/components/schemas/HostingCatalogInstallInput"}
+        template: {$ref: "#/components/schemas/HostingCatalogTemplate"}
+        resource: {$ref: "#/components/schemas/Resource"}
+        binding: {$ref: "#/components/schemas/ResourceBinding"}
+        storage_ref: {$ref: "#/components/schemas/HostingStorageRef"}
+        runtime_configuration: {$ref: "#/components/schemas/HostingRuntimeConfigurationRef"}
+        credentials: {type: array, items: {$ref: "#/components/schemas/HostingRuntimeEntry"}}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
     HostingDatabaseCreateInput:
       type: object
       additionalProperties: false
