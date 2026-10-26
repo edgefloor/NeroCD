@@ -164,7 +164,7 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 	}
 	if in.Source.Kind == "compose" {
 		if !domain.ValidHostingRuntimeDeliveryID(in.RequestID) {
-			return domain.Resource{}, InvalidInput(errors.New("Compose creation requires a 32-character lowercase hexadecimal request_id"))
+			return domain.Resource{}, InvalidInput(errors.New("compose creation requires a 32-character lowercase hexadecimal request_id"))
 		}
 		id = "res_compose_" + domain.HostingStackObjectID(in.ProjectID, "resource", in.RequestID)[4:]
 	} else if in.RequestID != "" {

@@ -61,13 +61,14 @@ func TestHostingStackInterpolation(t *testing.T) {
 		{"${MISSING:-fallback}", "fallback"}, {"${EMPTY:-fallback}", "fallback"}, {"${EMPTY-fallback}", ""},
 		{"${MISSING+alternate}", ""}, {"${SET:+alternate}", "alternate"}, {"${EMPTY+alternate}", "alternate"}, {"${EMPTY:+alternate}", ""},
 		{"a-$SET-b", "a-secret-value-b"},
+		{"$MISSING", ""}, {"${MISSING}", ""},
 	} {
 		got, err := ExpandHostingStackValue(tc.expression, values, true)
 		if err != nil || got != tc.want {
 			t.Fatalf("%s: got %q, %v", tc.expression, got, err)
 		}
 	}
-	for _, expression := range []string{"${MISSING?do-not-log-this}", "${EMPTY:?secret-value}", "$MISSING"} {
+	for _, expression := range []string{"${MISSING?do-not-log-this}", "${EMPTY:?secret-value}"} {
 		_, err := ExpandHostingStackValue(expression, values, true)
 		if err == nil || strings.Contains(err.Error(), "secret-value") || strings.Contains(err.Error(), "do-not-log-this") {
 			t.Fatalf("missing variable error leaked or absent: %v", err)

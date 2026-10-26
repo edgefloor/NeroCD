@@ -9,8 +9,8 @@ import (
 	"github.com/distribution/reference"
 )
 
+// Managed stack protocol versions identify stack-wide authority and observations.
 const (
-	// HostingStackCapability identifies stack-wide writer exclusion and observations.
 	HostingStackCapability      = "hosting_managed_compose_v1"
 	HostingStackPolicyVersion   = "managed-compose.interrupting.v1"
 	HostingStackCompilerVersion = "managed-compose.compiler.v1"

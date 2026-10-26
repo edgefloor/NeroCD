@@ -217,7 +217,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 			if ack := journal.AckHosting(intentID); ack != nil {
 				return ack
 			}
-			return errors.New("Compose configuration preflight failed; prior workloads were not changed")
+			return errors.New("compose configuration preflight failed; prior workloads were not changed")
 		}
 	}
 	var admitted domain.HostingOperation

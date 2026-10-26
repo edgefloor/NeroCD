@@ -87,7 +87,7 @@ func renderStack(operation string, plan domain.HostingApplyPlan, environment *ho
 		services := map[string]any{}
 		for i, service := range plan.Stack.Definition.Services {
 			item := map[string]any{"image": plan.Stack.Images[i].Release.CanonicalImage, "container_name": domain.HostingStackObjectID(plan.Snapshot.BindingID, "component", service.Name), "labels": map[string]string{imageBindingLabel: plan.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: plan.Release.Hash, imagePlanLabel: plan.Hash, stackComponentLabel: service.Name}}
-			if len(service.Command) > 0 {
+			if service.Command != nil {
 				command := make([]string, len(service.Command))
 				for n, value := range service.Command {
 					var err error
@@ -180,7 +180,7 @@ func (e *imageEngine) stackCompose(ctx context.Context, plan domain.HostingApply
 		return errors.New("stack daemon changed")
 	}
 	if !e.stackCommandReady {
-		return errors.New("Compose executable was not qualified before admission")
+		return errors.New("compose executable was not qualified before admission")
 	}
 	name, prefix := e.stackCommandArguments()
 	all := append(prefix, "--project-directory", e.configDir, "--env-file", "/dev/null", "--project-name", plan.Snapshot.RuntimeNamespace, "--file", "-")
@@ -418,7 +418,7 @@ func (e *imageEngine) stopStackPredecessor(ctx context.Context, plan domain.Host
 	}
 	for _, id := range strings.Fields(string(projectRaw)) {
 		if _, ok := known[id]; !ok {
-			return errors.New("Compose project has a foreign container")
+			return errors.New("compose project has a foreign container")
 		}
 	}
 	if len(actual) != len(known) {
@@ -626,13 +626,13 @@ func (e *imageEngine) prepareCompose(ctx context.Context) error {
 	if err != nil {
 		version, err = e.command.RunEnvironment(ctx, "docker-compose", []string{"version", "--short"}, e.configDir, []string{"DOCKER_CONFIG=" + e.configDir, "DOCKER_HOST=" + e.endpoint, "DOCKER_CONTEXT="})
 		if err != nil {
-			return errors.New("Docker Compose v2 or later is required")
+			return errors.New("docker Compose v2 or later is required")
 		}
 		e.stackStandalone = true
 	}
 	major, err := strconv.Atoi(strings.SplitN(strings.TrimSpace(strings.TrimPrefix(string(version), "v")), ".", 2)[0])
 	if err != nil || major < 2 {
-		return errors.New("Docker Compose v2 or later is required")
+		return errors.New("docker Compose v2 or later is required")
 	}
 	e.stackCommandReady = true
 	return nil

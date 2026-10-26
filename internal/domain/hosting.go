@@ -130,7 +130,7 @@ func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 			return errors.New("duplicate Compose source field")
 		}
 		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
-			return errors.New("Compose source requires only compose")
+			return errors.New("compose source requires only compose")
 		}
 		s.Compose = &HostingStackSource{}
 		if err := strictSourceJSON(wire.Compose, s.Compose); err != nil {
@@ -171,7 +171,7 @@ func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
 			return errors.New("duplicate Compose source field")
 		}
 		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
-			return errors.New("Compose source requires only compose")
+			return errors.New("compose source requires only compose")
 		}
 		s.Compose = &HostingStackSource{}
 		if err := strictSourceJSON(wire.Compose, s.Compose); err != nil {

@@ -95,19 +95,99 @@ func TestStackRenderingExpandsProtectedValuesExactlyOnce(t *testing.T) {
 	if document.Services["app"].Environment["PASSWORD"] != strings.ReplaceAll(password, "$", "$$") || document.Services["app"].Environment["DEFAULT"] != "fallback" || document.Services["db"].Healthcheck.Test[1] != "pg_isready -U $$POSTGRES_USER" || len(document.Services["db"].Ports) != 0 {
 		t.Fatal("protected value, escaped container variable or private database changed")
 	}
-	missing := plan
 	// Recompile after changing the source reference; ambient values must never satisfy it.
 	stack := *plan.Stack
 	stack.Definition.Services = append([]domain.HostingStackService{}, stack.Definition.Services...)
 	stack.Definition.Services[0].Environment = map[string]string{"VALUE": "${EVIL:?private-error-operand}"}
 	snapshot := plan.Snapshot
 	snapshot.Stack.Hash = domain.HostingDocumentHash(stack.Definition)
-	missing, err = domain.CompileHostingStackPlan(snapshot, plan.Release, nil, stack)
+	missing, err := domain.CompileHostingStackPlan(snapshot, plan.Release, nil, stack)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = renderStack("hop", missing, material); err == nil || strings.Contains(err.Error(), "private-error-operand") || strings.Contains(err.Error(), "ambient-must-not-enter") {
 		t.Fatal("ambient interpolation or secret error disclosure")
+	}
+}
+
+func TestStackCommandPresenceSurvivesPlanAndRendering(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		present      bool
+		length       int
+	}{
+		{name: "omitted"},
+		{name: "empty", source: "    command: []\n", present: true},
+		{name: "override", source: "    command: [\"serve\"]\n", present: true, length: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			definition, err := domain.ParseHostingStack(domain.HostingStackSource{Original: "services:\n  app:\n    image: nginx:alpine\n" + tc.source, PublicComponent: "app", ContainerPort: 80})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := stackTestPlan(t)
+			plan.Stack.Definition.Services[0].Command = definition.Services[0].Command
+			plan.Snapshot.Stack.Hash = domain.HostingDocumentHash(plan.Stack.Definition)
+			plan, err = domain.CompileHostingStackPlan(plan.Snapshot, plan.Release, nil, *plan.Stack)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The durable plan must retain [] separately from an omitted command.
+			encoded, err := json.Marshal(plan)
+			if err != nil || json.Unmarshal(encoded, &plan) != nil {
+				t.Fatal("plan round trip failed")
+			}
+			body, err := renderStack("hop", plan, stackTestEnvironment(t, plan, "password"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer clear(body)
+			var document struct {
+				Services map[string]map[string]json.RawMessage
+			}
+			if json.Unmarshal(body, &document) != nil {
+				t.Fatal("invalid rendered document")
+			}
+			command, present := document.Services["app"]["command"]
+			if present != tc.present {
+				t.Fatal("command presence changed")
+			}
+			if present {
+				var values []string
+				if json.Unmarshal(command, &values) != nil || values == nil || len(values) != tc.length {
+					t.Fatal("explicit command changed")
+				}
+			}
+		})
+	}
+}
+
+func TestStackReadinessRequiresSuccessfulInitExit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running bool
+		exit    int
+		ready   bool
+	}{
+		{name: "completed", ready: true},
+		{name: "failed", exit: 1},
+		{name: "still running", running: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := stackTestPlan(t)
+			plan.Stack.Definition.Services[0].DependsOn["db"] = "service_completed_successfully"
+			state := domain.HostingStackState{ObservationComplete: true, PublicComponent: "app"}
+			for _, image := range plan.Stack.Images {
+				component := domain.HostingStackComponent{Component: image.Component, ContainerID: strings.Repeat("a", 64), ImageID: image.Release.ImageID, OperationID: "hop", Running: true}
+				if image.Component == "db" {
+					component.Running, component.ExitCode = tc.running, tc.exit
+				}
+				state.Components = append(state.Components, component)
+			}
+			if err := domain.ValidateHostingStackState(plan, "hop", state, true); (err == nil) != tc.ready {
+				t.Fatalf("init readiness: %v", err)
+			}
+		})
 	}
 }
 

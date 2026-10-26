@@ -41,7 +41,7 @@ type HostingStackDefinition struct {
 type HostingStackService struct {
 	Name        string                   `json:"name"`
 	Image       string                   `json:"image"`
-	Command     []string                 `json:"command,omitempty"`
+	Command     []string                 `json:"command"`
 	Environment map[string]string        `json:"environment,omitempty"`
 	Mounts      []HostingStackMount      `json:"mounts,omitempty"`
 	DependsOn   map[string]string        `json:"depends_on,omitempty"`
@@ -112,7 +112,7 @@ func ParseHostingStack(source HostingStackSource) (HostingStackDefinition, error
 		}
 		for i := 0; i < len(node.Content); i += 2 {
 			name, value := node.Content[i].Value, node.Content[i+1]
-			if !stackName.MatchString(name) || !(value.Tag == "!!null" || value.Kind == yaml.MappingNode && len(value.Content) == 0) {
+			if !stackName.MatchString(name) || value.Tag != "!!null" && (value.Kind != yaml.MappingNode || len(value.Content) != 0) {
 				return zero, stackError("volumes."+name, "only owned default-driver volumes are supported")
 			}
 			volumes[name] = true
@@ -490,15 +490,11 @@ func ExpandHostingStackValue(expression string, values map[string]string, requir
 			}
 		case "?":
 			if !set && require {
-				return "", fmt.Errorf("Compose variable %s is required", name)
+				return "", fmt.Errorf("compose variable %s is required", name)
 			}
 		case ":?":
 			if !populated && require {
-				return "", fmt.Errorf("Compose variable %s is required and nonempty", name)
-			}
-		case "":
-			if !set && require {
-				return "", fmt.Errorf("Compose variable %s is required", name)
+				return "", fmt.Errorf("compose variable %s is required and nonempty", name)
 			}
 		}
 		out.WriteString(value)
