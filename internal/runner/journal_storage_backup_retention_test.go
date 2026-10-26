@@ -80,3 +80,35 @@ func TestStorageBackupRetentionRegistryOnlyIDAndProgressDoesNotAlterPlan(t *test
 		t.Fatal("foreign progress accepted")
 	}
 }
+
+func TestStorageBackupDeletionJournalRestartPreservesManualOrigin(t *testing.T) {
+	entry := storageRetentionJournalEntry()
+	entry.Plan.Operation.Version = domain.HostingStorageBackupDeletionVersion
+	entry.Plan.Operation.Origin = domain.StorageBackupManualSelection
+	entry.Plan.Operation.BackupID = "backup"
+	entry.Plan.Operation.ResourceGeneration = 3
+	entry.Plan.Operation.PolicyRevision = 0
+	entry.Plan.Hash = ""
+	entry.Plan.Hash = domain.HostingDocumentHash(entry.Plan)
+	entry.Request.PlanHash = entry.Plan.Hash
+	path := filepath.Join(t.TempDir(), "journal")
+	j, e := OpenAttemptJournal(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = j.AppendStorageBackupRetention(entry); e != nil {
+		t.Fatal(e)
+	}
+	if e = j.Close(); e != nil {
+		t.Fatal(e)
+	}
+	j, e = OpenAttemptJournal(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer j.Close()
+	got := j.Snapshot().StorageBackupRetentions
+	if len(got) != 1 || !reflect.DeepEqual(got[0], entry) {
+		t.Fatal("manual selection changed across restart")
+	}
+}

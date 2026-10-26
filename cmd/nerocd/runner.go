@@ -278,13 +278,13 @@ func runRunner(args []string) error {
 	}
 	if archiveConfig == nil || !archiveConfig.BackupRetention {
 		for _, capability := range registrationCapabilities {
-			if capability == domain.RunTypeStorageBackupRetention || capability == domain.HostingStorageBackupRetentionCapability {
+			if capability == domain.RunTypeStorageBackupRetention || capability == domain.HostingStorageBackupRetentionCapability || capability == domain.HostingStorageBackupDeletionCapability {
 				return errors.New("storage retention capabilities require explicit archive retention opt-in")
 			}
 		}
 	}
 	if archiveConfig != nil && archiveConfig.BackupRetention {
-		registrationCapabilities = append(registrationCapabilities, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability)
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability, domain.HostingStorageBackupDeletionCapability)
 	}
 	if archiveConfig != nil && archiveConfig.RemoteBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability)

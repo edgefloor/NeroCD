@@ -116,6 +116,8 @@ try {
   page.setDefaultTimeout(30000);
   let initial = await state("target");
   const retentionMode=initial.retention_mode==="true";
+  const deletionMode=initial.deletion_mode==="true";
+  let deletionState,deletionExecution,deletionFinalExecution;
   let retentionState,retentionPolicy,retentionExecution,retentionBackupIDs;
   const manifest=JSON.parse(await readFile(resolve(evidence,"browser-ui-manifest.json"),"utf8"));
   if(manifest.schema!=="nerocd.ui-assets/v1" || !manifest.files["index.html"]) throw Error("candidate UI manifest absent");
@@ -280,6 +282,73 @@ try {
     safe.retention_history_and_copy_availability=true;
     await report("retention_history",retentionExecution.id);
   }
+  if(deletionMode){
+    deletionState=await state("deletion");
+    p=await panel(deletionState);
+    await selectBackup(p,deletionState.backup_id);
+    let deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    await deletion.getByRole("checkbox",{name:/^Delete local copy /}).check();
+    const base=`/resources/${deletionState.resource_id}/storage-backups/${deletionState.backup_id}`;
+    const previewResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
+    const reviewed=await previewResponse;if(reviewed.status()!==200)throw Error("manual browser preview rejected");
+    const preview=await reviewed.json();
+    if(preview.origin!=="manual_selection"||preview.final_copy||preview.items.length!==1||preview.items[0].location!=="local"||preview.backup_id!==deletionState.backup_id)throw Error("manual browser preview selected wrong copies");
+    const executeResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));
+    await deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true}).click();
+    const lost=await executeResponse;if(lost.status()!==503)throw Error("manual committed response loss missing");
+    const saved=lost.request().postDataJSON();if(saved.preview_id!==preview.id||saved.expected_plan_hash!==preview.plan_hash)throw Error("manual execution left reviewed selection");
+    await expect(deletion).toContainText("does not cancel work already accepted by the server");
+    const retryResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));
+    await deletion.getByRole("button",{name:"Retry identical deletion request",exact:true}).click();
+    const retry=await retryResponse;if(retry.status()!==202||JSON.stringify(retry.request().postDataJSON())!==JSON.stringify(saved))throw Error("manual retry changed saved request");
+    deletionExecution=await retry.json();
+    safe.manual_deletion_selection_and_exact_retry=true;
+    await report("deletion",deletionExecution.id);
+    deletionState=await state("deletion_history");
+    p=await panel(deletionState);
+    await selectBackup(p,deletionState.backup_id);
+    deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    await expect(deletion).toContainText(`Deletion ${deletionExecution.id}: succeeded`);
+    const metadata=p.locator('dl[aria-label="Selected backup metadata"]');
+    await expect(metadata).toContainText("local: deleted");await expect(metadata).toContainText("remote: available");
+    await deletion.getByRole("checkbox",{name:/^Delete remote copy /}).check();
+    const finalPreviewResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
+    const finalHTTP=await finalPreviewResponse;if(finalHTTP.status()!==200||(await finalHTTP.json()).final_copy!==true)throw Error("connected final-copy warning missing");
+    await expect(deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true})).toBeDisabled();
+    await expect(deletion.getByRole("checkbox",{name:"I understand this deletes the final recoverable copy of this backup.",exact:true})).not.toBeChecked();
+    await deletion.getByRole("button",{name:"Discard saved request and review current copies",exact:true}).click();
+    safe.manual_deletion_history_and_final_copy_warning=true;
+    await report("deletion_history",deletionExecution.id);
+    deletionState=await state("deletion_final");
+    p=await panel(deletionState);await selectBackup(p,deletionState.backup_id);
+    deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    // Old deleted generations stay in history. Select only the enabled owned copy.
+    const localBoxes=await deletion.getByRole("checkbox",{name:/^Delete local copy /}).all();
+    let localCount=0;for(const box of localBoxes)if(await box.isEnabled()){await box.check();localCount++}
+    if(localCount!==1)throw Error("expected one available restored local generation");
+    await deletion.getByRole("checkbox",{name:/^Delete remote copy /}).check();
+    const bothResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
+    const bothHTTP=await bothResponse;if(bothHTTP.status()!==200)throw Error("final manual preview failed");
+    const both=await bothHTTP.json();if(!both.final_copy||both.items.length!==2||new Set(both.items.map(c=>c.location)).size!==2)throw Error("final exact both-copy selection differs");
+    const finalButton=deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true});await expect(finalButton).toBeDisabled();
+    await deletion.getByRole("checkbox",{name:"I understand this deletes the final recoverable copy of this backup.",exact:true}).check();
+    const finalLostResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));await finalButton.click();
+    const finalLost=await finalLostResponse;if(finalLost.status()!==503||finalLost.request().postDataJSON().confirm_final_copy!==true)throw Error("final-copy consent or committed response loss missing");
+    const finalSaved=finalLost.request().postDataJSON();
+    const finalRetryResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));await deletion.getByRole("button",{name:"Retry identical deletion request",exact:true}).click();
+    const finalRetry=await finalRetryResponse;if(finalRetry.status()!==202||JSON.stringify(finalRetry.request().postDataJSON())!==JSON.stringify(finalSaved))throw Error("final manual retry changed confirmation/selection");
+    deletionFinalExecution=await finalRetry.json();safe.manual_deletion_remote_and_final_confirmation=true;
+    await report("deletion_final",deletionFinalExecution.id);
+    deletionState=await state("deletion_final_history");
+    p=await panel(deletionState);await selectBackup(p,deletionState.backup_id);deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    await expect(deletion).toContainText(`Deletion ${deletionExecution.id}: succeeded`);await expect(deletion).toContainText(`Deletion ${deletionFinalExecution.id}: succeeded`);
+    await expect(p.locator('dl[aria-label="Selected backup metadata"]')).toContainText("remote: deleted");
+    safe.manual_deletion_final_history=true;await report("deletion_final_history",deletionFinalExecution.id);
+
+  }
   await state("complete");
   p = await panel(restoreState, true);
   await selectBackup(p, backup.id);
@@ -326,6 +395,15 @@ try {
       const denied=await viewerContext.request.post(`/api/v1/resources/${retentionState.resource_id}/storage-backup-retention/previews`,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:{request_id:"f".repeat(32),expected_policy_revision:retentionPolicy.revision}});
       if(denied.status()!==403)throw Error("viewer retention mutation was not denied");
       safe.retention_viewer_read_only_and_denied=true;
+    }
+    if(deletionMode){
+      const manualPanel=await panel(deletionState,false,viewer);await selectBackup(manualPanel,deletionState.backup_id);
+      const manual=manualPanel.getByRole("region",{name:"Delete selected backup copies",exact:true});
+      await expect(manual).toContainText(`Deletion ${deletionExecution.id}: succeeded`);
+      await expect(manual.getByRole("button",{name:"Review selected copy deletion",exact:true})).toHaveCount(0);
+      const denied=await viewerContext.request.post(`/api/v1/resources/${deletionState.resource_id}/storage-backups/${deletionState.backup_id}/deletion-previews`,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:{request_id:"manual_viewer_denied",expected_resource_generation:2,copy_ids:["foreign"]}});
+      if(denied.status()!==403)throw Error("viewer manual deletion mutation not denied");
+      safe.manual_deletion_viewer_history_and_denied=true;
     }
     safe.viewer_schedule_read_only=true;
     safe.viewer_history_and_controls=true;

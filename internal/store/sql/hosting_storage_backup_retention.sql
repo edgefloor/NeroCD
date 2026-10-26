@@ -20,7 +20,7 @@ SELECT clock_timestamp()::timestamptz AS evaluated_at;
 INSERT INTO hosting_storage_backup_retention_previews(id,resource_id,actor_id,policy_revision,body,copies,plan_hash) VALUES($1,$2,$3,$4,$5,$6,$7);
 
 -- name: StorageRetentionListExecutions :many
-SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100;
+SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 AND body->>'version'='owned-upload.backup-retention.v1' ORDER BY created_at DESC,id DESC LIMIT 100;
 
 -- name: StorageRetentionReadExecutionBody :one
 SELECT body FROM hosting_storage_backup_retention_executions WHERE id=$1 AND resource_id=$2;
@@ -168,3 +168,6 @@ SELECT nerocd_storage_retention_defer_copy();
 
 -- name: StorageRetentionLegacyTransfersForBackup :many
 SELECT t.id FROM hosting_storage_backup_transfers t WHERE t.backup_id=$1 AND t.mode='upload' AND t.state='succeeded' AND NOT EXISTS(SELECT 1 FROM hosting_storage_backup_copies c WHERE c.transfer_id=t.id) ORDER BY t.created_at,t.id;
+
+-- name: StorageDeletionListExecutions :many
+SELECT body FROM hosting_storage_backup_retention_executions WHERE resource_id=$1 AND body->>'backup_id'=sqlc.arg(backup_id)::text AND body->>'origin'='manual_selection' ORDER BY created_at DESC,id DESC LIMIT 100;

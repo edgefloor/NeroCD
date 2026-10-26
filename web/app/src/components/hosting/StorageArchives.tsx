@@ -1,3 +1,4 @@
+import { StorageBackupDeletion } from "./StorageBackupDeletion";
 import { StorageBackupRetention } from "./StorageBackupRetention";
 import { StorageBackupSchedules } from "./StorageBackupSchedules";
 import {
@@ -587,6 +588,7 @@ export function StorageArchives({
           </dd>
         </dl>
       ) : null}
+      {!backup.isError && backup.data ? <StorageBackupDeletion key={[actor, scope.project, scope.resource, scope.binding, scope.destination, selected, resource.generation].join(":")} scope={scope} resource={resource} backup={selected} copies={backup.data.copies ?? []} owner={owner} blocked={blocked} onDenied={() => setLost(true)} /> : null}
       {selected ? (
         <section
           aria-label="Remote archive transfers"

@@ -208,7 +208,7 @@ func (s *PostgresStore) GetStorageBackupRetentionExecution(ctx context.Context, 
 		if e != nil {
 			return v, hostingError(e)
 		}
-		if json.Unmarshal(raw, &v) != nil {
+		if json.Unmarshal(raw, &v) != nil || v.Version != domain.HostingStorageBackupRetentionVersion {
 			return v, ErrConflict
 		}
 		return v, nil
@@ -234,7 +234,7 @@ func (s *PostgresStore) ExecuteStorageBackupRetention(ctx context.Context, id, a
 		var existing string
 		existing, lookup := sqlcgen.New(tx).StorageRetentionFindExecution(ctx, sqlcgen.StorageRetentionFindExecutionParams{PreviewID: in.PreviewID, ResourceID: resource})
 		if lookup == nil {
-			return s.storageRetentionResumeTx(ctx, tx, existing, actor, resource, in, hash)
+			return s.storageRetentionResumeTx(ctx, tx, existing, actor, resource, in, hash, "execution")
 		}
 		if !errors.Is(lookup, pgx.ErrNoRows) {
 			return zero, lookup
@@ -282,67 +282,9 @@ func (s *PostgresStore) ExecuteStorageBackupRetention(ctx context.Context, id, a
 		if len(eligible) != len(chosen) {
 			return zero, ErrConflict
 		}
-		runnerID := chosen[0].RunnerID
 		now := time.Now().UTC()
 		out := domain.HostingStorageBackupRetentionExecution{ID: id, Version: domain.HostingStorageBackupRetentionVersion, ProjectID: p.ProjectID, ResourceID: resource, PreviewID: preview.ID, PolicyRevision: p.Revision, PlanHash: preview.PlanHash, State: "queued", ReservationHeld: true, LocalState: "not_selected", RemoteState: "not_selected", Items: []domain.BackupRetentionExecutionItem{}, CreatedAt: now, UpdatedAt: now}
-		for _, c := range chosen {
-			fresh, ok := byID[c.Item.CopyID]
-			if !ok || !eligible[c.Item.CopyID] || c.RunnerID != runnerID || fresh.IdentityHash != c.IdentityHash || fresh.Item.Availability != "available" {
-				return zero, ErrConflict
-			}
-			out.Items = append(out.Items, domain.BackupRetentionExecutionItem{CopyID: c.Item.CopyID, BackupID: c.Item.BackupID, Location: c.Item.Location, State: "pending", ReservationHeld: true})
-			if c.Item.Location == "local" {
-				out.LocalState = "pending"
-			} else {
-				out.RemoteState = "pending"
-			}
-		}
-		plan := domain.HostingStorageBackupRetentionPlan{Operation: out, ActorID: actor, RunnerID: runnerID, Copies: chosen, TimeoutSeconds: 900}
-		plan.Hash = domain.HostingDocumentHash(plan)
-		if plan.Validate() != nil {
-			return zero, ErrConflict
-		}
-		if e = storageRetentionCurrent(ctx, tx, plan); e != nil {
-			return zero, e
-		}
-		for _, copy := range chosen {
-			active, e := storageRetentionActive(ctx, tx, runnerID, copy.Item.BackupID)
-			if e != nil {
-				return zero, e
-			}
-			if active {
-				return zero, ErrBackupRetentionBusy
-			}
-		}
-		if !s.hostingJobs.StorageBackupRetentionEnabled() {
-			return zero, ErrConflict
-		}
-		e = sqlcgen.New(tx).StorageRetentionInsertExecution(ctx, sqlcgen.StorageRetentionInsertExecutionParams{ID: id, ResourceID: resource, ActorID: actor, RunnerID: runnerID, PreviewID: preview.ID, Plan: buildJSON(plan), PlanHash: plan.Hash, Body: buildJSON(out)})
-		if e != nil {
-			return zero, hostingError(e)
-		}
-		for _, c := range chosen {
-			var location string
-			if location, e = sqlcgen.New(tx).StorageRetentionReadCopyLocation(ctx, c.Item.CopyID); e != nil {
-				return zero, e
-			}
-			if e = sqlcgen.New(tx).StorageRetentionInsertItem(ctx, sqlcgen.StorageRetentionInsertItemParams{ExecutionID: id, CopyID: c.Item.CopyID, IdentityHash: c.IdentityHash, LocationHash: location}); e != nil {
-				return zero, hostingError(e)
-			}
-			if e = sqlcgen.New(tx).StorageRetentionReserveCopy(ctx, c.Item.CopyID); e != nil {
-				return zero, e
-			}
-		}
-		if _, e = s.hostingJobs.EnqueueStorageBackupRetentionTx(ctx, tx, hostingjobs.StorageBackupRetentionArgs{OperationID: id}); e != nil {
-			return zero, e
-		}
-		if e = storageRetentionSaveRequest(ctx, tx, resource, actor, "execution", in.RequestID, hash, out); e != nil {
-			return zero, e
-		}
-		if e = storageRetentionAudit(ctx, tx, actor, id, "retention_requested", p.ProjectID); e != nil {
-			return zero, e
-		}
-		return out, archiveFinalizeActor(ctx, tx, actor)
+		return s.storageRetentionAdmitTx(ctx, tx, actor, resource, in.RequestID, hash, "execution", "retention_requested", out, chosen, byID, eligible)
 	})
 }
 func storageRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingStorageBackupRetentionPlan) error {
@@ -356,6 +298,14 @@ func storageRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingSto
 	_, e = sqlcgen.New(tx).StorageRetentionLockRunner(ctx, sqlcgen.StorageRetentionLockRunnerParams{ID: p.RunnerID, Column2: domain.HostingStorageBackupRetentionCapability, Column3: domain.RunTypeStorageBackupRetention})
 	if e != nil {
 		return hostingError(e)
+	}
+	if p.Operation.Origin == domain.StorageBackupManualSelection {
+		if _, e = sqlcgen.New(tx).StorageRetentionLockRunner(ctx, sqlcgen.StorageRetentionLockRunnerParams{ID: p.RunnerID, Column2: domain.HostingStorageBackupDeletionCapability, Column3: domain.RunTypeStorageBackupRetention}); e != nil {
+			return hostingError(e)
+		}
+	}
+	if p.Operation.Origin == domain.StorageBackupManualSelection && value.Resource.Generation != p.Operation.ResourceGeneration {
+		return ErrConflict
 	}
 	for _, c := range p.Copies {
 		if c.DestinationID != value.Binding.DestinationID || c.Storage != value.Storage.Reference() {
@@ -392,4 +342,69 @@ func storageRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingSto
 
 func storageRetentionAudit(ctx context.Context, tx pgx.Tx, actor, id, phase, project string) error {
 	return createAuditWithQueries(ctx, sqlcgen.New(tx), domain.AuditEvent{ID: "aud_storage_retention_" + phase + "_" + id, ActorID: actor, Action: "hosting.storage_backup_retention." + phase, TargetID: id, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"project_id": project}})
+}
+
+func (s *PostgresStore) storageRetentionAdmitTx(ctx context.Context, tx pgx.Tx, actor, resource, requestID, hash, kind, phase string, out domain.HostingStorageBackupRetentionExecution, chosen []domain.StorageBackupRetentionCopy, byID map[string]domain.StorageBackupRetentionCopy, eligible map[string]bool) (domain.HostingStorageBackupRetentionExecution, error) {
+	var zero domain.HostingStorageBackupRetentionExecution
+	var e error
+	id := out.ID
+	runnerID := chosen[0].RunnerID
+	for _, c := range chosen {
+		fresh, ok := byID[c.Item.CopyID]
+		if !ok || !eligible[c.Item.CopyID] || c.RunnerID != runnerID || fresh.IdentityHash != c.IdentityHash || fresh.Item.Availability != "available" {
+			return zero, ErrConflict
+		}
+		out.Items = append(out.Items, domain.BackupRetentionExecutionItem{CopyID: c.Item.CopyID, BackupID: c.Item.BackupID, Location: c.Item.Location, State: "pending", ReservationHeld: true})
+		if c.Item.Location == "local" {
+			out.LocalState = "pending"
+		} else {
+			out.RemoteState = "pending"
+		}
+	}
+	plan := domain.HostingStorageBackupRetentionPlan{Operation: out, ActorID: actor, RunnerID: runnerID, Copies: chosen, TimeoutSeconds: 900}
+	plan.Hash = domain.HostingDocumentHash(plan)
+	if plan.Validate() != nil {
+		return zero, ErrConflict
+	}
+	if e = storageRetentionCurrent(ctx, tx, plan); e != nil {
+		return zero, e
+	}
+	for _, copy := range chosen {
+		active, e := storageRetentionActive(ctx, tx, runnerID, copy.Item.BackupID)
+		if e != nil {
+			return zero, e
+		}
+		if active {
+			return zero, ErrBackupRetentionBusy
+		}
+	}
+	if !s.hostingJobs.StorageBackupRetentionEnabled() {
+		return zero, ErrConflict
+	}
+	e = sqlcgen.New(tx).StorageRetentionInsertExecution(ctx, sqlcgen.StorageRetentionInsertExecutionParams{ID: id, ResourceID: resource, ActorID: actor, RunnerID: runnerID, PreviewID: out.PreviewID, Plan: buildJSON(plan), PlanHash: plan.Hash, Body: buildJSON(out)})
+	if e != nil {
+		return zero, hostingError(e)
+	}
+	for _, c := range chosen {
+		var location string
+		if location, e = sqlcgen.New(tx).StorageRetentionReadCopyLocation(ctx, c.Item.CopyID); e != nil {
+			return zero, e
+		}
+		if e = sqlcgen.New(tx).StorageRetentionInsertItem(ctx, sqlcgen.StorageRetentionInsertItemParams{ExecutionID: id, CopyID: c.Item.CopyID, IdentityHash: c.IdentityHash, LocationHash: location}); e != nil {
+			return zero, hostingError(e)
+		}
+		if e = sqlcgen.New(tx).StorageRetentionReserveCopy(ctx, c.Item.CopyID); e != nil {
+			return zero, e
+		}
+	}
+	if _, e = s.hostingJobs.EnqueueStorageBackupRetentionTx(ctx, tx, hostingjobs.StorageBackupRetentionArgs{OperationID: id}); e != nil {
+		return zero, e
+	}
+	if e = storageRetentionSaveRequest(ctx, tx, resource, actor, kind, requestID, hash, out); e != nil {
+		return zero, e
+	}
+	if e = storageRetentionAudit(ctx, tx, actor, id, phase, out.ProjectID); e != nil {
+		return zero, e
+	}
+	return out, archiveFinalizeActor(ctx, tx, actor)
 }

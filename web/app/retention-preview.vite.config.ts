@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 // Isolated static panel fixture: no application server, API proxy, database or container.
 export default defineConfig({
+  resolve: { alias: { "@": new URL("./src", import.meta.url).pathname } },
   plugins: [react(), tailwindcss()],
   build: {
     outDir: "node_modules/.cache/retention-preview",

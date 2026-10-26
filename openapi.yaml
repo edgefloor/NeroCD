@@ -8633,7 +8633,14 @@ paths:
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+                    },
+                    {
+                      "$ref": "#/components/schemas/HostingStorageBackupDeletionExecution"
+                    }
+                  ]
                 }
               }
             }
@@ -8711,6 +8718,247 @@ paths:
       }
     }
 
+  /api/v1/resources/{id}/storage-backups/{backup_id}/deletion-previews:
+    {
+      "post": {
+        "operationId": "previewHostingStorageBackupDeletion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact manual selection result. Backup history is preserved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupDeletionPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Inventory, authority or reservation changed"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupDeletionPreviewInput"
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/storage-backups/{backup_id}/deletions:
+    {
+      "post": {
+        "operationId": "executeHostingStorageBackupDeletion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Exact manual selection result. Backup history is preserved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupDeletionExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Inventory, authority or reservation changed"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostingStorageBackupDeletionInput"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listHostingStorageBackupDeletions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact manual selection result. Backup history is preserved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HostingStorageBackupDeletionExecution"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Inventory, authority or reservation changed"
+          }
+        }
+      }
+    }
+  /api/v1/resources/{id}/storage-backups/{backup_id}/deletions/{execution_id}:
+    {
+      "get": {
+        "operationId": "getHostingStorageBackupDeletion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          },
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact manual selection result. Backup history is preserved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupDeletionExecution"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid closed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Current authority denied"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Inventory, authority or reservation changed"
+          }
+        }
+      }
+    }
 components:
   securitySchemes:
     bearerAuth:
@@ -19911,6 +20159,22 @@ components:
           "evaluated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual_selection"
+            ]
+          },
+          "backup_id": {
+            "type": "string"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "final_copy": {
+            "type": "boolean"
           }
         }
       }
@@ -20041,6 +20305,22 @@ components:
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual_selection"
+            ]
+          },
+          "backup_id": {
+            "type": "string"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "final_copy": {
+            "type": "boolean"
           }
         }
       }
@@ -20206,7 +20486,14 @@ components:
         ],
         "properties": {
           "operation": {
-            "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HostingStorageBackupRetentionExecution"
+              },
+              {
+                "$ref": "#/components/schemas/HostingStorageBackupDeletionExecution"
+              }
+            ]
           },
           "actor_id": {
             "type": "string",
@@ -20323,6 +20610,294 @@ components:
             "type": "string",
             "maxLength": 256,
             "pattern": "^nerocd/storage/retention-probes/[A-Za-z0-9_-]+/[a-f0-9]{32}$"
+          }
+        }
+      }
+    HostingStorageBackupDeletionPreview:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "resource_id",
+          "policy_revision",
+          "plan_hash",
+          "local_reference_at",
+          "remote_reference_at",
+          "selection_truncated",
+          "items",
+          "created_at",
+          "evaluated_at",
+          "origin",
+          "backup_id",
+          "resource_generation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "owned-upload.backup-deletion.v1"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "local_reference_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote_reference_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selection_truncated": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionItem"
+            },
+            "maxItems": 1000
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "evaluated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual_selection"
+            ]
+          },
+          "backup_id": {
+            "type": "string"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "final_copy": {
+            "type": "boolean"
+          }
+        }
+      }
+    HostingStorageBackupDeletionExecution:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version",
+          "project_id",
+          "resource_id",
+          "preview_id",
+          "policy_revision",
+          "plan_hash",
+          "state",
+          "reservation_held",
+          "local_state",
+          "remote_state",
+          "items",
+          "created_at",
+          "updated_at",
+          "origin",
+          "backup_id",
+          "resource_generation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "enum": [
+              "owned-upload.backup-deletion.v1"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "preview_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "enum": [
+              0
+            ]
+          },
+          "plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatched",
+              "applying",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "reservation_held": {
+            "type": "boolean"
+          },
+          "local_state": {
+            "type": "string",
+            "enum": [
+              "not_selected",
+              "pending",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "remote_state": {
+            "type": "string",
+            "enum": [
+              "not_selected",
+              "pending",
+              "succeeded",
+              "failed",
+              "uncertain"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRetentionExecutionItem"
+            },
+            "maxItems": 100
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual_selection"
+            ]
+          },
+          "backup_id": {
+            "type": "string"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "final_copy": {
+            "type": "boolean"
+          }
+        }
+      }
+    HostingStorageBackupDeletionPreviewInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "expected_resource_generation",
+          "copy_ids"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "copy_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        }
+      }
+
+    HostingStorageBackupDeletionInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "preview_id",
+          "expected_plan_hash"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "preview_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_plan_hash": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "confirm_final_copy": {
+            "type": "boolean",
+            "default": false
           }
         }
       }

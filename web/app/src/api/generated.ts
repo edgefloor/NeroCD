@@ -4702,6 +4702,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage-backups/{backup_id}/deletion-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewHostingStorageBackupDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listHostingStorageBackupDeletions"];
+        put?: never;
+        post: operations["executeHostingStorageBackupDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/storage-backups/{backup_id}/deletions/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHostingStorageBackupDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -9559,6 +9607,11 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             evaluated_at: string;
+            /** @enum {string} */
+            origin?: "manual_selection";
+            backup_id?: string;
+            resource_generation?: number;
+            final_copy?: boolean;
         };
         HostingStorageBackupRetentionExecutionInput: {
             request_id: string;
@@ -9589,6 +9642,11 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @enum {string} */
+            origin?: "manual_selection";
+            backup_id?: string;
+            resource_generation?: number;
+            final_copy?: boolean;
         };
         StorageBackupRetentionCopy: {
             item: components["schemas"]["BackupRetentionItem"];
@@ -9623,7 +9681,7 @@ export interface components {
             replay_only: true;
         };
         HostingStorageBackupRetentionPlan: {
-            operation: components["schemas"]["HostingStorageBackupRetentionExecution"];
+            operation: components["schemas"]["HostingStorageBackupRetentionExecution"] | components["schemas"]["HostingStorageBackupDeletionExecution"];
             actor_id: string;
             runner_id: string;
             copies: components["schemas"]["StorageBackupRetentionCopy"][];
@@ -9647,6 +9705,69 @@ export interface components {
             failure_code: "" | "authority_denied" | "scope_changed" | "object_changed" | "conditional_unsupported" | "interrupted" | "storage_unavailable" | "remote_unavailable";
             probe_only?: boolean;
             probe_key?: string;
+        };
+        HostingStorageBackupDeletionPreview: {
+            id: string;
+            /** @enum {string} */
+            version: "owned-upload.backup-deletion.v1";
+            project_id: string;
+            resource_id: string;
+            /** @enum {integer} */
+            policy_revision: 0;
+            plan_hash: string;
+            local_reference_at: string | null;
+            remote_reference_at: string | null;
+            selection_truncated: boolean;
+            items: components["schemas"]["BackupRetentionItem"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            evaluated_at: string;
+            /** @enum {string} */
+            origin: "manual_selection";
+            backup_id: string;
+            resource_generation: number;
+            final_copy?: boolean;
+        };
+        HostingStorageBackupDeletionExecution: {
+            id: string;
+            /** @enum {string} */
+            version: "owned-upload.backup-deletion.v1";
+            project_id: string;
+            resource_id: string;
+            preview_id: string;
+            /** @enum {integer} */
+            policy_revision: 0;
+            plan_hash: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "applying" | "succeeded" | "failed" | "uncertain";
+            reservation_held: boolean;
+            /** @enum {string} */
+            local_state: "not_selected" | "pending" | "succeeded" | "failed" | "uncertain";
+            /** @enum {string} */
+            remote_state: "not_selected" | "pending" | "succeeded" | "failed" | "uncertain";
+            items: components["schemas"]["BackupRetentionExecutionItem"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @enum {string} */
+            origin: "manual_selection";
+            backup_id: string;
+            resource_generation: number;
+            final_copy?: boolean;
+        };
+        HostingStorageBackupDeletionPreviewInput: {
+            request_id: string;
+            expected_resource_generation: number;
+            copy_ids: string[];
+        };
+        HostingStorageBackupDeletionInput: {
+            request_id: string;
+            preview_id: string;
+            expected_plan_hash: string;
+            /** @default false */
+            confirm_final_copy: boolean;
         };
     };
     responses: {
@@ -19632,7 +19753,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostingStorageBackupRetentionExecution"];
+                    "application/json": components["schemas"]["HostingStorageBackupRetentionExecution"] | components["schemas"]["HostingStorageBackupDeletionExecution"];
                 };
             };
             /** @description Invalid closed request */
@@ -19723,6 +19844,247 @@ export interface operations {
                 content?: never;
             };
             /** @description Revision, authority, inventory or reservation conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    previewHostingStorageBackupDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                backup_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupDeletionPreviewInput"];
+            };
+        };
+        responses: {
+            /** @description Exact manual selection result. Backup history is preserved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDeletionPreview"];
+                };
+            };
+            /** @description Invalid closed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Inventory, authority or reservation changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostingStorageBackupDeletions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                backup_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact manual selection result. Backup history is preserved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDeletionExecution"][];
+                };
+            };
+            /** @description Invalid closed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Inventory, authority or reservation changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    executeHostingStorageBackupDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                backup_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStorageBackupDeletionInput"];
+            };
+        };
+        responses: {
+            /** @description Exact manual selection result. Backup history is preserved. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDeletionExecution"];
+                };
+            };
+            /** @description Invalid closed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Inventory, authority or reservation changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingStorageBackupDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                backup_id: string;
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact manual selection result. Backup history is preserved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDeletionExecution"];
+                };
+            };
+            /** @description Invalid closed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Inventory, authority or reservation changed */
             409: {
                 headers: {
                     [name: string]: unknown;

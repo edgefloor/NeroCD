@@ -868,7 +868,7 @@ host_docker() {
 class RetentionModeContractTests(unittest.TestCase):
     def test_retention_is_distinct_and_keeps_exact_remote_profile(self):
         source = (Path(__file__).parent / "gate.sh").read_text()
-        self.assertIn("--remote|--retention)", source)
+        self.assertIn("--remote|--retention|--deletion)", source)
         self.assertIn("owner=nerocd-storage-retention-runtime-20261026-e4db0929", source)
         self.assertIn('NEROCD_STORAGE_RETENTION_RUNTIME=$retention_mode', source)
         self.assertIn("TestHostingStorageBackupRetentionCompiledRunnerHTTPS", source)
@@ -877,6 +877,16 @@ class RetentionModeContractTests(unittest.TestCase):
         for requirement in ["storageRetentionRuntimeAwait", "conditional S3 deletion", "remote_restore_republished_local", "source_preserved"]:
             self.assertIn(requirement, fixture)
         self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageRetentionRuntimeWorkflow"):])
+
+class DeletionModeContractTests(unittest.TestCase):
+    def test_deletion_requires_its_own_profile_and_physical_recovery_evidence(self):
+        source = (Path(__file__).parent / "gate.sh").read_text()
+        for requirement in ["owner=nerocd-storage-deletion-runtime-20261026", "NEROCD_STORAGE_DELETION_RUNTIME=$deletion_mode", "TestHostingStorageBackupDeletionCompiledRunnerHTTPS", "CHECK_DELETION_PG", "CHECK_DELETION_MARKERS", "deletion-markers.json"]:
+            self.assertIn(requirement, source)
+        fixture = (Path(__file__).parents[2] / "internal/api/hosting_storage_backup_deletion_runtime_integration_test.go").read_text()
+        for requirement in ["ManualDeleteSelectedBackupLocalKeepsRemoteAndHistory", "remaining_remote_restore", "new_volume_application_reads_and_writes", "os.ErrNotExist"]:
+            self.assertIn(requirement, fixture)
+        self.assertNotIn("t.Skip", fixture[fixture.index("func hostingStorageDeletionRuntimeWorkflow"):])
 
 if __name__ == "__main__":
     unittest.main()
