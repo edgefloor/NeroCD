@@ -10,6 +10,36 @@ import (
 	"encoding/json"
 )
 
+const admitHostingComposeVolume = `-- name: AdmitHostingComposeVolume :exec
+INSERT INTO hosting_compose_volumes(binding_id,name,volume_name,destination_id,daemon_id,creation_operation_id,creation_plan_hash,creation_nonce,state)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,'admitted')
+`
+
+type AdmitHostingComposeVolumeParams struct {
+	BindingID           string `json:"binding_id"`
+	Name                string `json:"name"`
+	VolumeName          string `json:"volume_name"`
+	DestinationID       string `json:"destination_id"`
+	DaemonID            string `json:"daemon_id"`
+	CreationOperationID string `json:"creation_operation_id"`
+	CreationPlanHash    string `json:"creation_plan_hash"`
+	CreationNonce       string `json:"creation_nonce"`
+}
+
+func (q *Queries) AdmitHostingComposeVolume(ctx context.Context, arg AdmitHostingComposeVolumeParams) error {
+	_, err := q.db.Exec(ctx, admitHostingComposeVolume,
+		arg.BindingID,
+		arg.Name,
+		arg.VolumeName,
+		arg.DestinationID,
+		arg.DaemonID,
+		arg.CreationOperationID,
+		arg.CreationPlanHash,
+		arg.CreationNonce,
+	)
+	return err
+}
+
 const appendHostingComposeSourceVersion = `-- name: AppendHostingComposeSourceVersion :exec
 INSERT INTO hosting_compose_source_versions(resource_id,generation,original,original_hash,definition,definition_hash)
 VALUES($1,$2,$3,$4,$5,$6)
@@ -103,4 +133,64 @@ func (q *Queries) GetHostingComposeSourceVersion(ctx context.Context, arg GetHos
 		&i.DefinitionHash,
 	)
 	return i, err
+}
+
+const getHostingComposeVolume = `-- name: GetHostingComposeVolume :one
+SELECT binding_id, name, volume_name, destination_id, daemon_id, creation_operation_id, creation_plan_hash, creation_nonce, state, created_at FROM hosting_compose_volumes WHERE binding_id=$1 AND name=$2 FOR UPDATE
+`
+
+type GetHostingComposeVolumeParams struct {
+	BindingID string `json:"binding_id"`
+	Name      string `json:"name"`
+}
+
+func (q *Queries) GetHostingComposeVolume(ctx context.Context, arg GetHostingComposeVolumeParams) (HostingComposeVolume, error) {
+	row := q.db.QueryRow(ctx, getHostingComposeVolume, arg.BindingID, arg.Name)
+	var i HostingComposeVolume
+	err := row.Scan(
+		&i.BindingID,
+		&i.Name,
+		&i.VolumeName,
+		&i.DestinationID,
+		&i.DaemonID,
+		&i.CreationOperationID,
+		&i.CreationPlanHash,
+		&i.CreationNonce,
+		&i.State,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const hostingStackMutationHistory = `-- name: HostingStackMutationHistory :one
+SELECT EXISTS(SELECT 1 FROM hosting_apply_admissions a JOIN hosting_operations o ON o.id=a.operation_id WHERE o.binding_id=$1)
+OR EXISTS(SELECT 1 FROM hosting_compose_volumes WHERE binding_id=$1)
+OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=$1)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=$1)
+OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE binding_id=$1) AS recorded
+`
+
+func (q *Queries) HostingStackMutationHistory(ctx context.Context, bindingID string) (*bool, error) {
+	row := q.db.QueryRow(ctx, hostingStackMutationHistory, bindingID)
+	var recorded *bool
+	err := row.Scan(&recorded)
+	return recorded, err
+}
+
+const materializeHostingComposeVolume = `-- name: MaterializeHostingComposeVolume :execrows
+UPDATE hosting_compose_volumes SET state='materialized',created_at=$3 WHERE binding_id=$1 AND name=$2 AND state='admitted'
+`
+
+type MaterializeHostingComposeVolumeParams struct {
+	BindingID string `json:"binding_id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+}
+
+func (q *Queries) MaterializeHostingComposeVolume(ctx context.Context, arg MaterializeHostingComposeVolumeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, materializeHostingComposeVolume, arg.BindingID, arg.Name, arg.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

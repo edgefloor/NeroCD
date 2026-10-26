@@ -71,7 +71,7 @@ func HostingDatabaseNetworkName(binding string) string {
 }
 
 func hostingDatabaseSnapshotRecipe(s HostingSnapshot) (HostingDatabaseRecipe, error) {
-	if s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.PolicyVersion != HostingDatabasePolicyVersion || !validHostingStorageRef(s.Storage) || s.HostPort != 0 || s.Readiness != (HostingReadiness{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.ResourceGeneration < 1 {
+	if s.Stack != (HostingStackRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.PolicyVersion != HostingDatabasePolicyVersion || !validHostingStorageRef(s.Storage) || s.HostPort != 0 || s.Readiness != (HostingReadiness{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) || s.ResourceGeneration < 1 {
 		return HostingDatabaseRecipe{}, errors.New("invalid private database snapshot family")
 	}
 	for _, id := range []string{s.ResourceID, s.BindingID, s.DestinationID, s.ServerID, s.RunnerID} {

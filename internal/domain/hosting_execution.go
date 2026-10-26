@@ -89,6 +89,7 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
+	ManagedStack                           *HostingStackDeploymentInput                    `json:"managed_stack,omitempty"`
 	ApplicationDatabaseStorage             *HostingApplicationDatabaseStorageInput         `json:"application_database_storage,omitempty"`
 	ApplicationDatabaseRouteContinuity     *HostingApplicationDatabaseRouteContinuityInput `json:"application_database_route_continuity,omitempty"`
 	StorageRouteContinuity                 *HostingStorageRouteContinuityInput             `json:"storage_route_continuity,omitempty"`
@@ -103,6 +104,7 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
+	Stack                  HostingStackRef                  `json:"stack,omitzero"`
 	Database               HostingDatabaseExecutionRef      `json:"database,omitzero"`
 	StorageRouteContinuity HostingStorageRouteContinuityRef `json:"storage_route_continuity,omitzero"`
 	Storage                HostingStorageRef                `json:"storage,omitzero"`
@@ -125,18 +127,20 @@ type HostingSnapshot struct {
 
 // HostingRelease binds registry content and local image identity to one daemon.
 type HostingRelease struct {
-	CanonicalImage string               `json:"canonical_image"`
-	ImageID        string               `json:"image_id"`
-	OS             string               `json:"os"`
-	Architecture   string               `json:"architecture"`
-	Variant        string               `json:"variant,omitempty"`
-	DaemonID       string               `json:"daemon_id"`
-	Hash           string               `json:"hash"`
-	LocalBuild     HostingBuildArtifact `json:"local_build,omitzero"`
+	Stack          HostingStackReleaseRef `json:"stack,omitzero"`
+	CanonicalImage string                 `json:"canonical_image"`
+	ImageID        string                 `json:"image_id"`
+	OS             string                 `json:"os"`
+	Architecture   string                 `json:"architecture"`
+	Variant        string                 `json:"variant,omitempty"`
+	DaemonID       string                 `json:"daemon_id"`
+	Hash           string                 `json:"hash"`
+	LocalBuild     HostingBuildArtifact   `json:"local_build,omitzero"`
 }
 
 // HostingHealthy records the last atomically settled healthy workload.
 type HostingHealthy struct {
+	Stack       *HostingStackState     `json:"stack,omitempty"`
 	Storage     *HostingHealthyStorage `json:"storage,omitempty"`
 	Snapshot    HostingSnapshot        `json:"snapshot"`
 	OperationID string                 `json:"operation_id"`
@@ -147,6 +151,7 @@ type HostingHealthy struct {
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
+	Stack               *HostingStackPlan               `json:"stack,omitempty"`
 	Database            *HostingDatabasePlan            `json:"database,omitempty"`
 	Storage             *HostingStoragePlan             `json:"storage,omitempty"`
 	RetainedReleases    []HostingHealthy                `json:"retained_releases,omitempty"`
@@ -169,19 +174,22 @@ type HostingReceipt struct {
 // HostingResult is nonsecret durable evidence, never a command or arbitrary URL.
 // Uncertain results retain the independent mutation hold.
 type HostingResult struct {
-	Outcome             string `json:"outcome"`
-	ContainerID         string `json:"container_id,omitempty"`
-	PreviousContainerID string `json:"previous_container_id,omitempty"`
-	ImageID             string `json:"image_id,omitempty"`
-	DaemonID            string `json:"daemon_id,omitempty"`
-	PlanHash            string `json:"plan_hash,omitempty"`
-	Ready               bool   `json:"ready"`
-	Restored            bool   `json:"restored"`
-	Uncertain           bool   `json:"uncertain"`
+	Stack               *HostingStackState `json:"stack,omitempty"`
+	Outcome             string             `json:"outcome"`
+	ContainerID         string             `json:"container_id,omitempty"`
+	PreviousContainerID string             `json:"previous_container_id,omitempty"`
+	ImageID             string             `json:"image_id,omitempty"`
+	DaemonID            string             `json:"daemon_id,omitempty"`
+	PlanHash            string             `json:"plan_hash,omitempty"`
+	Ready               bool               `json:"ready"`
+	Restored            bool               `json:"restored"`
+	Uncertain           bool               `json:"uncertain"`
 }
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
+	StackSource                        *HostingStackDefinition                    `json:"stack_source,omitempty"`
+	StackCreatePermitted               bool                                       `json:"stack_create_permitted,omitempty"`
 	ApplicationDatabaseStorage         *HostingApplicationDatabaseStorage         `json:"application_database_storage,omitempty"`
 	ApplicationDatabaseStorageState    *HostingApplicationDatabaseStorageState    `json:"application_database_storage_state,omitempty"`
 	ApplicationDatabaseRouteContinuity *HostingApplicationDatabaseRouteContinuity `json:"application_database_route_continuity,omitempty"`
@@ -226,6 +234,7 @@ type HostingAuthority struct {
 
 // HostingPreparedRequest binds a stable release receipt to exact lease authority.
 type HostingPreparedRequest struct {
+	StackImages []HostingStackImage `json:"stack_images,omitempty"`
 	HostingAuthority
 	ReceiptID string         `json:"receipt_id"`
 	Release   HostingRelease `json:"release"`
@@ -241,7 +250,8 @@ type HostingCompleteRequest struct {
 // HostingObservation is read-only evidence compared against an already durable result.
 // Observation alone never authorizes replaying a workload mutation.
 type HostingObservation struct {
-	NoOwnedContainers bool `json:"no_owned_containers"`
+	Stack             *HostingStackState `json:"stack,omitempty"`
+	NoOwnedContainers bool               `json:"no_owned_containers"`
 	HostingAuthority
 	DaemonID    string `json:"daemon_id"`
 	ContainerID string `json:"container_id"`
@@ -254,6 +264,10 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.ManagedStack != nil && (!in.ManagedStack.AcknowledgeInterruption || in.ApplicationDatabaseStorage != nil || in.ApplicationDatabaseRouteContinuity != nil) {
+		return errors.New("managed stack requires explicit interrupting replacement acknowledgment")
+	}
+
 	if in.ApplicationDatabaseStorage != nil && (in.ApplicationDatabaseStorage.Validate() != nil || in.StorageRouteContinuity != nil) {
 		return ErrInvalidHostingStorage
 	}
@@ -298,6 +312,9 @@ func NormalizeHostingImage(value string) (string, error) {
 
 // ValidateHostingRelease checks canonical digest, platform and local daemon evidence.
 func ValidateHostingRelease(release HostingRelease) error {
+	if release.Stack != (HostingStackReleaseRef{}) {
+		return validateStackRelease(release)
+	}
 	if release.LocalBuild != (HostingBuildArtifact{}) {
 		return validateLocalBuildRelease(release)
 	}
@@ -330,6 +347,9 @@ func HostingDocumentHash(value any) string {
 
 // CompileHostingPlan hashes the immutable release, target and prior healthy pointer.
 func CompileHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy) (HostingApplyPlan, error) {
+	if snapshot.Stack != (HostingStackRef{}) || release.Stack != (HostingStackReleaseRef{}) || previous != nil && previous.Stack != nil {
+		return HostingApplyPlan{}, errors.New("stack requires versioned stack compiler")
+	}
 	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
 		return HostingApplyPlan{}, err
 	}
@@ -365,6 +385,9 @@ func CompileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease
 }
 
 func compileRetainedHostingPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, retained []HostingHealthy, policy, compiler string) (HostingApplyPlan, error) {
+	if snapshot.Stack != (HostingStackRef{}) || release.Stack != (HostingStackReleaseRef{}) || previous != nil && previous.Stack != nil {
+		return HostingApplyPlan{}, errors.New("stack requires interrupting replacement")
+	}
 	if err := ValidateHostingStorageRouteContinuitySnapshot(snapshot); err != nil {
 		return HostingApplyPlan{}, err
 	}

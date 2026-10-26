@@ -109,6 +109,16 @@ func (osProvenanceCommand) Run(ctx context.Context, name string, args []string, 
 }
 
 func (osProvenanceCommand) RunEnvironment(ctx context.Context, name string, args []string, dir string, extra []string) ([]byte, error) {
+	return runBoundedProvenanceCommand(ctx, name, args, dir, extra, nil)
+}
+
+// RunProtectedInput borrows stdin only for the bounded process lifetime.
+// Callers must suppress output diagnostics and clear their owned input afterward.
+func (osProvenanceCommand) RunProtectedInput(ctx context.Context, name string, args []string, dir string, extra []string, input []byte) ([]byte, error) {
+	return runBoundedProvenanceCommand(ctx, name, args, dir, extra, input)
+}
+
+func runBoundedProvenanceCommand(ctx context.Context, name string, args []string, dir string, extra []string, input []byte) ([]byte, error) {
 	// A resolver must not be allowed to keep a process alive beyond an attempt
 	// boundary.  The caller may impose a shorter deadline.
 	if _, ok := ctx.Deadline(); !ok {
@@ -121,6 +131,9 @@ func (osProvenanceCommand) RunEnvironment(ctx context.Context, name string, args
 	}
 	c := exec.CommandContext(ctx, name, args...)
 	c.Dir = dir
+	if input != nil {
+		c.Stdin = bytes.NewReader(input)
+	}
 	configureProvenanceProcess(c)
 	// No ambient git config, prompt, hooks, or credential helper may influence
 	// provenance. Git's network protocol is constrained at the invocation.

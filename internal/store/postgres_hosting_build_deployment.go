@@ -211,6 +211,9 @@ func hostingSnapshotTaskType(snap domain.HostingSnapshot) string {
 	return domain.RunTypeImageDeploy
 }
 func hostingRetainedPolicy(snap domain.HostingSnapshot) string {
+	if snap.Stack != (domain.HostingStackRef{}) {
+		return domain.HostingStackPolicyVersion
+	}
 	if snap.Storage != (domain.HostingStorageRef{}) {
 		if snap.RuntimeConfiguration.Generation > 0 {
 			return domain.HostingOwnedStorageRuntimePolicyVersion

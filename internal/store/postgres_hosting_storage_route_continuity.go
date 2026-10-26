@@ -247,7 +247,7 @@ func prepareStorageContinuity(ctx context.Context, tx pgx.Tx, operation, project
 	if !exists {
 		return nil, ErrConflict
 	}
-	if snap.Storage == (domain.HostingStorageRef{}) || snap.HostPort != in.HostPort || snap.HostPort < 1024 {
+	if snap.Storage == (domain.HostingStorageRef{}) && snap.Stack == (domain.HostingStackRef{}) || snap.HostPort != in.HostPort || snap.HostPort < 1024 {
 		return nil, ErrConflict
 	}
 	p, rows, err := storageContinuityPrelock(ctx, tx, snap.ResourceID)

@@ -120,7 +120,13 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 		return view, tx.Commit(ctx)
 	}
 	var source domain.ResourceSource
-	if json.Unmarshal(r.Source, &source) != nil || r.Kind != "application" || source.Kind != "image" {
+	if json.Unmarshal(r.Source, &source) != nil || r.Kind != "application" {
+		return finish("unsupported_source")
+	}
+	if source.Kind == "compose" {
+		return stackDeploymentOptions(ctx, tx, resource, project, source, &view, finish)
+	}
+	if source.Kind != "image" {
 		return finish("unsupported_source")
 	}
 	if _, err = domain.NormalizeHostingImage(source.Image.Reference); err != nil {
@@ -257,142 +263,7 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	if reusable == nil || !*reusable {
 		return finish("busy")
 	}
-	proxyRow, err := q.ProxyGetByServer(ctx, placement.ServerID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		reason, readErr := storageDeploymentOrdinaryReason(ctx, q, placement.DestinationID, placement.BindingID, healthy.OperationID, settings.HostPort)
-		if readErr != nil {
-			return view, readErr
-		}
-		return finish(reason)
-	}
-	if err != nil {
-		return view, err
-	}
-	p, err := proxyLoad(ctx, tx, proxyRow.ID)
-	if err != nil {
-		return view, err
-	}
-	exists, err := storageContinuitySchema(ctx, tx)
-	if err != nil {
-		return view, err
-	}
-	if !exists {
-		return view, ErrHostingStorageUnavailable
-	}
-	unsettled, err := q.StorageContinuityRouteState(ctx, sqlcgen.StorageContinuityRouteStateParams{ProxyID: p.ID, ResourceID: resource})
-	if err != nil {
-		return view, err
-	}
-	if unsettled != "" {
-		return finish("continuity_unresolved")
-	}
-	ids, err := q.ProxySwitchReadEnabledRoutes(ctx, p.ID)
-	if err != nil {
-		return view, err
-	}
-	if len(ids) > domain.HostingProxyMaxRoutes {
-		return finish("proxy_unavailable")
-	}
-	rows := make([]sqlcgen.HostingProxyRoute, 0, len(ids))
-	selections := make([]domain.HostingRouteSwitchSelection, 0)
-	for _, id := range ids {
-		row, readErr := q.ProxyGetRoute(ctx, id)
-		if readErr != nil {
-			return view, readErr
-		}
-		rows = append(rows, row)
-		if row.ResourceID == resource && row.ProjectID == project && row.BindingID == placement.BindingID {
-			view.Routes = append(view.Routes, domain.HostingRouteSwitchRoute{ID: row.ID, Hostname: row.Hostname, PathPrefix: row.PathPrefix, Version: row.Version, SelectedReleaseOperationID: row.SelectedReleaseOperationID})
-			selections = append(selections, domain.HostingRouteSwitchSelection{RouteID: row.ID, ExpectedVersion: row.Version, ExpectedSelectedReleaseOperationID: row.SelectedReleaseOperationID})
-		}
-	}
-	if len(selections) == 0 {
-		reason, readErr := storageDeploymentOrdinaryReason(ctx, q, placement.DestinationID, placement.BindingID, healthy.OperationID, settings.HostPort)
-		if readErr != nil {
-			return view, readErr
-		}
-		return finish(reason)
-	}
-	exclusive, err := q.StorageContinuityExclusive(ctx, p.ID)
-	if err != nil {
-		return view, err
-	}
-	if exclusive {
-		return finish("busy")
-	}
-	continuityPending, err := q.StorageContinuityProxyPending(ctx, p.ID)
-	if err != nil {
-		return view, err
-	}
-	if continuityPending {
-		return finish("busy")
-	}
-	if !p.Enabled || p.DestinationID != placement.DestinationID || p.RunnerID != placement.RunnerID || p.DaemonID != healthy.Release.DaemonID {
-		return finish("proxy_unavailable")
-	}
-	if p.RestoreOwnershipHeld {
-		return finish("restore_hold")
-	}
-	pending, err := q.ProxyPending(ctx, p.ID)
-	if err != nil {
-		return view, err
-	}
-	if pending || p.ActiveOperationID != "" || p.HoldOperationID != "" {
-		return finish("busy")
-	}
-	if p.LoadedGeneration < 1 {
-		return finish("no_loaded_generation")
-	}
-	prior, err := proxyLoadedPredecessor(ctx, tx, p)
-	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
-		return finish("stale_routes")
-	}
-	if err != nil {
-		return view, err
-	}
-	current := make([]domain.HostingProxyRouteTarget, 0, len(rows))
-	for _, row := range rows {
-		target, reason, readErr := switchReadRouteTarget(ctx, tx, p, row)
-		if readErr != nil {
-			if errors.Is(readErr, ErrConflict) || errors.Is(readErr, ErrNotFound) || errors.Is(readErr, ErrHostingRestoreHold) {
-				if row.ResourceID != resource && (reason == "busy" || reason == "restore_hold") {
-					reason = "busy"
-				}
-				return finish(reason)
-			}
-			return view, readErr
-		}
-		current = append(current, target)
-	}
-	if !reflect.DeepEqual(proxySortedTargets(current), proxySortedTargets(prior.Snapshot.Routes)) {
-		return finish("stale_routes")
-	}
-	for _, selection := range selections {
-		if selection.ExpectedSelectedReleaseOperationID != healthy.OperationID {
-			return finish("stale_routes")
-		}
-	}
-	input, err := domain.CanonicalHostingStorageRouteContinuityInput(domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: p.LoadedGeneration, ExpectedLoadedProxyOperationID: prior.ID, Routes: selections})
-	if err != nil {
-		return finish("stale_routes")
-	}
-	c := domain.HostingStorageRouteContinuity{Request: input}
-	acceptedAt, err := q.DatabaseClock(ctx)
-	if err != nil {
-		return view, err
-	}
-	if storageContinuityTrustedRoutes(prior, c, acceptedAt) != nil {
-		return finish("https_unavailable")
-	}
-	foreign, err := q.StorageContinuityForeignPortReferenced(ctx, sqlcgen.StorageContinuityForeignPortReferencedParams{DestinationID: placement.DestinationID, HostPort: int32(settings.HostPort), ProxyID: p.ID, ResourceID: resource, BindingID: placement.BindingID, PreviousOperationID: healthy.OperationID, LoadedProxyOperationID: prior.ID, RouteIds: storageContinuityRouteIDs(c)})
-	if err != nil {
-		return view, err
-	}
-	if foreign {
-		return finish("foreign_port_reference")
-	}
-	view.StorageRouteContinuity = &input
-	return finish("available")
+	return storageDeploymentRouteOptions(ctx, tx, resource, project, placement, healthy, settings, &view, finish)
 }
 
 // HostingStorageRouteContinuityStatus reports immutable historical settlement,
@@ -449,4 +320,144 @@ func (s *PostgresStore) HostingStorageRouteContinuityStatus(ctx context.Context,
 		return domain.HostingStorageRouteContinuityStatus{}, err
 	}
 	return view, tx.Commit(ctx)
+}
+
+func storageDeploymentRouteOptions(ctx context.Context, tx pgx.Tx, resource, project string, placement sqlcgen.ProxyResourceTargetRow, healthy domain.HostingHealthy, settings domain.HostingDeploymentInput, view *domain.HostingStorageDeploymentOptions, finish func(string) (domain.HostingStorageDeploymentOptions, error)) (domain.HostingStorageDeploymentOptions, error) {
+	q := sqlcgen.New(tx)
+	proxyRow, err := q.ProxyGetByServer(ctx, placement.ServerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		reason, readErr := storageDeploymentOrdinaryReason(ctx, q, placement.DestinationID, placement.BindingID, healthy.OperationID, settings.HostPort)
+		if readErr != nil {
+			return *view, readErr
+		}
+		return finish(reason)
+	}
+	if err != nil {
+		return *view, err
+	}
+	p, err := proxyLoad(ctx, tx, proxyRow.ID)
+	if err != nil {
+		return *view, err
+	}
+	exists, err := storageContinuitySchema(ctx, tx)
+	if err != nil {
+		return *view, err
+	}
+	if !exists {
+		return *view, ErrHostingStorageUnavailable
+	}
+	unsettled, err := q.StorageContinuityRouteState(ctx, sqlcgen.StorageContinuityRouteStateParams{ProxyID: p.ID, ResourceID: resource})
+	if err != nil {
+		return *view, err
+	}
+	if unsettled != "" {
+		return finish("continuity_unresolved")
+	}
+	ids, err := q.ProxySwitchReadEnabledRoutes(ctx, p.ID)
+	if err != nil {
+		return *view, err
+	}
+	if len(ids) > domain.HostingProxyMaxRoutes {
+		return finish("proxy_unavailable")
+	}
+	rows := make([]sqlcgen.HostingProxyRoute, 0, len(ids))
+	selections := make([]domain.HostingRouteSwitchSelection, 0)
+	for _, id := range ids {
+		row, readErr := q.ProxyGetRoute(ctx, id)
+		if readErr != nil {
+			return *view, readErr
+		}
+		rows = append(rows, row)
+		if row.ResourceID == resource && row.ProjectID == project && row.BindingID == placement.BindingID {
+			view.Routes = append(view.Routes, domain.HostingRouteSwitchRoute{ID: row.ID, Hostname: row.Hostname, PathPrefix: row.PathPrefix, Version: row.Version, SelectedReleaseOperationID: row.SelectedReleaseOperationID})
+			selections = append(selections, domain.HostingRouteSwitchSelection{RouteID: row.ID, ExpectedVersion: row.Version, ExpectedSelectedReleaseOperationID: row.SelectedReleaseOperationID})
+		}
+	}
+	if len(selections) == 0 {
+		reason, readErr := storageDeploymentOrdinaryReason(ctx, q, placement.DestinationID, placement.BindingID, healthy.OperationID, settings.HostPort)
+		if readErr != nil {
+			return *view, readErr
+		}
+		return finish(reason)
+	}
+	exclusive, err := q.StorageContinuityExclusive(ctx, p.ID)
+	if err != nil {
+		return *view, err
+	}
+	if exclusive {
+		return finish("busy")
+	}
+	continuityPending, err := q.StorageContinuityProxyPending(ctx, p.ID)
+	if err != nil {
+		return *view, err
+	}
+	if continuityPending {
+		return finish("busy")
+	}
+	if !p.Enabled || p.DestinationID != placement.DestinationID || p.RunnerID != placement.RunnerID || p.DaemonID != healthy.Release.DaemonID {
+		return finish("proxy_unavailable")
+	}
+	if p.RestoreOwnershipHeld {
+		return finish("restore_hold")
+	}
+	pending, err := q.ProxyPending(ctx, p.ID)
+	if err != nil {
+		return *view, err
+	}
+	if pending || p.ActiveOperationID != "" || p.HoldOperationID != "" {
+		return finish("busy")
+	}
+	if p.LoadedGeneration < 1 {
+		return finish("no_loaded_generation")
+	}
+	prior, err := proxyLoadedPredecessor(ctx, tx, p)
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+		return finish("stale_routes")
+	}
+	if err != nil {
+		return *view, err
+	}
+	current := make([]domain.HostingProxyRouteTarget, 0, len(rows))
+	for _, row := range rows {
+		target, reason, readErr := switchReadRouteTarget(ctx, tx, p, row)
+		if readErr != nil {
+			if errors.Is(readErr, ErrConflict) || errors.Is(readErr, ErrNotFound) || errors.Is(readErr, ErrHostingRestoreHold) {
+				if row.ResourceID != resource && (reason == "busy" || reason == "restore_hold") {
+					reason = "busy"
+				}
+				return finish(reason)
+			}
+			return *view, readErr
+		}
+		current = append(current, target)
+	}
+	if !reflect.DeepEqual(proxySortedTargets(current), proxySortedTargets(prior.Snapshot.Routes)) {
+		return finish("stale_routes")
+	}
+	for _, selection := range selections {
+		if selection.ExpectedSelectedReleaseOperationID != healthy.OperationID {
+			return finish("stale_routes")
+		}
+	}
+	input, err := domain.CanonicalHostingStorageRouteContinuityInput(domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: p.LoadedGeneration, ExpectedLoadedProxyOperationID: prior.ID, Routes: selections})
+	if err != nil {
+		return finish("stale_routes")
+	}
+	c := domain.HostingStorageRouteContinuity{Request: input}
+	acceptedAt, err := q.DatabaseClock(ctx)
+	if err != nil {
+		return *view, err
+	}
+	if storageContinuityTrustedRoutes(prior, c, acceptedAt) != nil {
+		return finish("https_unavailable")
+	}
+	foreign, err := q.StorageContinuityForeignPortReferenced(ctx, sqlcgen.StorageContinuityForeignPortReferencedParams{DestinationID: placement.DestinationID, HostPort: int32(settings.HostPort), ProxyID: p.ID, ResourceID: resource, BindingID: placement.BindingID, PreviousOperationID: healthy.OperationID, LoadedProxyOperationID: prior.ID, RouteIds: storageContinuityRouteIDs(c)})
+	if err != nil {
+		return *view, err
+	}
+	if foreign {
+		return finish("foreign_port_reference")
+	}
+	view.StorageRouteContinuity = &input
+	return finish("available")
 }

@@ -20,6 +20,13 @@ type HostingRuntimeConfigurationRef struct {
 
 // ValidateHostingRuntimeConfigurationRef binds runtime references to their policy family.
 func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
+	if s.Stack != (HostingStackRef{}) {
+		if s.PolicyVersion != HostingStackPolicyVersion || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) && (s.RuntimeConfiguration.Generation < 1 || !imageSHA256.MatchString(s.RuntimeConfiguration.Hash)) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Storage != (HostingStorageRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.Database != (HostingDatabaseExecutionRef{}) {
+			return errors.New("invalid stack runtime configuration")
+		}
+		return nil
+	}
+
 	storageCombined := s.PolicyVersion == HostingApplicationDatabaseStoragePolicyVersion
 	combined := s.PolicyVersion == HostingApplicationDatabasePolicyVersion || storageCombined
 	if combined {
@@ -45,6 +52,14 @@ func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
 
 // HostingPlanFamilyMatches rejects mixed policy/compiler families and substituted snapshots.
 func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
+	if s.Stack != (HostingStackRef{}) || p.Stack != nil {
+		if p.Stack == nil || p.Snapshot != s || p.RetainPrevious || len(p.RetainedReleases) != 0 || p.Storage != nil || p.Database != nil || p.ApplicationDatabase != nil {
+			return false
+		}
+		expected, err := CompileHostingStackPlan(s, p.Release, p.PreviousHealthy, *p.Stack)
+		return err == nil && expected.Hash == p.Hash
+	}
+
 	if p.ApplicationDatabase != nil || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
 		return false
 	}

@@ -4685,6 +4685,42 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/HostingAuthority'
+  /api/v1/runners/hosting/stack-volumes:
+    post:
+      summary: Seal owned Compose volume provenance
+      operationId: runnerHostingStackVolumes
+      description: >-
+        Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports;
+        this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner
+        credential is accepted; the complete operation/run/lease/attempt/fence tuple is required.
+        Observation task mode cannot prepare, admit apply, or publish deployment success.
+      responses:
+        '200':
+          description: Hosting operation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingStackVolumeRequest'
   /api/v1/runners/hosting/complete:
     post:
       summary: Fenced image hosting complete
@@ -12129,6 +12165,7 @@ components:
       additionalProperties: false
       required: [resource_id, resource_generation, storage_ref, previous_healthy_operation_id, host_port, container_port, readiness, available, reason, routes, storage_route_continuity, application_database_storage]
       properties:
+        stack_ref: {$ref: "#/components/schemas/HostingStackRef"}
         application_database_storage:
           anyOf: [{$ref: "#/components/schemas/HostingApplicationDatabaseStorageReview"}, {type: "null"}]
         resource_id: {$ref: "#/components/schemas/HostingIdentifier"}
@@ -13317,6 +13354,7 @@ components:
         - container_port
         - readiness
       properties:
+        managed_stack: {$ref: "#/components/schemas/HostingStackDeploymentInput"}
         application_database_storage: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageInput"}
         application_database_route_continuity: {$ref: "#/components/schemas/HostingApplicationDatabaseRouteContinuityInput"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityInput"}
@@ -14037,6 +14075,7 @@ components:
             anyOf:
               - required: [database]
               - required: [application_database]
+              - required: [stack]
           properties:
             policy_version:
               type: string
@@ -14059,6 +14098,17 @@ components:
               - required: [storage]
               - required: [local_build]
               - required: [storage_route_continuity]
+        - required: [stack]
+          properties:
+            policy_version: {type: string, enum: [managed-compose.interrupting.v1]}
+            image_reference: {type: string, enum: [""]}
+            readiness: {$ref: "#/components/schemas/HostingReadiness"}
+          not:
+            anyOf:
+              - required: [database]
+              - required: [application_database]
+              - required: [storage]
+              - required: [local_build]
       required:
         - resource_id
         - image_reference
@@ -14073,6 +14123,7 @@ components:
         - readiness
         - policy_version
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackRef"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabaseRef"}
         database: {$ref: "#/components/schemas/HostingDatabaseExecutionRef"}
         storage_route_continuity: {$ref: "#/components/schemas/HostingStorageRouteContinuityRef"}
@@ -14114,6 +14165,7 @@ components:
             - local-build.runtime-env.release-ports.v1
             - public-image.owned-storage.release-ports.v1
             - public-image.owned-storage.runtime-env.release-ports.v1
+            - managed-compose.interrupting.v1
             - database.private.owned-storage.v1
             - public-image.runtime-env.database.release-ports.v1
     HostingRelease:
@@ -14127,6 +14179,7 @@ components:
         - daemon_id
         - hash
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackReleaseRef"}
         local_build: {$ref: '#/components/schemas/HostingLocalBuildArtifact'}
         canonical_image:
           type: string
@@ -14136,6 +14189,7 @@ components:
           type: string
           enum:
             - linux
+            - ""
         architecture:
           type: string
         variant:
@@ -14154,6 +14208,7 @@ components:
         - release
         - plan_hash
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackState"}
         storage: {$ref: '#/components/schemas/HostingHealthyStorage'}
         snapshot:
           $ref: '#/components/schemas/HostingSnapshot'
@@ -14215,6 +14270,7 @@ components:
         - compiler_version
         - hash
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackPlan"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabasePlan"}
         database: {$ref: "#/components/schemas/HostingDatabasePlan"}
         storage: {$ref: '#/components/schemas/HostingStoragePlan'}
@@ -14234,6 +14290,7 @@ components:
         compiler_version:
           type: string
           enum:
+            - managed-compose.compiler.v1
             - image-hosting.v1
             - image-hosting.release-ports.v1
             - local-build-hosting.v1
@@ -14270,6 +14327,7 @@ components:
         - restored
         - uncertain
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackState"}
         outcome:
           type: string
           enum:
@@ -14328,6 +14386,7 @@ components:
         - receipt_id
         - release
       properties:
+        stack_images: {type: array, maxItems: 16, items: {$ref: "#/components/schemas/HostingStackImage"}}
         operation_id:
           type: string
           minLength: 1
@@ -14431,6 +14490,7 @@ components:
         - ready
         - no_owned_containers
       properties:
+        stack: {$ref: "#/components/schemas/HostingStackState"}
         operation_id:
           type: string
           minLength: 1
@@ -14481,6 +14541,8 @@ components:
           "updated_at"
         ],
         "properties": {
+          "stack_source": {"$ref": "#/components/schemas/HostingStackDefinition"},
+          "stack_create_permitted": {"type": "boolean"},
           "id": {
             "type": "string"
           },
@@ -21023,6 +21085,406 @@ components:
           "confirm_final_copy": {
             "type": "boolean",
             "default": false
+          }
+        }
+      }
+
+    HostingStackDeploymentInput:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "acknowledge_interruption"
+        ],
+        "properties": {
+          "acknowledge_interruption": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      }
+
+    HostingStackRef:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generation",
+          "hash"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+
+    HostingStackReleaseRef:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hash"
+        ],
+        "properties": {
+          "hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+
+    HostingStackMount:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "volume",
+          "target"
+        ],
+        "properties": {
+          "volume": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        }
+      }
+
+    HostingStackHealthcheck:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test",
+          "retries"
+        ],
+        "properties": {
+          "test": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string"
+            }
+          },
+          "interval": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "string"
+          },
+          "start_period": {
+            "type": "string"
+          },
+          "retries": {
+            "type": "integer"
+          }
+        }
+      }
+
+    HostingStackService:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "image"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackMount"
+            }
+          },
+          "depends_on": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "service_started",
+                "service_healthy",
+                "service_completed_successfully"
+              ]
+            }
+          },
+          "healthcheck": {
+            "$ref": "#/components/schemas/HostingStackHealthcheck"
+          }
+        }
+      }
+
+    HostingStackDefinition:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "original_hash",
+          "public_component",
+          "container_port",
+          "services",
+          "volumes"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "managed-compose.v1"
+            ]
+          },
+          "original_hash": {
+            "type": "string"
+          },
+          "public_component": {
+            "type": "string"
+          },
+          "container_port": {
+            "type": "integer"
+          },
+          "services": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackService"
+            }
+          },
+          "volumes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+
+    HostingStackImage:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "release"
+        ],
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "release": {
+            "$ref": "#/components/schemas/HostingRelease"
+          }
+        }
+      }
+
+    HostingStackVolume:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "volume_name",
+          "creation_operation_id",
+          "creation_nonce"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "volume_name": {
+            "type": "string"
+          },
+          "creation_operation_id": {
+            "type": "string"
+          },
+          "creation_nonce": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      }
+
+    HostingStackPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "definition",
+          "images",
+          "volumes",
+          "network_name"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/HostingStackDefinition"
+          },
+          "images": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackImage"
+            }
+          },
+          "volumes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackVolume"
+            }
+          },
+          "network_name": {
+            "type": "string"
+          }
+        }
+      }
+
+    HostingStackComponent:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "container_id",
+          "image_id",
+          "operation_id",
+          "running",
+          "exit_code",
+          "health"
+        ],
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "container_id": {
+            "type": "string"
+          },
+          "image_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "health": {
+            "type": "string"
+          }
+        }
+      }
+
+    HostingStackState:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observation_complete",
+          "public_component",
+          "network_id",
+          "components",
+          "volumes"
+        ],
+        "properties": {
+          "observation_complete": {
+            "type": "boolean"
+          },
+          "public_component": {
+            "type": "string"
+          },
+          "network_id": {
+            "type": "string"
+          },
+          "components": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackComponent"
+            }
+          },
+          "volumes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackVolume"
+            }
+          }
+        }
+      }
+
+    HostingStackVolumeRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation_id",
+          "run_id",
+          "lease_id",
+          "fence",
+          "attempt",
+          "plan_hash",
+          "volumes"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "lease_id": {
+            "type": "string"
+          },
+          "fence": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "volumes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/components/schemas/HostingStackVolume"
+            }
           }
         }
       }

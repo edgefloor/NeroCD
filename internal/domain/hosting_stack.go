@@ -264,6 +264,13 @@ func parseStackService(name string, node *yaml.Node, volumes map[string]bool) (H
 	out := HostingStackService{Name: name, Image: image}
 	if command := fields["command"]; command != nil {
 		out.Command, err = stackStrings(command)
+		if err == nil {
+			for _, value := range out.Command {
+				if _, err = ExpandHostingStackValue(value, map[string]string{}, false); err != nil {
+					break
+				}
+			}
+		}
 		if err != nil {
 			return zero, stackError(location+".command", "use exec-form string list")
 		}
@@ -374,6 +381,11 @@ func parseStackService(name string, node *yaml.Node, volumes map[string]bool) (H
 		test, e := stackStrings(h["test"])
 		if e != nil || len(test) < 2 || test[0] != "CMD" && test[0] != "CMD-SHELL" || test[0] == "CMD-SHELL" && len(test) != 2 {
 			return zero, stackError(location+".healthcheck.test", "requires CMD or CMD-SHELL list")
+		}
+		for _, value := range test {
+			if _, e := ExpandHostingStackValue(value, map[string]string{}, false); e != nil {
+				return zero, stackError(location+".healthcheck.test", "unsupported interpolation")
+			}
 		}
 		check := HostingStackHealthcheck{Test: test, Retries: 3}
 		for _, duration := range []struct {

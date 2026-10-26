@@ -1,4 +1,4 @@
-# Managed Compose sources
+# Managed Compose hosting
 
 A hosting application can save a `compose` source without a Git repository.
 The source contains the exact original Compose text, the public component name,
@@ -34,13 +34,80 @@ contracts fail preflight. Build directives, Git Compose execution, and arbitrary
 raw Compose remain outside this profile. The legacy Git Compose volume policy
 is unchanged.
 
-## Execution status
+## Deploy and redeploy
 
-This source-storage checkpoint saves desired configuration only. It does not
-admit Compose deployment or claim stack runtime support. Whole-stack execution,
-per-component receipts, owned-volume materialization, replacement recovery,
-selected-component HTTPS routing, and physical persistence qualification remain
-required before this feature can be accepted.
+In Project hosting, create an application with **Compose stack** as its source.
+Paste the original source, choose its public component and container port, then
+save the desired destination. Save referenced nonsecret variables and exact
+managed-secret versions in Runtime configuration. Secret creation and rotation
+remain separate explicit actions; redeployment never generates new credentials.
+
+Review the saved Compose deployment and acknowledge interruption. The first
+request can allocate a runner-local port or use an available explicit port.
+After the stack settles healthy, configure its ordinary managed HTTPS route.
+Subsequent deployments reuse that port and automatically submit the existing
+route-continuity selection. The same selected HTTPS routes move to the healthy
+successor through the ordinary proxy operation. Foreign routes, stale versions,
+revoked grants, and unsettled proxy ownership keep their existing barriers.
+
+The runner needs `hosting_managed_compose_v1`, `hosting_runtime_env_v1`,
+`image_release_ports_v1`, and `image_deploy`, with shell execution disabled.
+The current CLI advertises the stack capability with `--hosting-runtime-env`.
+Docker Compose v2 or later must be installed as a normal CLI plugin or the
+`docker-compose` executable. Both invocation forms use the bounded command
+adapter, an isolated registry configuration, an explicit local Docker socket,
+and a protected stdin document. The agent never inherits interpolation values
+from its host environment or persists expanded Compose credentials in `.env`.
+
+Preparation resolves every service image tag to an immutable release before
+requesting apply admission. The durable `managed-compose.compiler.v1` plan
+freezes the normalized source, image set, runtime configuration reference,
+destination, stable component identities, private network, and owned volume
+origins. The existing lease, fence, local journal and binding mutation hold
+control execution. Journal version 23 prevents older agents from interpreting
+stack intents as single-container operations while preserving mixed history.
+
+An apply grant can create missing new owned volumes once. Their Docker creation
+identity is sealed with the controller before any application writer starts.
+Retained volumes are external to the rendered Compose document; a missing
+retained volume fails instead of creating an empty replacement. Replacement
+verifies every predecessor, stops all old writers, verifies that they stopped,
+and removes only those exact containers without deleting volumes. Compose then
+starts the pinned services using their declared dependency conditions and
+private service DNS. Only the selected public component publishes a loopback
+port. Successful completion requires all long-running components healthy,
+successful initialization jobs exited zero, and the public HTTP readiness check.
+
+Operation details show each component's recorded container, image, running state,
+exit code and health. A failed or canceled replacement retains a mutation hold
+when its outcome cannot be verified. Its receipt reports actual inspected
+components or an explicitly incomplete observation. It does not claim prior
+recovery or undo application/database writes. Another mutation cannot compete
+with that hold; ordinary observation cannot silently authorize replay or volume
+creation. Named volumes are retained when components disappear from later
+source revisions; no implicit data deletion or stack volume cleanup is provided.
+
+## Qualification
+
+Focused source/runtime checks cover unsupported definitions, reference expansion,
+protected dollar escaping through installed Compose configuration, stale writer
+fences, creation-grant replay, stable volume origins, and held failed replacement.
+PostgreSQL and Docker checks require their existing isolated prerequisites; a
+skipped test is not physical evidence.
+
+The opt-in existing runtime gate is
+`bash acceptance/runtime-hosting-storage/gate.sh --managed-compose`. Run it only
+against the explicitly authorized committed candidate and owned target profile.
+It uses the distinct `nerocd-compose-vikunja-runtime-20261027` DinD owner, its
+Docker-data volume, an ephemeral loopback administration port, and loopback
+`25443` forwarded to the guest managed HTTPS port. The connected browser pastes
+the exact upstream Vikunja/PostgreSQL source, saves variables and secret refs,
+deploys, configures the managed route, creates an application account/task/file,
+redeploys, then checks fresh login, retained data and new writes. The Go fixture
+checks exact secret bytes, private PostgreSQL, component health, volume origins,
+writer stop/start events, HTTPS trust and a controlled failed replacement hold.
+Physical qualification and independent reviews remain required for acceptance;
+source and build checks alone do not establish a working application.
 
 ## Upstream reference
 
@@ -57,7 +124,7 @@ The inspected paths are `DockerCompose.php::submit`,
 Coolify saves raw source and retains component and generated variable identities
 with `firstOrCreate`. It resolves remote secrets before stopping a service,
 keeps a stable Compose project identity, and preserves dependency conditions.
-NeroCD must retain those behaviors through its existing Go runner authority,
+NeroCD retains those behaviors through its existing Go runner authority,
 protected material delivery, durable receipts, and owned-volume provenance.
 SSH scripts, persistent `.env` files, and remote shell cleanup are not the
 execution mechanism for this managed profile.

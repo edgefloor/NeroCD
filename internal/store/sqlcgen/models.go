@@ -437,6 +437,19 @@ type HostingComposeSourceVersion struct {
 	DefinitionHash string          `json:"definition_hash"`
 }
 
+type HostingComposeVolume struct {
+	BindingID           string `json:"binding_id"`
+	Name                string `json:"name"`
+	VolumeName          string `json:"volume_name"`
+	DestinationID       string `json:"destination_id"`
+	DaemonID            string `json:"daemon_id"`
+	CreationOperationID string `json:"creation_operation_id"`
+	CreationPlanHash    string `json:"creation_plan_hash"`
+	CreationNonce       string `json:"creation_nonce"`
+	State               string `json:"state"`
+	CreatedAt           string `json:"created_at"`
+}
+
 type HostingDatabase struct {
 	ResourceID     string    `json:"resource_id"`
 	ProjectID      string    `json:"project_id"`

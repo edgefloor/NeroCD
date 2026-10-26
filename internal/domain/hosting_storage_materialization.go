@@ -41,6 +41,9 @@ type HostingHealthyStorage struct {
 
 // ValidateHostingHealthyStorage rejects invented or omitted storage evidence.
 func ValidateHostingHealthyStorage(healthy HostingHealthy) error {
+	if healthy.Stack != nil || healthy.Snapshot.Stack != (HostingStackRef{}) {
+		return ValidateHostingStackHealthy(healthy)
+	}
 	if healthy.Snapshot.Storage == (HostingStorageRef{}) {
 		if healthy.Storage != nil {
 			return ErrInvalidHostingStorage

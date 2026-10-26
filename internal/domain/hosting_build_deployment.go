@@ -88,6 +88,16 @@ func validateLocalBuildRelease(r HostingRelease) error {
 
 // ValidateHostingSnapshotRelease enforces the exclusive registry/local union.
 func ValidateHostingSnapshotRelease(s HostingSnapshot, r HostingRelease) error {
+	if s.Stack != (HostingStackRef{}) {
+		if s.PolicyVersion != HostingStackPolicyVersion || s.Stack.Generation < 1 || !imageSHA256.MatchString(s.Stack.Hash) || s.ImageReference != "" || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.Storage != (HostingStorageRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || r.Stack == (HostingStackReleaseRef{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
+			return errors.New("invalid stack source/release union")
+		}
+		return validateStackRelease(r)
+	}
+	if r.Stack != (HostingStackReleaseRef{}) || s.PolicyVersion == HostingStackPolicyVersion {
+		return errors.New("stack release requires stack source")
+	}
+
 	if s.Database != (HostingDatabaseExecutionRef{}) || s.PolicyVersion == HostingDatabasePolicyVersion {
 		return ValidateHostingDatabaseRelease(s, r)
 	}
