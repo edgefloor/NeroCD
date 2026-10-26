@@ -377,6 +377,11 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 		return errors.New("storage owner observation did not establish trusted settlement; exact journal evidence retained")
 	}
 	if op.State == "prepared" && op.Result == nil {
+		if op.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
+			// A restart never obtains a new secret delivery or resumes mutations for
+			// this family. Retain exact evidence for owner-requested observation.
+			return errors.New("owned storage runtime preparation remains held; owner-requested read-only recovery is required before new claims")
+		}
 		lease, fenced, err := probeReplayAuthority(server, token, first.Attempt, parent)
 		if err != nil {
 			return err

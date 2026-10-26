@@ -748,3 +748,98 @@ func TestStorageRecoveryPreparedOriginCanObserveAfterOldAuthorityExpires(t *test
 		})
 	}
 }
+
+func TestStorageCoordinatorCombinedPreparedRestartRetainsObservationOnlyHold(t *testing.T) {
+	for _, materialized := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before_storage_admission", true: "after_materialization_live_lease"}[materialized], func(t *testing.T) {
+			f := mountedTestFixture(t, "")
+			snapshot := f.plan.Snapshot
+			snapshot.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
+			snapshot.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{Generation: 1, Hash: "sha256:" + strings.Repeat("e", 64)}
+			plan, err := domain.CompileHostingOwnedStorageRuntimePlan(snapshot, f.plan.Release, nil, nil, *f.plan.Storage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.plan = plan
+			j, dir := openStorageCoordinatorJournal(t)
+			c := newStorageCoordinatorController(t, j, f)
+			prepared := domain.HostingPreparedRequest{HostingAuthority: c.a, ReceiptID: attemptMutationKey("hosting_prepared", c.a.LeaseID, c.a.Attempt, "release"), Release: *c.op.Release}
+			entry := runner.JournalHosting{ID: prepared.ReceiptID, Attempt: journalAttemptIdentity(c.a.RunID, c.lease, nil), OperationID: c.a.OperationID, Phase: "prepared", Prepared: &prepared, StorageRef: c.op.Snapshot.Storage, CreatedAt: time.Now().UTC()}
+			markHostingRuntimeEntry(&entry, snapshot.RuntimeConfiguration)
+			if _, err := j.AppendHosting(entry); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/runners/hosting/reconciliation" {
+					// Model the controller's supported trusted no-writer settlement. The
+					// read-only observer alone cannot erase the hold or invent this receipt.
+					c.mu.Lock()
+					result := domain.HostingResult{Outcome: "failed"}
+					c.op.Result = &result
+					c.op.State = "failed"
+					c.op.CompleteReceipt = &domain.HostingReceipt{ID: attemptMutationKey("hosting_result", c.a.LeaseID, c.a.Attempt, "result"), BodyHash: domain.HostingDocumentHash(result), CreatedAt: time.Now().UTC()}
+					c.allowEmptyObservation = true
+					c.mu.Unlock()
+				}
+				c.serve(w, r)
+			}))
+			defer server.Close()
+			if materialized {
+				supervisor := newAttemptSupervisorFrom(t.Context(), c.lease)
+				err := executeHostingStoragePrepared(supervisor, j, func(context.Context) error { return nil }, runnerclient.New(server.URL, "token"), f.engine, c.a, c.lease, c.op)
+				supervisor.Close()
+				if err == nil || !strings.Contains(err.Error(), "runtime configuration missing") || !c.materialized || !c.hasPhase("apply_intent") {
+					t.Fatalf("fixture did not reach materialized crash boundary: %v", err)
+				}
+			}
+			if err := j.Close(); err != nil {
+				t.Fatal(err)
+			}
+			j, err = runner.OpenAttemptJournal(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = j.Close() })
+			c.journal = j
+			before := j.Snapshot().Hosting
+			creates, acks := c.createCalls, c.materializedCalls
+			opened := false
+			err = reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", t.Context(), func(string) (hostingStorageEngine, error) { opened = true; return f.engine, nil })
+			if err == nil || !strings.Contains(err.Error(), "owner-requested read-only recovery") || opened || c.createCalls != creates || c.materializedCalls != acks || c.applyCalls != 0 || !reflect.DeepEqual(before, j.Snapshot().Hosting) {
+				t.Fatalf("combined replay escaped observation hold: %v requests=%v", err, c.requests)
+			}
+			for _, path := range c.requests {
+				if strings.Contains(path, "runtime-environment") {
+					t.Fatal("restart fetched secret material")
+				}
+			}
+			if !materialized {
+				// Cancellation without mutation admission is independently
+				// settled by the controller; it needs no Docker observation.
+				c.op.State = "canceled"
+				if err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", t.Context(), func(string) (hostingStorageEngine, error) {
+					t.Fatal("pre-admission cancellation opened engine")
+					return nil, errors.New("forbidden")
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if len(j.Snapshot().Hosting) != 0 || c.observeCalls != 0 || c.createCalls != 0 {
+					t.Fatal("pre-admission cancellation retained or mutated the attempt")
+				}
+				return
+			}
+			// Fresh owner authority can reach read-only observation and the server's
+			// exact terminal receipt can retire the journal without a writer.
+			c.op.MutationHold, c.op.ReconcileRequested = true, true
+			engine := &storageCoordinatorEngine{observe: func(context.Context, domain.HostingOperation) (domain.HostingObservation, error) {
+				return domain.HostingObservation{NoOwnedContainers: true, DaemonID: f.request.DaemonID}, nil
+			}}
+			if err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", t.Context(), func(string) (hostingStorageEngine, error) { return engine, nil }); err != nil {
+				t.Fatal(err)
+			}
+			if len(j.Snapshot().Hosting) != 0 || c.observeCalls != 1 || c.applyCalls != 0 || c.createCalls != creates {
+				t.Fatal("trusted read-only settlement did not retire exact evidence")
+			}
+		})
+	}
+}
