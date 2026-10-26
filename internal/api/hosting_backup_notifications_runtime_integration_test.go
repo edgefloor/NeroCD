@@ -545,17 +545,22 @@ func notificationRuntimeVerifyReceipts(f *databaseRunnerFixture, receivers *back
 }
 
 type backupNotificationBrowser struct {
-	f                                     *databaseRunnerFixture
-	mu                                    sync.Mutex
-	phase, backup, recovery, failedBackup string
-	configured, observed, done            chan struct{}
-	restored                              chan domain.HostingDatabaseBackupOperation
+	f                                                        *databaseRunnerFixture
+	mu                                                       sync.Mutex
+	phase, backup, recovery, failedBackup, failedBackupState string
+	configured, observed, done                               chan struct{}
+	restored                                                 chan domain.HostingDatabaseBackupOperation
 }
 
 func (b *backupNotificationBrowser) set(phase, backup, recovery string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.phase, b.backup, b.recovery = phase, backup, recovery
+}
+func (b *backupNotificationBrowser) state() map[string]string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return map[string]string{"phase": b.phase, "backup_id": b.backup, "recovery_url": b.recovery, "failed_backup_id": b.failedBackup, "failed_backup_state": b.failedBackupState}
 }
 func (b *backupNotificationBrowser) await(ch <-chan struct{}, name string) {
 	b.f.t.Helper()
@@ -611,9 +616,7 @@ func startBackupNotificationBrowser(f *databaseRunnerFixture, source domain.Host
 			return
 		}
 		if r.Method == "POST" && r.URL.Path == control+"/state" {
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			writeJSON(w, 200, map[string]string{"phase": b.phase, "backup_id": b.backup, "recovery_url": b.recovery, "failed_backup_id": b.failedBackup})
+			writeJSON(w, 200, b.state())
 			return
 		}
 		if r.Method == "POST" {
@@ -1153,7 +1156,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql dump_email_webhook")
 	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql current_authority")
 	browser.mu.Lock()
-	browser.failedBackup = dump.ID
+	browser.failedBackup, browser.failedBackupState = dump.ID, dump.State
 	browser.mu.Unlock()
 	browser.set("complete", backup.ID, recoveryLink)
 	browser.await(browser.done, "final actual event history")
@@ -1412,5 +1415,20 @@ func TestBackupNotificationDumpDiagnosticsExcludeCommandMaterial(t *testing.T) {
 	err := exec.Command("/bin/sh", "-c", "exit 7").Run()
 	if err == nil || notificationRuntimeDumpDockerError("read_events", nil, err).Error() != "notification dump step=read_events exit=7 class=command_failed" {
 		t.Fatal("safe subprocess exit classification missing")
+	}
+}
+
+func TestBackupNotificationBrowserPreservesObservedDumpOutcome(t *testing.T) {
+	for _, state := range []string{"failed", "uncertain"} {
+		b := &backupNotificationBrowser{failedBackup: "dbb_observed", failedBackupState: state}
+		b.set("complete", "dbb_restored", "https://127.0.0.1:18443/projects")
+		raw, err := json.Marshal(b.state())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value map[string]string
+		if json.Unmarshal(raw, &value) != nil || value["failed_backup_id"] != "dbb_observed" || value["failed_backup_state"] != state || value["backup_id"] != "dbb_restored" || value["phase"] != "complete" {
+			t.Fatal("browser state replaced the observed dump identity or outcome")
+		}
 	}
 }

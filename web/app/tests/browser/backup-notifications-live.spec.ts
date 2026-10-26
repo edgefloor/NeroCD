@@ -17,6 +17,43 @@ const recoveryTarget = (value: string) => {
   return url.href;
 };
 
+const dumpHistory = (history: Locator) => history.locator("article").evaluateAll(articles => articles.flatMap(article => {
+  const link = article.querySelector<HTMLAnchorElement>("a[href]");
+  if (!link) return [];
+  const url = new URL(link.href);
+  if (url.searchParams.getAll("backup_id").length !== 1) return [];
+  const [label, state, delivery] = (article.querySelector("p")?.textContent ?? "").trim().split(/\s+·\s+/);
+  return [{ backup: url.searchParams.get("backup_id"), label, state, delivery }];
+}));
+const dumpHistoryMatches = (rows: Awaited<ReturnType<typeof dumpHistory>>, backup: string, sourceState: string) => {
+  const label = sourceState === "failed" ? "Backup failed" : sourceState === "uncertain" ? "Backup outcome uncertain, needs attention" : undefined;
+  const selected = rows.filter(row => row.backup === backup);
+  return label !== undefined && selected.length === 2 && new Set(selected.map(row => row.delivery)).size === 2 && selected.every(row => row.label === label && row.state === "delivered" && /^ntd_[A-Za-z0-9_-]+$/.test(row.delivery ?? ""));
+};
+
+test("final dump history matches the exact observed backup outcome", async ({ page }) => {
+  for (const [state, label, wrongLabel] of [
+    ["failed", "Backup failed", "Backup outcome uncertain, needs attention"],
+    ["uncertain", "Backup outcome uncertain, needs attention", "Backup failed"],
+  ]) {
+    const render = async (text = label, backup = "dbb_source", deliveryState = "delivered", count = 2) => {
+      await page.setContent(`<base href="https://127.0.0.1:18443/"><section aria-label="Notification delivery history">${Array.from({ length: count }, (_, i) => `<article><p>${text} · ${deliveryState} · ntd_${i}</p><a href="/projects?backup_id=${backup}">Open authenticated backup recovery</a></article>`).join("")}</section>`);
+    };
+    const history = page.getByRole("region", { name: "Notification delivery history", exact: true });
+    await render();
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", state)).toBe(true);
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", "succeeded")).toBe(false);
+    await render(wrongLabel);
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", state)).toBe(false);
+    await render(label, "dbb_foreign");
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", state)).toBe(false);
+    await render(label, "dbb_source", "pending");
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", state)).toBe(false);
+    await render(label, "dbb_source", "delivered", 1);
+    expect(dumpHistoryMatches(await dumpHistory(history), "dbb_source", state)).toBe(false);
+  }
+});
+
 test("recovery link comparison preserves identity across query ordering", async ({ page }) => {
   const origin = "https://127.0.0.1:18443";
   const delivered = `${origin}/projects?backup_id=dbb_source&environment_id=env_source&project_id=proj_source&resource_id=res_source&transfer_id=upload_source`;
@@ -60,7 +97,7 @@ test("actual backup notifications configure both transports and recover the reta
   const state = async () => {
     const response = await control("state");
     if (response.status !== 200) throw new Error("notification fixture state unavailable");
-    return response.value as { phase: string; backup_id: string; recovery_url: string; failed_backup_id: string };
+    return response.value as { phase: string; backup_id: string; recovery_url: string; failed_backup_id: string; failed_backup_state: string };
   };
   const acknowledge = async (phase: string) => {
     expect((await control(phase)).status).toBe(204);
@@ -193,9 +230,10 @@ test("actual backup notifications configure both transports and recover the reta
   expect(sourceMutations).toBe(1);
   const complete = await state();
   expect(complete.failed_backup_id).toMatch(/^dbb_/);
+  expect(["failed", "uncertain"]).toContain(complete.failed_backup_state);
   await page.goto("/projects");
   await chooseOption(panel, "Notifications project", m.project_id);
-  await expect(history).toContainText("Backup failed");
+  await expect.poll(async () => dumpHistoryMatches(await dumpHistory(history), complete.failed_backup_id, complete.failed_backup_state)).toBe(true);
   await expect(history).toContainText("Upload failed, local backup available");
   await acknowledge("done");
 });
