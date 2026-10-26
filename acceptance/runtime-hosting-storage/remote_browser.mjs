@@ -9,6 +9,28 @@ const origin = process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN;
 const key = process.env.NEROCD_STORAGE_REMOTE_BROWSER_KEY;
 const evidence = process.env.NEROCD_STORAGE_REMOTE_HOST_EVIDENCE;
 if (!/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") || !/^[a-f0-9]{64}$/.test(key ?? "") || !evidence?.startsWith("/")) throw Error("exact private browser profile required");
+// Diagnostics contain only code-owned labels, numeric statuses and error classes.
+// Never record exception messages, URLs, request bodies or DOM content.
+const diagnosticPhases = new Set(["startup","target","validation","backup","denied","retry","restore","archive_alert","retention","retention_history","deletion","deletion_history","deletion_final","deletion_final_history","complete","viewer","unknown_phase"]);
+const diagnosticActions = new Set(["initialization","await_fixture_phase","fixture_http","fixture_transport","fixture_ready","navigate_projects","select_project","select_environment","locate_application","locate_archive_panel","select_backup","verify_backup_metadata","select_local_copy","select_remote_copy","request_preview","preview_http","verify_preview","request_execution","execution_http","verify_execution","retry_execution","retry_http","verify_retry","verify_history","verify_final_copy_warning","discard_preview","select_final_local_copies","confirm_final_copy","verify_final_history","viewer_sign_in","verify_viewer_history","viewer_denial_http","report_phase","report_http","unknown_action"]);
+const diagnosticTrace = [];
+let diagnosticPhase = "startup", diagnosticAction = "initialization";
+function diagnosticErrorClass(error) {
+  if (stopped) return "Cancelled";
+  return ["TimeoutError","AssertionError","AbortError","TypeError","SyntaxError"].includes(error?.name) ? error.name : "Error";
+}
+function recordDiagnostic(action, status, error) {
+  diagnosticAction = diagnosticActions.has(action) ? action : "unknown_action";
+  const entry = {phase:diagnosticPhase,action:diagnosticAction};
+  if (Number.isInteger(status) && status >= 100 && status <= 599) entry.http_status = status;
+  if (error !== undefined) entry.error_class = diagnosticErrorClass(error);
+  diagnosticTrace.push(entry);
+  if (diagnosticTrace.length > 64) diagnosticTrace.shift();
+}
+function setDiagnosticPhase(phase) {
+  diagnosticPhase = diagnosticPhases.has(phase) ? phase : "unknown_phase";
+  recordDiagnostic("await_fixture_phase");
+}
 let api, browser, context, page;
 let stopped = false;
 const cleanupFailures = new Set();
@@ -40,31 +62,41 @@ deadlineTimer.unref();
 function requireActive() { if (stopped) throw Error("browser workflow cancelled"); }
 const pause = () => new Promise(resolve => setTimeout(resolve, 250));
 async function state(phase) {
+  setDiagnosticPhase(phase);
   while (Date.now() < deadline) {
     requireActive();
-    try { const response = await api.get("/__storage_remote_fixture/state"); if (response.status() === 200) { const value = await response.json(); if (value.phase === phase) return value; } } catch {}
+    try { const response = await api.get("/__storage_remote_fixture/state"); recordDiagnostic("fixture_http",response.status()); if (response.status() === 200) { const value = await response.json(); if (value.phase === phase) {recordDiagnostic("fixture_ready");return value;} } } catch(error) {recordDiagnostic("fixture_transport",undefined,error);}
     requireActive();
     await pause();
   }
   throw Error("fixture phase deadline: " + phase);
 }
 async function report(action, id) {
+  recordDiagnostic("report_phase");
   const response = await api.post("/__storage_remote_fixture/report", { data: { action, id } });
+  recordDiagnostic("report_http",response.status());
   if (response.status() !== 204) throw Error("fixture report rejected: " + action);
 }
 async function panel(m, reload = false, targetPage = page) {
+  recordDiagnostic("navigate_projects");
   if (reload) await targetPage.reload();
   else await targetPage.goto(`/projects#storage-${m.resource_id}`);
   const hosting = targetPage.getByRole("region", { name: "Project hosting", exact: true });
+  recordDiagnostic("select_project");
   await hosting.getByLabel("Hosting project", { exact: true }).selectOption("proj_platform");
+  recordDiagnostic("select_environment");
   await hosting.getByRole("button", { name: "storage runtime fixture", exact: true }).click();
+  recordDiagnostic("locate_application");
   const application = hosting.getByRole("article", { name: m.resource_name ?? "remote uploaded application B", exact: true });
   const result = application.getByRole("region", { name: "Upload backups and restores", exact: true });
+  recordDiagnostic("locate_archive_panel");
   await expect(result).toBeVisible();
   return result;
 }
 async function selectBackup(p, id) {
+  recordDiagnostic("select_backup");
   await p.getByRole("button", { name: `Backup ${id}`, exact: true }).click();
+  recordDiagnostic("verify_backup_metadata");
   await expect(p.locator('dl[aria-label="Selected backup metadata"]')).toContainText(id);
 }
 function deliveredRecoveryURL(m, kind) {
@@ -103,7 +135,7 @@ async function deliveredPanel(m,kind) {
     return result;
   }finally{page.off("request",observe)}
 }
-const safe = { status: "failed", served_candidate_ui: true, intercepted_requests: false };
+const safe = { status: "failed", served_candidate_ui: true, intercepted_requests: false, diagnostics: diagnosticTrace };
 try {
   requireActive();
   api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key } });
@@ -287,21 +319,26 @@ try {
     p=await panel(deletionState);
     await selectBackup(p,deletionState.backup_id);
     let deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    recordDiagnostic("select_local_copy");
     await deletion.getByRole("checkbox",{name:/^Delete local copy /}).check();
     const base=`/resources/${deletionState.resource_id}/storage-backups/${deletionState.backup_id}`;
     const previewResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    recordDiagnostic("request_preview");
     await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
-    const reviewed=await previewResponse;if(reviewed.status()!==200)throw Error("manual browser preview rejected");
+    const reviewed=await previewResponse;recordDiagnostic("preview_http",reviewed.status());if(reviewed.status()!==200)throw Error("manual browser preview rejected");
+    recordDiagnostic("verify_preview");
     const preview=await reviewed.json();
     if(preview.origin!=="manual_selection"||preview.final_copy||preview.items.length!==1||preview.items[0].location!=="local"||preview.backup_id!==deletionState.backup_id)throw Error("manual browser preview selected wrong copies");
     const executeResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));
+    recordDiagnostic("request_execution");
     await deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true}).click();
-    const lost=await executeResponse;if(lost.status()!==503)throw Error("manual committed response loss missing");
+    const lost=await executeResponse;recordDiagnostic("execution_http",lost.status());if(lost.status()!==503)throw Error("manual committed response loss missing");
     const saved=lost.request().postDataJSON();if(saved.preview_id!==preview.id||saved.expected_plan_hash!==preview.plan_hash)throw Error("manual execution left reviewed selection");
     await expect(deletion).toContainText("does not cancel work already accepted by the server");
     const retryResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));
+    recordDiagnostic("retry_execution");
     await deletion.getByRole("button",{name:"Retry identical deletion request",exact:true}).click();
-    const retry=await retryResponse;if(retry.status()!==202||JSON.stringify(retry.request().postDataJSON())!==JSON.stringify(saved))throw Error("manual retry changed saved request");
+    const retry=await retryResponse;recordDiagnostic("retry_http",retry.status());if(retry.status()!==202||JSON.stringify(retry.request().postDataJSON())!==JSON.stringify(saved))throw Error("manual retry changed saved request");
     deletionExecution=await retry.json();
     safe.manual_deletion_selection_and_exact_retry=true;
     await report("deletion",deletionExecution.id);
@@ -309,15 +346,20 @@ try {
     p=await panel(deletionState);
     await selectBackup(p,deletionState.backup_id);
     deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    recordDiagnostic("verify_history");
     await expect(deletion).toContainText(`Deletion ${deletionExecution.id}: succeeded`);
     const metadata=p.locator('dl[aria-label="Selected backup metadata"]');
     await expect(metadata).toContainText("local: deleted");await expect(metadata).toContainText("remote: available");
+    recordDiagnostic("select_remote_copy");
     await deletion.getByRole("checkbox",{name:/^Delete remote copy /}).check();
     const finalPreviewResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    recordDiagnostic("request_preview");
     await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
-    const finalHTTP=await finalPreviewResponse;if(finalHTTP.status()!==200||(await finalHTTP.json()).final_copy!==true)throw Error("connected final-copy warning missing");
+    const finalHTTP=await finalPreviewResponse;recordDiagnostic("preview_http",finalHTTP.status());if(finalHTTP.status()!==200||(await finalHTTP.json()).final_copy!==true)throw Error("connected final-copy warning missing");
+    recordDiagnostic("verify_final_copy_warning");
     await expect(deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true})).toBeDisabled();
     await expect(deletion.getByRole("checkbox",{name:"I understand this deletes the final recoverable copy of this backup.",exact:true})).not.toBeChecked();
+    recordDiagnostic("discard_preview");
     await deletion.getByRole("button",{name:"Discard saved request and review current copies",exact:true}).click();
     safe.manual_deletion_history_and_final_copy_warning=true;
     await report("deletion_history",deletionExecution.id);
@@ -325,25 +367,30 @@ try {
     p=await panel(deletionState);await selectBackup(p,deletionState.backup_id);
     deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
     // Old deleted generations stay in history. Select only the enabled owned copy.
+    recordDiagnostic("select_final_local_copies");
     const localBoxes=await deletion.getByRole("checkbox",{name:/^Delete local copy /}).all();
     let localCount=0;for(const box of localBoxes)if(await box.isEnabled()){await box.check();localCount++}
     if(localCount!==1)throw Error("expected one available restored local generation");
+    recordDiagnostic("select_remote_copy");
     await deletion.getByRole("checkbox",{name:/^Delete remote copy /}).check();
     const bothResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletion-previews"));
+    recordDiagnostic("request_preview");
     await deletion.getByRole("button",{name:"Review selected copy deletion",exact:true}).click();
-    const bothHTTP=await bothResponse;if(bothHTTP.status()!==200)throw Error("final manual preview failed");
+    const bothHTTP=await bothResponse;recordDiagnostic("preview_http",bothHTTP.status());if(bothHTTP.status()!==200)throw Error("final manual preview failed");
     const both=await bothHTTP.json();if(!both.final_copy||both.items.length!==2||new Set(both.items.map(c=>c.location)).size!==2)throw Error("final exact both-copy selection differs");
     const finalButton=deletion.getByRole("button",{name:"Permanently delete reviewed copies",exact:true});await expect(finalButton).toBeDisabled();
+    recordDiagnostic("confirm_final_copy");
     await deletion.getByRole("checkbox",{name:"I understand this deletes the final recoverable copy of this backup.",exact:true}).check();
-    const finalLostResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));await finalButton.click();
-    const finalLost=await finalLostResponse;if(finalLost.status()!==503||finalLost.request().postDataJSON().confirm_final_copy!==true)throw Error("final-copy consent or committed response loss missing");
+    const finalLostResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));recordDiagnostic("request_execution");await finalButton.click();
+    const finalLost=await finalLostResponse;recordDiagnostic("execution_http",finalLost.status());if(finalLost.status()!==503||finalLost.request().postDataJSON().confirm_final_copy!==true)throw Error("final-copy consent or committed response loss missing");
     const finalSaved=finalLost.request().postDataJSON();
-    const finalRetryResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));await deletion.getByRole("button",{name:"Retry identical deletion request",exact:true}).click();
-    const finalRetry=await finalRetryResponse;if(finalRetry.status()!==202||JSON.stringify(finalRetry.request().postDataJSON())!==JSON.stringify(finalSaved))throw Error("final manual retry changed confirmation/selection");
+    const finalRetryResponse=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith(base+"/deletions"));recordDiagnostic("retry_execution");await deletion.getByRole("button",{name:"Retry identical deletion request",exact:true}).click();
+    const finalRetry=await finalRetryResponse;recordDiagnostic("retry_http",finalRetry.status());if(finalRetry.status()!==202||JSON.stringify(finalRetry.request().postDataJSON())!==JSON.stringify(finalSaved))throw Error("final manual retry changed confirmation/selection");
     deletionFinalExecution=await finalRetry.json();safe.manual_deletion_remote_and_final_confirmation=true;
     await report("deletion_final",deletionFinalExecution.id);
     deletionState=await state("deletion_final_history");
     p=await panel(deletionState);await selectBackup(p,deletionState.backup_id);deletion=p.getByRole("region",{name:"Delete selected backup copies",exact:true});
+    recordDiagnostic("verify_history");
     await expect(deletion).toContainText(`Deletion ${deletionExecution.id}: succeeded`);await expect(deletion).toContainText(`Deletion ${deletionFinalExecution.id}: succeeded`);
     await expect(p.locator('dl[aria-label="Selected backup metadata"]')).toContainText("remote: deleted");
     safe.manual_deletion_final_history=true;await report("deletion_final_history",deletionFinalExecution.id);
@@ -365,6 +412,7 @@ try {
     if (overflow) throw Error("storage workflow horizontal overflow at " + width);
   }
   safe.responsive_widths = [320, 390, 430, 1280];
+  diagnosticPhase="viewer";recordDiagnostic("viewer_sign_in");
   const viewerContext=await browser.newContext({baseURL:origin,ignoreHTTPSErrors:true});
   try {
     const viewer=await viewerContext.newPage();
@@ -402,6 +450,7 @@ try {
       await expect(manual).toContainText(`Deletion ${deletionExecution.id}: succeeded`);
       await expect(manual.getByRole("button",{name:"Review selected copy deletion",exact:true})).toHaveCount(0);
       const denied=await viewerContext.request.post(`/api/v1/resources/${deletionState.resource_id}/storage-backups/${deletionState.backup_id}/deletion-previews`,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:{request_id:"manual_viewer_denied",expected_resource_generation:2,copy_ids:["foreign"]}});
+      recordDiagnostic("viewer_denial_http",denied.status());
       if(denied.status()!==403)throw Error("viewer manual deletion mutation not denied");
       safe.manual_deletion_viewer_history_and_denied=true;
     }
@@ -410,7 +459,9 @@ try {
   } finally {await viewerContext.close();}
   safe.status = "passed";
   await report("done", restored.operation.id);
-} catch {
+} catch(error) {
+  recordDiagnostic(diagnosticAction,undefined,error);
+  console.error(JSON.stringify({browser_diagnostic:diagnosticTrace.at(-1)}));
   if (!process.exitCode) process.exitCode=1;
   safe.status="failed"; safe.failure=stopped?"browser_workflow_cancelled":"browser_workflow_failed";
 } finally {
