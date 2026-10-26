@@ -583,11 +583,18 @@ const page = new Proxy({}, {get: (_, name) => {
  if (name === "goto") return async value=>{currentURL=value;if(activePhase==="deletion"&&diagnosticFailure==="navigation"){const error=Error("private diagnostic secret URL body DOM");error.name="TimeoutError";throw error;}};
  if (name === "check" && activePhase==="deletion" && diagnosticFailure==="checkbox") return async()=>{const error=Error("private diagnostic secret URL body DOM");error.name="private diagnostic secret class";throw error;};
  if (name === "url") return ()=>currentURL;
+ if (name === "page") return ()=>page;
  if (["getByRole","getByLabel","locator","filter"].includes(name)) return () => page;
  if (name === "evaluateAll") return async () => "target:1";
  if (name === "textContent") return async () => "View scheduled archive backup";
  if (name === "evaluate") return async () => false;
- if (name === "waitForResponse") return async () => {
+ if (name === "waitForResponse") return async predicate => {
+  // Backup GETs are independent of the mutation response sequence below.
+  for(const id of ["backup","failed_backup","retention_old","retention_middle","retention_new"]) {
+   const read={status:()=>200,url:()=>process.env.NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN+"/api/v1/storage-backups/"+id,
+    request:()=>({method:()=>"GET",timing:()=>({startTime:Date.now()+1})}),json:async()=>({id,copies:[]})};
+   if(predicate(read))return read;
+  }
   const index=responseIndex++;
   const values=[{id:"target"},{id:"validation"},{},{id:"schedule",revision:1,remote_target:{target_id:"target"}},{id:"schedule",revision:2},{id:"schedule",revision:3,enabled:false},{id:"upload"},{operation:{id:"restore"}}];
   values.push({enabled:true,automatic:false,revision:1,local:{keep_count:1},remote:{keep_count:2}},
@@ -661,38 +668,60 @@ module.exports = {
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=3)
 
-    def test_exact_backup_selection_refreshes_externally_changed_history(self):
-        # Exercise the actual driver helper. No browser/API qualification is claimed.
+    def test_exact_backup_selection_waits_for_delayed_same_id_copy_refresh(self):
+        # The old button and same-ID metadata stay actionable throughout both gates.
         script = r"""
 const fs=require("node:fs"),assert=require("node:assert/strict");
 const source=fs.readFileSync(process.argv[1],"utf8");
 const helper=source.slice(source.indexOf("async function selectBackup(p, id)"),source.indexOf("function deliveredRecoveryURL"));
 const run=new Function("recordDiagnostic","expect",helper+"return selectBackup;");
+const tick=()=>new Promise(setImmediate);
 (async()=>{
- for(const scenario of ["new_backup","republished_generation","refresh_denied"]) {
-  const events=[];let fresh=false;
-  const panel={getByRole:(role,options)=>{
+ for(const scenario of ["republished_generation","refresh_denied","http_denied"]) {
+  const events=[];let finishHTTP,finishDOM,settled=false;
+  const network=new Promise(resolve=>{finishHTTP=resolve;});
+  const rendered=new Promise(resolve=>{finishDOM=resolve;});
+  const response={status:()=>scenario==="http_denied"?403:200,
+   json:async()=>({id:"exact_backup",copies:[
+    {location:"local",availability:"deleted",protected_reasons:["superseded"]},
+    {location:"remote",availability:"available",protected_reasons:[]},
+    {location:"local",availability:"available",protected_reasons:[]}]})};
+  const metadata={locator:selector=>{assert.equal(selector,"ul > li");return "copies";}};
+  const panel={page:()=>({waitForResponse:predicate=>{
+   events.push("armed");
+   const sample=(method,id,startTime)=>({url:()=>"https://fixture/api/v1/storage-backups/"+id,request:()=>({method:()=>method,timing:()=>({startTime})})});
+   assert.equal(predicate(sample("GET","exact_backup",0)),false);
+   assert.equal(predicate(sample("POST","exact_backup",Date.now()+1)),false);
+   assert.equal(predicate(sample("GET","foreign",Date.now()+1)),false);
+   assert.equal(predicate(sample("GET","exact_backup",Date.now()+1)),true);
+   return network;
+  }}),getByRole:(role,options)=>{
    assert.equal(role,"button");assert.equal(options.exact,true);
    return {click:async()=>{
-    if(options.name==="Refresh archive status") {
-     events.push("refresh");if(scenario==="refresh_denied")throw Error("denied");fresh=true;
-    } else {
-     assert.equal(options.name,"Backup exact_backup");
-     assert.equal(fresh,true,"external backup/history must be refreshed before exact selection");
-     events.push("select");
-    }
+    if(options.name==="Refresh archive status") {events.push("refresh_clicked");if(scenario==="refresh_denied")throw Error("denied");}
+    else {assert.equal(options.name,"Backup exact_backup");events.push("old_button_clicked");}
    }};
-  },locator:selector=>{assert.equal(selector,'dl[aria-label="Selected backup metadata"]');return "metadata";}};
+  },locator:selector=>{assert.equal(selector,'dl[aria-label="Selected backup metadata"]');return metadata;}};
   const select=run(action=>events.push(action),value=>({toContainText:async id=>{
-   assert.equal(value,"metadata");assert.equal(id,"exact_backup");assert.equal(fresh,true);events.push("verified");
+   assert.equal(value,metadata);assert.equal(id,"exact_backup");events.push("same_id_metadata_present");
+  },toHaveText:async expected=>{
+   assert.equal(value,"copies");assert.deepEqual(expected,["local: deleted · superseded","remote: available","local: available"]);
+   events.push("waiting_for_render");await rendered;events.push("fresh_copies_rendered");
   }}));
+  const outcome=select(panel,"exact_backup").then(()=>{settled=true;return "passed";},()=>{settled=true;return "failed";});
+  await tick();
   if(scenario==="refresh_denied") {
-   await assert.rejects(select(panel,"exact_backup"));
-   assert.deepEqual(events,["refresh_archive_status","refresh"]);
-  } else {
-   await select(panel,"exact_backup");
-   assert.deepEqual(events,["refresh_archive_status","refresh","select_backup","select","verify_backup_metadata","verified"]);
+   assert.equal(await outcome,"failed");assert.equal(events.includes("old_button_clicked"),false);finishHTTP(response);continue;
   }
+  assert.equal(events.includes("old_button_clicked"),true);
+  assert.equal(settled,false,"old same-ID button must not complete selection before refreshed GET");
+  finishHTTP(response);await tick();
+  if(scenario==="http_denied") {assert.equal(await outcome,"failed");assert.equal(events.includes("same_id_metadata_present"),false);continue;}
+  assert.equal(events.includes("same_id_metadata_present"),true);
+  assert.equal(events.includes("waiting_for_render"),true);
+  assert.equal(settled,false,"same-ID metadata must not complete selection before fresh copy inventory renders");
+  finishDOM();assert.equal(await outcome,"passed");
+  assert.equal(events.at(-1),"fresh_copies_rendered");
  }
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
