@@ -15,11 +15,13 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,6 +76,8 @@ type databaseRetentionExecution struct {
 }
 
 type databaseRetentionMutation struct {
+	ProbeOnly bool   `json:"probe_only,omitempty"`
+	ProbeKey  string `json:"probe_key,omitempty"`
 	domain.HostingAuthority
 	ReceiptID   string `json:"receipt_id"`
 	PlanHash    string `json:"plan_hash"`
@@ -84,6 +88,7 @@ type databaseRetentionMutation struct {
 
 type databaseRetentionWire struct {
 	mu               sync.Mutex
+	observeOnly      bool
 	pausePlan        bool
 	first            bool
 	entered, release chan struct{}
@@ -114,6 +119,11 @@ func (w *databaseRetentionWire) serve(out http.ResponseWriter, r *http.Request, 
 		databaseRemoteCopyResponse(out, rec)
 		return true
 	}
+	// Qualification probes never count as archive intents or deletion receipts.
+	if in.ProbeOnly {
+		databaseRemoteCopyResponse(out, rec)
+		return true
+	}
 	w.mu.Lock()
 	if in.Phase == "intent" {
 		seen := false
@@ -131,6 +141,17 @@ func (w *databaseRetentionWire) serve(out http.ResponseWriter, r *http.Request, 
 			}
 			w.intents = append(w.intents, in)
 		}
+	}
+	if w.observeOnly {
+		if in.Phase == "deleted" || in.Phase == "absent" {
+			if w.terminals == nil {
+				w.terminals = map[string]int{}
+			}
+			w.terminals[in.CopyID]++
+		}
+		w.mu.Unlock()
+		databaseRemoteCopyResponse(out, rec)
+		return true
 	}
 	if w.pausePlan {
 		if strings.HasSuffix(r.URL.Path, "/plan") && !w.first {
@@ -184,15 +205,16 @@ func (w *databaseRetentionWire) serve(out http.ResponseWriter, r *http.Request, 
 }
 
 type databaseRetentionFixture struct {
-	f           *databaseRunnerFixture
-	silo        *databaseRemoteSilo
-	source      domain.HostingDatabase
-	application domain.HostingOperation
-	targetID    string
-	revision    int64
-	backups     []domain.HostingDatabaseBackupOperation
-	uploads     []databaseRemoteTransfer
-	deleteFault *databaseRetentionDeleteFault
+	f                     *databaseRunnerFixture
+	silo                  *databaseRemoteSilo
+	source                domain.HostingDatabase
+	application           domain.HostingOperation
+	targetID              string
+	revision              int64
+	backups               []domain.HostingDatabaseBackupOperation
+	uploads               []databaseRemoteTransfer
+	archiveDeleteRequests atomic.Int64
+	deleteFault           *databaseRetentionDeleteFault
 }
 
 func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRetentionFixture {
@@ -211,7 +233,7 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 	if len(faultMode) > 0 {
 		mode = faultMode[0]
 	}
-	if mode == "conditional_unsupported" || mode == "unknown_delete" {
+	if mode == "conditional_unsupported" || mode == "unknown_delete" || mode == "delete_denied" {
 		if mode == "unknown_delete" {
 			x.deleteFault = &databaseRetentionDeleteFault{}
 		}
@@ -226,6 +248,9 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 			t.Fatal("owned conditional fault listener unavailable")
 		}
 		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if retentionArchiveDelete(r) {
+				x.archiveDeleteRequests.Add(1)
+			}
 			if mode == "conditional_unsupported" && retentionConditionalFault(r) {
 				w.WriteHeader(204)
 				return
@@ -750,7 +775,26 @@ func TestHostingDatabaseBackupRetentionReplayCompiledRunner(t *testing.T) {
 	case <-time.After(90 * time.Second):
 		t.Fatal("committed deletion ACK loss not reached")
 	}
-	x.execute(preview, x.f.token, 409)
+	wire.mu.Lock()
+	liveAuthority := wire.committed
+	wire.mu.Unlock()
+	observeAttempt := func() (int, int) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		var next, leases int
+		if err := x.f.database.QueryRow(ctx, `SELECT next_attempt,(SELECT count(*) FROM run_leases WHERE run_id=task_runs.id) FROM task_runs WHERE id=$1`, liveAuthority.RunID).Scan(&next, &leases); err != nil {
+			t.Fatal("exact live attempt observation unavailable")
+		}
+		return next, leases
+	}
+	nextBefore, leasesBefore := observeAttempt()
+	beforeLive := x.execution(execution.ID)
+	liveReplay := x.execute(preview, x.f.token, 202)
+	nextAfter, leasesAfter := observeAttempt()
+	afterLive := x.execution(execution.ID)
+	if liveReplay.ID != execution.ID || nextBefore != nextAfter || leasesBefore != leasesAfter || leasesBefore != 1 || !retentionHistoryPreserved([]databaseRetentionExecution{liveReplay}, beforeLive) || !retentionHistoryPreserved([]databaseRetentionExecution{afterLive}, beforeLive) {
+		t.Fatal("live continuation changed its existing batch or attempt")
+	}
 	x.f.stop()
 	close(wire.release)
 	x.f.start()
@@ -896,28 +940,66 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 				x.execute(p, viewer.Token, 403)
 
 				backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID)
-				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "DELETE", "/api/v1/destinations/"+x.f.destination+"/project-grants/"+x.source.Resource.ProjectID, nil, 204)
+				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "POST", "/api/v1/destinations/"+x.f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: x.source.Resource.ProjectID}, 200)
 				x.execute(p, x.f.token, 403)
 				if backupRuntimeRestoreGrant(x.f, x.source.Resource.ProjectID) != nil {
 					t.Fatal("owned grant restore failed")
 				}
 				x.assertCopies(p, map[string]bool{})
 			} else {
+				wire := &databaseRetentionWire{observeOnly: true}
+				x.f.retentionWire.Store(wire)
 				executed := x.execute(p, x.f.token, 202)
 				settled := x.await(executed.ID)
-				if settled.State != "uncertain" || !settled.ReservationHeld {
-					t.Fatal("failed conditional qualification did not hold all copies")
-				}
-				for _, item := range settled.Items {
-					if item.State != "uncertain" || item.FailureCode != "conditional_unsupported" || !item.ReservationHeld {
-						t.Fatal("conditional failure did not remain closed")
-					}
+				wire.mu.Lock()
+				intents, terminals := len(wire.intents), len(wire.terminals)
+				wire.mu.Unlock()
+				if !retentionQualificationHeld(p, settled) || intents != 0 || terminals != 0 || x.archiveDeleteRequests.Load() != 0 {
+					t.Fatal("failed qualification changed selected archives or lost its held failure")
 				}
 				x.assertCopies(p, map[string]bool{})
 			}
 			fmt.Println("DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql " + kind)
 		})
 	}
+}
+
+func retentionQualificationHeld(preview databaseRetentionPreview, execution databaseRetentionExecution) bool {
+	selected := retentionSelected(preview)
+	if execution.State != "uncertain" || !execution.ReservationHeld || len(execution.Items) != len(selected) || len(selected) == 0 {
+		return false
+	}
+	expected := map[string]databaseRetentionItem{}
+	for _, item := range preview.Items {
+		if item.Selected {
+			expected[item.CopyID] = item
+		}
+	}
+	seen, failures := map[string]bool{}, 0
+	for _, item := range execution.Items {
+		copy, exists := expected[item.CopyID]
+		if !exists || item.BackupID != copy.BackupID || item.Location != copy.Location || !slices.Contains(selected, item.CopyID) || seen[item.CopyID] || item.State != "pending" || !item.ReservationHeld {
+			return false
+		}
+		seen[item.CopyID] = true
+		if item.FailureCode != "" {
+			if item.Location != "remote" || item.FailureCode != "conditional_unsupported" {
+				return false
+			}
+			failures++
+		}
+	}
+	return failures == 1
+}
+
+func retentionDumpShadowScripts() (string, string) {
+	// The pinned PG17 image exposes its real executable through this PATH entry.
+	// Shadow only a previously absent earlier PATH location; never move the binary.
+	const wrapper = "#!/bin/sh\n# nerocd-owned-retention-duplicate\nexec cat /tmp/nerocd-retention-duplicate.dump\n"
+	quoted := "'" + wrapper + "'"
+	install := "set -eu\ntest \"$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump\ntest -x /usr/lib/postgresql/17/bin/pg_dump\ntest ! -e /usr/local/bin/pg_dump\ntest ! -L /usr/local/bin/pg_dump\n(set -C; printf '%s' " + quoted + " >/usr/local/bin/pg_dump)\nchmod 0755 /usr/local/bin/pg_dump\nhash -r\ntest \"$(command -v pg_dump)\" = /usr/local/bin/pg_dump\n"
+	cleanup := "set -eu\nif test -e /usr/local/bin/pg_dump || test -L /usr/local/bin/pg_dump; then\n  test ! -L /usr/local/bin/pg_dump\n  test \"$(cat /usr/local/bin/pg_dump)\" = \"$(printf '%s' " + quoted + ")\"\n  rm /usr/local/bin/pg_dump\nfi\ntest \"$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump\nrm -f /tmp/nerocd-retention-duplicate.dump\n"
+	return install, cleanup
 }
 
 func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatabaseBackupOperation) domain.HostingDatabaseBackupOperation {
@@ -930,19 +1012,20 @@ func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatab
 	}
 	defer clear(data)
 	// Controlled duplicate-content injection. Only this owned database container's
-	// pg_dump invocation is replaced, using a real restorable archive produced by
-	// the compiled runner. Cleanup restores the original executable on all exits.
+	// pg_dump invocation is shadowed, using a real archive produced by the
+	// compiled runner. Cleanup removes only this wrapper; the real binary stays intact.
 	raw, err := databaseRunnerDocker(f.t.Context(), data, "exec", "--interactive", source.Result.ContainerID, "sh", "-c", "cat >/tmp/nerocd-retention-duplicate.dump && chmod 0444 /tmp/nerocd-retention-duplicate.dump")
 	clear(raw)
 	if err != nil {
 		f.t.Fatal("duplicate-content archive injection failed")
 	}
-	f.docker("exec", source.Result.ContainerID, "sh", "-c", "test ! -e /usr/local/bin/pg_dump.retention-original && mv /usr/local/bin/pg_dump /usr/local/bin/pg_dump.retention-original && printf '#!/bin/sh\ncat /tmp/nerocd-retention-duplicate.dump\n' >/usr/local/bin/pg_dump && chmod 0755 /usr/local/bin/pg_dump")
+	install, cleanup := retentionDumpShadowScripts()
 	restore := func(ctx context.Context) error {
-		raw, err := databaseRunnerDocker(ctx, nil, "exec", source.Result.ContainerID, "sh", "-c", "if test -e /usr/local/bin/pg_dump.retention-original; then mv /usr/local/bin/pg_dump.retention-original /usr/local/bin/pg_dump; fi; rm -f /tmp/nerocd-retention-duplicate.dump")
+		raw, err := databaseRunnerDocker(ctx, nil, "exec", source.Result.ContainerID, "sh", "-c", cleanup)
 		clear(raw)
 		return err
 	}
+	// Register cleanup before installation or any subsequent backup admission.
 	f.t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -950,6 +1033,7 @@ func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatab
 			f.t.Error("duplicate-content executable cleanup failed")
 		}
 	})
+	f.docker("exec", source.Result.ContainerID, "sh", "-c", install)
 	admitted := x.admitBackup()
 	settled := backupRuntimeAwait(f, admitted.ID)
 	upload := databaseRemoteAwait(f, admitted.ID, "upload", "succeeded")
@@ -1066,6 +1150,9 @@ func TestHostingDatabaseBackupRetentionProtectionsCompiledRunner(t *testing.T) {
 		}
 	}
 	x.assertCopies(p, map[string]bool{})
+	sharedRestore := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", "/api/v1/database-backups/"+second.ID+"/restores", map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Shared archive recovery"}, 202)
+	x.restoreApplication(second, sharedRestore.ID, "retention_shared_survivor")
+	x.f.assertRedacted()
 	fmt.Println("DATABASE_BACKUP_RETENTION_PROTECTION_PASS postgresql newest_shared_active_failed_upload_external")
 	fmt.Println("DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS postgresql")
 }
@@ -1137,6 +1224,11 @@ func TestDatabaseBackupRetentionWireExactReplayAndDefaultIsolation(t *testing.T)
 			t.Fatal("retention fault changed another profile")
 		}
 	}
+}
+
+func retentionArchiveDelete(r *http.Request) bool {
+	return r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/") &&
+		!strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/retention-probes/") && strings.HasSuffix(r.URL.Path, ".dump")
 }
 
 func retentionConditionalFault(r *http.Request) bool {
@@ -1496,5 +1588,92 @@ func TestDatabaseBackupRetentionRecoveredCopyPublicEvidence(t *testing.T) {
 	changed.Items[0].State = "available"
 	if retentionHistoryPreserved([]databaseRetentionExecution{changed}, prior) {
 		t.Fatal("recovery erased original deletion evidence")
+	}
+}
+
+func TestDatabaseBackupRetentionQualificationProbeIsolation(t *testing.T) {
+	wire := &databaseRetentionWire{entered: make(chan struct{}), release: make(chan struct{})}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"state":"dispatched"}`)) })
+	for _, phase := range []string{"intent", "deleted", "absent", "uncertain"} {
+		body := fmt.Sprintf(`{"probe_only":true,"probe_key":"nerocd/postgresql/retention-probes/owned/nonce","phase":%q,"copy_id":"owned"}`, phase)
+		out := httptest.NewRecorder()
+		if !wire.serve(out, httptest.NewRequest("POST", "/api/v1/runners/hosting/database-backup-retention/mutation", strings.NewReader(body)), handler) || out.Code != 200 || out.Body.Len() == 0 {
+			t.Fatal("qualification response entered the archive receipt fault")
+		}
+	}
+	if wire.first || len(wire.intents) != 0 || len(wire.terminals) != 0 || wire.replays != 0 {
+		t.Fatal("qualification probes were counted as physical archive effects")
+	}
+	observer := &databaseRetentionWire{observeOnly: true}
+	for _, phase := range []string{"intent", "deleted"} {
+		body := fmt.Sprintf(`{"phase":%q,"copy_id":"owned"}`, phase)
+		out := httptest.NewRecorder()
+		observer.serve(out, httptest.NewRequest("POST", "/api/v1/runners/hosting/database-backup-retention/mutation", strings.NewReader(body)), handler)
+		if out.Code != 200 || out.Body.Len() == 0 {
+			t.Fatal("archive observer withheld a real response")
+		}
+	}
+	if len(observer.intents) != 1 || len(observer.terminals) != 1 {
+		t.Fatal("archive observer failed to detect physical effects")
+	}
+}
+
+func TestDatabaseBackupRetentionQualificationPendingProof(t *testing.T) {
+	preview := databaseRetentionPreview{Items: []databaseRetentionItem{{CopyID: "local", Location: "local", Selected: true}, {CopyID: "remote", Location: "remote", Selected: true}}}
+	execution := databaseRetentionExecution{State: "uncertain", ReservationHeld: true, Items: []databaseRetentionExecutionItem{{CopyID: "local", Location: "local", State: "pending", ReservationHeld: true}, {CopyID: "remote", Location: "remote", State: "pending", ReservationHeld: true, FailureCode: "conditional_unsupported"}}}
+	if !retentionQualificationHeld(preview, execution) {
+		t.Fatal("untouched pending copies lost visible qualification failure")
+	}
+	for _, mutate := range []func(*databaseRetentionExecution){
+		func(v *databaseRetentionExecution) { v.Items[0].State = "intent" },
+		func(v *databaseRetentionExecution) { v.Items[0].State = "deleted" },
+		func(v *databaseRetentionExecution) { v.Items[0].State = "uncertain" },
+		func(v *databaseRetentionExecution) { v.Items[0].ReservationHeld = false },
+		func(v *databaseRetentionExecution) { v.Items[1].FailureCode = "" },
+		func(v *databaseRetentionExecution) { v.Items[1].FailureCode = "private_canary" },
+		func(v *databaseRetentionExecution) { v.Items[0].CopyID = v.Items[1].CopyID },
+		func(v *databaseRetentionExecution) { v.Items = v.Items[:1] },
+	} {
+		changed := execution
+		changed.Items = slices.Clone(execution.Items)
+		mutate(&changed)
+		if retentionQualificationHeld(preview, changed) {
+			t.Fatal("changed physical effects satisfied qualification failure proof")
+		}
+	}
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"DELETE", "/nerocd-runtime/nerocd/postgresql/backup/archive.dump", true},
+		{"GET", "/nerocd-runtime/nerocd/postgresql/backup/archive.dump", false},
+		{"DELETE", "/nerocd-runtime/nerocd/postgresql/retention-probes/owned/archive.dump", false},
+		{"DELETE", "/foreign/nerocd/postgresql/backup/archive.dump", false},
+	} {
+		if retentionArchiveDelete(httptest.NewRequest(tc.method, tc.path, nil)) != tc.want {
+			t.Fatal("archive DELETE observation escaped owned archive scope")
+		}
+	}
+}
+
+func TestDatabaseBackupRetentionDumpShadowGuard(t *testing.T) {
+	install, cleanup := retentionDumpShadowScripts()
+	for _, script := range []string{install, cleanup} {
+		command := exec.CommandContext(t.Context(), "sh", "-n")
+		command.Stdin = strings.NewReader(script)
+		if err := command.Run(); err != nil {
+			t.Fatal("owned dump shadow script syntax invalid")
+		}
+		if strings.Contains(script, "mv ") || strings.Contains(script, "retention-original") {
+			t.Fatal("dump shadow altered the real executable")
+		}
+	}
+	for _, guard := range []string{"test ! -e /usr/local/bin/pg_dump", "test ! -L /usr/local/bin/pg_dump", "set -C", "hash -r", "$(command -v pg_dump)\" = /usr/lib/postgresql/17/bin/pg_dump", "$(command -v pg_dump)\" = /usr/local/bin/pg_dump"} {
+		if !strings.Contains(install, guard) {
+			t.Fatal("dump shadow installation lost an executable ownership guard")
+		}
+	}
+	if !strings.Contains(cleanup, "test ! -L /usr/local/bin/pg_dump") || !strings.Contains(cleanup, "$(cat /usr/local/bin/pg_dump)") || !strings.Contains(cleanup, "nerocd-owned-retention-duplicate") {
+		t.Fatal("dump shadow cleanup lost exact-content guards")
 	}
 }
