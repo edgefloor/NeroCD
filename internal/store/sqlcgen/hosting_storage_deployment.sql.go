@@ -93,6 +93,39 @@ func (q *Queries) StorageDeploymentResource(ctx context.Context, id string) (Sto
 	return i, err
 }
 
+const storageDeploymentRestoredInitialHistory = `-- name: StorageDeploymentRestoredInitialHistory :one
+SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE (resource_id=$1::text OR binding_id=$2::text) AND id<>$3::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_materializations WHERE storage_id=$4::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_operation_admissions WHERE storage_id=$4::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_restore_use_admissions WHERE storage_id=$4::text)
+OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=$2::text)
+OR EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.binding_id=$2::text
+ AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.binding_id=s.binding_id AND b.destination_id=s.destination_id AND b.host_port=s.host_port))
+OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE resource_id=$1::text OR binding_id=$2::text)
+AS recorded
+`
+
+type StorageDeploymentRestoredInitialHistoryParams struct {
+	ResourceID         string `json:"resource_id"`
+	BindingID          string `json:"binding_id"`
+	RestoreOperationID string `json:"restore_operation_id"`
+	StorageID          string `json:"storage_id"`
+}
+
+// Restore admission reserves precisely this binding-state port before any writer.
+func (q *Queries) StorageDeploymentRestoredInitialHistory(ctx context.Context, arg StorageDeploymentRestoredInitialHistoryParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, storageDeploymentRestoredInitialHistory,
+		arg.ResourceID,
+		arg.BindingID,
+		arg.RestoreOperationID,
+		arg.StorageID,
+	)
+	var recorded *bool
+	err := row.Scan(&recorded)
+	return recorded, err
+}
+
 const storageDeploymentRunnerEligible = `-- name: StorageDeploymentRunnerEligible :one
 SELECT EXISTS(SELECT 1 FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN resource_bindings b ON b.destination_id=d.id
 WHERE b.id=$1::text AND b.resource_id=$2::text AND d.id=$3::text AND s.id=$4::text AND r.id=$5::text

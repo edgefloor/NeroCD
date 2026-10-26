@@ -161,6 +161,11 @@ func TestPostgresCatalogArchivePinnedRuntimeAndReplay(t *testing.T) {
 		t.Fatal("restore replay duplicated metadata or fabricated catalog identity", err)
 	}
 	catalogArchiveFinishRestore(t, f, restored)
+	options, err := f.pg.HostingStorageDeploymentOptions(f.ctx, restored.Resource.ID, "usr_bootstrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStorageInitialOptions(t, options, restored.Resource, restored.Storage)
 	input := hostingDeploymentRequest()
 	input.HostPort = 0
 	input.IdempotencyKey = "archive_restored_deploy"
@@ -176,6 +181,47 @@ func TestPostgresCatalogArchivePinnedRuntimeAndReplay(t *testing.T) {
 	raw, _ := json.Marshal([]any{restored, replay, op})
 	if strings.Contains(string(raw), "private-value") {
 		t.Fatal("plaintext escaped restore metadata")
+	}
+}
+
+func TestPostgresCatalogArchiveInitialDeploymentSafety(t *testing.T) {
+	for _, scenario := range []string{"pending", "failed", "unrelated_writer", "release_slot"} {
+		t.Run(scenario, func(t *testing.T) {
+			f, _ := catalogArchiveSource(t)
+			backup := f.finishBackup(t, f.backup(t))
+			restored, err := f.service.RequestStorageRestore(f.owner, backup.ID, domain.HostingStorageRestoreInput{RequestID: strings.Repeat("4", 32), Name: "initial safety"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "restore_hold"
+			switch scenario {
+			case "failed":
+				op, a := f.claim(t, restored.Operation.ID, "restore")
+				if _, err = f.service.RunnerStorageArchiveComplete(f.runnerContext, domain.HostingStorageArchiveCompleteRequest{HostingAuthority: a, ReceiptID: "failed_restore", PlanHash: op.StorageArchive.Plan.Hash, Result: domain.HostingStorageArchiveResult{ArchiveOutcome: "failed", ResumeOutcome: "not_needed", FailureCode: "helper_failed"}}); err != nil {
+					t.Fatal(err)
+				}
+			case "unrelated_writer", "release_slot":
+				catalogArchiveFinishRestore(t, f, restored)
+				view, readErr := f.pg.HostingStorageDeploymentOptions(f.ctx, restored.Resource.ID, "usr_bootstrap")
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				assertStorageInitialOptions(t, view, restored.Resource, restored.Storage)
+				want = "no_previous_healthy"
+				if scenario == "unrelated_writer" {
+					_, err = f.db.Exec(f.ctx, `INSERT INTO hosting_operations(id,project_id,resource_id,binding_id,idempotency_key,request_hash,state,created_by) VALUES('hop_unknown_restore_writer',$1,$2,$3,'unknown_writer','sha256:'||repeat('a',64),'failed','usr_bootstrap')`, restored.Resource.ProjectID, restored.Resource.ID, restored.Storage.BindingID)
+				} else {
+					_, err = f.db.Exec(f.ctx, `INSERT INTO hosting_release_slots(destination_id,host_port,binding_id) VALUES($1,18080,$2)`, restored.Storage.DestinationID, restored.Storage.BindingID)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			view, err := f.pg.HostingStorageDeploymentOptions(f.ctx, restored.Resource.ID, "usr_bootstrap")
+			if err != nil || view.Available || view.Reason != want || view.HostPort != nil || view.ContainerPort != nil || view.Readiness != nil || view.PreviousHealthyOperationID != nil {
+				t.Fatalf("unsafe restored deployment advice: %+v %v; want %s", view, err, want)
+			}
+		})
 	}
 }
 

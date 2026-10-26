@@ -45,6 +45,40 @@ func storageDeploymentOrdinaryReason(ctx context.Context, q *sqlcgen.Queries, de
 	return "available", nil
 }
 
+// A restore initializes binding state without creating an application writer.
+// Only its exact completed origin may be excluded from initial writer history.
+func storageDeploymentRestoredInitial(ctx context.Context, tx pgx.Tx, storage domain.HostingStorage, daemon *string) (bool, error) {
+	q := sqlcgen.New(tx)
+	present, err := storageRestoreOriginPresent(ctx, tx, storage.ID)
+	if err != nil || !present {
+		return false, err
+	}
+	m, err := readArchiveRestoreMaterialization(ctx, tx, storage)
+	if err != nil {
+		return false, err
+	}
+	if m.State != "materialized" || m.MaterializedReceipt == nil || daemon == nil || *daemon != m.DaemonID {
+		return false, nil
+	}
+	op, found, err := archiveOperation(ctx, tx, m.CreationOperationID)
+	if err != nil || !found {
+		return false, err
+	}
+	a := op.StorageArchive
+	if op.State != "succeeded" || op.ResourceID != storage.ResourceID || op.BindingID != storage.BindingID || op.ProjectID != storage.ProjectID || op.MutationHold || op.RestoreOwnershipHeld || op.CompleteReceipt == nil || a.Mode != "restore" || a.Plan.Target == nil || a.Plan.Hash != m.CreationPlanHash || !reflect.DeepEqual(a.Plan.Target.Storage, storage) || a.Plan.Target.Plan.CreationNonce != m.CreationNonce || a.Result == nil || a.Result.ArchiveOutcome != "succeeded" || !a.Result.RestoreVerified || a.Result.Uncertain {
+		return false, nil
+	}
+	materialized, err := q.ReadStorageRestoreMaterialized(ctx, storage.ID)
+	if err != nil {
+		return false, err
+	}
+	if materialized.OperationID != op.ID {
+		return false, nil
+	}
+	history, err := q.StorageDeploymentRestoredInitialHistory(ctx, sqlcgen.StorageDeploymentRestoredInitialHistoryParams{ResourceID: storage.ResourceID, BindingID: storage.BindingID, StorageID: storage.ID, RestoreOperationID: op.ID})
+	return err == nil && history != nil && !*history, err
+}
+
 // HostingStorageDeploymentOptions qualifies current settings in one read-only
 // snapshot. It never locks a row, reserves a port, or creates admission evidence.
 func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, resource, actor string) (domain.HostingStorageDeploymentOptions, error) {
@@ -172,6 +206,13 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	}
 	var healthy domain.HostingHealthy
 	if len(state.Healthy) == 0 {
+		initial, readErr := storageDeploymentRestoredInitial(ctx, tx, storage, state.DaemonID)
+		if readErr != nil {
+			return view, readErr
+		}
+		if initial {
+			return finish("initial_deployment")
+		}
 		return finish("no_previous_healthy")
 	}
 	if json.Unmarshal(state.Healthy, &healthy) != nil {

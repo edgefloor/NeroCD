@@ -25,3 +25,16 @@ OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=sqlc.arg(binding
 OR EXISTS(SELECT 1 FROM hosting_release_slots WHERE binding_id=sqlc.arg(binding_id)::text)
 OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE resource_id=sqlc.arg(resource_id)::text OR binding_id=sqlc.arg(binding_id)::text)
 AS recorded;
+
+-- name: StorageDeploymentRestoredInitialHistory :one
+SELECT EXISTS(SELECT 1 FROM hosting_operations WHERE (resource_id=sqlc.arg(resource_id)::text OR binding_id=sqlc.arg(binding_id)::text) AND id<>sqlc.arg(restore_operation_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_materializations WHERE storage_id=sqlc.arg(storage_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_operation_admissions WHERE storage_id=sqlc.arg(storage_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_storage_restore_use_admissions WHERE storage_id=sqlc.arg(storage_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_retained_releases WHERE binding_id=sqlc.arg(binding_id)::text)
+OR EXISTS(SELECT 1 FROM hosting_release_claims WHERE binding_id=sqlc.arg(binding_id)::text)
+-- Restore admission reserves precisely this binding-state port before any writer.
+OR EXISTS(SELECT 1 FROM hosting_release_slots s WHERE s.binding_id=sqlc.arg(binding_id)::text
+ AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b WHERE b.binding_id=s.binding_id AND b.destination_id=s.destination_id AND b.host_port=s.host_port))
+OR EXISTS(SELECT 1 FROM hosting_proxy_routes WHERE resource_id=sqlc.arg(resource_id)::text OR binding_id=sqlc.arg(binding_id)::text)
+AS recorded;
