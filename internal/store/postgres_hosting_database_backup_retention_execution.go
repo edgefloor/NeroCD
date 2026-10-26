@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,11 +25,15 @@ func backupRetentionLoad(ctx context.Context, tx pgx.Tx, id string, lock bool) (
 	var r backupRetentionRow
 	var plan, body []byte
 	var hash string
-	query := `SELECT plan,body,plan_hash,run_id FROM hosting_database_backup_retention_executions WHERE id=$1`
+	q := sqlcgen.New(tx)
+	var e error
 	if lock {
-		query += " FOR UPDATE"
+		row, err := q.LockDatabaseBackupRetentionExecution(ctx, id)
+		plan, body, hash, r.run, e = row.Plan, row.Body, row.PlanHash, row.RunID, err
+	} else {
+		row, err := q.ReadDatabaseBackupRetentionExecution(ctx, id)
+		plan, body, hash, r.run, e = row.Plan, row.Body, row.PlanHash, row.RunID, err
 	}
-	e := tx.QueryRow(ctx, query, id).Scan(&plan, &body, &hash, &r.run)
 	if e != nil {
 		return r, hostingError(e)
 	}
@@ -51,7 +56,7 @@ func backupRetentionAuthority(ctx context.Context, tx pgx.Tx, runner string, a d
 		return backupRetentionRow{}, hostingError(e)
 	}
 	var id string
-	e := tx.QueryRow(ctx, `SELECT e.id FROM hosting_database_backup_retention_executions e JOIN task_runs t ON t.id=e.run_id JOIN run_leases l ON l.run_id=t.id WHERE e.id=$1 AND e.run_id=$2 AND e.runner_id=$3 AND l.id=$4 AND l.runner_id=$3 AND l.attempt=$5 AND l.fence=$6 AND (NOT $7 OR (l.status='active' AND l.expires_at>clock_timestamp())) AND t.run_spec=jsonb_build_object('type','database_backup_retention','hosting_operation_id',e.id,'hosting_mode','retention','inputs','{}'::jsonb) FOR UPDATE OF l`, a.OperationID, a.RunID, runner, a.LeaseID, a.Attempt, a.Fence, live).Scan(&id)
+	id, e := sqlcgen.New(tx).LockDatabaseBackupRetentionAuthority(ctx, sqlcgen.LockDatabaseBackupRetentionAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Column5: strconv.Itoa(a.Attempt), Fence: a.Fence, Column7: live})
 	if e != nil {
 		return backupRetentionRow{}, hostingError(e)
 	}
@@ -81,7 +86,7 @@ func (s *PostgresStore) PrepareDatabaseBackupRetention(ctx context.Context, id s
 		}
 		r.view.State = "dispatched"
 		r.view.UpdatedAt = time.Now().UTC()
-		_, e = tx.Exec(ctx, `UPDATE hosting_database_backup_retention_executions SET run_id=$2,body=$3 WHERE id=$1`, id, run.ID, buildJSON(r.view))
+		e = sqlcgen.New(tx).DispatchDatabaseBackupRetention(ctx, sqlcgen.DispatchDatabaseBackupRetentionParams{ID: id, RunID: &run.ID, Body: buildJSON(r.view)})
 		return e == nil, e
 	})
 	return e
@@ -144,7 +149,9 @@ func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, run
 		}
 		var hash string
 		var raw []byte
-		e = tx.QueryRow(ctx, `SELECT body_hash,response FROM hosting_database_backup_retention_receipts WHERE execution_id=$1 AND copy_id=$2 AND phase=$3 AND attempt=$4`, in.OperationID, in.CopyID, phaseKey, in.Attempt).Scan(&hash, &raw)
+		readDatabaseBackupRetentionReceiptRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionReceipt(ctx, sqlcgen.ReadDatabaseBackupRetentionReceiptParams{ExecutionID: in.OperationID, CopyID: in.CopyID, Phase: phaseKey, Attempt: int32(in.Attempt)})
+		hash = readDatabaseBackupRetentionReceiptRow.BodyHash
+		raw = readDatabaseBackupRetentionReceiptRow.Response
 		if e == nil {
 			if hash != domain.HostingDocumentHash(in) || json.Unmarshal(raw, &zero) != nil {
 				return zero, ErrConflict
@@ -213,11 +220,11 @@ func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, run
 			} else if in.Phase == "uncertain" {
 				availability = "uncertain"
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_copies SET availability=$2 WHERE id=$1`, in.CopyID, availability); e != nil {
+			if e = sqlcgen.New(tx).SetDatabaseBackupCopyAvailability(ctx, sqlcgen.SetDatabaseBackupCopyAvailabilityParams{ID: in.CopyID, Availability: availability}); e != nil {
 				return zero, e
 			}
 		}
-		if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_retention_items SET state=$3,reservation_held=$4 WHERE execution_id=$1 AND copy_id=$2`, in.OperationID, in.CopyID, item.State, item.ReservationHeld); e != nil {
+		if e = sqlcgen.New(tx).SetDatabaseBackupRetentionItem(ctx, sqlcgen.SetDatabaseBackupRetentionItemParams{ExecutionID: in.OperationID, CopyID: in.CopyID, State: item.State, ReservationHeld: item.ReservationHeld}); e != nil {
 			return zero, e
 		}
 		done := true
@@ -277,20 +284,20 @@ func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, run
 			if r.view.State == "succeeded" {
 				status = "succeeded"
 			}
-			if _, e = tx.Exec(ctx, `UPDATE task_runs SET status=$2,finished_at=clock_timestamp() WHERE id=$1`, in.RunID, status); e != nil {
+			if e = sqlcgen.New(tx).CompleteDatabaseBackupRetentionTask(ctx, sqlcgen.CompleteDatabaseBackupRetentionTaskParams{ID: in.RunID, Status: status}); e != nil {
 				return zero, e
 			}
-			if _, e = tx.Exec(ctx, `UPDATE run_leases SET status=$2,completed_at=clock_timestamp(),completion_key=$3 WHERE id=$1 AND status='active'`, in.LeaseID, status, in.ReceiptID); e != nil {
+			if e = sqlcgen.New(tx).CompleteDatabaseBackupRetentionLease(ctx, sqlcgen.CompleteDatabaseBackupRetentionLeaseParams{ID: in.LeaseID, Status: status, CompletionKey: &in.ReceiptID}); e != nil {
 				return zero, e
 			}
 		}
-		if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_retention_executions SET body=$2,reservation_held=$3 WHERE id=$1`, in.OperationID, buildJSON(r.view), held); e != nil {
+		if e = sqlcgen.New(tx).SetDatabaseBackupRetentionExecutionState(ctx, sqlcgen.SetDatabaseBackupRetentionExecutionStateParams{ID: in.OperationID, Body: buildJSON(r.view), ReservationHeld: held}); e != nil {
 			return zero, e
 		}
 		if e = databaseBackupAudit(ctx, tx, r.plan.ActorID, in.OperationID, "retention_"+in.ReceiptID, r.view.ProjectID); e != nil {
 			return zero, e
 		}
-		if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_receipts(execution_id,copy_id,phase,attempt,receipt_id,authority,body,body_hash,response) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, in.OperationID, in.CopyID, phaseKey, in.Attempt, in.ReceiptID, buildJSON(in.HostingAuthority), buildJSON(in), domain.HostingDocumentHash(in), buildJSON(r.view)); e != nil {
+		if e = sqlcgen.New(tx).CreateDatabaseBackupRetentionReceipt(ctx, sqlcgen.CreateDatabaseBackupRetentionReceiptParams{ExecutionID: in.OperationID, CopyID: in.CopyID, Phase: phaseKey, Attempt: int32(in.Attempt), ReceiptID: in.ReceiptID, Authority: buildJSON(in.HostingAuthority), Body: buildJSON(in), BodyHash: domain.HostingDocumentHash(in), Response: buildJSON(r.view)}); e != nil {
 			return zero, e
 		}
 		if e = backupRetentionCurrent(ctx, tx, r.plan); e != nil {
@@ -311,22 +318,9 @@ func (s *PostgresStore) recoverDatabaseBackupRetentions(ctx context.Context) err
 		return nil
 	}
 	_, e := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		rows, e := tx.Query(ctx, `SELECT id FROM hosting_database_backup_retention_executions WHERE body->>'state'='queued' ORDER BY created_at,id LIMIT 100`)
+		ids, e := sqlcgen.New(tx).ListQueuedDatabaseBackupRetentionIDs(ctx)
 		if e != nil {
 			return false, e
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if e = rows.Scan(&id); e != nil {
-				rows.Close()
-				return false, e
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if rows.Err() != nil {
-			return false, rows.Err()
 		}
 		for _, id := range ids {
 			if _, e = s.hostingJobs.EnqueueDatabaseBackupRetentionTx(ctx, tx, hostingjobs.DatabaseBackupRetentionArgs{OperationID: id}); e != nil {

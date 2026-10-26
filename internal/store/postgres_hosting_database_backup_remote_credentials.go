@@ -71,13 +71,7 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 			return out, err
 		}
 		var valid bool
-		databaseBackupRemoteDeliveryValidRow, err := sqlcgen.New(tx).DatabaseBackupRemoteDeliveryValid(ctx, sqlcgen.DatabaseBackupRemoteDeliveryValidParams{Column1: out.Metadata.UseUntil, Column2: expiry})
-		if err == nil && databaseBackupRemoteDeliveryValidRow == nil {
-			err = pgx.ScanArgError{ColumnIndex: 0, FieldName: "?column?", Err: errors.New("cannot scan NULL into *bool")}
-		}
-		if err == nil {
-			valid = *databaseBackupRemoteDeliveryValidRow
-		}
+		valid, err = sqlcgen.New(tx).DatabaseBackupRemoteDeliveryValid(ctx, sqlcgen.DatabaseBackupRemoteDeliveryValidParams{Column1: out.Metadata.UseUntil, Column2: expiry})
 		if err != nil {
 			return out, err
 		}

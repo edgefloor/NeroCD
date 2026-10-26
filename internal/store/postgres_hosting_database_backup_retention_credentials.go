@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
 )
 
 type HostingDatabaseBackupRetentionCredentialRepository interface {
@@ -40,7 +41,7 @@ func backupRetentionDeliveryAuthority(ctx context.Context, tx pgx.Tx, runner, to
 	if e = backupRetentionCurrent(ctx, tx, r.plan); e != nil {
 		return r, c, expiry, e
 	}
-	e = tx.QueryRow(ctx, `SELECT least(l.expires_at,clock_timestamp()+interval '1 minute') FROM run_leases l JOIN runners r ON r.id=l.runner_id WHERE l.id=$1 AND r.id=$2 AND r.token_hash=$3 AND r.token_hash<>'' AND r.status='active' FOR SHARE OF r`, in.Authority.LeaseID, runner, token).Scan(&expiry)
+	expiry, e = sqlcgen.New(tx).ReadDatabaseBackupRetentionCredentialExpiry(ctx, sqlcgen.ReadDatabaseBackupRetentionCredentialExpiryParams{ID: in.Authority.LeaseID, ID_2: runner, TokenHash: token})
 	return r, c, expiry, hostingError(e)
 }
 func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context, runner, token string, in domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error) {
@@ -55,14 +56,14 @@ func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context,
 			Request domain.BackupRemoteCredentialRequest
 		}{runner, in})
 		var raw []byte
-		e = tx.QueryRow(ctx, `SELECT metadata FROM hosting_database_backup_retention_deliveries WHERE delivery_id=$1`, in.DeliveryID).Scan(&raw)
+		raw, e = sqlcgen.New(tx).ReadDatabaseBackupRetentionDelivery(ctx, in.DeliveryID)
 		if e == nil {
 			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in || out.Metadata.Validate() != nil {
 				return out, ErrConflict
 			}
 		} else if errors.Is(e, pgx.ErrNoRows) {
 			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRetentionCredentialPurpose, Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
-			if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_deliveries(delivery_id,execution_id,copy_id,metadata,use_until) VALUES($1,$2,$3,$4,$5)`, in.DeliveryID, in.Authority.OperationID, in.RetentionCopyID, buildJSON(out.Metadata), expiry); e != nil {
+			if e = sqlcgen.New(tx).CreateDatabaseBackupRetentionDelivery(ctx, sqlcgen.CreateDatabaseBackupRetentionDeliveryParams{DeliveryID: in.DeliveryID, ExecutionID: in.Authority.OperationID, CopyID: in.RetentionCopyID, Metadata: buildJSON(out.Metadata), UseUntil: expiry}); e != nil {
 				return out, e
 			}
 			if e = databaseBackupAudit(ctx, tx, runner, r.view.ID, "retention_credentials_"+in.DeliveryID, r.view.ProjectID); e != nil {
@@ -72,7 +73,8 @@ func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context,
 			return out, e
 		}
 		var valid bool
-		if e = tx.QueryRow(ctx, `SELECT $1::timestamptz>clock_timestamp() AND $1::timestamptz<=$2::timestamptz`, out.Metadata.UseUntil, expiry).Scan(&valid); e != nil {
+		valid, e = sqlcgen.New(tx).DatabaseBackupRetentionDeliveryValid(ctx, sqlcgen.DatabaseBackupRetentionDeliveryValidParams{Column1: out.Metadata.UseUntil, Column2: expiry})
+		if e != nil {
 			return out, e
 		}
 		if !valid {
@@ -94,7 +96,7 @@ func (s *PostgresStore) RevalidateBackupRetentionCredentials(ctx context.Context
 			return false, e
 		}
 		var raw []byte
-		e = tx.QueryRow(ctx, `SELECT metadata FROM hosting_database_backup_retention_deliveries WHERE delivery_id=$1 AND execution_id=$2 AND copy_id=$3 AND use_until>clock_timestamp() AND use_until<=$4`, in.DeliveryID, in.Authority.OperationID, in.RetentionCopyID, expiry).Scan(&raw)
+		raw, e = sqlcgen.New(tx).ReadValidDatabaseBackupRetentionDelivery(ctx, sqlcgen.ReadValidDatabaseBackupRetentionDeliveryParams{DeliveryID: in.DeliveryID, ExecutionID: in.Authority.OperationID, CopyID: in.RetentionCopyID, UseUntil: expiry})
 		if e != nil {
 			return false, hostingError(e)
 		}

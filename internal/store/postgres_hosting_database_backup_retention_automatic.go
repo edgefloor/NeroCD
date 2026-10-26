@@ -8,10 +8,11 @@ import (
 
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/store/sqlcgen"
 )
 
 func backupRetentionPublication(ctx context.Context, tx pgx.Tx, resource, publication string) error {
-	_, e := tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_publications(id,resource_id,actor_id,policy_revision) SELECT $1,resource_id,actor_id,revision FROM hosting_database_backup_retention_policies WHERE resource_id=$2 AND body->>'enabled'='true' AND body->>'automatic'='true' ON CONFLICT DO NOTHING`, publication, resource)
+	e := sqlcgen.New(tx).CreateDatabaseBackupRetentionPublication(ctx, sqlcgen.CreateDatabaseBackupRetentionPublicationParams{ID: publication, ResourceID: resource})
 	return e
 }
 
@@ -21,7 +22,7 @@ func (s *PostgresStore) ReconcileDatabaseBackupRetention(ctx context.Context) er
 	if !s.hostingJobs.DatabaseBackupRetentionEnabled() {
 		return nil
 	}
-	rows, e := s.pool.Query(ctx, `SELECT id,resource_id,actor_id,policy_revision FROM hosting_database_backup_retention_publications WHERE state='pending' ORDER BY created_at,id LIMIT 50`)
+	rows, e := sqlcgen.New(s.pool).ListPendingDatabaseBackupRetentionPublications(ctx)
 	if e != nil {
 		return e
 	}
@@ -29,18 +30,9 @@ func (s *PostgresStore) ReconcileDatabaseBackupRetention(ctx context.Context) er
 		id, resource, actor string
 		revision            int64
 	}
-	var events []event
-	for rows.Next() {
-		var v event
-		if e = rows.Scan(&v.id, &v.resource, &v.actor, &v.revision); e != nil {
-			rows.Close()
-			return e
-		}
-		events = append(events, v)
-	}
-	rows.Close()
-	if rows.Err() != nil {
-		return rows.Err()
+	events := make([]event, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, event{id: row.ID, resource: row.ResourceID, actor: row.ActorID, revision: row.PolicyRevision})
 	}
 	for _, v := range events {
 		key := domain.HostingDocumentHash(v.id)[7:39]
@@ -70,7 +62,7 @@ func (s *PostgresStore) ReconcileDatabaseBackupRetention(ctx context.Context) er
 				return e
 			}
 		}
-		if _, e = s.pool.Exec(ctx, `UPDATE hosting_database_backup_retention_publications SET state=$2,reason=$3 WHERE id=$1 AND state='pending'`, v.id, state, reason); e != nil {
+		if e = sqlcgen.New(s.pool).SetDatabaseBackupRetentionPublicationState(ctx, sqlcgen.SetDatabaseBackupRetentionPublicationStateParams{ID: v.id, State: state, Reason: reason}); e != nil {
 			return e
 		}
 	}

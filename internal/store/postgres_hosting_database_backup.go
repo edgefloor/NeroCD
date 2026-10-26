@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -564,7 +565,7 @@ func (s *PostgresStore) databaseBackupClaimAllowed(ctx context.Context, tx pgx.T
 }
 func databaseBackupAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, live bool) (sqlcgen.HostingDatabaseBackup, error) {
 	var r sqlcgen.HostingDatabaseBackup
-	lockDatabaseBackupAuthorityRow, err := sqlcgen.New(tx).LockDatabaseBackupAuthority(ctx, sqlcgen.LockDatabaseBackupAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: int32(a.Attempt), Fence: a.Fence, Column7: live})
+	lockDatabaseBackupAuthorityRow, err := sqlcgen.New(tx).LockDatabaseBackupAuthority(ctx, sqlcgen.LockDatabaseBackupAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Column5: strconv.Itoa(a.Attempt), Fence: a.Fence, Column7: live})
 	r.ID = lockDatabaseBackupAuthorityRow
 	if err != nil {
 		return r, hostingError(err)

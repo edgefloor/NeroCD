@@ -17,12 +17,12 @@ import (
 )
 
 func backupRetentionLock(ctx context.Context, tx pgx.Tx) error {
-	_, e := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-backup-copy-admission',0))`)
+	e := sqlcgen.New(tx).LockDatabaseBackupCopyAdmission(ctx)
 	return e
 }
 func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_retention_policies WHERE resource_id=$1 FOR SHARE`, resource).Scan(&raw)
+	raw, err := sqlcgen.New(tx).LockDatabaseBackupRetentionPolicy(ctx, resource)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -38,7 +38,10 @@ func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource string) (*do
 func backupRetentionReplay(ctx context.Context, tx pgx.Tx, resource, actor, kind, request, hash string, out any) (bool, error) {
 	var got, savedActor string
 	var raw []byte
-	e := tx.QueryRow(ctx, `SELECT actor_id,request_hash,response FROM hosting_database_backup_retention_requests WHERE resource_id=$1 AND kind=$2 AND request_id=$3`, resource, kind, request).Scan(&savedActor, &got, &raw)
+	readDatabaseBackupRetentionRequestRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionRequest(ctx, sqlcgen.ReadDatabaseBackupRetentionRequestParams{ResourceID: resource, Kind: kind, RequestID: request})
+	savedActor = readDatabaseBackupRetentionRequestRow.ActorID
+	got = readDatabaseBackupRetentionRequestRow.RequestHash
+	raw = readDatabaseBackupRetentionRequestRow.Response
 	if errors.Is(e, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -51,7 +54,7 @@ func backupRetentionReplay(ctx context.Context, tx pgx.Tx, resource, actor, kind
 	return true, nil
 }
 func backupRetentionSaveRequest(ctx context.Context, tx pgx.Tx, resource, actor, kind, request, hash string, out any) error {
-	_, e := tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_requests(resource_id,kind,request_id,actor_id,request_hash,response) VALUES($1,$2,$3,$4,$5,$6)`, resource, kind, request, actor, hash, buildJSON(out))
+	e := sqlcgen.New(tx).CreateDatabaseBackupRetentionRequest(ctx, sqlcgen.CreateDatabaseBackupRetentionRequestParams{ResourceID: resource, Kind: kind, RequestID: request, ActorID: actor, RequestHash: hash, Response: buildJSON(out)})
 	return e
 }
 func (s *PostgresStore) GetDatabaseBackupRetention(ctx context.Context, actor, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
@@ -94,7 +97,7 @@ func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, 
 			return zero, ErrConflict
 		}
 		out := domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersion, ProjectID: value.Resource.ProjectID, ResourceID: resource, Revision: revision + 1, ResourceGeneration: value.Resource.Generation, Enabled: in.Enabled, Automatic: in.Automatic, Local: in.Local, Remote: in.Remote, CreatedAt: created, UpdatedAt: now}
-		_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_policies(resource_id,project_id,actor_id,revision,body) VALUES($1,$2,$3,$4,$5) ON CONFLICT(resource_id) DO UPDATE SET actor_id=EXCLUDED.actor_id,revision=EXCLUDED.revision,body=EXCLUDED.body`, resource, out.ProjectID, actor, out.Revision, buildJSON(out))
+		e = sqlcgen.New(tx).SaveDatabaseBackupRetentionPolicy(ctx, sqlcgen.SaveDatabaseBackupRetentionPolicyParams{ResourceID: resource, ProjectID: out.ProjectID, ActorID: actor, Revision: int64(out.Revision), Body: buildJSON(out)})
 		if e != nil {
 			return zero, e
 		}
@@ -150,7 +153,7 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 		}{location, in.LocalCopy})
 		if !c.Local.Created {
 			var prior []byte
-			e = tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND superseded_by_copy_id IS NULL AND availability IN ('available','reserved') AND body->'local'->>'created'='true' LIMIT 1`, location).Scan(&prior)
+			prior, e = sqlcgen.New(tx).FindOwnedDatabaseBackupLocalCopy(ctx, location)
 			if e == nil {
 				var known domain.BackupRetentionCopy
 				if json.Unmarshal(prior, &known) != nil {
@@ -188,7 +191,9 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 		}
 		var priorID string
 		var raw []byte
-		e = tx.QueryRow(ctx, `SELECT id,body FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local' AND location_hash=$2 AND availability<>'deleted' AND superseded_by_copy_id IS NULL FOR UPDATE`, r.ID, location).Scan(&priorID, &raw)
+		lockDatabaseBackupLocalCopyPredecessorRow, e := sqlcgen.New(tx).LockDatabaseBackupLocalCopyPredecessor(ctx, sqlcgen.LockDatabaseBackupLocalCopyPredecessorParams{BackupID: r.ID, LocationHash: location})
+		priorID = lockDatabaseBackupLocalCopyPredecessorRow.ID
+		raw = lockDatabaseBackupLocalCopyPredecessorRow.Body
 		if e == nil {
 			var prior domain.BackupRetentionCopy
 			if json.Unmarshal(raw, &prior) != nil || prior.Local == nil || prior.Local.PoolID != c.Local.PoolID || prior.Local.Device != c.Local.Device || prior.Local.Inode == c.Local.Inode || prior.Local.Bytes != c.Local.Bytes || c.Local.Bytes != c.Item.Bytes || prior.Item.Digest != c.Item.Digest || prior.Item.Bytes != c.Item.Bytes || prior.ServerID != c.ServerID || prior.DestinationID != c.DestinationID || prior.DaemonID != c.DaemonID {
@@ -196,17 +201,17 @@ func backupRetentionRegisterLocalCopy(ctx context.Context, tx pgx.Tx, r sqlcgen.
 			}
 			// Current-authority validation flushes deferred constraints. Defer only
 			// this new link until its copy and completion receipt have been written.
-			if _, e = tx.Exec(ctx, `SET CONSTRAINTS hosting_database_backup_copies_superseded_by_copy_id_fkey, hosting_database_backup_copy_supersession_receipt DEFERRED`); e != nil {
+			if e = sqlcgen.New(tx).DeferDatabaseBackupCopySupersession(ctx); e != nil {
 				return e
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_copies SET superseded_by_copy_id=$2 WHERE id=$1`, priorID, copyID); e != nil {
+			if e = sqlcgen.New(tx).SupersedeDatabaseBackupCopy(ctx, sqlcgen.SupersedeDatabaseBackupCopyParams{ID: priorID, SupersededByCopyID: &copyID}); e != nil {
 				return e
 			}
 		} else if !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
 	}
-	_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_copies(id,backup_id,resource_id,runner_id,location,identity_hash,location_hash,body,availability,created_at) VALUES($1,$2,$3,$4,'local',$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, c.Item.CopyID, r.ID, r.SourceResourceID, r.RunnerID, c.IdentityHash, location, buildJSON(c), c.Item.Availability, r.CreatedAt)
+	e = sqlcgen.New(tx).CreateDatabaseBackupLocalCopy(ctx, sqlcgen.CreateDatabaseBackupLocalCopyParams{ID: c.Item.CopyID, BackupID: r.ID, ResourceID: r.SourceResourceID, RunnerID: r.RunnerID, IdentityHash: c.IdentityHash, LocationHash: location, Body: buildJSON(c), Availability: c.Item.Availability, CreatedAt: r.CreatedAt})
 	return e
 }
 func backupRetentionRegisterRemote(ctx context.Context, tx pgx.Tx, r backupRemoteRow, in domain.HostingDatabaseBackupTransferMutation) error {
@@ -218,7 +223,7 @@ func backupRetentionRegisterRemote(ctx context.Context, tx pgx.Tx, r backupRemot
 	c := domain.BackupRetentionCopy{Item: domain.BackupRetentionItem{CopyID: "dbc_remote_" + r.view.ID, BackupID: r.view.BackupID, TransferID: r.view.ID, Location: "remote", Digest: p.Operation.Blob.Digest, Bytes: p.Operation.Blob.Bytes, CreatedAt: r.view.CreatedAt, Availability: "unproven", ProtectedReasons: []string{}}, RunnerID: p.RunnerID, DestinationID: p.Operation.DestinationID, ServerID: p.ServerID, DaemonID: in.DaemonID, Remote: in.RemoteCopy, Target: &p.Target, ObjectKey: p.ObjectKey}
 	if c.Remote != nil && !c.Remote.Created {
 		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_copies WHERE location_hash=$1 AND superseded_by_copy_id IS NULL AND availability IN ('available','reserved') AND body->'remote'->>'created'='true' LIMIT 1`, location).Scan(&raw)
+		raw, err := sqlcgen.New(tx).FindOwnedDatabaseBackupRemoteCopy(ctx, location)
 		if err == nil {
 			var known domain.BackupRetentionCopy
 			if json.Unmarshal(raw, &known) != nil {
@@ -241,32 +246,22 @@ func backupRetentionRegisterRemote(ctx context.Context, tx pgx.Tx, r backupRemot
 		Proof    *domain.BackupRemoteCopyProof
 	}{location, c.Remote})
 	var resource string
-	if e := tx.QueryRow(ctx, `SELECT source_resource_id,created_at FROM hosting_database_backups WHERE id=$1`, r.view.BackupID).Scan(&resource, &c.Item.CreatedAt); e != nil {
+	readDatabaseBackupCopySourceRow, e := sqlcgen.New(tx).ReadDatabaseBackupCopySource(ctx, r.view.BackupID)
+	resource = readDatabaseBackupCopySourceRow.SourceResourceID
+	c.Item.CreatedAt = readDatabaseBackupCopySourceRow.CreatedAt
+	if e != nil {
 		return e
 	}
-	_, e := tx.Exec(ctx, `INSERT INTO hosting_database_backup_copies(id,backup_id,transfer_id,resource_id,runner_id,location,identity_hash,location_hash,body,availability,created_at) VALUES($1,$2,$3,$4,$5,'remote',$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, c.Item.CopyID, c.Item.BackupID, c.Item.TransferID, resource, p.RunnerID, c.IdentityHash, location, buildJSON(c), c.Item.Availability, c.Item.CreatedAt)
+	e = sqlcgen.New(tx).CreateDatabaseBackupRemoteCopy(ctx, sqlcgen.CreateDatabaseBackupRemoteCopyParams{ID: c.Item.CopyID, BackupID: c.Item.BackupID, TransferID: &c.Item.TransferID, ResourceID: resource, RunnerID: p.RunnerID, IdentityHash: c.IdentityHash, LocationHash: location, Body: buildJSON(c), Availability: c.Item.Availability, CreatedAt: c.Item.CreatedAt})
 	return e
 }
 
 func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) ([]domain.BackupRetentionCopy, error) {
 	// Successful legacy operations remain visible, but never acquire new deletion
 	// rights merely because a current agent can read their matching contents.
-	rows, e := tx.Query(ctx, `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND state='succeeded' AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies c WHERE c.backup_id=hosting_database_backups.id AND c.location='local') ORDER BY id LIMIT 100001`, resource)
+	ids, e := sqlcgen.New(tx).ListLegacyDatabaseBackupIDs(ctx, resource)
 	if e != nil {
 		return nil, e
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if e = rows.Scan(&id); e != nil {
-			rows.Close()
-			return nil, e
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if rows.Err() != nil {
-		return nil, rows.Err()
 	}
 	if len(ids) > 100000 {
 		return nil, ErrConflict
@@ -284,22 +279,9 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 			return nil, e
 		}
 	}
-	rows, e = tx.Query(ctx, `SELECT t.id FROM hosting_database_backup_transfers t JOIN hosting_database_backups b ON b.id=t.backup_id WHERE b.source_resource_id=$1 AND t.mode='upload' AND t.state='succeeded' AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies c WHERE c.transfer_id=t.id) ORDER BY t.id LIMIT 100001`, resource)
+	ids, e = sqlcgen.New(tx).ListLegacyDatabaseBackupUploadIDs(ctx, resource)
 	if e != nil {
 		return nil, e
-	}
-	ids = nil
-	for rows.Next() {
-		var id string
-		if e = rows.Scan(&id); e != nil {
-			rows.Close()
-			return nil, e
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if rows.Err() != nil {
-		return nil, rows.Err()
 	}
 	if len(ids) > 100000 {
 		return nil, ErrConflict
@@ -313,27 +295,13 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 			return nil, err
 		}
 	}
-	rows, e = tx.Query(ctx, `SELECT c.body,c.availability,
- (SELECT count(DISTINCT other.id) FROM hosting_database_backup_copies other WHERE other.availability<>'deleted' AND other.superseded_by_copy_id IS NULL AND other.id<>c.id AND other.location_hash=c.location_hash)
- + (SELECT count(*) FROM hosting_database_backups other WHERE c.location='local' AND other.mode='backup' AND other.id<>c.backup_id AND other.state='succeeded' AND other.blob->>'digest'=c.body->'item'->>'digest' AND other.plan->'source'->'snapshot'->>'server_id'=c.body->>'server_id' AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies known WHERE known.backup_id=other.id AND known.location='local' AND known.availability='deleted'))
- + (SELECT count(*) FROM hosting_database_backup_transfers other WHERE c.location='remote' AND other.id<>c.transfer_id AND other.mode='upload' AND other.state='succeeded' AND nerocd_backup_remote_scope(other.plan->'target'->'target'->>'endpoint',other.plan->'target'->'target'->>'bucket',other.plan->>'object_key')=nerocd_backup_remote_scope(c.body->'target'->'target'->>'endpoint',c.body->'target'->'target'->>'bucket',c.body->>'object_key')),
- EXISTS(SELECT 1 FROM hosting_database_backups b WHERE b.runner_id=c.runner_id AND b.ownership_held),
- EXISTS(SELECT 1 FROM hosting_database_backup_transfers t WHERE t.backup_id=c.backup_id AND t.mode='upload' AND t.state IN ('queued','dispatched','applying','failed','uncertain')),
- EXISTS(SELECT 1 FROM hosting_database_backup_retention_items i WHERE i.location_hash=c.location_hash AND i.reservation_held)
- FROM hosting_database_backup_copies c WHERE c.resource_id=$1 AND c.availability<>'deleted' AND c.superseded_by_copy_id IS NULL ORDER BY c.created_at,c.id LIMIT 100001`, resource)
+	rows, e := sqlcgen.New(tx).ListDatabaseBackupRetentionInventory(ctx, resource)
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
 	out := []domain.BackupRetentionCopy{}
-	for rows.Next() {
-		var raw []byte
-		var availability string
-		var refs int
-		var active, upload, reserved bool
-		if e = rows.Scan(&raw, &availability, &refs, &active, &upload, &reserved); e != nil {
-			return nil, e
-		}
+	for _, row := range rows {
+		raw, availability, refs, active, upload, reserved := row.Body, row.Availability, row.SharedReferences, row.Active, row.UploadPending, row.Reserved
 		var c domain.BackupRetentionCopy
 		if json.Unmarshal(raw, &c) != nil {
 			return nil, ErrConflict
@@ -358,9 +326,6 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 			c.Item.ProtectedReasons = append(c.Item.ProtectedReasons, "unproven_ownership")
 		}
 		out = append(out, c)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
 	}
 	if len(out) > 100000 {
 		return nil, ErrConflict
@@ -393,7 +358,7 @@ func backupRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, acto
 		Preview domain.HostingDatabaseBackupRetentionPreview
 		Copies  []domain.BackupRetentionCopy
 	}{out, chosen})
-	_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_previews(id,resource_id,actor_id,policy_revision,body,copies,plan_hash) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, resource, actor, p.Revision, buildJSON(out), buildJSON(chosen), out.PlanHash)
+	e = sqlcgen.New(tx).CreateDatabaseBackupRetentionPreview(ctx, sqlcgen.CreateDatabaseBackupRetentionPreviewParams{ID: id, ResourceID: resource, ActorID: actor, PolicyRevision: int64(p.Revision), Body: buildJSON(out), Copies: buildJSON(chosen), PlanHash: out.PlanHash})
 	return out, chosen, e
 }
 func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingDatabaseBackupRetentionPreviewInput) (domain.HostingDatabaseBackupRetentionPreview, error) {
@@ -434,24 +399,19 @@ func (s *PostgresStore) ListDatabaseBackupRetentionExecutions(ctx context.Contex
 		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
 			return nil, e
 		}
-		rows, e := tx.Query(ctx, `SELECT body FROM hosting_database_backup_retention_executions WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100`, resource)
+		rows, e := sqlcgen.New(tx).ListDatabaseBackupRetentionExecutionBodies(ctx, resource)
 		if e != nil {
 			return nil, e
 		}
-		defer rows.Close()
 		out := []domain.HostingDatabaseBackupRetentionExecution{}
-		for rows.Next() {
-			var raw []byte
+		for _, raw := range rows {
 			var v domain.HostingDatabaseBackupRetentionExecution
-			if e = rows.Scan(&raw); e != nil {
-				return nil, e
-			}
 			if json.Unmarshal(raw, &v) != nil {
 				return nil, ErrConflict
 			}
 			out = append(out, v)
 		}
-		return out, rows.Err()
+		return out, nil
 	})
 }
 func (s *PostgresStore) GetDatabaseBackupRetentionExecution(ctx context.Context, actor, resource, id string) (domain.HostingDatabaseBackupRetentionExecution, error) {
@@ -461,7 +421,7 @@ func (s *PostgresStore) GetDatabaseBackupRetentionExecution(ctx context.Context,
 			return v, e
 		}
 		var raw []byte
-		e := tx.QueryRow(ctx, `SELECT body FROM hosting_database_backup_retention_executions WHERE id=$1 AND resource_id=$2`, id, resource).Scan(&raw)
+		raw, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionExecutionBody(ctx, sqlcgen.ReadDatabaseBackupRetentionExecutionBodyParams{ID: id, ResourceID: resource})
 		if e != nil {
 			return v, hostingError(e)
 		}
@@ -489,7 +449,7 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 			return zero, e
 		}
 		var existing string
-		lookup := tx.QueryRow(ctx, `SELECT id FROM hosting_database_backup_retention_executions WHERE preview_id=$1 AND resource_id=$2`, in.PreviewID, resource).Scan(&existing)
+		existing, lookup := sqlcgen.New(tx).FindDatabaseBackupRetentionPreviewExecution(ctx, sqlcgen.FindDatabaseBackupRetentionPreviewExecutionParams{PreviewID: in.PreviewID, ResourceID: resource})
 		if lookup == nil {
 			return s.backupRetentionResumeTx(ctx, tx, existing, actor, resource, in, hash)
 		}
@@ -506,7 +466,9 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		var raw, copyRaw []byte
 		var preview domain.HostingDatabaseBackupRetentionPreview
 		var chosen []domain.BackupRetentionCopy
-		e = tx.QueryRow(ctx, `SELECT body,copies FROM hosting_database_backup_retention_previews WHERE id=$1 AND resource_id=$2 AND policy_revision=$3`, in.PreviewID, resource, p.Revision).Scan(&raw, &copyRaw)
+		readDatabaseBackupRetentionPreviewRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionPreview(ctx, sqlcgen.ReadDatabaseBackupRetentionPreviewParams{ID: in.PreviewID, ResourceID: resource, PolicyRevision: int64(p.Revision)})
+		raw = readDatabaseBackupRetentionPreviewRow.Body
+		copyRaw = readDatabaseBackupRetentionPreviewRow.Copies
 		if e != nil {
 			return zero, hostingError(e)
 		}
@@ -558,7 +520,7 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 			return zero, e
 		}
 		var active bool
-		e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backups WHERE runner_id=$1 AND ownership_held) OR EXISTS(SELECT 1 FROM hosting_database_backup_transfers WHERE runner_id=$1 AND mode IN ('upload','download') AND state IN ('queued','dispatched','applying','uncertain'))`, runnerID).Scan(&active)
+		active, e = sqlcgen.New(tx).DatabaseBackupRetentionRunnerBusy(ctx, runnerID)
 		if e != nil {
 			return zero, e
 		}
@@ -568,19 +530,20 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		if !s.hostingJobs.DatabaseBackupRetentionEnabled() {
 			return zero, ErrConflict
 		}
-		_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_executions(id,resource_id,actor_id,runner_id,preview_id,plan,plan_hash,body,reservation_held) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true)`, id, resource, actor, runnerID, preview.ID, buildJSON(plan), plan.Hash, buildJSON(out))
+		e = sqlcgen.New(tx).CreateDatabaseBackupRetentionExecution(ctx, sqlcgen.CreateDatabaseBackupRetentionExecutionParams{ID: id, ResourceID: resource, ActorID: actor, RunnerID: runnerID, PreviewID: preview.ID, Plan: buildJSON(plan), PlanHash: plan.Hash, Body: buildJSON(out)})
 		if e != nil {
 			return zero, hostingError(e)
 		}
 		for _, c := range chosen {
 			var location string
-			if e = tx.QueryRow(ctx, `SELECT location_hash FROM hosting_database_backup_copies WHERE id=$1`, c.Item.CopyID).Scan(&location); e != nil {
+			location, e = sqlcgen.New(tx).ReadDatabaseBackupCopyLocation(ctx, c.Item.CopyID)
+			if e != nil {
 				return zero, e
 			}
-			if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_items(execution_id,copy_id,identity_hash,location_hash,state,reservation_held) VALUES($1,$2,$3,$4,'pending',true)`, id, c.Item.CopyID, c.IdentityHash, location); e != nil {
+			if e = sqlcgen.New(tx).CreateDatabaseBackupRetentionItem(ctx, sqlcgen.CreateDatabaseBackupRetentionItemParams{ExecutionID: id, CopyID: c.Item.CopyID, IdentityHash: c.IdentityHash, LocationHash: location}); e != nil {
 				return zero, hostingError(e)
 			}
-			if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_copies SET availability='reserved' WHERE id=$1`, c.Item.CopyID); e != nil {
+			if e = sqlcgen.New(tx).ReserveDatabaseBackupCopy(ctx, c.Item.CopyID); e != nil {
 				return zero, e
 			}
 		}
@@ -604,8 +567,7 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 	if e != nil {
 		return e
 	}
-	var eligible string
-	e = tx.QueryRow(ctx, `SELECT r.id FROM runners r JOIN runner_enrollments n ON n.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND n.credential_hash=r.token_hash AND n.used_at IS NOT NULL AND n.revoked_at IS NULL AND $2=ANY(r.capabilities) AND $3=ANY(r.capabilities) AND NOT('shell'=ANY(r.capabilities)) FOR SHARE OF r,n`, p.RunnerID, domain.HostingDatabaseBackupRetentionCapability, domain.RunTypeDatabaseBackupRetention).Scan(&eligible)
+	_, e = sqlcgen.New(tx).LockDatabaseBackupRetentionRunner(ctx, sqlcgen.LockDatabaseBackupRetentionRunnerParams{ID: p.RunnerID, Column2: domain.HostingDatabaseBackupRetentionCapability, Column3: domain.RunTypeDatabaseBackupRetention})
 	if e != nil {
 		return hostingError(e)
 	}
@@ -614,7 +576,9 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 			return ErrConflict
 		}
 		var server, runner string
-		e = tx.QueryRow(ctx, `SELECT d.server_id,s.runner_id FROM destinations d JOIN servers s ON s.id=d.server_id WHERE d.id=$1 FOR SHARE OF d,s`, c.DestinationID).Scan(&server, &runner)
+		lockDatabaseBackupRetentionDestinationRow, e := sqlcgen.New(tx).LockDatabaseBackupRetentionDestination(ctx, c.DestinationID)
+		server = lockDatabaseBackupRetentionDestinationRow.ServerID
+		runner = lockDatabaseBackupRetentionDestinationRow.RunnerID
 		if e != nil {
 			return e
 		}
@@ -647,7 +611,8 @@ func backupRetentionArchiveAdmission(ctx context.Context, tx pgx.Tx, backup stri
 	}
 	var denied bool
 	if remote == nil {
-		e := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local') AND NOT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE backup_id=$1 AND location='local' AND superseded_by_copy_id IS NULL AND availability IN ('available','unproven'))`, backup).Scan(&denied)
+		var e error
+		denied, e = sqlcgen.New(tx).DatabaseBackupLocalArchiveDenied(ctx, backup)
 		if e != nil {
 			return e
 		}
@@ -657,7 +622,7 @@ func backupRetentionArchiveAdmission(ctx context.Context, tx pgx.Tx, backup stri
 			return e
 		}
 		location := backupRetentionRemoteLocation(upload.plan)
-		e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosting_database_backup_copies WHERE location_hash=$1 AND availability NOT IN ('available','unproven'))`, location).Scan(&denied)
+		denied, e = sqlcgen.New(tx).DatabaseBackupRemoteArchiveDenied(ctx, location)
 		if e != nil {
 			return e
 		}

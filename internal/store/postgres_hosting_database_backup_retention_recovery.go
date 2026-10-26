@@ -16,7 +16,8 @@ import (
 // owner authorization, and this lock helper grants no mutation authority.
 func backupRetentionBoundary(ctx context.Context, tx pgx.Tx, id string) error {
 	var resource string
-	if e := tx.QueryRow(ctx, `SELECT resource_id FROM hosting_database_backup_retention_executions WHERE id=$1`, id).Scan(&resource); e != nil {
+	resource, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionResource(ctx, id)
+	if e != nil {
 		return hostingError(e)
 	}
 	if e := lockHostingResourceDestination(ctx, tx, resource); e != nil {
@@ -56,7 +57,8 @@ func (s *PostgresStore) backupRetentionResumeTx(ctx context.Context, tx pgx.Tx, 
 		return r.view, nil
 	}
 	var live bool
-	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1 AND status='active' AND expires_at>clock_timestamp())`, *r.run).Scan(&live); e != nil {
+	live, e = sqlcgen.New(tx).DatabaseBackupRetentionLeaseLive(ctx, *r.run)
+	if e != nil {
 		return zero, e
 	}
 	if live {
@@ -65,10 +67,11 @@ func (s *PostgresStore) backupRetentionResumeTx(ctx context.Context, tx pgx.Tx, 
 		}
 		return r.view, nil
 	}
-	var nextAttempt int
-	if e = tx.QueryRow(ctx, `SELECT next_attempt FROM task_runs WHERE id=$1`, *r.run).Scan(&nextAttempt); e != nil {
+	nextAttemptRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionNextAttempt(ctx, *r.run)
+	if e != nil {
 		return zero, e
 	}
+	nextAttempt := int(nextAttemptRow)
 	// A dispatched task without a first lease is already claimable; do not create
 	// a duplicate attempt or another reservation while the runner is starting.
 	if nextAttempt == 1 {
@@ -92,18 +95,18 @@ func (s *PostgresStore) backupRetentionResumeTx(ctx context.Context, tx pgx.Tx, 
 		return zero, ErrConflict
 	}
 	next := nextAttempt
-	if _, e = tx.Exec(ctx, `UPDATE run_leases SET status='expired',completed_at=clock_timestamp() WHERE run_id=$1 AND status='active' AND expires_at<=clock_timestamp()`, *r.run); e != nil {
+	if e = sqlcgen.New(tx).ExpireDatabaseBackupRetentionLeases(ctx, *r.run); e != nil {
 		return zero, e
 	}
-	if _, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_retention_resumes(execution_id,next_attempt,request_id,actor_id,plan_hash) VALUES($1,$2,$3,$4,$5)`, id, next, in.RequestID, actor, r.plan.Hash); e != nil {
+	if e = sqlcgen.New(tx).CreateDatabaseBackupRetentionResume(ctx, sqlcgen.CreateDatabaseBackupRetentionResumeParams{ExecutionID: id, NextAttempt: int32(next), RequestID: in.RequestID, ActorID: actor, PlanHash: r.plan.Hash}); e != nil {
 		return zero, hostingError(e)
 	}
 	r.view.State = "dispatched"
 	r.view.UpdatedAt = time.Now().UTC()
-	if _, e = tx.Exec(ctx, `UPDATE task_runs SET status='queued',runner_id=NULL,finished_at=NULL,claim_order_at=clock_timestamp() WHERE id=$1`, *r.run); e != nil {
+	if e = sqlcgen.New(tx).QueueDatabaseBackupRetentionTask(ctx, *r.run); e != nil {
 		return zero, e
 	}
-	if _, e = tx.Exec(ctx, `UPDATE hosting_database_backup_retention_executions SET body=$2 WHERE id=$1`, id, buildJSON(r.view)); e != nil {
+	if e = sqlcgen.New(tx).UpdateDatabaseBackupRetentionExecutionBody(ctx, sqlcgen.UpdateDatabaseBackupRetentionExecutionBodyParams{ID: id, Body: buildJSON(r.view)}); e != nil {
 		return zero, e
 	}
 	if e = databaseBackupAudit(ctx, tx, actor, id, "retention_resume_"+in.RequestID, r.view.ProjectID); e != nil {
@@ -130,14 +133,13 @@ func (s *PostgresStore) DatabaseBackupRetentionRetirement(ctx context.Context, r
 		if in.PlanHash != r.plan.Hash {
 			return zero, ErrConflict
 		}
-		var next int
-		e = tx.QueryRow(ctx, `SELECT a.next_attempt FROM hosting_database_backup_retention_resumes a JOIN run_leases old ON old.run_id=$2 AND old.id=$3 WHERE a.execution_id=$1 AND a.next_attempt>$4 AND a.plan_hash=$5 AND old.attempt=$4 AND old.fence=$6 AND (old.status<>'active' OR old.expires_at<=clock_timestamp()) ORDER BY a.next_attempt LIMIT 1`, in.OperationID, in.RunID, in.LeaseID, in.Attempt, in.PlanHash, in.Fence).Scan(&next)
+		nextRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionRetirement(ctx, sqlcgen.ReadDatabaseBackupRetentionRetirementParams{ExecutionID: in.OperationID, RunID: in.RunID, ID: in.LeaseID, NextAttempt: int32(in.Attempt), PlanHash: in.PlanHash, Fence: in.Fence})
 		if e != nil {
 			if errors.Is(e, pgx.ErrNoRows) {
 				return zero, ErrConflict
 			}
 			return zero, hostingError(e)
 		}
-		return domain.HostingDatabaseBackupRetentionRetirement{HostingAuthority: in.HostingAuthority, PlanHash: in.PlanHash, NextAttempt: next, ReplayOnly: true}, nil
+		return domain.HostingDatabaseBackupRetentionRetirement{HostingAuthority: in.HostingAuthority, PlanHash: in.PlanHash, NextAttempt: int(nextRow), ReplayOnly: true}, nil
 	})
 }
