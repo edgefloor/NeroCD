@@ -311,3 +311,42 @@ func TestStorageArchiveCodecContractParity(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageArchiveCombinedRuntimeFamily(t *testing.T) {
+	p := archiveDomainPlan(t)
+	p.SourceHealthy.Snapshot.PolicyVersion = HostingOwnedStorageRuntimePolicyVersion
+	p.SourceHealthy.Snapshot.RuntimeConfiguration = HostingRuntimeConfigurationRef{Generation: 7, Hash: "sha256:" + strings.Repeat("a", 64)}
+	p.Writers = []HostingHealthy{p.SourceHealthy}
+	p.Hash = ""
+	p.Hash = HostingDocumentHash(p)
+	if p.Validate() != nil {
+		t.Fatal("combined owned storage/runtime source rejected")
+	}
+	for name, mutate := range map[string]func(*HostingStorageArchivePlan){
+		"old policy with runtime": func(p *HostingStorageArchivePlan) {
+			p.SourceHealthy.Snapshot.PolicyVersion = HostingOwnedStoragePolicyVersion
+		},
+		"combined without runtime": func(p *HostingStorageArchivePlan) {
+			p.SourceHealthy.Snapshot.RuntimeConfiguration = HostingRuntimeConfigurationRef{}
+		},
+		"malformed runtime": func(p *HostingStorageArchivePlan) { p.SourceHealthy.Snapshot.RuntimeConfiguration.Generation = 0 },
+		"database family":   func(p *HostingStorageArchivePlan) { p.SourceHealthy.Snapshot.ApplicationDatabase.BindingID = "binding" },
+		"generic runtime family": func(p *HostingStorageArchivePlan) {
+			p.SourceHealthy.Snapshot.PolicyVersion = HostingRuntimePolicyVersion
+		},
+		"retained mixed family": func(p *HostingStorageArchivePlan) {
+			p.Writers[0].Snapshot.PolicyVersion = HostingOwnedStoragePolicyVersion
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := p
+			changed.Writers = append([]HostingHealthy(nil), p.Writers...)
+			mutate(&changed)
+			changed.Hash = ""
+			changed.Hash = HostingDocumentHash(changed)
+			if changed.Validate() == nil {
+				t.Fatal("malformed mixed archive family accepted")
+			}
+		})
+	}
+}

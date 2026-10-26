@@ -631,11 +631,17 @@ export async function archiveBackupEligible(
     op.state === "succeeded" &&
     !op.mutation_hold &&
     !op.restore_ownership_held &&
-    snapshot.policy_version === "public-image.owned-storage.release-ports.v1" &&
+    ((snapshot.policy_version === "public-image.owned-storage.release-ports.v1" &&
+      (!snapshot.runtime_configuration ||
+        (snapshot.runtime_configuration.generation === 0 && !snapshot.runtime_configuration.hash))) ||
+      (snapshot.policy_version === "public-image.owned-storage.runtime-env.release-ports.v1" &&
+        Number.isSafeInteger(snapshot.runtime_configuration?.generation) &&
+        (snapshot.runtime_configuration?.generation ?? 0) > 0 &&
+        hash(snapshot.runtime_configuration?.hash))) &&
     snapshot.storage?.storage_id === storage.id &&
     snapshot.storage.hash === storage.hash &&
     (!snapshot.local_build || !snapshot.local_build.artifact?.build_id) &&
     (!snapshot.database || !snapshot.database.engine) &&
-    (!snapshot.runtime_configuration || !snapshot.runtime_configuration.hash)
+    (!snapshot.application_database || !snapshot.application_database.binding_id)
   );
 }

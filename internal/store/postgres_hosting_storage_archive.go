@@ -164,7 +164,22 @@ func archivePrelock(ctx context.Context, tx pgx.Tx, destination string, resource
 
 func archiveRunner(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchivePlan) error {
 	_, err := sqlcgen.New(tx).LockStorageArchiveRunner(ctx, sqlcgen.LockStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
-	return hostingError(err)
+	if err != nil {
+		return hostingError(err)
+	}
+	// Combined writers require the same explicit qualification as ordinary
+	// deployment. Archive execution itself still delivers no runtime secrets.
+	for _, h := range append([]domain.HostingHealthy{p.SourceHealthy}, p.Writers...) {
+		if h.Snapshot.PolicyVersion == domain.HostingOwnedStorageRuntimePolicyVersion {
+			if err := requireHostingStorageAgent(ctx, tx, h.Snapshot); err != nil {
+				return err
+			}
+			if err := requireHostingRuntimeAgent(ctx, tx, h.Snapshot); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *PostgresStore) archiveGate(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {

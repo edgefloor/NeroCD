@@ -24,7 +24,7 @@ func archiveLoadRestore(ctx context.Context, db sqlcgen.DBTX, id string) (domain
 	return domain.HostingStorageRestore{Resource: op.StorageArchive.Plan.Target.Resource, Storage: op.StorageArchive.Plan.Target.Storage, Operation: op}, nil
 }
 
-// RequestStorageRestore clones only pinned image and mount metadata into a new
+// RequestStorageRestore clones pinned image, mount and runtime references into a new
 // held resource on the same project/destination. It grants no source stop rights.
 func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID, actor, resourceID, bindingID string, in domain.HostingStorageRestoreInput, event domain.AuditEvent) (domain.HostingStorageRestore, error) {
 	if in.Validate() != nil || resourceID == "" || bindingID == "" {
@@ -54,6 +54,23 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 			Actor, Backup string
 			Input         domain.HostingStorageRestoreInput
 		}{actor, backupID, in})
+		original, found, err := archiveOperation(ctx, tx, backup.OperationID)
+		if err != nil {
+			return zero, err
+		}
+		if !found || original.State != "succeeded" || original.StorageArchive.Mode != "backup" {
+			return zero, ErrConflict
+		}
+		p := original.StorageArchive.Plan
+		if p.SourceStorage.ResourceID != source.ID || p.ProjectID != source.ProjectID || p.DestinationID != binding.DestinationID {
+			return zero, ErrConflict
+		}
+		// Read the exact backed-up generation, never the latest desired input.
+		// Replays also recheck current managed-secret version authority.
+		doc, refs, err := archivePinnedRuntime(ctx, q, p)
+		if err != nil {
+			return zero, err
+		}
 		prior, err := q.ReadStorageRestoreRequest(ctx, sqlcgen.ReadStorageRestoreRequestParams{BackupID: backupID, RequestID: in.RequestID})
 		if err == nil {
 			if prior.CreatedBy != actor || prior.RequestHash != hash {
@@ -70,13 +87,6 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if err := storageRetentionArchiveAdmission(ctx, tx, backupID, in.RemoteSource); err != nil {
 			return zero, err
 		}
-		original, found, err := archiveOperation(ctx, tx, backup.OperationID)
-		if err != nil {
-			return zero, err
-		}
-		if !found || original.State != "succeeded" || original.StorageArchive.Mode != "backup" {
-			return zero, ErrConflict
-		}
 		raw, err := q.ReadStorageArchiveBlob(ctx, backupID)
 		if err != nil {
 			return zero, hostingError(err)
@@ -85,8 +95,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if json.Unmarshal(raw, &blob) != nil || blob.Validate() != nil {
 			return zero, ErrConflict
 		}
-		p := original.StorageArchive.Plan
-		if p.SourceStorage.ResourceID != source.ID || p.ProjectID != source.ProjectID || p.DestinationID != binding.DestinationID || resourceID == source.ID || bindingID == binding.ID {
+		if resourceID == source.ID || bindingID == binding.ID {
 			return zero, ErrConflict
 		}
 		now := time.Now().UTC()
@@ -102,6 +111,11 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		created, err := q.CreateResource(ctx, sqlcgen.CreateResourceParams{ID: resourceID, ProjectID: source.ProjectID, ProjectEnvironmentID: savedSource.ProjectEnvironmentID, Name: in.Name, Kind: "application", Source: imageRaw, CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
 		if err != nil {
 			return zero, err
+		}
+		if p.SourceHealthy.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
+			if err = archiveCreateRuntime(ctx, q, resourceID, p.ProjectID, actor, in.RequestID, doc, refs, now); err != nil {
+				return zero, err
+			}
 		}
 		resource, err := resourceFromHostingSQL(created)
 		if err != nil {

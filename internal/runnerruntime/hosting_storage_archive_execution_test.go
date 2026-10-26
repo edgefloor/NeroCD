@@ -715,3 +715,48 @@ func TestStorageArchiveProgressDiagnosticDoesNotRenderPrivateCauses(t *testing.T
 		})
 	}
 }
+
+func TestStorageArchiveCombinedWriterUsesExistingContainerWithoutSecretDelivery(t *testing.T) {
+	for _, failure := range []string{"", "backup", "resume:container"} {
+		t.Run("combined_"+failure, func(t *testing.T) {
+			x, c, e, _ := archiveRuntimeFixture(t)
+			p := x.p
+			p.SourceHealthy.Snapshot.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
+			p.SourceHealthy.Snapshot.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{Generation: 7, Hash: "sha256:" + strings.Repeat("a", 64)}
+			for i := range p.Writers {
+				p.Writers[i].Snapshot.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
+				p.Writers[i].Snapshot.RuntimeConfiguration = p.SourceHealthy.Snapshot.RuntimeConfiguration
+			}
+			p.Hash = ""
+			p.Hash = domain.HostingDocumentHash(p)
+			if p.Validate() != nil {
+				t.Fatal("combined fixture invalid")
+			}
+			x.p = p
+			c.op.StorageArchive.Plan = p
+			e.failAt = failure
+			_ = x.execute(c.op)
+			for _, path := range c.requests {
+				if strings.Contains(path, "runtime-environment") || strings.Contains(path, "secrets") {
+					t.Fatal("archive fetched runtime values")
+				}
+			}
+			if !slices.Contains(e.effects, "stop:container") || !slices.Contains(e.effects, "resume:container") {
+				t.Fatal("archive did not preserve original writer obligation", e.effects)
+			}
+			if slices.Contains(e.effects, "resume:stopped") {
+				t.Fatal("archive started originally stopped writer")
+			}
+			result := c.op.StorageArchive.Result
+			if result == nil {
+				t.Fatal("missing truthful result")
+			}
+			if failure == "resume:container" && (!result.Uncertain || result.ResumeOutcome != "uncertain" || !c.op.MutationHold) {
+				t.Fatal("resume failure discarded hold")
+			}
+			if failure == "backup" && (result.ArchiveOutcome != "failed" || result.ResumeOutcome != "resumed" || result.Uncertain) {
+				t.Fatal("archive failure fabricated success or lost compensated resume")
+			}
+		})
+	}
+}
