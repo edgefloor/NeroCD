@@ -556,14 +556,41 @@ func TestHostingStorageDeploymentPostgresOrdinaryAndPrerequisites(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
+		name         string
+		capabilities []string
+		available    bool
+	}{
+		{"runtime_missing_both_capabilities", []string{}, false},
+		{"runtime_missing_owned_storage_capability", []string{domain.HostingRuntimeEnvironmentCapability}, false},
+		{"runtime_missing_environment_capability", []string{domain.HostingOwnedStorageRuntimeCapability}, false},
+		{"runtime_capable", []string{domain.HostingOwnedStorageRuntimeCapability, domain.HostingRuntimeEnvironmentCapability}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newStorageContinuityFixture(t)
+			runtimeSave(t, f.pg, f.resource.ID, runtimeInput(1, 0))
+			if _, err := f.db.Exec(t.Context(), `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, f.runner, test.capabilities); err != nil {
+				t.Fatal(err)
+			}
+			view, err := f.pg.HostingStorageDeploymentOptions(t.Context(), f.resource.ID, "usr_bootstrap")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.available {
+				if view.Available || view.Reason != "runner_ineligible" || view.StorageRouteContinuity != nil {
+					t.Fatalf("missing runtime capability admitted options: %+v", view)
+				}
+				return
+			}
+			if !view.Available || view.Reason != "available" || view.StorageRouteContinuity == nil || view.PreviousHealthyOperationID == nil || *view.PreviousHealthyOperationID != f.op.ID || len(view.Routes) != 1 || view.Routes[0].ID != f.route.ID {
+				t.Fatalf("capable runtime storage options unavailable: %+v", view)
+			}
+		})
+	}
+	for _, test := range []struct {
 		name   string
 		want   string
 		change func(*testing.T, storageContinuityFixture)
 	}{
-		{"runtime", "runtime_configuration_unsupported", func(t *testing.T, f storageContinuityFixture) {
-			t.Helper()
-			runtimeSave(t, f.pg, f.resource.ID, runtimeInput(1, 0))
-		}},
 		{"foreign_reference", "foreign_port_reference", func(t *testing.T, f storageContinuityFixture) {
 			t.Helper()
 			if _, err := f.db.Exec(t.Context(), `INSERT INTO hosting_proxy_routes(id,proxy_id,project_id,resource_id,binding_id,grant_id,hostname,path_prefix,version,selected_release_operation_id,enabled,created_by) SELECT 'options_foreign_route',proxy_id,project_id,resource_id,binding_id,grant_id,'foreign.apps.nerocd.invalid',path_prefix,1,selected_release_operation_id,false,created_by FROM hosting_proxy_routes WHERE id=$1`, f.route.ID); err != nil {
