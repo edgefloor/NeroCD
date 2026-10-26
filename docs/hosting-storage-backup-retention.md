@@ -58,7 +58,7 @@ Explicit protections override selection:
 | Reserved or uncertain | An existing batch owns unresolved effects |
 | Unavailable | The copy cannot currently support a new destructive effect |
 
-Publication, upload, download, restore, and retention share serial admission. Download completion can reuse an exact current local generation or publish a distinct owned generation. Supersession retains the old proof and receipt. It does not rewrite that generation as physically deleted.
+Publication, upload, download, restore, and retention share short serial admission transactions. A held local effect conservatively excludes producers on the same runner or server because new archive plans do not know their artifact pool. Independent runners on other servers remain usable. A held remote effect excludes its recorded canonical endpoint, bucket, and object; different objects and destinations can proceed. Remote target validation does not touch a local artifact pool. Download completion can reuse an exact current local generation or publish a distinct owned generation. Supersession retains the old proof and receipt. It does not rewrite that generation as physically deleted.
 
 ## Automatic cleanup and recovery
 
@@ -66,7 +66,7 @@ The protected storage archive runner configuration has a separate `backup_retent
 
 Automatic cleanup is optional in the resource policy. Successful local publication, successful remote upload, and completed archive recovery produce deduplicated publication records. The existing joined hosting recovery loop admits their previews and batches. Retention failure does not rewrite archive or transfer success and does not emit a backup-failure notification.
 
-Intent and result journal records survive restart. A historical receipt acknowledges only its exact request. New effects require current actor, project, destination, credential, runner, and full lease authority. Unknown destructive effects retain their reservations. An uncertain nonversioned remote delete cannot be retried as a fresh deletion merely because its response was lost.
+Intent and result journal records survive restart. A historical receipt acknowledges only its exact request. New effects require current actor, project, destination, credential, runner, and full lease authority. Unknown destructive effects retain their reservations. A batch denied before deletion can retain reservations for recovery after current authorization is restored; there is no separate cancellation subsystem. In the UI, definitive invalid or stale requests permit correction and a new review. An ambiguous saved request retries the identical body, or can be discarded locally with an explicit warning that discarding does not cancel accepted server work. An uncertain nonversioned remote delete cannot be retried as a fresh deletion merely because its response was lost.
 
 Restore uses retained availability and the recorded remote configuration. A remote restore verifies downloaded bytes, republishes local ownership evidence, and restores into a new owned application volume. The source application and immutable backup history remain separate from copy availability.
 

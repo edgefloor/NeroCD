@@ -61,6 +61,52 @@ func TestRuntimeIdentityRemoteStorageBackupCapabilities(t *testing.T) {
 	}
 }
 
+func TestRuntimeIdentityStorageRetentionCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retention  bool
+		capability bool
+		task       bool
+		duplicate  bool
+		wantError  bool
+	}{
+		{name: "local archive"},
+		{name: "retention archive", retention: true, capability: true, task: true},
+		{name: "duplicate retention capabilities", retention: true, capability: true, task: true, duplicate: true},
+		{name: "missing retention capability", retention: true, task: true, wantError: true},
+		{name: "missing retention task", retention: true, capability: true, wantError: true},
+		{name: "missing retention opt-in", capability: true, task: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caps := []string{domain.HostingOwnedStorageCapability, domain.HostingStorageArchiveCapability, domain.RunTypeStorageArchive}
+			if tc.capability {
+				caps = append(caps, domain.HostingStorageBackupRetentionCapability)
+			}
+			if tc.task {
+				caps = append(caps, domain.RunTypeStorageBackupRetention)
+			}
+			if tc.duplicate {
+				caps = append(caps, caps...)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/runners/identity" || r.Header.Get("Authorization") != "Bearer fixture" {
+					t.Error("unexpected identity request")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_storage_identity", "capabilities": caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			config := Config{Server: server.URL, Token: "fixture", RunnerID: "runner_storage_identity", StorageArchive: &StorageArchiveExecutionConfig{BackupRetention: tc.retention, TrustedLoopbackHTTP: true}}
+			if err := validateRuntimeIdentity(t.Context(), config); (err != nil) != tc.wantError {
+				t.Fatalf("runtime identity error = %v, want error = %v", err, tc.wantError)
+			}
+		})
+	}
+}
+
 func runtimeEnvironmentPlan(t *testing.T) domain.HostingApplyPlan {
 	t.Helper()
 	p := imageTestPlan(t)

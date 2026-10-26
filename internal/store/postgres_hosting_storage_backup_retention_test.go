@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
@@ -452,5 +455,158 @@ func TestPostgresStorageRetentionDownloadGenerationReuseAndSupersession(t *testi
 		if copies != want || current != 1 {
 			t.Fatalf("download %d generation count %d current %d", i, copies, current)
 		}
+	}
+}
+
+// Exercise the actual admission trigger independently of the archive and transfer
+// schema constraints. The temporary producer tables expose only their frozen
+// bodies; held copies and execution receipts remain the real persisted rows.
+func storageRetentionProbeAdmission(t *testing.T, f archiveControlFixture, table string, plan any, denied bool) {
+	t.Helper()
+	tx, err := f.db.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			t.Error(err)
+		}
+	}()
+	column := "body"
+	if table == "hosting_storage_backup_transfers" {
+		column = "plan"
+	}
+	if _, err = tx.Exec(f.ctx, fmt.Sprintf("CREATE TEMP TABLE %s(%s jsonb) ON COMMIT DROP; CREATE TRIGGER retention_probe BEFORE INSERT ON pg_temp.%s FOR EACH ROW EXECUTE FUNCTION nerocd_storage_copy_admission()", table, column, table)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(f.ctx, fmt.Sprintf("INSERT INTO pg_temp.%s(%s) VALUES($1)", table, column), body)
+	if (err != nil) != denied {
+		t.Fatalf("%s admission error=%v denied=%v", table, err, denied)
+	}
+	if denied {
+		var pgerr interface{ SQLState() string }
+		if !errors.As(err, &pgerr) || pgerr.SQLState() != "23514" {
+			t.Fatalf("unexpected conflict: %v", err)
+		}
+	}
+}
+func storageRetentionMakeUncertain(t *testing.T, f archiveControlFixture, v domain.HostingStorageBackupRetentionExecution) domain.HostingStorageBackupRetentionPlan {
+	t.Helper()
+	if err := f.pg.PrepareStorageBackupRetention(f.ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := f.pg.ClaimRun(f.ctx, f.runner, time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: v.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	p, err := f.pg.StorageBackupRetentionPlan(f.ctx, f.runner, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := domain.HostingStorageBackupRetentionMutation{HostingAuthority: a, ReceiptID: "scope_intent", PlanHash: p.Hash, CopyID: p.Copies[0].Item.CopyID, Phase: "intent"}
+	if _, err = f.pg.StorageBackupRetentionMutation(f.ctx, f.runner, m); err != nil {
+		t.Fatal(err)
+	}
+	m.ReceiptID = "scope_uncertain"
+	m.Phase = "uncertain"
+	m.FailureCode = "storage_unavailable"
+	got, err := f.pg.StorageBackupRetentionMutation(f.ctx, f.runner, m)
+	if err != nil || !got.ReservationHeld || got.Items[0].State != "uncertain" {
+		t.Fatal("uncertainty reservation", got, err)
+	}
+	return p
+}
+func TestPostgresStorageRetentionAdmissionLocalConflictScope(t *testing.T) {
+	f, v := admittedStorageRetentionBatch(t)
+	p := storageRetentionMakeUncertain(t, f, v)
+	copy := p.Copies[0]
+	for _, tc := range []struct {
+		name, runner, server string
+		denied               bool
+	}{
+		{"same runner", copy.RunnerID, "another_server", true},
+		{"same server unknown pool", "another_runner", copy.ServerID, true},
+		{"independent runner and server", "another_runner", "another_server", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []string{"backup", "restore", "recover"} {
+				storageRetentionProbeAdmission(t, f, "hosting_storage_archive_plans", map[string]any{"runner_id": tc.runner, "server_id": tc.server, "mode": mode, "source_storage": map[string]any{"resource_id": "independent_resource"}}, tc.denied)
+			}
+			for _, mode := range []string{"upload", "download"} {
+				storageRetentionProbeAdmission(t, f, "hosting_storage_backup_transfers", map[string]any{"runner_id": tc.runner, "server_id": tc.server, "operation": map[string]any{"mode": mode}}, tc.denied)
+			}
+		})
+	}
+	storageRetentionProbeAdmission(t, f, "hosting_storage_backup_transfers", map[string]any{"runner_id": copy.RunnerID, "server_id": copy.ServerID, "operation": map[string]any{"mode": "validate"}}, false)
+	// The ordinary service admission must still reject the actually shared pool.
+	if _, err := f.service.RequestStorageBackup(f.owner, f.resource.ID, domain.HostingStorageBackupInput{RequestID: strings.Repeat("a", 32), ExpectedResourceGeneration: f.resource.Generation}); err == nil {
+		t.Fatal("held uncertain local copy admitted backup")
+	}
+}
+func TestPostgresStorageRetentionAdmissionRemoteConflictScope(t *testing.T) {
+	f, target := storageRemoteControlFixture(t)
+	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		b := storageRetentionBackupTarget(t, f, i+90, true, &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision})
+		transfers, err := f.service.ListStorageBackupTransfers(f.owner, b.ID, false)
+		if err != nil || len(transfers) != 1 {
+			t.Fatal(err)
+		}
+		a, p := claimStorageRemote(t, f, transfers[0].ID)
+		m := domain.HostingStorageBackupTransferMutation{HostingAuthority: a, ReceiptID: fmt.Sprintf("scope_upload_intent_%d", i), PlanHash: p.Hash, Phase: "intent", DaemonID: f.helper.DaemonID}
+		if _, err = f.pg.StorageBackupTransferMutation(f.ctx, f.runner, m); err != nil {
+			t.Fatal(err)
+		}
+		m.Phase = "complete"
+		m.ReceiptID = fmt.Sprintf("scope_upload_complete_%d", i)
+		m.RemoteCopy = &domain.BackupRemoteCopyProof{ETag: `"owned-scope-object"`, Created: true}
+		if _, err = f.pg.StorageBackupTransferMutation(f.ctx, f.runner, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.service.SaveStorageBackupRetention(f.owner, f.resource.ID, domain.HostingStorageBackupRetentionInput{RequestID: "remote_scope_policy", ExpectedResourceGeneration: f.resource.Generation, Enabled: true, Remote: domain.BackupRetentionLimits{KeepCount: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := f.service.PreviewStorageBackupRetention(f.owner, f.resource.ID, domain.HostingStorageBackupRetentionPreviewInput{RequestID: "remote_scope_preview", ExpectedPolicyRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := f.service.ExecuteStorageBackupRetention(f.owner, f.resource.ID, domain.HostingStorageBackupRetentionExecutionInput{RequestID: "remote_scope_execute", PreviewID: preview.ID, ExpectedPolicyRevision: 1, ExpectedPlanHash: preview.PlanHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := storageRetentionMakeUncertain(t, f, v)
+	copy := p.Copies[0]
+	if copy.Item.Location != "remote" {
+		t.Fatal("expected remote only reservation")
+	}
+	for _, tc := range []struct {
+		name, endpoint, bucket, key string
+		denied                      bool
+	}{
+		{"exact location", copy.Target.Target.Endpoint, copy.Target.Target.Bucket, copy.ObjectKey, true},
+		{"canonical location", "https://BACKUP.EXAMPLE:443", copy.Target.Target.Bucket, copy.ObjectKey, true},
+		{"different object", copy.Target.Target.Endpoint, copy.Target.Target.Bucket, copy.ObjectKey + "other", false},
+		{"different bucket", copy.Target.Target.Endpoint, "different-bucket", copy.ObjectKey, false},
+		{"different endpoint", "https://other.example", copy.Target.Target.Bucket, copy.ObjectKey, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storageRetentionProbeAdmission(t, f, "hosting_storage_backup_transfers", map[string]any{"runner_id": "independent_runner", "server_id": "independent_server", "target": map[string]any{"target": map[string]any{"endpoint": tc.endpoint, "bucket": tc.bucket}}, "object_key": tc.key}, tc.denied)
+		})
+	}
+	storageRetentionProbeAdmission(t, f, "hosting_storage_archive_plans", map[string]any{"runner_id": copy.RunnerID, "server_id": copy.ServerID, "mode": "backup"}, false)
+	storageRetentionProbeAdmission(t, f, "hosting_storage_archive_plans", map[string]any{"runner_id": "independent_runner", "server_id": "independent_server", "remote_source": map[string]any{"transfer_id": copy.Item.TransferID}}, true)
+	// A fresh backup creates a distinct remote object and remains usable.
+	if _, err = f.service.RequestStorageBackup(f.owner, f.resource.ID, domain.HostingStorageBackupInput{RequestID: strings.Repeat("b", 32), ExpectedResourceGeneration: f.resource.Generation}); err != nil {
+		t.Fatal("remote hold blocked distinct backup", err)
 	}
 }

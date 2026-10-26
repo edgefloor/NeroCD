@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { StorageBackupRetention } from "./StorageBackupRetention";
 import * as api from "@/api/hosting-storage-backup-retention";
+import { ApiError } from "@/api/errors";
 import type { Resource } from "@/api/hosting";
 vi.mock("@/api/hosting-storage-backup-retention", () => ({
   getRetentionPolicy: vi.fn(),
@@ -179,4 +180,100 @@ test("review sends exactly the immutable preview and retries the same request", 
   expect(original.preview_id).toBe("preview");
   expect(original.expected_plan_hash).toBe(preview.plan_hash);
   expect(screen.getByText(/Selected for deletion/)).not.toBeNull();
+});
+
+test("invalid numeric limits remain editable and do not create a saved attempt", async () => {
+  setup();
+  const save = await screen.findByRole("button", {
+    name: "Save retention policy",
+  });
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("local keep_count"), {
+    target: { value: "-1" },
+  });
+  fireEvent.click(save);
+  await screen.findByText(/Enter whole nonnegative limits/);
+  expect(api.saveRetentionPolicy).not.toHaveBeenCalled();
+  expect(
+    (screen.getByLabelText("local keep_count") as HTMLInputElement).disabled,
+  ).toBe(false);
+  fireEvent.change(screen.getByLabelText("local keep_count"), {
+    target: { value: "2" },
+  });
+  vi.mocked(api.saveRetentionPolicy).mockResolvedValue(policy);
+  fireEvent.click(save);
+  await waitFor(() => expect(api.saveRetentionPolicy).toHaveBeenCalledOnce());
+  expect(
+    vi.mocked(api.saveRetentionPolicy).mock.calls[0]![2].local.keep_count,
+  ).toBe(2);
+});
+
+test("definitive stale policy rejection refreshes revision and allows correction", async () => {
+  vi.mocked(api.getRetentionPolicy).mockResolvedValue(policy);
+  vi.mocked(api.saveRetentionPolicy)
+    .mockRejectedValueOnce(new ApiError(409, "stale", null))
+    .mockResolvedValue(policy);
+  setup();
+  const save = await screen.findByRole("button", {
+    name: "Save retention policy",
+  });
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
+  vi.mocked(api.getRetentionPolicy).mockResolvedValue({
+    ...policy,
+    revision: 3,
+  });
+  fireEvent.click(save);
+  await screen.findByText(/The policy or copies changed/);
+  await waitFor(() =>
+    expect(vi.mocked(api.getRetentionPolicy).mock.calls.length).toBeGreaterThan(
+      1,
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry saved retention request" }),
+  ).toBeNull();
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("remote keep_count"), {
+    target: { value: "1" },
+  });
+  fireEvent.click(save);
+  await waitFor(() => expect(api.saveRetentionPolicy).toHaveBeenCalledTimes(2));
+  const first = vi.mocked(api.saveRetentionPolicy).mock.calls[0]![2];
+  const corrected = vi.mocked(api.saveRetentionPolicy).mock.calls[1]![2];
+  expect(corrected.request_id).not.toBe(first.request_id);
+  expect(corrected.expected_revision).toBe(3);
+  expect(corrected.remote.keep_count).toBe(1);
+});
+
+test("ambiguous saved policy retry stays identical and can be discarded without claiming cancellation", async () => {
+  vi.mocked(api.saveRetentionPolicy).mockRejectedValue(
+    new Error("response lost"),
+  );
+  setup();
+  const save = await screen.findByRole("button", {
+    name: "Save retention policy",
+  });
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(save);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Retry saved retention request",
+    }),
+  );
+  await waitFor(() => expect(api.saveRetentionPolicy).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.saveRetentionPolicy).mock.calls[1]![2]).toBe(
+    vi.mocked(api.saveRetentionPolicy).mock.calls[0]![2],
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Discard saved request locally",
+    }),
+  );
+  await screen.findByText(
+    /Saved request discarded locally. This does not cancel work/,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Retry saved retention request" }),
+  ).toBeNull();
+  await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
 });

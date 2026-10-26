@@ -133,12 +133,34 @@ CREATE TABLE hosting_storage_backup_retention_resumes (
 CREATE TRIGGER hosting_storage_backup_retention_resumes_immutable BEFORE UPDATE OR DELETE ON hosting_storage_backup_retention_resumes FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_execution_immutable();
 
 
--- Shared serial admission covers every storage publication, transfer and restore.
+-- Keep admission transactions serial, but held effects exclude only producers
+-- sharing their physical location. Archive plans do not know the artifact pool,
+-- so local effects conservatively exclude the same runner or server. Remote
+-- effects exclude only the recorded canonical endpoint/bucket/object.
 CREATE FUNCTION nerocd_storage_copy_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE producer jsonb; producer_runner text; producer_server text; remote_scope text; touches_local boolean:=true;
 BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended('nerocd-storage-copy-admission',0));
- IF EXISTS(SELECT 1 FROM hosting_storage_backup_retention_executions WHERE reservation_held) THEN
- RAISE EXCEPTION 'storage copy pool reserved' USING ERRCODE='23514'; END IF;
+ IF TG_TABLE_NAME='hosting_storage_archive_plans' THEN
+  producer:=NEW.body;
+  IF producer->'remote_source' IS NOT NULL THEN
+   SELECT nerocd_backup_remote_scope(t.plan->'target'->'target'->>'endpoint',t.plan->'target'->'target'->>'bucket',t.plan->>'object_key')
+   INTO remote_scope FROM hosting_storage_backup_transfers t WHERE t.id=producer->'remote_source'->>'transfer_id';
+  END IF;
+ ELSE
+  producer:=NEW.plan;
+  touches_local:=COALESCE(producer->'operation'->>'mode','')<>'validate';
+  remote_scope:=nerocd_backup_remote_scope(producer->'target'->'target'->>'endpoint',producer->'target'->'target'->>'bucket',producer->>'object_key');
+ END IF;
+ producer_runner:=producer->>'runner_id'; producer_server:=producer->>'server_id';
+ IF EXISTS(SELECT 1 FROM hosting_storage_backup_retention_items i
+   JOIN hosting_storage_backup_copies c ON c.id=i.copy_id
+   WHERE i.reservation_held AND (
+    (touches_local AND c.location='local' AND (c.runner_id=producer_runner OR c.body->>'server_id'=producer_server)) OR
+    (c.location='remote' AND remote_scope IS NOT NULL AND
+     nerocd_backup_remote_scope(c.body->'target'->'target'->>'endpoint',c.body->'target'->'target'->>'bucket',c.body->>'object_key')=remote_scope)
+   )) THEN
+ RAISE EXCEPTION 'storage copy location reserved' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER hosting_storage_copy_archive BEFORE INSERT ON hosting_storage_archive_plans FOR EACH ROW EXECUTE FUNCTION nerocd_storage_copy_admission();

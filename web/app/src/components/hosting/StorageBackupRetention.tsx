@@ -87,6 +87,26 @@ export function StorageBackupRetention({
   }, [policy.error, executions.error, onDenied]);
   async function send(next: Attempt) {
     if (blocked || busy || !owner) return;
+    if (
+      next.kind === "policy" &&
+      [next.body.local, next.body.remote].some(
+        (limits) =>
+          !Number.isSafeInteger(limits.keep_count) ||
+          limits.keep_count < 0 ||
+          limits.keep_count > 10000 ||
+          !Number.isSafeInteger(limits.keep_days) ||
+          limits.keep_days < 0 ||
+          limits.keep_days > 36500 ||
+          !Number.isSafeInteger(limits.max_bytes) ||
+          limits.max_bytes < 0 ||
+          limits.max_bytes > 2 ** 50,
+      )
+    ) {
+      setError(
+        "Enter whole nonnegative limits within the supported range, then save again.",
+      );
+      return;
+    }
     setAttempt(next);
     setBusy(true);
     setError("");
@@ -107,9 +127,23 @@ export function StorageBackupRetention({
         onDenied();
         setPreview(null);
       }
-      setError(
-        "The request result is unconfirmed. Retry the saved request. A changed policy or copy requires a fresh review.",
-      );
+      if (
+        e instanceof ApiError &&
+        [400, 401, 403, 404, 409, 422].includes(e.status)
+      ) {
+        setAttempt(null);
+        setPreview(null);
+        setError(
+          e.status === 409
+            ? "The policy or copies changed. Refresh the current policy and review a new preview before deleting."
+            : "The request was rejected. Correct the limits or refresh access, then try again.",
+        );
+        await client.invalidateQueries({ queryKey: key });
+      } else {
+        setError(
+          "The request result is unconfirmed. Retry the identical saved request or discard it locally. Discarding does not cancel work already accepted by the server. Check batch history before starting another deletion.",
+        );
+      }
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -268,9 +302,25 @@ export function StorageBackupRetention({
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !busy ? (
-        <Button disabled={blocked || !owner} onClick={() => send(attempt)}>
-          Retry saved retention request
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={blocked || !owner} onClick={() => send(attempt)}>
+            Retry saved retention request
+          </Button>
+          <Button
+            variant="outline"
+            disabled={blocked || !owner}
+            onClick={() => {
+              setAttempt(null);
+              setPreview(null);
+              setError(
+                "Saved request discarded locally. This does not cancel work already accepted by the server. Check batch history before starting another deletion.",
+              );
+              void client.invalidateQueries({ queryKey: key });
+            }}
+          >
+            Discard saved request locally
+          </Button>
+        </div>
       ) : null}
       <ul>
         {executions.data?.map((execution) => (

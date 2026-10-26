@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"nerocd/internal/artifactfs"
 	"nerocd/internal/domain"
@@ -102,6 +103,9 @@ func hostingStorageRetentionRuntimeWorkflow(f *hostingStorageRemoteRuntimeFixtur
 			if err == nil {
 				handle.Close()
 				t.Fatal("selected local copy remains")
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("selected local copy absence is unproven: %v", err)
 			}
 		} else {
 			if err != nil {
