@@ -73,6 +73,17 @@ engines, in-place/cross-host restore and aggregate gates remain open. Historical
 checkpoint exclusions below retain their original scope. Feature equivalence
 adds no migration or unchanged-client compatibility claim.
 
+PostgreSQL backup/upload failure notification qualification is accepted at
+`1eb2d01c9262c6bad5a03579545226189f88f1be`. The [notification guide and evidence](hosting-backup-notifications.md#accepted-qualification-and-durable-evidence)
+cover SMTP email and generic HTTPS webhooks, live channel setup, actual events,
+durable identities and attempts, and explicit local-copy recovery into a fresh
+database with application reads and new writes. The physical dump failure settles
+as uncertain. Native Linux arm64, PostgreSQL 17.11, trusted rootful classic-store
+Docker, same-destination pinned Silo over trusted loopback HTTP, and private-CA
+notification TLS define the profile. Public-CA deployment, production S3 HTTPS,
+other events/channels and full R63/A25 remain open. Earlier checkpoint exclusions
+retain their original revision and scope.
+
 ## Status and evidence
 
 - `planned`: required target without accepted implementation evidence.
@@ -880,8 +891,8 @@ Pinned source evidence is [Team notification configuration](https://github.com/c
 
 | Channel | Status and slice | Supported limits | Planned fixtures |
 | --- | --- | --- | --- |
-| Email | planned, M2 | Configure credentials, event selection, bounded retry and actionable delivery result | notify-email, A25 |
-| Generic webhook | planned, M2 | Scoped endpoint/credential, durable event identity, retry and duplicate handling | notify-webhook, A25 |
+| Email | validated bounded PostgreSQL backup/upload failure slice | Encrypted write-only SMTP configuration, current project recipients, two event selectors, durable attempts and explicit recovery; private-CA TLS qualification | [Accepted notification qualification](hosting-backup-notifications.md#accepted-qualification-and-durable-evidence); full channel/event matrix and A25 remain open |
+| Generic webhook | validated bounded PostgreSQL backup/upload failure slice | Encrypted write-only HTTPS endpoint, two event selectors, durable identities, bounded retry and explicit recovery; private-CA TLS qualification | [Accepted notification qualification](hosting-backup-notifications.md#accepted-qualification-and-durable-evidence); full channel/event matrix and A25 remain open |
 | Discord | planned, M3 | Separate channel adapter and delivery evidence | notify-discord |
 | Slack | planned, M3 | Separate channel adapter and delivery evidence | notify-slack |
 | Telegram | planned, M3 | Separate channel adapter and delivery evidence | notify-telegram |
