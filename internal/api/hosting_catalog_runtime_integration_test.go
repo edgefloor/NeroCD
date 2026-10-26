@@ -626,6 +626,19 @@ func catalogRuntimeResumeFailure(t *testing.T, f *storageRuntimeFixture, resourc
 	if !stopped || storageArchiveWriterRunning(t, current.Result.ContainerID) || storageArchiveWriterRunning(t, old.Result.ContainerID) {
 		t.Fatal("resume fault did not occur after exact writer quiescence")
 	}
+	// The owned service restarts this held exit. The raw fixture process needs
+	// the same explicit supervision before it can claim authorized recovery.
+	select {
+	case processErr := <-f.process.done:
+		f.process.done <- processErr
+		var exitErr *exec.ExitError
+		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage archive evidence remains held for authorized recovery") {
+			t.Fatal("held archive did not produce the expected runner exit")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner did not exit after the held archive")
+	}
+	f.stop()
 	if err := os.Remove(marker); err != nil {
 		t.Fatal(err)
 	}
@@ -634,6 +647,7 @@ func catalogRuntimeResumeFailure(t *testing.T, f *storageRuntimeFixture, resourc
 	if evidence == nil || len(evidence.ResumeRequiredContainerIDs) != 1 || evidence.ResumeRequiredContainerIDs[0] != current.Result.ContainerID {
 		t.Fatal("owner recovery widened originally-running writer obligation")
 	}
+	f.start()
 	recovered := f.await(recovery.ID, "succeeded")
 	if recovered.MutationHold || !storageArchiveWriterRunning(t, current.Result.ContainerID) || storageArchiveWriterRunning(t, old.Result.ContainerID) {
 		t.Fatal("owner recovery failed exact writer resume")
