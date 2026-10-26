@@ -11,8 +11,16 @@ const evidence = process.env.NEROCD_STORAGE_REMOTE_HOST_EVIDENCE;
 if (!/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") || !/^[a-f0-9]{64}$/.test(key ?? "") || !evidence?.startsWith("/")) throw Error("exact private browser profile required");
 let api, browser, context, page;
 let stopped = false;
+const cleanupFailures = new Set();
+const closing = new Map();
 async function closeOwned() {
-  await Promise.allSettled([context?.close(), browser?.close(), api?.dispose()]);
+  for (const [name, resource, method] of [["context", context, "close"], ["browser", browser, "close"], ["api", api, "dispose"]]) {
+    if (resource && !closing.has(name)) closing.set(name, Promise.resolve().then(() => resource[method]()));
+  }
+  const pending = [...closing.entries()];
+  const results = await Promise.allSettled(pending.map(([, promise]) => promise));
+  results.forEach((result, index) => {if (result.status === "rejected") cleanupFailures.add(pending[index][0]);});
+  return cleanupFailures.size === 0;
 }
 function stop(code) {
   if (stopped) return;
@@ -179,14 +187,23 @@ try {
   safe.status = "passed";
   await report("done", restored.operation.id);
 } catch {
-  if (!process.exitCode) process.exitCode=1; safe.failure=stopped?"browser_workflow_cancelled":"browser_workflow_failed";
+  if (!process.exitCode) process.exitCode=1;
+  safe.status="failed"; safe.failure=stopped?"browser_workflow_cancelled":"browser_workflow_failed";
 } finally {
   clearTimeout(deadlineTimer);
   if (stopped) {safe.status="failed"; safe.failure="browser_workflow_cancelled";}
+  if (!await closeOwned()) {
+    safe.status="failed";
+    safe.cleanup_failures=[...cleanupFailures].sort();
+    safe.failure ??= "browser_cleanup_failed";
+    if (!process.exitCode) process.exitCode=1;
+  }
+  if (stopped) {safe.status="failed"; safe.failure="browser_workflow_cancelled";}
   try {
     await writeFile(resolve(evidence, "browser-safe.json"), JSON.stringify(safe, null, 2) + "\n", { mode: 0o600 });
+  } catch {
+    if (!process.exitCode) process.exitCode=1;
   } finally {
-    await closeOwned();
     process.removeListener("SIGINT", onInterrupt);
     process.removeListener("SIGTERM", onTerminate);
   }

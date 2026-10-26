@@ -1,6 +1,7 @@
 """Exercise the actual gate's signal traps using harmless executable stubs."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import signal
@@ -365,21 +366,34 @@ inner_docker() {
 
 class BrowserCancellationTest(unittest.TestCase):
     """Run the real driver with inert Playwright resources, without a browser."""
-    def run_driver(self, delivered_signal=None):
+    def run_driver(self, delivered_signal=None, cleanup_failure="", complete=False):
         driver = GATE.with_name("remote_browser.mjs")
         with tempfile.TemporaryDirectory(prefix="nerocd-storage-browser-stop-test-") as temporary:
             root = Path(temporary)
             module = root / "web/app/node_modules/@playwright/test"
             module.mkdir(parents=True)
             (root / "web/app/package.json").write_text("{}")
+            (root / "browser-ui-manifest.json").write_text(json.dumps({"schema": "nerocd.ui-assets/v1", "files": {"index.html": hashlib.sha256(b"fixture").hexdigest()}}))
             (module / "index.js").write_text(r"""
 const fs = require("node:fs");
 const root = process.env.NEROCD_STORAGE_REMOTE_HOST_EVIDENCE;
-const mark = value => fs.appendFileSync(root + "/closed", value + "\n");
+const mark = value => {
+ fs.appendFileSync(root + "/closed", value + "\n");
+ if (fs.existsSync(root + "/browser-safe.json")) fs.writeFileSync(root + "/receipt-before-cleanup", "invalid");
+};
+const close = async value => {
+ mark(value);
+ if (process.env.STORAGE_BROWSER_TEST_CLOSE_FAILURE === value) throw Error("private close failure must not appear in receipt");
+};
+const complete = process.env.STORAGE_BROWSER_TEST_COMPLETE === "1";
+const phases = ["target", "validation", "backup", "denied", "retry", "restore", "complete"];
 let rejectPending, pendingHandle;
 const api = {
- get: async () => {
+ get: async path => {
   fs.writeFileSync(root + "/started", "polling");
+  if (complete) return path.includes("/__storage_remote_fixture/")
+   ? {status: () => 200, json: async () => ({phase:phases.shift(),resource_id:"resource",target_id:"target",backup_id:"backup",access_key:"fixture",secret_key:"fixture"})}
+   : {status: () => 200, body: async () => Buffer.from("fixture")};
   if (process.env.STORAGE_BROWSER_TEST_EXPIRE === "1") {
    const expired = Date.now() + 25 * 60 * 1000;
    Date.now = () => expired;
@@ -387,20 +401,37 @@ const api = {
   }
   return new Promise((resolve, reject) => {rejectPending = reject; pendingHandle = setInterval(() => {}, 1000);});
  },
- dispose: async () => {mark("api"); clearInterval(pendingHandle); rejectPending?.(Error("owned API disposed"));}
+ post: async () => ({status: () => 204}),
+ dispose: async () => {clearInterval(pendingHandle); rejectPending?.(Error("owned API disposed")); await close("api");}
 };
-const context = {newPage: async () => ({setDefaultTimeout: () => {}}), close: async () => mark("context")};
+let responseIndex = 0, contextIndex = 0;
+const page = new Proxy({}, {get: (_, name) => {
+ if (name === "then") return undefined;
+ if (["getByRole","getByLabel","locator"].includes(name)) return () => page;
+ if (name === "evaluateAll") return async () => "target:1";
+ if (name === "evaluate") return async () => false;
+ if (name === "waitForResponse") return async () => {
+  const index=responseIndex++;
+  const values=[{id:"target"},{id:"validation"},{id:"backup"},{id:"upload"},{operation:{id:"restore"}}];
+  return {status: () => index === 0 ? 200 : 202,json: async () => values[index],
+   request: () => ({postDataJSON: () => ({remote_target:{target_id:"target"},remote_source:{transfer_id:"upload"}})})};
+ };
+ return async () => {};
+}});
+const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer";return {newPage: async () => page,close: async () => close(name)};};
 module.exports = {
  request: {newContext: async () => api},
- chromium: {launch: async () => ({newContext: async () => context, close: async () => mark("browser")})},
- expect: () => {throw Error("UI must not execute in cancellation test");}
+ chromium: {launch: async () => ({newContext: async () => makeContext(), close: async () => close("browser")})},
+ expect: () => new Proxy({}, {get: () => async () => {if (!complete) throw Error("UI must not execute in cancellation test");}})
 };
 """)
             environment = os.environ.copy()
             environment.update(NEROCD_STORAGE_REMOTE_BROWSER_ORIGIN="https://127.0.0.1:49155",
                                NEROCD_STORAGE_REMOTE_BROWSER_KEY="a" * 64,
                                NEROCD_STORAGE_REMOTE_HOST_EVIDENCE=str(root),
-                               STORAGE_BROWSER_TEST_EXPIRE="0" if delivered_signal else "1")
+                               STORAGE_BROWSER_TEST_EXPIRE="0" if delivered_signal or complete else "1",
+                               STORAGE_BROWSER_TEST_CLOSE_FAILURE=cleanup_failure,
+                               STORAGE_BROWSER_TEST_COMPLETE="1" if complete else "0")
             process = subprocess.Popen(["node", str(driver)], cwd=root, env=environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, start_new_session=True)
@@ -413,15 +444,23 @@ module.exports = {
                 if delivered_signal:
                     process.send_signal(delivered_signal)
                 output, _ = process.communicate(timeout=3)
-                self.assertEqual(process.returncode, 128 + delivered_signal if delivered_signal else 1, output)
-                self.assertEqual(set((root / "closed").read_text().splitlines()), {"api", "context", "browser"})
+                expected_code = 128 + delivered_signal if delivered_signal else (1 if cleanup_failure or not complete else 0)
+                self.assertEqual(process.returncode, expected_code, output)
+                expected_closed = {"api", "context", "browser", "viewer"} if complete else {"api", "context", "browser"}
+                self.assertEqual(set((root / "closed").read_text().splitlines()), expected_closed)
+                self.assertFalse((root / "receipt-before-cleanup").exists(), "receipt was published before cleanup")
                 safe = json.loads((root / "browser-safe.json").read_text())
-                self.assertEqual(safe["status"], "failed")
-                self.assertEqual(safe["failure"], "browser_workflow_cancelled" if delivered_signal else "browser_workflow_failed")
+                self.assertEqual(safe["status"], "passed" if expected_code == 0 else "failed")
+                if expected_code:
+                    expected_failure = "browser_workflow_cancelled" if delivered_signal else ("browser_cleanup_failed" if complete else "browser_workflow_failed")
+                    self.assertEqual(safe["failure"], expected_failure)
+                if cleanup_failure:
+                    self.assertEqual(safe["cleanup_failures"], [cleanup_failure])
+                    self.assertNotIn("private close failure", json.dumps(safe))
             finally:
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
-                    process.communicate(timeout=3)
+                process.communicate(timeout=3)
 
     def test_sigterm_stops_pending_poll_and_joins_owned_resources(self):
         self.run_driver(signal.SIGTERM)
@@ -431,6 +470,23 @@ module.exports = {
 
     def test_phase_deadline_closes_owned_resources(self):
         self.run_driver()
+
+    def test_success_receipt_is_written_after_clean_shutdown(self):
+        self.run_driver(complete=True)
+
+    def test_each_owned_close_failure_prevents_success(self):
+        for resource in ("context", "browser", "api"):
+            with self.subTest(resource=resource):
+                self.run_driver(cleanup_failure=resource, complete=True)
+
+    def test_cleanup_failure_preserves_primary_failure(self):
+        self.run_driver(cleanup_failure="context")
+
+    def test_cleanup_failure_preserves_interrupt_status(self):
+        for delivered_signal in (signal.SIGINT, signal.SIGTERM):
+            for resource in ("context", "browser", "api"):
+                with self.subTest(signal=delivered_signal, resource=resource):
+                    self.run_driver(delivered_signal, cleanup_failure=resource)
 
 
 if __name__ == "__main__":
