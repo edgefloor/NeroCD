@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -558,5 +559,287 @@ func TestPostgresBackupNotificationRiverExplicitTestRecovery(t *testing.T) {
 	channels, err := service.ListNotificationChannels(actorCtx, channel.ProjectID)
 	if err != nil || len(channels) != 1 || channels[0].ConsecutiveFailures != 0 {
 		t.Fatal("test changed actual-event counters", err)
+	}
+}
+
+type notificationSMTPRepairMessage struct {
+	recipients []string
+	body       string
+}
+type notificationSMTPRepairPeer struct {
+	address   string
+	policy    notificationtransport.Policy
+	accepted  *atomic.Int32
+	delivered *atomic.Int32
+	messages  <-chan notificationSMTPRepairMessage
+}
+
+func newNotificationSMTPRepairPeer(t *testing.T, mode string, drops int, beforeAuthReply func(int) error) notificationSMTPRepairPeer {
+	t.Helper()
+	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(certificate.Close)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	failures := make(chan error, 1)
+	messages := make(chan notificationSMTPRepairMessage, 5)
+	accepted, delivered := &atomic.Int32{}, &atomic.Int32{}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(4 * time.Second):
+			t.Error("persistence SMTP peer did not join")
+		}
+		select {
+		case err := <-failures:
+			t.Error("persistence SMTP peer", err)
+		default:
+		}
+	})
+	roots := x509.NewCertPool()
+	roots.AddCert(certificate.Certificate())
+	go func() {
+		defer close(done)
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			attempt := int(accepted.Add(1))
+			err = func() error {
+				defer connection.Close()
+				_ = connection.SetDeadline(time.Now().Add(3 * time.Second))
+				reader := bufio.NewReader(connection)
+				write := func(value string) error { _, err := io.WriteString(connection, value); return err }
+				if mode == "starttls" {
+					if err := write("220 fixture ESMTP\r\n"); err != nil {
+						return err
+					}
+					line, err := reader.ReadString('\n')
+					if err != nil || !strings.HasPrefix(line, "EHLO ") {
+						return errors.New("missing SMTP hello")
+					}
+					if err = write("250-fixture\r\n250 STARTTLS\r\n"); err != nil {
+						return err
+					}
+					line, err = reader.ReadString('\n')
+					if err != nil || line != "STARTTLS\r\n" {
+						return errors.New("missing STARTTLS request")
+					}
+					if err = write("220 upgrade\r\n"); err != nil {
+						return err
+					}
+				}
+				if attempt <= drops {
+					return nil
+				}
+				secured := tls.Server(connection, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: certificate.TLS.Certificates})
+				if err := secured.Handshake(); err != nil {
+					return err
+				}
+				connection = secured
+				reader = bufio.NewReader(connection)
+				if mode == "tls" {
+					if err := write("220 fixture ESMTP\r\n"); err != nil {
+						return err
+					}
+				}
+				observation := notificationSMTPRepairMessage{}
+				for {
+					line, err := reader.ReadString('\n')
+					if errors.Is(err, io.EOF) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					switch {
+					case strings.HasPrefix(line, "EHLO "):
+						if err = write("250-fixture\r\n250 AUTH PLAIN\r\n"); err != nil {
+							return err
+						}
+					case strings.HasPrefix(line, "AUTH PLAIN "):
+						decoded, e := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(line, "AUTH PLAIN ")))
+						if e != nil || string(decoded) != "\x00fixture\x00canary-repair-password" {
+							return errors.New("unexpected SMTP credentials")
+						}
+						if beforeAuthReply != nil {
+							if e = beforeAuthReply(attempt); e != nil {
+								return e
+							}
+						}
+						if err = write("235 authenticated\r\n"); err != nil {
+							return err
+						}
+					case strings.HasPrefix(line, "MAIL FROM:"):
+						if err = write("250 accepted\r\n"); err != nil {
+							return err
+						}
+					case strings.HasPrefix(line, "RCPT TO:"):
+						observation.recipients = append(observation.recipients, strings.TrimSpace(line))
+						if err = write("250 accepted\r\n"); err != nil {
+							return err
+						}
+					case line == "DATA\r\n":
+						if err = write("354 data\r\n"); err != nil {
+							return err
+						}
+						var body strings.Builder
+						for {
+							part, e := reader.ReadString('\n')
+							if e != nil {
+								return e
+							}
+							if part == ".\r\n" {
+								break
+							}
+							body.WriteString(part)
+							if body.Len() > 16384 {
+								return errors.New("SMTP body exceeded fixture bound")
+							}
+						}
+						observation.body = body.String()
+						messages <- observation
+						delivered.Add(1)
+						if err = write("250 queued\r\n"); err != nil {
+							return err
+						}
+					case line == "QUIT\r\n":
+						return write("221 bye\r\n")
+					default:
+						return errors.New("unexpected SMTP command")
+					}
+				}
+			}()
+			if err != nil {
+				select {
+				case failures <- err:
+				default:
+				}
+				return
+			}
+		}
+	}()
+	return notificationSMTPRepairPeer{address: listener.Addr().String(), policy: notificationtransport.Policy{FixtureTLSOrigins: []string{"smtp+" + mode + "://" + listener.Addr().String()}, RootCAs: roots}, accepted: accepted, delivered: delivered, messages: messages}
+}
+
+func notificationSMTPRepairStore(t *testing.T, f networkCaptureFixture, peer notificationSMTPRepairPeer, mode string) (*store.PostgresStore, *app.Service, domain.NotificationChannel, string) {
+	t.Helper()
+	pg, err := store.OpenPostgres(t.Context(), f.db.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closePostgresStore(t, pg) })
+	sender, err := notificationtransport.New(peer.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.ConfigureBackupNotifications(managedRing(t), sender, "https://nerocd.example"); err != nil {
+		t.Fatal(err)
+	}
+	service := hostingDatabaseApplication(t, pg)
+	if _, err = f.db.Exec(f.ctx, `INSERT INTO users(id,email,name,status) VALUES('usr_notify_repair','old@example.com','repair recipient','active');INSERT INTO project_members(id,project_id,user_id,role) VALUES('mem_notify_repair','proj_platform','usr_notify_repair','viewer')`); err != nil {
+		t.Fatal(err)
+	}
+	host, port, _ := net.SplitHostPort(peer.address)
+	number, _ := strconv.Atoi(port)
+	configuration := &domain.NotificationConfiguration{SMTPHost: host, SMTPPort: number, SMTPSecurity: mode, SMTPUsername: "fixture", SMTPPassword: "canary-repair-password", FromAddress: "sender@example.com", RecipientUserIDs: []string{"usr_notify_repair"}}
+	defer configuration.Close()
+	channel, err := service.SaveNotificationChannel(f.ctx, f.resource.ProjectID, "", domain.NotificationChannelInput{RequestID: "create_repair_email", Name: "repair email", Type: "email", Enabled: true, Events: []string{"backup_failed"}}, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, in := failedNotificationBackup(t, f, "notification_repair_source")
+	if _, err = f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); err != nil {
+		t.Fatal(err)
+	}
+	var delivery string
+	if err = f.db.QueryRow(f.ctx, `SELECT d.id FROM hosting_notification_deliveries d JOIN hosting_notification_events e ON e.id=d.event_id WHERE e.source_id=$1`, backup.ID).Scan(&delivery); err != nil {
+		t.Fatal(err)
+	}
+	return pg, service, channel, delivery
+}
+
+func assertNotificationSMTPRepairPending(t *testing.T, f networkCaptureFixture, service *app.Service, channel domain.NotificationChannel, id string, attempt int, code string) {
+	t.Helper()
+	v, err := service.GetNotificationDelivery(f.ctx, channel.ProjectID, id)
+	if err != nil || v.State != "pending" || v.AttemptCount != attempt || v.FailureCode != code || len(v.Attempts) != attempt {
+		t.Fatal("transient SMTP attempt became terminal or lost history", v, err)
+	}
+	channels, err := service.ListNotificationChannels(f.ctx, channel.ProjectID)
+	if err != nil || len(channels) != 1 || !channels[0].Enabled || channels[0].ConsecutiveFailures != 0 {
+		t.Fatal("transient SMTP failure changed configuration counter", channels, err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE hosting_notification_deliveries SET next_attempt_at=clock_timestamp() WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresBackupNotificationSMTPTransientTLSRetriesWithoutDisablingChannel(t *testing.T) {
+	for _, mode := range []string{"tls", "starttls"} {
+		t.Run(mode, func(t *testing.T) {
+			f := backupFixture(t)
+			peer := newNotificationSMTPRepairPeer(t, mode, 3, nil)
+			pg, service, channel, id := notificationSMTPRepairStore(t, f, peer, mode)
+			for attempt := 1; attempt <= 3; attempt++ {
+				if err := pg.SendBackupNotification(f.ctx, id); err != nil {
+					t.Fatal(err)
+				}
+				assertNotificationSMTPRepairPending(t, f, service, channel, id, attempt, "smtp_unavailable")
+			}
+			if peer.delivered.Load() != 0 {
+				t.Fatal("failed TLS attempt delivered a message")
+			}
+			if err := pg.SendBackupNotification(f.ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			v, err := service.GetNotificationDelivery(f.ctx, channel.ProjectID, id)
+			if err != nil || v.State != "delivered" || v.AttemptCount != 4 || peer.delivered.Load() != 1 || peer.accepted.Load() != 4 {
+				t.Fatal("SMTP did not recover with original delivery", v, err)
+			}
+			message := <-peer.messages
+			if !strings.Contains(message.body, "Message-ID: <"+id+"@nerocd.invalid>") {
+				t.Fatal("SMTP retry changed delivery identity")
+			}
+		})
+	}
+}
+
+func TestPostgresBackupNotificationSMTPChangedAddressRetriesCurrentMember(t *testing.T) {
+	for _, mode := range []string{"tls", "starttls"} {
+		t.Run(mode, func(t *testing.T) {
+			f := backupFixture(t)
+			peer := newNotificationSMTPRepairPeer(t, mode, 0, func(attempt int) error {
+				if attempt != 1 {
+					return nil
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				_, err := f.db.Exec(ctx, `UPDATE users SET email='current@example.com' WHERE id='usr_notify_repair'`)
+				return err
+			})
+			pg, service, channel, id := notificationSMTPRepairStore(t, f, peer, mode)
+			if err := pg.SendBackupNotification(f.ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			assertNotificationSMTPRepairPending(t, f, service, channel, id, 1, "recipients_unavailable")
+			if peer.delivered.Load() != 0 {
+				t.Fatal("obsolete address received message")
+			}
+			if err := pg.SendBackupNotification(f.ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			v, err := service.GetNotificationDelivery(f.ctx, channel.ProjectID, id)
+			if err != nil || v.State != "delivered" || v.AttemptCount != 2 || peer.delivered.Load() != 1 || peer.accepted.Load() != 2 {
+				t.Fatal("current member retry did not deliver", v, err)
+			}
+			message := <-peer.messages
+			if len(message.recipients) != 1 || !strings.Contains(message.recipients[0], "current@example.com") || strings.Contains(message.body, "old@example.com") {
+				t.Fatal("changed member address was not re-resolved")
+			}
+		})
 	}
 }

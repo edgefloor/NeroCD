@@ -264,6 +264,18 @@ func smtpFailure(err error, uncertain bool) Result {
 	}
 	return Result{Code: "smtp_unavailable"}
 }
+
+func smtpTLSFailure(err error) Result {
+	var verification *tls.CertificateVerificationError
+	var record tls.RecordHeaderError
+	if errors.As(err, &verification) || errors.As(err, &record) {
+		return Result{Code: "tls_failed", ConfigurationFailure: true}
+	}
+	// EOF, resets, deadlines, cancellation, and temporary SMTP responses do
+	// not prove a configuration error. No message has been sent at this point.
+	return smtpFailure(err, false)
+}
+
 func (s *Sender) email(ctx context.Context, c *domain.NotificationConfiguration, p domain.NotificationPayload, authorize Authorize) Result {
 	if c.Validate("email") != nil {
 		return Result{Code: "configuration_invalid", ConfigurationFailure: true}
@@ -280,6 +292,7 @@ func (s *Sender) email(ctx context.Context, c *domain.NotificationConfiguration,
 	if len(recipients) == 0 {
 		return Result{Code: "recipients_unavailable"}
 	}
+	sent := 0
 	for _, recipient := range recipients {
 		current, err := authorize(ctx)
 		if err != nil {
@@ -302,6 +315,10 @@ func (s *Sender) email(ctx context.Context, c *domain.NotificationConfiguration,
 		if result.Code != "" {
 			return result
 		}
+		sent++
+	}
+	if sent == 0 {
+		return Result{Code: "recipients_unavailable"}
 	}
 	return Result{}
 }
@@ -327,7 +344,7 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 	if c.SMTPSecurity == "tls" {
 		secured := tls.Client(wire, tlsConfig)
 		if err = secured.HandshakeContext(ctx); err != nil {
-			return Result{Code: "tls_failed", ConfigurationFailure: true}
+			return smtpTLSFailure(err)
 		}
 		wire = secured
 	}
@@ -344,7 +361,7 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 			return Result{Code: "tls_required", ConfigurationFailure: true}
 		}
 		if err = client.StartTLS(tlsConfig); err != nil {
-			return Result{Code: "tls_failed", ConfigurationFailure: true}
+			return smtpTLSFailure(err)
 		}
 	}
 	if c.SMTPUsername != "" {
@@ -357,7 +374,7 @@ func (s *Sender) emailOne(ctx context.Context, c *domain.NotificationConfigurati
 		return authorityFailure(ctx, err)
 	}
 	if !slices.Contains(current, recipient) {
-		return authorityFailure(ctx, ErrAuthorityChanged)
+		return Result{Code: "recipients_unavailable"}
 	}
 	if err = client.Mail(c.FromAddress); err != nil {
 		return smtpFailure(err, false)

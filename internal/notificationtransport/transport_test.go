@@ -269,3 +269,272 @@ func TestNotificationSMTPVerifiedTLSStableMessageAndCancellation(t *testing.T) {
 		t.Fatal("cancellation ignored")
 	}
 }
+
+type smtpRepairObservation struct {
+	recipients         []string
+	message            string
+	sensitiveBeforeTLS bool
+	err                error
+}
+
+type smtpRepairFixture struct {
+	sender        *Sender
+	configuration *domain.NotificationConfiguration
+	ready         <-chan struct{}
+	observed      <-chan smtpRepairObservation
+	accepted      *atomic.Int32
+}
+
+// The fixture owns one connection and joins it during cleanup. Faults happen
+// at the TLS boundary, before any SMTP authentication or message envelope.
+func newSMTPRepairFixture(t *testing.T, mode, fault string) smtpRepairFixture {
+	t.Helper()
+	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(certificate.Close)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, done := make(chan struct{}), make(chan struct{})
+	observed := make(chan smtpRepairObservation, 1)
+	accepted := &atomic.Int32{}
+	t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(4 * time.Second):
+			t.Error("SMTP repair fixture did not join")
+		}
+	})
+	root := x509.NewCertPool()
+	if fault != "certificate" {
+		root.AddCert(certificate.Certificate())
+	}
+	sender, err := New(Policy{FixtureTLSOrigins: []string{"smtp+" + mode + "://" + listener.Addr().String()}, RootCAs: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, port, _ := net.SplitHostPort(listener.Addr().String())
+	number, _ := strconv.Atoi(port)
+	configuration := &domain.NotificationConfiguration{SMTPHost: host, SMTPPort: number, SMTPSecurity: mode, SMTPUsername: "fixture", SMTPPassword: "canary-repair-password", FromAddress: "sender@example.com", RecipientUserIDs: []string{"member"}}
+	t.Cleanup(configuration.Close)
+	go func() {
+		defer close(done)
+		observation := smtpRepairObservation{}
+		defer func() { observed <- observation }()
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		accepted.Add(1)
+		defer connection.Close()
+		_ = connection.SetDeadline(time.Now().Add(3 * time.Second))
+		read := bufio.NewReader(connection)
+		write := func(value string) bool {
+			_, err := io.WriteString(connection, value)
+			observation.err = err
+			return err == nil
+		}
+		command := func(prefix string) bool {
+			line, err := read.ReadString('\n')
+			observation.err = err
+			if strings.HasPrefix(line, "AUTH") || strings.HasPrefix(line, "MAIL") || strings.HasPrefix(line, "RCPT") {
+				observation.sensitiveBeforeTLS = true
+			}
+			return err == nil && strings.HasPrefix(line, prefix)
+		}
+		if mode == "starttls" {
+			if !write("220 fixture ESMTP\r\n") || !command("EHLO ") || !write("250-fixture\r\n250 STARTTLS\r\n") || !command("STARTTLS\r\n") {
+				return
+			}
+			if fault == "temporary_status" {
+				write("454 TLS temporarily unavailable\r\n")
+				return
+			}
+			if !write("220 start TLS\r\n") {
+				return
+			}
+		}
+		close(ready)
+		switch fault {
+		case "drop":
+			return
+		case "stall", "cancel":
+			_, _ = io.Copy(io.Discard, io.LimitReader(connection, 65536))
+			return
+		case "plaintext":
+			// Wait for ClientHello so plaintext cannot be prefetched with the
+			// SMTP 220 response before net/smtp switches its buffered reader.
+			if _, err := io.ReadFull(connection, make([]byte, 1)); err != nil {
+				return
+			}
+			write("220 plaintext after TLS boundary\r\n")
+			_, _ = io.Copy(io.Discard, io.LimitReader(connection, 65536))
+			return
+		}
+		secured := tls.Server(connection, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: certificate.TLS.Certificates})
+		if err := secured.Handshake(); err != nil {
+			if fault != "certificate" {
+				observation.err = err
+			}
+			return
+		}
+		connection = secured
+		read = bufio.NewReader(connection)
+		if mode == "tls" {
+			if fault == "temporary_status" {
+				write("421 SMTP temporarily unavailable\r\n")
+				return
+			}
+			if !write("220 fixture ESMTP\r\n") {
+				return
+			}
+		}
+		for {
+			line, err := read.ReadString('\n')
+			if err != nil {
+				observation.err = err
+				return
+			}
+			switch {
+			case strings.HasPrefix(line, "EHLO "):
+				if !write("250-fixture\r\n250 AUTH PLAIN\r\n") {
+					return
+				}
+			case strings.HasPrefix(line, "AUTH PLAIN "):
+				value, err := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(line, "AUTH PLAIN ")))
+				if err != nil || string(value) != "\x00fixture\x00canary-repair-password" {
+					observation.err = errors.New("fixture authentication mismatch")
+					return
+				}
+				if !write("235 authenticated\r\n") {
+					return
+				}
+			case strings.HasPrefix(line, "MAIL FROM:"):
+				if !write("250 accepted\r\n") {
+					return
+				}
+			case strings.HasPrefix(line, "RCPT TO:"):
+				observation.recipients = append(observation.recipients, strings.TrimSpace(line))
+				if !write("250 accepted\r\n") {
+					return
+				}
+			case line == "DATA\r\n":
+				if !write("354 data\r\n") {
+					return
+				}
+				var body strings.Builder
+				for {
+					part, err := read.ReadString('\n')
+					if err != nil {
+						observation.err = err
+						return
+					}
+					if part == ".\r\n" {
+						break
+					}
+					body.WriteString(part)
+					if body.Len() > 16384 {
+						observation.err = errors.New("fixture message exceeded limit")
+						return
+					}
+				}
+				observation.message = body.String()
+				if !write("250 queued\r\n") {
+					return
+				}
+			case line == "QUIT\r\n":
+				write("221 bye\r\n")
+				return
+			default:
+				observation.err = errors.New("unexpected fixture command")
+				return
+			}
+		}
+	}()
+	return smtpRepairFixture{sender: sender, configuration: configuration, ready: ready, observed: observed, accepted: accepted}
+}
+
+func TestNotificationSMTPHandshakeFailuresKeepTransientAttemptsRetryable(t *testing.T) {
+	for _, mode := range []string{"tls", "starttls"} {
+		for _, fault := range []string{"drop", "stall", "cancel", "temporary_status", "certificate", "plaintext"} {
+			t.Run(mode+"/"+fault, func(t *testing.T) {
+				fixture := newSMTPRepairFixture(t, mode, fault)
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				if fault == "stall" {
+					var stop context.CancelFunc
+					ctx, stop = context.WithTimeout(ctx, 200*time.Millisecond)
+					defer stop()
+				}
+				result := make(chan Result, 1)
+				go func() {
+					result <- fixture.sender.Send(ctx, fixture.configuration, notificationTestPayload(), func(context.Context) ([]string, error) { return []string{"member@example.com"}, nil })
+				}()
+				if fault == "cancel" {
+					select {
+					case <-fixture.ready:
+						cancel()
+					case <-time.After(time.Second):
+						t.Fatal("SMTP did not reach TLS boundary")
+					}
+				}
+				var actual Result
+				select {
+				case actual = <-result:
+				case <-time.After(3 * time.Second):
+					t.Fatal("SMTP attempt did not stop")
+				}
+				configurationError := fault == "certificate" || fault == "plaintext"
+				if actual.Code == "" || actual.ConfigurationFailure != configurationError || actual.Permanent || actual.Uncertain {
+					t.Fatalf("wrong TLS result: %+v", actual)
+				}
+				if configurationError && actual.Code != "tls_failed" {
+					t.Fatalf("certificate/protocol error lost: %+v", actual)
+				}
+				if !configurationError && actual.Code != "smtp_unavailable" {
+					t.Fatalf("transient TLS error was not retryable: %+v", actual)
+				}
+				observation := <-fixture.observed
+				if observation.sensitiveBeforeTLS || len(observation.recipients) != 0 || observation.message != "" {
+					t.Fatal("SMTP sent credentials or a message before verified TLS")
+				}
+			})
+		}
+	}
+}
+
+func TestNotificationSMTPSuccessfullyUpgradesSTARTTLS(t *testing.T) {
+	fixture := newSMTPRepairFixture(t, "starttls", "")
+	result := fixture.sender.Send(t.Context(), fixture.configuration, notificationTestPayload(), func(context.Context) ([]string, error) { return []string{"member@example.com"}, nil })
+	if result.Code != "" {
+		t.Fatalf("verified STARTTLS delivery failed: %+v", result)
+	}
+	observation := <-fixture.observed
+	if observation.err != nil || observation.sensitiveBeforeTLS || len(observation.recipients) != 1 || !strings.Contains(observation.message, "Message-ID: <ntd_stable@nerocd.invalid>") {
+		t.Fatal("STARTTLS message was not acknowledged correctly", observation.err)
+	}
+}
+
+func TestNotificationSMTPRetriesWhenEverySnapshotAddressChanges(t *testing.T) {
+	fixture := newSMTPRepairFixture(t, "tls", "")
+	calls := 0
+	first := fixture.sender.Send(t.Context(), fixture.configuration, notificationTestPayload(), func(context.Context) ([]string, error) {
+		calls++
+		if calls < 3 {
+			return []string{"old@example.com"}, nil
+		}
+		return []string{"current@example.com"}, nil
+	})
+	if first.Code != "recipients_unavailable" || first.ConfigurationFailure || first.Permanent || first.Uncertain || fixture.accepted.Load() != 0 {
+		t.Fatalf("zero-send attempt claimed delivery: %+v", first)
+	}
+	second := fixture.sender.Send(t.Context(), fixture.configuration, notificationTestPayload(), func(context.Context) ([]string, error) { return []string{"current@example.com"}, nil })
+	if second.Code != "" {
+		t.Fatalf("current address retry failed: %+v", second)
+	}
+	observation := <-fixture.observed
+	if observation.err != nil || len(observation.recipients) != 1 || !strings.Contains(observation.recipients[0], "current@example.com") || strings.Contains(observation.message, "old@example.com") {
+		t.Fatal("obsolete recipient was sent a message", observation.err)
+	}
+}
