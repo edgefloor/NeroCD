@@ -26,6 +26,7 @@ case ${1:-} in
  *) echo 'usage: gate.sh [--archive|--remote]' >&2; exit 2;;
 esac
 outer=''
+pg=''
 volume_attempted=false
 outer_attempted=false
 returned_outer=''
@@ -44,6 +45,26 @@ exec > >(tee "$evidence/gate.log") 2>&1
 printf 'evidence=%s\nhead=%s\ntree=%s\nowner=%s\n' "$evidence" "$head_before" "$tree_before" "$owner"
 host_docker() { docker --host "$docker_host" "$@"; }
 inner_docker() { host_docker exec "$outer" docker --host unix:///var/run/docker.sock "$@"; }
+
+# POSTGRES_CAPACITY_BEGIN
+# Read only the exact labelled PostgreSQL service inside the verified owned guest.
+postgres_capacity() {
+ local stage=$1 observed status=0
+ [[ -n "$pg" ]] || return 0
+ [[ "$pg" =~ ^[a-f0-9]{64}$ ]] || return 1
+ observed=$(host_docker exec "$outer" timeout 5 docker --host unix:///var/run/docker.sock inspect --format "{{.Id}} {{index .Config.Labels \"$label\"}}" "$pg") || return 1
+ [[ "$observed" == "$pg $owner" ]] || { echo 'PostgreSQL diagnostic ownership mismatch' >&2; return 1; }
+ {
+  echo "stage=$stage"
+  host_docker exec "$outer" timeout 5 docker --host unix:///var/run/docker.sock exec "$pg" df -Pk /var/lib/postgresql/data || status=1
+  host_docker exec "$outer" timeout 5 docker --host unix:///var/run/docker.sock exec "$pg" df -Pi /var/lib/postgresql/data || status=1
+  # The image's local socket trust avoids passing a password to diagnostics.
+  host_docker exec "$outer" timeout 5 docker --host unix:///var/run/docker.sock exec "$pg" psql --username=nerocd --dbname=nerocd_storage_runtime --no-psqlrc --set=ON_ERROR_STOP=1 --command="SELECT current_database(), pg_database_size(current_database()) AS database_bytes, (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'nerocd_%') AS fixture_schemas, (SELECT coalesce(sum(size),0) FROM pg_ls_waldir()) AS wal_bytes; SELECT name, setting, unit FROM pg_settings WHERE name IN ('max_wal_size','min_wal_size','shared_buffers','checkpoint_timeout','fsync','full_page_writes','synchronous_commit') ORDER BY name; SELECT relname, n_live_tup, n_dead_tup, pg_total_relation_size(relid) AS relation_bytes FROM pg_stat_sys_tables WHERE schemaname='pg_catalog' AND relname IN ('pg_attribute','pg_class','pg_type') ORDER BY relname;" || status=1
+  echo "diagnostic_exit=$status"
+ } > "$evidence/postgres-capacity-$stage" 2>&1
+ return "$status"
+}
+# POSTGRES_CAPACITY_END
 
 # IMAGE_PRELOAD_BEGIN
 # Pull only an existing exact pin, then verify its native content and config
@@ -226,6 +247,7 @@ cleanup() {
    host_docker cp "$outer:/fixture/evidence/." "$evidence/runtime" || result=1
   fi
   if [[ "$running" == true ]]; then
+  postgres_capacity final || result=1
   host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-final" || result=1
   inner_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/inner-containers-final" || result=1
   inner_docker volume ls --format '{{json .}}' > "$evidence/inner-volumes-final" || result=1
@@ -362,7 +384,7 @@ if [[ "$remote" != true ]]; then
  pg_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[1]["Id"])' "$evidence/pinned-host-images")
  registry_image=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[2]["Id"])' "$evidence/pinned-host-images")
 fi
-pg=$(inner_docker run --pull=never --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 512m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=256m --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$pg_image")
+pg=$(inner_docker run --pull=never --detach --name "$owner-pg" --label "$label=$owner" --network host --memory 1536m --cpus 1 --pids-limit 128 --tmpfs /var/lib/postgresql/data:rw,size=1g --env POSTGRES_USER=nerocd --env POSTGRES_PASSWORD=isolated_fixture_only --env POSTGRES_DB=nerocd_storage_runtime "$pg_image" postgres -c max_wal_size=128MB -c min_wal_size=32MB)
 reg=$(inner_docker run --pull=never --detach --name "$owner-registry" --label "$label=$owner" --network host --memory 128m --cpus 1 --pids-limit 128 --tmpfs /var/lib/registry:rw,size=64m --env REGISTRY_HTTP_ADDR=127.0.0.1:25000 "$registry_image")
 printf 'inner_pg=%s\ninner_registry=%s\n' "$pg" "$reg" | tee "$evidence/inner-services"
 for version in a b; do
@@ -398,6 +420,7 @@ for _ in $(seq 1 60); do
  sleep 1
 done
 [[ "$ready" == true ]]
+postgres_capacity before-test
 remote_mode=''
 if [[ "$remote" == true ]]; then remote_mode=disposable-dind; fi
 archive_mode=''

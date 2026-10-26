@@ -763,5 +763,93 @@ assert.throws(()=>validate({...archive,recovery_url:archive.recovery_url+"&trans
         result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))],capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
+
+class PostgresCapacityTest(unittest.TestCase):
+    def test_service_budget_and_wal_targets_keep_outer_profile(self):
+        source = GATE.read_text()
+        launch = next(line for line in source.splitlines() if line.startswith("pg=$(inner_docker run "))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = r"""
+set -euo pipefail
+owner=owned; label=io.nerocd.storage-runtime.owner; pg_image=exact-pinned-image
+inner_docker() { printf '%s\n' "$@" > "$1.args"; printf '%064d\n' 1; }
+""" + launch
+            result = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            args = (root / "run.args").read_text().splitlines()
+        for flag, value in {"--memory": "1536m", "--cpus": "1", "--pids-limit": "128", "--tmpfs": "/var/lib/postgresql/data:rw,size=1g", "--label": "io.nerocd.storage-runtime.owner=owned", "--network": "host", "--pull=never": "--detach"}.items():
+            self.assertEqual(args[args.index(flag) + 1], value)
+        self.assertEqual(args[-6:], ["exact-pinned-image", "postgres", "-c", "max_wal_size=128MB", "-c", "min_wal_size=32MB"])
+        self.assertFalse(set(args) & {"--privileged", "--mount", "--volume", "-v"})
+        outer = next(line for line in source.splitlines() if line.startswith("returned_outer=$(outer_run "))
+        self.assertIn("--cpus 4 --memory 6g --pids-limit 2048", outer)
+        self.assertIn('postgres_capacity before-test', source)
+        self.assertIn('postgres_capacity final || result=1', source)
+
+    def diagnostic(self, identity="correct", fail="", pg="a" * 64):
+        source = GATE.read_text().split("# POSTGRES_CAPACITY_BEGIN", 1)[1].split("# POSTGRES_CAPACITY_END", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = r"""
+set -euo pipefail
+outer=exact-owned-guest; owner=owned; label=io.nerocd.storage-runtime.owner
+host_docker() {
+ printf '%s\n' "$@" >> "$evidence/calls"
+ printf '%s\n' END_CALL >> "$evidence/calls"
+ [[ "$1 $2 $3 $4 $5 $6 $7" == 'exec exact-owned-guest timeout 5 docker --host unix:///var/run/docker.sock' ]] || return 90
+ if [[ "$8" == inspect ]]; then
+  [[ "${10}" == '{{.Id}} {{index .Config.Labels "io.nerocd.storage-runtime.owner"}}' ]] || return 91
+  if [[ "$identity" == missing ]]; then return 1; fi
+  if [[ "$identity" == wrong ]]; then printf '%s foreign\n' "$pg"; else printf '%s owned\n' "$pg"; fi
+ else
+  [[ "$8 $9" == "exec $pg" ]] || return 92
+  if [[ "${10}" == "$fail" ]]; then echo unavailable; return 1; fi
+  echo readonly-capacity-evidence
+ fi
+}
+""" + source + '\npostgres_capacity final\n'
+            result = subprocess.run(["bash", "-c", script], env={**os.environ, "evidence": str(root), "pg": pg, "identity": identity, "fail": fail}, capture_output=True, text=True, timeout=5)
+            calls = (root / "calls").read_text() if (root / "calls").exists() else ""
+            evidence = (root / "postgres-capacity-final").read_text() if (root / "postgres-capacity-final").exists() else ""
+            return result, calls, evidence
+
+    def test_readonly_owned_diagnostics_capture_space_wal_and_settings(self):
+        result, calls, evidence = self.diagnostic()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls.count("END_CALL"), 4)
+        self.assertIn("df\n-Pk\n/var/lib/postgresql/data", calls)
+        self.assertIn("df\n-Pi\n/var/lib/postgresql/data", calls)
+        self.assertIn("pg_ls_waldir()", calls)
+        self.assertIn("n_dead_tup", calls)
+        self.assertIn("'fsync','full_page_writes','synchronous_commit'", calls)
+        self.assertNotIn("PGPASSWORD", calls)
+        self.assertNotIn("POSTGRES_PASSWORD", calls)
+        self.assertNotIn("--host=127.0.0.1", calls)
+        self.assertIn("stage=final", evidence)
+        self.assertIn("diagnostic_exit=0", evidence)
+        self.assertNotIn("password", evidence.lower())
+
+    def test_uncertain_identity_never_executes_in_database(self):
+        for identity in ["wrong", "missing"]:
+            with self.subTest(identity=identity):
+                result, calls, evidence = self.diagnostic(identity=identity)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls.count("END_CALL"), 1)
+                self.assertEqual(evidence, "")
+        for pg in ["", "unvalidated-id"]:
+            result, calls, evidence = self.diagnostic(pg=pg)
+            self.assertEqual(result.returncode, 0 if not pg else 1)
+            self.assertEqual(calls, "")
+            self.assertEqual(evidence, "")
+
+    def test_failed_measurement_retains_other_evidence_and_fails(self):
+        result, calls, evidence = self.diagnostic(fail="df")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls.count("END_CALL"), 4)
+        self.assertIn("readonly-capacity-evidence", evidence)
+        self.assertIn("unavailable", evidence)
+        self.assertIn("diagnostic_exit=1", evidence)
+
 if __name__ == "__main__":
     unittest.main()
