@@ -276,7 +276,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   in 130.140 seconds, retained by exact relevant-source correspondence.
   This qualifies native Linux arm64, trusted classic-store Docker and PostgreSQL
   17.11 on one destination. Later scheduled and remote qualification is below.
-  Retention automation, in-place and cross-destination restore, other engines
+  Later retention qualification is below. In-place and cross-destination restore, other engines
   and full A25/A26/A37 remain open.
 - [PostgreSQL backup schedules](docs/hosting-database-backup-schedules.md) are
   accepted at `60b86e47504533280170028cbc0b9b632c7b67db`, with physical proof at
@@ -286,7 +286,7 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   exact retry and restart identity, new-target restore and application data.
   The full 157.868-second gate also proves guest `pg_dump` timeout separately
   from restore timeout. The supported cron subset excludes weekday `7` and
-  `L`/`W`/`#` forms. Retention, notifications and general scheduler parity
+  `L`/`W`/`#` forms. Later retention qualification is below. Notifications and general scheduler parity
   remain open within the existing PostgreSQL-only physical profile.
 - [PostgreSQL remote backups](docs/hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
   are accepted at `6621204964e96039558c0f267dbac50475a7ad98`. Versioned encrypted
@@ -295,9 +295,18 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   passed with application reads and new writes. The native Linux arm64 fixture
   uses pinned PostgreSQL 17.11 and Silo on an explicitly trusted loopback HTTP
   origin. Target setup/validation uses the API; selection, warning/reload, retry
-  and restore use the live UI. Production S3 HTTPS, retention/deletion,
+  and restore use the live UI. Later retention qualification is below. Production S3 HTTPS,
   notifications, other engines and aggregate parity gates remain open. The
   existing user UI process is unchanged.
+- [PostgreSQL backup retention](docs/hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence)
+  is accepted at `5003e16c0c0fc48d31c29f444f47a97b94e10339`. Independent local
+  and remote count, age and size policies use immutable preview batches with
+  newest/shared/active-copy safeguards. The compiled runner and live UI prove
+  exact deletion replay, explicit interrupted-batch recovery and restored
+  application data from retained remote and republished local copies.
+  Qualification uses PostgreSQL 17.11 on native Linux arm64 with pinned Silo at
+  an explicitly trusted loopback HTTP origin. Production S3 HTTPS, notifications,
+  other engines and aggregate parity remain open; the running user UI is unchanged.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The

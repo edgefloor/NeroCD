@@ -49,7 +49,7 @@ Original saved actor authority must remain current for new effects and resume ad
 
 The runner opt-in is `--hosting-database-backup-retention`, alongside the existing logical-backup and remote-backup modes. It advertises `hosting_postgresql_backup_retention_v1` and uses the `postgresql.backup-retention.v1` protocol. Older agents cannot claim retention work. Protected journal version 20 adds retention entries while preserving earlier versions. River carries only the operation ID; secrets remain in the protected, purpose-bound credential transport and are cleared after use. Existing network restrictions, TLS verification, operator endpoint allowlists and credential deadlines continue to apply.
 
-This implementation reuses Coolify's local/S3 count, age and size selection behavior from `bootstrap/helpers/databases.php` and `DatabaseBackupJob::removeExpiredBackups`. Go agent leases, durable receipts, explicit immutable batches, exact physical ownership and conditional deletion replace SSH commands and helper-side deletion. Newest/shared/active/unproven-copy protection and retained history are deliberate safety differences. Resource removal or redeployment does not implicitly run retention.
+This implementation reuses Coolify's independent local and S3 count, age and size selection from `bootstrap/helpers/databases.php` and `app/Jobs/DatabaseBackupJob.php`, including `removeExpiredBackups`. The owner controls map to `app/Livewire/Project/Database/BackupEdit.php` and `resources/views/livewire/project/database/backup-edit/retention.blade.php` at pinned upstream `b12d1386f3d458618b4c579babcd1e339c6c40b3`. Go agent leases, durable receipts, explicit immutable batches, exact physical ownership and conditional deletion replace SSH commands, `mc` and helper-side `rm`. Newest/shared/active/unproven-copy protection and retained history are deliberate safety differences. Resource removal or redeployment does not implicitly run retention.
 
 UI, controller transaction tests, portable filesystem/S3 tests and source reviews are separate evidence. Compiled-runner retention, provider conditional DELETE and restored application reads/writes must pass the isolated runtime gate before workflow acceptance. No production user's backup should be used as a test fixture.
 
@@ -61,3 +61,85 @@ claim that the prior inode was deleted. Only the new generation participates in
 current availability and retention selection. Reserved or uncertain generations
 and locations with held retention reservations cannot be superseded. Adopting an
 existing file does not prove replacement and cannot supersede another inode.
+
+## Accepted qualification and durable evidence
+
+The Leader accepted the bounded retention/recovery workflow at
+`5003e16c0c0fc48d31c29f444f47a97b94e10339`, tree
+`72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618`. Migrations 0078 and 0079 add
+retention and copy-generation supersession. The profile is native Linux arm64,
+PostgreSQL 17.11, trusted rootful classic-store Docker and pinned Silo at an
+explicitly trusted loopback HTTP origin. It does not qualify production S3 HTTPS,
+certificate installation, another provider, engine or architecture, cross-host
+recovery or loss of the destination's disk.
+
+The accepted sequence covers:
+
+- The real embedded UI saves independent local and remote policies, previews the
+  selected identities and confirms the immutable batch. Local and remote copies
+  are checked independently after execution.
+- A retained remote archive restores into a fresh private database after its
+  original local copy was deleted. The download publishes a distinct local
+  generation. A later local restore uses that generation, preserves the original
+  deletion history and creates another independent database and application.
+  Both restored applications prove reads and new writes.
+- A lost committed deletion acknowledgment replays from the original runner
+  journal. A browser reload explicitly continues the saved batch after the old
+  attempt quiesces. The old authority cannot admit a new effect, while its exact
+  committed receipt can still be acknowledged. No continuation selects another
+  batch or repeats a completed copy effect.
+- Newest, shared, active, failed-upload and unproven copies remain protected.
+  Local-only limits select no remote copy and remote-only limits select no local
+  copy. Delete denial, unsupported conditional deletion and revoked authority
+  fail visibly. An unknown nonversioned remote DELETE retains its reservation
+  and cannot become a safe automatic retry.
+
+The [physical fixture](../internal/api/hosting_database_backup_retention_runtime_integration_test.go)
+defines the main, replay, protection, failure and unknown-delete groups. The live
+browser checks policy/preview/confirmation and explicit recovery from history,
+including viewer denial and 320, 390, 430 and 1440-pixel layouts. Its fixture
+setup and API assertions are separate from browser actions. Physical count and
+protection checks do not by themselves qualify every age/size edge case; the
+selection algorithm and its threshold limits are documented above.
+
+Minimal durable evidence is under
+`/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/`:
+
+| Receipt | Observed result and boundary |
+| --- | --- |
+| `integration-verification.json`, `runtime-test` and `result` | Exact accepted candidate/tree, gate exit 0 and full workflow pass. Nine top-level groups, 26 required markers and no failures or skips. The recorded 493.040 seconds measures evidence-directory creation to terminal completion, not a precisely observed gate start. |
+| `browser-results/*/postgresql/.last-run.json` | All five immediate, schedule, remote, retention and retention-recovery browser profiles passed with empty failed-test lists. |
+| `backup-preservation-reconciled.json`, `process-absence`, `outer-absence` and `volume-absence` | No actual changes to the 35-container baseline or 210-volume profile. Owned fixture resources absent and the selected user UI profile unchanged. |
+| `integration-source-manifest.json`, `source-blobs` and `evidence-sha256.json` | Exact-source correspondence and hashes for the retained runtime, browser and cleanup receipts. No credentials or raw environment snapshots are part of this minimal copy. |
+
+Receipt SHA-256 values are
+`fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e`
+for `integration-verification.json`,
+`06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688`
+for `integration-source-manifest.json`, and
+`17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39`
+for `runtime-test`. Original physical evidence remains at
+`/tmp/nerocd-database-runner-20261024.g526cs1m/`. Earlier failed or diagnostic
+attempts retain their original results; none is promoted to a full pass.
+
+Atomic audit/receipt evidence comes from the real PostgreSQL run at source
+`2b6f683a0799b5ba2649aabbcbe4dad2a42cc052`, retained under the sibling
+`repair-round4/transaction-pg/known-expired-authority-green-race.json` and `.log`.
+`TestPostgresBackupRetentionCurrentAuthorityAndAuditRollback` and its owner,
+grant, runner, capability and audit subcases passed in 8.87 seconds. The audit
+rejection leaves no receipt or changed item and permits retry after rollback.
+The complete store, domain, secretcrypto, migrations and module dependencies are
+unchanged between that source and accepted `5003e16`. The 26.008-second command
+receipt covers five focused race tests, not just this one test. These original
+revision labels remain necessary; the documentation task reruns no database or
+application suite.
+
+The [checklist](parity-checklist.json) appends five bounded validated assessments,
+R46-C07 and R47-C03 through R47-C06. It records independent local/remote
+retention, same-batch replay and atomic audit/receipt commit with the evidence
+above. The historical 933-outcome audit, prior assessments and aggregate
+acceptance gates remain unchanged. No full R46/R47, A25/A26/A37 or database matrix
+is accepted. Notifications, broader cron grammar and additional database engines
+remain part of the hosting plan. Qualification does not upgrade a running user
+process or expand the UI. Total effort, review-round count, token usage and
+monetary cost are not established by these timings.

@@ -7,8 +7,9 @@ or change its successful backup receipt.
 
 This workflow supports the pinned PostgreSQL recipe on the same authorized
 Docker destination and runner. It does not implement storage-volume archives,
-controller-database backups, arbitrary SQL uploads, object browsing, automatic
-retention, or removal of local archives after upload.
+controller-database backups, arbitrary SQL uploads or object browsing.
+[Independent retention](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence)
+is qualified separately; uploading an archive does not itself remove the local copy.
 
 ## Enable the runner
 
@@ -148,8 +149,8 @@ orphaned authority is not repaired automatically.
 Download/import uncertainty remains held. The local restore crash window after
 database commit but before durable result evidence is not inferred as success
 or blindly imported again. Local archives remain the default recovery source.
-Automatic retention, local deletion, remote object browsing and additional
-engines remain outside this workflow.
+Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
+Remote object browsing and additional engines remain outside this workflow.
 
 ## Upstream behavior and Go adaptation
 
@@ -160,7 +161,7 @@ The upstream comparison uses Coolify
 | Upstream source | Behavior carried into this bounded workflow |
 | --- | --- |
 | [S3Storage](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/S3Storage.php), [Create](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Storage/Create.php), [Form](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Storage/Form.php) and [S3StoragesController](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Http/Controllers/Api/S3StoragesController.php) | Scoped destination configuration, hidden encrypted keys and explicit connection validation. NeroCD saves immutable project target revisions and validates from the selected runner. |
-| [DatabaseBackupJob](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/DatabaseBackupJob.php) and [BackupEdit](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Database/BackupEdit.php) | PostgreSQL custom dumps, explicit S3 selection and separate local/upload outcomes. Failed upload preserves useful local recovery. Upstream also offers retention, local deletion and notifications, which remain pending here. |
+| [DatabaseBackupJob](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/DatabaseBackupJob.php) and [BackupEdit](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Database/BackupEdit.php) | PostgreSQL custom dumps, explicit S3 selection and separate local/upload outcomes. Failed upload preserves useful local recovery. Retention and local deletion are accepted separately in the retention guide; notifications remain pending. |
 | [ImportForm](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Database/ImportForm.php) and [StartDatabaseImport](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartDatabaseImport.php) | Select a saved S3 source and import database data. NeroCD restricts selection to a successful recorded transfer and restores into a fresh private database. Arbitrary keys, upload formats and replacement options are outside this workflow. |
 
 Upstream transfer/import uses SSH-managed Docker helpers and `mc`. NeroCD uses
@@ -249,7 +250,9 @@ migration or unchanged-client gate gains acceptance.
 Target configuration edits preserve saved locations and historical references.
 Explicit key replacement revokes old references, so an older remote-only backup
 can become unrecoverable with those references. Local archives remain available
-under their existing authority. Independent S3 retention/deletion, notifications,
-other engines, in-place restore, broader cron grammar and production HTTPS
-qualification remain next hosting gaps. The user's existing UI still runs its
+under their existing authority. Independent local/S3 retention and deletion are subsequently accepted at
+`5003e16c0c0fc48d31c29f444f47a97b94e10339` within the
+[retention profile](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
+Notifications, other engines, in-place restore, broader cron grammar and
+production HTTPS qualification remain next hosting gaps. The user's existing UI still runs its
 older source; fixture qualification does not upgrade that process.
