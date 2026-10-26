@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -172,10 +173,10 @@ func archiveRunner(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchiv
 	for _, h := range append([]domain.HostingHealthy{p.SourceHealthy}, p.Writers...) {
 		if h.Snapshot.PolicyVersion == domain.HostingOwnedStorageRuntimePolicyVersion {
 			if err := requireHostingStorageAgent(ctx, tx, h.Snapshot); err != nil {
-				return err
+				return fmt.Errorf("require combined archive storage runner: %w", err)
 			}
 			if err := requireHostingRuntimeAgent(ctx, tx, h.Snapshot); err != nil {
-				return err
+				return fmt.Errorf("require combined archive runtime runner: %w", err)
 			}
 		}
 	}

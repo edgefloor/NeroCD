@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -56,7 +57,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		}{actor, backupID, in})
 		original, found, err := archiveOperation(ctx, tx, backup.OperationID)
 		if err != nil {
-			return zero, err
+			return zero, fmt.Errorf("load archive source operation: %w", err)
 		}
 		if !found || original.State != "succeeded" || original.StorageArchive.Mode != "backup" {
 			return zero, ErrConflict
@@ -69,7 +70,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		// Replays also recheck current managed-secret version authority.
 		doc, refs, err := archivePinnedRuntime(ctx, q, p)
 		if err != nil {
-			return zero, err
+			return zero, fmt.Errorf("validate archive pinned runtime: %w", err)
 		}
 		prior, err := q.ReadStorageRestoreRequest(ctx, sqlcgen.ReadStorageRestoreRequestParams{BackupID: backupID, RequestID: in.RequestID})
 		if err == nil {
@@ -114,7 +115,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		}
 		if p.SourceHealthy.Snapshot.RuntimeConfiguration != (domain.HostingRuntimeConfigurationRef{}) {
 			if err = archiveCreateRuntime(ctx, q, resourceID, p.ProjectID, actor, in.RequestID, doc, refs, now); err != nil {
-				return zero, err
+				return zero, fmt.Errorf("create restored runtime configuration: %w", err)
 			}
 		}
 		resource, err := resourceFromHostingSQL(created)
