@@ -301,7 +301,7 @@ func (x *databaseRetentionFixture) backup(suffix string, uploadState string) dom
 	x.f.appRecord(x.application, "PUT", suffix, "retention_"+suffix)
 	admitted := x.admitBackup()
 	settled := backupRuntimeAwait(x.f, admitted.ID)
-	upload := databaseRemoteAwait(x.f, admitted.ID, "upload", uploadState)
+	upload := retentionAwaitUpload(x.f, admitted.ID, uploadState)
 	if upload.Blob == nil || *upload.Blob != *settled.Blob {
 		x.f.t.Fatal("retention upload changed archive identity")
 	}
@@ -943,14 +943,14 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 					t.Fatal("viewer denial allocated retention work or changed copy inventory")
 				}
 
-				backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID)
+				restoreGrant := backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID)
 				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "POST", "/api/v1/destinations/"+x.f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: x.source.Resource.ProjectID}, 200)
 				// Project ownership remains valid; the revoked placement is a conflict.
 				x.execute(p, x.f.token, 409)
 				if x.admissionInventory() != beforeDenial {
 					t.Fatal("revoked placement allocated retention work or changed copy inventory")
 				}
-				if backupRuntimeRestoreGrant(x.f, x.source.Resource.ProjectID) != nil {
+				if restoreGrant() != nil {
 					t.Fatal("owned grant restore failed")
 				}
 				if !retentionSameInventory(p.Items, x.preview().Items) {
@@ -1064,7 +1064,7 @@ func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatab
 	f.docker("exec", source.Result.ContainerID, "sh", "-c", install)
 	admitted := x.admitBackup()
 	settled := backupRuntimeAwait(f, admitted.ID)
-	upload := databaseRemoteAwait(f, admitted.ID, "upload", "succeeded")
+	upload := retentionAwaitUpload(f, admitted.ID, "succeeded")
 	if restore(f.t.Context()) != nil {
 		f.t.Fatal("duplicate-content executable restore failed")
 	}
@@ -1104,11 +1104,60 @@ func (x *databaseRetentionFixture) adoptRemote() domain.HostingDatabaseBackupOpe
 	x.f.start()
 	backupRuntimeWaitReplay(x.f, wire)
 	x.f.backupWire.Store(nil)
-	uploaded := databaseRemoteAwait(x.f, admitted.ID, "upload", "succeeded")
+	uploaded := retentionAwaitUpload(x.f, admitted.ID, "succeeded")
 	x.backups = append(x.backups, settled)
 	x.uploads = append(x.uploads, uploaded)
 	return settled
 }
+func retentionUploadObservation(v databaseRemoteTransfer) (string, string) {
+	state, failure := "unknown", "unknown"
+	switch v.State {
+	case "queued", "dispatched", "applying", "succeeded", "failed", "uncertain":
+		state = v.State
+	}
+	if domain.ValidBackupRemoteFailure(v.FailureCode) {
+		failure = v.FailureCode
+	}
+	return state, failure
+}
+
+func retentionAwaitUpload(f *databaseRunnerFixture, backup, expected string) databaseRemoteTransfer {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.t.Context(), 90*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	state, failure := "missing", "unknown"
+	for {
+		select {
+		case <-ctx.Done():
+			f.t.Fatalf("retention upload did not settle: state=%s failure=%s terminal=%s", state, failure, databaseBackupTerminalClass(f.logs.snapshot()))
+		case <-ticker.C:
+			values := databaseRunnerJSON[[]databaseRemoteTransfer](f, f.token, "GET", "/api/v1/database-backups/"+backup+"/transfers", nil, 200)
+			for _, v := range values {
+				if v.Mode != "upload" {
+					continue
+				}
+				state, failure = retentionUploadObservation(v)
+				if v.State == expected {
+					return v
+				}
+			}
+		}
+	}
+}
+
+func TestDatabaseBackupRetentionUploadObservationClosed(t *testing.T) {
+	state, failure := retentionUploadObservation(databaseRemoteTransfer{State: "uncertain", FailureCode: "interrupted"})
+	if state != "uncertain" || failure != "interrupted" {
+		t.Fatal("known upload state lost")
+	}
+	state, failure = retentionUploadObservation(databaseRemoteTransfer{State: "private_state_canary", FailureCode: "private_failure_canary"})
+	if state != "unknown" || failure != "unknown" {
+		t.Fatal("upload observation exposed arbitrary values")
+	}
+}
+
 func retentionProtected(p databaseRetentionPreview, backup, location, reason string) bool {
 	for _, v := range p.Items {
 		if v.BackupID == backup && v.Location == location && slices.Contains(v.ProtectedReasons, reason) && !v.Selected {
@@ -1144,7 +1193,7 @@ func TestHostingDatabaseBackupRetentionProtectionsCompiledRunner(t *testing.T) {
 	}
 	close(active.release)
 	newest := backupRuntimeAwait(x.f, admitted.ID)
-	uploaded := databaseRemoteAwait(x.f, admitted.ID, "upload", "succeeded")
+	uploaded := retentionAwaitUpload(x.f, admitted.ID, "succeeded")
 	x.f.backupWire.Store(nil)
 	x.backups = append(x.backups, newest)
 	x.uploads = append(x.uploads, uploaded)

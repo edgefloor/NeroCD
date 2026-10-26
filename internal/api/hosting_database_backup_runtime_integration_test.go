@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -1515,9 +1516,9 @@ func (w *databaseBackupRuntimeWire) serve(out http.ResponseWriter, r *http.Reque
 	defer clear(raw)
 	if path == "/api/v1/runners/hosting/database-backup/mutation" {
 		var in domain.HostingDatabaseBackupMutation
-		if json.Unmarshal(raw, &in) != nil || in.Phase != "complete" {
-			// The reset body borrows raw. Forward before the deferred clear so
-			// the real decoder reads the original bytes, including invalid JSON.
+		if w.pause || json.Unmarshal(raw, &in) != nil || in.Phase != "complete" {
+			// Plan-pause mode never changes mutation acknowledgements. The reset
+			// body borrows raw, so forward before its deferred clear.
 			handler.ServeHTTP(out, r)
 			return true
 		}
@@ -1692,14 +1693,29 @@ func backupRuntimeRegisterSourceRestartCleanup(t *testing.T, containerID string,
 	})
 }
 
-func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string) {
+func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string) func() error {
 	f.t.Helper()
+	var mu sync.Mutex
+	restored := false
+	restore := func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if restored {
+			return nil
+		}
+		if err := backupRuntimeRestoreGrant(f, project); err != nil {
+			return err
+		}
+		restored = true
+		return nil
+	}
 	f.t.Cleanup(func() {
 		f.stop() // A denied attempt must join before its fixture grant is restored.
-		if err := backupRuntimeRestoreGrant(f, project); err != nil {
+		if err := restore(); err != nil {
 			f.t.Error("owned fixture grant cleanup failed")
 		}
 	})
+	return restore
 }
 
 func backupRuntimeRestoreGrant(f *databaseRunnerFixture, project string) error {
@@ -2302,5 +2318,87 @@ func TestDatabaseBackupDiagnosticSurvivesFatalBeforeCleanup(t *testing.T) {
 	start, cleanup := bytes.Index(out, []byte("DATABASE_BACKUP_FAILURE_EVIDENCE ")), bytes.Index(out, []byte("DATABASE_BACKUP_DIAGNOSTIC_CLEANUP"))
 	if start < 0 || cleanup <= start || !bytes.Contains(out, []byte(`"TerminalClass":"plan_response"`)) || !bytes.Contains(out, []byte(`"State":"unknown"`)) || !bytes.Contains(out, []byte(`"RunnerExited":true`)) {
 		t.Fatal("fatal path lost safe evidence before fixture cleanup")
+	}
+}
+
+func TestDatabaseBackupGrantCleanupAfterExplicitRestore(t *testing.T) {
+	calls := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls > 1 {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"error":{"code":"conflict"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"project_id":"project_fixture"}`)
+	}))
+	defer server.Close()
+	if !t.Run("restored_before_cleanup", func(child *testing.T) {
+		f := &databaseRunnerFixture{t: child, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
+		restore := backupRuntimeRegisterGrantCleanup(f, "project_fixture")
+		if err := restore(); err != nil {
+			child.Fatal("explicit grant restore failed")
+		}
+	}) || calls != 1 {
+		t.Fatal("cleanup repeated an already successful grant mutation")
+	}
+}
+
+func TestDatabaseBackupPlanPauseForwardsCompletion(t *testing.T) {
+	wire := &databaseBackupRuntimeWire{mode: "backup", pause: true, entered: make(chan struct{}), release: make(chan struct{})}
+	close(wire.release)
+	var received []domain.HostingDatabaseBackupMutation
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		if err != nil {
+			t.Error("request unavailable")
+			w.WriteHeader(400)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/plan") {
+			var in domain.HostingAuthority
+			if domain.DecodeHostingStorageProtocolJSON(raw, &in) != nil {
+				t.Error("plan authority corrupted")
+			}
+			writeJSON(w, 200, domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{Mode: "backup"}})
+			return
+		}
+		var in domain.HostingDatabaseBackupMutation
+		if domain.DecodeHostingStorageProtocolJSON(raw, &in) != nil {
+			t.Error("mutation corrupted")
+			w.WriteHeader(400)
+			return
+		}
+		received = append(received, in)
+		writeJSON(w, 200, domain.HostingDatabaseBackupOperation{Mode: "backup", State: "succeeded"})
+	})
+	a := domain.HostingAuthority{OperationID: "operation", RunID: "run", LeaseID: "lease", Attempt: 1, Fence: "fence"}
+	call := func(path string, in any) *httptest.ResponseRecorder {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest("POST", "/api/v1/runners/hosting/database-backup/"+path, bytes.NewReader(raw))
+		w := httptest.NewRecorder()
+		if !wire.serve(w, r, handler) {
+			handler.ServeHTTP(w, r)
+		}
+		return w
+	}
+	if call("plan", a).Code != 200 {
+		t.Fatal("plan pause failed")
+	}
+	for _, receipt := range []string{"first_completion", "next_backup_completion"} {
+		in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: receipt, PlanHash: "sha256:" + strings.Repeat("a", 64), Phase: "complete", Blob: &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 123, Format: "postgresql_custom"}}
+		if call("mutation", in).Code != 200 {
+			t.Fatal("plan-only pause injected completion failure")
+		}
+		if len(received) == 0 || !reflect.DeepEqual(received[len(received)-1], in) {
+			t.Fatal("plan-only pause changed completion body")
+		}
+	}
+	if len(received) != 2 || wire.replays() != 0 {
+		t.Fatal("plan pause created a receipt replay fault")
 	}
 }
