@@ -27,6 +27,20 @@ can proceed without speculative workspace infrastructure. Trusted-host deploymen
 does not require a new VM backend; untrusted execution remains disabled until
 its declared isolation requirements are satisfied.
 
+The bounded [Linkding catalog workflow](hosting-catalog.md) is physically qualified
+at `dd19157ce2e454b2ff6ad6c2d74b028a7dda9c86`. The
+[final physical receipt](../acceptance/runtime-hosting-catalog/README.md#final-physical-qualification)
+proves install/retry, deployment, credential continuity, redeploy and
+failed-deployment recovery, then backup, separate-target extraction, ordinary
+restored deployment, fresh login, archived bookmark reads and isolated new writes.
+Exact writer reuse, completion replay and failed-resume owner recovery also pass.
+This covers Linkding 1.47.0 on native Linux arm64, rootful classic-store
+Docker/overlay2, one destination and a private fixture CA. Production ACME,
+other architectures, general Compose, catalog search/filtering, template breadth,
+upgrades and universal application restore remain open. Combined integration
+acceptance is separate from this physical source qualification. Historical rows,
+prior failures and aggregate hosting gates retain their original assessments.
+
 Current connected stateful support uses physical source
 `09a432407c41671517fa342d28c07e9c79978aea` and accepted documentation
 `3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
@@ -781,14 +795,14 @@ The C references resolve in the specification's [source list](product-spec.md#13
 | Resource organization | C1, C10 | partial: shared project environments, image configuration and per-binding public-image mutation admission through API/UI; additional kinds, team ownership, legacy mappings and broader shared-resource concurrency planned | A08, A34, A35; legacy-membership-preservation | P01; preserve legacy IDs and explicit environment grouping |
 | Git sources | C2 | partial: public HTTPS build UI/runtime and controlled checkout; private HTTPS configuration/grants/credential endpoint/client accepted; private HTTPS runtime and Dockerfile/Railpack static-provider UI accepted; bounded GitHub push integration accepted; broader provider integrations and complete source choices planned | A03, A09; provider matrix below | P04, P18; no-Git inputs need no artificial repository |
 | Builds | C2, C12, C13 | partial: production UI/API/River/controller and explicitly configured agent build public and granted private HTTPS Git into immutable local artifacts; same-host artifact deployment and typed build output accepted; private Railpack static-provider UI accepted; full language matrix, remote delivery and shared cache planned | A02–A07; builder and architecture matrices below | P05; bounded public source-to-local-artifact/deployment evidence does not establish the complete hosting or workspace journey |
-| Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input, pasted Compose and catalog sources planned | A05, A15, A21; no-git-source | P04, P08, P11 |
+| Inputs without Git | C2, C3, C8 | partial: public-image API/UI deployment freezes selected output without a repository; stored-Dockerfile product input and pasted Compose planned; one bounded Linkding catalog image input has passing runtime evidence | A05, A15, A21; no-git-source | P04, P08, P11 |
 | Build placement | C4 | partial: controller dispatches to the exact configured enrolled build agent and fixed daemon; registry publication and dedicated-server image delivery planned | A07, A13; registry-push-pull, architecture-mismatch | P02, P05; tags never relocate stateful destinations |
 | Domains and HTTPS | C5 | partial: standalone Traefik TLS engine and authorized whole-generation backend/dispatch; explicitly capable agent execution and managed routing UI accepted with local test-CA fixtures; public DNS/production ACME and additional proxy modes remain unvalidated | A20, A27; proxy matrix below | P07; proxy reconciliation and route ownership have separate generations |
 | Deployment automation | C2, C14, C15 | partial: manual image API/UI with autoports, explicit fixed ports, exact request/receipt replay and selected retained cleanup and trusted exact-revision build prerequisite; bounded GitHub build-on-push accepted; verified route-switch engine and guarded controller accepted; bounded read API/operator UI accepted; bounded completed-conflict recovery API accepted; bounded recovery administrator UI accepted; bounded automatic_unprotected deployment accepted; protected approval remains planned | A06, A09–A14; approval-invalidation, retained-release | P04, P06; optional approval must bind prepared release and destination |
 | Previews | C6 | planned: derived resources, isolated configuration, routes and storage | A23, A24; late-close-event, quota-exhaustion | P12; hostile forks require isolated pools or rejection |
 | Persistent storage | C17 | partial: accepted metadata/admission, explicit storage capability, API/compiled-runner uploaded-file runtime and bounded unqueued-continuity recovery; metadata API/UI accepted; connected deployment-review/recovery UX accepted separately from physical runtime; broader directories/managed files/external files, backups and unknown-writer recovery planned | A19, A26, A37; external-volume-retention, ownership-transfer | P08; resource deletion retains data by default |
 | Databases | C7 | partial foundations: metadata/creation UI, private controller/engine helpers and protected credential delivery accepted; direct engine qualification/default-off coordinator accepted; standalone API/runner physical workflow accepted at its original revision and direct deployment UI accepted; internal R42 prerequisites include migration 0071 upgrade control/compiled execution accepted through 79b50e2 with actual PostgreSQL control tests; compiled exact-ID/automatic capture, recovery and empty-network upgrade/maintenance qualified at 5ff5b7e; earlier 563fb88 qualification retained; earlier b777 evidence retained at its original revision; bounded same-destination public-image application connections qualified at 9a69228; bounded PostgreSQL immediate backup/new-private-database restore accepted at 56cce; broader binding profiles and engine recovery remain unfinished; direct origin/alias-upgrade proof retained at d384; no managed database claim from Compose alone | A17, A18, A26; engine matrix below | P09; replication and an availability SLA are not implied |
-| Service catalog | C8 | planned: versioned definitions, stable generated values and explicit upgrades | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
+| Service catalog | C8 | partial: one pinned Linkding definition with stable generated credentials, installed copies and physically qualified install/redeploy/backup/separate-target application recovery; broader fixtures and upgrades missing | A21, A22; catalog-version, component-upgrade | P11, P18; initial tested catalog expands through explicit version fixtures |
 | Variables and secrets | C16 | partial: runner_file execution plus encrypted project-managed versions, create/rotate/owner reveal/revoke and protected UI; bounded private Git and managed runtime delivery/execution accepted; broader delivery/scopes, recovery workflows and external providers planned | A03, A18, A35; scope-denial, redaction, key-recovery, revoked-version | P03; separate build/runtime/preview grants; external-provider versions explicit |
 | Ongoing operations | C9 | partial: run logs, runner evidence, typed build output/viewer and opt-in independent runtime collector; accepted bounded runtime-status dashboard; bounded live runtime logs/viewer are accepted; broader resource actions remain planned | A28, A29, A32; stale-observation, log-reconnect | P13, P15; desired state, operation result and observation remain separate |
 | Recovery | C18–C20, C15 | partial: platform backup identity, image mutation/restore holds, bounded readiness-failure restoration and standalone proxy state recovery; trusted restored-ownership resumption and hosted data recovery planned | A25–A27, A37; resume-failure, new-resource-restore | P10; platform, database, storage and release rollback are distinct |
@@ -977,3 +991,8 @@ missing. This is an evidence lower bound, not a completion percentage. The
 previous 17-outcome snapshot and original 4-outcome baseline remain in audit
 history. R21-C04, R21-C05 and R28-C02 gain current proof; no full gate gains a pass.
 The proposed workspace product remains deferred behind useful hosting.
+
+The [current catalog criteria](hosting-catalog.md#current-catalog-criteria) retain
+per-outcome evidence and gaps separately from the frozen consolidated parity audit
+at `f96d8c6267fcab2273b6f748d09801931660ceaf`. That cutoff excludes this
+later catalog qualification. This slice changes no audit score or aggregate gate.

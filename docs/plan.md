@@ -7,8 +7,18 @@ Prioritize R01–R68, A01–A37 and the declared hosting matrices. The broader
 revision 3 workspace/agent product is subsequent scope, not a prerequisite.
 
 Catalog slice: [Linkding installation and combined image runtime/storage](hosting-catalog.md)
-implements source and isolated acceptance coverage. Runtime qualification and final
-acceptance remain gated on exact-candidate reviews and the approved physical fixture.
+is physically qualified at `dd19157ce2e454b2ff6ad6c2d74b028a7dda9c86` for one
+versioned image application on the documented Linux arm64 profile. The
+[backup/separate-target recovery contract](hosting-catalog-recovery.md) now has
+actual restored login, archived-data reads and isolated new writes, plus exact
+writer reuse, replay and failed-resume owner recovery evidence. See the
+[final receipt and retained check revisions](../acceptance/runtime-hosting-catalog/README.md#final-physical-qualification).
+Combined staging still requires its integration checks before final acceptance.
+
+Catalog search, filters, presentation, breadth, upgrades, pasted Compose and
+universal application restore remain open. This bounded workflow does not complete
+the useful initial catalog or full Coolify hosting scope. Preserve prior failed
+attempts at their original revisions; the later pass does not relabel them.
 
 Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
 Historical accepted application/source assessment:
@@ -603,3 +613,8 @@ Retained evidence is labeled with its original revision and scope. New Task,
 VM, remote cache, agent, preview and promotion targets need new real execution
 evidence; old hosting CI does not prove them. No D0–D3, full hosting parity or
 multi-OS/GPU qualification is declared complete at this baseline.
+
+The [current catalog criteria](hosting-catalog.md#current-catalog-criteria) retain
+per-outcome evidence and gaps separately from the frozen consolidated parity audit
+at `f96d8c6267fcab2273b6f748d09801931660ceaf`. That cutoff excludes this
+later catalog qualification. This slice changes no audit score or aggregate gate.

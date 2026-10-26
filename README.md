@@ -44,9 +44,12 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   remain planned; existing runner-file bindings have their own contract.
 - A pinned [Linkding catalog installation](docs/hosting-catalog.md) saves an ordinary
   image application, generated managed credentials, retained owned storage and
-  immutable upstream provenance atomically. Combined runtime/storage execution
-  has a dedicated policy family; [physical qualification](acceptance/runtime-hosting-catalog/README.md)
-  remains pending the reviewed candidate run.
+  immutable upstream provenance atomically. The [physical workflow](acceptance/runtime-hosting-catalog/README.md#final-physical-qualification)
+  qualifies install, redeploy, failed-deployment recovery, backup and separate
+  restored-application login/read/write at `dd19157ce2e454b2ff6ad6c2d74b028a7dda9c86`.
+  This covers Linkding 1.47.0 on native Linux arm64, rootful classic-store Docker,
+  one destination and a private fixture CA. Catalog upgrades, broader templates,
+  general Compose and universal application recovery remain open.
 - Desired runtime configuration through resource GET/PUT APIs, with generation
   compare-and-swap, idempotent requests, explicit public nonsecret literals and
   exact managed-secret version references. Current owners write and viewers read.
