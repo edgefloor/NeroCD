@@ -1,3 +1,12 @@
+import { useDatabaseAccess } from "./ResourceDatabase";
+import * as databaseAPI from "@/api/hosting-databases";
+import * as backupAPI from "@/api/hosting-database-backups";
+import * as transferAPI from "@/api/hosting-database-backup-targets";
+vi.mock("@/api/hosting-databases", async original => ({ ...await original<typeof databaseAPI>(), getHostingDatabase: vi.fn() }));
+vi.mock("@/api/hosting-database-backups", async original => ({ ...await original<typeof backupAPI>(), listDatabaseBackups: vi.fn(), requestDatabaseBackup: vi.fn(), restoreDatabaseBackup: vi.fn() }));
+vi.mock("@/api/hosting-database-backup-targets", async original => ({ ...await original<typeof transferAPI>(), listDatabaseBackupTransfers: vi.fn(), listDatabaseBackupTargets: vi.fn(async () => []), retryDatabaseBackupUpload: vi.fn() }));
+vi.mock("@/api/hosting-database-backup-schedules", async original => ({ ...await original<typeof import("@/api/hosting-database-backup-schedules")>(), listDatabaseBackupSchedules: vi.fn(async () => []) }));
+vi.mock("@/api/hosting-database-backup-retention", async original => ({ ...await original<typeof import("@/api/hosting-database-backup-retention")>(), getRetentionPolicy: vi.fn(async () => null), listRetentionExecutions: vi.fn(async () => []) }));
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -5,7 +14,7 @@ import { ApiError } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 vi.mock("./DatabaseCreateForm", () => ({ DatabaseCreateForm: ({ projectID, environmentID }: { projectID: string; environmentID: string }) => <div>Database creation for {projectID}/{environmentID}</div> }));
-vi.mock("./ResourceDatabase", () => ({ ResourceDatabase: ({ resource }: { resource: api.Resource }) => <div>Dedicated database metadata for {resource.name}</div> }));
+vi.mock("./ResourceDatabase", () => ({ ResourceDatabase: ({ resource }: { resource: api.Resource }) => <div>Dedicated database metadata for {resource.name}</div>, useDatabaseAccess: vi.fn() }));
 
 vi.mock("./ResourceRuntimeStatus", () => ({ ResourceRuntimeStatus: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-status" data-blocked={String(blocked)}>Runtime status for {resource.name}</div> }));
 vi.mock("./ResourceRuntimeLogs", () => ({ ResourceRuntimeLogs: ({ resource, blocked }: { resource: { name: string }; blocked: boolean }) => <div data-testid="runtime-logs" data-blocked={String(blocked)}>Runtime logs for {resource.name}</div> }));
@@ -293,4 +302,44 @@ test("runtime status clears while the current resource is revalidated", async ()
   vi.mocked(api.listResources).mockImplementation(() => new Promise(() => {}));
   await act(async () => { void client.invalidateQueries({ queryKey: ["hostingResources"] }); });
   await waitFor(() => expect(screen.getByTestId("runtime-status").getAttribute("data-blocked")).toBe("true"));
+});
+
+const recoveryLocator = { project_id: "one", environment_id: "env", resource_id: "db", backup_id: "backup", transfer_id: "upload" };
+const recoveryDatabase = {
+  resource: { ...resource, id: "db", name: "Data", kind: "database", source: { kind: "image", image: { reference: "postgres:17" } } },
+  binding: { id: "binding", resource_id: "db", destination_id: "runner", runtime_namespace: "namespace", created_by: "user", created_at: environment.created_at },
+  storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, engine: "postgresql", recipe_version: "postgresql-17.11-bookworm.v1", runtime_state: "adapter_unqualified",
+  credentials: [{ role: "admin", username: "postgres", secret_id: "admin_secret", version: 1 }, { role: "app", username: "ncd_app", secret_id: "app_secret", version: 1 }],
+} as databaseAPI.HostingDatabase;
+const recoveryBackup = { id: "backup", backup_id: "backup", project_id: "one", source_resource_id: "db", source_generation: 1, max_bytes: 1073741824, timeout_seconds: 900, version: "postgresql.logical-local.v1", mode: "backup", state: "succeeded", consistency: "logical_snapshot_source_writable", ownership_held: false, created_at: environment.created_at, updated_at: environment.created_at, blob: { bytes: 65537, digest: "sha256:" + "a".repeat(64), format: "postgresql_custom" } } as backupAPI.DatabaseBackup;
+function recoverySetup(owner = true, locator = recoveryLocator) {
+  vi.mocked(useDatabaseAccess).mockReturnValue({ ready: true, viewer: true, owner, maintainer: owner, refreshing: false, scope: { actor: "current_member", project: "one", environment: "env" }, epoch: "current", error: undefined });
+  vi.mocked(databaseAPI.getHostingDatabase).mockResolvedValue(recoveryDatabase);
+  vi.mocked(backupAPI.listDatabaseBackups).mockResolvedValue([recoveryBackup]);
+  vi.mocked(transferAPI.listDatabaseBackupTransfers).mockResolvedValue([{ id: "upload", backup_id: "backup", project_id: "one", mode: "upload", state: "failed", created_at: environment.created_at, updated_at: environment.created_at, target_id: "target", target_revision: 1 } as transferAPI.DatabaseBackupTransfer]);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); clients.push(client);
+  return render(<QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => owner} recoverySearch={locator} /></QueryClientProvider>);
+}
+test("authenticated recovery resolves current membership and full relationships before rendering the real backup panel", async () => {
+  recoverySetup();
+  const linked = await screen.findByRole("listitem", { name: "Linked backup history" });
+  expect(within(linked).getByText(/Backup · succeeded · backup/)).toBeTruthy();
+  expect(screen.getByLabelText<HTMLSelectElement>("Completed backup").value).toBe("backup");
+  expect(screen.getByRole("button", { name: "Retry upload for backup" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Restore into new database" })).toBeTruthy();
+  expect(databaseAPI.getHostingDatabase).toHaveBeenCalledWith("db", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(backupAPI.requestDatabaseBackup).not.toHaveBeenCalled(); expect(backupAPI.restoreDatabaseBackup).not.toHaveBeenCalled(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
+});
+test("recovery viewer sees linked history without retry/restore authority even when source actor is no longer present", async () => {
+  recoverySetup(false);
+  await screen.findByRole("listitem", { name: "Linked backup history" });
+  expect(screen.queryByRole("button", { name: "Retry upload for backup" })).toBeNull(); expect(screen.queryByRole("button", { name: "Restore into new database" })).toBeNull();
+});
+test.each(["project", "environment", "backup", "transfer"])("recovery rejects a foreign %s relationship before any backup controls", async mismatch => {
+  recoverySetup();
+  if (mismatch === "project" || mismatch === "environment") vi.mocked(databaseAPI.getHostingDatabase).mockResolvedValue({ ...recoveryDatabase, resource: { ...recoveryDatabase.resource, [mismatch === "project" ? "project_id" : "project_environment_id"]: "foreign" } });
+  if (mismatch === "backup") vi.mocked(backupAPI.listDatabaseBackups).mockResolvedValue([]);
+  if (mismatch === "transfer") vi.mocked(transferAPI.listDatabaseBackupTransfers).mockResolvedValue([]);
+  await screen.findByText(/Backup recovery is unavailable for this project/);
+  expect(screen.queryByRole("button", { name: "Restore into new database" })).toBeNull(); expect(transferAPI.retryDatabaseBackupUpload).not.toHaveBeenCalled();
 });

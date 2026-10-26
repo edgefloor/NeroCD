@@ -7,6 +7,7 @@ vi.mock("@/api/mutations", () => ({ useProjectActions: () => ({ busy: false, act
 vi.mock("@/components/common/PageNavigation", () => ({ PageNavigation: () => <p>Project paging</p>, usePage: () => ({ limit: 50, offset: 0 }) }));
 vi.mock("@/pages/ProjectsView", () => ({ ProjectsView: () => <section aria-label="Project creation and automation summaries" /> }));
 vi.mock("@/pages/ProjectHosting", () => ({ ProjectHosting: () => <section aria-label="Project hosting" /> }));
+vi.mock("@/pages/ProjectNotifications", () => ({ ProjectNotifications: () => <section aria-label="Project backup notifications" /> }));
 vi.mock("@/pages/ProjectSecrets", () => ({ ProjectSecrets: () => <section aria-label="Project secrets" /> }));
 import { Route } from "./_authenticated.projects";
 afterEach(cleanup);

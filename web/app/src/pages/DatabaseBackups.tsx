@@ -1,3 +1,4 @@
+import type { BackupRecoveryLocator } from "../api/hosting-backup-notifications";
 import {
   BackupDestinationSelect,
   DatabaseBackupDestinations,
@@ -42,6 +43,7 @@ type Props = {
   owner: boolean;
   blocked: boolean;
   onDenied: () => void;
+  recovery?: BackupRecoveryLocator;
 };
 export function DatabaseBackups(props: Props) {
   return (
@@ -62,6 +64,7 @@ function DatabaseBackupsPanel({
   owner,
   blocked,
   onDenied,
+  recovery,
 }: Props) {
   const client = useQueryClient();
   const [accessRevoked, setAccessRevoked] = useState(false);
@@ -75,7 +78,7 @@ function DatabaseBackupsPanel({
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [restoreSource, setRestoreSource] = useState("");
   const [name, setName] = useState("");
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(recovery?.backup_id ?? "");
   const [attempt, setAttempt] = useState<Attempt>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -407,7 +410,7 @@ function DatabaseBackupsPanel({
       ) : null}
       <ul className="space-y-3">
         {history.data?.map((v) => (
-          <li key={v.id} className="min-w-0 space-y-1 border-t pt-2 break-all">
+          <li key={v.id} aria-label={recovery?.backup_id === v.id ? "Linked backup history" : undefined} className="min-w-0 space-y-1 border-t pt-2 break-all">
             <p>
               {v.mode === "backup" ? "Backup" : "New-database restore"} ·{" "}
               {v.state} · {v.id}
