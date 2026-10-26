@@ -117,6 +117,19 @@ native Linux arm64 trusted classic-store Docker/Silo same-destination profile,
 not production S3 HTTPS, storage schedules/retention/notifications, cross-host
 recovery, or full A25–A27/A37. The existing user UI binary was preserved.
 
+Scheduled owned-upload backups and their two failure alerts are accepted at
+`733cde407427ef745d57fbb726e001bdb1555d47`. The [schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
+records the 123.399-second exact-candidate pass: owner schedule replay/edit/disable,
+viewer history, controller restart, real archive/upload execution, accepted SMTP
+and HTTPS webhook receipts, and actual delivered recovery links opened without
+mutation. Explicit same-archive retry and new-volume application reads/new writes
+preserve the source. The earlier 52.858-second capacity failure and 89.464-second
+admission failure remain recorded with their repairs. Qualification retains the
+native arm64/rootful classic Docker/same-destination Silo/private-CA profile.
+Production S3 HTTPS, arbitrary mounts, retention, cross-host/in-place recovery,
+broader cron/events/channels and aggregate R/A/matrix gates remain open. The
+existing user UI is preserved, and workspace gates remain deferred.
+
 Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
 broader notification events and channels, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.

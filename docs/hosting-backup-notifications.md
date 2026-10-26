@@ -1,8 +1,8 @@
 # Hosting backup notifications
 
-Project notification channels deliver accepted PostgreSQL backup failures and remote upload failures through SMTP email or a generic HTTPS webhook. An upload failure leaves the successful backup and its local-copy records intact. Notification delivery runs after the source transaction commits.
+Project notification channels deliver accepted backup and remote upload failures for PostgreSQL and owned-upload storage. Channels use SMTP email or a generic HTTPS webhook. An upload failure leaves the successful backup and its local-copy records intact. Notification delivery runs after the source transaction commits.
 
-This guide covers project setup, failure history, and explicit recovery for the two supported PostgreSQL failure events. The contract and qualification limits follow the workflow.
+This guide covers project setup, failure history, and explicit recovery for the two supported failure event selectors for PostgreSQL and owned-upload storage. The contract and qualification limits follow the workflow.
 
 ## Configure project alerts
 
@@ -24,8 +24,15 @@ If a save or test response is lost, inspect refreshed history before using the r
 1. Open **Notification delivery history** and identify the backup or upload event. **Inspect delivery** shows the attempts, safe failure guidance, and timestamps. The panel lists the latest 100 deliveries.
 2. Distinguish source outcome from delivery outcome. `delivered` means the receiver acknowledged the notification. A failed or uncertain backup remains failed or uncertain even when its alert was delivered. An upload failure can leave a successful local backup available.
 3. Follow **Open authenticated backup recovery** from the message or history. Sign in if required. The page checks current project, environment, resource, backup, and transfer scope before showing linked history. Opening a link does not retry an upload or start a restore. Viewers can inspect authorized history. Owners perform recovery actions.
-4. For an upload failure with an available local copy, inspect the linked successful backup and failed transfer. Use **Retry upload for** that backup only after checking the target. The retry sends the same archive without another dump. See [remote backup recovery](hosting-database-remote-backups.md).
-5. To recover data, select the completed backup and an available archive source, enter **New database name**, and select **Restore into new database**. See [PostgreSQL backup and restore](hosting-database-backups.md). Verify the restored application can read the snapshot and make new writes. Preserve the source database until that proof is complete.
+4. For a PostgreSQL upload failure with an available local copy, inspect the linked successful backup and failed transfer. Use **Retry upload for** that backup only after checking the target. The retry sends the same archive without another dump. See [remote backup recovery](hosting-database-remote-backups.md).
+5. To recover PostgreSQL data, select the completed backup and an available archive source, enter **New database name**, and select **Restore into new database**. See [PostgreSQL backup and restore](hosting-database-backups.md). Verify the restored application can read the snapshot and make new writes. Preserve the source database until that proof is complete.
+
+For owned uploads, a delivered storage alert selects the authorized resource's
+upload panel and exact archive or failed transfer. Use **Retry remote upload of
+the same archive**, then the explicit new-resource restore controls described in
+[storage remote recovery](hosting-storage-remote-backups.md#restore-and-verify-a-new-resource).
+An archive-failure link selects its source and recovery context; opening it does
+not release a hold or start another operation.
 
 A failed dump does not create a completed archive to restore. An uncertain source requires inspection before another operation. If delivery ends as `failed` or `suppressed`, inspect its safe failure guidance and current channel configuration. Fix configuration and send a distinct explicit test. Three consecutive real-event configuration failures disable the channel. Edit and save it to reset the counter and deliberately enable delivery again. A new test does not replay an old failed real event.
 
@@ -34,6 +41,12 @@ A failed dump does not create a completed archive to restore. An uncertain sourc
 `backup_failed` covers an accepted backup operation that settles as `failed` or `uncertain`. `upload_failed` covers an accepted upload transfer with either outcome. The immutable `source_state` records the distinction. Uncertain messages say that the outcome needs attention.
 
 The source transaction inserts an event, the selected channel generations, and a safe audit entry together. The event references the exact accepted runner receipt. Controller decisions retain a separate immutable source receipt with the operation state, failure code, and plan hash. These decisions include upload admission denied after queueing and retirement of an already accepted scheduled backup.
+
+Storage adapters use `storage_backup` and `storage_transfer` source kinds with
+the same `backup_failed` and `upload_failed` selectors. Accepted storage
+`reconciliation_required` evidence projects an uncertain notification state and
+keeps ownership held. Restore, download, validation, and discovery-only skips
+remain excluded. Database source behavior is unchanged.
 
 The event identity is unique for the source kind, source ID, and event. Each selected channel generation has one delivery identity. Replayed source receipts cannot add deliveries for later channel generations.
 
@@ -159,3 +172,17 @@ Fixture reviews at `1a8b4d1b13972fef2a4665b535ed0ae6ae4bd9bc` took 52, 50, and 6
 Recurring owned-upload archives use the same qualified storage runner and project
 notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
 for scheduling, safe retry, history, and source-specific failure evidence.
+
+## Accepted scheduled storage alerts
+
+The Leader accepted storage scheduling and its two failure adapters at
+`733cde407427ef745d57fbb726e001bdb1555d47` after exact-candidate code hygiene,
+specification, and critical security reviews. The
+[schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
+retains the 123.399-second gate, tree, receipt hashes, actual SMTP/HTTPS receipt
+URLs opened without mutation, and explicit application-verified new-volume
+recovery. Both physical storage failures settle as `failed`; retained local PG
+tests also cover uncertain receipts and held ownership. This extends the earlier
+PostgreSQL qualification with storage sources under the same bounded fixture
+profile. Broader events/channels, escalation, production public-CA/S3 HTTPS, and
+aggregate gates remain open. The existing user UI remains unchanged.

@@ -40850,7 +40850,8 @@
     "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open.",
     "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged.",
     "Later PostgreSQL retention/recovery is accepted at5003e16c0c0fc48d31c29f444f47a97b94e10339/tree72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618 and recorded under supplemental_assessments/postgresql-retention-recovery-20261026. Five bounded outcomes R46-C07/R47-C03-C06 gain validated profile-specific evidence. Nine physical groups,26markers and five browser profiles pass without failures/skips;493.040seconds is directory-creation-to-terminal elapsed, not exact execution duration. Original core2b6f PostgreSQL audit-rollback proof is retained with unchanged complete relevant dependencies. Historical933 audit, prior assessments and aggregate gates stay unchanged; productionHTTPS/provider breadth, notifications and other engines remain open.",
-    "Owned-upload remote recovery is accepted at 58716fea31420f1f10258385de25e2c712e12770/tree e1f2ceaa49af387da72ac71a977f8b44bc206802, recorded under supplemental_assessments/owned-upload-remote-recovery-20261026 and [storage remote qualification](hosting-storage-remote-backups.md#accepted-qualification-and-evidence). The 87.774-second exact-source gate passed three real PostgreSQL groups/four revocation cases, local archive and remote/browser workflows without selected Go failures/skips. Twelve bounded outcomes R46-C03/C04/C13/C14/C16/C20, R47-C01/C02, and R48-C02/C07/C08/C09 gain profile-specific evidence. Five GETs, one PUT, one helper start, application reads/new writes, permissions and unchanged source/host inventory are retained. Qualification is native Linux arm64, trusted rootful classic-store Docker/overlay2 and one same-destination pinned Silo at trusted loopback HTTP. Production S3 HTTPS/provider breadth, storage schedules/retention/notifications, A27 platform recovery and full gates stay open. Historical933/30 audit, prior supplemental records and failed attempts remain unchanged; the optional broad runtime race timeout is not a full CI pass. Existing user UI binary was preserved."
+    "Owned-upload remote recovery is accepted at 58716fea31420f1f10258385de25e2c712e12770/tree e1f2ceaa49af387da72ac71a977f8b44bc206802, recorded under supplemental_assessments/owned-upload-remote-recovery-20261026 and [storage remote qualification](hosting-storage-remote-backups.md#accepted-qualification-and-evidence). The 87.774-second exact-source gate passed three real PostgreSQL groups/four revocation cases, local archive and remote/browser workflows without selected Go failures/skips. Twelve bounded outcomes R46-C03/C04/C13/C14/C16/C20, R47-C01/C02, and R48-C02/C07/C08/C09 gain profile-specific evidence. Five GETs, one PUT, one helper start, application reads/new writes, permissions and unchanged source/host inventory are retained. Qualification is native Linux arm64, trusted rootful classic-store Docker/overlay2 and one same-destination pinned Silo at trusted loopback HTTP. Production S3 HTTPS/provider breadth, storage schedules/retention/notifications, A27 platform recovery and full gates stay open. Historical933/30 audit, prior supplemental records and failed attempts remain unchanged; the optional broad runtime race timeout is not a full CI pass. Existing user UI binary was preserved.",
+    "Scheduled owned-upload backups, two storage failure alerts and verified new-volume recovery are Leader accepted at 733cde407427ef745d57fbb726e001bdb1555d47/tree 5be5cb2d7c937aaea00e76a8a8e128bd6c6fd77a after exact code hygiene, specification and critical security reviews. See supplemental_assessments/owned-upload-schedules-alerts-recovery-20261026 and [schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence). The 123.399-second gate passed ten PG groups/four revocation cases and local/remote/browser groups. Actual SMTP/HTTPS receipt URLs select exact authenticated archive/transfer history without mutation; explicit same-archive retry and new-volume app reads/new writes preserve the source. Helper/PUT counts belong only to the first successful scheduled archive and upload retry. The 52.858-second capacity and 89.464-second admission attempts remain failed with repairs recorded. Native Linux arm64/rootful classic Docker/same-destination Silo loopback HTTP/private-CA limits apply; retention, production S3 HTTPS, arbitrary mounts, broad cron/events/channels, cross-host/in-place/disk-loss recovery and aggregate gates stay open. Six bounded outcomes add no historical score; original 933/30 outcomes, all prior records and user UI binary remain unchanged."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -47025,6 +47026,331 @@
         "Native Linux arm64, trusted rootful classic-store Docker/overlay2, same-destination runner, pinned Silo through explicitly trusted loopback HTTP. No production S3 HTTPS/provider breadth, disk loss, in-place/cross-host restore, storage schedules/retention/notification credit, A27 platform restart/restore, or full requirement/acceptance/matrix gates. Existing user UI binary unchanged.",
         "Earlier failed attempts remain failed. The optional broader runtime race diagnostic timeout remains failed and is not a full CI pass.",
         "Feature-specific token usage/cost and a delivery ETA are unavailable."
+      ]
+    },
+    {
+      "id": "owned-upload-schedules-alerts-recovery-20261026",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Six later bounded assessments extend storage scheduling, actual backup/upload alerts, and scheduled-archive recovery evidence. Historical criteria and parent states, all prior supplemental records, original totals, and aggregate gates remain unchanged. This is an owned-upload realization of existing contracts, not extra historical score. The original validator checks historical evidence; exact-candidate documentation review checks this supplemental record.",
+      "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+      "physical_tree": "5be5cb2d7c937aaea00e76a8a8e128bd6c6fd77a",
+      "acceptance_fixture": "acceptance/runtime-hosting-storage/gate.sh --remote",
+      "source_paths": [
+        "internal/api/hosting_storage_remote_runtime_integration_test.go",
+        "internal/store/postgres_hosting_storage_backup_schedule.go",
+        "internal/store/postgres_hosting_storage_backup_schedule_test.go",
+        "internal/store/postgres_hosting_backup_notification_events.go",
+        "web/app/src/components/hosting/StorageBackupSchedules.tsx",
+        "acceptance/runtime-hosting-storage/remote_browser.mjs"
+      ],
+      "evidence_paths": [
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/preservation-safe.json",
+        "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/safe-receipt.tar.gz"
+      ],
+      "runtime_receipt_sha256": "bf8b98d62d07c821eaf2cc10a43139cda39ee7ac19004245bfca891c062eac11",
+      "runtime_summary": {
+        "gate_exit": 0,
+        "elapsed_seconds": 123.399,
+        "local_archive_seconds": 23.43,
+        "remote_group_seconds": 37.07,
+        "postgresql_groups": 10,
+        "revocation_replay_subtests": 4,
+        "no_failed_or_skipped_selected_go_tests": true,
+        "scheduler_join_restart": true,
+        "actual_failure_event_kinds": [
+          "storage_backup",
+          "storage_transfer"
+        ],
+        "actual_transports": [
+          "smtp",
+          "https_webhook"
+        ],
+        "delivered_urls_extracted_from_accepted_receipts": true,
+        "delivered_links_opened_without_mutation": true,
+        "first_scheduled_archive_helper_starts": 1,
+        "first_scheduled_archive_upload_puts": 1,
+        "counter_scope": "First successful scheduled archive and its upload retry; excludes later intentional archive-failure schedule.",
+        "object_gets": 5,
+        "receipt_replayed": true,
+        "source_preserved": true,
+        "browser_widths": [
+          320,
+          390,
+          430,
+          1280
+        ],
+        "browser_request_interception": false,
+        "served_assets_match_manifest": true,
+        "baseline_container_count": 35,
+        "baseline_volume_count": 210,
+        "owned_resources_and_processes_absent": true,
+        "existing_user_ui_identity_unchanged": true
+      },
+      "reviews": {
+        "subject_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+        "code_hygiene": "Leader confirmed passed",
+        "specification": "Leader confirmed passed",
+        "critical_security": "Leader confirmed passed"
+      },
+      "prior_attempts": [
+        {
+          "source_sha": "1efe830db674f6a5f7866ad5662c2a2ce707bc0d",
+          "elapsed_seconds": 52.858,
+          "result": "failed",
+          "reason": "SQLSTATE53100 during repeated migrations exhausted 256 MiB PGDATA tmpfs.",
+          "repair_sha": "9f8596def3aa6f6364b20f77d4a1b3ce5d69a80b",
+          "evidence_path": "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/1efe830db674f6a5f7866ad5662c2a2ce707bc0d.BHohfQ/attempt-failure-summary.json"
+        },
+        {
+          "source_sha": "9f8596def3aa6f6364b20f77d4a1b3ce5d69a80b",
+          "elapsed_seconds": 89.464,
+          "result": "failed",
+          "reason": "Schedule ACK setup did not commit. Original HTTP status unrecorded; local PG reproduction established deferred version-constraint failure during remote target validation.",
+          "repair_sha": "6526a0db3d717d9b58b30a144216e1565e6ac0c9",
+          "evidence_path": "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/9f8596def3aa6f6364b20f77d4a1b3ce5d69a80b.pMYk6E/attempt-failure-summary.json"
+        }
+      ],
+      "outcomes": [
+        {
+          "criterion_id": "R46-C02",
+          "outcome": "Request scheduled backup",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "Owner browser creates a recurring owned-upload backup, replays a lost response identically, edits and disables the same schedule, and receives an admitted archive from concurrent due discovery; the controller stops, joins, and restarts.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R46-C09",
+          "outcome": "Retain backup execution history",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "Owner and viewer read resource-scoped occurrence history; it retains the admitted revision and exact archive/operation IDs after edits and disablement. Uncertain receipt and held-history cases pass in the ten PG groups.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C03",
+          "outcome": "Notify backup failures",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "An actual scheduled archive failure creates one accepted storage_backup event; both SMTP and HTTPS webhook receive its exact source/event/delivery identities. The delivered URL opens owned source/recovery history without mutation.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R63-C04",
+          "outcome": "Notify upload failures",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "An actual scheduled upload failure creates an accepted storage_transfer event while the local archive remains successful. Both transports receive the exact IDs and the browser opens the actual delivered transfer recovery URL without mutation.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C08",
+          "outcome": "Verify application reads restored data",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "After explicit remote recovery from the scheduled archive into a new volume/resource, a deployed application reads the original archived upload and permission metadata is preserved.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R48-C09",
+          "outcome": "Verify application writes restored data before passing",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "733cde407427ef745d57fbb726e001bdb1555d47",
+            "scope": "Scheduled owned-upload backups, two storage failure alerts, and verified new-volume recovery",
+            "justification": "The restored application writes and reads a new upload while the source upload bytes and permission metadata remain unchanged.",
+            "named_tests": [
+              "TestHostingStorageRemoteCompiledRunnerHTTPS",
+              "TestHostingStorageArchiveCompiledRunnerHTTPS",
+              "TestPostgresStorageBackupScheduleAtomicConcurrencyAndDisable",
+              "TestPostgresStorageBackupScheduleAuthorityOverlapAndRollback",
+              "TestPostgresStorageBackupNotificationAtomicReceiptAndUncertainty",
+              "TestPostgresStorageUploadNotificationPreservesLocalAndExcludesDownload"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/attempt-verification-summary.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/api-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/store-tests.log",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/runtime/remote-markers.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026/733cde407427ef745d57fbb726e001bdb1555d47.pF9Yxx/browser-safe.json"
+            ],
+            "limits": "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "acceptance_cases": [
+        {
+          "id": "A25",
+          "bounded_result": "Actual storage backup/upload failures reach both transports and preserve truthful local recovery availability; no aggregate backup/notification gate.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A26",
+          "bounded_result": "Scheduled archive remote restore into a fresh same-destination volume proves application reads/new writes and source preservation; broader engines/profiles remain open.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A31",
+          "bounded_result": "Resource-owned schedules retain revisions, UTC occurrence identity, overlap policy and bounded due discovery; general component command scheduling and broad cron parity remain open.",
+          "aggregate_gate_delta": []
+        },
+        {
+          "id": "A37",
+          "bounded_result": "The local archive group repeats writer compensation and held recovery checks; upload follows durable resumption. Broader quiescence profiles remain open.",
+          "aggregate_gate_delta": []
+        }
+      ],
+      "unchanged_gaps": [
+        "Scheduled owned-upload archives and backup_failed/upload_failed through SMTP/HTTPS webhook only. Native Linux arm64, trusted rootful classic-store Docker/overlay2, one same-destination runner, pinned Silo at explicit loopback HTTP, private-CA notification TLS. No production S3 HTTPS, arbitrary mounts, retention, in-place/cross-host/disk-loss recovery, broad cron/general command jobs/events/channels, aggregate R/A/matrix gate, or user UI upgrade.",
+        "Prior failed attempts and the thirteen-file SQL-placement baseline failure remain recorded; this is not a full CI pass.",
+        "Historical 933 eligible/30 verified outcomes and all requirement/acceptance/matrix gate states remain unchanged.",
+        "Feature-specific token usage, dollar cost, total labor, speedup and completion forecast are unavailable."
       ]
     }
   ]

@@ -161,3 +161,16 @@ not a full CI pass. Feature-specific cost and token usage are unavailable.
 Recurring owned-upload archives use the same qualified storage runner and project
 notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
 for scheduling, safe retry, history, and source-specific failure evidence.
+
+## Later scheduled workflow qualification
+
+The direct remote-backup checkpoint above retains its original scope. Scheduled
+owned-upload backups and storage failure alerts are accepted at
+`733cde407427ef745d57fbb726e001bdb1555d47`. The
+[schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
+records the 123.399-second gate, actual delivered alert links, same-archive retry,
+and application-verified new-volume restore. It retains the private-CA/native
+Linux arm64/rootful classic Docker/same-destination Silo loopback HTTP profile.
+Retention, production S3 HTTPS, arbitrary mounts, in-place or cross-host recovery,
+broader cron/events/channels and aggregate gates remain open. The existing user
+UI binary is preserved.

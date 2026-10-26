@@ -317,6 +317,17 @@ authorization, audit and the embedded React/TypeScript UI are the starting syste
   PostgreSQL 17.11, trusted rootful Docker, pinned Silo over trusted loopback HTTP,
   and private-CA notification TLS. Other events/channels, public-CA deployment,
   production S3 HTTPS and full R63/A25 remain open.
+- [Recurring owned-upload backups](docs/hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
+  are accepted at `733cde407427ef745d57fbb726e001bdb1555d47`. The 123.399-second gate
+  proves owner create/replay/edit/disable/history, viewer reads, durable scheduled
+  archive and upload execution, actual SMTP/HTTPS failure alerts, and delivered
+  recovery links that select history without starting a mutation. Explicit retry
+  reuses the archive; new-volume restore proves application reads/new writes and
+  source preservation. Qualification uses native Linux arm64, trusted rootful
+  classic-store Docker, same-destination pinned Silo at trusted loopback HTTP,
+  and private-CA alert receivers. Retention, production S3 HTTPS, arbitrary mounts,
+  cross-host/in-place recovery, broad cron/events/channels and aggregate gates
+  remain open. The existing user UI binary is preserved.
 - The [internal upload archive helper](internal/storagearchive/README.md) is
   accepted at `3b34b3920378cc41613bc87ca69eea2d35d2f175`: a standalone fixed-root
   Linux helper for strict USTAR `nerocd-storage-v1`. The
@@ -358,7 +369,7 @@ standalone PostgreSQL/Redis hosting and bounded same-destination image-app
 connections have physical evidence; broader R42 application binding, database-native recovery and broader stateful qualification
 remain unfinished. Protected plans and production TLS remain open. Broader
 credentials, Compose/storage, databases, backups, restores, previews, terminals,
-schedules and notifications remain open.
+general schedules and broader notification events/channels remain open.
 
 Remote builders, registry delivery, caching, releases, approvals, permissions and
 observations can advance through a named hosting contract. Before any workspace
