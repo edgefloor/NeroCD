@@ -2,13 +2,96 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
+
+	"nerocd/internal/domain"
+	"nerocd/internal/runner"
 )
+
+func storageDiagnosticWord(value string, allowed ...string) string {
+	for _, word := range allowed {
+		if value == word {
+			return word
+		}
+	}
+	return "unknown"
+}
+
+func storageDiagnosticResult(r *domain.HostingStorageArchiveResult) map[string]any {
+	if r == nil {
+		return nil
+	}
+	return map[string]any{
+		"archive_outcome": storageDiagnosticWord(r.ArchiveOutcome, "succeeded", "failed", "not_attempted"),
+		"resume_outcome":  storageDiagnosticWord(r.ResumeOutcome, "resumed", "not_needed", "uncertain"),
+		"failure_code":    storageDiagnosticWord(r.FailureCode, "", "helper_failed", "archive_invalid", "ownership_mismatch", "interrupted", "resume_failed", "canceled"),
+		"uncertain":       r.Uncertain, "restore_verified": r.RestoreVerified,
+	}
+}
+
+func storageDiagnosticPhases(entries []runner.JournalStorageArchive, operation string) []string {
+	var phases []string
+	for _, entry := range entries {
+		if entry.Plan.OperationID != operation || len(phases) == 32 {
+			continue
+		}
+		phase := entry.Phase
+		if entry.Progress != nil {
+			phase = entry.Progress.Phase
+		}
+		phases = append(phases, storageDiagnosticWord(phase, "plan", "prepared", "apply_intent", "writer_snapshot", "stop_intent", "stopped", "helper_intent", "helper_unverified", "helper_identified", "archive_published", "restore_verified", "resume_intent", "resumed", "complete", "storage_create_intent", "storage_materialized", "recovery_settlement"))
+	}
+	return phases
+}
+
+// Decode only the archive family; never log a journal or decode application payloads.
+func storageDiagnosticJournal(input io.Reader) ([]runner.JournalStorageArchive, error) {
+	const limit = 4 << 20
+	raw, err := io.ReadAll(io.LimitReader(input, limit+1))
+	if err != nil || len(raw) > limit {
+		return nil, fmt.Errorf("journal unavailable or exceeds diagnostic bound")
+	}
+	var snapshot struct {
+		Entries []runner.JournalStorageArchive `json:"storage_archive"`
+	}
+	if json.Unmarshal(raw, &snapshot) != nil || len(snapshot.Entries) > 128 {
+		return nil, fmt.Errorf("journal snapshot invalid or exceeds diagnostic bound")
+	}
+	return snapshot.Entries, nil
+}
+
+func TestStorageRuntimeDiagnosticBoundaries(t *testing.T) {
+	secret := "credential-or-application-payload"
+	r := &domain.HostingStorageArchiveResult{ArchiveOutcome: secret, ResumeOutcome: "resumed", FailureCode: secret, Blob: &domain.HostingStorageArchiveBlob{SHA256: secret}}
+	entries := []runner.JournalStorageArchive{{Plan: domain.HostingStorageArchivePlan{OperationID: "owned"}, Phase: secret}, {Plan: domain.HostingStorageArchivePlan{OperationID: "other"}, Phase: "complete"}}
+	raw, err := json.Marshal(map[string]any{"result": storageDiagnosticResult(r), "phases": storageDiagnosticPhases(entries, "owned")})
+	if err != nil || strings.Contains(string(raw), secret) || !strings.Contains(string(raw), "unknown") || strings.Contains(string(raw), "complete") {
+		t.Fatal("diagnostic allowlist leaked unapproved values")
+	}
+	for _, input := range []string{"{", strings.Repeat(" ", (4<<20)+1), `{"storage_archive":[` + strings.Repeat(`{},`, 128) + `{}]}`} {
+		if _, err := storageDiagnosticJournal(strings.NewReader(input)); err == nil {
+			t.Fatal("unbounded or malformed diagnostic journal accepted")
+		}
+	}
+	decoded, err := storageDiagnosticJournal(strings.NewReader(`{"events":[{"payload":"` + secret + `"}],"storage_archive":[]}`))
+	if err != nil || len(decoded) != 0 {
+		t.Fatal("unrelated journal payload influenced archive diagnostic")
+	}
+	entries = nil
+	for range 40 {
+		entries = append(entries, runner.JournalStorageArchive{Plan: domain.HostingStorageArchivePlan{OperationID: "owned"}, Progress: &domain.HostingStorageArchiveProgress{Phase: "helper_intent"}})
+	}
+	if phases := storageDiagnosticPhases(entries, "owned"); len(phases) != 32 || phases[0] != "helper_intent" {
+		t.Fatal("diagnostic phase bound or progress selection changed")
+	}
+}
 
 // Direct fixture starts must use a prerequisite image already verified by the
 // gate. This covers Pebble and Silo without changing production pull behavior.

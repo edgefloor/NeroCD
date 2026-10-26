@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,6 +62,8 @@ type storageRuntimeFixture struct {
 	archiveCompletions                                  atomic.Int64
 	capabilities                                        []string
 	archiveConfig                                       string
+	lastOperation                                       atomic.Pointer[domain.HostingOperation]
+	diagnosticsRegistered                               bool
 }
 
 func storageRuntimeJSON[T any](f *storageRuntimeFixture, method, path string, body any, status int) T {
@@ -326,6 +329,14 @@ func TestStorageRuntimeRollback(t *testing.T) {
 
 func (f *storageRuntimeFixture) start(caps ...[]string) {
 	f.t.Helper()
+	if !f.diagnosticsRegistered {
+		f.diagnosticsRegistered = true
+		f.t.Cleanup(func() {
+			if f.t.Failed() {
+				f.failureDiagnostics()
+			}
+		})
+	}
 	if f.process != nil {
 		f.t.Fatal("runner already started")
 	}
@@ -435,6 +446,7 @@ func (f *storageRuntimeFixture) await(id, state string) domain.HostingOperation 
 	f.t.Helper()
 	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
 		op := storageRuntimeJSON[domain.HostingOperation](f, http.MethodGet, "/api/v1/hosting-operations/"+id, nil, 200)
+		f.lastOperation.Store(&op)
 		if op.State == state {
 			return op
 		}
@@ -445,6 +457,115 @@ func (f *storageRuntimeFixture) await(id, state string) domain.HostingOperation 
 	}
 	f.t.Fatalf("operation %s did not reach %s logs=%s", id, state, f.logs.String())
 	return domain.HostingOperation{}
+}
+
+// Failure observation never stops the runner, clears a hold, or acquires the
+// journal writer lock. Fixed categories replace transport errors and payloads.
+func (f *storageRuntimeFixture) failureDiagnostics() {
+	op := f.lastOperation.Load()
+	if op == nil {
+		f.t.Log("storage failure diagnostic unavailable: no polled operation")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	read := func(path, token string, out any) bool {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, f.control.URL+path, nil)
+		if err != nil {
+			return false
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := f.client.Do(request)
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		raw, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+		return err == nil && len(raw) <= 1<<20 && response.StatusCode == 200 && json.Unmarshal(raw, out) == nil
+	}
+	current := *op
+	fresh := read("/api/v1/hosting-operations/"+op.ID, f.token, &current)
+	summary := map[string]any{"operation_id": op.ID, "run_id": op.RunID, "fresh": fresh, "state": storageDiagnosticWord(current.State, "queued", "dispatched", "preparing", "prepared", "applying", "verifying", "succeeded", "failed", "canceled", "uncertain"), "mutation_hold": current.MutationHold, "restore_ownership_held": current.RestoreOwnershipHeld}
+	if current.Result != nil {
+		summary["result"] = map[string]any{"outcome": storageDiagnosticWord(current.Result.Outcome, "succeeded", "failed"), "ready": current.Result.Ready, "restored": current.Result.Restored, "uncertain": current.Result.Uncertain}
+	}
+	if current.StorageArchive != nil {
+		summary["archive_result"] = storageDiagnosticResult(current.StorageArchive.Result)
+		phases := make([]string, 0, len(current.StorageArchive.Progress))
+		for _, progress := range current.StorageArchive.Progress {
+			if len(phases) == 32 {
+				break
+			}
+			phases = append(phases, storageDiagnosticPhases([]runner.JournalStorageArchive{{Plan: domain.HostingStorageArchivePlan{OperationID: op.ID}, Progress: &domain.HostingStorageArchiveProgress{Phase: progress.Phase}}}, op.ID)...)
+		}
+		summary["archive_phases"] = phases
+	}
+	var run domain.TaskRun
+	if op.RunID != "" && read("/api/v1/runs/"+op.RunID, f.token, &run) {
+		summary["run_state"] = storageDiagnosticWord(run.Status, "queued", "pending", "running", "succeeded", "failed", "canceled", "active")
+	} else {
+		summary["run_state"] = "unavailable"
+	}
+	encoded, _ := json.Marshal(summary)
+	f.t.Logf("storage failure operation summary=%s", encoded)
+	if !strings.HasPrefix(filepath.Base(f.root), storageRuntimeOwner+"-") {
+		f.t.Log("storage failure journal unavailable: fixture ownership missing")
+		return
+	}
+	root, err := os.OpenRoot(f.root)
+	if err != nil {
+		f.t.Log("storage failure journal unavailable: root")
+		return
+	}
+	defer root.Close()
+	file, err := root.Open("journal/journal.json")
+	if err != nil {
+		f.t.Log("storage failure journal unavailable: snapshot")
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		f.t.Log("storage failure journal unavailable: file type")
+		return
+	}
+	entries, err := storageDiagnosticJournal(file)
+	if err != nil {
+		f.t.Log("storage failure journal unavailable: invalid or bounded")
+		return
+	}
+	f.t.Logf("storage failure durable archive phases=%v", storageDiagnosticPhases(entries, op.ID))
+	for _, entry := range entries {
+		if entry.Plan.OperationID != op.ID || entry.Complete == nil || entry.Complete.HostingAuthority != entry.Authority() {
+			continue
+		}
+		result, _ := json.Marshal(storageDiagnosticResult(&entry.Complete.Result))
+		f.t.Logf("storage failure durable archive result=%s", result)
+		credential, credentialErr := root.ReadFile("credential")
+		if credentialErr == nil && len(credential) <= 256 {
+			a := entry.Authority()
+			query := url.Values{"lease_id": {a.LeaseID}, "attempt": {fmt.Sprint(a.Attempt)}, "fence": {a.Fence}}
+			var lease domain.RunLease
+			if read("/api/v1/runners/lease?"+query.Encode(), string(credential), &lease) && lease.ID == a.LeaseID && lease.RunID == a.RunID && lease.Attempt == a.Attempt && lease.Fence == a.Fence {
+				f.t.Logf("storage failure archive lease state=%s", storageDiagnosticWord(lease.Status, "active", "completed", "expired", "canceled", "failed", "succeeded"))
+			} else {
+				f.t.Log("storage failure archive lease unavailable")
+			}
+		}
+		profileValid := entry.Plan.Validate() == nil
+		for _, candidate := range entries {
+			if candidate.Phase == "helper_unverified" && candidate.Authority() == entry.Authority() && reflect.DeepEqual(candidate.Plan, entry.Plan) {
+				decoded, err := hex.DecodeString(candidate.UncertainHelperContainerID)
+				profileValid = profileValid && err == nil && len(decoded) == 32 && candidate.UncertainHelperContainerID == strings.ToLower(candidate.UncertainHelperContainerID)
+			}
+		}
+		if profileValid {
+			storageArchiveHelperFailureProfile(f, entry, entries)
+		} else {
+			f.t.Log("storage failure helper profile unavailable: invalid durable identity")
+		}
+		break
+	}
 }
 
 func (f *storageRuntimeFixture) proxyAwait(id string) domain.HostingProxyOperation {
