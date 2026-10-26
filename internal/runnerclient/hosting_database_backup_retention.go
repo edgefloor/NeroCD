@@ -31,6 +31,7 @@ func (r *backupRetentionMutationResponse) decodeResponse(body io.Reader) error {
 	}
 	return domain.DecodeHostingDatabaseBackupJSON(raw, &r.value)
 }
+// HostingDatabaseBackupRetentionPlan fetches and validates a backup retention plan.
 func (c Client) HostingDatabaseBackupRetentionPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingDatabaseBackupRetentionPlan, error) {
 	var r backupRetentionPlanResponse
 	if e := c.post(databaseBackupProtectedContext(ctx), "/api/v1/runners/hosting/database-backup-retention/plan", a, &r); e != nil {
@@ -44,6 +45,7 @@ func (c Client) HostingDatabaseBackupRetentionPlan(ctx context.Context, a domain
 	}
 	return r.value, nil
 }
+// HostingDatabaseBackupRetentionMutation submits a receipt and validates the retained item state.
 func (c Client) HostingDatabaseBackupRetentionMutation(ctx context.Context, in domain.HostingDatabaseBackupRetentionMutation) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	var r backupRetentionMutationResponse
 	if in.Validate() != nil {
@@ -84,6 +86,7 @@ func (r *backupRetentionRetirementResponse) decodeResponse(body io.Reader) error
 	}
 	return domain.DecodeHostingDatabaseBackupJSON(raw, &r.value)
 }
+// HostingDatabaseBackupRetentionRetirement requests and validates a replay-only continuation.
 func (c Client) HostingDatabaseBackupRetentionRetirement(ctx context.Context, in domain.HostingDatabaseBackupRetentionRetirementInput) (domain.HostingDatabaseBackupRetentionRetirement, error) {
 	var r backupRetentionRetirementResponse
 	if in.Validate() != nil {

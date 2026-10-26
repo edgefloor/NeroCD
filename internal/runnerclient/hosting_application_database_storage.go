@@ -7,6 +7,7 @@ import (
 	"nerocd/internal/domain"
 )
 
+// HostingApplicationDatabaseStorageWriter submits a writer receipt and validates the returned state.
 func (c Client) HostingApplicationDatabaseStorageWriter(ctx context.Context, request domain.HostingApplicationDatabaseStorageWriterRequest, expected domain.HostingOperation) (domain.HostingOperation, error) {
 	var reply connectionResponse[domain.HostingOperation]
 	if _, err := applicationConnectionInput(expected, request.HostingAuthority); err != nil || request.Validate() != nil || expected.ApplicationDatabaseStorage == nil || request.Receipt.PlanHash != expected.Plan.Hash || request.Receipt.StorageRef != expected.Snapshot.Storage {
@@ -21,6 +22,7 @@ func (c Client) HostingApplicationDatabaseStorageWriter(ctx context.Context, req
 	}
 	return out, nil
 }
+// HostingApplicationDatabaseStorageAuthorize requests effect permission bounded by the lease expiry.
 func (c Client) HostingApplicationDatabaseStorageAuthorize(ctx context.Context, request domain.HostingApplicationDatabaseStorageEffectRequest, expected domain.HostingOperation, expiry time.Time) (domain.HostingApplicationDatabaseStorageEffectAuthorization, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseStorageEffectAuthorization]
 	if _, err := applicationConnectionInput(expected, request.HostingAuthority); err != nil || request.Validate() != nil || expected.ApplicationDatabaseStorage == nil || !expected.MutationHold || expected.Result != nil || !time.Now().Before(expiry) {
@@ -36,6 +38,7 @@ func (c Client) HostingApplicationDatabaseStorageAuthorize(ctx context.Context, 
 	}
 	return out, nil
 }
+// HostingApplicationDatabaseStorageProxyPlan fetches and validates a stopped-writer proxy plan.
 func (c Client) HostingApplicationDatabaseStorageProxyPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingApplicationDatabaseStorageProxyPlan, error) {
 	var reply connectionResponse[domain.HostingApplicationDatabaseStorageProxyPlan]
 	if err := c.connectionPost(ctx, "storage/proxy-plan", a, &reply); err != nil {

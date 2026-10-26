@@ -62,6 +62,7 @@ func cloneStorageBackupRetentions(v []JournalStorageBackupRetention) []JournalSt
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+// AppendStorageBackupRetention durably retains a validated storage retention receipt, rejecting conflicting IDs.
 func (j *AttemptJournal) AppendStorageBackupRetention(e JournalStorageBackupRetention) (JournalStorageBackupRetention, error) {
 	if err := validateJournalStorageBackupRetention(e); err != nil {
 		return JournalStorageBackupRetention{}, err

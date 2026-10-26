@@ -31,6 +31,7 @@ func (r *storageRemoteMutationResponse) decodeResponse(body io.Reader) error {
 	}
 	return nil
 }
+// HostingStorageBackupTransferPlan fetches and validates a storage backup transfer plan.
 func (c Client) HostingStorageBackupTransferPlan(ctx context.Context, a domain.HostingAuthority) (domain.HostingStorageBackupTransferPlan, error) {
 	var response storageRemotePlanResponse
 	if e := c.post(databaseBackupProtectedContext(ctx), "/api/v1/runners/hosting/storage-backup-transfer/plan", a, &response); e != nil {
@@ -45,6 +46,7 @@ func (c Client) HostingStorageBackupTransferPlan(ctx context.Context, a domain.H
 	}
 	return p, nil
 }
+// HostingStorageBackupTransferMutation submits a receipt and validates the transfer outcome.
 func (c Client) HostingStorageBackupTransferMutation(ctx context.Context, in domain.HostingStorageBackupTransferMutation) (domain.HostingStorageBackupTransfer, error) {
 	var response storageRemoteMutationResponse
 	if in.Validate() != nil {

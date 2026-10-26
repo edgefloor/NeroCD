@@ -62,6 +62,7 @@ func cloneDatabaseBackupRetentions(v []JournalDatabaseBackupRetention) []Journal
 	_ = json.Unmarshal(raw, &out)
 	return out
 }
+// AppendDatabaseBackupRetention durably retains a validated retention receipt, rejecting conflicting IDs.
 func (j *AttemptJournal) AppendDatabaseBackupRetention(e JournalDatabaseBackupRetention) (JournalDatabaseBackupRetention, error) {
 	if err := validateJournalDatabaseBackupRetention(e); err != nil {
 		return JournalDatabaseBackupRetention{}, err

@@ -34,10 +34,12 @@ type Policy struct {
 	RootCAs           *x509.CertPool
 }
 
+// Sender delivers notifications under a validated network policy.
 type Sender struct {
 	policy Policy
 	lookup func(context.Context, string, string) ([]netip.Addr, error)
 }
+// Result classifies delivery success, retryability, and configuration failures.
 type Result struct {
 	Permanent            bool
 	Code                 string
@@ -64,6 +66,7 @@ func networkFailure(err error) Result {
 	return Result{Code: "network_unavailable"}
 }
 
+// New validates and copies the protected notification network policy.
 func New(p Policy) (*Sender, error) {
 	copyPolicy := Policy{PrivateOrigins: map[string][]netip.Prefix{}, FixtureTLSOrigins: append([]string(nil), p.FixtureTLSOrigins...), RootCAs: p.RootCAs}
 	if p.RootCAs != nil {
@@ -145,6 +148,7 @@ func (s *Sender) resolve(ctx context.Context, origin, host string) ([]netip.Addr
 // claim fence, and current recipients before every external message.
 type Authorize func(context.Context) ([]string, error)
 
+// Send authorizes and delivers a notification within a bounded time budget.
 func (s *Sender) Send(ctx context.Context, c *domain.NotificationConfiguration, p domain.NotificationPayload, authorize Authorize) Result {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
