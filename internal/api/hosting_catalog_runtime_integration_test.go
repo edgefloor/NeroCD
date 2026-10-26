@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -457,6 +458,7 @@ func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, inst
 	if storageArchiveWriterRunning(t, old.Result.ContainerID) || !storageArchiveWriterRunning(t, current.Result.ContainerID) {
 		t.Fatal("catalog backup recreated or started wrong writer")
 	}
+	catalogArchiveAwaitReady(t, sourceBase, current)
 	client := catalogSession(t, sourceBase, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogArchiveBookmark(t, client, sourceBase, "NeroCD source after backup", true, true)
 	// Change desired metadata after the backup without changing the running
@@ -511,6 +513,10 @@ func catalogRuntimeArchiveRoundtrip(t *testing.T, f *storageRuntimeFixture, inst
 	catalogArchiveBookmark(t, client, sourceBase, "NeroCD restored independent write", false, false)
 	catalogArchiveBookmark(t, client, sourceBase, "NeroCD source after backup", false, true)
 	catalogRuntimeResumeFailure(t, f, installed.Resource, current, old)
+	catalogArchiveAwaitReady(t, sourceBase, current)
+	recoveredSession := catalogSession(t, sourceBase, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
+	catalogBookmark(t, recoveredSession, sourceBase, false)
+	catalogArchiveBookmark(t, recoveredSession, sourceBase, "NeroCD source after backup", false, true)
 	raw, _ := json.Marshal([]any{entry.Plan, restoredEntry.Plan, pinned, deployed})
 	for _, value := range values {
 		if bytes.Contains(raw, []byte(value)) || strings.Contains(f.logs.String(), value) {
@@ -629,5 +635,47 @@ func catalogRuntimeResumeFailure(t *testing.T, f *storageRuntimeFixture, resourc
 	}
 	if storageArchiveHelperStarts(t, recovery.ID, since) != 0 {
 		t.Fatal("owner recovery repeated archive helper execution")
+	}
+}
+
+// Docker start proves writer resumption, not application readiness. Probe only
+// the exact known local health endpoint within the deployment's readiness budget.
+// Login and bookmark requests remain strict single application operations.
+func catalogArchiveAwaitReady(t *testing.T, base string, op domain.HostingOperation) {
+	t.Helper()
+	if op.Result == nil || op.Plan == nil || op.Release == nil || base != "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort) || op.Snapshot.Readiness.Path != "/health" || op.Snapshot.Readiness.TimeoutSeconds < 1 || op.Snapshot.Readiness.TimeoutSeconds > 120 {
+		t.Fatal("catalog readiness requires the exact settled local application")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(op.Snapshot.Readiness.TimeoutSeconds)*time.Second)
+	defer cancel()
+	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	attempts := 0
+	for {
+		if !storageArchiveWriterRunning(t, op.Result.ContainerID) {
+			t.Fatal("resumed catalog writer stopped during readiness")
+		}
+		attempts++
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/health", nil)
+		if err != nil {
+			t.Fatal("catalog readiness request construction")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
+			closeErr := response.Body.Close()
+			if readErr == nil && closeErr == nil && len(body) <= 4096 && response.StatusCode == 200 && bytes.Contains(body, []byte("1.47.0")) && bytes.Contains(body, []byte("healthy")) {
+				t.Logf("catalog resumed readiness operation=%s attempts=%d", op.ID, attempts)
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("resumed catalog application did not become healthy within its readiness deadline")
+		case <-ticker.C:
+		}
 	}
 }
