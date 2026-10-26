@@ -15,6 +15,52 @@ import (
 	"time"
 )
 
+func TestRuntimeIdentityRemoteStorageBackupCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		remote     bool
+		capability bool
+		task       bool
+		duplicate  bool
+		wantError  bool
+	}{
+		{name: "local archive"},
+		{name: "remote archive", remote: true, capability: true, task: true},
+		{name: "duplicate remote capabilities", remote: true, capability: true, task: true, duplicate: true},
+		{name: "missing remote capability", remote: true, task: true, wantError: true},
+		{name: "missing remote task", remote: true, capability: true, wantError: true},
+		{name: "missing remote opt-in", capability: true, task: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caps := []string{domain.HostingOwnedStorageCapability, domain.HostingStorageArchiveCapability, domain.RunTypeStorageArchive}
+			if tc.capability {
+				caps = append(caps, domain.HostingStorageBackupRemoteCapability)
+			}
+			if tc.task {
+				caps = append(caps, domain.RunTypeStorageBackupTransfer)
+			}
+			if tc.duplicate {
+				caps = append(caps, caps...)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v1/runners/identity" || r.Header.Get("Authorization") != "Bearer fixture" {
+					t.Error("unexpected identity request")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_storage_identity", "capabilities": caps}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			config := Config{Server: server.URL, Token: "fixture", RunnerID: "runner_storage_identity", StorageArchive: &StorageArchiveExecutionConfig{RemoteBackups: tc.remote, TrustedLoopbackHTTP: true}}
+			if err := validateRuntimeIdentity(t.Context(), config); (err != nil) != tc.wantError {
+				t.Fatalf("runtime identity error = %v, want error = %v", err, tc.wantError)
+			}
+		})
+	}
+}
+
 func runtimeEnvironmentPlan(t *testing.T) domain.HostingApplyPlan {
 	t.Helper()
 	p := imageTestPlan(t)
