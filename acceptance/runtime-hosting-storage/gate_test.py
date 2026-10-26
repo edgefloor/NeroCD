@@ -574,7 +574,7 @@ const api = {
  post: async () => ({status: () => 204}),
  dispose: async () => {clearInterval(pendingHandle); rejectPending?.(Error("owned API disposed")); await close("api");}
 };
-let responseIndex = 0, contextIndex = 0;
+let responseIndex = 0, contextIndex = 0, browserClosed = false;
 const page = new Proxy({}, {get: (_, name) => {
  if (name === "then") return undefined;
  if (["getByRole","getByLabel","locator"].includes(name)) return () => page;
@@ -588,10 +588,14 @@ const page = new Proxy({}, {get: (_, name) => {
  };
  return async () => {};
 }});
-const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer";return {newPage: async () => page,close: async () => close(name)};};
+const makeContext = () => {const name=contextIndex++ === 0 ? "context" : "viewer";return {newPage: async () => page,close: async () => {
+ await new Promise(resolve => setTimeout(resolve, 10));
+ if (browserClosed) throw Error("parent closed before child settled");
+ await close(name);
+}};};
 module.exports = {
  request: {newContext: async () => api},
- chromium: {launch: async () => ({newContext: async () => makeContext(), close: async () => close("browser")})},
+ chromium: {launch: async () => ({newContext: async () => makeContext(), close: async () => {browserClosed = true; await close("browser");}})},
  expect: () => new Proxy({}, {get: () => async () => {if (!complete) throw Error("UI must not execute in cancellation test");}})
 };
 """)
@@ -631,6 +635,57 @@ module.exports = {
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=3)
+
+    def test_overlapping_cleanup_joins_children_and_late_resources(self):
+        # Evaluate the actual cleanup function without starting the workflow.
+        script = r"""
+const fs = require("node:fs"), assert = require("node:assert/strict");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const cleanup = source.slice(source.indexOf("let api, browser, context, page;"), source.indexOf("function stop(code)"));
+const run = new Function("exercise", cleanup + `
+ return exercise({closeOwned, cleanupFailures,
+  set: resources => {({api, browser, context} = resources);}});`);
+(async () => {
+ for (const failure of ["", "context", "browser", "api"]) {
+  await run(async ({closeOwned, cleanupFailures, set}) => {
+   const events = [], calls = new Map();
+   let release;
+   const pending = new Promise(resolve => {release = resolve;});
+   const resource = name => ({[name === "api" ? "dispose" : "close"]: async () => {
+    calls.set(name, (calls.get(name) ?? 0) + 1);
+    events.push(name + ":start");
+    if (name === "context") await pending;
+    events.push(name + ":settled");
+    if (failure === name) throw Error("private failure");
+   }});
+   set({context:resource("context"), browser:resource("browser"), api:resource("api")});
+   const first = closeOwned(), overlapping = closeOwned();
+   await new Promise(resolve => setImmediate(resolve));
+   assert.deepEqual(events, ["context:start"]);
+   release();
+   assert.deepEqual(await Promise.all([first, overlapping]), [!failure, !failure]);
+   assert(events.indexOf("context:settled") < events.indexOf("browser:start"));
+   assert.deepEqual([...calls.values()], [1, 1, 1]);
+   assert.deepEqual([...cleanupFailures], failure ? [failure] : []);
+   assert.equal(await closeOwned(), !failure);
+   assert.deepEqual([...calls.values()], [1, 1, 1]);
+  });
+ }
+ await run(async ({closeOwned, set}) => {
+  assert.equal(await closeOwned(), true);
+  const closed = [];
+  // A resource creation completing after cancellation is joined by finally.
+  set({api:{dispose:async () => closed.push("api")}});
+  assert.equal(await closeOwned(), true);
+  set({api:undefined, context:{close:async () => closed.push("context")}, browser:{close:async () => closed.push("browser")}});
+  assert.equal(await closeOwned(), true);
+  assert.deepEqual(closed, ["api", "context", "browser"]);
+ });
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+        result = subprocess.run(["node", "-e", script, str(GATE.with_name("remote_browser.mjs"))],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_sigterm_stops_pending_poll_and_joins_owned_resources(self):
         self.run_driver(signal.SIGTERM)

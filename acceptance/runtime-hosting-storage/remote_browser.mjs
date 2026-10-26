@@ -14,12 +14,14 @@ let stopped = false;
 const cleanupFailures = new Set();
 const closing = new Map();
 async function closeOwned() {
+  // A context must settle before its owning browser is closed. Concurrent
+  // signal/finally callers join the same promise for each owned resource.
   for (const [name, resource, method] of [["context", context, "close"], ["browser", browser, "close"], ["api", api, "dispose"]]) {
-    if (resource && !closing.has(name)) closing.set(name, Promise.resolve().then(() => resource[method]()));
+    if (!resource) continue;
+    if (!closing.has(name)) closing.set(name, Promise.resolve().then(() => resource[method]()));
+    const [result] = await Promise.allSettled([closing.get(name)]);
+    if (result.status === "rejected") cleanupFailures.add(name);
   }
-  const pending = [...closing.entries()];
-  const results = await Promise.allSettled(pending.map(([, promise]) => promise));
-  results.forEach((result, index) => {if (result.status === "rejected") cleanupFailures.add(pending[index][0]);});
   return cleanupFailures.size === 0;
 }
 function stop(code) {
