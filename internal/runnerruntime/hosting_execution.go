@@ -79,7 +79,11 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	failBeforeApply := func() error {
-		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration, op.Snapshot.Storage)
+		drain := reporter.WaitEmpty
+		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+			drain = storageDrain
+		}
+		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, drain, local, op.Snapshot.RuntimeConfiguration, op.Snapshot.Storage)
 		return err
 	}
 	if op.Release == nil {

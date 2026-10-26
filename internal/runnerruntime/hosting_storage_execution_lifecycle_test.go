@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -324,5 +325,227 @@ func TestStorageCompletionPreparedRecoveryJoinsWatcherBeforeCommit(t *testing.T)
 	}
 	if c.applyCalls != 1 || c.completeCalls != 1 || len(j.Snapshot().Hosting) != 0 {
 		t.Fatal("prepared recovery duplicated effects or left settled records")
+	}
+}
+
+func TestStoragePreparationFailureCompletionDoesNotCancelAcknowledgement(t *testing.T) {
+	for _, phase := range []string{"prepare", "ensure_prepared_release"} {
+		t.Run(phase, func(t *testing.T) {
+			for _, worker := range []string{"watcher", "renewer"} {
+				t.Run(worker, func(t *testing.T) { testStoragePreparationFailureCompletion(t, phase, worker, "ack") })
+			}
+		})
+	}
+}
+
+func TestStoragePreparationFailureRetainsLostACKAndRevokedAuthority(t *testing.T) {
+	for _, phase := range []string{"prepare", "ensure_prepared_release"} {
+		t.Run(phase, func(t *testing.T) {
+			for _, outcome := range []string{"lost_ack", "canceled_drain", "expired_drain"} {
+				t.Run(outcome, func(t *testing.T) { testStoragePreparationFailureCompletion(t, phase, "watcher", outcome) })
+			}
+		})
+	}
+}
+
+func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcome string) {
+	t.Helper()
+	// An unavailable executable fails daemon inspection in the actual image
+	// caller. No Docker process or workload mutation can start in either phase.
+	t.Setenv("PATH", t.TempDir())
+	f := mountedTestFixture(t, "")
+	j, _ := openStorageCoordinatorJournal(t)
+	c := newStorageCoordinatorController(t, j, f)
+	if phase == "prepare" {
+		c.op.Plan = nil
+		c.op.Release = nil
+		c.op.State = "queued"
+	}
+	parent, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	s := newAttemptSupervisorFrom(parent, c.lease)
+	defer s.Close()
+	entered, committed := make(chan struct{}), make(chan struct{})
+	var enteredOnce, committedOnce sync.Once
+	var bodyMu sync.Mutex
+	var completionBodies [][]byte
+	loseACK := outcome == "lost_ack"
+	var watcher *leaseWatcher
+	var renewer *leaseRenewer
+	claim := domain.ClaimedRun{Run: domain.TaskRun{ID: c.a.RunID, RunSpec: domain.RunSpec{Type: domain.RunTypeImageDeploy, HostingOperationID: c.a.OperationID, HostingMode: "deploy"}}, Lease: c.lease}
+	claim.PrimitivePlan.RunID = claim.Run.ID
+	replacement := claim
+	replacement.Run.ID = "run_after_prepare_failure"
+	replacement.Run.RunSpec.HostingOperationID = "hop_after_prepare_failure"
+	replacement.Lease.ID, replacement.Lease.RunID, replacement.Lease.Fence = "lease_after_prepare_failure", replacement.Run.ID, "fence_after_prepare_failure"
+	replacement.PrimitivePlan.RunID = replacement.Run.ID
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/runners/hosting/plan":
+			_ = json.NewEncoder(w).Encode(c.op)
+		case "/api/v1/runners/heartbeat":
+			_ = json.NewEncoder(w).Encode(domain.Runner{ID: c.lease.RunnerID})
+		case "/api/v1/runners/events/batch":
+			var in runnerclient.EventBatchRequest
+			if json.NewDecoder(r.Body).Decode(&in) != nil || in.RunID != c.a.RunID || in.LeaseID != c.a.LeaseID || in.Attempt != c.a.Attempt || in.Fence != c.a.Fence {
+				t.Error("event authority changed")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			ack := runnerclient.EventBatchAck{}
+			for _, event := range in.Events {
+				ack.Events = append(ack.Events, domain.RunLog{RunID: in.RunID, LeaseID: in.LeaseID, Attempt: in.Attempt, EventKey: event.EventKey, RequestedSequence: event.Sequence, Sequence: event.Sequence, Stream: event.Stream, Message: event.Message})
+			}
+			_ = json.NewEncoder(w).Encode(ack)
+		case "/api/v1/runners/lease", "/api/v1/runners/renew":
+			enteredOnce.Do(func() { close(entered) })
+			select {
+			case <-r.Context().Done():
+				return
+			case <-parent.Done():
+				return
+			case <-committed:
+			}
+			if r.URL.Path == "/api/v1/runners/renew" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			terminal := c.lease
+			terminal.Status = "failed"
+			_ = json.NewEncoder(w).Encode(terminal)
+		case "/api/v1/runners/hosting/complete":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			bodyMu.Lock()
+			completionBodies = append(completionBodies, append([]byte(nil), body...))
+			dropACK := loseACK
+			bodyMu.Unlock()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			rec := httptest.NewRecorder()
+			c.serve(rec, r)
+			if rec.Code != http.StatusOK {
+				t.Error("preparation failure completion did not commit")
+				w.WriteHeader(rec.Code)
+				return
+			}
+			committedOnce.Do(func() { close(committed) })
+			select {
+			case <-watcher.done:
+			case <-parent.Done():
+				return
+			}
+			select {
+			case <-renewer.done:
+			case <-parent.Done():
+				return
+			}
+			if dropACK {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			_, _ = w.Write(rec.Body.Bytes())
+		case "/api/v1/runners/claim":
+			_ = json.NewEncoder(w).Encode(replacement)
+		default:
+			c.serve(w, r)
+		}
+	}))
+	defer server.Close()
+	watchInterval, renewInterval := time.Hour, time.Hour
+	if worker == "watcher" {
+		watchInterval = time.Nanosecond
+	} else {
+		renewInterval = time.Nanosecond
+	}
+	watcher = startLeaseWatcher(s.Context(), server.URL, "token", c.lease, watchInterval, s.cancel)
+	defer watcher.Stop()
+	renewer = startLeaseRenewer(s.Context(), s, server.URL, "token", c.lease, renewInterval)
+	defer renewer.Stop()
+	select {
+	case <-entered:
+	case <-parent.Done():
+		t.Fatal("authority worker did not enter handshake")
+	}
+	reporter := startAttemptReporter(s.Context(), s, j, server.URL, "token", c.a.RunID, c.lease)
+	defer reporter.Stop()
+	drain := databaseCompletionDrain(s, reporter, watcher, renewer)
+	switch outcome {
+	case "canceled_drain":
+		drain = func(ctx context.Context) error {
+			s.cancel()
+			return databaseCompletionDrain(s, reporter, watcher, renewer)(ctx)
+		}
+	case "expired_drain":
+		drain = func(context.Context) error {
+			s.mu.Lock()
+			s.expiry = time.Now().Add(-time.Second)
+			s.mu.Unlock()
+			requestContext, done, err := s.RequestContext()
+			if done != nil {
+				done()
+			}
+			if err == nil || requestContext != nil {
+				t.Error("expired supervisor admitted a request")
+			}
+			return err
+		}
+	}
+	err := executeImageClaim(s, j, reporter, drain, server.URL, "token", claim, "unix:///nonexistent-storage-fixture.sock", false, nil)
+	if outcome == "canceled_drain" || outcome == "expired_drain" {
+		if err == nil || c.completeCalls != 0 || !c.hasPhase("result") || c.createCalls != 0 || c.materializedCalls != 0 || c.applyCalls != 0 || f.created {
+			t.Fatal("revoked authority published fresh completion, mutated storage or lost durable failure")
+		}
+		return
+	}
+	if outcome == "lost_ack" {
+		if err == nil || !c.hasPhase("result") || c.completeCalls != 1 || s.Context().Err() != nil {
+			t.Fatal("lost preparation acknowledgement discarded result or canceled supervisor")
+		}
+		bodyMu.Lock()
+		loseACK = false
+		bodyMu.Unlock()
+		if err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", parent, func(string) (hostingStorageEngine, error) {
+			t.Error("failure receipt replay opened an engine")
+			return nil, errors.New("forbidden")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		bodyMu.Lock()
+		exact := len(completionBodies) == 2 && bytes.Equal(completionBodies[0], completionBodies[1])
+		bodyMu.Unlock()
+		if !exact || c.completeCalls != 2 || len(j.Snapshot().Hosting) != 0 || c.createCalls != 0 || c.materializedCalls != 0 || c.applyCalls != 0 || f.created {
+			t.Fatal("failure replay changed receipt, repeated effects or retained settled evidence")
+		}
+		next, err := runnerclient.New(server.URL, "token").Claim(parent)
+		if err != nil || next.Run.ID != replacement.Run.ID || next.Lease != replacement.Lease {
+			t.Fatalf("failure receipt replay blocked next claim: %v", err)
+		}
+		return
+	}
+	if s.Context().Err() != nil || errors.Is(err, errLeaseAuthorityLost) {
+		t.Fatalf("committed preparation failure canceled its own acknowledgement: %v", err)
+	}
+	if phase == "prepare" {
+		if err == nil || !strings.Contains(err.Error(), "image preparation failed; previous workload was not changed") {
+			t.Fatalf("prepare did not return its settled failure: %v", err)
+		}
+	} else if err != nil {
+		t.Fatalf("prepared release failure did not settle: %v", err)
+	}
+	if c.completeCalls != 1 || c.createCalls != 0 || c.materializedCalls != 0 || c.applyCalls != 0 || f.created || c.op.MutationHold || c.op.Result == nil || *c.op.Result != (domain.HostingResult{Outcome: "failed"}) || len(j.Snapshot().Hosting) != 0 || len(j.Snapshot().Events) != 0 {
+		t.Fatal("preparation failure mutated storage, repeated completion or left unsettled evidence")
+	}
+	if err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", parent, func(string) (hostingStorageEngine, error) {
+		t.Error("settled preparation replay opened engine")
+		return nil, errors.New("forbidden")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	next, err := runnerclient.New(server.URL, "token").Claim(parent)
+	if err != nil || next.Run.ID != replacement.Run.ID || next.Lease != replacement.Lease {
+		t.Fatalf("next claim after settled failure was blocked: %v", err)
 	}
 }
