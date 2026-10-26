@@ -89,8 +89,16 @@ proves failed-upload local preservation, same-archive retry, acknowledgment repl
 and a forced remote GET before fresh-target restore. The pinned Silo fixture uses
 explicitly trusted loopback HTTP; production S3 HTTPS remains unqualified.
 
+PostgreSQL retention/recovery is accepted at
+`5003e16c0c0fc48d31c29f444f47a97b94e10339`. Its [qualification](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence)
+covers independent local and remote retention, immutable-batch replay,
+explicit continuation and application recovery from retained copies. The profile
+uses pinned Silo with trusted loopback HTTP. Production S3 HTTPS remains
+unqualified. This closes the active bounded workflow without a new subsystem or
+UI expansion.
+
 Continue H2 from the remaining recovery gaps. Full upstream cron grammar,
-independent local/S3 retention and deletion, notifications, other engines,
+notifications, other engines,
 cross-destination and in-place restore need their own contracts and acceptance.
 Broader R42 profiles, rotation,
 production ACME and aggregate stateful hosting gates remain open. This accepted

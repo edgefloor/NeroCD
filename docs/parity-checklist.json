@@ -40848,7 +40848,8 @@
     "Audit SHA is the physically tested09a source, not its later documentation descendant. Mandatory source ranges relocate mechanically by3 product-spec lines; original manifests and receipts remain in audit_history. Prior failed full receipt /tmp/nerocd-operation-snapshot-integrated-full-handoff.json remains failed.",
     "Later bounded backup acceptance at 56cce329e620472e3c82e9ed7ef0ae0618f124e4 is recorded in supplemental_assessments and docs/hosting-database-backups.md. Ten named outcomes receive profile-specific assessments with prior/current classifications, exact accepted/source revisions, fixtures, durable receipts and limits. Nine are validated; R46-C06 remains partial because the guest-timeout fixture proves pg_restore timeout only, while forced pg_dump timeout is unverified. This historical09a audit, its 933 eligible outcomes, 30 verified outcomes and all parent gates remain unchanged. The final physical evidence is thirteenth-runtime at c1f7b153a963609336851f94a16b2eac96f86e91, full pass130.140 seconds retained by source correspondence; earlier qualification-handoff failure remains historical. Scheduling, S3, retention, in-place/cross-destination recovery and other engines receive no new credit.",
     "Subsequent scheduled-backup and pg_dump-timeout physical qualification is recorded in supplemental_assessments under postgresql-schedules-and-dump-timeout-20261025. Sourcec76019739ffbde0bcf7eb357c9740ddd35bf9a57 passed three groups and three failure subtests without skips, two real UI scenarios and nine markers in157.868 seconds. R46-C02 gains bounded validated schedule workflow evidence; R46-C06 changes from the historical dcef partial assessment to bounded validated backup-timeout proof. Combined60b86e47504533280170028cbc0b9b632c7b67db is accepted after all13 integration checks passed. Historical933 audit, prior supplemental records and all parent gates stay unchanged. Cron weekday7/L/W/#, S3, retention, notifications, other engines and general scheduler/full-parity claims remain open.",
-    "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged."
+    "Subsequent PostgreSQL remote recovery acceptance at 6621204964e96039558c0f267dbac50475a7ad98 is recorded in supplemental_assessments under postgresql-remote-backup-recovery-20261025 and [remote qualification](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence). Reviewed source ba63eeefcb98eda32fb18184f10c794357bb114b has the same tree c2dba0c2a9ff32a7e6b433283a750da82836f9fe. Four runtime groups, all13 markers and three browser profiles passed with zero failures/skips. Eight bounded assessments R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09 are validated; the latter extend local restore evidence without duplicate credit. R29-C12 remains partial. The fixture qualifies pinned PostgreSQL17.11/Silo on native Linux arm64 and one declared same destination with explicitly trusted loopback HTTP; target setup/validation uses API, selection/warning/reload/retry/restore uses live UI. Production S3 HTTPS, retention/deletion, notifications, other engines and complete gates remain open. Historical failed x0c98tlo and zkx52pev runs remain failed. Historical09a audit,933 eligible/30 verified outcomes and all parent gates are unchanged.",
+    "Later PostgreSQL retention/recovery is accepted at5003e16c0c0fc48d31c29f444f47a97b94e10339/tree72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618 and recorded under supplemental_assessments/postgresql-retention-recovery-20261026. Five bounded outcomes R46-C07/R47-C03-C06 gain validated profile-specific evidence. Nine physical groups,26markers and five browser profiles pass without failures/skips;493.040seconds is directory-creation-to-terminal elapsed, not exact execution duration. Original core2b6f PostgreSQL audit-rollback proof is retained with unchanged complete relevant dependencies. Historical933 audit, prior assessments and aggregate gates stay unchanged; productionHTTPS/provider breadth, notifications and other engines remain open."
   ],
   "unresolved_client_contract": {
     "state": "missing",
@@ -45723,6 +45724,289 @@
         "A37",
         "DB01 full PostgreSQL matrix",
         "Migration and unchanged-client compatibility"
+      ]
+    },
+    {
+      "id": "postgresql-retention-recovery-20261026",
+      "assessment_kind": "later_bounded_acceptance",
+      "historical_audit_unchanged": true,
+      "historical_eligible_count": 933,
+      "historical_verified_count": 30,
+      "note": "Five bounded retention outcomes gain accepted profile-specific evidence. This does not requalify unrelated historical933 rows, change prior supplemental records or accept a complete requirement/acceptance/matrix gate. The final physical run has nine groups/26markers/five browser passes;493.040seconds measures directory creation to terminal completion, not a precisely observed execution start.",
+      "outcomes": [
+        {
+          "criterion_id": "R46-C07",
+          "outcome": "Apply backup retention",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_source_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_tree": "72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618",
+            "scope": "Bounded hosted PostgreSQL local/S3 retention and retained-copy recovery",
+            "justification": "Owner UI saves and previews independent policies and executes the exact selected local/remote copy batch. Physical count-rule deletion, safeguards, retained-copy application recovery and terminal history pass. Age/size semantics are implemented as documented; physical count/protection checks do not establish every age/size edge case.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRetentionCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_retention_runtime_integration_test.go",
+              "internal/store/postgres_hosting_database_backup_retention_test.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-source-manifest.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "evidence_sha256": {
+              "integration-verification.json": "fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e",
+              "runtime-test": "17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39",
+              "integration-source-manifest.json": "06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688"
+            },
+            "limits": "Native Linux arm64, PostgreSQL17.11, trusted rootful Docker classic image store and pinned Silo at explicitly trusted loopback HTTP only. Physical count/protection and recovery scenarios do not qualify every age/size edge case. No production S3 HTTPS/certificate deployment, other provider/engine/architecture, notifications, cross-host/disk-loss recovery, in-place restore or full R/A/matrix acceptance."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C03",
+          "outcome": "Apply local retention independently",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_source_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_tree": "72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618",
+            "scope": "Bounded hosted PostgreSQL local/S3 retention and retained-copy recovery",
+            "justification": "Local-only limits select no remote copy. Exact local deletion respects newest/shared/active/failed-upload/unproven-copy safeguards. A retained remote copy can republish a distinct local generation for subsequent local restore.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRetentionProtectionsCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_retention_runtime_integration_test.go",
+              "internal/store/postgres_hosting_database_backup_retention_test.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-source-manifest.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "evidence_sha256": {
+              "integration-verification.json": "fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e",
+              "runtime-test": "17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39",
+              "integration-source-manifest.json": "06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688"
+            },
+            "limits": "Native Linux arm64, PostgreSQL17.11, trusted rootful Docker classic image store and pinned Silo at explicitly trusted loopback HTTP only. Physical count/protection and recovery scenarios do not qualify every age/size edge case. No production S3 HTTPS/certificate deployment, other provider/engine/architecture, notifications, cross-host/disk-loss recovery, in-place restore or full R/A/matrix acceptance."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C04",
+          "outcome": "Apply remote retention independently",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_source_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_tree": "72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618",
+            "scope": "Bounded hosted PostgreSQL local/S3 retention and retained-copy recovery",
+            "justification": "Remote-only limits select no local copy. The owned Silo fixture exercises conditional deletion and refuses denied or unsupported conditions; unknown nonversioned DELETE remains reserved. This is not a production-provider HTTPS qualification.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRetentionProtectionsCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_retention_runtime_integration_test.go",
+              "internal/store/postgres_hosting_database_backup_retention_test.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-source-manifest.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "evidence_sha256": {
+              "integration-verification.json": "fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e",
+              "runtime-test": "17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39",
+              "integration-source-manifest.json": "06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688"
+            },
+            "limits": "Native Linux arm64, PostgreSQL17.11, trusted rootful Docker classic image store and pinned Silo at explicitly trusted loopback HTTP only. Physical count/protection and recovery scenarios do not qualify every age/size edge case. No production S3 HTTPS/certificate deployment, other provider/engine/architecture, notifications, cross-host/disk-loss recovery, in-place restore or full R/A/matrix acceptance."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C05",
+          "outcome": "Replay lost retention response without deleting another batch",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "missing",
+            "state": "missing"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_source_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_tree": "72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618",
+            "scope": "Bounded hosted PostgreSQL local/S3 retention and retained-copy recovery",
+            "justification": "Lost committed deletion acknowledgment replays from the original journal. Browser recovery explicitly continues the same execution and copy set after old-attempt quiescence. Exact completed effects are preserved, stale new effects rejected and no new batch admitted.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestHostingDatabaseBackupRetentionReplayCompiledRunner"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_retention_runtime_integration_test.go",
+              "internal/store/postgres_hosting_database_backup_retention_test.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-source-manifest.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "evidence_sha256": {
+              "integration-verification.json": "fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e",
+              "runtime-test": "17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39",
+              "integration-source-manifest.json": "06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688"
+            },
+            "limits": "Native Linux arm64, PostgreSQL17.11, trusted rootful Docker classic image store and pinned Silo at explicitly trusted loopback HTTP only. Physical count/protection and recovery scenarios do not qualify every age/size edge case. No production S3 HTTPS/certificate deployment, other provider/engine/architecture, notifications, cross-host/disk-loss recovery, in-place restore or full R/A/matrix acceptance."
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        },
+        {
+          "criterion_id": "R47-C06",
+          "outcome": "Commit audit and retention receipt atomically",
+          "prior_assessment": {
+            "subject_sha": "09a432407c41671517fa342d28c07e9c79978aea",
+            "presence": "partial",
+            "state": "partial"
+          },
+          "current_bounded_assessment": {
+            "classification": "validated",
+            "acceptance_stage": "Leader_accepted",
+            "accepted_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_source_sha": "5003e16c0c0fc48d31c29f444f47a97b94e10339",
+            "physical_tree": "72fcd1c0cee9be1a84c8cd748e47bed3c8ecb618",
+            "scope": "Bounded hosted PostgreSQL local/S3 retention and retained-copy recovery",
+            "justification": "Real PostgreSQL audit rejection rolls back receipts and item changes; retry succeeds after removing the failing audit trigger. Physical receipt replay and terminal per-copy history complement this original core2b6f transaction proof, whose complete store/domain/secretcrypto/migrations/module dependencies are unchanged at accepted5003.",
+            "acceptance_fixture": "acceptance/runtime-hosting-postgresql-backup-runner/gate.sh",
+            "named_tests": [
+              "TestPostgresBackupRetentionCurrentAuthorityAndAuditRollback"
+            ],
+            "source_paths": [
+              "internal/api/hosting_database_backup_retention_runtime_integration_test.go",
+              "internal/store/postgres_hosting_database_backup_retention_test.go"
+            ],
+            "evidence_paths": [
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-verification.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/runtime-test",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/result",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/integration-source-manifest.json",
+              "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/accepted-runtime/evidence-sha256.json"
+            ],
+            "evidence_sha256": {
+              "integration-verification.json": "fb1d7dccfdc1f3b33ef5a1dbfa76008c827cf32d270d00aa9663bd80ce27912e",
+              "runtime-test": "17472f2f70a91a40f7546edbf14f1500375401c7d87d728c81122b13e0181d39",
+              "integration-source-manifest.json": "06529a89b2466a0247080f99c5d5e407a06541c11aa6b0ad69ce9cd8370a2688"
+            },
+            "limits": "Native Linux arm64, PostgreSQL17.11, trusted rootful Docker classic image store and pinned Silo at explicitly trusted loopback HTTP only. Physical count/protection and recovery scenarios do not qualify every age/size edge case. No production S3 HTTPS/certificate deployment, other provider/engine/architecture, notifications, cross-host/disk-loss recovery, in-place restore or full R/A/matrix acceptance.",
+            "retained_transaction_evidence": {
+              "source_sha": "2b6f683a0799b5ba2649aabbcbe4dad2a42cc052",
+              "test": "TestPostgresBackupRetentionCurrentAuthorityAndAuditRollback",
+              "result": "passed",
+              "test_seconds": 8.87,
+              "command_seconds": 26.008,
+              "paths": [
+                "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/repair-round4/transaction-pg/known-expired-authority-green-race.json",
+                "/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-retention-20261025/repair-round4/transaction-pg/known-expired-authority-green-race.log"
+              ],
+              "dependency_paths": [
+                "internal/store/",
+                "internal/domain/",
+                "internal/secretcrypto/",
+                "db/migrations/",
+                "go.mod",
+                "go.sum"
+              ],
+              "retention_reason": "Git diff between original source and accepted5003 has no changes under these complete dependency paths; original revision and receipt are preserved."
+            }
+          },
+          "historical_score_delta": 0,
+          "aggregate_gate_delta": []
+        }
+      ],
+      "acceptance_cases": [
+        {
+          "case": "policy_preview_exact_batch",
+          "gate_context": [
+            "A25",
+            "A26"
+          ],
+          "status": "validated_bounded",
+          "test": "TestHostingDatabaseBackupRetentionCompiledRunner"
+        },
+        {
+          "case": "retained_remote_then_republished_local_application_recovery",
+          "gate_context": [
+            "A26",
+            "A37"
+          ],
+          "status": "validated_bounded",
+          "test": "TestHostingDatabaseBackupRetentionCompiledRunner"
+        },
+        {
+          "case": "same_batch_replay_and_explicit_recovery",
+          "gate_context": [
+            "A26",
+            "A37"
+          ],
+          "status": "validated_bounded",
+          "test": "TestHostingDatabaseBackupRetentionReplayCompiledRunner"
+        },
+        {
+          "case": "protected_copies_and_unknown_nonversioned_delete",
+          "gate_context": [
+            "A25",
+            "A26"
+          ],
+          "status": "validated_bounded",
+          "test": "TestHostingDatabaseBackupRetentionUnknownDeleteCompiledRunner"
+        }
+      ],
+      "unchanged_gaps": [
+        "Production S3 HTTPS/provider matrix",
+        "Unqualified age/size physical edge cases",
+        "Notifications",
+        "Other engines/architectures",
+        "Broader cron grammar",
+        "Cross-host/disk-loss recovery",
+        "In-place restore",
+        "Full R46/R47/A25/A26/A37/DB01 gates"
       ]
     }
   ]
