@@ -652,7 +652,7 @@ func hostingStorageRemoteRuntimeArchive(f *hostingStorageRemoteRuntimeFixture, b
 	return raw
 }
 func hostingStorageRemoteRuntimeRestore(f *hostingStorageRemoteRuntimeFixture, backup string, uploaded hostingStorageRemoteRuntimeTransfer, revision int64, name string) domain.HostingStorageRestore {
-	return storageRuntimeJSON[domain.HostingStorageRestore](f.storageRuntimeFixture, "POST", "/api/v1/storage-backups/"+backup+"/restores", map[string]any{"request_id": hostingStorageRemoteRuntimeRandom(f.t), "name": name, "remote_source": map[string]any{"transfer_id": uploaded.ID, "expected_target_revision": revision}}, 202)
+	return storageRuntimeJSON[domain.HostingStorageRestore](f.storageRuntimeFixture, "POST", "/api/v1/storage-backups/"+backup+"/restores", storageRemoteRuntimeRestoreRequest(f.t, uploaded.ID, revision, name), 202)
 }
 func hostingStorageRemoteRuntimeAuthorization(f *hostingStorageRemoteRuntimeFixture, resource domain.Resource, backup domain.HostingStorageBackup, failed hostingStorageRemoteRuntimeTransfer, target string, revision int64) {
 	f.t.Helper()

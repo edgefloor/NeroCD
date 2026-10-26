@@ -2,11 +2,15 @@ package api
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"nerocd/internal/hostingproxy"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,6 +161,7 @@ func TestStorageRuntimeDockerOutputProcess(t *testing.T) {
 }
 
 func TestStorageRuntimeDockerDirectStartsNeverPull(t *testing.T) {
+	t.Run("remote restore public request", testStorageRemoteRuntimeRestoreRequest)
 	t.Run("fixture port separation", testStorageRuntimeFixturePortSeparation)
 	t.Run("closed helper environment diagnostic", testStorageDiagnosticHelperEnvironment)
 	t.Run("owned proxy cleanup", testStorageRuntimeOwnedProxyCleanup)
@@ -621,5 +626,55 @@ func testStorageDiagnosticHelperEnvironment(t *testing.T) {
 	encoded, _ := json.Marshal(summary)
 	if summary.EntryCount != 9 || !summary.EntriesTruncated || len(summary.Entries) != 8 || strings.Contains(string(encoded), secret) {
 		t.Fatal("environment projection bound or secrecy failed")
+	}
+}
+
+// Use the same payload constructor for the physical fixture and the public-decoder contract.
+func storageRemoteRuntimeRestoreRequest(t *testing.T, transferID string, revision int64, name string) domain.HostingStorageRestoreInput {
+	t.Helper()
+	var request [16]byte
+	if _, err := rand.Read(request[:]); err != nil {
+		t.Fatal(err)
+	}
+	return domain.HostingStorageRestoreInput{RequestID: hex.EncodeToString(request[:]), Name: name, RemoteSource: &domain.BackupRemoteSource{TransferID: transferID, ExpectedTargetRevision: revision}}
+}
+
+func testStorageRemoteRuntimeRestoreRequest(t *testing.T) {
+	t.Helper()
+	const transferID = "storage_upload_hsb_ea81121f8616f6636c6bbfc9a8f71a73"
+	payload := storageRemoteRuntimeRestoreRequest(t, transferID, 3, "blocked-corrupt")
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(raw []byte) (domain.HostingStorageRestoreInput, bool, int) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/storage-backups/hsb_ea81121f8616f6636c6bbfc9a8f71a73/restores", bytes.NewReader(raw))
+		var result domain.HostingStorageRestoreInput
+		ok := decodeStorageArchive(recorder, request, &result)
+		return result, ok, recorder.Code
+	}
+	result, ok, _ := decode(raw)
+	if !ok || !reflect.DeepEqual(result, payload) {
+		t.Fatal("actual remote restore fixture payload rejected by public decoder")
+	}
+	valid := string(raw)
+	cases := map[string]string{
+		"48 character request": strings.Replace(valid, payload.RequestID, strings.Repeat("a", 48), 1),
+		"unknown root":         strings.TrimSuffix(valid, "}") + `,"unknown":true}`,
+		"duplicate root":       strings.TrimSuffix(valid, "}") + `,"request_id":"` + payload.RequestID + `"}`,
+		"case alias":           strings.Replace(valid, `"request_id"`, `"Request_ID"`, 1),
+		"unknown nested":       strings.Replace(valid, `"expected_target_revision":3`, `"expected_target_revision":3,"unknown":true`, 1),
+		"duplicate nested":     strings.Replace(valid, `"expected_target_revision":3`, `"expected_target_revision":3,"expected_target_revision":3`, 1),
+		"invalid revision":     strings.Replace(valid, `"expected_target_revision":3`, `"expected_target_revision":0`, 1),
+		"empty transfer":       strings.Replace(valid, transferID, "", 1),
+	}
+	for name, invalid := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, ok, status := decode([]byte(invalid)); ok || status != http.StatusBadRequest {
+				t.Fatalf("invalid request accepted or wrong status: accepted=%v status=%d", ok, status)
+			}
+		})
 	}
 }
