@@ -84,7 +84,7 @@ an ambiguous request. A changed body is a separate request, not a replay.
 | Request | Body or result |
 | --- | --- |
 | `POST /api/v1/resources/{id}/storage-backups` | `request_id`, `expected_resource_generation`, optional `remote_target: {target_id, revision}` |
-| `GET /api/v1/storage-backups/{id}/transfers` | Storage-specific validation/upload/download metadata and history |
+| `GET /api/v1/storage-backups/{id}/transfers` | Storage-specific upload/download metadata and history |
 | `GET /api/v1/storage-backup-transfers/{id}` | One transfer, including `state`, `failure_code`, `backup_id`, `restore_operation_id`, and immutable `blob` metadata |
 | `POST /api/v1/storage-backups/{id}/transfers/retry` | `request_id`, `expected_transfer_id`; replay does not archive or quiesce again |
 | `POST /api/v1/storage-backups/{id}/restores` | `request_id`, `name`, optional `remote_source: {transfer_id, expected_target_revision}` |
@@ -133,9 +133,10 @@ The 87.774-second gate passed three real PostgreSQL storage-transfer groups,
 including four receipt-replay revocation cases, the local archive group in
 23.30 seconds, and the remote group in 23.88 seconds. No selected Go tests failed
 or skipped. The live browser created and validated the target, backed up,
-reloaded the failed-upload warning, retried, restored, read history, and verified
-viewer controls at widths 320, 390, 430, and 1280. Served assets matched the
-candidate manifest without request interception.
+reloaded the failed-upload warning, retried, restored, and read history. The owner
+panel passed responsive checks at widths 320, 390, 430, and 1280. A separate
+viewer context verified history visibility and absent mutation controls. Served
+assets matched the candidate manifest without request interception.
 
 `runtime/remote-markers.json` records five GETs, one PUT, one archive helper
 start, committed receipt replay, and no upload-before-resume violation. Corrupt
