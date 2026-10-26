@@ -36,7 +36,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 	return nil
 }
 
-func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig) error {
+func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, storageDrain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig) error {
 	mode := claim.Run.RunSpec.HostingMode
 	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
@@ -137,7 +137,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
-		return executeHostingStoragePrepared(supervisor, journal, reporter.WaitEmpty, client, engine, a, claim.Lease, op)
+		return executeHostingStoragePrepared(supervisor, journal, storageDrain, client, engine, a, claim.Lease, op)
 	}
 	intentID := attemptMutationKey("hosting_intent", a.LeaseID, a.Attempt, "apply")
 	intent := runner.JournalHosting{ID: intentID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "apply_intent", Plan: op.Plan, CreatedAt: time.Now().UTC()}

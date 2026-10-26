@@ -370,7 +370,7 @@ func reconcileStorageAttempt(parent context.Context, server, token string, clien
 		if err = engine.EnsurePreparedRelease(supervisor.Context(), *op.Release); err != nil {
 			return err
 		}
-		return executeHostingStoragePrepared(supervisor, journal, reporter.WaitEmpty, client, engine, a, lease, op)
+		return executeHostingStoragePrepared(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), client, engine, a, lease, op)
 	}
 	return errors.New("storage creation or possible writer remains unresolved; owner-requested read-only recovery is required before new claims")
 }

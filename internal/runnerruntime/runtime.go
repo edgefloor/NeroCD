@@ -644,7 +644,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		if options.database != nil && options.database.ApplicationDatabase {
 			return executeConnectedImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.database)
 		}
-		return executeImageClaim(supervisor, journal, reporter, server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment)
+		return executeImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment)
 	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {

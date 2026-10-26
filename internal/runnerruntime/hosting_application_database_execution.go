@@ -91,7 +91,7 @@ func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, 
 		return err
 	}
 	if op.ApplicationDatabase == nil && op.Snapshot.ApplicationDatabase == (domain.HostingApplicationDatabaseRef{}) {
-		return executeImageClaim(s, j, reporter, server, token, claim, endpoint, local, environment)
+		return executeImageClaim(s, j, reporter, drain, server, token, claim, endpoint, local, environment)
 	}
 	if config == nil || !config.ApplicationDatabase || environment == nil || !applicationDatabaseScope(op, a, claim.Lease.RunnerID, claim.Run.RunSpec.HostingMode) || claim.PrimitivePlan.RunID != a.RunID || claim.Lease.RunID != a.RunID || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 {
 		return errApplicationDatabaseExecution
