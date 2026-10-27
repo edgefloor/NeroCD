@@ -55,10 +55,14 @@ func (p HostingStorageBackupDownloadPlan) Validate() error {
 // HostingStorageBackupDownloadStream binds the multipart stream to live lease authority.
 type HostingStorageBackupDownloadStream struct {
 	HostingAuthority
-	PlanHash string `json:"plan_hash"`
+	PlanHash    string `json:"plan_hash"`
+	FailureCode string `json:"failure_code,omitempty"`
 }
 
 func (in HostingStorageBackupDownloadStream) Validate() error {
+	if in.FailureCode != "" && in.FailureCode != "archive_unavailable" {
+		return ErrInvalidStorageBackupDownload
+	}
 	a := in.HostingAuthority
 	if !validRuntimeReferenceID(a.OperationID) || a.RunID != "storage_transfer_"+a.OperationID || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !imageSHA256.MatchString(in.PlanHash) {
 		return ErrInvalidStorageBackupDownload
