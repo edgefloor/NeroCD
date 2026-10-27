@@ -69,7 +69,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	defer func() { _ = engine.Close() }()
 	if mode == domain.HostingStackStopMode {
-		return executeHostingStackStop(supervisor, journal, reporter, client, engine, a, claim.Lease, op)
+		return executeHostingStackStop(supervisor, journal, storageDrain, client, engine, a, claim.Lease, op)
 	}
 	if mode == "cleanup" {
 		return executeHostingCleanup(supervisor, journal, reporter, client, engine, a, claim.Lease, op)
@@ -86,7 +86,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	failBeforeApply := func() error {
 		drain := reporter.WaitEmpty
-		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
+		if op.Snapshot.Storage != (domain.HostingStorageRef{}) || op.Snapshot.Stack != (domain.HostingStackRef{}) {
 			drain = storageDrain
 		}
 		result := domain.HostingResult{Outcome: "failed"}
@@ -288,7 +288,11 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	} else {
 		result = engine.Apply(supervisor.Context(), op.ID, *op.Plan, verifying)
 	}
-	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, result, reporter.WaitEmpty, local, op.Snapshot.RuntimeConfiguration)
+	completionDrain := reporter.WaitEmpty
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		completionDrain = storageDrain
+	}
+	finished, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, result, completionDrain, local, op.Snapshot.RuntimeConfiguration)
 	if err != nil {
 		return err
 	}

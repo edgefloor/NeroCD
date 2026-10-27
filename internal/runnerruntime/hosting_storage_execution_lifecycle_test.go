@@ -348,10 +348,37 @@ func TestStoragePreparationFailureRetainsLostACKAndRevokedAuthority(t *testing.T
 	}
 }
 
-func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcome string) {
+func TestComposePreparationFailureCompletionDoesNotCancelAcknowledgement(t *testing.T) {
+	for _, worker := range []string{"watcher", "renewer"} {
+		t.Run(worker, func(t *testing.T) { testStoragePreparationFailureCompletion(t, "prepare", worker, "ack", true) })
+	}
+}
+
+func TestComposePreparationFailureRetainsLostACKAndRevokedAuthority(t *testing.T) {
+	for _, outcome := range []string{"lost_ack", "canceled_drain", "expired_drain"} {
+		t.Run(outcome, func(t *testing.T) { testStoragePreparationFailureCompletion(t, "prepare", "watcher", outcome, true) })
+	}
+}
+
+func TestComposeSuccessfulCompletionDoesNotCancelAcknowledgement(t *testing.T) {
+	for _, worker := range []string{"watcher", "renewer"} {
+		t.Run(worker, func(t *testing.T) {
+			testStoragePreparationFailureCompletion(t, "stack_complete", worker, "ack", true)
+			testStoragePreparationFailureCompletion(t, "stack_stop", worker, "ack", true)
+		})
+	}
+}
+
+func TestComposeSuccessfulCompletionLostACKReplaysMetadataOnly(t *testing.T) {
+	for _, phase := range []string{"stack_complete", "stack_stop"} {
+		t.Run(phase, func(t *testing.T) { testStoragePreparationFailureCompletion(t, phase, "watcher", "lost_ack", true) })
+	}
+}
+
+func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcome string, compose ...bool) {
 	t.Helper()
-	// An unavailable executable fails daemon inspection in the actual image
-	// caller. No Docker process or workload mutation can start in either phase.
+	// Image preparation uses an unavailable executable. Stack Stop uses the
+	// existing command seam, so this fixture never starts Docker processes.
 	t.Setenv("PATH", t.TempDir())
 	f := mountedTestFixture(t, "")
 	j, _ := openStorageCoordinatorJournal(t)
@@ -360,6 +387,19 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 		c.op.Plan = nil
 		c.op.Release = nil
 		c.op.State = "queued"
+	}
+	if len(compose) > 0 && compose[0] {
+		c.op.Snapshot.Storage = domain.HostingStorageRef{}
+		c.op.Snapshot.Stack = domain.HostingStackRef{Generation: 1, Hash: "sha256:" + strings.Repeat("a", 64)}
+	}
+	var stopPlan domain.HostingStackStopPlan
+	if phase == "stack_stop" {
+		stopPlan = stackStopTestPlan(t)
+		c.op.Snapshot = stopPlan.Target.Snapshot
+		c.op.StackStopPlan = &stopPlan
+		c.op.Plan = nil
+		c.op.Release = nil
+		c.op.TaskMode = domain.HostingStackStopMode
 	}
 	parent, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -413,6 +453,13 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 			terminal := c.lease
 			terminal.Status = "failed"
 			_ = json.NewEncoder(w).Encode(terminal)
+		case "/api/v1/runners/hosting/apply-begin":
+			if phase != "stack_stop" {
+				c.serve(w, r)
+				return
+			}
+			c.op.MutationHold = true
+			_ = json.NewEncoder(w).Encode(c.op)
 		case "/api/v1/runners/hosting/complete":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -493,6 +540,93 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 			return err
 		}
 	}
+	if phase == "stack_complete" || phase == "stack_stop" {
+		var err error
+		if phase == "stack_stop" {
+			engine := testImageEngine(t)
+			running, removed := true, false
+			engine.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+				switch args[4] {
+				case "info":
+					return json.Marshal(stopPlan.Target.Release.DaemonID)
+				case "container":
+					switch args[5] {
+					case "ls":
+						if removed {
+							return nil, nil
+						}
+						var ids []string
+						for _, component := range stopPlan.Target.Stack.Components {
+							ids = append(ids, component.ContainerID)
+						}
+						return []byte(strings.Join(ids, "\n")), nil
+					case "inspect":
+						for _, component := range stopPlan.Target.Stack.Components {
+							if component.ContainerID != args[6] {
+								continue
+							}
+							ports := map[string]any{}
+							if component.Component == stopPlan.Target.Stack.PublicComponent {
+								ports["80/tcp"] = []map[string]string{{"HostIp": "127.0.0.1", "HostPort": "18080"}}
+							}
+							return json.Marshal(map[string]any{"Id": component.ContainerID, "Image": component.ImageID, "Labels": map[string]string{imageBindingLabel: stopPlan.Target.Snapshot.BindingID, imageOperationLabel: stopPlan.Target.OperationID, imagePlanLabel: stopPlan.Target.PlanHash, imageReleaseLabel: stopPlan.Target.Release.Hash, stackComponentLabel: component.Component}, "State": map[string]any{"Running": running, "ExitCode": 0}, "Mounts": []any{}, "Networks": map[string]any{stopPlan.TargetPlan.Stack.NetworkName: map[string]any{"NetworkID": stopPlan.Target.Stack.NetworkID, "Aliases": []string{component.Component}}}, "Ports": ports})
+						}
+					case "stop":
+						running = false
+						return nil, nil
+					case "rm":
+						if running {
+							t.Error("removed live stack")
+						}
+						removed = true
+						return nil, nil
+					}
+				case "network":
+					if args[5] == "ls" {
+						return []byte(stopPlan.Target.Stack.NetworkID), nil
+					}
+					if args[len(args)-1] == "{{json .Containers}}" {
+						return []byte(`{}`), nil
+					}
+					return json.Marshal(map[string]any{"Id": stopPlan.Target.Stack.NetworkID, "Name": stopPlan.TargetPlan.Stack.NetworkName, "Driver": "bridge", "Scope": "local", "Labels": map[string]string{imageBindingLabel: stopPlan.Target.Snapshot.BindingID}})
+				}
+				t.Error("unexpected stack Stop command", args[4:])
+				return nil, errors.New("unexpected command")
+			})
+			err = executeHostingStackStop(s, j, drain, runnerclient.New(server.URL, "token"), engine, c.a, c.lease, c.op)
+		} else {
+			// Exercise the post-apply terminal publisher after writer effects
+			// returned. Physical Compose apply remains the acceptance gate's job.
+			_, err = journalHostingResultWithRuntimeEnvironment(s, j, runnerclient.New(server.URL, "token"), c.a, c.lease, domain.HostingResult{Outcome: "succeeded"}, drain, false, domain.HostingRuntimeConfigurationRef{})
+		}
+		if outcome == "lost_ack" {
+			if err == nil || !c.hasPhase("result") || s.Context().Err() != nil {
+				t.Fatal("lost stack success ACK discarded durable result or canceled supervisor")
+			}
+			bodyMu.Lock()
+			loseACK = false
+			bodyMu.Unlock()
+			if err = reconcileHostingJournal(server.URL, "token", j, "", parent); err != nil {
+				t.Fatal(err)
+			}
+			bodyMu.Lock()
+			exact := len(completionBodies) == 2 && bytes.Equal(completionBodies[0], completionBodies[1])
+			bodyMu.Unlock()
+			if !exact {
+				t.Fatal("stack success replay changed completion bytes")
+			}
+		} else if err != nil || s.Context().Err() != nil {
+			t.Fatalf("stack success canceled its completion acknowledgement: %v", err)
+		}
+		if len(j.Snapshot().Hosting) != 0 {
+			t.Fatal("settled stack success left journal records")
+		}
+		next, err := runnerclient.New(server.URL, "token").Claim(parent)
+		if err != nil || next.Run.ID != replacement.Run.ID || next.Lease != replacement.Lease {
+			t.Fatalf("stack completion blocked successor claim: %v", err)
+		}
+		return
+	}
 	err := executeImageClaim(s, j, reporter, drain, server.URL, "token", claim, "unix:///nonexistent-storage-fixture.sock", false, nil)
 	if errors.Is(err, errSettledImagePreparationFailure) != (phase == "prepare" && outcome == "ack") {
 		t.Fatalf("preparation failure marker escaped exact acknowledged completion: %v", err)
@@ -510,11 +644,17 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 		bodyMu.Lock()
 		loseACK = false
 		bodyMu.Unlock()
-		if err := reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", parent, func(string) (hostingStorageEngine, error) {
-			t.Error("failure receipt replay opened an engine")
-			return nil, errors.New("forbidden")
-		}); err != nil {
-			t.Fatal(err)
+		var replayErr error
+		if len(compose) > 0 && compose[0] {
+			replayErr = reconcileHostingJournal(server.URL, "token", j, "", parent)
+		} else {
+			replayErr = reconcileHostingStorageJournalWithEngine(server.URL, "token", j, "", parent, func(string) (hostingStorageEngine, error) {
+				t.Error("failure receipt replay opened an engine")
+				return nil, errors.New("forbidden")
+			})
+		}
+		if replayErr != nil {
+			t.Fatal(replayErr)
 		}
 		bodyMu.Lock()
 		exact := len(completionBodies) == 2 && bytes.Equal(completionBodies[0], completionBodies[1])

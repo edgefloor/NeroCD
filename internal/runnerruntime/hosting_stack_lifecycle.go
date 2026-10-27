@@ -109,7 +109,7 @@ func (e *imageEngine) stopStack(ctx context.Context, p domain.HostingStackStopPl
 	return result
 }
 
-func executeHostingStackStop(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, client runnerclient.Client, engine *imageEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation) error {
+func executeHostingStackStop(supervisor *attemptSupervisor, journal *runner.AttemptJournal, drain func(context.Context) error, client runnerclient.Client, engine *imageEngine, a domain.HostingAuthority, lease domain.RunLease, op domain.HostingOperation) error {
 	if op.StackStopPlan == nil || op.StackStopPlan.Validate() != nil {
 		return errors.New("immutable stack stop plan missing")
 	}
@@ -130,7 +130,7 @@ func executeHostingStackStop(supervisor *attemptSupervisor, journal *runner.Atte
 		return errors.New("stack stop admission changed")
 	}
 	result := engine.stopStack(supervisor.Context(), *op.StackStopPlan)
-	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, reporter.WaitEmpty)
+	finished, err := journalHostingResult(supervisor, journal, client, a, lease, result, drain)
 	if err != nil {
 		return err
 	}
