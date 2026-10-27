@@ -270,6 +270,17 @@ func unsafeImageHostChanges() map[string]func(*imageContainer) {
 		"host-pid":          func(c *imageContainer) { c.HostConfig.PidMode = "host" },
 		"host-ipc":          func(c *imageContainer) { c.HostConfig.IpcMode = "host" },
 		"host-userns":       func(c *imageContainer) { c.HostConfig.UsernsMode = "host" },
+		"host-uts":          func(c *imageContainer) { c.HostConfig.UTSMode = "host" },
+		"host-cgroupns":     func(c *imageContainer) { c.HostConfig.CgroupnsMode = "host" },
+		"mount-bind": func(c *imageContainer) {
+			c.HostConfig.Mounts = []imageConfiguredMount{{Type: "bind", Source: "/", Target: "/host"}}
+		},
+		"configured-foreign-volume": func(c *imageContainer) {
+			c.HostConfig.Mounts = []imageConfiguredMount{{Type: "volume", Source: "foreign", Target: "/data"}}
+		},
+		"actual-foreign-volume": func(c *imageContainer) {
+			c.Mounts = []imageMount{{Type: "volume", Name: "foreign", Driver: "local", Destination: "/data", RW: true}}
+		},
 		"device": func(c *imageContainer) {
 			c.HostConfig.Devices = []json.RawMessage{json.RawMessage(`{"PathOnHost":"/dev/sda"}`)}
 		},
@@ -283,6 +294,15 @@ func unsafeImageHostChanges() map[string]func(*imageContainer) {
 		"extra-mount": func(c *imageContainer) {
 			c.Mounts = append(c.Mounts, imageMount{Type: "bind", Destination: "/host", RW: true})
 		},
+	}
+}
+
+func TestImageHostPolicyAllowsDockerPrivateDefaults(t *testing.T) {
+	for _, raw := range []string{`{"NetworkMode":"default"}`, `{"NetworkMode":"bridge","CgroupnsMode":"private"}`} {
+		var h imageHostConfig
+		if err := json.Unmarshal([]byte(raw), &h); err != nil || !imageHostPolicyMatches(h) {
+			t.Fatalf("legitimate Docker policy rejected: %s, %v", raw, err)
+		}
 	}
 }
 

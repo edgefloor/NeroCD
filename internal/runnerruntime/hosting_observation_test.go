@@ -45,11 +45,15 @@ func observationPageFixture() domain.HostingObservationTargets {
 	return domain.HostingObservationTargets{Targets: []domain.HostingObservationTarget{target}, NextCursor: target.BindingID, EndOfSweep: true}
 }
 func TestObservationPageRejectsAllTargetsBeforeSampling(t *testing.T) {
-	for _, mode := range []string{"runner", "container", "image", "namespace", "hostport", "path", "duration", "future", "expired", "duplicate", "cursor", "nil", "oversized"} {
+	for _, mode := range []string{"runner", "container", "image", "namespace", "hostport", "path", "duration", "future", "expired", "duplicate", "cursor", "nil", "oversized", "storage-name", "storage-path"} {
 		t.Run(mode, func(t *testing.T) {
 			page := observationPageFixture()
 			target := &page.Targets[0]
 			switch mode {
+			case "storage-name":
+				target.Storage = &domain.HostingObservationStorage{VolumeName: "foreign", MountPath: "/data"}
+			case "storage-path":
+				target.Storage = &domain.HostingObservationStorage{VolumeName: "ncdv_" + strings.Repeat("a", 32), MountPath: "/"}
 			case "runner":
 				target.RunnerID = "other"
 			case "container":

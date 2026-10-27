@@ -145,6 +145,21 @@ func strictObservationResponse(raw []byte, value any) bool {
 			return false
 		}
 		for _, target := range object.Targets {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(target, &fields) != nil {
+				return false
+			}
+			if storage, ok := fields["storage"]; ok {
+				if !observationObject(storage, "volume_name", "mount_path") {
+					return false
+				}
+				delete(fields, "storage")
+				var err error
+				target, err = json.Marshal(fields)
+				if err != nil {
+					return false
+				}
+			}
 			if !observationObject(target, "sample_id", "issued_at", "expires_at", "resource_id", "binding_id", "destination_id", "server_id", "runner_id", "operation_id", "daemon_id", "container_id", "image_id", "release_hash", "plan_hash", "runtime_namespace", "container_port", "host_port", "readiness_path", "sample_timeout_seconds") {
 				return false
 			}

@@ -168,6 +168,9 @@ func validateObservationPage(page domain.HostingObservationTargets, runnerID, af
 }
 func validateObservationTarget(t domain.HostingObservationTarget, runnerID string, now time.Time) error {
 	invalid := errors.New("invalid hosting observation target")
+	if t.Storage != nil && t.Storage.Validate() != nil {
+		return invalid
+	}
 	for _, id := range []string{t.ResourceID, t.BindingID, t.DestinationID, t.ServerID, t.RunnerID, t.OperationID, t.DaemonID} {
 		if !observationOpaqueID.MatchString(id) {
 			return invalid

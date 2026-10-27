@@ -104,3 +104,35 @@ func TestObservationIdentityDisallowsRedirectsAndInsecureTLS(t *testing.T) {
 		t.Fatal("observation identity accepted disabled TLS verification")
 	}
 }
+
+func TestHostingObservationClientStorageEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, storage string
+		valid         bool
+	}{
+		{"legacy-stateless", "", true},
+		{"managed", `,"storage":{"volume_name":"ncdv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mount_path":"/data"}`, true},
+		{"null", `,"storage":null`, false},
+		{"missing-path", `,"storage":{"volume_name":"ncdv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, false},
+		{"unknown", `,"storage":{"volume_name":"ncdv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mount_path":"/data","bind":"/"}`, false},
+		{"case-alias", `,"storage":{"Volume_name":"ncdv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mount_path":"/data"}`, false},
+		{"duplicate", `,"storage":{"volume_name":"a","volume_name":"b","mount_path":"/data"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(domain.HostingObservationTarget{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := `{"targets":[` + strings.TrimSuffix(string(raw), "}") + tc.storage + `}],"next_cursor":"","end_of_sweep":true}`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer server.Close()
+			page, err := New(server.URL, "token").HostingObservationTargets(t.Context(), domain.HostingObservationTargetsInput{Limit: 4}, ObservationTransport{TrustedLoopbackHTTP: true})
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+			if tc.valid && tc.storage != "" && (len(page.Targets) != 1 || page.Targets[0].Storage == nil || page.Targets[0].Storage.MountPath != "/data") {
+				t.Fatal("authorized mount evidence lost in transport")
+			}
+		})
+	}
+}

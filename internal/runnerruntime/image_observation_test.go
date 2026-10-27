@@ -1,6 +1,7 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"text/template"
 	"time"
 
 	"nerocd/internal/domain"
@@ -23,7 +25,7 @@ import (
 func observationContainerJSON(t *testing.T, target domain.HostingObservationTarget, mode string) []byte {
 	t.Helper()
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(target.OperationID), "sha256:")[:16]
-	values := map[string]any{"host_policy": imageHostConfig{NetworkMode: "default"}, "id": target.ContainerID, "name": "/" + target.RuntimeNamespace + "_" + suffix, "image": target.ImageID, "status": "running", "running": true, "paused": false, "restarting": false, "dead": false, "exit_code": 0, "binding": target.BindingID, "operation": target.OperationID, "release": target.ReleaseHash, "plan": target.PlanHash, "ports": map[string]any{strconv.Itoa(target.ContainerPort) + "/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.HostPort)}}}}
+	values := map[string]any{"mounts": []imageMount{}, "host_policy": imageHostConfig{NetworkMode: "default"}, "id": target.ContainerID, "name": "/" + target.RuntimeNamespace + "_" + suffix, "image": target.ImageID, "status": "running", "running": true, "paused": false, "restarting": false, "dead": false, "exit_code": 0, "binding": target.BindingID, "operation": target.OperationID, "release": target.ReleaseHash, "plan": target.PlanHash, "ports": map[string]any{strconv.Itoa(target.ContainerPort) + "/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.HostPort)}}}}
 	switch mode {
 	case "exited":
 		values["status"], values["running"], values["exit_code"] = "exited", false, 23
@@ -53,7 +55,7 @@ func observationContainerJSON(t *testing.T, target domain.HostingObservationTarg
 	return raw
 }
 func TestImageObservationClosedEvidenceAndIdentity(t *testing.T) {
-	for _, mode := range []string{"healthy", "http503", "redirect", "exited", "paused", "restarting", "created", "dead", "missing", "inspect-error", "list-error", "daemon-mismatch", "binding", "image", "name", "container", "ports", "probe-stopped", "probe-replaced", "privileged", "capability", "bind", "host-network", "probe-privileged", "http-failure", "missing-exit-field"} {
+	for _, mode := range []string{"healthy", "http503", "redirect", "exited", "paused", "restarting", "created", "dead", "missing", "inspect-error", "list-error", "daemon-mismatch", "binding", "image", "name", "container", "ports", "probe-stopped", "probe-replaced", "privileged", "capability", "bind", "host-network", "probe-privileged", "http-failure", "missing-exit-field", "missing-mount-field", "null-mount-field"} {
 		t.Run(mode, func(t *testing.T) {
 			var redirected atomic.Int32
 			other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { redirected.Add(1); w.WriteHeader(200) }))
@@ -134,6 +136,16 @@ func TestImageObservationClosedEvidenceAndIdentity(t *testing.T) {
 					delete(m, "exit_code")
 					raw, _ = json.Marshal(m)
 				}
+				if mode == "missing-mount-field" || mode == "null-mount-field" {
+					var m map[string]any
+					_ = json.Unmarshal(raw, &m)
+					if mode == "missing-mount-field" {
+						delete(m, "mounts")
+					} else {
+						m["mounts"] = nil
+					}
+					raw, _ = json.Marshal(m)
+				}
 				return raw, nil
 			})
 			result := (&imageObservation{e}).Sample(t.Context(), target)
@@ -209,5 +221,155 @@ func TestObservationCommandCancellationAndOutputBounds(t *testing.T) {
 				t.Fatal("command exceeded bounds or exposed diagnostics")
 			}
 		})
+	}
+}
+
+// Render the real projection so an omitted Docker field cannot be hidden by a
+// fake response that already contains that field.
+func projectedObservationJSON(t *testing.T, target domain.HostingObservationTarget, c imageContainer) []byte {
+	t.Helper()
+	input := map[string]any{
+		"Id": c.ID, "Name": "/" + target.RuntimeNamespace + "_" + strings.TrimPrefix(domain.HostingDocumentHash(target.OperationID), "sha256:")[:16],
+		"Image": c.Image, "Config": c.Config, "HostConfig": c.HostConfig, "Mounts": c.Mounts,
+		"State": map[string]any{"Status": "running", "Running": true, "Paused": false, "Restarting": false, "Dead": false, "ExitCode": 0},
+	}
+	// Docker templates receive JSON maps, and omit HostConfig.Mounts when empty.
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &input); err != nil {
+		t.Fatal(err)
+	}
+	if mounts, ok := input["HostConfig"].(map[string]any)["Mounts"].([]any); ok {
+		for _, mount := range mounts {
+			configured := mount.(map[string]any)
+			if configured["ReadOnly"] == false {
+				delete(configured, "ReadOnly")
+			}
+		}
+	}
+	if mounts, ok := input["Mounts"].([]any); ok {
+		for _, mount := range mounts {
+			actual := mount.(map[string]any)
+			if actual["Type"] == "bind" {
+				delete(actual, "Name")
+				delete(actual, "Driver")
+			}
+		}
+	}
+	if len(c.HostConfig.Mounts) == 0 {
+		delete(input["HostConfig"].(map[string]any), "Mounts")
+	}
+	projection, err := template.New("inspect").Funcs(template.FuncMap{"json": func(v any) (string, error) { b, e := json.Marshal(v); return string(b), e }}).Parse(observationProjection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := projection.Execute(&output, input); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
+}
+
+func TestImageObservationEnforcesMountAndNamespacePolicy(t *testing.T) {
+	for _, mode := range []string{"no-storage", "stateless-bind", "stateless-foreign-volume", "managed-volume", "managed-actual-only", "private-default", "mount-bind", "foreign-volume", "unauthorized-managed-volume", "configured-bind", "configured-foreign-volume", "actual-bind", "actual-foreign-volume", "missing-mount", "extra-mount", "read-only", "wrong-path", "host-uts", "host-cgroupns"} {
+		for _, phase := range []string{"before-probe", "after-probe"} {
+			t.Run(mode+"/"+phase, func(t *testing.T) {
+				var probes atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { probes.Add(1); w.WriteHeader(http.StatusNoContent) }))
+				defer server.Close()
+				target := observationTargetFixture()
+				u, _ := url.Parse(server.URL)
+				target.HostPort, _ = strconv.Atoi(u.Port())
+				storage := domain.HostingObservationStorage{VolumeName: "ncdv_" + strings.Repeat("a", 32), MountPath: "/data"}
+				if mode != "no-storage" && mode != "stateless-bind" && mode != "stateless-foreign-volume" && mode != "unauthorized-managed-volume" {
+					target.Storage = &storage
+				}
+				h := domain.HostingHealthy{ContainerID: target.ContainerID, OperationID: target.OperationID, PlanHash: target.PlanHash,
+					Release:  domain.HostingRelease{ImageID: target.ImageID, Hash: target.ReleaseHash},
+					Snapshot: domain.HostingSnapshot{BindingID: target.BindingID, ContainerPort: target.ContainerPort, HostPort: target.HostPort}}
+				safe := mountedContainer(h, true)
+				if target.Storage != nil {
+					safe.Mounts = []imageMount{{Type: "volume", Name: storage.VolumeName, Driver: "local", Destination: storage.MountPath, RW: true}}
+					safe.HostConfig.Mounts = []imageConfiguredMount{{Type: "volume", Source: storage.VolumeName, Target: storage.MountPath}}
+				}
+				e := testImageEngine(t)
+				inspections := 0
+				e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+					if !observationCommandAllowed(args[4:]) {
+						t.Fatalf("forbidden command: %v", args)
+					}
+					if args[4] == "info" {
+						return json.Marshal(target.DaemonID)
+					}
+					inspections++
+					c := safe
+					c.Mounts = append([]imageMount(nil), safe.Mounts...)
+					c.HostConfig.Mounts = append([]imageConfiguredMount(nil), safe.HostConfig.Mounts...)
+					if phase == "before-probe" || inspections > 1 {
+						switch mode {
+						case "stateless-bind":
+							c.HostConfig.Mounts = []imageConfiguredMount{{Type: "bind", Source: "/", Target: "/host"}}
+							c.Mounts = []imageMount{{Type: "bind", Destination: "/host", RW: true}}
+						case "stateless-foreign-volume":
+							c.HostConfig.Mounts = []imageConfiguredMount{{Type: "volume", Source: "foreign", Target: "/data"}}
+							c.Mounts = []imageMount{{Type: "volume", Name: "foreign", Driver: "local", Destination: "/data", RW: true}}
+						case "managed-actual-only":
+							c.HostConfig.Mounts = nil
+						case "private-default":
+							c.HostConfig.CgroupnsMode = "private"
+						case "mount-bind":
+							c.HostConfig.Mounts[0] = imageConfiguredMount{Type: "bind", Source: "/", Target: "/host"}
+							c.Mounts[0] = imageMount{Type: "bind", Destination: "/host", RW: true}
+						case "foreign-volume":
+							c.HostConfig.Mounts[0].Source = "foreign"
+							c.Mounts[0].Name = "foreign"
+						case "unauthorized-managed-volume":
+							c.HostConfig.Mounts = []imageConfiguredMount{{Type: "volume", Source: storage.VolumeName, Target: storage.MountPath}}
+							c.Mounts = []imageMount{{Type: "volume", Name: storage.VolumeName, Driver: "local", Destination: storage.MountPath, RW: true}}
+						case "configured-bind":
+							c.HostConfig.Mounts[0] = imageConfiguredMount{Type: "bind", Source: "/", Target: storage.MountPath}
+						case "configured-foreign-volume":
+							c.HostConfig.Mounts[0].Source = "foreign"
+						case "actual-bind":
+							c.Mounts[0].Type = "bind"
+						case "actual-foreign-volume":
+							c.Mounts[0].Name = "foreign"
+						case "missing-mount":
+							c.Mounts = nil
+						case "extra-mount":
+							c.Mounts = append(c.Mounts, imageMount{Type: "volume", Name: "foreign", Destination: "/extra", RW: true})
+						case "read-only":
+							c.Mounts[0].RW = false
+						case "wrong-path":
+							c.Mounts[0].Destination = "/wrong"
+						case "host-uts":
+							c.HostConfig.UTSMode = "host"
+						case "host-cgroupns":
+							c.HostConfig.CgroupnsMode = "host"
+						}
+					}
+					return projectedObservationJSON(t, target, c), nil
+				})
+				got := (&imageObservation{e}).Sample(t.Context(), target)
+				valid := mode == "no-storage" || mode == "managed-volume" || mode == "managed-actual-only" || mode == "private-default"
+				if valid {
+					if got.Readiness != "ready" || got.ContainerState != "running" || inspections != 2 || probes.Load() != 1 {
+						t.Fatalf("legitimate workload rejected: %+v, inspections=%d probes=%d", got, inspections, probes.Load())
+					}
+				} else {
+					if got.CollectionError != "target_mismatch" || got.ContainerState != "unknown" || got.Readiness != "unknown" {
+						t.Fatalf("unsafe workload accepted: %+v", got)
+					}
+					if phase == "before-probe" && probes.Load() != 0 {
+						t.Fatal("unsafe workload reached readiness probe")
+					}
+					if phase == "after-probe" && probes.Load() != 1 {
+						t.Fatal("fixture did not reach readiness recheck")
+					}
+				}
+			})
+		}
 	}
 }

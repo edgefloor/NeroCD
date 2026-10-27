@@ -133,11 +133,14 @@ func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runne
 		p.healthy = &h
 		return p, gateErr
 	}
-	if snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace || h.OperationID == "" || h.ContainerID == "" || len(h.ContainerID) > 128 || h.PlanHash == "" || snap.HostPort < 1024 || domain.ValidateHostingSnapshotRelease(snap, h.Release) != nil {
+	if snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace || h.OperationID == "" || h.ContainerID == "" || len(h.ContainerID) > 128 || h.PlanHash == "" || snap.HostPort < 1024 || domain.ValidateHostingSnapshotRelease(snap, h.Release) != nil || domain.ValidateHostingHealthyStorage(h) != nil {
 		return p, ErrConflict
 	}
 	p.healthy = &h
 	p.target = domain.HostingObservationTarget{ResourceID: resource, BindingID: p.binding, DestinationID: p.destination, ServerID: p.server, RunnerID: p.runner, OperationID: h.OperationID, DaemonID: h.Release.DaemonID, ContainerID: h.ContainerID, ImageID: h.Release.ImageID, ReleaseHash: h.Release.Hash, PlanHash: h.PlanHash, RuntimeNamespace: p.namespace, ContainerPort: snap.ContainerPort, HostPort: snap.HostPort, ReadinessPath: snap.Readiness.Path, SampleTimeoutSeconds: domain.HostingObservationTimeoutSeconds}
+	if h.Storage != nil {
+		p.target.Storage = &domain.HostingObservationStorage{VolumeName: h.Storage.Plan.VolumeName, MountPath: h.Storage.Plan.MountPath}
+	}
 	p.identity = domain.HostingDocumentHash(struct {
 		Healthy           domain.HostingHealthy
 		Grant             time.Time

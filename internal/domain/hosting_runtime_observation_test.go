@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestHostingObservationStorageValidation(t *testing.T) {
+	valid := HostingObservationStorage{VolumeName: "ncdv_" + strings.Repeat("a", 32), MountPath: "/data"}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*HostingObservationStorage){
+		func(s *HostingObservationStorage) { s.VolumeName = "foreign" },
+		func(s *HostingObservationStorage) { s.VolumeName = "ncdv_" + strings.Repeat("A", 32) },
+		func(s *HostingObservationStorage) { s.VolumeName += ",type=bind" },
+		func(s *HostingObservationStorage) { s.MountPath = "/" },
+		func(s *HostingObservationStorage) { s.MountPath = "/proc/host" },
+		func(s *HostingObservationStorage) { s.MountPath = "/data/../host" },
+		func(s *HostingObservationStorage) { s.MountPath = "" },
+	} {
+		got := valid
+		change(&got)
+		if got.Validate() == nil {
+			t.Fatalf("invalid mount authority accepted: %+v", got)
+		}
+	}
+}
+
 func TestHostingObservationClosedEvidence(t *testing.T) {
 	valid := HostingRuntimeObservation{BindingID: "binding", SampleID: "sample", ContainerState: "running", Readiness: "ready"}
 	if err := valid.Validate(); err != nil {

@@ -20,7 +20,7 @@ import (
 const observationOutputLimit = 8 << 10
 
 // This projection intentionally excludes Config.Env and unselected labels.
-const observationProjection = `{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"status":{{json .State.Status}},"running":{{json .State.Running}},"paused":{{json .State.Paused}},"restarting":{{json .State.Restarting}},"dead":{{json .State.Dead}},"exit_code":{{json .State.ExitCode}},"binding":{{json (index .Config.Labels "io.nerocd.binding")}},"operation":{{json (index .Config.Labels "io.nerocd.operation")}},"release":{{json (index .Config.Labels "io.nerocd.release")}},"plan":{{json (index .Config.Labels "io.nerocd.plan")}},"ports":{{json .HostConfig.PortBindings}},"host_policy":{"Privileged":{{json .HostConfig.Privileged}},"PublishAllPorts":{{json .HostConfig.PublishAllPorts}},"NetworkMode":{{json .HostConfig.NetworkMode}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},"UsernsMode":{{json .HostConfig.UsernsMode}},"Binds":{{json .HostConfig.Binds}},"CapAdd":{{json .HostConfig.CapAdd}},"VolumesFrom":{{json .HostConfig.VolumesFrom}},"SecurityOpt":{{json .HostConfig.SecurityOpt}},"Devices":{{json .HostConfig.Devices}},"DeviceRequests":{{json .HostConfig.DeviceRequests}}}}`
+const observationProjection = `{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"status":{{json .State.Status}},"running":{{json .State.Running}},"paused":{{json .State.Paused}},"restarting":{{json .State.Restarting}},"dead":{{json .State.Dead}},"exit_code":{{json .State.ExitCode}},"binding":{{json (index .Config.Labels "io.nerocd.binding")}},"operation":{{json (index .Config.Labels "io.nerocd.operation")}},"release":{{json (index .Config.Labels "io.nerocd.release")}},"plan":{{json (index .Config.Labels "io.nerocd.plan")}},"ports":{{json .HostConfig.PortBindings}},"mounts":[{{range $i, $m := .Mounts}}{{if $i}},{{end}}{"Type":{{json (index $m "Type")}},"Name":{{json (index $m "Name")}},"Driver":{{json (index $m "Driver")}},"Destination":{{json (index $m "Destination")}},"RW":{{json (index $m "RW")}}}{{end}}],"host_policy":{"Privileged":{{json .HostConfig.Privileged}},"PublishAllPorts":{{json .HostConfig.PublishAllPorts}},"NetworkMode":{{json .HostConfig.NetworkMode}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},"UsernsMode":{{json .HostConfig.UsernsMode}},"UTSMode":{{json .HostConfig.UTSMode}},"CgroupnsMode":{{json .HostConfig.CgroupnsMode}},"Mounts":[{{range $i, $m := (index .HostConfig "Mounts")}}{{if $i}},{{end}}{"Type":{{json (index $m "Type")}},"Source":{{json (index $m "Source")}},"Target":{{json (index $m "Target")}},"ReadOnly":{{json (index $m "ReadOnly")}}}{{end}}],"Binds":{{json .HostConfig.Binds}},"CapAdd":{{json .HostConfig.CapAdd}},"VolumesFrom":{{json .HostConfig.VolumesFrom}},"SecurityOpt":{{json .HostConfig.SecurityOpt}},"Devices":{{json .HostConfig.Devices}},"DeviceRequests":{{json .HostConfig.DeviceRequests}}}}`
 
 type imageObservation struct{ engine *imageEngine }
 
@@ -35,6 +35,7 @@ func newImageObservation(endpoint string) (*imageObservation, error) {
 func (s *imageObservation) Close() error { return s.engine.Close() }
 
 type observationContainer struct {
+	Mounts     []imageMount    `json:"mounts"`
 	HostPolicy imageHostConfig `json:"host_policy"`
 	ID         string          `json:"id"`
 	Name       string          `json:"name"`
@@ -62,10 +63,10 @@ func (s *imageObservation) inspect(ctx context.Context, t domain.HostingObservat
 		return got, errors.New("observation inspect unavailable")
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil || len(fields) != 15 {
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 16 {
 		return got, errors.New("invalid observation projection")
 	}
-	for _, key := range []string{"id", "name", "image", "status", "running", "paused", "restarting", "dead", "exit_code", "binding", "operation", "release", "plan", "ports", "host_policy"} {
+	for _, key := range []string{"id", "name", "image", "status", "running", "paused", "restarting", "dead", "exit_code", "binding", "operation", "release", "plan", "ports", "mounts", "host_policy"} {
 		value, ok := fields[key]
 		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return got, errors.New("incomplete observation projection")
@@ -85,7 +86,11 @@ func (s *imageObservation) inspect(ctx context.Context, t domain.HostingObservat
 func observationIdentityMatches(c observationContainer, t domain.HostingObservationTarget) bool {
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(t.OperationID), "sha256:")[:16]
 	ports := c.Ports[strconv.Itoa(t.ContainerPort)+"/tcp"]
-	return imageHostPolicyMatches(c.HostPolicy) && c.ID == t.ContainerID && c.Name == "/"+t.RuntimeNamespace+"_"+suffix && c.Image == t.ImageID && c.Binding == t.BindingID && c.Operation == t.OperationID && c.Release == t.ReleaseHash && c.Plan == t.PlanHash && len(c.Ports) == 1 && len(ports) == 1 && ports[0].HostIP == "127.0.0.1" && ports[0].HostPort == strconv.Itoa(t.HostPort)
+	volumeName, mountPath := "", ""
+	if t.Storage != nil {
+		volumeName, mountPath = t.Storage.VolumeName, t.Storage.MountPath
+	}
+	return imageHostPolicyMatches(c.HostPolicy) && imageMountPolicyMatches(c.Mounts, c.HostPolicy.Mounts, volumeName, mountPath) && c.ID == t.ContainerID && c.Name == "/"+t.RuntimeNamespace+"_"+suffix && c.Image == t.ImageID && c.Binding == t.BindingID && c.Operation == t.OperationID && c.Release == t.ReleaseHash && c.Plan == t.PlanHash && len(c.Ports) == 1 && len(ports) == 1 && ports[0].HostIP == "127.0.0.1" && ports[0].HostPort == strconv.Itoa(t.HostPort)
 }
 func observationRunning(c observationContainer) bool {
 	return c.Status == "running" && c.Running && !c.Paused && !c.Restarting && !c.Dead

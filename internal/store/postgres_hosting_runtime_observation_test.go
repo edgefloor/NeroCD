@@ -549,3 +549,56 @@ func TestPostgresHostingObservationSerializesGrantRevocation(t *testing.T) {
 		t.Fatal("revoked receipt replay", err)
 	}
 }
+
+func TestPostgresHostingObservationTargetsPinImmutableStorage(t *testing.T) {
+	for _, mode := range []string{"managed", "missing-evidence", "foreign-volume", "wrong-daemon", "invalid-origin"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newStorageMaterializationFixture(t)
+			ack, err := f.pg.HostingStorageCreateBegin(t.Context(), f.runner, f.request())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.pg.HostingStorageMaterialized(t.Context(), f.runner, f.proof(ack)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.pg.HostingApplyBegin(t.Context(), f.runner, f.authority); err != nil {
+				t.Fatal(err)
+			}
+			f.complete(t, "succeeded", false)
+			if _, err = f.db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingObservationCapability); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "missing-evidence":
+				_, err = f.db.Exec(t.Context(), `UPDATE hosting_binding_state SET healthy=healthy-'storage'`)
+			case "foreign-volume":
+				_, err = f.db.Exec(t.Context(), `UPDATE hosting_binding_state SET healthy=jsonb_set(healthy,'{storage,plan,volume_name}','"foreign"')`)
+			case "wrong-daemon":
+				_, err = f.db.Exec(t.Context(), `UPDATE hosting_binding_state SET healthy=jsonb_set(healthy,'{storage,plan,daemon_id}','"foreign"')`)
+			case "invalid-origin":
+				_, err = f.db.Exec(t.Context(), `UPDATE hosting_binding_state SET healthy=jsonb_set(healthy,'{storage,creation_plan_hash}','"invalid"')`)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential := fmt.Sprintf("%x", sha256.Sum256([]byte("image-hosting-fixture-token")))
+			page, err := f.pg.HostingObservationTargets(t.Context(), f.runner, credential, domain.HostingObservationTargetsInput{Limit: 4})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode != "managed" {
+				if len(page.Targets) != 0 {
+					t.Fatal("invalid settled storage authorized observation")
+				}
+				return
+			}
+			if len(page.Targets) != 1 || page.Targets[0].Storage == nil {
+				t.Fatalf("missing mount authority: %+v", page)
+			}
+			want := domain.HostingObservationStorage{VolumeName: f.storage.VolumeName, MountPath: f.storage.MountPath}
+			if *page.Targets[0].Storage != want {
+				t.Fatalf("storage authority changed: %+v", page.Targets[0].Storage)
+			}
+		})
+	}
+}

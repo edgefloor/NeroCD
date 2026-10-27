@@ -206,21 +206,25 @@ type imageContainer struct {
 type imageHostConfig struct {
 	Privileged, PublishAllPorts               bool
 	NetworkMode, PidMode, IpcMode, UsernsMode string
+	UTSMode, CgroupnsMode                     string
 	Binds, CapAdd, VolumesFrom, SecurityOpt   []string
 	Devices, DeviceRequests                   []json.RawMessage
-	Mounts                                    []struct {
-		Type, Source, Target string
-		ReadOnly             bool
-	}
-	PortBindings map[string][]struct {
+	Mounts                                    []imageConfiguredMount
+	PortBindings                              map[string][]struct {
 		HostIP   string `json:"HostIp"`
 		HostPort string `json:"HostPort"`
 	} `json:"PortBindings"`
 }
 
+type imageConfiguredMount struct {
+	Type, Source, Target string
+	ReadOnly             bool
+}
+
 func imageHostPolicyMatches(h imageHostConfig) bool {
 	return !h.Privileged && !h.PublishAllPorts && (h.NetworkMode == "default" || h.NetworkMode == "bridge") &&
 		h.PidMode == "" && (h.IpcMode == "" || h.IpcMode == "private") && h.UsernsMode == "" &&
+		h.UTSMode == "" && (h.CgroupnsMode == "" || h.CgroupnsMode == "private") &&
 		len(h.Binds) == 0 && len(h.CapAdd) == 0 && len(h.VolumesFrom) == 0 && len(h.SecurityOpt) == 0 &&
 		len(h.Devices) == 0 && len(h.DeviceRequests) == 0
 }
@@ -232,17 +236,25 @@ func imageContainerPolicyMatches(c imageContainer, snapshot domain.HostingSnapsh
 		return false
 	}
 	if storage == nil {
-		return len(c.Mounts) == 0 && len(h.Mounts) == 0
+		return imageMountPolicyMatches(c.Mounts, h.Mounts, "", "")
 	}
-	if len(c.Mounts) != 1 || len(h.Mounts) > 1 {
+	return imageMountPolicyMatches(c.Mounts, h.Mounts, storage.VolumeName, storage.MountPath)
+}
+
+// Mount authority comes from controller-pinned storage, never Docker labels.
+func imageMountPolicyMatches(actual []imageMount, configured []imageConfiguredMount, volumeName, mountPath string) bool {
+	if volumeName == "" {
+		return len(actual) == 0 && len(configured) == 0
+	}
+	if len(actual) != 1 || len(configured) > 1 {
 		return false
 	}
-	mount := c.Mounts[0]
-	if mount.Type != "volume" || mount.Name != storage.VolumeName || mount.Driver != "local" || mount.Destination != storage.MountPath || !mount.RW {
+	mount := actual[0]
+	if mount.Type != "volume" || mount.Name != volumeName || mount.Driver != "local" || mount.Destination != mountPath || !mount.RW {
 		return false
 	}
-	for _, configured := range h.Mounts {
-		if configured.Type != "volume" || configured.Source != storage.VolumeName || configured.Target != storage.MountPath || configured.ReadOnly {
+	for _, mount := range configured {
+		if mount.Type != "volume" || mount.Source != volumeName || mount.Target != mountPath || mount.ReadOnly {
 			return false
 		}
 	}

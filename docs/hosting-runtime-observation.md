@@ -42,6 +42,13 @@ release hash, plan hash, and single loopback port mapping to match the target.
 Command output and lifetime are bounded, and raw command diagnostics are not
 reported or logged.
 
+The controller validates the settled healthy receipt's storage evidence before
+issuing a target. A target with storage includes the immutable volume name and
+mount path. Both configured and actual mounts must match that exact writable
+local volume. A target without storage permits no mounts. Container labels cannot
+authorize storage. Host UTS and cgroup namespaces fail closed, and the sampler
+checks mounts and host policy both before and after the readiness request.
+
 A successful, empty, exact-ID listing on the verified daemon is required to
 report a missing container. An inspection error alone does not establish absence.
 An exited container must have verified identity, state, and exit code. Paused,

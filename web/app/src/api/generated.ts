@@ -5828,6 +5828,11 @@ export interface components {
             readiness_path: string;
             /** @enum {integer} */
             sample_timeout_seconds: 5;
+            storage?: components["schemas"]["HostingObservationStorage"];
+        };
+        HostingObservationStorage: {
+            volume_name: string;
+            mount_path: string;
         };
         HostingObservationTargets: {
             targets: components["schemas"]["HostingObservationTarget"][];

@@ -52,6 +52,23 @@ type HostingObservationTarget struct {
 	HostPort             int       `json:"host_port"`
 	ReadinessPath        string    `json:"readiness_path"`
 	SampleTimeoutSeconds int       `json:"sample_timeout_seconds"`
+
+	Storage *HostingObservationStorage `json:"storage,omitempty"`
+}
+
+// HostingObservationStorage is the exact mount authorized by the controller's
+// validated immutable healthy receipt. Its absence authorizes no mounts.
+type HostingObservationStorage struct {
+	VolumeName string `json:"volume_name"`
+	MountPath  string `json:"mount_path"`
+}
+
+// Validate rejects mount syntax outside the managed local-volume contract.
+func (s HostingObservationStorage) Validate() error {
+	if len(s.VolumeName) != 37 || !strings.HasPrefix(s.VolumeName, "ncdv_") || !hostingStorageRequest.MatchString(s.VolumeName[5:]) || ValidateHostingStorageMountPath(s.MountPath) != nil {
+		return ErrInvalidHostingStorage
+	}
+	return nil
 }
 
 // HostingObservationTargets is one bounded server-selected sweep page.
