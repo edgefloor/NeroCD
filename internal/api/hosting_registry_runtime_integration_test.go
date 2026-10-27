@@ -338,12 +338,16 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 	}
 	f.stop()
 	serialized, _ := json.Marshal([]any{states, failed})
-	engineAuth, _ := json.Marshal(struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Server   string `json:"serveraddress"`
-	}{"fixture", password, "127.0.0.1:25001"})
-	markers := [][]byte{[]byte("X-Registry-Auth"), []byte("x-registry-auth"), []byte(base64.URLEncoding.EncodeToString(engineAuth)), []byte(base64.StdEncoding.EncodeToString([]byte("fixture:" + password))), []byte(password), []byte(secretValue(password)), []byte(base64.URLEncoding.EncodeToString([]byte(secretValue(password))))}
+	markers := [][]byte{[]byte("X-Registry-Auth"), []byte("x-registry-auth")}
+	for _, deliveredPassword := range []string{password, "incorrect"} {
+		engineAuth, _ := json.Marshal(struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Server   string `json:"serveraddress"`
+		}{"fixture", deliveredPassword, "127.0.0.1:25001"})
+		markers = append(markers, []byte(base64.URLEncoding.EncodeToString(engineAuth)), []byte(base64.StdEncoding.EncodeToString([]byte("fixture:"+deliveredPassword))), []byte(deliveredPassword), []byte(secretValue(deliveredPassword)), []byte(base64.URLEncoding.EncodeToString([]byte(secretValue(deliveredPassword)))))
+	}
+
 	for _, marker := range markers {
 		if bytes.Contains(serialized, marker) || strings.Contains(f.logs.String(), string(marker)) {
 			t.Fatal("registry credential escaped into operation/log")

@@ -342,6 +342,11 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			}
 		}
 	}
+	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
+		if err := os.Mkdir(filepath.Join(f.root, "runner"), 0700); err != nil {
+			t.Fatal("private fixture configured work root", err)
+		}
+	}
 	f.start(caps)
 	return f
 }
