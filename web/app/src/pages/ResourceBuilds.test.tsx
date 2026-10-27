@@ -55,6 +55,41 @@ function privateBackend(handler?: (url: string, options: RequestInit) => Respons
 }
 function setupPrivate(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={privateResource} writable={writable} blocked={false} /></QueryClientProvider>); }
 async function privateReview() { await screen.findByRole("option", { name: "grant-one · source 3 · eligible" }); fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } }); fireEvent.click(screen.getByLabelText(/I reviewed this exact private HTTPS Git source/)); }
+test.each(["pending", "ready"])("external private grant becomes selectable after history refresh with %s access", async (access) => {
+ let available = false;
+ let resolveMembers!: (response: Response) => void;
+ const fetch = privateBackend((url) => url.includes("/source-grants?") ? json({ items: available ? [privateGrant] : [], count: available ? 1 : 0, total: available ? 1 : 0, limit: 20, offset: 0 }) : url.includes("/project-members?") && access === "pending" ? new Promise<Response>((resolve) => { resolveMembers = resolve; }) : undefined);
+ setupPrivate();
+ const refresh = await screen.findByRole("button", { name: "Refresh build history" });
+ if (access === "pending") {
+  await waitFor(() => expect(resolveMembers).toBeTypeOf("function"));
+  expect(fetch.mock.calls.filter(([url]) => url.includes("/source-grants?"))).toHaveLength(0);
+ } else {
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.includes("/source-grants?"))).toHaveLength(1));
+ }
+ available = true;
+ fireEvent.click(refresh);
+ if (access === "pending") await act(async () => resolveMembers(json({ items: [{ project_id: "project", user_id: "user", role: "maintainer" }], count: 1, total: 1, limit: 100, offset: 0 })));
+ await privateReview();
+ await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request private Git build" }).disabled).toBe(false));
+ expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+ expect(screen.getByLabelText<HTMLSelectElement>("Private source grant").value).toBe("grant-one");
+});
+test("history refresh during the initial grant request retains that request's empty result", async () => {
+ let available = false;
+ let resolveGrants!: (response: Response) => void;
+ const fetch = privateBackend((url) => url.includes("/source-grants?") ? available ? json({ items: [privateGrant], count: 1, total: 1, limit: 20, offset: 0 }) : new Promise<Response>((resolve) => { resolveGrants = resolve; }) : undefined);
+ setupPrivate();
+ await waitFor(() => expect(resolveGrants).toBeTypeOf("function"));
+ available = true;
+ fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+ await act(async () => resolveGrants(json({ items: [], count: 0, total: 0, limit: 20, offset: 0 })));
+ expect(fetch.mock.calls.filter(([url]) => url.includes("/source-grants?"))).toHaveLength(1);
+ expect(screen.queryByRole("option", { name: "grant-one · source 3 · eligible" })).toBeNull();
+ fireEvent.click(screen.getByRole("button", { name: "Refresh build history" }));
+ await privateReview();
+ await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Request private Git build" }).disabled).toBe(false));
+});
 test.each(["lost", "503"])("private %s retry freezes exact grant ID, key and generations", async (failure) => {
  let count = 0; const fetch = privateBackend((url, options) => url.endsWith("/builds") && options.method === "POST" ? ++count === 1 ? failure === "lost" ? Promise.reject(new TypeError("lost")) : json({}, 503) : json({ build }, 202) : undefined); const view = setupPrivate(); await privateReview();
  expect(screen.getByRole<HTMLOptionElement>("option", { name: "legacy · source 0 · ineligible" }).disabled).toBe(true); expect(screen.getByRole<HTMLOptionElement>("option", { name: "revoked · source 3 · revoked" }).disabled).toBe(true);
