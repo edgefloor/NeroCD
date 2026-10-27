@@ -209,6 +209,7 @@ func TestApplicationDatabaseStorageResumedReplacementAdmission(t *testing.T) {
 			proxy := domain.HostingProxy{ID: "proxy", ServerID: "server", DestinationID: "destination", RunnerID: "runner", ControlProjectID: "project", Enabled: true, DaemonID: "daemon", LoadedGeneration: 7, DesiredGeneration: 7}
 			route := domain.HostingRoute{ID: "route", ResourceID: "application", Version: 4, SelectedReleaseOperationID: "resumed_a", Hostname: "connected-" + engine + ".example.test", PathPrefix: "/", Enabled: true}
 			loaded := "loaded_after_recovery"
+			freshStorageHash := "sha256:" + strings.Repeat("d", 64)
 			options := domain.HostingRouteSwitchOptions{ResourceID: route.ResourceID, LoadedGeneration: &proxy.LoadedGeneration, LoadedProxyOperationID: &loaded, Available: true, Reason: "available", Routes: []domain.HostingRouteSwitchRoute{{ID: route.ID, Version: route.Version, SelectedReleaseOperationID: route.SelectedReleaseOperationID, Hostname: route.Hostname, PathPrefix: route.PathPrefix}}, Targets: []domain.HostingRouteSwitchTarget{{OperationID: route.SelectedReleaseOperationID, Kind: "current_healthy"}}}
 			var requests []string
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -223,20 +224,21 @@ func TestApplicationDatabaseStorageResumedReplacementAdmission(t *testing.T) {
 				case "/api/v1/resources/application/route-switches":
 					body = options
 				case "/api/v1/resources/application/storage-deployment-options":
-					body = map[string]any{"application_database_storage": map[string]any{"version": applicationDatabaseStorageVersion, "strategy": "replacement_with_interruption", "expected_storage_generation": 3, "expected_storage_hash": "saved_storage_hash", "acknowledge_interruption_required": true}}
+					body = map[string]any{"application_database_storage": map[string]any{"version": applicationDatabaseStorageVersion, "strategy": "replacement_with_interruption", "expected_storage_generation": 1, "expected_storage_hash": freshStorageHash, "acknowledge_interruption_required": true}}
 				case "/api/v1/resources/application/database-connection/deployments":
 					if req.Method != "POST" {
 						t.Error("replacement was not actually submitted")
 					}
-					var got struct {
-						domain.HostingDeploymentInput
-						Storage applicationDatabaseStorageAck `json:"application_database_storage"`
-					}
+					var got domain.HostingDeploymentInput
 					if json.NewDecoder(req.Body).Decode(&got) != nil {
 						t.Error("invalid replacement request")
 					}
 					want := domain.HostingDeploymentInput{ExpectedGeneration: 11, ExpectedRuntimeConfigurationGeneration: 9, IdempotencyKey: "storage_resume_redeploy_c", ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 10}, ApplicationDatabaseRouteContinuity: &domain.HostingApplicationDatabaseRouteContinuityInput{ExpectedLoadedGeneration: 7, ExpectedLoadedProxyOperationID: loaded, Routes: []domain.HostingRouteSwitchSelection{{RouteID: route.ID, ExpectedVersion: 4, ExpectedSelectedReleaseOperationID: "resumed_a"}}}}
-					if !reflect.DeepEqual(got.HostingDeploymentInput, want) || got.Storage != (applicationDatabaseStorageAck{3, "saved_storage_hash", true}) {
+					want.ApplicationDatabaseStorage = &domain.HostingApplicationDatabaseStorageInput{ExpectedStorageGeneration: 1, ExpectedStorageHash: freshStorageHash, AcknowledgeInterruption: true}
+					if err := domain.ValidateHostingDeployment(got); err != nil {
+						t.Error("replacement request does not satisfy production admission", err)
+					}
+					if !reflect.DeepEqual(got, want) {
 						t.Error("post-recovery deployment lost fresh route/storage CAS, readiness or runtime generation")
 					}
 					w.WriteHeader(http.StatusAccepted)
@@ -256,7 +258,7 @@ func TestApplicationDatabaseStorageResumedReplacementAdmission(t *testing.T) {
 			t.Cleanup(server.Close)
 			f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), token: "owner", adminToken: "admin", serverID: proxy.ServerID}
 			f.routes = &applicationDatabaseRouteFixture{f: f, proxy: proxy, route: route, daemonID: proxy.DaemonID}
-			s := &applicationDatabaseStorageFixture{Metadata: domain.HostingStorage{ResourceID: "application", Generation: 3, Hash: "saved_storage_hash"}}
+			s := &applicationDatabaseStorageFixture{Metadata: domain.HostingStorage{ResourceID: "application", Generation: 1, Hash: freshStorageHash}}
 			previous := domain.HostingOperation{ID: "resumed_a"}
 			previous.Snapshot.RuntimeConfiguration.Generation = 9
 			if s.requestResumedReplacement(f, domain.Resource{ID: "application", Generation: 11}, previous).ID != "new_c" {
