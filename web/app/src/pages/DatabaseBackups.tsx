@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/errors";
 import { DatabaseBackupRetention } from "./DatabaseBackupRetention";
+import { ComposeDatabaseBackupSchedules } from "./ComposeDatabaseBackupSchedules";
 import { DatabaseBackupSchedules } from "./DatabaseBackupSchedules";
 import { Button } from "../components/ui/button";
 import {
@@ -742,5 +743,6 @@ function ComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:
   {error?<p role="alert">{databaseError(error)}</p>:null}
   {error&&attempt?<p role="status">The response is unconfirmed. Request {attempt.input.request_id} is retained; retry the identical request before changing selections or starting another database action.</p>:null}
   {error&&attempt?<Button disabled={pending} onClick={()=>void submit(attempt)}>Retry exact database request</Button>:null}
+  <ComposeDatabaseBackupSchedules resource={resource} scope={scope} owner={owner} onDenied={()=>setDenied(true)} />
  </section>;
 }

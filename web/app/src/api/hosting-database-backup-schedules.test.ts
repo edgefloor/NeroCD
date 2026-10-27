@@ -207,3 +207,106 @@ test("schedule safe view preserves the exact admitted remote destination revisio
       ),
     ).toThrow();
 });
+
+test("Compose projections preserve component and reject remote or inconsistent versions", () => {
+  const context = { resource: db.resource };
+  const compose = {
+    ...schedule,
+    version: "postgresql.compose-logical-local.schedule.v1",
+    component: "postgresql",
+  };
+  expect(parseDatabaseBackupSchedule(compose, scope, context)).toEqual(compose);
+  expect(
+    parseDatabaseBackupOccurrence(
+      { ...occurrence, component: "old_database" },
+      scope,
+      context,
+      "schedule",
+    ).component,
+  ).toBe("old_database");
+  for (const invalid of [
+    { ...compose, component: undefined },
+    { ...compose, component: "../db" },
+    { ...compose, remote_target: { target_id: "remote", revision: 1 } },
+    { ...schedule, component: "postgresql" },
+  ])
+    expect(() =>
+      parseDatabaseBackupSchedule(invalid, scope, context),
+    ).toThrow();
+});
+test("Compose create requires deployment, disable omits it, replies retain component", async () => {
+  const compose = {
+    ...schedule,
+    version: "postgresql.compose-logical-local.schedule.v1",
+    component: "postgresql",
+  };
+  const fetch = vi
+    .fn()
+    .mockImplementation(async () => new Response(JSON.stringify(compose)));
+  vi.stubGlobal("fetch", fetch);
+  const input = {
+    request_id: "same_request",
+    expected_resource_generation: 2,
+    expected_version: 0,
+    component: "postgresql",
+    expected_deployed_operation_id: "deployed",
+    frequency: "daily",
+    timezone: "UTC",
+    enabled: true,
+  };
+  await expect(
+    saveDatabaseBackupSchedule(
+      scope,
+      db,
+      "",
+      input,
+      new AbortController().signal,
+    ),
+  ).resolves.toEqual(compose);
+  for (const invalid of [
+    { ...input, expected_deployed_operation_id: undefined },
+    { ...input, remote_target: { target_id: "remote", revision: 1 } },
+    { ...input, component: undefined },
+  ])
+    await expect(
+      saveDatabaseBackupSchedule(
+        scope,
+        db,
+        "",
+        invalid,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fetch.mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ ...compose, revision: 2, enabled: false })),
+  );
+  await expect(
+    saveDatabaseBackupSchedule(
+      scope,
+      db,
+      "schedule",
+      {
+        ...input,
+        expected_version: 1,
+        enabled: false,
+        expected_deployed_operation_id: undefined,
+      },
+      new AbortController().signal,
+    ),
+  ).resolves.toMatchObject({ enabled: false, component: "postgresql" });
+  fetch.mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ ...compose, component: "other" })),
+  );
+  await expect(
+    saveDatabaseBackupSchedule(
+      scope,
+      db,
+      "",
+      input,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+});

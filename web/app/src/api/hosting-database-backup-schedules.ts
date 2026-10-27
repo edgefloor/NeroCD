@@ -10,16 +10,29 @@ import {
   type HostingDatabase,
 } from "./hosting-databases";
 
-export type DatabaseBackupSchedule =
-  components["schemas"]["HostingDatabaseBackupSchedule"] & {
-    remote_target?: RemoteBackupTarget;
-  };
+export type DatabaseBackupSchedule = Omit<
+  components["schemas"]["HostingDatabaseBackupSchedule"],
+  "version"
+> & {
+  version:
+    | "postgresql.logical-local.schedule.v1"
+    | "postgresql.compose-logical-local.schedule.v1";
+  component?: string;
+  remote_target?: RemoteBackupTarget;
+};
 export type DatabaseBackupScheduleInput =
   components["schemas"]["HostingDatabaseBackupScheduleInput"] & {
+    component?: string;
+    expected_deployed_operation_id?: string;
     remote_target?: RemoteBackupTarget;
   };
 export type DatabaseBackupOccurrence =
-  components["schemas"]["HostingDatabaseBackupOccurrence"];
+  components["schemas"]["HostingDatabaseBackupOccurrence"] & {
+    component?: string;
+  };
+type ScheduleContext = Pick<HostingDatabase, "resource">;
+const componentName = (v: unknown): v is string =>
+  typeof v === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(v);
 const identifier = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const text = (v: unknown): v is string =>
@@ -50,6 +63,7 @@ const scheduleAllowed = new Set([
   ...scheduleRequired,
   "last_scheduled_at",
   "remote_target",
+  "component",
 ]);
 const occurrenceRequired = [
   "id",
@@ -65,7 +79,11 @@ const occurrenceRequired = [
   "ownership_held",
   "created_at",
 ];
-const occurrenceAllowed = new Set([...occurrenceRequired, "operation_id"]);
+const occurrenceAllowed = new Set([
+  ...occurrenceRequired,
+  "operation_id",
+  "component",
+]);
 const occurrenceStates = new Set([
   "queued",
   "dispatched",
@@ -140,12 +158,16 @@ export function validDatabaseBackupScheduleFields(
 export function parseDatabaseBackupSchedule(
   raw: unknown,
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: ScheduleContext,
 ): DatabaseBackupSchedule {
   const v = document(raw, scheduleRequired, scheduleAllowed);
   if (
     !identifier(v.id) ||
-    v.version !== "postgresql.logical-local.schedule.v1" ||
+    (v.version !== "postgresql.logical-local.schedule.v1" &&
+      v.version !== "postgresql.compose-logical-local.schedule.v1") ||
+    (v.version === "postgresql.compose-logical-local.schedule.v1"
+      ? !componentName(v.component) || v.remote_target !== undefined
+      : v.component !== undefined) ||
     v.project_id !== scope.project ||
     v.resource_id !== database.resource.id ||
     !positive(v.revision) ||
@@ -159,7 +181,8 @@ export function parseDatabaseBackupSchedule(
     return fail();
   return {
     id: v.id,
-    version: "postgresql.logical-local.schedule.v1",
+    version: v.version,
+    ...(v.component !== undefined ? { component: v.component as string } : {}),
     project_id: scope.project,
     resource_id: database.resource.id,
     revision: v.revision,
@@ -179,12 +202,13 @@ export function parseDatabaseBackupSchedule(
 export function parseDatabaseBackupOccurrence(
   raw: unknown,
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: ScheduleContext,
   schedule: string,
 ): DatabaseBackupOccurrence {
   const v = document(raw, occurrenceRequired, occurrenceAllowed);
   if (
     !identifier(v.id) ||
+    (v.component !== undefined && !componentName(v.component)) ||
     v.schedule_id !== schedule ||
     !identifier(v.schedule_id) ||
     v.project_id !== scope.project ||
@@ -217,6 +241,7 @@ export function parseDatabaseBackupOccurrence(
   return {
     id: v.id,
     schedule_id: schedule,
+    ...(v.component !== undefined ? { component: v.component as string } : {}),
     project_id: scope.project,
     resource_id: database.resource.id,
     schedule_revision: v.schedule_revision,
@@ -232,7 +257,7 @@ export function parseDatabaseBackupOccurrence(
       : {}),
   };
 }
-const path = (database: HostingDatabase) =>
+const path = (database: ScheduleContext) =>
   `/api/v1/resources/${encodeURIComponent(database.resource.id)}/database-backup-schedules`;
 export const databaseBackupSchedulesKey = (
   scope: DatabaseScope,
@@ -247,7 +272,7 @@ export const databaseBackupSchedulesKey = (
   ] as const;
 export async function listDatabaseBackupSchedules(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: ScheduleContext,
   signal?: AbortSignal,
 ) {
   const raw = await boundedDatabaseRequest(
@@ -261,7 +286,7 @@ export async function listDatabaseBackupSchedules(
 }
 export async function saveDatabaseBackupSchedule(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: ScheduleContext,
   schedule: string,
   input: DatabaseBackupScheduleInput,
   signal: AbortSignal,
@@ -275,6 +300,17 @@ export async function saveDatabaseBackupSchedule(
     (schedule && !identifier(schedule)) ||
     typeof input.enabled !== "boolean" ||
     !validDatabaseBackupScheduleFields(input.frequency, input.timezone)
+  )
+    return fail();
+  if (
+    input.component !== undefined
+      ? !componentName(input.component) ||
+        input.remote_target !== undefined ||
+        ((input.enabled || !schedule) &&
+          !identifier(input.expected_deployed_operation_id)) ||
+        (input.expected_deployed_operation_id !== undefined &&
+          !identifier(input.expected_deployed_operation_id))
+      : input.expected_deployed_operation_id !== undefined
   )
     return fail();
   if (input.remote_target !== undefined)
@@ -299,6 +335,7 @@ export async function saveDatabaseBackupSchedule(
     out.frequency !== input.frequency ||
     out.timezone !== input.timezone ||
     out.enabled !== input.enabled ||
+    out.component !== input.component ||
     out.remote_target?.target_id !== input.remote_target?.target_id ||
     out.remote_target?.revision !== input.remote_target?.revision
   )
@@ -307,7 +344,7 @@ export async function saveDatabaseBackupSchedule(
 }
 export async function listDatabaseBackupOccurrences(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: ScheduleContext,
   schedule: string,
   signal?: AbortSignal,
 ) {

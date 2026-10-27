@@ -412,20 +412,44 @@ try {
     await addTask(targetPage,"Target record to replace");
   } finally { await targetContext.close(); }
   const backups=application.getByRole("region",{name:"Component database backups",exact:true});
-  step="request_component_database_backup";
-  await backups.getByRole("combobox",{name:"Database backup component",exact:true}).selectOption("postgresql");
-  const backupPending=response(page,`/api/v1/resources/${resourceID}/database-backups`);
-  await backups.getByRole("button",{name:"Create logical backup",exact:true}).click();
-  const backupResponse=await backupPending;
-  safe.database_backup_http_status=backupResponse.status();
-  const backupRequest=backupResponse.request().postDataJSON();
-  safe.database_backup_request_matches_started_operation=backupRequest.expected_deployed_operation_id===startedOperation;
+  step="create_component_database_backup_schedule";
+  const schedules=backups.getByRole("region",{name:"Component database backup schedules",exact:true});
+  await schedules.getByRole("combobox",{name:"Scheduled database component",exact:true}).selectOption("postgresql");
+  await schedules.getByRole("textbox",{name:"Backup frequency",exact:true}).fill("every_minute");
+  const schedulePending=response(page,`/api/v1/resources/${resourceID}/database-backup-schedules`);
+  await schedules.getByRole("button",{name:"Create backup schedule",exact:true}).click();
+  const scheduleResponse=await schedulePending;
+  const scheduleRequest=scheduleResponse.request().postDataJSON();
+  safe.database_backup_http_status=scheduleResponse.status();
+  safe.database_backup_request_matches_started_operation=scheduleRequest.expected_deployed_operation_id===startedOperation;
+  const schedule=await scheduleResponse.json();
+  if(scheduleResponse.status()!==200||schedule.component!=="postgresql"||schedule.resource_id!==resourceID||schedule.version!=="postgresql.compose-logical-local.schedule.v1"||!safe.database_backup_request_matches_started_operation)throw Error("schedule component or deployment identity changed");
+  for(const width of [1280,320,390,430]){
+    await page.setViewportSize({width,height:900});
+    await expect(schedules.getByRole("button",{name:"Disable schedule",exact:true})).toBeVisible();
+    if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error("schedule responsive overflow");
+  }
+  await page.setViewportSize({width:1280,height:900});
+  step="await_component_database_backup_occurrence";
+  let occurrence;
+  await expect.poll(async()=>{
+    const r=await page.request.get(`/api/v1/resources/${resourceID}/database-backup-schedules/${schedule.id}/occurrences`);
+    if(r.status()!==200)throw Error("schedule occurrence history unavailable");
+    const values=await r.json();
+    occurrence=values.find(v=>v.operation_id);
+    return Boolean(occurrence);
+  },{timeout:75000,intervals:[500,1000,2000]}).toBe(true);
+  if(occurrence.component!=="postgresql"||occurrence.schedule_revision!==schedule.revision||occurrence.schedule_id!==schedule.id)throw Error("occurrence component or revision changed");
+  const disablePending=page.waitForResponse(r=>r.request().method()==="PUT"&&new URL(r.url()).pathname===`/api/v1/resources/${resourceID}/database-backup-schedules/${schedule.id}`);
+  await schedules.getByRole("button",{name:"Disable schedule",exact:true}).click();
+  const disableResponse=await disablePending,disabled=await disableResponse.json();
+  if(disableResponse.status()!==200||disabled.enabled||disabled.component!==schedule.component||disabled.revision!==schedule.revision+1)throw Error("schedule disable changed component");
+  const backupResponse=await page.request.get(`/api/v1/database-backups/${occurrence.operation_id}`);
   const logicalBackup=await backupResponse.json();
-  if(typeof logicalBackup?.code==="string"&&/^[a-z_]{1,64}$/.test(logicalBackup.code))safe.database_backup_error_code=logicalBackup.code;
   safe.database_backup_response_resource_matches=logicalBackup.source_resource_id===resourceID;
   safe.database_backup_response_component_matches=logicalBackup.source_component==="postgresql";
-  if(backupResponse.status()!==202)throw Error("unexpected database backup response");
-  if(logicalBackup.source_component!=="postgresql"||logicalBackup.source_resource_id!==resourceID)throw Error("backup component identity changed");
+  if(backupResponse.status()!==200||logicalBackup.id!==occurrence.operation_id||logicalBackup.source_component!=="postgresql"||logicalBackup.source_resource_id!==resourceID||logicalBackup.source_deployed_operation_id!==startedOperation)throw Error("scheduled backup component identity changed");
+  safe.browser_component_database_schedule=true;
   await report("database_backed_up",logicalBackup.id);
   await state("database_mutate");
   step="source_write_after_logical_backup";
@@ -437,6 +461,8 @@ try {
   await state("database_import");
   await hosting(page);
   step="review_component_database_import";
+  await schedules.getByRole("button",{name:"Refresh schedules",exact:true}).click();
+  await expect(schedules.getByRole("region",{name:"Backup schedule occurrences",exact:true})).toContainText("succeeded");
   await backups.getByRole("button",{name:"Refresh database backup history",exact:true}).click();
   await backups.getByRole("combobox",{name:"Backup to restore",exact:true}).selectOption(logicalBackup.id);
   await backups.getByRole("combobox",{name:"Restore target application",exact:true}).selectOption(backupState.id);
