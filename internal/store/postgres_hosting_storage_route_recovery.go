@@ -142,7 +142,7 @@ func (s *PostgresStore) RecoverHostingStorageRouteContinuity(ctx context.Context
 }
 
 func storageRouteRecoveryHealthy(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, c domain.HostingStorageRouteContinuity, p domain.HostingProxy, authority domain.HostingAuthority) error {
-	if op.State != "succeeded" || op.MutationHold || op.RestoreOwnershipHeld || op.ReconcileRequested || op.CleanupPlan != nil || op.Result == nil || op.Result.Outcome != "succeeded" || op.Result.Uncertain || op.Result.Restored || !op.Result.Ready || op.Result.ContainerID == "" || op.Release == nil || op.Plan == nil || op.Plan.Storage == nil || op.Result.PlanHash != op.Plan.Hash || op.Result.ImageID != op.Release.ImageID || op.Result.DaemonID != c.DaemonID || op.Release.DaemonID != c.DaemonID || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
+	if op.State != "succeeded" || op.MutationHold || op.RestoreOwnershipHeld || op.ReconcileRequested || op.CleanupPlan != nil || op.Result == nil || op.Result.Outcome != "succeeded" || op.Result.Uncertain || op.Result.Restored || !op.Result.Ready || op.Release == nil || op.Plan == nil || op.Result.PlanHash != op.Plan.Hash || op.Result.DaemonID != c.DaemonID || op.Release.DaemonID != c.DaemonID || !domain.HostingPlanFamilyMatches(op.Snapshot, *op.Plan) {
 		return ErrConflict
 	}
 	run, err := sqlcgen.New(tx).GetRun(ctx, op.RunID)
@@ -182,20 +182,9 @@ func storageRouteRecoveryHealthy(ctx context.Context, tx pgx.Tx, op domain.Hosti
 	if foreign {
 		return ErrConflict
 	}
-	storage, err := currentHostingStorage(ctx, tx, op.ProjectID, op.ResourceID)
-	if err != nil {
-		return hostingError(err)
-	}
-	if storage.Reference() != op.Snapshot.Storage || storage.BindingID != op.BindingID || storage.DestinationID != op.Snapshot.DestinationID || storage.VolumeName != op.Plan.Storage.VolumeName || storage.MountPath != op.Plan.Storage.MountPath {
-		return ErrConflict
-	}
-	evidence, err := hostingStorageHealthyEvidence(ctx, tx, op)
+	expected, err := storageRouteRecoveryTarget(ctx, tx, op)
 	if err != nil {
 		return err
-	}
-	expected := domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: op.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash, Storage: evidence}
-	if domain.ValidateHostingHealthyStorage(expected) != nil {
-		return ErrConflict
 	}
 	state, err := sqlcgen.New(tx).StorageDeploymentBindingState(ctx, op.BindingID)
 	if err != nil {
@@ -213,6 +202,76 @@ func storageRouteRecoveryHealthy(ctx context.Context, tx pgx.Tx, op domain.Hosti
 		return ErrConflict
 	}
 	return nil
+}
+
+func storageRouteRecoveryTarget(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) (domain.HostingHealthy, error) {
+	expected := domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, Release: *op.Release, PlanHash: op.Plan.Hash}
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		if op.Plan.Stack == nil || op.StackStopPlan != nil || op.Result.Stack == nil || op.Result.StackStopped || op.Result.ContainerID != "" || op.Result.ImageID != "" || op.Result.PreviousContainerID != "" {
+			return expected, ErrConflict
+		}
+		definition, result, err := hostingSelectedStackDefinition(ctx, tx, op.ResourceID, op.ProjectID, op.Snapshot)
+		if err != nil {
+			return expected, err
+		}
+		if !reflect.DeepEqual(definition, op.Plan.Stack.Definition) {
+			return expected, ErrConflict
+		}
+		plan, err := domain.CompileHostingStackPlan(op.Snapshot, *op.Release, op.Plan.PreviousHealthy, *op.Plan.Stack, op.Plan.PreviousStopped)
+		if err != nil || !reflect.DeepEqual(plan, *op.Plan) || domain.ValidateHostingStackState(*op.Plan, op.ID, *op.Result.Stack, true) != nil {
+			return expected, ErrConflict
+		}
+		if op.Plan.PreviousHealthy != nil && (op.Plan.PreviousHealthy.Stack == nil || op.Plan.PreviousHealthy.Stack.NetworkID != op.Result.Stack.NetworkID) {
+			return expected, ErrConflict
+		}
+		if result != nil {
+			for _, image := range op.Plan.Stack.Images {
+				artifact, local := domain.HostingComposeBuildArtifact(*result, image.Component)
+				if local {
+					release, err := domain.NewHostingLocalBuildRelease(artifact)
+					if err != nil || image.Release != release {
+						return expected, ErrConflict
+					}
+				} else if image.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+					return expected, ErrConflict
+				}
+			}
+		}
+		stopped, err := readStackStopped(ctx, tx, op.BindingID)
+		if err != nil {
+			return expected, err
+		}
+		if stopped != nil {
+			return expected, ErrConflict
+		}
+		if err := validateHostingStackMaterialized(ctx, tx, op, *op.Result.Stack); err != nil {
+			return expected, err
+		}
+		expected.Stack = op.Result.Stack
+		if domain.ValidateHostingStackHealthy(expected) != nil {
+			return expected, ErrConflict
+		}
+		return expected, nil
+	}
+	if op.Plan.Storage == nil || op.Result.ContainerID == "" || op.Result.ImageID != op.Release.ImageID {
+		return expected, ErrConflict
+	}
+	storage, err := currentHostingStorage(ctx, tx, op.ProjectID, op.ResourceID)
+	if err != nil {
+		return expected, hostingError(err)
+	}
+	if storage.Reference() != op.Snapshot.Storage || storage.BindingID != op.BindingID || storage.DestinationID != op.Snapshot.DestinationID || storage.VolumeName != op.Plan.Storage.VolumeName || storage.MountPath != op.Plan.Storage.MountPath {
+		return expected, ErrConflict
+	}
+	evidence, err := hostingStorageHealthyEvidence(ctx, tx, op)
+	if err != nil {
+		return expected, err
+	}
+	expected.ContainerID, expected.Storage = op.Result.ContainerID, evidence
+	if domain.ValidateHostingHealthyStorage(expected) != nil {
+		return expected, ErrConflict
+	}
+	return expected, nil
 }
 
 func storageRouteRecoveryStatus(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, c domain.HostingStorageRouteContinuity, state, successor string) (domain.HostingStorageRouteContinuityStatus, error) {
