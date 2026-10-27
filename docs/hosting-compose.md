@@ -106,7 +106,7 @@ permissions, sensitive-output handling, short demand leases and retention apply.
 The extended Compose gate checks browser component selection and Follow/Stop,
 actual app/PostgreSQL output, finite output from an explicit test-only init
 command added to the pasted example, and redeployment ending an
-old follow. Its component-log qualification is pending until run at the candidate.
+old follow. Component logs passed qualification at the candidate recorded below.
 
 ## Qualification
 
@@ -144,6 +144,38 @@ The existing gate evidence is preserved under
 `$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/1c2ee593f07d30f7ce25c1719c5a3b0caa5a4279.fdSE3b`.
 This qualifies the managed profile and shipped example, not raw/Git/build parity
 or unverified rollback after a failed stateful replacement.
+
+Physical qualification also passed on 2026-10-27 at
+`b8f249c431f9ac6e33914789db3adb03c6629b78` with the existing
+`--managed-compose` gate:
+
+- [x] Saved and deployed the managed Compose configuration over verified HTTPS;
+  redeployment retained application records and uploaded bytes, with fresh login
+  and successful new writes.
+- [x] The compiled API/runtime test passed its controlled failed replacement
+  checks, including the mutation hold and rejection of a competing deployment.
+- [x] Component log selection, Follow and Stop passed in the browser, alongside
+  application/PostgreSQL output, finite init output and old-follow replacement.
+- [x] Stack Stop/Start retained application data and uploads.
+- [x] PostgreSQL component backup and separate-target import passed. This restores
+  database data only; original source uploads are excluded. Later source writes
+  remained excluded and target writes were independent.
+- [x] All 39 baseline container profiles and all 222 volume profiles remained
+  unchanged, with no unclassified additions. The user's UI on port 18081 retained
+  its identity, healthy response and content.
+
+Safe receipts are preserved under
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/b8f249c431f9ac6e33914789db3adb03c6629b78.GUz1EX`.
+The gate ran once from `2026-10-27T08:22:46Z` to `2026-10-27T08:26:18Z`
+(212 seconds); `TestHostingComposeVikunjaCompiledRunnerHTTPS` passed in
+127.26 seconds. Separate command windows completed cheap checks in 12 seconds
+in total. This qualification required no product or fixture repairs and no reruns.
+The qualified image-store profile is classic overlay2; containerd image-store
+support remains unqualified.
+
+The next bounded gap is local backup schedules for the qualified managed Compose
+PostgreSQL component. That implementation is not complete. Raw Compose, Git
+Compose and mixed build/image stacks remain outside this accepted workflow.
 
 ## Pasteable Vikunja/PostgreSQL example
 

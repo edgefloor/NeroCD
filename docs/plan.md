@@ -31,7 +31,11 @@ builds and optional unprotected automatic deployment. PostgreSQL/Redis connectio
 and owned upload volumes have physical qualification on one trusted Linux arm64
 profile. PostgreSQL and upload recovery now include selected schedules, remote
 copies, retention and failure notifications. One pinned Linkding catalog
-workflow includes separate-target application recovery.
+workflow includes separate-target application recovery. Saved managed Compose now
+includes the qualified Vikunja/PostgreSQL save, deploy, HTTPS, redeploy, component
+logs, Stop/Start and database-only component backup/import workflow at
+`b8f249c431f9ac6e33914789db3adb03c6629b78`; see
+[Compose qualification](hosting-compose.md#qualification).
 
 Use [compatibility](compatibility.md#accepted-foundations-and-evidence) for tested profiles and limits. These results do not complete the hosting
 requirements. Public production ACME, broader hosts, protected production plans,
@@ -55,13 +59,16 @@ A practical deployment demo alone does not complete Coolify parity.
 
 Continue H2 from the remaining stateful and catalog gaps. Select a complete user
 workflow with a recoverable failure path before adding another internal helper.
+The next bounded slice is local backup schedules for the qualified managed Compose
+PostgreSQL component; implementation is not complete.
 
 | Area | Existing bounded workflow | Remaining work |
 | --- | --- | --- |
 | Application and database | [One image application with PostgreSQL or Redis](hosting-database-connections.md), then one owned upload volume | Broader application inputs, credential rotation, cross-server binding presentation and full R42/A17 |
 | PostgreSQL recovery | [Immediate backup/restore](hosting-database-backups.md), [schedules](hosting-database-backup-schedules.md), [remote copies](hosting-database-remote-backups.md), [retention](hosting-database-backup-retention.md), and [failure alerts](hosting-backup-notifications.md) | Production S3 HTTPS, additional engines, cross-destination and in-place recovery, broader cron grammar and notification events/channels |
 | Upload recovery | [Local archives](hosting-storage-archive.md), [remote copies](hosting-storage-remote-backups.md), [schedules/alerts](hosting-storage-backup-schedules.md), [retention](hosting-storage-backup-retention.md), and [selected-copy deletion](hosting-storage-backup-deletion.md) | Broader mount types, unknown-writer recovery, cross-host/in-place recovery and full A25–A27/A37 |
-| Catalog | [Search, definition preview and pinned Linkding install](hosting-catalog.md), then [separate-target recovery](hosting-catalog-recovery.md) | Category/compatibility filters and richer requirement presentation, more tested definitions, explicit upgrades, pasted Compose and application-specific recovery |
+| Catalog | [Search, definition preview and pinned Linkding install](hosting-catalog.md), then [separate-target recovery](hosting-catalog-recovery.md) | Category/compatibility filters and richer requirement presentation, more tested definitions, explicit upgrades and broader application-specific recovery |
+| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start and database-only backup/import | Local PostgreSQL component schedules next; raw Compose, Git Compose and mixed build/image stacks remain unsupported |
 | Practical hosting | [SSH onboarding](hosting-ssh-onboarding.md), [runtime logs](hosting-runtime-logs.md), [automatic deployment](hosting-auto-deploy.md) | Broader host/capability qualification, public ACME, protected plans under R17/R19, live provider setup and complete A01/A09/A29 |
 
 Keep the existing default-off flags and explicit capabilities. A successful
