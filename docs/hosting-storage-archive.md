@@ -161,3 +161,58 @@ adds an optional validated `remote_target` to the existing backup request and us
 `managed-compose.remote-volume-archive.v1` plans. It retains the same helper and
 limits. Writer recovery and local completion can finish while upload dispatch is
 unavailable, leaving the original transfer queued. Compose schedules stay local.
+
+## Download a local archive
+
+Enable `--hosting-storage-backup-download` on both the server and runner. Keep
+`NEROCD_HOSTING_STORAGE_ARCHIVE_POLICY_FILE` configured on the server and the
+matching `--storage-archive-config-file` on the runner. Both download flags are
+disabled by default. No S3 target is required. The runner advertises
+`hosting_storage_backup_download_v1` with the existing storage transfer capability.
+
+As an authorized project owner or administrator, select a successful local backup
+and click **Download archive**. **Refresh download availability** checks the
+current blob and authority. The control supports ordinary owned-storage backups
+and Compose named-volume backups without requiring a remote copy.
+`GET /api/v1/storage-backups/{id}/archive-options` reports availability.
+`GET /api/v1/storage-backups/{id}/archive` returns an `application/x-tar`
+attachment with the exact recorded length, `no-store`, and `nosniff`.
+The bytes are the uncompressed USTAR archive, not a newly generated backup.
+Downloading does not stop writers or create another archive.
+
+The broker supports one controller, with two concurrent controller streams and
+one per actor. Initial metadata work has a five-second budget. Runner admission
+waits at most 30 seconds, and streaming is bounded to 300 seconds. Missing or
+tampered local archives return 404 before an attachment is committed. A truncated
+or mismatched stream fails rather than completing a valid download. Current
+authorization and exact fenced runner authority remain required.
+
+### Local download qualification
+
+Accepted source `ff6b200cb198d621bd9bd6a429ee4a81fda45478` passed the existing
+managed Compose gate on 2026-10-27, 19:00:09–19:04:21 UTC, in 252 seconds.
+The API runtime passed in 163.33 seconds. Native Chromium downloaded the exact
+5,120-byte selected blob. History and writer events stayed unchanged, and the
+runner then completed remote validation, scheduled transfer and same-archive
+retry. Records, uploads, routes, failed-replacement recovery, and exact cleanup
+of the 41-container/236-volume baseline passed.
+
+The physical profile is native arm64, rootful Docker, fixture-CA HTTPS, and one
+controller. Ordinary image support has real HTTP/PostgreSQL and runner proofs,
+but no new ordinary-image physical qualification. Compose archive restore,
+cross-host recovery, and broader architectures remain unqualified.
+
+The audited [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-archive-download-20261027/ff6b200cb198d621bd9bd6a429ee4a81fda45478/evidence-index.json)
+has SHA-256 `30ad793f14a2890d8a2f2c1bc9cd15df8d12adab3c0008fd4b31e5cb3fcbc50a`
+and 28 safe files. It retains exact final Go tests, race/static/build checks,
+75 embedded UI assets, dependency-attributed WebUI 2,025-test evidence, and links
+to four separate failed receipts. Raw diagnostics and archive payloads are not
+shareable evidence.
+
+| Delivery category | Evidence and limits |
+| --- | --- |
+| Implementation | Worker and integration checks retain their source revisions. Exclusive implementation time was not measured. |
+| Product repair | Metadata deadlines, UI actor identity, pre-existing Compose completion cancellation, and composed download completion were repaired with focused proofs. Command windows overlap implementation and validation. |
+| Fixture repair | The paginated history decoder was corrected after the first failed gate. The real encoder/decoder regression is retained. |
+| Test execution | Failed gates took 321, 239, 215, and 408 seconds. The accepted gate took 252 seconds. Their total is 1,435 seconds; API runtimes are subsets, not additional time. Final standard Go tests passed 18:56:23–18:59:38 UTC; PostgreSQL evidence is separate. |
+| Review and waiting | Three exact final reviews passed. Earlier repair reviews and validation overlapped; exclusive waiting durations are unavailable. |

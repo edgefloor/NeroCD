@@ -158,6 +158,8 @@ Schedule creation and enabling require fresh deployment review and consent for
 every due interruption. Reads, history, disable, and identical replay retain
 current authorization when runtime evidence is unavailable.
 
+The [local archive download](hosting-storage-archive.md#download-a-local-archive)
+control returns a selected successful backup without another interruption.
 Compose archive restore, bind mounts, and coordinated database and upload
 snapshots are unsupported. Archive selection does not establish database
 consistency. Use the separate PostgreSQL component backup
@@ -445,7 +447,9 @@ elapsed-time percentage.
 This local schedule qualification did not cover remote transfer. The separate
 [immediate remote-copy qualification](hosting-storage-remote-backups.md#accepted-compose-remote-copy)
 and [scheduled remote-copy qualification](hosting-storage-remote-backups.md#compose-remote-schedule-qualification)
-record their own status and scope. Compose download, archive restore, bind mounts,
+record their own status and scope. Local archive download is separately
+[qualified at `ff6b200c`](hosting-storage-archive.md#local-download-qualification).
+Compose archive restore, bind mounts,
 raw Compose, Git Compose and mixed build/image stacks remain unsupported or
 unqualified.
 Coordinated database and upload recovery is a separate NeroCD expansion, not an

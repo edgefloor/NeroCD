@@ -273,3 +273,22 @@ effect retains its
 reservation. Neither mode authorizes testing against a user's
 backup or deleting an
 application volume.
+
+## Local archive download qualification
+
+The existing `--managed-compose` mode enables the server and runner download
+flags with the installed archive configuration. After local backup and failed
+archive compensation, the native browser downloads the selected successful blob.
+Go compares unchanged history and writer events. The same runner must then finish
+the existing remote validation, scheduled copy, denied upload, and same-blob retry.
+The archive is saved only in an owned temporary path and deleted after byte/hash
+comparison. Safe receipts contain only status, length, and SHA-256.
+
+This profile passed at `ff6b200cb198d621bd9bd6a429ee4a81fda45478` with API
+runtime 163.33 seconds and gate exit 0, 19:00:09–19:04:21 UTC on 2026-10-27.
+All four viewport widths, served manifest, existing app/database/upload recovery,
+and exact 41-container/236-volume/user preservation checks passed.
+The [operator guide and audited evidence](../../docs/hosting-storage-archive.md#local-download-qualification)
+record four prior failures, focused repairs, check provenance, and timing limits.
+Ordinary-image physical qualification, multiple controllers, Compose archive
+restore, and cross-host recovery are not established by this run.

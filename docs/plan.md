@@ -76,11 +76,12 @@ It preserves local success through upload failure and retries the same blob
 without another archive or interruption. Scheduled remote copies
 [passed qualification at `26998a435`](hosting-storage-remote-backups.md#compose-remote-schedule-qualification),
 including local success through denied upload and same-archive retry.
-Local archive download remains a NeroCD gap. The pinned PHP reference has no
+Local archive download is [accepted at `ff6b200c`](hosting-storage-archive.md#local-download-qualification)
+for the bounded single-controller profile, with native Compose browser proof. The pinned PHP reference has no
 archive restore action: `VolumeBackupRecoveryJob` resumes stopped containers and
 cleans partial remote uploads. Compose archive restore and coordinated database
 and upload recovery are separate NeroCD expansions, not missing upstream restore
-parity. They must not displace the upstream download workflow.
+parity.
 
 | Area | Existing bounded workflow | Remaining work |
 | --- | --- | --- |
@@ -88,7 +89,7 @@ parity. They must not displace the upstream download workflow.
 | PostgreSQL recovery | [Immediate backup/restore](hosting-database-backups.md), [schedules](hosting-database-backup-schedules.md), [remote copies](hosting-database-remote-backups.md), [retention](hosting-database-backup-retention.md), and [failure alerts](hosting-backup-notifications.md) | Production S3 HTTPS, additional engines, cross-destination and in-place recovery, broader cron grammar and notification events/channels |
 | Upload recovery | [Local archives](hosting-storage-archive.md), [remote copies](hosting-storage-remote-backups.md), [schedules/alerts](hosting-storage-backup-schedules.md), [retention](hosting-storage-backup-retention.md), and [selected-copy deletion](hosting-storage-backup-deletion.md) | Broader mount types, unknown-writer recovery, cross-host/in-place recovery and full A25–A27/A37 |
 | Catalog | [Local category/search filters and upstream declarations accepted at `6aeac387`](hosting-catalog.md#catalog-filter-qualification), [pinned Linkding install](hosting-catalog.md) and [separate-target recovery](hosting-catalog-recovery.md), plus [Uptime Kuma persistence at `397a8d826`](hosting-catalog.md#uptime-kuma-qualification) and [Actual Budget server-data persistence at `ca3b8dcd`](hosting-catalog.md#actual-budget-qualification), plus [Vikunja/PostgreSQL catalog install/deploy at `eeee82b6`](hosting-catalog.md#catalog-compose-qualification) | Destination compatibility filtering and richer requirement presentation, more tested definitions, explicit upgrades and broader application-specific recovery |
-| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, local PostgreSQL component schedules, immediate and scheduled local named-volume backup, and immediate or scheduled remote copy with same-archive retry | Download, archive restore, bind mounts, raw Compose, Git Compose and mixed build/image stacks remain unsupported or unqualified |
+| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, local PostgreSQL component schedules, immediate and scheduled local named-volume backup, and immediate or scheduled remote copy with same-archive retry, and [local archive download](hosting-storage-archive.md#local-download-qualification) | Archive restore, bind mounts, raw Compose, Git Compose and mixed build/image stacks remain unsupported or unqualified |
 | Private image pulls | [Ordinary images at `a1ce5a1b`](hosting-image-deployments.md#private-registry-qualification) and [saved managed Compose at `c4b9ef45`](hosting-compose.md#private-registry-qualification): explicit credential versions, matching-service pulls before mutation, retained records/uploads/routes after denied pulls, and later valid redeployment/Start | Server registry inventory, login/logout, push, multiple selected private registries, and selected credentials for database/local-build deployments remain outside this profile |
 | Practical hosting | [SSH onboarding](hosting-ssh-onboarding.md), [runtime logs](hosting-runtime-logs.md), [automatic deployment](hosting-auto-deploy.md) | Broader host/capability qualification, public ACME, protected plans under R17/R19, live provider setup and complete A01/A09/A29 |
 
