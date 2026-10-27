@@ -1,13 +1,18 @@
 package store_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
+	"nerocd/internal/store/sqlcgen"
 )
 
 func TestPostgresComposeStorageArchiveAdmissionRecoveryAndReplay(t *testing.T) {
@@ -107,5 +112,67 @@ func TestPostgresComposeStorageArchiveAdmissionRecoveryAndReplay(t *testing.T) {
 	raw, _ := json.Marshal(p)
 	if strings.Contains(string(raw), `"lease_id"`) {
 		t.Fatal("source includes lease authority")
+	}
+}
+
+func TestPostgresComposeStorageVolumeDiscoveryDestinationLockOrder(t *testing.T) {
+	f, _ := composeStorageScheduleFixture(t)
+	if err := f.stopExecution(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(f.owner, 10*time.Second)
+	defer cancel()
+	barrier, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = barrier.Rollback(context.Background()) }()
+	if err = sqlcgen.New(barrier).LockHostingExecutionDestination(ctx, "destination_owned_storage"); err != nil {
+		t.Fatal(err)
+	}
+	var blockerPID int32
+	if err = barrier.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		value domain.HostingStorageBackupVolumes
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { v, e := f.service.StorageBackupVolumes(ctx, f.resource.ID); done <- result{v, e} }()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting bool
+		if err = f.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%LockHostingExecutionDestination%')`, blockerPID).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("discovery did not reach destination barrier")
+		case <-ticker.C:
+		}
+	}
+	// A destination owner must still be able to acquire the resource. Discovery
+	// may not hold that resource while waiting behind the destination owner.
+	_, resourceErr := sqlcgen.New(barrier).LockHostingRuntimeResource(ctx, f.resource.ID)
+	if err = barrier.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := <-done
+	for _, e := range []error{resourceErr, out.err} {
+		var pgError *pgconn.PgError
+		if errors.As(e, &pgError) {
+			t.Logf("observed SQLSTATE=%s", pgError.Code)
+		}
+	}
+	if resourceErr != nil || out.err != nil {
+		t.Fatal("discovery inverted destination/resource lock order")
+	}
+	if !out.value.Available || out.value.OperationID != f.source.ID {
+		t.Fatal("serialized discovery lost eligible source")
 	}
 }

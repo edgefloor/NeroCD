@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/jackc/pgx/v5/pgconn"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
@@ -448,4 +449,11 @@ func TestStorageArchiveComposeSelectionHTTPDecoder(t *testing.T) {
 		t.Fatal("viewer discovery failed")
 	}
 	archiveHTTPCall(t, server, "GET", discoveryPath+"?volume=foreign", owner, "", "", 400)
+	// This is the PostgreSQL lock-inversion failure reproduced by the real store
+	// concurrency regression. The handler completes with a redacted HTTP 500.
+	repo.err = fmt.Errorf("hosting persistence: %w", &pgconn.PgError{Code: "40P01", Message: "private deadlock details"})
+	failed := archiveHTTPCall(t, server, "GET", discoveryPath, viewer, "", "", 500)
+	if !strings.Contains(failed.Body.String(), `"code":"internal_error"`) || strings.Contains(failed.Body.String(), "private deadlock details") {
+		t.Fatal("deadlock response changed status or leaked SQL details")
+	}
 }

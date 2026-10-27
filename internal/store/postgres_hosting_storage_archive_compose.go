@@ -56,6 +56,11 @@ func composeArchiveVolume(ctx context.Context, tx pgx.Tx, c domain.HostingStorag
 func (s *PostgresStore) StorageBackupVolumes(ctx context.Context, actor, resource string) (domain.HostingStorageBackupVolumes, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackupVolumes, error) {
 		out := domain.HostingStorageBackupVolumes{ResourceID: resource, Reason: "unavailable", Volumes: []domain.HostingStorageBackupVolume{}}
+		// Match execution and component-source admission: destination before resource.
+		// Concurrent discovery must not retain a resource lock behind its owner.
+		if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
+			return out, err
+		}
 		r, _, err := archivePlacement(ctx, tx, actor, resource, domain.RoleViewer)
 		if err != nil {
 			return out, err
