@@ -250,3 +250,69 @@ test("older entries without category metadata remain available under All categor
   expect(screen.getByLabelText<HTMLSelectElement>("Catalog category").options.length).toBe(1);
   expect(screen.getByRole("region", { name: "Catalog installation preview" }).textContent).toContain("CategoryNot declared");
 });
+
+
+const kuma: api.CatalogTemplate = {
+  ...template,
+  id: "uptime-kuma",
+  name: "Uptime Kuma",
+  immutable_version: "kuma-test-version",
+  category: "monitoring",
+  upstream_path: "templates/compose/uptime-kuma.yaml",
+  definition: {
+    image_reference: "docker.io/louislam/uptime-kuma@sha256:test-digest",
+    container_port: 3001,
+    mount_path: "/app/data",
+    readiness: { path: "/", timeout_seconds: 120 },
+    credential_names: [],
+  },
+};
+
+test("credential-free application filters by its upstream category and previews first-run setup", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([template, kuma]);
+  setup();
+  await screen.findByRole("option", { name: /Uptime Kuma ·/ });
+  expect(screen.getByText("Catalog matches: 2 of 2.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Catalog category"), { target: { value: "monitoring" } });
+  expect(screen.queryByRole("option", { name: /Linkding ·/ })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "uptime-kuma" } });
+  expect(screen.getByLabelText<HTMLInputElement>("Installation name").value).toBe("Uptime Kuma");
+  const preview = screen.getByRole("region", { name: "Catalog installation preview" });
+  expect(preview.textContent).toContain("Generated variablesNone");
+  expect(preview.textContent).toContain("Container port3001");
+  expect(preview.textContent).toContain("Persistent data/app/data");
+  expect(preview.textContent).toContain("No login credentials are generated. After deployment, open the application to complete its initial account setup.");
+  expect(preview.textContent).not.toContain("Credentials are generated once");
+  fireEvent.change(screen.getByLabelText("Installation name"), { target: { value: "My monitor" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  expect(screen.getByLabelText<HTMLInputElement>("Installation name").value).toBe("My monitor");
+});
+
+test("credential-free installation retries the identical request and offers setup without secret controls", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([template, kuma]);
+  vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response")).mockImplementationOnce(async (body) => ({
+    id: "res", request: body, template: kuma,
+    resource: { id: "res", project_id: "project", project_environment_id: "env", name: body.name, kind: "application", source: { kind: "image", image: { reference: kuma.definition.image_reference } }, generation: 1, created_by: "actor", created_at: "", updated_at: "" },
+    binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" },
+    storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, runtime_configuration: { generation: 1, hash: "runtime" }, credentials: [], created_by: "actor", created_at: "",
+  }));
+  setup();
+  await screen.findByRole("option", { name: /Uptime Kuma ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "uptime-kuma" } });
+  await screen.findByRole("option", { name: "Docker" });
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog application").disabled).toBe(true);
+  const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
+  expect(first.template_id).toBe("uptime-kuma");
+  expect(first.immutable_version).toBe(kuma.immutable_version);
+  fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
+  await screen.findByText("No login credentials were generated. After deployment, open the application to complete its initial account setup.");
+  expect(vi.mocked(api.installCatalog).mock.calls[1]![0]).toBe(first);
+  expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Hide credentials" })).toBeNull();
+  expect(screen.queryByText(/Linkding creates the initial account/)).toBeNull();
+  expect(revealManagedSecret).not.toHaveBeenCalled();
+});

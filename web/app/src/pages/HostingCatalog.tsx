@@ -29,6 +29,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const id = useId();
     const client = useQueryClient();
     const [name, setName] = useState("Linkding");
+    const [nameEdited, setNameEdited] = useState(false);
     const [destination, setDestination] = useState("");
     const [template, setTemplate] = useState("");
     const [search, setSearch] = useState("");
@@ -69,7 +70,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
             setError("Enter a name with 1 to 128 UTF-8 bytes, without surrounding whitespace or control characters.");
             return;
         }
-        const body = attempt ?? { request_id: databaseRequestID(), project_id: projectID, project_environment_id: environmentID, destination_id: destination, name, template_id: selected!.id as "linkding", immutable_version: selected!.immutable_version as CatalogInstallInput["immutable_version"] };
+        const body = attempt ?? { request_id: databaseRequestID(), project_id: projectID, project_environment_id: environmentID, destination_id: destination, name, template_id: selected!.id as CatalogInstallInput["template_id"], immutable_version: selected!.immutable_version as CatalogInstallInput["immutable_version"] };
         setAttempt(body);
         setBusy(true);
         setError("");
@@ -128,14 +129,15 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     }
     return <section aria-label="Hosting catalog" className="min-w-0 space-y-3 rounded-xl border p-3">
     <h4 className="font-medium">Install from catalog</h4>
-    <p>Choose a pinned application. Installation saves its credentials and persistent storage. Deploy it from the application deployment panel.</p>
+    <p>Choose a pinned application. Installation saves persistent storage and any template-generated credentials. Deploy it from the application deployment panel.</p>
     <p className="text-sm">Arbitrary Compose import is incomplete.</p>
  {created ? <>
         <p role="status">Installed {created.resource.name}. Open its application, review deployment settings, and deploy.</p>
+        {created.credentials.length > 0 ? <>
         <p>Login and password are retained managed secrets. Linkding creates the initial account only when its username is absent. Changing startup credentials does not rotate an existing account password.</p>
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
-            </p>)}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
+            </p>)}</> : <p>No login credentials were generated. After deployment, open the application to complete its initial account setup.</p>}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
         <label className="block" htmlFor={`${id}-category`}>Catalog category</label>
         <select id={`${id}-category`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" value={category} disabled={unavailable || !!attempt} onChange={e => { setCategory(e.target.value); setTemplate(""); }}>
             <option value="">All categories</option>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -149,7 +151,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         {search ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setSearch(""); setTemplate(""); }}>Clear search</Button> : null}
         {category ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setCategory(""); setSearch(""); setTemplate(""); }}>Clear filters</Button> : null}
         <label className="block" htmlFor={`${id}-template`}>Catalog application</label>
-        <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => setTemplate(e.target.value)}>
+        <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => { setTemplate(e.target.value); if (!nameEdited) setName(matches.find(t => t.id === e.target.value)?.name ?? ""); }}>
         <option value="">Select an application</option>{matches.map(t => <option key={t.id} value={t.id}>{t.name} · {t.immutable_version}</option>)}</select>
         {selected ? <section aria-label="Catalog installation preview" className="min-w-0 space-y-2 rounded-lg border p-3 text-sm">
             <h5 className="font-medium">{selected.name} installation preview</h5>
@@ -164,11 +166,13 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Readiness check</dt><dd>{selected.definition.readiness.path}, timeout {selected.definition.readiness.timeout_seconds} seconds</dd>
                 <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
             </dl>
-            <p>Credentials are generated once during installation and stored as managed secrets. Configure a domain and HTTPS route after deployment.</p>
+            <p>{selected.definition.credential_names.length > 0
+                ? "Credentials are generated once during installation and stored as managed secrets."
+                : "No login credentials are generated. After deployment, open the application to complete its initial account setup."} Configure a domain and HTTPS route after deployment.</p>
             <p>An upstream architecture restriction does not verify compatibility with the selected destination. CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
         </section> : null}
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>
-        <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => setName(e.target.value)}/>
+        <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => { setName(e.target.value); setNameEdited(true); }}/>
         <label className="block" htmlFor={`${id}-destination`}>Catalog destination</label>
         <select id={`${id}-destination`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" required value={destination} disabled={unavailable || !!attempt} onChange={e => setDestination(e.target.value)}>
         <option value="">Select a destination</option>{destinations.data?.items.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
