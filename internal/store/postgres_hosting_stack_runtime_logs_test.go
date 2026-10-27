@@ -43,6 +43,9 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
+		t.Fatal(err)
+	}
 	var images []domain.HostingStackImage
 	for i, name := range []string{"app", "init"} {
 		repo := "docker.io/library/nginx"
@@ -158,6 +161,9 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextAuthority := domain.HostingAuthority{OperationID: next.ID, RunID: nextClaim.Run.ID, LeaseID: nextClaim.Lease.ID, Attempt: nextClaim.Lease.Attempt, Fence: nextClaim.Lease.Fence}
+	if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, nextAuthority); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: nextAuthority, ReceiptID: "stack_log_next_prepared", Release: release, StackImages: images}); err != nil {
 		t.Fatal(err)
 	}
