@@ -265,7 +265,7 @@ func (e *imageEngine) inspectContainer(ctx context.Context, id string) (imageCon
 }
 func ownedImageContainer(container imageContainer, binding, operation, release, plan string) bool {
 	labels := container.Config.Labels
-	return imageHostPolicyMatches(container.HostConfig) && dockerObjectID.MatchString(container.ID) && labels[imageBindingLabel] == binding && labels[imageOperationLabel] == operation && labels[imageReleaseLabel] == release && labels[imagePlanLabel] == plan
+	return dockerObjectID.MatchString(container.ID) && labels[imageBindingLabel] == binding && labels[imageOperationLabel] == operation && labels[imageReleaseLabel] == release && labels[imagePlanLabel] == plan
 }
 func (e *imageEngine) mutate(ctx context.Context, daemon string, args ...string) ([]byte, error) {
 	if err := e.verifyDaemon(ctx, daemon); err != nil {

@@ -293,12 +293,20 @@ func (e *imageEngine) verifyOwnedVolumeUsers(ctx context.Context, req hostingOwn
 			return err
 		}
 		var user hostingVolumeUser
-		if json.Unmarshal(raw, &user) != nil || user.ID != id || user.Image != expected.Release.ImageID || !ownedImageContainer(user.imageContainer, req.Storage.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || len(user.Mounts) != 1 || len(user.HostConfig.Mounts) > 1 {
+		if json.Unmarshal(raw, &user) != nil || user.ID != id || user.Image != expected.Release.ImageID || !ownedImageContainer(user.imageContainer, req.Storage.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || len(user.Mounts) > 128 {
 			return errors.New("owned hosting volume user identity mismatch")
 		}
-		for _, mount := range user.HostConfig.Mounts {
-			if mount.Type != "volume" || mount.Source != req.Storage.VolumeName || mount.Target != req.Storage.MountPath || mount.ReadOnly {
-				return errors.New("owned hosting volume configured mount mismatch")
+		// Database plans own a private network and a separate credential mount.
+		// Their engine validates that full policy. Ordinary image users must
+		// match the image compiler's default host policy and single volume.
+		if expected.Snapshot.Database == (domain.HostingDatabaseExecutionRef{}) {
+			if !imageHostPolicyMatches(user.HostConfig) || len(user.Mounts) != 1 || len(user.HostConfig.Mounts) > 1 {
+				return errors.New("owned hosting image user host policy mismatch")
+			}
+			for _, mount := range user.HostConfig.Mounts {
+				if mount.Type != "volume" || mount.Source != req.Storage.VolumeName || mount.Target != req.Storage.MountPath || mount.ReadOnly {
+					return errors.New("owned hosting volume configured mount mismatch")
+				}
 			}
 		}
 		matches := 0

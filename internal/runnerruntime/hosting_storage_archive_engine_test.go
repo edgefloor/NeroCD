@@ -121,6 +121,7 @@ func archiveFixture(t *testing.T) *archiveEngineFake {
 	f.addVolume(archiveSourceRequest(p))
 	h := p.SourceHealthy
 	c := imageContainer{ID: h.ContainerID, Image: h.Release.ImageID}
+	c.HostConfig.NetworkMode = "default"
 	c.Config.Labels = map[string]string{imageBindingLabel: h.Snapshot.BindingID, imageOperationLabel: h.OperationID, imageReleaseLabel: h.Release.Hash, imagePlanLabel: h.PlanHash}
 	c.State.Running = true
 	port := strconv.Itoa(h.Snapshot.ContainerPort) + "/tcp"

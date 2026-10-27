@@ -293,7 +293,7 @@ func TestHostingOwnedVolumeRejectsForeignPolicyAndMalformedEvidence(t *testing.T
 }
 
 func TestHostingOwnedVolumeChecksStoppedUsersAndExactMounts(t *testing.T) {
-	for _, mode := range []string{"allowed-stopped", "foreign-stopped", "forged-binding", "image", "id", "mount-name", "mount-path", "mount-driver", "bind", "read-only", "missing-mount", "duplicate-mount", "malformed-user", "oversized-user", "malformed-user-list", "too-many-users"} {
+	for _, mode := range []string{"allowed-stopped", "privileged", "capability", "host-network", "extra-bind", "foreign-stopped", "forged-binding", "image", "id", "mount-name", "mount-path", "mount-driver", "bind", "read-only", "missing-mount", "duplicate-mount", "malformed-user", "oversized-user", "malformed-user-list", "too-many-users"} {
 		t.Run(mode, func(t *testing.T) {
 			req := ownedVolumeRequest(t)
 			known := ownedVolumeKnownUser(req)
@@ -301,6 +301,14 @@ func TestHostingOwnedVolumeChecksStoppedUsersAndExactMounts(t *testing.T) {
 			user := ownedVolumeUserInspection(req, known)
 			mounts := user["Mounts"].([]map[string]any)
 			switch mode {
+			case "privileged":
+				user["HostConfig"].(map[string]any)["Privileged"] = true
+			case "capability":
+				user["HostConfig"].(map[string]any)["CapAdd"] = []string{"SYS_ADMIN"}
+			case "host-network":
+				user["HostConfig"].(map[string]any)["NetworkMode"] = "host"
+			case "extra-bind":
+				user["Mounts"] = append(mounts, map[string]any{"Type": "bind", "Destination": "/host", "RW": true})
 			case "forged-binding":
 				user["Config"].(map[string]any)["Labels"].(map[string]string)[imageBindingLabel] = "foreign"
 			case "image":
