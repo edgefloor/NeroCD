@@ -239,7 +239,7 @@ func TestRunnerWebEnrollmentCommandAdmission(t *testing.T) {
 				if len(observed) != 0 || !strings.Contains(err.Error(), "enrollment") {
 					t.Fatalf("missing file did not fail before enrollment: %v paths=%s", err, reached)
 				}
-			} else if len(observed) != 0 || !strings.Contains(err.Error(), "requires --hosting-") {
+			} else if len(observed) != 0 || remove == "" || !strings.Contains(err.Error(), remove) {
 				t.Fatalf("missing flag did not fail before enrollment: %v paths=%s", err, reached)
 			}
 		})
