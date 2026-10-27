@@ -236,3 +236,137 @@ test("identical replay keeps its original generation after current metadata adva
     JSON.parse(fetch.mock.calls[0][1].body).expected_resource_generation,
   ).toBe(1);
 });
+
+const composeSchedule = {
+  ...schedule,
+  version: "managed-compose.local-volume-archive.schedule.v1",
+  volume: "uploads",
+  acknowledge_interruption: true,
+};
+test("Compose schedule and occurrence retain selected volume and recurring interruption consent", () => {
+  expect(parseStorageBackupSchedule(composeSchedule, scope, db)).toEqual(
+    composeSchedule,
+  );
+  expect(
+    parseStorageBackupOccurrence(
+      { ...occurrence, volume: "uploads" },
+      scope,
+      db,
+      "schedule",
+    ).volume,
+  ).toBe("uploads");
+});
+for (const [name, change] of Object.entries({
+  missingVolume: { volume: undefined },
+  invalidVolume: { volume: "../uploads" },
+  missingConsent: { acknowledge_interruption: undefined },
+  falseConsent: { acknowledge_interruption: false },
+  remote: { remote_target: { target_id: "remote", revision: 1 } },
+  imageVolume: { version: "hosting.storage-backup.schedule.v1" },
+}))
+  test(`Compose schedule rejects ${name}`, () => {
+    expect(() =>
+      parseStorageBackupSchedule({ ...composeSchedule, ...change }, scope, db),
+    ).toThrow();
+  });
+const composeInput = {
+  request_id: "a".repeat(32),
+  expected_resource_generation: 2,
+  expected_version: 0,
+  frequency: "daily",
+  timezone: "UTC",
+  enabled: false,
+  volume: "uploads",
+  expected_deployed_operation_id: "deploy",
+  acknowledge_interruption: true,
+};
+test("initially disabled Compose create requires source proof and receipt volume matches", async () => {
+  const fetch = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ ...composeSchedule, enabled: false })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  await expect(
+    saveStorageBackupSchedule(
+      scope,
+      db,
+      "",
+      composeInput,
+      new AbortController().signal,
+    ),
+  ).resolves.toMatchObject({ volume: "uploads", enabled: false });
+  expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual(
+    composeInput,
+  );
+});
+for (const [name, change] of Object.entries({
+  missingDeployment: { expected_deployed_operation_id: undefined },
+  missingConsent: { acknowledge_interruption: undefined },
+  falseConsent: { acknowledge_interruption: false },
+  invalidVolume: { volume: "../bad" },
+  remote: { remote_target: { target_id: "remote", revision: 1 } },
+  imageDeployment: { volume: undefined },
+}))
+  test(`Compose input rejects ${name} before network`, async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      saveStorageBackupSchedule(
+        scope,
+        db,
+        "",
+        { ...composeInput, ...change },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+test("existing disable needs no source proof but validates selected volume receipt", async () => {
+  const input = {
+    ...composeInput,
+    expected_version: 1,
+    expected_deployed_operation_id: undefined,
+    acknowledge_interruption: undefined,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ...composeSchedule, revision: 2, enabled: false }),
+        ),
+    ),
+  );
+  await expect(
+    saveStorageBackupSchedule(
+      scope,
+      db,
+      "schedule",
+      input,
+      new AbortController().signal,
+    ),
+  ).resolves.toMatchObject({ enabled: false, volume: "uploads" });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ...composeSchedule,
+            revision: 2,
+            enabled: false,
+            volume: "other",
+          }),
+        ),
+    ),
+  );
+  await expect(
+    saveStorageBackupSchedule(
+      scope,
+      db,
+      "schedule",
+      input,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+});

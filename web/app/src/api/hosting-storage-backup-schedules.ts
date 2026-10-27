@@ -8,16 +8,27 @@ import { request } from "./client";
 import type { components } from "./generated";
 import { boundedDatabaseRequest } from "./hosting-databases";
 
-export type StorageBackupSchedule =
-  components["schemas"]["HostingStorageBackupSchedule"] & {
-    remote_target?: RemoteBackupTarget;
-  };
+export type StorageBackupSchedule = Omit<
+  components["schemas"]["HostingStorageBackupSchedule"],
+  "version"
+> & {
+  version:
+    | "hosting.storage-backup.schedule.v1"
+    | "managed-compose.local-volume-archive.schedule.v1";
+  volume?: string;
+  acknowledge_interruption?: true;
+  remote_target?: RemoteBackupTarget;
+};
 export type StorageBackupScheduleInput =
   components["schemas"]["HostingStorageBackupScheduleInput"] & {
+    volume?: string;
+    expected_deployed_operation_id?: string;
+    acknowledge_interruption?: boolean;
     remote_target?: RemoteBackupTarget;
   };
 export type StorageBackupOccurrence =
-  components["schemas"]["HostingStorageBackupOccurrence"];
+  components["schemas"]["HostingStorageBackupOccurrence"] & { volume?: string };
+type ScheduleResource = Pick<Resource, "id" | "generation">;
 const identifier = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const text = (v: unknown): v is string =>
@@ -48,6 +59,8 @@ const scheduleAllowed = new Set([
   ...scheduleRequired,
   "last_scheduled_at",
   "remote_target",
+  "volume",
+  "acknowledge_interruption",
 ]);
 const occurrenceRequired = [
   "id",
@@ -67,6 +80,7 @@ const occurrenceAllowed = new Set([
   ...occurrenceRequired,
   "operation_id",
   "backup_id",
+  "volume",
 ]);
 const occurrenceStates = new Set([
   "queued",
@@ -147,12 +161,15 @@ export function validStorageBackupScheduleFields(
 export function parseStorageBackupSchedule(
   raw: unknown,
   scope: ArchiveScope,
-  resource: Resource,
+  resource: ScheduleResource,
 ): StorageBackupSchedule {
   const v = document(raw, scheduleRequired, scheduleAllowed);
   if (
     !identifier(v.id) ||
-    v.version !== "hosting.storage-backup.schedule.v1" ||
+    ![
+      "hosting.storage-backup.schedule.v1",
+      "managed-compose.local-volume-archive.schedule.v1",
+    ].includes(String(v.version)) ||
     v.project_id !== scope.project ||
     v.resource_id !== resource.id ||
     !positive(v.revision) ||
@@ -164,9 +181,22 @@ export function parseStorageBackupSchedule(
     (v.last_scheduled_at !== undefined && !date(v.last_scheduled_at))
   )
     return fail();
+  const compose =
+    v.version === "managed-compose.local-volume-archive.schedule.v1";
+  if (
+    compose
+      ? !identifier(v.volume) ||
+        v.acknowledge_interruption !== true ||
+        v.remote_target !== undefined
+      : v.volume !== undefined || v.acknowledge_interruption !== undefined
+  )
+    return fail();
   return {
     id: v.id,
-    version: "hosting.storage-backup.schedule.v1",
+    version: v.version as StorageBackupSchedule["version"],
+    ...(compose
+      ? { volume: v.volume as string, acknowledge_interruption: true as const }
+      : {}),
     project_id: scope.project,
     resource_id: resource.id,
     revision: v.revision,
@@ -186,7 +216,7 @@ export function parseStorageBackupSchedule(
 export function parseStorageBackupOccurrence(
   raw: unknown,
   scope: ArchiveScope,
-  resource: Resource,
+  resource: ScheduleResource,
   schedule: string,
 ): StorageBackupOccurrence {
   const v = document(raw, occurrenceRequired, occurrenceAllowed);
@@ -207,7 +237,8 @@ export function parseStorageBackupOccurrence(
     !occurrenceReasons.has(v.reason) ||
     typeof v.ownership_held !== "boolean" ||
     (v.backup_id !== undefined && !identifier(v.backup_id)) ||
-    (v.operation_id !== undefined && !identifier(v.operation_id))
+    (v.operation_id !== undefined && !identifier(v.operation_id)) ||
+    (v.volume !== undefined && !identifier(v.volume))
   )
     return fail();
   if (
@@ -227,6 +258,7 @@ export function parseStorageBackupOccurrence(
   return {
     id: v.id,
     schedule_id: schedule,
+    ...(v.volume !== undefined ? { volume: v.volume as string } : {}),
     project_id: scope.project,
     resource_id: resource.id,
     schedule_revision: v.schedule_revision,
@@ -243,7 +275,7 @@ export function parseStorageBackupOccurrence(
       : {}),
   };
 }
-const path = (resource: Resource) =>
+const path = (resource: ScheduleResource) =>
   `/api/v1/resources/${encodeURIComponent(resource.id)}/storage-backup-schedules`;
 export const storageBackupSchedulesKey = (
   scope: ArchiveScope,
@@ -254,11 +286,12 @@ export const storageBackupSchedulesKey = (
     scope.actor,
     scope.project,
     scope.destination,
+    scope.binding,
     resource,
   ] as const;
 export async function listStorageBackupSchedules(
   scope: ArchiveScope,
-  resource: Resource,
+  resource: ScheduleResource,
   signal?: AbortSignal,
 ) {
   const raw = await boundedDatabaseRequest(
@@ -272,7 +305,7 @@ export async function listStorageBackupSchedules(
 }
 export async function saveStorageBackupSchedule(
   scope: ArchiveScope,
-  resource: Resource,
+  resource: ScheduleResource,
   schedule: string,
   input: StorageBackupScheduleInput,
   signal: AbortSignal,
@@ -286,6 +319,22 @@ export async function saveStorageBackupSchedule(
     (schedule && !identifier(schedule)) ||
     typeof input.enabled !== "boolean" ||
     !validStorageBackupScheduleFields(input.frequency, input.timezone)
+  )
+    return fail();
+  const compose = input.volume !== undefined;
+  if (
+    compose
+      ? !identifier(input.volume) ||
+        input.remote_target !== undefined ||
+        ((input.enabled || !schedule) &&
+          (!identifier(input.expected_deployed_operation_id) ||
+            input.acknowledge_interruption !== true)) ||
+        (input.expected_deployed_operation_id !== undefined &&
+          !identifier(input.expected_deployed_operation_id)) ||
+        (input.acknowledge_interruption !== undefined &&
+          input.acknowledge_interruption !== true)
+      : input.expected_deployed_operation_id !== undefined ||
+        input.acknowledge_interruption !== undefined
   )
     return fail();
   if (input.remote_target !== undefined)
@@ -310,6 +359,9 @@ export async function saveStorageBackupSchedule(
     out.frequency !== input.frequency ||
     out.timezone !== input.timezone ||
     out.enabled !== input.enabled ||
+    out.volume !== input.volume ||
+    (out.version === "managed-compose.local-volume-archive.schedule.v1") !==
+      compose ||
     ((input.enabled || input.remote_target !== undefined) &&
       (out.remote_target?.target_id !== input.remote_target?.target_id ||
         out.remote_target?.revision !== input.remote_target?.revision))
@@ -319,7 +371,7 @@ export async function saveStorageBackupSchedule(
 }
 export async function listStorageBackupOccurrences(
   scope: ArchiveScope,
-  resource: Resource,
+  resource: ScheduleResource,
   schedule: string,
   signal?: AbortSignal,
 ) {

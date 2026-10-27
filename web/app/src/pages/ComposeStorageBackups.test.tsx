@@ -58,13 +58,15 @@ function setup(
       (await handler?.(u, o)) ??
       new Response(
         JSON.stringify(
-          u.endsWith("storage-backup-volumes")
-            ? evidence
-            : o.method === "POST"
-              ? backup
-              : u.includes("?limit=")
-                ? { items: [], limit: 20, offset: 0, count: 0, total: 0 }
-                : backup,
+          u.includes("storage-backup-schedules")
+            ? []
+            : u.endsWith("storage-backup-volumes")
+              ? evidence
+              : o.method === "POST"
+                ? backup
+                : u.includes("?limit=")
+                  ? { items: [], limit: 20, offset: 0, count: 0, total: 0 }
+                  : backup,
         ),
       ),
   );
@@ -104,7 +106,11 @@ test("fresh review requires interruption consent before sending", async () => {
   expect(fetch.mock.calls.filter(([, o]) => o.method === "POST")).toHaveLength(
     0,
   );
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I acknowledge interruption of this volume.s writers while/,
+    }),
+  );
   fireEvent.click(submit);
   await screen.findByText(/Volume backup backup/);
   expect(
@@ -126,7 +132,11 @@ test("lost response retries identical body", async () => {
       : undefined,
   );
   await review();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I acknowledge interruption of this volume.s writers while/,
+    }),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Confirm Compose volume backup" }),
   );
@@ -183,7 +193,11 @@ test("denial retires review", async () => {
     o.method === "POST" ? new Response("{}", { status: 403 }) : undefined,
   );
   await review();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I acknowledge interruption of this volume.s writers while/,
+    }),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Confirm Compose volume backup" }),
   );
@@ -208,7 +222,11 @@ test("unmount aborts a pending mutation and ignores its late receipt", async () 
     }
   });
   await review();
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I acknowledge interruption of this volume.s writers while/,
+    }),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Confirm Compose volume backup" }),
   );

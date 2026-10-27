@@ -15,6 +15,7 @@ import {
   type ArchiveScope,
   type RecoveryInput,
 } from "@/api/hosting-storage-archives";
+import { StorageBackupSchedules } from "@/components/hosting/StorageBackupSchedules";
 import { OperationDetails } from "@/components/hosting/StorageArchives";
 import { Button } from "@/components/ui/button";
 
@@ -311,6 +312,20 @@ export function ComposeStorageBackups({
           )}
         </>
       ) : null}
+      <StorageBackupSchedules
+        key={JSON.stringify([scope, generation, owner])}
+        scope={scope}
+        resource={{ id: scope.resource, generation }}
+        owner={owner}
+        blocked={blocked}
+        composeVolume={volume}
+        onRemoteTarget={() => {}}
+        onSelectBackup={(value) => {
+          setSelected(value);
+          setRecovered("");
+        }}
+        onDenied={lose}
+      />
       {review ? (
         <section
           aria-label="Reviewed Compose volume backup"
