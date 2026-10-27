@@ -129,6 +129,10 @@ func TestPostgresGitComposeRoutedReplacement(t *testing.T) {
 	if _, err = f.pg.RequestHostingBuildDeployment(ctx, "changed-replay", prior.ResourceID, "usr_bootstrap", changed, destinationEvent("changed-replay")); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("changed BuildID replay accepted", err)
 	}
+	// Settle dispatch before cancellation's initial/locked run-ID comparison.
+	if err = f.pg.PrepareDeployment(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = f.pg.CancelHostingOperation(ctx, op.ID, destinationEvent("cancel-routed")); err != nil {
 		t.Fatal(err)
 	}

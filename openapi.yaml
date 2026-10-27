@@ -13971,6 +13971,9 @@ components:
       additionalProperties: false
       required: [build_id, expected_source_generation, expected_generation, idempotency_key, container_port, readiness]
       properties:
+        registry_credential:
+          $ref: "#/components/schemas/HostingRegistryCredentialRef"
+          description: One selected project secret version for registry-pulled Git Compose services. Requires managed_stack; local build owners and aliases never receive this credential.
         storage_route_continuity:
           $ref: "#/components/schemas/HostingStorageRouteContinuityInput"
           description: Explicit current route and proxy selections for a Git Compose same-port replacement. Requires managed_stack and the exact current successful Compose build.

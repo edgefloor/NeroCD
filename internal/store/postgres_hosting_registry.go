@@ -185,6 +185,13 @@ func (s *PostgresStore) AuthorizeHostingRegistryCredential(ctx context.Context, 
 			return result, ErrConflict
 		}
 		for _, service := range op.StackSource.Services {
+			owner, ownerErr := domain.HostingStackBuildOwner(*op.StackSource, service.Name)
+			if ownerErr != nil {
+				return result, ErrConflict
+			}
+			if owner != "" {
+				continue
+			}
 			registry, e := domain.HostingImageRegistry(service.Image)
 			if e != nil {
 				return result, ErrConflict

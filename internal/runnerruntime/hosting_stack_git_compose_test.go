@@ -12,7 +12,7 @@ import (
 )
 
 func TestGitComposeStackUsesExactLocalArtifactsAndImageAliases(t *testing.T) {
-	for _, mode := range []string{"success", "local_missing", "daemon_changed", "missing_authority", "missing_owner", "registry_pull_failed"} {
+	for _, mode := range []string{"success", "local_missing", "daemon_changed", "missing_authority", "missing_owner", "registry_pull_failed", "credential_denied"} {
 		t.Run(mode, func(t *testing.T) {
 			e, client, a, at := composeBuildFixture(t)
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -66,7 +66,18 @@ func TestGitComposeStackUsesExactLocalArtifactsAndImageAliases(t *testing.T) {
 			if mode == "missing_authority" {
 				authority = nil
 			}
-			release, images, err := engine.prepareStack(ctx, composed.Definition, nil, authority)
+			var deliveries []string
+			var deliver stackRegistryDelivery
+			if mode == "credential_denied" {
+				deliver = func(_ context.Context, component string) (*domain.HostingRegistryCredentialDelivery, error) {
+					deliveries = append(deliveries, component)
+					return nil, errors.New("credential denied")
+				}
+			}
+			release, images, err := engine.prepareStack(ctx, composed.Definition, deliver, authority)
+			if mode == "credential_denied" && (len(deliveries) != 1 || deliveries[0] != "database" || pulls != 0) {
+				t.Fatal("credential requested for local owner/alias or denied delivery pulled", deliveries, pulls)
+			}
 			if mode != "success" {
 				if err == nil {
 					t.Fatal("unavailable artifact accepted")

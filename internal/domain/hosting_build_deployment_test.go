@@ -142,3 +142,26 @@ func TestBuildDeploymentContinuityRequiresManagedCompose(t *testing.T) {
 		t.Fatal("continuity accepted without explicit stable port")
 	}
 }
+
+func TestBuildDeploymentRegistryCredentialRequiresCompose(t *testing.T) {
+	in := HostingBuildDeploymentInput{BuildID: "build", ExpectedSourceGeneration: 1, ExpectedGeneration: 1, IdempotencyKey: "deploy", ContainerPort: 80, HostPort: 18080, Readiness: HostingReadiness{Path: "/", TimeoutSeconds: 5}}
+	raw, err := json.Marshal(in)
+	if err != nil || strings.Contains(string(raw), "registry_credential") {
+		t.Fatal("absent ref changed old input", err)
+	}
+	in.RegistryCredential = &HostingRegistryCredentialRef{SecretID: "secret_registry", Version: 1}
+	if ValidateHostingBuildDeployment(in) == nil {
+		t.Fatal("ordinary local build accepted registry credential")
+	}
+	in.ManagedStack = &HostingStackDeploymentInput{AcknowledgeInterruption: true}
+	if err = ValidateHostingBuildDeployment(in); err != nil {
+		t.Fatal(err)
+	}
+	if in.DeploymentInput().RegistryCredential != in.RegistryCredential {
+		t.Fatal("shared input lost reference")
+	}
+	in.RegistryCredential.Version = 0
+	if ValidateHostingBuildDeployment(in) == nil {
+		t.Fatal("incomplete secret version accepted")
+	}
+}

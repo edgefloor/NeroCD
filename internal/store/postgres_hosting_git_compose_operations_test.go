@@ -13,7 +13,7 @@ import (
 	"nerocd/internal/store"
 )
 
-func settledGitComposeOperationsFixture(t *testing.T) (buildStoreFixture, domain.HostingOperation, domain.HostingBuildDeploymentInput) {
+func settledGitComposeOperationsFixture(t *testing.T, customize ...func(*domain.HostingStackSource)) (buildStoreFixture, domain.HostingOperation, domain.HostingBuildDeploymentInput) {
 	t.Helper()
 	f := newBuildStoreFixture(t)
 	ctx := t.Context()
@@ -48,6 +48,9 @@ func settledGitComposeOperationsFixture(t *testing.T) (buildStoreFixture, domain
 		t.Fatal(err)
 	}
 	source := domain.HostingStackSource{Original: "services:\n  web:\n    build: ../app\n    image: local-app:v1\n    volumes: [uploads:/data]\n  worker:\n    image: local-app:v1\n  db:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: nerocd_fixture\n      POSTGRES_DB: nerocd_fixture\n    volumes: [db:/var/lib/postgresql/data]\nvolumes:\n  uploads: {}\n  db: {}\n", PublicComponent: "web", ContainerPort: 8080}
+	for _, change := range customize {
+		change(&source)
+	}
 	definition, err := domain.ParseHostingGitCompose(source, src.Settings)
 	if err != nil {
 		t.Fatal(err)

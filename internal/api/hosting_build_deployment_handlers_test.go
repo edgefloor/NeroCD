@@ -53,3 +53,23 @@ func TestBuildDeploymentContinuityDecoder(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildDeploymentRegistryCredentialDecoder(t *testing.T) {
+	valid := `{"build_id":"build","expected_generation":1,"expected_source_generation":1,"idempotency_key":"private","container_port":80,"host_port":18080,"readiness":{"path":"/","timeout_seconds":5},"managed_stack":{"acknowledge_interruption":true},"registry_credential":{"secret_id":"secret_registry","version":1}}`
+	for _, bad := range []bool{false, true} {
+		body := valid
+		if bad {
+			body = strings.Replace(body, `"version":1`, `"password":"untrusted"`, 1)
+		}
+		request := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		response := httptest.NewRecorder()
+		var input domain.HostingBuildDeploymentInput
+		ok := decodeBody(response, request, &input)
+		if ok == bad {
+			t.Fatalf("strict registry decoder bad=%t response=%s", bad, response.Body.String())
+		}
+		if ok && (input.RegistryCredential == nil || domain.ValidateHostingBuildDeployment(input) != nil) {
+			t.Fatal("valid registry reference lost")
+		}
+	}
+}

@@ -133,10 +133,16 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 		}
 		snap.StackStoppedOperationID = in.ManagedStack.ExpectedStoppedOperationID
 	} else {
-		if in.ManagedStack != nil || in.StorageRouteContinuity != nil {
+		if in.ManagedStack != nil || in.StorageRouteContinuity != nil || in.RegistryCredential != nil {
 			return domain.HostingOperation{}, false, ErrConflict
 		}
 		snap.LocalBuild = domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}
+	}
+	if in.RegistryCredential != nil {
+		snap.RegistryCredential = *in.RegistryCredential
+		if err = validateHostingRegistrySecret(ctx, tx, projectID, snap); err != nil {
+			return domain.HostingOperation{}, false, err
+		}
 	}
 	snap.RuntimeConfiguration, err = lockHostingRuntimeConfiguration(ctx, tx, projectID, resourceID, in.ExpectedRuntimeConfigurationGeneration)
 	if err != nil {
