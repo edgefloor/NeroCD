@@ -14,6 +14,28 @@ func TestPostgresHostingStackStopAndStart(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, deployed, deployment, state := settledStackFixture(t)
 			ctx, pg, runner := t.Context(), f.pg, f.server.RunnerID
+			if mode == "confirmed" {
+				f.exec(t, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, runner, domain.RunTypeProxyApply)
+				if _, err := pg.ConfigureHostingProxy(ctx, "proxy_lifecycle", f.server.ID, "usr_bootstrap", domain.HostingProxyInput{ControlProjectID: f.resource.ProjectID, Configuration: domain.HostingProxyConfiguration{Email: "operator@nerocd.invalid", CA: "letsencrypt-staging", ManagementPort: 19080}, IdempotencyKey: "lifecycle-proxy"}, destinationEvent("lifecycle_proxy")); err != nil {
+					t.Fatal(err)
+				}
+				var first string
+				if err := f.db.QueryRow(ctx, `SELECT id FROM hosting_proxy_operations WHERE proxy_id='proxy_lifecycle' AND generation=1`).Scan(&first); err != nil {
+					t.Fatal(err)
+				}
+				settleProxyGeneration(t, pg, first, runner, deployed.Release.DaemonID)
+				if _, err := pg.GrantHostingHostname(ctx, "proxy_lifecycle", "grant_lifecycle", "usr_bootstrap", domain.HostingHostnameGrantInput{ProjectID: f.resource.ProjectID, Hostname: "lifecycle.nerocd.invalid"}, destinationEvent("lifecycle_grant")); err != nil {
+					t.Fatal(err)
+				}
+				route, err := pg.RequestHostingRoute(ctx, f.resource.ID, "", "pop_lifecycle_route", "usr_bootstrap", domain.HostingRouteInput{IdempotencyKey: "lifecycle-route", Hostname: "lifecycle.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: deployed.ID}, destinationEvent("lifecycle_route"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				authority, operation, preparation := admitSwitchOperation(t, switchControl{pg: pg, server: f.server, a: deployed}, route.OperationID)
+				if _, err = pg.RunnerProxyComplete(ctx, runner, domain.HostingProxyCompleteRequest{HostingAuthority: authority, ReceiptID: "lifecycle_route_loaded", Result: trustedProxyResult(operation, preparation, "applied")}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			input := domain.HostingStackStopInput{IdempotencyKey: "stop-current-stack", ExpectedDeployedOperationID: deployed.ID, ExpectedGeneration: f.resource.Generation}
 			if _, err := pg.RequestHostingStackStop(ctx, "hop_unauthorized_stop", f.resource.ID, "usr_unknown", input, destinationEvent("unauthorized_stop")); err == nil {
 				t.Fatal("unauthorized Stop admitted")
@@ -133,6 +155,12 @@ func TestPostgresHostingStackStopAndStart(t *testing.T) {
 			if _, err = pg.RequestHostingDeployment(ctx, "hop_unproven_start", f.resource.ID, "usr_bootstrap", deployment, destinationEvent("unproven_start")); !errors.Is(err, store.ErrConflict) {
 				t.Fatal("start omitted stopped proof", err)
 			}
+			options, err := pg.HostingStorageDeploymentOptions(ctx, f.resource.ID, "usr_bootstrap")
+			if err != nil || !options.Available || options.Reason != "available" || options.StoppedOperationID == nil || *options.StoppedOperationID != stop.ID {
+				t.Fatal("stopped stack Start review unavailable", options.Reason, err)
+			}
+			deployment.StorageRouteContinuity = options.StorageRouteContinuity
+			deployment.HostPort = *options.HostPort
 			deployment.IdempotencyKey = "start-stopped-stack"
 			deployment.ManagedStack.ExpectedStoppedOperationID = stop.ID
 			start, err := pg.RequestHostingDeployment(ctx, "hop_stack_start", f.resource.ID, "usr_bootstrap", deployment, destinationEvent("stack_start"))
@@ -168,6 +196,12 @@ func TestPostgresHostingStackStopAndStart(t *testing.T) {
 			}
 			if _, err = pg.HostingComplete(ctx, runner, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "stack_started", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: deployed.Release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}}); err != nil {
 				t.Fatal(err)
+			}
+			if mode == "confirmed" {
+				continuity, err := pg.HostingStorageRouteContinuityStatus(ctx, f.resource.ID, "usr_bootstrap", start.ID)
+				if err != nil || continuity.State != "proxy_pending" || continuity.SuccessorProxyOperationID == "" {
+					t.Fatal("Start did not queue same-route successor", continuity, err)
+				}
 			}
 			lifecycle, err = pg.HostingStackLifecycle(ctx, "usr_bootstrap", f.resource.ID)
 			if err != nil || lifecycle.State != "running" || lifecycle.DeployedOperationID != start.ID || lifecycle.StopOperationID != "" {

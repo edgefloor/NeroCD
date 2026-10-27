@@ -376,11 +376,9 @@ func stackStartReference(ctx context.Context, tx pgx.Tx, binding string, expecte
 
 // Only route continuity may account for an intentionally stopped predecessor.
 // Ordinary route qualification continues to reject nonrunning release records.
+// This also serves repeatable-read options; mutation callers lock route resources.
 func stoppedStackRouteTarget(ctx context.Context, tx pgx.Tx, p domain.HostingProxy, row sqlcgen.HostingProxyRoute) (domain.HostingProxyRouteTarget, error) {
 	q := sqlcgen.New(tx)
-	if _, err := q.ProxyLockResource(ctx, row.ResourceID); err != nil {
-		return domain.HostingProxyRouteTarget{}, hostingError(err)
-	}
 	placement, err := q.ProxyResourceTarget(ctx, row.ResourceID)
 	if err != nil {
 		return domain.HostingProxyRouteTarget{}, hostingError(err)
