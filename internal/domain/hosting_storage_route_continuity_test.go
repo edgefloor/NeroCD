@@ -91,6 +91,13 @@ func TestHostingStorageRouteContinuitySnapshotRoundTripAndPlanHash(t *testing.T)
 	if err != nil || bound.Hash == plain.Hash {
 		t.Fatalf("reservation not hashed into apply plan %+v %v", bound, err)
 	}
+	s.RegistryCredential = HostingRegistryCredentialRef{SecretID: "registry_secret", Version: 1}
+	s.ImageReference = "nginx:1.27"
+	private, err := CompileHostingOwnedStoragePlan(s, r, nil, nil, descriptor)
+	if err != nil || private.Hash == bound.Hash || private.Snapshot.RegistryCredential != s.RegistryCredential {
+		t.Fatal("routed storage credential was not bound into the plan", err)
+	}
+	bound = private
 	raw, err := json.Marshal(bound)
 	if err != nil {
 		t.Fatal(err)

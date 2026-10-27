@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nerocd/internal/api"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/runnerclient"
 	"nerocd/internal/secretcrypto"
@@ -173,4 +174,109 @@ func TestPostgresRegistryCredentialPullAuthorityAndHTTP(t *testing.T) {
 		t.Fatal("historical receipt lost", err)
 	}
 
+}
+
+func TestPostgresRegistryRoutedStoragePreparationAndDenial(t *testing.T) {
+	for _, deny := range []bool{false, true} {
+		name := "prepare"
+		if deny {
+			name = "deny_before_pull"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newStorageContinuityFixture(t)
+			item, record, audit := managedFixture(t, "route_registry_secret", 1)
+			var err error
+			record.Envelope, err = managedRing(t).Seal(secretcrypto.Binding{ProjectID: item.ProjectID, SecretID: item.ID, Version: 1}, []byte(`{"registry":"docker.io","username":"private-user","password":"private-token"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.pg.CreateManagedSecret(t.Context(), item, record, audit); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingRegistryPullCapability); err != nil {
+				t.Fatal(err)
+			}
+			in := f.input("private-routed")
+			in.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: item.ID, Version: 1}
+			op, err := f.pg.RequestHostingDeployment(t.Context(), "private_route", f.resource.ID, "usr_bootstrap", in, destinationEvent("private_route"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if op.Snapshot.RegistryCredential != *in.RegistryCredential || op.Snapshot.StorageRouteContinuity.Hash == "" || op.MutationHold {
+				t.Fatal("combined request did not preserve pre-pull scope")
+			}
+			op = awaitHostingDispatch(t, f.pg, op.ID)
+			claim, err := f.pg.ClaimRun(t.Context(), f.runner, time.Now(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authority := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			if _, err = f.pg.HostingRunnerPlan(t.Context(), f.runner, authority); err != nil {
+				t.Fatal(err)
+			}
+			svc := runtimeCredentialApp(t, f.pg)
+			principal, err := svc.AuthenticateRunnerToken(t.Context(), "image-hosting-fixture-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := auth.WithPrincipal(t.Context(), principal)
+			req := domain.HostingRegistryCredentialRequest{Authority: authority, DeliveryID: strings.Repeat("d", 32)}
+			if deny {
+				if _, err = f.pg.RevokeManagedSecret(t.Context(), item.ID, 1, destinationEvent("revoke_routed_registry")); err != nil {
+					t.Fatal(err)
+				}
+				if got, err := svc.RunnerHostingRegistryCredential(ctx, req, "image-hosting-fixture-token"); err == nil || got != nil {
+					if got != nil {
+						got.Close()
+					}
+					t.Fatal("revoked selected credential delivered")
+				}
+				finished, err := f.pg.HostingComplete(t.Context(), f.runner, domain.HostingCompleteRequest{HostingAuthority: authority, ReceiptID: "failed_private_pull", Result: domain.HostingResult{Outcome: "failed"}})
+				if err != nil || finished.MutationHold || finished.State != "failed" {
+					t.Fatal("pre-pull denial did not settle safely", err)
+				}
+				continuityState(t, f, op.ID, "released")
+				route, err := f.pg.GetHostingRoute(t.Context(), f.route.ID)
+				if err != nil || route.Route.SelectedReleaseOperationID != f.op.ID || !route.Route.HTTPReady || !route.Route.HTTPSReady {
+					t.Fatal("denied pre-pull changed the loaded route", err)
+				}
+				var loaded int64
+				if err = f.db.QueryRow(t.Context(), `SELECT loaded_generation FROM hosting_proxies WHERE id='proxy_continuity'`).Scan(&loaded); err != nil || loaded != f.loaded.Generation {
+					t.Fatal("pre-pull denial changed proxy generation", err)
+				}
+				return
+			}
+			got, err := svc.RunnerHostingRegistryCredential(ctx, req, "image-hosting-fixture-token")
+			if err != nil {
+				t.Fatal("routed pre-pull delivery", err)
+			}
+			until := got.UseUntil
+			got.Close()
+			got, err = svc.RunnerHostingRegistryCredential(ctx, req, "image-hosting-fixture-token")
+			if err != nil || !got.UseUntil.Equal(until) {
+				t.Fatal("routed delivery replay changed", err)
+			}
+			got.Close()
+			if _, err = f.pg.HostingPrepared(t.Context(), f.runner, domain.HostingPreparedRequest{HostingAuthority: authority, ReceiptID: "private_route_prepared", Release: *f.op.Release}); err != nil {
+				t.Fatal("routed image preparation", err)
+			}
+			op, err = f.pg.GetHostingOperation(t.Context(), op.ID)
+			if err != nil || op.Plan == nil || op.Plan.Snapshot.RegistryCredential != *in.RegistryCredential || op.Plan.Snapshot.StorageRouteContinuity.Hash == "" {
+				t.Fatal("prepared plan dropped combined scope", err)
+			}
+			next := storageMaterializationFixture{f.pg, f.db, f.resource, f.runner, f.storage, op, authority}
+			admitContinuityWriter(t, next)
+			finished := next.complete(t, "succeeded", false)
+			if finished.State != "succeeded" || finished.MutationHold {
+				t.Fatal("routed private replacement did not settle")
+			}
+			proxyID := continuityState(t, f, op.ID, "proxy_pending")
+			settleProxyGeneration(t, f.pg, proxyID, f.runner, f.op.Release.DaemonID)
+			continuityState(t, f, op.ID, "loaded")
+			replay, err := f.pg.RequestHostingDeployment(t.Context(), "ignored_private_route", f.resource.ID, "usr_bootstrap", in, destinationEvent("private_route_replay"))
+			if err != nil || replay.ID != op.ID {
+				t.Fatal("routed request replay changed", err)
+			}
+		})
+	}
 }

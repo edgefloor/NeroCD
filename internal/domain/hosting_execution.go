@@ -273,7 +273,7 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
-	if in.RegistryCredential != nil && (in.RegistryCredential.Validate() != nil || in.ManagedStack != nil || in.StorageRouteContinuity != nil || in.ApplicationDatabaseStorage != nil || in.ApplicationDatabaseRouteContinuity != nil) {
+	if in.RegistryCredential != nil && (in.RegistryCredential.Validate() != nil || in.ManagedStack != nil || in.ApplicationDatabaseStorage != nil || in.ApplicationDatabaseRouteContinuity != nil) {
 		return ErrInvalidRegistryCredential
 	}
 	if in.ManagedStack != nil && in.ManagedStack.ExpectedStoppedOperationID != "" && !hostingProxyID.MatchString(in.ManagedStack.ExpectedStoppedOperationID) {

@@ -38,7 +38,7 @@ func ValidateHostingRegistrySnapshot(s HostingSnapshot) error {
 	if s.RegistryCredential == (HostingRegistryCredentialRef{}) {
 		return nil
 	}
-	if s.RegistryCredential.Validate() != nil || s.Stack != (HostingStackRef{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.StorageRouteContinuity != (HostingStorageRouteContinuityRef{}) {
+	if s.RegistryCredential.Validate() != nil || s.Stack != (HostingStackRef{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
 		return ErrInvalidRegistryCredential
 	}
 	_, err := HostingImageRegistry(s.ImageReference)
