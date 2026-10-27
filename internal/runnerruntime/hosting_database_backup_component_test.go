@@ -174,6 +174,9 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 		return nil, errors.New("unexpected component fixture command")
 	})
 	e.stream = func(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
+		if mode == "unsupported local authentication" && strings.Contains(args[len(args)-1], "psql ") {
+			return errors.New("local authentication rejected")
+		}
 		if slices.Contains(args, "--list") {
 			if mode == "corrupt archive" {
 				return errors.New("invalid archive")
@@ -201,11 +204,11 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 }
 
 func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
-	for _, mode := range []string{"success", "wrong image", "wrong major", "privileged", "foreign network", "foreign volume", "foreign SQL writer", "restore failure", "unresolved import", "late launch", "cancelled import", "corrupt archive", "tool timeout", "revoked authority", "already stopped writer"} {
+	for _, mode := range []string{"success", "wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume", "foreign SQL writer", "restore failure", "unresolved import", "late launch", "cancelled import", "corrupt archive", "tool timeout", "revoked authority", "already stopped writer"} {
 		t.Run(mode, func(t *testing.T) {
 			e, p, running, mutations := componentBackupEngineFixture(t, mode)
 			blob, err := e.run(t.Context(), p, func(context.Context) error { return nil })
-			reject := slices.Contains([]string{"wrong image", "wrong major", "privileged", "foreign network", "foreign volume"}, mode)
+			reject := slices.Contains([]string{"wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume"}, mode)
 			if reject {
 				if err == nil || *mutations != 0 {
 					t.Fatal("unsupported profile mutated", err, *mutations)

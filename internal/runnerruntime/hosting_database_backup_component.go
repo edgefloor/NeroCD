@@ -132,6 +132,13 @@ func (e *databaseBackupEngine) componentPreflight(ctx context.Context, p domain.
 	if err != nil {
 		return err
 	}
+	// Prove this guest's user/database can use the qualified local socket before
+	// recording intent or interrupting target writers. No names or values leave
+	// protected execution; custom local authentication is not adopted implicitly.
+	probe := componentPostgresEnvironment + `/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --quiet --tuples-only --command='SELECT 1'`
+	if e.stream(ctx, componentDatabaseExec(db.ContainerID, false, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "10", "/bin/sh", "-ceu", probe), nil, io.Discard) != nil {
+		return errDatabaseBackupHeld
+	}
 	if p.Operation.Mode == "backup" {
 		return nil
 	}
