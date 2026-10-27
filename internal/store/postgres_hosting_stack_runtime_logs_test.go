@@ -115,7 +115,20 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 	}
 	input.IdempotencyKey = "stack-log-replace"
 	input.HostPort = 0
-	if _, err = pg.RequestHostingDeployment(ctx, "hop_stack_log_next", resource.ID, "usr_bootstrap", input, destinationEvent("stack_log_replace")); err != nil {
+	next, err := pg.RequestHostingDeployment(ctx, "hop_stack_log_next", resource.ID, "usr_bootstrap", input, destinationEvent("stack_log_replace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next = awaitHostingDispatch(t, pg, next.ID)
+	nextClaim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextAuthority := domain.HostingAuthority{OperationID: next.ID, RunID: nextClaim.Run.ID, LeaseID: nextClaim.Lease.ID, Attempt: nextClaim.Lease.Attempt, Fence: nextClaim.Lease.Fence}
+	if _, err = pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: nextAuthority, ReceiptID: "stack_log_next_prepared", Release: release, StackImages: images}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, nextAuthority); err != nil {
 		t.Fatal(err)
 	}
 	page := f.page(t, session.ID)
