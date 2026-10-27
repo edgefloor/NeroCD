@@ -1,17 +1,63 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingruntimeprotocol"
 )
+
+func TestStackInspectionAcceptsComponentsWithoutHealthchecks(t *testing.T) {
+	for _, tc := range []struct {
+		name, health string
+		running      bool
+	}{
+		{name: "completed init"},
+		{name: "running without healthcheck", running: true},
+		{name: "healthy service", running: true, health: "healthy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := strings.Repeat("a", 64)
+			state := map[string]any{"Running": tc.running, "ExitCode": 0}
+			if tc.health != "" {
+				state["Health"] = map[string]any{"Status": tc.health, "Log": "private-health-output"}
+			}
+			data := map[string]any{"Id": id, "Image": "sha256:" + id, "Config": map[string]any{"Labels": map[string]string{stackComponentLabel: "component"}, "Env": []string{"PASSWORD=private-environment"}}, "State": state, "Mounts": []any{}, "NetworkSettings": map[string]any{"Networks": map[string]any{}}, "HostConfig": map[string]any{"PortBindings": map[string]any{}}}
+			e := testImageEngine(t)
+			e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+				// Docker renders inspection maps with missing-key errors. An absent
+				// Health field must not prevent observing a completed init container.
+				filter, err := template.New("docker-inspect").Option("missingkey=error").Funcs(template.FuncMap{"json": func(value any) (string, error) {
+					encoded, marshalErr := json.Marshal(value)
+					return string(encoded), marshalErr
+				}}).Parse(args[len(args)-1])
+				if err != nil {
+					return nil, err
+				}
+				var output bytes.Buffer
+				if err := filter.Execute(&output, data); err != nil {
+					return nil, err
+				}
+				if strings.Contains(output.String(), "private-") {
+					t.Fatal("inspection exposed environment or health output")
+				}
+				return output.Bytes(), nil
+			})
+			container, err := e.inspectStackContainer(t.Context(), id)
+			if err != nil || container.State.Running != tc.running || container.State.Health.Status != tc.health {
+				t.Fatalf("component inspection: %v", err)
+			}
+		})
+	}
+}
 
 func stackTestPlan(t *testing.T) domain.HostingApplyPlan {
 	t.Helper()

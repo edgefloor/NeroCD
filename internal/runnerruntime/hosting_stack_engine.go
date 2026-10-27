@@ -223,7 +223,7 @@ func (e *imageEngine) inspectStackContainer(ctx context.Context, id string) (sta
 	if !dockerObjectID.MatchString(id) {
 		return result, errors.New("invalid stack container identity")
 	}
-	format := `{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json .Config.Labels}},"State":{"Running":{{json .State.Running}},"ExitCode":{{json .State.ExitCode}},"Health":{"Status":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}}}},"Mounts":{{json .Mounts}},"Networks":{{json .NetworkSettings.Networks}},"Ports":{{json .HostConfig.PortBindings}}}`
+	format := `{"Id":{{json .Id}},"Image":{{json .Image}},"Labels":{{json .Config.Labels}},"State":{"Running":{{json .State.Running}},"ExitCode":{{json .State.ExitCode}},"Health":{"Status":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}}}},"Mounts":{{json .Mounts}},"Networks":{{json .NetworkSettings.Networks}},"Ports":{{json .HostConfig.PortBindings}}}`
 	raw, err := e.docker(ctx, "container", "inspect", id, "--format", format)
 	if err != nil || json.Unmarshal(raw, &result) != nil {
 		return result, errors.New("stack component inspection failed")
