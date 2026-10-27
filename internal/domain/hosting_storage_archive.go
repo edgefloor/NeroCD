@@ -551,7 +551,7 @@ func (in HostingStorageArchiveCompleteRequest) Validate() error {
 // unknown fields, duplicate keys and case aliases before typed validation.
 func DecodeHostingStorageArchiveJSON(raw []byte, out any) error {
 	trimmed := bytes.TrimSpace(raw)
-	if len(raw) > HostingStorageArchiveJSONLimit || !validRuntimeJSONUnicode(raw) || len(trimmed) == 0 || trimmed[0] != '{' || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {
+	if len(raw) > HostingStorageArchiveJSONLimit || !validRuntimeJSONUnicode(raw) || len(trimmed) == 0 || trimmed[0] != '{' || !databaseBackupUniqueJSON(json.NewDecoder(bytes.NewReader(raw)), false) {
 		return ErrInvalidStorageArchive
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))

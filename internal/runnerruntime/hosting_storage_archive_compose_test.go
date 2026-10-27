@@ -6,14 +6,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/runner"
+	"nerocd/internal/runnerclient"
 )
 
 func composeArchiveTestPlan(t *testing.T) domain.HostingStorageArchivePlan {
@@ -22,11 +28,15 @@ func composeArchiveTestPlan(t *testing.T) domain.HostingStorageArchivePlan {
 	definition, err := domain.ParseHostingStack(domain.HostingStackSource{Original: `services:
   app:
     image: nginx:alpine
+    environment:
+      VIKUNJA_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: [uploads:/uploads]
     depends_on:
       init: {condition: service_completed_successfully}
   db:
     image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: [database:/var/lib/postgresql/data]
   init:
     image: nginx:alpine
@@ -296,6 +306,132 @@ func TestComposeArchiveDurableCoordinatorAndFreshResumeRecovery(t *testing.T) {
 			}
 			if len(x.j.Snapshot().StorageArchive) != 0 {
 				t.Fatal("recovery did not retire exact durable chain")
+			}
+		})
+	}
+}
+
+func TestComposeArchiveWireAndJournalPreserveEnvironmentMapKeys(t *testing.T) {
+	p := composeArchiveTestPlan(t)
+	old := p.ComposeSource.Healthy
+	old.OperationID = "previous"
+	oldState := *old.Stack
+	oldState.Components = append([]domain.HostingStackComponent(nil), old.Stack.Components...)
+	for i := range oldState.Components {
+		oldState.Components[i].OperationID = old.OperationID
+		oldState.Components[i].ContainerID = strings.Repeat("e", 63) + strconv.Itoa(i)
+	}
+	old.Stack = &oldState
+	p.ComposeSource.Retained = append(p.ComposeSource.Retained, domain.HostingStorageArchiveStackProof{Healthy: old, Plan: p.ComposeSource.Plan})
+	archiveHash(&p)
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: p.OperationID, RunID: "backup_" + p.OperationID, LeaseID: "lease", Attempt: 1, Fence: "fence"}
+	op := domain.HostingOperation{ID: p.OperationID, ProjectID: p.ProjectID, ResourceID: p.SourceResourceID(), BindingID: p.SourceBindingID(), RunID: a.RunID, State: "dispatched", TaskMode: "backup", StorageArchive: &domain.HostingStorageArchive{Mode: "backup", BackupID: p.BackupID, Plan: p, Progress: []domain.HostingStorageArchiveProgressEvidence{}}}
+	raw, err := json.Marshal(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response atomic.Value
+	response.Store(raw)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(response.Load().([]byte))
+	}))
+	defer server.Close()
+	ctx := runnerclient.WithStorageArchiveTransport(t.Context(), runnerclient.StorageArchiveTransport{TrustedLoopbackHTTP: true})
+	client := runnerclient.New(server.URL, "nonsecret_fixture_token")
+	decoded, err := client.HostingStorageArchivePlan(ctx, a)
+	if err != nil {
+		t.Fatal("real serialized operation response rejected", err)
+	}
+	if decoded.StorageArchive.Plan.ComposeSource.Plan.Stack.Definition.Services[0].Environment["VIKUNJA_DATABASE_PASSWORD"] != "${POSTGRES_PASSWORD}" || decoded.StorageArchive.Plan.ComposeSource.Retained[0].Plan.Stack.Definition.Services[1].Environment["POSTGRES_PASSWORD"] != "${POSTGRES_PASSWORD}" {
+		t.Fatal("case-sensitive environment map changed")
+	}
+	// These are wire decoder checks, independent of the immutable plan hash.
+	for name, change := range map[string]func(string) string{
+		"duplicate map key": func(s string) string {
+			return strings.Replace(s, `"POSTGRES_PASSWORD":"${POSTGRES_PASSWORD}"`, `"POSTGRES_PASSWORD":"first","POSTGRES_PASSWORD":"${POSTGRES_PASSWORD}"`, 1)
+		},
+		"typed field alias": func(s string) string { return strings.Replace(s, `"compose_source":`, `"Compose_source":`, 1) },
+		"unknown typed field": func(s string) string {
+			return strings.Replace(s, `"compose_source":`, `"unknown_typed_field":true,"compose_source":`, 1)
+		},
+		"duplicate typed field": func(s string) string {
+			return strings.Replace(s, `"mode":"backup"`, `"mode":"restore","mode":"backup"`, 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := change(string(raw))
+			if bad == string(raw) {
+				t.Fatal("negative mutation missed fixture")
+			}
+			response.Store([]byte(bad))
+			if _, err := client.HostingStorageArchivePlan(ctx, a); err == nil {
+				t.Fatal("ambiguous response accepted")
+			}
+		})
+	}
+	response.Store(raw)
+	dir := filepath.Join(t.TempDir(), "journal")
+	journal, err := runner.OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if journal != nil {
+			if err := journal.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	now := time.Now().UTC()
+	entry := runner.JournalStorageArchive{ID: "compose_plan", Phase: "plan", Plan: p, CreatedAt: now, Attempt: runner.AttemptIdentity{RunID: a.RunID, LeaseID: a.LeaseID, Attempt: a.Attempt, Fence: a.Fence, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}}
+	if _, err = journal.AppendStorageArchive(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journal = nil
+	saved, err := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err = runner.OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal("Compose archive journal restart rejected", err)
+	}
+	entries := journal.Snapshot().StorageArchive
+	if len(entries) != 1 || entries[0].Plan.Hash != p.Hash || entries[0].Plan.ComposeSource.Plan.Stack.Definition.Services[1].Environment["POSTGRES_PASSWORD"] != "${POSTGRES_PASSWORD}" || entries[0].Plan.ComposeSource.Retained[0].Plan.Stack.Definition.Services[0].Environment["VIKUNJA_DATABASE_PASSWORD"] != "${POSTGRES_PASSWORD}" {
+		t.Fatal("restart changed environment proof")
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journal = nil
+	for name, change := range map[string]func(string) string{
+		"duplicate map key": func(s string) string {
+			return strings.Replace(s, `"POSTGRES_PASSWORD":"${POSTGRES_PASSWORD}"`, `"POSTGRES_PASSWORD":"first","POSTGRES_PASSWORD":"${POSTGRES_PASSWORD}"`, 1)
+		},
+		"typed field alias": func(s string) string { return strings.Replace(s, `"compose_source":`, `"Compose_source":`, 1) },
+		"unknown typed field": func(s string) string {
+			return strings.Replace(s, `"compose_source":`, `"unknown_typed_field":true,"compose_source":`, 1)
+		},
+		"duplicate root field": func(s string) string { return strings.Replace(s, `"version":12`, `"version":12,"version":12`, 1) },
+	} {
+		t.Run("journal "+name, func(t *testing.T) {
+			bad := change(string(saved))
+			if bad == string(saved) {
+				t.Fatal("negative journal mutation missed fixture")
+			}
+			if err := os.WriteFile(filepath.Join(dir, "journal.json"), []byte(bad), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if opened, err := runner.OpenAttemptJournal(dir); err == nil {
+				_ = opened.Close()
+				t.Fatal("ambiguous saved journal accepted")
 			}
 		})
 	}

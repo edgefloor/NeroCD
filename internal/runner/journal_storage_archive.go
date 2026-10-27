@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"nerocd/internal/domain"
@@ -15,7 +17,39 @@ var storageArchiveJournalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,12
 var storageArchiveHelperID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func decodeStorageArchiveJournal(raw []byte, state *journalState) error {
-	return decodeDatabaseJournal(raw, state)
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid storage archive journal document")
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err = d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || key != strings.ToLower(key) || seen[key] {
+			return errors.New("invalid storage archive journal document")
+		}
+		seen[key] = true
+		valid := false
+		if key == "storage_archive" {
+			valid = storageArchiveJournalUnique(d, false)
+		} else {
+			valid = databaseJournalUnique(d)
+		}
+		if !valid {
+			return errors.New("invalid storage archive journal document")
+		}
+	}
+	token, err = d.Token()
+	if err != nil || token != json.Delim('}') || d.Decode(new(any)) != io.EOF {
+		return errors.New("invalid storage archive journal document")
+	}
+	d = json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(state) != nil {
+		return errors.New("invalid storage archive journal document")
+	}
+	return nil
 }
 
 // JournalStorageArchive retains only typed, nonsecret archive evidence. In
@@ -326,4 +360,51 @@ func cloneStorageArchiveEntries(entries []JournalStorageArchive) []JournalStorag
 		clones[i] = cloneStorageArchiveEntry(entry)
 	}
 	return clones
+}
+
+// Saved Compose environment values are case-sensitive string maps. This codec
+// is used only within storage_archive; other journal families retain their codec.
+func storageArchiveJournalUnique(d *json.Decoder, environment bool) bool {
+	token, err := d.Token()
+	if err != nil {
+		return false
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return true
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for d.More() {
+			token, err = d.Token()
+			key, ok := token.(string)
+			if err != nil || !ok || !environment && key != strings.ToLower(key) || seen[key] {
+				return false
+			}
+			seen[key] = true
+			if !storageArchiveJournalUnique(d, !environment && key == "environment") {
+				return false
+			}
+		}
+	case '[':
+		for d.More() {
+			if !storageArchiveJournalUnique(d, false) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	token, err = d.Token()
+	return err == nil && (delim == '{' && token == json.Delim('}') || delim == '[' && token == json.Delim(']'))
+}
+
+func journalStateUsesComposeStorageArchive(state journalState) bool {
+	for _, entry := range state.StorageArchive {
+		if entry.Plan.ComposeSource != nil {
+			return true
+		}
+	}
+	return false
 }

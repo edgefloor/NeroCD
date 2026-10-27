@@ -136,21 +136,28 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			_ = store.Close()
 			return nil, errors.New("managed stack journal requires version 23")
 		}
-		switch j.state.Version {
-		case 12, 13:
+		if journalStateUsesComposeStorageArchive(j.state) {
 			if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {
 				_ = store.Close()
 				return nil, err
 			}
-		case 18, 19, 20, 22:
-			if err := decodeDatabaseJournal(contents, &j.state); err != nil {
-				_ = store.Close()
-				return nil, err
-			}
-		case 10, 11, 14, 15, 16, 17:
-			if err := decodeStorageJournal(contents, &j.state); err != nil {
-				_ = store.Close()
-				return nil, err
+		} else {
+			switch j.state.Version {
+			case 12, 13:
+				if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {
+					_ = store.Close()
+					return nil, err
+				}
+			case 18, 19, 20, 22:
+				if err := decodeDatabaseJournal(contents, &j.state); err != nil {
+					_ = store.Close()
+					return nil, err
+				}
+			case 10, 11, 14, 15, 16, 17:
+				if err := decodeStorageJournal(contents, &j.state); err != nil {
+					_ = store.Close()
+					return nil, err
+				}
 			}
 		}
 		if err := validateJournalState(j.state); err != nil {
