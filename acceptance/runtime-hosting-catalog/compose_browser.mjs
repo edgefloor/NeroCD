@@ -188,80 +188,60 @@ try {
   safe.served_assets_match_manifest = true;
   await signIn(page, "admin@example.local", "admin");
   const h = await hosting(page);
-  step = "save_original_compose";
-  let source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
+  step = "install_catalog_compose";
+  const source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
   if (createHash("sha256").update(source).digest("hex") !== "2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767") throw Error("shipped Compose example changed");
-  const publicImage = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576";
-  if (!/^127\.0\.0\.1:25001\/[a-z0-9-]+:a@sha256:[a-f0-9]{64}$/.test(initial.image_reference ?? "") || source.split(publicImage).length !== 2) throw Error("protected application image metadata invalid");
-  source = source.replace(publicImage, initial.image_reference);
-  safe.protected_compose_image = true;
-  // Explicit test command emits finite init output; shipped example stays intact.
-  source = source.replace("      - |\n", "      - |\n        printf 'nerocd-init-log-fixture\\n'\n");
-  const create = h.getByRole("form", { name: "Create application", exact: true });
-  await create.getByLabel("Application source", { exact: true }).selectOption("compose");
-  await create.getByLabel("Application name", { exact: true }).fill(applicationName);
-  await create.getByLabel("Compose stack", { exact: true }).fill(source);
-  await create.getByLabel("Public component", { exact: true }).fill("vikunja");
-  await create.getByLabel("Public component container port", { exact: true }).fill("3456");
-  const createdWait = response(page, "/api/v1/resources");
-  await create.getByRole("button", { name: "Save application", exact: true }).click();
-  const resource = await checkedResponse(createdWait, 201);
-  if (!resource.id || resource.source.kind !== "compose" || resource.source.compose.original !== source) throw Error("saved source mismatch");
+  const catalog = h.getByRole("region", { name: "Hosting catalog", exact: true });
+  await catalog.getByLabel("Catalog application", { exact: true }).selectOption("vikunja-with-postgresql");
+  await catalog.getByLabel("Installation name", { exact: true }).fill(applicationName);
+  await catalog.getByLabel("Catalog destination", { exact: true }).selectOption(initial.id);
+  await catalog.getByLabel("Public URL", { exact: true }).fill(appOrigin);
+  await expect(catalog.getByRole("heading", { name: "Vikunja with PostgreSQL installation preview", exact: true })).toBeVisible();
+  const firstWait = response(page, "/api/v1/hosting-catalog/installations");
+  await catalog.getByRole("button", { name: "Install application", exact: true }).click();
+  const firstInstall = await firstWait;
+  if (firstInstall.status() !== 503 || firstInstall.request().postDataJSON().public_url !== appOrigin) throw Error("catalog committed response-loss contract missing");
+  const originalRequest = firstInstall.request().postData();
+  await expect(catalog.getByRole("alert")).toContainText("Installation unconfirmed");
+  const retryWait = response(page, "/api/v1/hosting-catalog/installations");
+  await catalog.getByRole("button", { name: "Retry same installation", exact: true }).click();
+  const retryInstall = await retryWait;
+  if (retryInstall.status() !== 201 || retryInstall.request().postData() !== originalRequest) throw Error("catalog retry changed request");
+  const installed = await checkedResponse(retryInstall, 201);
+  const resource = installed.resource;
+  if (!resource?.id || resource.generation !== 1 || resource.source.kind !== "compose" || resource.source.compose.original !== source || installed.request.template_id !== "vikunja-with-postgresql" || installed.request.immutable_version !== "coolify-b12d1386.vikunja-2.7.1.v1" || installed.request.public_url !== appOrigin || installed.binding.destination_id !== initial.id || installed.runtime_configuration.generation !== 1 || !installed.runtime_configuration.hash || installed.storage_ref.storage_id !== "" || installed.storage_ref.generation !== 0 || installed.storage_ref.hash !== "") throw Error("catalog Compose installation receipt mismatch");
+  if (!Array.isArray(installed.credentials) || installed.credentials.length !== 2 || installed.credentials.some(v => !["SERVICE_PASSWORD_POSTGRESQL", "SERVICE_PASSWORD_JWTSECRET"].includes(v.name) || v.kind !== "managed_secret" || !v.secret?.secret_id || v.secret.version !== 1 || v.value !== undefined)) throw Error("generated runtime secret references missing");
+  await expect(catalog).toContainText(`Installed ${applicationName}`);
+  await expect(catalog.getByRole("button", { name: "Reveal login credentials", exact: true })).toHaveCount(0);
+  await expect(catalog.locator("output")).toHaveCount(0);
+  safe.browser_catalog_compose_install_identical_retry = true;
+  safe.catalog_compose_original_source = true;
+  safe.catalog_compose_generated_runtime_refs = true;
+  safe.saved_compose_configuration = true;
   const resourceID = resource.id;
   const application = h.getByRole("article", { name: applicationName, exact: true });
-  const destination = application.getByRole("region", { name: `Desired destination for ${applicationName}`, exact: true });
-  await destination.getByLabel("Available destination", { exact: true }).selectOption(initial.id);
-  const boundWait = response(page, `/api/v1/resources/${resourceID}/binding`);
-  await destination.getByRole("button", { name: "Save desired destination", exact: true }).click();
-  await checkedResponse(boundWait, 201);
-  safe.saved_compose_configuration = true;
-  step = "save_runtime_configuration";
-  const runtime = application.getByRole("region", { name: `Runtime configuration for ${applicationName}`, exact: true });
-  const entries = [
-    ["SERVICE_URL_VIKUNJA", "literal", appOrigin],
-    ["SERVICE_USER_POSTGRESQL", "literal", "vikunja"],
-    ["POSTGRESQL_DATABASE", "literal", "vikunja"],
-    ["SERVICE_PASSWORD_POSTGRESQL", "managed_secret", "Compose PostgreSQL"],
-    ["SERVICE_PASSWORD_JWTSECRET", "managed_secret", "Compose JWT"],
-  ];
-  for (const [index, [name, kind, value]] of entries.entries()) {
-    const n = index + 1;
-    await runtime.getByRole("button", { name: "Add runtime variable", exact: true }).click();
-    await runtime.getByLabel(`Variable name ${n}`, { exact: true }).fill(name);
-    await runtime.getByRole("combobox", { name: `Value type ${n}`, exact: true }).selectOption(kind);
-    if (kind === "literal") await runtime.getByLabel(`Nonsecret value ${n}`, { exact: true }).fill(value);
-    else {
-      const select = runtime.getByRole("combobox", { name: `Existing managed secret for ${name}`, exact: true });
-      const option = select.getByRole("option").filter({ hasText: `${value} · ` });
-      await expect(option).toHaveCount(1);
-      await select.selectOption(await option.getAttribute("value"));
-      await runtime.getByRole("combobox", { name: `Exact secret version for ${name}`, exact: true }).selectOption("1");
-    }
-  }
-  const runtimeWait = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/runtime-configuration`);
-  await runtime.getByRole("button", { name: "Save runtime configuration", exact: true }).click();
-  const savedRuntime = await checkedResponse(runtimeWait, 200);
-  if (savedRuntime.runtime_configuration.entries.length !== entries.length) throw Error("runtime configuration incomplete");
-  safe.browser_runtime_configuration = true;
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
   let selectedRegistrySecret;
   async function deploy(replacement, stoppedOperation) {
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
-      step = "configure_compose_readiness";
-      await review.getByLabel("Readiness path", { exact: true }).fill("/health");
-      await review.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
+      step = "verify_catalog_compose_readiness";
+      await expect(review.getByLabel("Readiness path", { exact: true })).toHaveValue("/health");
+      await expect(review.getByLabel("Readiness timeout in seconds", { exact: true })).toHaveValue("120");
+      safe.catalog_compose_readiness_prefill = true;
     }
-    step = "select_compose_registry_credential";
-    const registry = review.getByRole("region", { name: "Image registry credentials", exact: true });
-    await registry.getByLabel("Image access", { exact: true }).selectOption("private");
-    const secrets = registry.getByLabel("Registry credential secret", { exact: true });
-    const option = secrets.getByRole("option").filter({ hasText: "Compose registry correct · " });
-    await expect(option).toHaveCount(1);
-    selectedRegistrySecret = await option.getAttribute("value");
-    await secrets.selectOption(selectedRegistrySecret);
-    await registry.getByLabel("Registry credential version", { exact: true }).selectOption("1");
+    if (replacement) {
+      step = "select_compose_registry_credential";
+      const registry = review.getByRole("region", { name: "Image registry credentials", exact: true });
+      await registry.getByLabel("Image access", { exact: true }).selectOption("private");
+      const secrets = registry.getByLabel("Registry credential secret", { exact: true });
+      const option = secrets.getByRole("option").filter({ hasText: "Compose registry correct · " });
+      await expect(option).toHaveCount(1);
+      selectedRegistrySecret = await option.getAttribute("value");
+      await secrets.selectOption(selectedRegistrySecret);
+      await registry.getByLabel("Registry credential version", { exact: true }).selectOption("1");
+    }
     step = "review_compose_options";
     await review.getByRole("button", { name: stoppedOperation ? "Review current Compose start" : "Review current Compose deployment", exact: true }).click();
     step = "acknowledge_compose_interruption";
@@ -274,8 +254,13 @@ try {
     const input = result.request().postDataJSON();
     if (input.managed_stack?.expected_stopped_operation_id !== stoppedOperation) throw Error("Start stopped authority missing");
     if (input.managed_stack?.acknowledge_interruption !== true || !input.expected_runtime_configuration_generation || Boolean(input.storage_route_continuity) !== replacement) throw Error("Compose admission authority missing");
-    if (input.registry_credential?.secret_id !== selectedRegistrySecret || input.registry_credential?.version !== 1) throw Error("Compose registry reference missing");
-    safe.browser_compose_registry_selection = true;
+    if (replacement) {
+      if (input.registry_credential?.secret_id !== selectedRegistrySecret || input.registry_credential?.version !== 1) throw Error("Compose registry reference missing");
+      safe.browser_compose_registry_selection = true;
+    } else {
+      if (input.registry_credential !== undefined || input.readiness.path !== "/health" || input.readiness.timeout_seconds !== 120) throw Error("untouched public catalog deployment changed");
+      safe.browser_initial_public_compose = true;
+    }
     return (await result.json()).id;
   }
   await state("deploy");

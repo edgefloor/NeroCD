@@ -118,43 +118,74 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("distinct registry secret identities required")
 	}
 	registryRef := domain.HostingRegistryCredentialRef{SecretID: registrySecrets["correct"].ID, Version: 1}
-	b.mu.Lock()
-	b.imageReference = protectedImage
-	b.mu.Unlock()
-	password := hostingStorageRemoteRuntimeRandom(t) + "$cash$$${NEVER_EXPAND}"
-	jwt := hostingStorageRemoteRuntimeRandom(t) + "$jwt$$${NEVER_EXPAND}"
-	for name, value := range map[string]string{"Compose PostgreSQL": password, "Compose JWT": jwt} {
-		storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: name, Value: value}, 201)
-	}
 	b.set("install", f.destinationID)
 	resourceID := b.await(t, "installed")
 	resource := storageRuntimeJSON[domain.Resource](f, "GET", "/api/v1/resources/"+resourceID, nil, 200)
-	if resource.Source.Kind != "compose" || resource.Source.Compose == nil {
-		t.Fatal("browser did not save Compose source")
+	installation := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "GET", "/api/v1/resources/"+resourceID+"/catalog-installation", nil, 200)
+	b.mu.Lock()
+	original, retried := b.original, b.retried
+	b.mu.Unlock()
+	if original == nil || retried == nil || domain.HostingDocumentHash(original) != domain.HostingDocumentHash(installation) || domain.HostingDocumentHash(retried) != domain.HostingDocumentHash(installation) {
+		t.Fatal("catalog response-loss retry changed installation")
+	}
+	if resource.Generation != 1 || resource.Source.Kind != "compose" || resource.Source.Compose == nil || installation.Request.TemplateID != "vikunja-with-postgresql" || installation.Request.ImmutableVersion != domain.HostingCatalogVikunjaVersion || installation.Request.PublicURL != "https://catalog-runtime.example.test:25443" || installation.Resource.ID != resourceID || installation.Binding.DestinationID != f.destinationID || installation.StorageRef != (domain.HostingStorageRef{}) || installation.Template.Definition.Compose == nil || !reflect.DeepEqual(resource.Source.Compose, installation.Template.Definition.Compose) {
+		t.Fatal("catalog Compose installation identity or source changed")
 	}
 	definition, err := domain.ParseHostingStack(*resource.Source.Compose)
-	originalPublic := strings.Replace(resource.Source.Compose.Original, protectedImage, publicImage, 1)
-	originalSum := sha256.Sum256([]byte(originalPublic))
-	if strings.Count(resource.Source.Compose.Original, protectedImage) != 1 || "sha256:"+hex.EncodeToString(originalSum[:]) != "sha256:c46d52024d31bad0a70342051c26dd4401ad80d29ec8867c22cca0e60e9a6925" {
-		t.Fatal("unexpected Compose source substitution")
-	}
-	if err != nil || definition.OriginalHash != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(resource.Source.Compose.Original))) || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
-		t.Fatal("original reference-bearing source or public component changed")
+	if err != nil || definition.OriginalHash != "sha256:2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 || strings.Count(resource.Source.Compose.Original, publicImage) != 1 {
+		t.Fatal("catalog original Compose source changed before first deployment")
 	}
 	runtime := storageRuntimeJSON[struct {
 		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
 	}](f, "GET", "/api/v1/resources/"+resourceID+"/runtime-configuration", nil, 200)
-	if runtime.Configuration.RuntimeGeneration != 1 || len(runtime.Configuration.Entries) != 5 {
-		t.Fatal("browser runtime variables not saved")
+	document, _, canonicalErr := domain.CanonicalHostingRuntimeDocument(runtime.Configuration.Entries)
+	if canonicalErr != nil || runtime.Configuration.RuntimeGeneration != 1 || len(runtime.Configuration.Entries) != 5 || installation.RuntimeConfiguration.Generation != 1 || installation.RuntimeConfiguration.Hash != domain.HostingDocumentHash(document) || len(installation.Credentials) != 2 {
+		t.Fatal("catalog canonical runtime references missing")
 	}
+	values := map[string]string{}
+	for _, entry := range runtime.Configuration.Entries {
+		switch entry.Name {
+		case "SERVICE_URL_VIKUNJA", "SERVICE_USER_POSTGRESQL", "POSTGRESQL_DATABASE":
+			want := "vikunja"
+			if entry.Name == "SERVICE_URL_VIKUNJA" {
+				want = installation.Request.PublicURL
+			}
+			if entry.Kind != "literal" || entry.Value == nil || *entry.Value != want || entry.Secret != nil {
+				t.Fatal("catalog literal runtime value changed")
+			}
+		case "SERVICE_PASSWORD_POSTGRESQL", "SERVICE_PASSWORD_JWTSECRET":
+			if entry.Kind != "managed_secret" || entry.Secret == nil || entry.Secret.Version != 1 || entry.Secret.SecretID == "" || entry.Value != nil {
+				t.Fatal("catalog generated runtime secret reference missing")
+			}
+			found := false
+			for _, credential := range installation.Credentials {
+				found = found || reflect.DeepEqual(entry, credential)
+			}
+			if !found {
+				t.Fatal("catalog runtime credential reference differs")
+			}
+			secret := storageRuntimeJSON[app.ManagedSecretReveal](f, "POST", "/api/v1/managed-secrets/"+entry.Secret.SecretID+"/reveal", app.ManagedSecretRevealInput{Version: 1}, 200)
+			if secret.Value == "" {
+				t.Fatal("catalog generated runtime secret empty")
+			}
+			values[entry.Name] = secret.Value
+		default:
+			t.Fatal("unexpected catalog runtime variable")
+		}
+	}
+	password, jwt := values["SERVICE_PASSWORD_POSTGRESQL"], values["SERVICE_PASSWORD_JWTSECRET"]
+	if password == "" || jwt == "" || password == jwt {
+		t.Fatal("catalog generated secret identities missing")
+	}
+	clear(values)
 	b.set("deploy", resourceID)
 	first := f.await(b.await(t, "deployed"), "succeeded")
 	if first.Plan == nil || first.Plan.Stack == nil || first.Result == nil || first.Result.Stack == nil || first.Release == nil || first.Plan.CompilerVersion != domain.HostingStackCompilerVersion || len(first.Result.Stack.Components) != 3 || len(first.Result.Stack.Volumes) != 2 || first.Result.Uncertain || first.MutationHold {
 		t.Fatal("whole-stack initial success missing")
 	}
-	verify := func(op domain.HostingOperation) {
+	verify := func(op domain.HostingOperation, expectedRegistry domain.HostingRegistryCredentialRef) {
 		t.Helper()
-		if op.Snapshot.RegistryCredential != registryRef {
+		if op.Snapshot.RegistryCredential != expectedRegistry {
 			t.Fatal("Compose registry snapshot reference changed")
 		}
 		for _, component := range op.Result.Stack.Components {
@@ -165,7 +196,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 			if component.Component == "vikunja" {
 				actual := bytes.TrimSpace(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Image}}"))
 				if string(actual) != pinnedImageID {
-					t.Fatal("protected image differs from pinned Vikunja content")
+					t.Fatal("application image differs from pinned Vikunja content")
 				}
 			}
 			if component.Component == "postgresql" && len(ports) != 0 {
@@ -202,7 +233,10 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 			clear(environment)
 		}
 	}
-	verify(first)
+	if first.Snapshot.ResourceGeneration != 1 || first.Snapshot.Stack.Generation != 1 || first.Snapshot.Stack.Hash != domain.HostingDocumentHash(definition) || first.Snapshot.RuntimeConfiguration != installation.RuntimeConfiguration {
+		t.Fatal("initial catalog deployment lost immutable source or runtime reference")
+	}
+	verify(first, domain.HostingRegistryCredentialRef{})
 	uploadOwnership := composeRuntimeUploadOwnership(t, first)
 	b.set("healthy", resourceID)
 	b.await(t, "healthy")
@@ -280,7 +314,8 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	routesBefore := storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+resourceID+"/routes", nil, 200)
 	proxyBefore := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
 	changedCompose := *resource.Source.Compose
-	changedCompose.Original = strings.Replace(changedCompose.Original, protectedImage, replacementImage, 1)
+	changedCompose.Original = strings.Replace(changedCompose.Original, publicImage, replacementImage, 1)
+	changedCompose.Original = strings.Replace(changedCompose.Original, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
 	changedSource := resource.Source
 	changedSource.Compose = &changedCompose
 	oldGeneration := resource.Generation
@@ -340,7 +375,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	composeRuntimeFollow(t, f, resourceID, second, "postgresql", true)
 	composeRuntimeFollow(t, f, resourceID, second, "init", true)
-	verify(second)
+	verify(second, registryRef)
 	if !reflect.DeepEqual(volumeSchedule, composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)) {
 		t.Fatal("redeploy changed saved named-volume schedule identity")
 	}
@@ -393,7 +428,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if started.Plan == nil || started.Plan.PreviousStopped == nil || started.Plan.PreviousStopped.StopOperationID != stopped.ID || started.Snapshot.StackStoppedOperationID != stopped.ID || started.Result == nil || started.Result.Stack == nil || !reflect.DeepEqual(started.Result.Stack.Volumes, second.Result.Stack.Volumes) || started.Result.Stack.NetworkID != second.Result.Stack.NetworkID || started.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration {
 		t.Fatal("Start changed retained stack identity")
 	}
-	verify(started)
+	verify(started, registryRef)
 	if !reflect.DeepEqual(volumeSchedule, composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)) {
 		t.Fatal("Start changed saved named-volume schedule identity")
 	}
@@ -423,7 +458,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	storageRuntimeJSON[json.RawMessage](f, "PUT", "/api/v1/resources/"+target.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: target.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("e", 32), Entries: targetEntries}, 200)
 	targetDeploy := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+target.ID+"/deployments", domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: target.Generation, ExpectedRuntimeConfigurationGeneration: 1, RegistryCredential: &registryRef, IdempotencyKey: "compose-import-target", ContainerPort: 3456, HostPort: first.Snapshot.HostPort + 1, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}}, 202)
 	targetDeploy = f.await(targetDeploy.ID, "succeeded")
-	verify(targetDeploy)
+	verify(targetDeploy, registryRef)
 	for _, a := range started.Result.Stack.Volumes {
 		for _, b := range targetDeploy.Result.Stack.Volumes {
 			if a.VolumeName == b.VolumeName {
@@ -497,7 +532,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, _ := json.Marshal([]any{resource, runtime, first, second, stopped, started, held, denied})
+	ordinary, _ := json.Marshal([]any{installation, resource, runtime, first, second, stopped, started, held, denied})
 	for _, value := range []string{password, jwt} {
 		if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
 			t.Fatal("managed credential entered ordinary operation/journal/log output")
@@ -506,7 +541,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	registryRuntimeArtifactSecrecy(t, f, ordinary, registryPassword)
 	clear(journal)
 	clear(ordinary)
-	t.Log("private Compose registry: protected uncached pinned Vikunja, anonymous PostgreSQL/init, selected immutable refs, wrong/revoked pre-mutation route/container preservation, later valid redeploy/Start and artifact secrecy verified")
+	t.Log("catalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start, anonymous PostgreSQL/init, selected immutable refs, wrong/revoked pre-mutation route/container preservation, later valid redeploy/Start and artifact secrecy verified")
 	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, UI Stop removes all writers, UI Start retains records/uploads/credentials/HTTPS, logical DB backup/UI distinct-target transactional replacement/source later-write exclusion/target independent writes (uploads excluded), controlled failed replacement held")
 	b.set("complete", resourceID)
 	b.await(t, "done")
@@ -1091,15 +1126,20 @@ func TestComposeRegistrySourceUpdateContract(t *testing.T) {
 		}
 		return w.Body.Bytes()
 	}
-	a := "127.0.0.1:25001/fixture:a@sha256:" + strings.Repeat("a", 64)
+	a := "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 	b := "127.0.0.1:25001/fixture:b@sha256:" + strings.Repeat("b", 64)
-	source := domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: "services:\n  app:\n    image: " + a + "\n  db:\n    image: postgres:17\n", PublicComponent: "app", ContainerPort: 3456}}
+	original, readErr := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	source := domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: string(original), PublicComponent: "vikunja", ContainerPort: 3456}}
 	var resource domain.Resource
 	if json.Unmarshal(send("POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("c", 32), ProjectID: "proj_platform", ProjectEnvironmentID: environment.ID, Name: "Compose registry patch", Kind: "application", Source: source}, 201), &resource) != nil {
 		t.Fatal("resource receipt")
 	}
 	changed := *source.Compose
 	changed.Original = strings.Replace(changed.Original, a, b, 1)
+	changed.Original = strings.Replace(changed.Original, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
 	source.Compose = &changed
 	patch := app.ResourcePatch{ExpectedGeneration: resource.Generation, Source: &source}
 	var updated domain.Resource
@@ -1110,4 +1150,46 @@ func TestComposeRegistrySourceUpdateContract(t *testing.T) {
 	patch.ExpectedGeneration = 0
 	send("PATCH", "/api/v1/resources/"+resource.ID, patch, 400)
 	send("PATCH", "/api/v1/resources/"+resource.ID, map[string]any{"expected_generation": updated.Generation, "source": nil}, 400)
+}
+
+func TestComposeCatalogFixtureRequestContract(t *testing.T) {
+	input := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("c", 32), ProjectID: "proj_platform", ProjectEnvironmentID: "env_fixture", DestinationID: "dest_fixture", Name: "Compose Vikunja acceptance", TemplateID: "vikunja-with-postgresql", ImmutableVersion: domain.HostingCatalogVikunjaVersion, PublicURL: "https://catalog-runtime.example.test:25443"}
+	for _, name := range []string{"valid", "missing_url", "invalid_url", "other_template_url", "invalid_request"} {
+		t.Run(name, func(t *testing.T) {
+			value := input
+			switch name {
+			case "missing_url":
+				value.PublicURL = ""
+			case "invalid_url":
+				value.PublicURL = "not a URL"
+			case "other_template_url":
+				value.TemplateID = "linkding"
+				value.ImmutableVersion = domain.HostingCatalogLinkdingVersion
+			case "invalid_request":
+				value.RequestID = "catalog-fixture"
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded domain.HostingCatalogInstallInput
+			accepted := decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/hosting-catalog/installations", bytes.NewReader(raw)), &decoded) && decoded.Validate() == nil
+			if accepted != (name == "valid") || accepted && !reflect.DeepEqual(decoded, input) {
+				t.Fatal("actual catalog decoder/validator contract changed")
+			}
+		})
+	}
+	original, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprintf("sha256:%x", sha256.Sum256(original)) != "sha256:2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767" {
+		t.Fatal("catalog example source changed")
+	}
+	changed := strings.Replace(string(original), "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576", "127.0.0.1:25001/fixture:b@sha256:"+strings.Repeat("b", 64), 1)
+	changed = strings.Replace(changed, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
+	definition, err := domain.ParseHostingStack(domain.HostingStackSource{Original: changed, PublicComponent: "vikunja", ContainerPort: 3456})
+	if err != nil || len(definition.Services) != 3 {
+		t.Fatal("catalog public to protected source contract invalid")
+	}
 }
