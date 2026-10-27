@@ -544,3 +544,42 @@ test("lost retry response stays bound to its held download rather than another r
   );
   expect(api.requestArchiveRestore).not.toHaveBeenCalled();
 });
+
+test("selected ordinary backup exposes authoritative native archive download", async () => {
+  const blob = {
+    backup_id: "backup",
+    destination_id: "d",
+    daemon_id: "daemon",
+    sha256: hash,
+    size_bytes: 123,
+    format: "nerocd-storage-v1",
+  } as const;
+  vi.mocked(api.getArchiveBackup).mockResolvedValue({
+    ...backup,
+    project_id: "p",
+    resource_id: "r",
+    blob,
+  });
+  const fetch = vi.fn(
+    async (_url: string) =>
+      new Response(
+        JSON.stringify({
+          available: true,
+          reason_code: "",
+          backup_id: "backup",
+          blob,
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  setup();
+  await loaded();
+  click("Backup backup");
+  const link = await screen.findByRole("link", { name: "Download archive" });
+  expect(link.getAttribute("href")).toBe(
+    "/api/v1/storage-backups/backup/archive",
+  );
+  expect(fetch.mock.calls[0]![0]).toBe(
+    "/api/v1/storage-backups/backup/archive-options",
+  );
+});

@@ -618,3 +618,46 @@ test("scheduled remote selection is independent and locked across review and ide
   expect(admissions[1]![1].body).toBe(admissions[0]![1].body);
   expect(JSON.parse(String(admissions[0]![1].body))).toMatchObject({ remote_target: { target_id: "target", revision: 3 }, volume: "uploads", expected_deployed_operation_id: "deploy", acknowledge_interruption: true });
 });
+
+test("selected Compose backup downloads through options without retention copy metadata", async () => {
+  const blob = {
+    backup_id: "backup",
+    destination_id: "d",
+    daemon_id: "daemon",
+    sha256: `sha256:${"a".repeat(64)}`,
+    size_bytes: 123,
+    format: "nerocd-storage-v1",
+  };
+  const saved = { ...backup, state: "succeeded", blob };
+  setup((url) => {
+    if (url.endsWith("/archive-options"))
+      return new Response(
+        JSON.stringify({
+          available: true,
+          reason_code: "",
+          backup_id: "backup",
+          blob,
+        }),
+      );
+    if (url.includes("storage-backups?"))
+      return new Response(
+        JSON.stringify({
+          items: [saved],
+          limit: 20,
+          offset: 0,
+          count: 1,
+          total: 1,
+        }),
+      );
+    if (url === "/api/v1/storage-backups/backup")
+      return new Response(JSON.stringify(saved));
+    return undefined;
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "View volume backup backup" }),
+  );
+  const link = await screen.findByRole("link", { name: "Download archive" });
+  expect(link.getAttribute("href")).toBe(
+    "/api/v1/storage-backups/backup/archive",
+  );
+});

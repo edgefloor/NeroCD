@@ -1,3 +1,4 @@
+import { StorageArchiveDownload } from "@/components/hosting/StorageArchiveDownload";
 import {
   BackupDestinationSelect,
   useDatabaseBackupDestinations,
@@ -577,6 +578,15 @@ export function ComposeStorageBackups({
         <p role="alert">
           Selected backup evidence is unavailable. Refresh before recovery.
         </p>
+      ) : null}
+      {backup.data && !backup.isError ? (
+        <StorageArchiveDownload
+          scope={scope}
+          backup={backup.data}
+          owner={owner}
+          blocked={blocked || lost}
+          onDenied={lose}
+        />
       ) : null}
       {backup.data && !backup.isError ? (
         <div className="break-all text-sm">

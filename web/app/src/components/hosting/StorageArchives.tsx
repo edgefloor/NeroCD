@@ -1,3 +1,4 @@
+import { StorageArchiveDownload } from "./StorageArchiveDownload";
 import { StorageArchiveTransfers } from "./StorageArchiveTransfers";
 import { StorageBackupDeletion } from "./StorageBackupDeletion";
 import { StorageBackupRetention } from "./StorageBackupRetention";
@@ -564,6 +565,15 @@ export function StorageArchives({
           </Button>
         </>
       )}
+      {!backup.isError && backup.data ? (
+        <StorageArchiveDownload
+          scope={scope}
+          backup={backup.data}
+          owner={owner}
+          blocked={paused || accessLost}
+          onDenied={() => setLost(true)}
+        />
+      ) : null}
       {!backup.isError && backup.data ? (
         <dl
           aria-label="Selected backup metadata"

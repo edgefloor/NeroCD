@@ -593,6 +593,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage-backups/{id}/archive-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check current owner access to a local backup archive download */
+        get: operations["storageBackupArchiveOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage-backups/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream one exact local backup archive through a single controller */
+        get: operations["downloadStorageBackupArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage-backups/{id}": {
         parameters: {
             query?: never;
@@ -7559,6 +7593,13 @@ export interface components {
             depth: number;
             path_bytes: number;
         };
+        HostingStorageBackupDownloadOptions: {
+            available: boolean;
+            /** @enum {string} */
+            reason_code: "" | "disabled" | "runner_unavailable" | "local_copy_unavailable" | "backup_not_succeeded";
+            backup_id: string;
+            blob?: components["schemas"]["HostingStorageArchiveBlob"];
+        };
         /** @description Private destination+daemon artifact identity, without any filesystem path, URL or byte-download authority. */
         HostingStorageArchiveBlob: {
             backup_id: string;
@@ -12397,6 +12438,99 @@ export interface operations {
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    storageBackupArchiveOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current download eligibility */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDownloadOptions"];
+                };
+            };
+            /** @description Current owner or destination access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadStorageBackupArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified local archive attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-tar": string;
+                };
+            };
+            /** @description Authority revoked */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Local copy missing */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Backup state or copy reservation changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download capacity exhausted */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download capability or controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download deadline exceeded */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getStorageBackup: {
