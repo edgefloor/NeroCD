@@ -289,6 +289,43 @@ func (b *catalogRuntimeBrowser) set(phase, id string) {
 	defer b.mu.Unlock()
 	b.phase, b.id = phase, id
 }
+
+func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
+	for _, tc := range []struct{ phase, action string }{
+		{"database_backup", "database_backed_up"},
+		{"database_mutate", "database_source_mutated"},
+		{"database_import", "database_imported"},
+		{"database_check", "database_checked"},
+	} {
+		t.Run(tc.phase, func(t *testing.T) {
+			b := &catalogRuntimeBrowser{key: strings.Repeat("a", 64), phase: tc.phase, reports: make(chan hostingStorageRemoteRuntimeReport, 1)}
+			for _, action := range []string{"wrong_phase", tc.action} {
+				r := httptest.NewRequest(http.MethodPost, "/__catalog_fixture/report", strings.NewReader(`{"action":"`+action+`","id":"fixture_id"}`))
+				r.Header.Set("X-NeroCD-Fixture-Key", b.key)
+				w := httptest.NewRecorder()
+				if !b.serve(w, r, nil) {
+					t.Fatal("fixture report not handled")
+				}
+				want := http.StatusNoContent
+				if action != tc.action {
+					want = http.StatusConflict
+				}
+				if w.Code != want {
+					t.Fatalf("action=%s status=%d want=%d", action, w.Code, want)
+				}
+			}
+			select {
+			case v := <-b.reports:
+				if v.Action != tc.action || v.ID != "fixture_id" {
+					t.Fatal("wrong report delivered")
+				}
+			default:
+				t.Fatal("accepted report not delivered")
+			}
+		})
+	}
+}
+
 func (b *catalogRuntimeBrowser) await(t *testing.T, action string) string {
 	t.Helper()
 	select {
@@ -324,7 +361,7 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 				w.WriteHeader(400)
 				return true
 			}
-			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked"}[phase]
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked", "database_backup": "database_backed_up", "database_mutate": "database_source_mutated", "database_import": "database_imported", "database_check": "database_checked"}[phase]
 			if v.Action != expected {
 				w.WriteHeader(409)
 				return true
