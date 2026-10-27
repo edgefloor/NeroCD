@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 )
@@ -296,5 +297,31 @@ func TestPostgresComposeStorageBackupScheduleStoppedControl(t *testing.T) {
 	}
 	if _, err = f.db.Exec(f.ctx, `UPDATE hosting_storage_backup_schedules SET source_volume='other' WHERE id=$1`, saved.ID); err == nil {
 		t.Fatal("immutable origin changed")
+	}
+}
+
+func TestPostgresComposeStorageBackupScheduleGrantRevocation(t *testing.T) {
+	f, _ := composeStorageScheduleFixture(t)
+	if err := f.stopExecution(); err != nil {
+		t.Fatal(err)
+	}
+	in := composeStorageScheduleInput(f)
+	saved, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id='destination_owned_storage' AND project_id=$1`, f.resource.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked grant replay", err)
+	}
+	if err = f.pg.ReconcileStorageBackupSchedules(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	var state, reason string
+	var op *string
+	if err = f.db.QueryRow(f.ctx, `SELECT state,reason,operation_id FROM hosting_storage_backup_schedule_occurrences WHERE schedule_id=$1`, saved.ID).Scan(&state, &reason, &op); err != nil || state != "denied" || reason != "authority_denied" || op != nil {
+		t.Fatal("grant denial misclassified", state, reason, err)
 	}
 }
