@@ -2,12 +2,22 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 test.use({ trace: "off", screenshot: "off" });
 test("owner checks catalog requirements and destinations before installing with identical retry", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.goto("/projects");
+  const manifest = JSON.parse(execFileSync("python3", ["-B", "../../scripts/skills/ui_manifest.py"], { encoding: "utf8" })) as { schema: string; files: Record<string, string> };
+  expect(manifest.schema).toBe("nerocd.ui-assets/v1");
+  expect(manifest.files["index.html"]).toBeTruthy();
+  for (const [path, expected] of Object.entries(manifest.files)) {
+    if (path === ".gitkeep") continue;
+    const response = await page.request.get(path === "index.html" ? "/" : `/${path}`);
+    expect(response.status()).toBe(200);
+    expect(createHash("sha256").update(await response.body()).digest("hex"), `served asset ${path}`).toBe(expected);
+  }
+  await testInfo.attach("served-ui-manifest", { body: Buffer.from(JSON.stringify(manifest)), contentType: "application/json" });
   await signIn(page);
   await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
   const suffix = randomBytes(6).toString("hex");
@@ -126,7 +136,8 @@ test("owner checks catalog requirements and destinations before installing with 
   expect(installationRequests).toHaveLength(2);
   expect(installationRequests[1]).toEqual(installationRequests[0]);
   expect(body.id).toBe(committedReceipt?.id);
-  const persistedResponse = await page.request.get(`/api/v1/hosting-catalog/installations/${body.id}`);
+  expect(body.id).toBe(body.resource.id);
+  const persistedResponse = await page.request.get(`/api/v1/resources/${encodeURIComponent(body.resource.id)}/catalog-installation`);
   expect(persistedResponse.status()).toBe(200);
   const persisted = await persistedResponse.json();
   expect(persisted.id).toBe(body.id);
