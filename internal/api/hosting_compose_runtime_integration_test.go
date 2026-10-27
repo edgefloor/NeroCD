@@ -3,11 +3,15 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +23,7 @@ import (
 	"time"
 
 	"nerocd/internal/app"
+	"nerocd/internal/artifactfs"
 	"nerocd/internal/domain"
 )
 
@@ -29,7 +34,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") != "disposable-dind" {
 		t.Skip("requires exact approved Compose runtime profile")
 	}
-	f := newStorageRuntimeFixture(t)
+	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
 	password := hostingStorageRemoteRuntimeRandom(t) + "$cash$$${NEVER_EXPAND}"
 	jwt := hostingStorageRemoteRuntimeRandom(t) + "$jwt$$${NEVER_EXPAND}"
@@ -210,6 +215,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if b.await(t, "app_start_checked") != taskID {
 		t.Fatal("fresh login after Start lost application data")
 	}
+	composeRuntimeVolumeArchive(t, f, resource, started, taskID)
 	// Provision a distinct already-deployed application through ordinary setup
 	// APIs. Backup and destructive import themselves are requested through UI.
 	target := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("d", 32), ProjectID: resource.ProjectID, ProjectEnvironmentID: resource.ProjectEnvironmentID, Name: "Compose database restore target", Kind: "application", Source: resource.Source}, 201)
@@ -408,4 +414,197 @@ func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID str
 		storageRuntimeJSON[domain.HostingRuntimeLogSession](f, "DELETE", "/api/v1/runtime-log-sessions/"+session.ID, nil, 200)
 	}
 	return session
+}
+
+// Read the real local CAS after UI admission, then exercise helper failure on
+// the same selected volume without replacing the deployed stack.
+func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, deployed domain.HostingOperation, taskID string) {
+	t.Helper()
+	volume := ""
+	for _, v := range deployed.Result.Stack.Volumes {
+		if v.Name == "vikunja-data" {
+			volume = v.VolumeName
+		}
+	}
+	if volume == "" {
+		t.Fatal("selected upload volume missing")
+	}
+	root := filepath.Join("/var/lib/docker/volumes", volume, "_data")
+	var inspected []struct {
+		Name, Mountpoint string
+		Labels           map[string]string
+	}
+	if json.Unmarshal(storageRuntimeDocker(t, "volume", "inspect", volume), &inspected) != nil || len(inspected) != 1 || inspected[0].Name != volume || inspected[0].Mountpoint != root || inspected[0].Labels["io.nerocd.binding"] != deployed.BindingID {
+		t.Fatal("selected upload volume ownership/path mismatch")
+	}
+	before := composeRuntimeUploadSnapshot(t, root)
+	if len(before) < 2 {
+		t.Fatal("upload archive fixture contains no application file")
+	}
+	unchanged := map[string]string{}
+	for _, component := range deployed.Result.Stack.Components {
+		if component.Component != "vikunja" {
+			unchanged[component.ContainerID] = string(storageRuntimeDocker(t, "container", "inspect", component.ContainerID, "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}"))
+		}
+	}
+	assertWriters := func(since string) {
+		t.Helper()
+		for _, c := range deployed.Result.Stack.Components {
+			if c.Component == "vikunja" {
+				if !storageArchiveWriterRunning(t, c.ContainerID) {
+					t.Fatal("archive did not resume exact application writer")
+				}
+				continue
+			}
+			if string(storageRuntimeDocker(t, "container", "inspect", c.ContainerID, "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")) != unchanged[c.ContainerID] {
+				t.Fatal("archive touched PostgreSQL or completed init state")
+			}
+			for _, action := range []string{"start", "die", "stop"} {
+				if len(bytes.TrimSpace(storageRuntimeDocker(t, "events", "--since", since, "--until", time.Now().Format(time.RFC3339Nano), "--filter", "container="+c.ContainerID, "--filter", "event="+action, "--format", "{{.Action}}"))) != 0 {
+					t.Fatal("archive interrupted unselected component")
+				}
+			}
+		}
+		if !reflect.DeepEqual(before, composeRuntimeUploadSnapshot(t, root)) {
+			t.Fatal("archive changed upload bytes or numeric metadata")
+		}
+	}
+	since := time.Now().Format(time.RFC3339Nano)
+	f.catalogBrowser.set("volume_backup", resource.ID)
+	backupID := f.catalogBrowser.await(t, "volume_backed_up")
+	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	op := f.await(backup.OperationID, "succeeded")
+	if op.StorageArchive == nil || op.StorageArchive.Result == nil || op.StorageArchive.Result.ArchiveOutcome != "succeeded" || op.StorageArchive.Result.ResumeOutcome != "resumed" || op.StorageArchive.Result.Uncertain || op.MutationHold {
+		t.Fatal("Compose volume backup did not settle with resumed writers")
+	}
+	backup = storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	if backup.State != "succeeded" || backup.Blob == nil {
+		t.Fatal("Compose volume archive metadata missing")
+	}
+	metadata := storageRuntimeJSON[struct {
+		Volume                    string
+		SourceDeployedOperationID string `json:"source_deployed_operation_id"`
+	}](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	if metadata.Volume != "vikunja-data" || metadata.SourceDeployedOperationID != deployed.ID || op.StorageArchive.Plan.CompilerVersion != "managed-compose.local-volume-archive.v1" || op.StorageArchive.Plan.PolicyVersion != "managed-compose.local-volume-archive.v1" {
+		t.Fatal("Compose backup lost selected volume/deployment family")
+	}
+	pool, err := artifactfs.OpenStore(filepath.Join(f.root, "archive-artifacts"), domain.HostingStorageArchiveMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	file, blob, err := pool.Open(t.Context(), strings.TrimPrefix(backup.Blob.SHA256, "sha256:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if blob.Size != backup.Blob.SizeBytes {
+		t.Fatal("archive CAS size mismatch")
+	}
+	actual := map[string]string{}
+	reader := tar.NewReader(file)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.New()
+		if _, err := io.Copy(hash, reader); err != nil {
+			t.Fatal(err)
+		}
+		actual[header.Name] = fmt.Sprintf("%d:%d:%o:%d:%x", header.Uid, header.Gid, header.Mode, header.Typeflag, hash.Sum(nil))
+	}
+	if !reflect.DeepEqual(before, actual) {
+		t.Fatal("local CAS archive differs from real upload bytes/UID/GID/modes")
+	}
+	assertWriters(since)
+	// O_EXCL-equivalent creation rejects a preexisting fixture path. The codec
+	// rejects this FIFO via no-follow metadata before opening it.
+	fifo := filepath.Join(root, "nerocd-compose-archive-fixture.fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(fifo); err != nil && !os.IsNotExist(err) {
+			t.Error(err)
+		}
+	})
+	since = time.Now().Format(time.RFC3339Nano)
+	failedBackup := storageRuntimeJSON[domain.HostingStorageBackup](f, "POST", "/api/v1/resources/"+resource.ID+"/storage-backups", map[string]any{"request_id": strings.Repeat("f", 32), "expected_resource_generation": resource.Generation, "volume": "vikunja-data", "expected_deployed_operation_id": deployed.ID, "acknowledge_interruption": true}, 202)
+	failed := f.await(failedBackup.OperationID, "failed")
+	if failed.StorageArchive == nil || failed.StorageArchive.Result == nil || failed.StorageArchive.Result.ArchiveOutcome != "failed" || failed.StorageArchive.Result.ResumeOutcome != "resumed" || failed.StorageArchive.Result.Uncertain || failed.MutationHold {
+		t.Fatal("failed Compose archive did not settle with compensated writers")
+	}
+	phases := map[string]bool{}
+	for _, progress := range failed.StorageArchive.Progress {
+		phases[progress.Phase] = true
+	}
+	if !phases["stopped"] || !phases["helper_identified"] || !phases["resumed"] || phases["archive_published"] {
+		t.Fatal("Compose archive failure missed quiescence/helper/resume or published an archive")
+	}
+	failedBackup = storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+failedBackup.ID, nil, 200)
+	if failedBackup.State != "failed" || failedBackup.Blob != nil {
+		t.Fatal("failed Compose archive published backup metadata")
+	}
+	if err := os.Remove(fifo); err != nil {
+		t.Fatal(err)
+	}
+	assertWriters(since)
+	f.catalogBrowser.set("failure_backup_id", failedBackup.ID)
+	f.catalogBrowser.set("volume_recheck", resource.ID)
+	if f.catalogBrowser.await(t, "volume_checked") != taskID {
+		t.Fatal("application task/upload/new writes lost after volume backup compensation")
+	}
+	t.Logf("Compose local archive backup=%s failed_backup=%s volume=vikunja-data CAS_bytes=%d members=%d exact writer resumed; PostgreSQL/init untouched", backupID, failedBackup.ID, blob.Size, len(actual))
+}
+
+func composeRuntimeUploadSnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			return fmt.Errorf("unexpected upload fixture file type")
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("upload numeric metadata missing")
+		}
+		name, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		kind := byte(tar.TypeDir)
+		hash := sha256.New()
+		if info.Mode().IsRegular() {
+			kind = tar.TypeReg
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, readErr := io.Copy(hash, file)
+			closeErr := file.Close()
+			if readErr != nil {
+				return readErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		}
+		result[name] = fmt.Sprintf("%d:%d:%o:%d:%x", owner.Uid, owner.Gid, info.Mode().Perm(), kind, hash.Sum(nil))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

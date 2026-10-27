@@ -65,8 +65,8 @@ func storageRuntimeConfigureArchive(t *testing.T, f *storageRuntimeFixture, pg *
 		t.Fatal(err)
 	}
 	limits := domain.HostingStorageArchiveLimits{ArchiveBytes: 1 << 20, DataBytes: 512 << 10, FileBytes: 128 << 10, Members: 1000, Depth: 32, PathBytes: 255}
-	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
-		// The pinned Linkding SQLite dataset exceeds the tiny upload fixture.
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+		// The pinned catalog datasets exceed the tiny upload fixture.
 		limits = domain.HostingStorageArchiveLimits{ArchiveBytes: 64 << 20, DataBytes: 48 << 20, FileBytes: 32 << 20, Members: 10000, Depth: 32, PathBytes: 255}
 	}
 	if err := pg.ConfigureStorageArchive(&helper, limits); err != nil {

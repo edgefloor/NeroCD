@@ -260,6 +260,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if len(archive) > 0 && archive[0] {
 		storageRuntimeConfigureArchive(t, f, pg)
 		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
+		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+			caps = append(caps, "hosting_compose_storage_archive_v1")
+		}
 	}
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
