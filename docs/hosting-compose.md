@@ -134,9 +134,16 @@ explicit storage-archive recovery action. Recovery resumes recorded writers;
 it does not restore archived application data.
 
 Compose volume backups reuse the installed archive helper and configured size
-limits. Compose archive restore, remote copies, schedules, bind mounts, and
-coordinated database and upload snapshots are unsupported. Archive selection does
-not establish database consistency. Use the separate PostgreSQL component backup
+limits. [Local named-volume schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
+reuse that controller and archive runner. Each occurrence resolves the current
+settled deployment while preserving the selected volume's recorded origin.
+Schedule creation and enabling require fresh deployment review and consent for
+every due interruption. Reads, history, disable, and identical replay retain
+current authorization when runtime evidence is unavailable.
+
+Compose archive restore, remote copies, bind mounts, and coordinated database and
+upload snapshots are unsupported. Archive selection does not establish database
+consistency. Use the separate PostgreSQL component backup
 workflow for database archives.
 
 ## Qualification
@@ -334,13 +341,81 @@ formatting and lint took ten seconds, and the Go build took six seconds in
 overlapping windows. Review and waiting time were not instrumented. These
 measurements do not provide an additive elapsed-time partition.
 
-The next bounded Coolify workflow is a local backup schedule for one managed
-Compose named volume. Remote copies and download remain later gaps. Compose
-archive restore, bind mounts, raw Compose, Git Compose, and
-mixed build/image stacks remain unsupported or unqualified. Coordinated database
-and upload recovery is a separate NeroCD expansion, not an upstream workflow
-implemented by `VolumeBackupRecoveryJob`. These results do not qualify full parity
-or automatic rollback after a failed stateful replacement.
+### Accepted local named-volume schedules
+
+Local named-volume schedules passed the planned workflow on 2026-10-27 at
+`1df3c90a1aef7b3f4235b4ba43eb239415b29e51`. Independent hygiene, specification, and
+security reviews reported no findings at that candidate.
+
+- [x] Saved a disabled schedule against the first settled deployment and retained
+  its identity and selected volume across redeployment and Stop/Start.
+- [x] Enabled it after fresh review of the current deployment and explicit consent
+  to interrupt the selected volume's running writers on every due occurrence.
+- [x] One actual due occurrence produced a 5,120-byte local CAS archive with five
+  members. File bytes, numeric UID/GID, modes, and source deployment matched.
+- [x] Disabled the schedule and inspected occurrence and backup history. The app
+  retained records and uploads and accepted new writes. PostgreSQL and completed
+  init containers stayed in their expected states.
+- [x] FIFO archive failure resumed writers without publishing an artifact.
+  Component PostgreSQL scheduling and separate-target import, component logs,
+  and failed replacement with a held mutation and rejected competitor passed.
+- [x] All 41 baseline container profiles and 232 baseline volume profiles remained
+  exact. Two added containers and their anonymous volumes were classified as
+  non-task additions. Global inventory equality remained false. No task-owned or
+  unclassified additions leaked, and owned cleanup completed.
+- [x] The user's instance on port 18081 preserved its identity, content, and health.
+  Served UI assets matched their manifest at 320, 390, 430, and 1280 pixels.
+
+The complete aggregate gate passed from `2026-10-27T10:47:43Z` to
+`2026-10-27T10:51:42Z`, 239 seconds. The physical runtime test took 153.57 seconds.
+Safe evidence is indexed under
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/1df3c90a1aef7b3f4235b4ba43eb239415b29e51/evidence-index.json`.
+No further full run was needed.
+
+The first schedule gate at `531803554c28112ae0cc43358dde93abb4a01f2f` remains
+failed. It ran from `2026-10-27T10:28:05Z` to `2026-10-27T10:30:33Z`, 148 seconds,
+and timed out while saving the initial disabled schedule. All 41 baseline
+containers and 232 volumes remained unchanged, with no additions. User-instance
+preservation and owned cleanup passed. The original timeout cause is unresolved.
+
+Before the second gate, focused PostgreSQL checks of the protected runtime's
+initial deployment and route passed in 4.390 seconds. The full resource-page
+browser check passed under normal conditions. Unavailable volume evidence and
+query retirement reproduced possible timeout conditions but did not establish
+the original cause. The two-file fixture diagnostic change at `1df3c90` did not
+change production behavior or UI code. The passing rerun does not establish the
+cause of the first failure.
+
+Required affected Go package tests, formatting, vet, pinned lint with zero issues,
+shell checks, generated checks, and the full frontend suite and embedded build
+passed at `95b9413977752f48ffdc64a6708a9ccd061e8c12`. The frontend suite passed
+1,922 tests in 128 files. Backend authority-repair checks retained actual
+PostgreSQL schedule, revocation, overlap, rollback, and race coverage from
+`1685973304dbaae2c21cf0aebd97b6d9d759a136`. Final formatting, lint, real request
+decoder, and route checks passed at `5318035`. Later changes affected fixture
+assertions and diagnostics only. Protected-runtime diagnostic checks passed
+before the final gate. Broad `make check` and unrelated product suites were not
+run. Retained passes apply to these unchanged dependencies, not full hosting parity.
+
+Implementation estimates are six minutes for backend work and five for UI work,
+with tests overlapping both. Product authority repair took approximately one
+minute. A test fixture configuration mistake took less than one minute to repair.
+The browser investigation ran approximately 10:31–10:44 UTC, and fixture
+diagnostics approximately 10:44–10:46 UTC. Their command boundaries do not provide
+separate active repair and waiting totals. Test windows at `95b9413` took 62
+seconds for affected Go packages, 23 seconds for static checks, 33 seconds for
+frontend tests and build, and 64 seconds for generated checks, concurrently.
+Later backend command windows took approximately 72, 38, three, and 55 seconds
+for focused and race checks, also overlapping. Final preflight took 13 seconds.
+Protected-runtime diagnostic compilation and checks took 37 seconds. Review and
+waiting time were not instrumented. These categories cannot be added into an
+elapsed-time percentage.
+
+Compose remote transfer, download, archive restore, bind mounts, raw Compose,
+Git Compose, and mixed build/image stacks remain unsupported or unqualified.
+Coordinated database and upload recovery is a separate NeroCD expansion, not an
+upstream workflow implemented by `VolumeBackupRecoveryJob`. No coordinated
+snapshot, full parity, or automatic rollback claim follows from this qualification.
 
 ## Pasteable Vikunja/PostgreSQL example
 

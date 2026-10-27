@@ -2,7 +2,8 @@
 
 Owned-upload backups stop the exact running writers, archive an owned local volume,
 and resume those writers. Image-resource restore extracts into a separate resource
-and volume. Managed Compose supports immediate local named-volume backup only.
+and volume. Managed Compose supports immediate and scheduled local named-volume
+backups.
 Configure the controller and matching runner helper before admitting this work.
 
 The server's archive controller is disabled by default. Set
@@ -148,5 +149,8 @@ Authorized history remains readable independently of new backup availability.
 The existing
 `POST /api/v1/hosting-operations/{id}/storage-archive-recovery` endpoint handles
 unresolved writer resumption with an exact plan hash and a fresh request identity.
-Compose restore, remote copies, and schedules are rejected. A successful local
-archive does not establish a coordinated database and upload recovery point.
+[Local Compose named-volume schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
+reuse these archive plans and limits. A schedule fixes the selected volume's
+origin and resolves the current settled deployment at each due admission.
+Compose restore and remote copies remain rejected. A successful local archive
+does not establish a coordinated database and upload recovery point.

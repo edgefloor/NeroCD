@@ -18,6 +18,30 @@ saved request does not cancel an accepted schedule. Read current history before
 you make a separate submission. Disable stops future discovery. It does not
 cancel an admitted archive or clear its ownership hold.
 
+## Schedule a Compose named volume
+
+In **Compose volume backups**, select an eligible named volume. In **Recurring
+Compose volume backups**, enter the frequency and timezone, then choose
+**Review Compose volume schedule**. Review the current deployment and acknowledge
+interruption of the selected volume's running writers for every due backup.
+Choose **Confirm Compose volume schedule**. Even an initially disabled schedule
+requires this fresh review. Enabling or editing an enabled schedule requires a
+new deployment review and acknowledgement.
+
+The selected volume is fixed for the schedule. Create a separate schedule to
+select another volume. Redeployment can change component containers while
+preserving the selected volume's recorded creation origin. Each due occurrence
+resolves the current settled deployment and records its exact operation identity.
+It uses the existing [archive controller](hosting-storage-archive.md) and writer
+recovery protocol. Other volumes are excluded. These schedules create local
+archives only and do not provide coordinated database and upload snapshots.
+
+Use **View schedule** and **View scheduled archive** to inspect occurrences and
+archive results. Owners can disable an existing schedule without fresh runtime
+evidence. Current authorization still applies to reads, disable, and identical
+request replay when the archive controller or runtime is unavailable. Disabling
+a schedule does not cancel an admitted backup or clear a mutation hold.
+
 ## API contract
 
 Owners create schedules with `POST /api/v1/resources/{id}/storage-backup-schedules`
@@ -36,6 +60,21 @@ Each revision retains its actor, source storage reference, binding, destination,
 frequency, timezone, and selected remote revision. Public history contains safe
 IDs, the UTC minute, admitted revision, state, finite reason, and held ownership.
 It does not expose paths, credential references, lease fences, or arbitrary output.
+
+Compose uses the same endpoints and common input fields. Add `volume`,
+`expected_deployed_operation_id`, and `acknowledge_interruption: true` when
+creating a schedule, including a disabled one, or saving an enabled revision.
+The deployment must match fresh eligible volume evidence. A disabled update
+retains `volume` but can omit the deployment and acknowledgement fields.
+`remote_target` is rejected for Compose. Image schedules keep their existing
+input contract.
+
+Compose schedule metadata uses
+`managed-compose.local-volume-archive.schedule.v1` and exposes `volume` and retained
+`acknowledge_interruption`. Occurrences expose the selected volume alongside
+their schedule revision, linked backup, operation, and ownership state. The
+controller verifies the stable volume origin and the schedule actor's current
+authority at each due admission. A changed volume origin cannot silently retarget a schedule.
 
 ## Timing and execution
 
@@ -96,3 +135,28 @@ Notification receivers use a private CA and explicit fixture TLS origins.
 Production S3 HTTPS, public-CA deployment, arbitrary mounts, in-place or cross-host
 recovery, disk loss, broader cron grammar, general command jobs, and additional
 events and channels are unqualified.
+
+## Accepted Compose qualification
+
+Local schedules for a selected managed Compose named volume passed at
+`1df3c90a1aef7b3f4235b4ba43eb239415b29e51`. The existing Compose gate saved a disabled
+schedule, retained it across redeployment and Stop/Start, enabled it against the
+current deployment, executed a due local archive, and disabled it through the UI.
+Exact archive bytes and ownership, application persistence and new writes,
+failure compensation, and cleanup passed. See the
+[Compose checklist and evidence](hosting-compose.md#accepted-local-named-volume-schedules)
+for source revisions, the earlier unresolved timeout, check limits, and timing.
+Compose remote copies, download, and archive restore remain outside this slice.
+
+## Compose upstream reference
+
+The behavioral reference is Coolify commit
+`b12d1386f3d458618b4c579babcd1e339c6c40b3`, specifically
+`app/Http/Controllers/Api/VolumeBackupsController.php::persistSchedule` and
+`app/Jobs/ScheduledJobManager.php::processScheduledVolumeBackup`. Coolify stores a
+schedule against selected persistent storage and dispatches each due volume
+backup, withholding new work while stopped-container recovery is pending.
+NeroCD follows that workflow through its existing scheduler, current authorization,
+immutable occurrence transactions, fenced Go runner, and durable archive recovery.
+This local Compose slice does not implement upstream S3, retention, or broader
+storage-type behavior.
