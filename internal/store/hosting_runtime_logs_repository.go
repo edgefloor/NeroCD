@@ -14,6 +14,7 @@ type RuntimeLogScope struct{ ActorID, ResourceID string }
 
 // HostingRuntimeLogsRepository owns bounded demand and immutable-target log sessions.
 type HostingRuntimeLogsRepository interface {
+	RuntimeLogTargets(context.Context, string, string) (domain.HostingRuntimeLogTargets, error)
 	RuntimeLogSessionScope(context.Context, string, string) (RuntimeLogScope, error)
 	OpenRuntimeLogSession(context.Context, string, string, domain.HostingRuntimeLogOpen) (domain.HostingRuntimeLogSession, error)
 	RenewRuntimeLogSession(context.Context, string, string) (domain.HostingRuntimeLogSession, error)

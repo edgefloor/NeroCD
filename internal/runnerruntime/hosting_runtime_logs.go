@@ -270,14 +270,36 @@ func (c *runtimeLogCollector) session(parent context.Context, grant runtimeLogGr
 		size = 0
 		return true
 	}
+	accept := func(event domain.HostingRuntimeLogEvent) bool {
+		queue.take(event)
+		// 32 KiB bounds worst-case JSON escaping below the transport limit.
+		if len(events) == 64 || size+len(event.Message) > 32<<10 {
+			if !send("following") {
+				return false
+			}
+		}
+		events = append(events, event)
+		size += len(event.Message)
+		return true
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-readerDone:
-			// Source loss is explicit; unflushed fragments are never reconstructed.
-			_ = send("disconnected")
-			return
+			// The producer has joined. Drain its already-framed events before EOF;
+			// completed init containers may have only this finite output.
+			for {
+				select {
+				case event := <-queue.events:
+					if !accept(event) {
+						return
+					}
+				default:
+					_ = send("disconnected")
+					return
+				}
+			}
 		case renewed := <-updates:
 			if !time.Now().Before(deadline) || renewed.claim.CollectionEpoch != current.CollectionEpoch || !reflect.DeepEqual(renewed.claim.Target, current.Target) {
 				return
@@ -297,15 +319,9 @@ func (c *runtimeLogCollector) session(parent context.Context, grant runtimeLogGr
 			}
 			watchdog.Reset(time.Until(deadline))
 		case event := <-queue.events:
-			queue.take(event)
-			// 32 KiB of message bytes bounds worst-case JSON escaping below 256 KiB.
-			if len(events) == 64 || size+len(event.Message) > 32<<10 {
-				if !send("following") {
-					return
-				}
+			if !accept(event) {
+				return
 			}
-			events = append(events, event)
-			size += len(event.Message)
 		case <-flush.C:
 			if !send("following") {
 				return

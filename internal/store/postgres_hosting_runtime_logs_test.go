@@ -89,6 +89,9 @@ func (f runtimeLogFixture) append(t *testing.T, b domain.HostingRuntimeLogBatch)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// PostgreSQL and JSON receipts can represent the same instant with different
+	// time.Location pointers. Compare their stable UTC receipt values.
+	v.ReceivedAt = v.ReceivedAt.UTC()
 	return v
 }
 func (f runtimeLogFixture) page(t *testing.T, id string) domain.HostingRuntimeLogPage {

@@ -30,6 +30,20 @@ const (
 
 var runtimeLogRandomID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
+// HostingRuntimeLogTargets lists current components without opening collection demand.
+type HostingRuntimeLogTargets struct {
+	ResourceID  string                       `json:"resource_id"`
+	OperationID string                       `json:"operation_id"`
+	Components  []HostingRuntimeLogComponent `json:"components"`
+}
+
+// HostingRuntimeLogComponent exposes receipt state without client Docker selectors.
+type HostingRuntimeLogComponent struct {
+	Component string `json:"component"`
+	Running   bool   `json:"running"`
+	ExitCode  int    `json:"exit_code"`
+}
+
 // HostingRuntimeLogOpen freezes a short admission deadline across retries.
 type HostingRuntimeLogOpen struct {
 	RequestID           string    `json:"request_id"`

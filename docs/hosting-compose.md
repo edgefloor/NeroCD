@@ -93,6 +93,9 @@ For a settled healthy stack, select a Compose component in Runtime logs, then
 choose **Follow runtime logs**. Application, PostgreSQL and retained successful
 init containers are separate targets. Selection alone opens no collection.
 Changing selection closes the prior follow; an init container may have no output.
+A completed container stream ends as disconnected after delivering its framed
+output. Target discovery uses the current settled receipt, independently of
+route availability or changed desired deployment settings.
 Redeployment ends the old session as `target_changed`, retaining its original
 component and operation identity. Start a new Follow explicitly for the successor.
 Failed, held and superseded deployments cannot open component follows.
@@ -101,7 +104,8 @@ The runner must opt in with `--hosting-runtime-logs` and advertise both
 `hosting_runtime_logs_v1` and `hosting_runtime_stack_logs_v1`. Existing log
 permissions, sensitive-output handling, short demand leases and retention apply.
 The extended Compose gate checks browser component selection and Follow/Stop,
-actual app/PostgreSQL output, retained init admission, and redeployment ending an
+actual app/PostgreSQL output, finite output from an explicit test-only init
+command added to the pasted example, and redeployment ending an
 old follow. Its component-log qualification is pending until run at the candidate.
 
 ## Qualification

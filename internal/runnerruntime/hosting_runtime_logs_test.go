@@ -560,3 +560,36 @@ func TestRuntimeLogRejectionCooldownIsParentCancellable(t *testing.T) {
 		}
 	})
 }
+
+func TestRuntimeLogCompletedComponentDrainsFiniteOutput(t *testing.T) {
+	claim := runtimeLogClaimFixture()
+	claim.Target.Component = "init"
+	claim.Target.ContainerName = domain.HostingStackObjectID(claim.Target.BindingID, "component", "init")
+	var wire strings.Builder
+	for i := 0; i < 100; i++ {
+		wire.Write(runtimeLogFrame(1, fmt.Sprintf("init-%03d\n", i)))
+	}
+	var events []domain.HostingRuntimeLogEvent
+	final := ""
+	collector := runtimeLogCollector{token: "private", source: runtimeLogSourceFixture{
+		verify: func(context.Context, domain.HostingRuntimeLogTarget) (runtimeLogSourceIdentity, error) {
+			return runtimeLogSourceIdentity{Driver: "local"}, nil
+		},
+		open: func(context.Context, domain.HostingRuntimeLogTarget) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(wire.String())), nil
+		},
+	}, client: runtimeLogClientFixture{append: func(_ context.Context, b domain.HostingRuntimeLogBatch) (domain.HostingRuntimeLogAck, error) {
+		events = append(events, b.Events...)
+		final = b.State
+		return domain.HostingRuntimeLogAck{}, nil
+	}}}
+	collector.session(t.Context(), runtimeLogGrant{claim, time.Now().Add(3 * time.Second)}, make(chan runtimeLogGrant))
+	if final != "disconnected" || len(events) != 100 {
+		t.Fatalf("finite init output lost: state=%s count=%d", final, len(events))
+	}
+	for i, event := range events {
+		if event.Component != "init" || event.Message != fmt.Sprintf("init-%03d\n", i) {
+			t.Fatalf("finite component event changed at %d", i)
+		}
+	}
+}

@@ -170,8 +170,10 @@ try {
   await signIn(page, "admin@example.local", "admin");
   const h = await hosting(page);
   step = "save_original_compose";
-  const source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
+  let source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
   if (createHash("sha256").update(source).digest("hex") !== "2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767") throw Error("shipped Compose example changed");
+  // Explicit test command emits finite init output; shipped example stays intact.
+  source = source.replace("      - |\n", "      - |\n        printf 'nerocd-init-log-fixture\\n'\n");
   const create = h.getByRole("form", { name: "Create application", exact: true });
   await create.getByLabel("Application source", { exact: true }).selectOption("compose");
   await create.getByLabel("Application name", { exact: true }).fill(applicationName);

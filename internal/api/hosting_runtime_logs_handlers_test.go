@@ -57,6 +57,9 @@ func TestHostingRuntimeLogRegisteredHTTPStrictAuthAndCookieRevocation(t *testing
 		t.Fatal(err)
 	}
 	openPath := "/api/v1/resources/" + resource.ID + "/runtime-log-sessions"
+	call("GET", "/api/v1/resources/"+resource.ID+"/runtime-log-targets", token, "", 503)
+	call("GET", "/api/v1/resources/"+resource.ID+"/runtime-log-targets?container_id=foreign", token, "", 400)
+	call("GET", "/api/v1/resources/"+resource.ID+"/runtime-log-targets", "", "", 401)
 	if w := call("POST", openPath, token, string(raw), 503); w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("cache policy missing")
 	}

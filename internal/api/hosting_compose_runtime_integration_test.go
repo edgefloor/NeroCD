@@ -43,7 +43,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("browser did not save Compose source")
 	}
 	definition, err := domain.ParseHostingStack(*resource.Source.Compose)
-	if err != nil || definition.OriginalHash != "sha256:2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
+	if err != nil || definition.OriginalHash != "sha256:c46d52024d31bad0a70342051c26dd4401ad80d29ec8867c22cca0e60e9a6925" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
 		t.Fatal("original reference-bearing source or public component changed")
 	}
 	runtime := storageRuntimeJSON[struct {
@@ -257,7 +257,7 @@ func composeRuntimeWriterBarrier(t *testing.T, previous, current domain.HostingO
 	}
 }
 
-// Empty init output is legitimate; following is still bound to its retained ID.
+// The explicit acceptance init command has finite output; EOF is disconnected.
 func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID string, operation domain.HostingOperation, component string, closeSession bool) domain.HostingRuntimeLogSession {
 	t.Helper()
 	requestID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -280,7 +280,15 @@ func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID str
 				t.Fatal("cross-component log output")
 			}
 		}
-		if page.Session.State == "following" && (component == "init" || len(page.Items) > 0) {
+		if component == "init" {
+			found := false
+			for _, event := range page.Items {
+				found = found || strings.Contains(event.Message, "nerocd-init-log-fixture")
+			}
+			if found && (page.Session.State == "following" || page.Session.State == "disconnected") {
+				break
+			}
+		} else if page.Session.State == "following" && len(page.Items) > 0 {
 			break
 		}
 		if time.Now().After(deadline) {

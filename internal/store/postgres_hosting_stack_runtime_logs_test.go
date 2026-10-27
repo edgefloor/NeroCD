@@ -18,6 +18,7 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 	bearer := "image-hosting-fixture-token"
 	f := runtimeLogFixture{pg: pg, db: db, resource: resource, server: server, destination: destination, bearer: bearer, hash: fmt.Sprintf("%x", sha256.Sum256([]byte(bearer)))}
 	resource.ID = "res_stack_logs"
+	resource.Name = "Compose component logs"
 	resource.Source = domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: "services:\n  app:\n    image: nginx:alpine\n    depends_on:\n      init:\n        condition: service_completed_successfully\n  init:\n    image: busybox:1.37\n    command: [\"true\"]\n", PublicComponent: "app", ContainerPort: 80}}
 	var err error
 	resource, err = pg.CreateResource(ctx, resource, store.WithHostingComposeCreate(strings.Repeat("a", 32), domain.HostingDocumentHash(resource)), store.WithAudit(destinationEvent("stack_log_create")))
@@ -65,6 +66,38 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "stack_log_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}}); err != nil {
 		t.Fatal(err)
 	}
+	targets, err := pg.RuntimeLogTargets(ctx, "usr_bootstrap", resource.ID)
+	if err != nil || targets.ResourceID != resource.ID || targets.OperationID != op.ID || len(targets.Components) != 2 {
+		t.Fatal("current targets missing", err)
+	}
+	var sessions int
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM hosting_runtime_log_sessions`).Scan(&sessions); err != nil || sessions != 0 {
+		t.Fatal("discovery opened demand", err)
+	}
+	// Desired configuration can change without changing the settled log target.
+	changed := resource
+	source := *resource.Source.Compose
+	source.ContainerPort = 81
+	changed.Source.Compose = &source
+	changed, err = pg.UpdateResource(ctx, changed, resource.Generation, store.WithAudit(destinationEvent("stack_log_desired_change")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current, err := pg.RuntimeLogTargets(ctx, "usr_bootstrap", resource.ID); err != nil || current.OperationID != targets.OperationID {
+		t.Fatal("desired port hid settled logs", err)
+	}
+	source.ContainerPort = 80
+	changed.Source.Compose = &source
+	resource, err = pg.UpdateResource(ctx, changed, changed.Generation, store.WithAudit(destinationEvent("stack_log_desired_restore")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.ExpectedGeneration = resource.Generation
+	f.exec(t, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingStackRuntimeLogsCapability)
+	if _, err = pg.RuntimeLogTargets(ctx, "usr_bootstrap", resource.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("old collector discovered stack targets", err)
+	}
+	f.exec(t, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingStackRuntimeLogsCapability)
 	for i, component := range []string{"app", "init"} {
 		in := runtimeLogOpenInput(i + 1)
 		in.Component = component

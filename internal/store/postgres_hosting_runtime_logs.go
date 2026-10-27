@@ -712,3 +712,25 @@ func (s *PostgresStore) PurgeRuntimeLogs(ctx context.Context) (int, error) {
 		return len(ids), err
 	})
 }
+
+// RuntimeLogTargets reads the same current authority as Open without creating demand.
+func (s *PostgresStore) RuntimeLogTargets(ctx context.Context, actor, resource string) (domain.HostingRuntimeLogTargets, error) {
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingRuntimeLogTargets, error) {
+		var zero domain.HostingRuntimeLogTargets
+		p, err := lockHostingSettledPlacement(ctx, tx, resource, "", "", domain.HostingStackRuntimeLogsCapability)
+		if err != nil {
+			return zero, err
+		}
+		if err = authorizeBuildActor(ctx, tx, actor, p.project, "viewer"); err != nil {
+			return zero, err
+		}
+		if p.healthy == nil {
+			return zero, ErrConflict
+		}
+		result := domain.HostingRuntimeLogTargets{ResourceID: resource, OperationID: p.healthy.OperationID, Components: make([]domain.HostingRuntimeLogComponent, 0, len(p.healthy.Stack.Components))}
+		for _, component := range p.healthy.Stack.Components {
+			result.Components = append(result.Components, domain.HostingRuntimeLogComponent{Component: component.Component, Running: component.Running, ExitCode: component.ExitCode})
+		}
+		return result, nil
+	})
+}

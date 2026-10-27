@@ -1243,6 +1243,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/runtime-log-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List settled Compose log targets without collection demand */
+        get: operations["runtimeLogTargets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/runtime-log-sessions": {
         parameters: {
             query?: never;
@@ -5639,6 +5656,17 @@ export interface components {
             items: components["schemas"]["GitHubPushDelivery"][];
             next_cursor: string;
             has_more: boolean;
+        };
+        HostingRuntimeLogTargets: {
+            resource_id: string;
+            operation_id: string;
+            components: components["schemas"]["HostingRuntimeLogComponent"][];
+        };
+        HostingRuntimeLogComponent: {
+            component: string;
+            running: boolean;
+            /** Format: int32 */
+            exit_code: number;
         };
         HostingRuntimeLogOpen: {
             request_id: string;
@@ -13067,6 +13095,34 @@ export interface operations {
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
             413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runtimeLogTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current settled stack components; Cache-Control:no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRuntimeLogTargets"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
