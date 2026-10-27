@@ -1309,6 +1309,63 @@ paths:
         }
       }
     }
+  /api/v1/resources/{id}/database-backup-components:
+    {
+      "get": {
+        "operationId": "getHostingDatabaseBackupComponents",
+        "summary": "Read settled Compose PostgreSQL component eligibility",
+        "description": "Authorized settled operation evidence only; creates no demand. The runner verifies the live official PostgreSQL16 profile before effects. Logical database archives do not contain uploaded files.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Safe logical backup state or private runner plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingDatabaseBackupComponents"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "401": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "403": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "404": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "409": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "500": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          },
+          "503": {
+            "description": "Request rejected or unavailable; never assume effects did not occur"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            }
+          }
+        ]
+      }
+    }
   /api/v1/resources/{id}/database-backups:
     {
       "get": {
@@ -9049,6 +9106,10 @@ paths:
         }
       }
     }
+  "/api/v1/resources/{id}/stack-lifecycle": {"get": {"operationId": "getHostingStackLifecycle", "summary": "getHostingStackLifecycle", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Settled lifecycle evidence; Cache-Control: no-store", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingStackLifecycle"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}}}
+
+  "/api/v1/resources/{id}/stack-stop": {"post": {"operationId": "stopHostingStack", "summary": "stopHostingStack", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"202": {"description": "Settled lifecycle evidence; Cache-Control: no-store", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingOperation"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingStackStopInput"}}}}}}
+
 components:
   securitySchemes:
     bearerAuth:
@@ -10605,6 +10666,139 @@ components:
           }
         }
       }
+    HostingDatabaseBackupComponentTarget:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "component",
+          "expected_deployed_operation_id",
+          "expected_resource_generation",
+          "acknowledge_replacement"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "expected_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "expected_resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "acknowledge_replacement": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      }
+    HostingDatabaseBackupComponentPlan:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          }
+        }
+      }
+    HostingDatabaseBackupComponent:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "engine",
+          "major_version",
+          "running",
+          "eligible",
+          "reason"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "postgresql"
+            ]
+          },
+          "major_version": {
+            "type": "integer",
+            "enum": [
+              16
+            ]
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    HostingDatabaseBackupComponents:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "resource_generation",
+          "available",
+          "reason",
+          "components"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "components": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/HostingDatabaseBackupComponent"
+            }
+          }
+        }
+      }
     HostingDatabaseBackupInput:
       {
         "type": "object",
@@ -10624,16 +10818,47 @@ components:
           },
           "remote_target": {
             "$ref": "#/components/schemas/BackupTargetSelection"
+          },
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "expected_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "component",
+              "expected_deployed_operation_id"
+            ]
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "component"
+                  ]
+                },
+                {
+                  "required": [
+                    "expected_deployed_operation_id"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     HostingDatabaseBackupRestoreInput:
       {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "request_id",
-          "name"
+          "request_id"
         ],
         "properties": {
           "request_id": {
@@ -10647,8 +10872,33 @@ components:
           },
           "remote_source": {
             "$ref": "#/components/schemas/BackupRemoteSource"
+          },
+          "component_target": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupComponentTarget"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "name"
+            ],
+            "not": {
+              "required": [
+                "component_target"
+              ]
+            }
+          },
+          {
+            "required": [
+              "component_target"
+            ],
+            "not": {
+              "required": [
+                "name"
+              ]
+            }
+          }
+        ]
       }
     HostingDatabaseBackupBlob:
       {
@@ -10715,7 +10965,8 @@ components:
           "version": {
             "type": "string",
             "enum": [
-              "postgresql.logical-local.v1"
+              "postgresql.logical-local.v1",
+              "postgresql.compose-logical-local.v1"
             ]
           },
           "project_id": {
@@ -10787,6 +11038,22 @@ components:
           },
           "remote_target": {
             "$ref": "#/components/schemas/BackupTargetSelection"
+          },
+          "source_component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "source_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "target_component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "target_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
           }
         }
       }
@@ -10799,9 +11066,7 @@ components:
           "actor_id",
           "runner_id",
           "source",
-          "source_storage",
           "source_plan",
-          "credentials",
           "location_id",
           "max_bytes",
           "timeout_seconds",
@@ -10860,8 +11125,65 @@ components:
           "hash": {
             "type": "string",
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "component": {
+            "$ref": "#/components/schemas/HostingDatabaseBackupComponentPlan"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "source_storage",
+              "credentials"
+            ],
+            "not": {
+              "required": [
+                "component"
+              ]
+            },
+            "properties": {
+              "operation": {
+                "properties": {
+                  "version": {
+                    "enum": [
+                      "postgresql.logical-local.v1"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "required": [
+              "component"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "source_storage"
+                  ]
+                },
+                {
+                  "required": [
+                    "credentials"
+                  ]
+                }
+              ]
+            },
+            "properties": {
+              "operation": {
+                "properties": {
+                  "version": {
+                    "enum": [
+                      "postgresql.compose-logical-local.v1"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     HostingDatabaseBackupMutation:
       {
@@ -10927,6 +11249,22 @@ components:
           },
           "local_copy": {
             "$ref": "#/components/schemas/BackupLocalCopyProof"
+          },
+          "component_version": {
+            "type": "string",
+            "enum": [
+              "postgresql.compose-logical-local.v1"
+            ]
+          },
+          "writers": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/HostingStorageArchiveWriterState"
+            }
+          },
+          "writers_resumed": {
+            "type": "boolean"
           }
         }
       }
@@ -12169,6 +12507,7 @@ components:
       additionalProperties: false
       required: [resource_id, resource_generation, storage_ref, previous_healthy_operation_id, host_port, container_port, readiness, available, reason, routes, storage_route_continuity, application_database_storage]
       properties:
+        stopped_operation_id: {"type": "string"}
         stack_ref: {$ref: "#/components/schemas/HostingStackRef"}
         application_database_storage:
           anyOf: [{$ref: "#/components/schemas/HostingApplicationDatabaseStorageReview"}, {type: "null"}]
@@ -14127,6 +14466,7 @@ components:
         - readiness
         - policy_version
       properties:
+        stack_stopped_operation_id: {"type": "string"}
         stack: {$ref: "#/components/schemas/HostingStackRef"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabaseRef"}
         database: {$ref: "#/components/schemas/HostingDatabaseExecutionRef"}
@@ -14274,6 +14614,7 @@ components:
         - compiler_version
         - hash
       properties:
+        previous_stopped: {"$ref": "#/components/schemas/HostingStackStopped"}
         stack: {$ref: "#/components/schemas/HostingStackPlan"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabasePlan"}
         database: {$ref: "#/components/schemas/HostingDatabasePlan"}
@@ -14331,6 +14672,7 @@ components:
         - restored
         - uncertain
       properties:
+        stack_stopped: {"type": "boolean"}
         stack: {$ref: "#/components/schemas/HostingStackState"}
         outcome:
           type: string
@@ -14494,6 +14836,7 @@ components:
         - ready
         - no_owned_containers
       properties:
+        stack_stopped: {"type": "boolean"}
         stack: {$ref: "#/components/schemas/HostingStackState"}
         operation_id:
           type: string
@@ -14545,8 +14888,12 @@ components:
           "updated_at"
         ],
         "properties": {
-          "stack_source": {"$ref": "#/components/schemas/HostingStackDefinition"},
-          "stack_create_permitted": {"type": "boolean"},
+          "stack_source": {
+            "$ref": "#/components/schemas/HostingStackDefinition"
+          },
+          "stack_create_permitted": {
+            "type": "boolean"
+          },
           "id": {
             "type": "string"
           },
@@ -14649,7 +14996,8 @@ components:
               "restore",
               "recover",
               "finalize",
-              "storage_recover"
+              "storage_recover",
+              "stack_stop"
             ]
           },
           "observation_lease": {
@@ -14664,10 +15012,17 @@ components:
           "application_database_route_continuity": {
             "$ref": "#/components/schemas/HostingApplicationDatabaseRouteContinuity"
           },
-          "application_database_storage": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorage"},
-          "application_database_storage_state": {"$ref": "#/components/schemas/HostingApplicationDatabaseStorageState"},
+          "application_database_storage": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseStorage"
+          },
+          "application_database_storage_state": {
+            "$ref": "#/components/schemas/HostingApplicationDatabaseStorageState"
+          },
           "application_database_yield": {
             "$ref": "#/components/schemas/HostingApplicationDatabaseYieldReceipt"
+          },
+          "stack_stop_plan": {
+            "$ref": "#/components/schemas/HostingStackStopPlan"
           }
         },
         "oneOf": [
@@ -14688,7 +15043,8 @@ components:
                   "observe",
                   "cleanup",
                   "finalize",
-                  "storage_recover"
+                  "storage_recover",
+                  "stack_stop"
                 ]
               }
             }
@@ -14758,6 +15114,7 @@ components:
           }
         ]
       }
+
     HostingStorageBackupInput:
       {
         "type": "object",
@@ -21104,6 +21461,9 @@ components:
           "acknowledge_interruption": {
             "type": "boolean",
             "const": true
+          },
+          "expected_stopped_operation_id": {
+            "type": "string"
           }
         }
       }
@@ -21493,3 +21853,11 @@ components:
           }
         }
       }
+
+    HostingStackLifecycle: {"type": "object", "additionalProperties": false, "required": ["resource_id", "resource_generation", "state"], "properties": {"resource_id": {"type": "string"}, "resource_generation": {"type": "integer", "format": "int64", "minimum": 1}, "state": {"type": "string", "enum": ["running", "stopped", "held", "unavailable"]}, "deployed_operation_id": {"type": "string"}, "stop_operation_id": {"type": "string"}}}
+
+    HostingStackStopInput: {"type": "object", "additionalProperties": false, "required": ["idempotency_key", "expected_deployed_operation_id", "expected_generation"], "properties": {"idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128}, "expected_deployed_operation_id": {"type": "string", "minLength": 1, "maxLength": 128}, "expected_generation": {"type": "integer", "format": "int64", "minimum": 1}}}
+
+    HostingStackStopped: {"type": "object", "additionalProperties": false, "required": ["stop_operation_id", "target"], "properties": {"stop_operation_id": {"type": "string"}, "target": {"$ref": "#/components/schemas/HostingHealthy"}}}
+
+    HostingStackStopPlan: {"type": "object", "additionalProperties": false, "required": ["target", "target_plan", "compiler_version", "hash"], "properties": {"target": {"$ref": "#/components/schemas/HostingHealthy"}, "target_plan": {"$ref": "#/components/schemas/HostingApplyPlan"}, "compiler_version": {"type": "string", "enum": ["managed-compose.stop.v1"]}, "hash": {"type": "string"}}}

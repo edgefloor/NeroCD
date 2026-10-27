@@ -135,6 +135,13 @@ func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runne
 	// Only the distinct stack-log capability admits whole-stack receipts. The
 	// ordinary observation/single-container path below keeps its original gates.
 	if capability == domain.HostingStackRuntimeLogsCapability {
+		stopped, err := readStackStopped(ctx, tx, p.binding)
+		if err != nil {
+			return p, err
+		}
+		if stopped != nil {
+			return p, ErrConflict
+		}
 		if !slices.Contains(current.Capabilities, domain.HostingRuntimeLogsCapability) || p.mutation || domain.ValidateHostingStackHealthy(h) != nil || snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace {
 			return p, ErrConflict
 		}

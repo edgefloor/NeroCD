@@ -55,6 +55,13 @@ const (
 	databaseBackupStageAuthority
 	databaseBackupStageRestore
 	databaseBackupStageReadiness
+	databaseBackupStageWriterStop
+	databaseBackupStageWriterState
+	databaseBackupStageSQLClients
+	databaseBackupStageImportTransport
+	databaseBackupStageImportTerminal
+	databaseBackupStageImportExit
+	databaseBackupStageWriterResume
 )
 
 func (p databaseBackupPhase) name() string {
@@ -107,6 +114,20 @@ func (s databaseBackupStage) name() string {
 		return "restore"
 	case databaseBackupStageReadiness:
 		return "readiness"
+	case databaseBackupStageWriterStop:
+		return "writer_stop"
+	case databaseBackupStageWriterState:
+		return "writer_state"
+	case databaseBackupStageSQLClients:
+		return "sql_clients"
+	case databaseBackupStageImportTransport:
+		return "import_transport"
+	case databaseBackupStageImportTerminal:
+		return "import_terminal"
+	case databaseBackupStageImportExit:
+		return "import_exit"
+	case databaseBackupStageWriterResume:
+		return "writer_resume"
 	}
 	return "unknown"
 }
@@ -140,12 +161,14 @@ func databaseBackupErrorPhase(err error, phase databaseBackupPhase) error {
 }
 
 type databaseBackupEngine struct {
-	localCopy *domain.BackupLocalCopyProof
-	image     *imageEngine
-	host      DatabaseEngineConfig
-	root      *os.Root
-	store     *artifactfs.Store
-	stream    func(context.Context, []string, io.Reader, io.Writer) error
+	writers        []domain.HostingStorageArchiveWriterState
+	writersResumed bool
+	localCopy      *domain.BackupLocalCopyProof
+	image          *imageEngine
+	host           DatabaseEngineConfig
+	root           *os.Root
+	store          *artifactfs.Store
+	stream         func(context.Context, []string, io.Reader, io.Writer) error
 }
 
 func openDatabaseBackupEngine(ctx context.Context, config DatabaseExecutionConfig, endpoint string) (*databaseBackupEngine, error) {
@@ -312,6 +335,9 @@ func (e *databaseBackupEngine) preflight(parent context.Context, p domain.Hostin
 	if p.Validate() != nil {
 		return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStagePlan, errDatabaseBackupHeld)
 	}
+	if p.Component != nil {
+		return e.componentPreflight(ctx, p)
+	}
 	if p.Operation.Mode == "backup" {
 		if err := e.inspect(ctx, p.Source, p.SourcePlan, p.SourceStorage); err != nil {
 			return databaseBackupErrorPhase(err, databaseBackupPhasePreflight)
@@ -359,6 +385,9 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 		return blob, databaseBackupErrorAt(databaseBackupPhaseExecution, databaseBackupStageAuthority, errDatabaseBackupHeld)
 	}
 	if p.Operation.Mode == "restore" {
+		if p.Component != nil {
+			return e.componentRestore(ctx, p, before)
+		}
 		f, err := e.archive(ctx, p)
 		if err != nil {
 			return blob, databaseBackupErrorAt(databaseBackupPhaseExecution, databaseBackupStageArchive, err)
@@ -394,7 +423,15 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 	if databaseAuthorize(ctx, before) != nil {
 		return blob, errDatabaseBackupHeld
 	}
-	if e.stream(ctx, databaseBackupArgs("backup", p.Source.ContainerID, p.TimeoutSeconds), nil, &writer) != nil || file.Sync() != nil {
+	args := databaseBackupArgs("backup", p.Source.ContainerID, p.TimeoutSeconds)
+	if p.Component != nil {
+		component, err := domain.HostingPostgresComponent(p.Source, p.SourcePlan, p.Component.Source)
+		if err != nil {
+			return blob, errDatabaseBackupHeld
+		}
+		args = databaseBackupComponentArgs("backup", component.ContainerID, p.TimeoutSeconds)
+	}
+	if e.stream(ctx, args, nil, &writer) != nil || file.Sync() != nil {
 		return blob, errDatabaseBackupHeld
 	}
 	blob = domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Bytes: writer.n, Format: "postgresql_custom"}

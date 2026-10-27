@@ -9,6 +9,9 @@ import (
 )
 
 func hostingJournalUsesStack(entry JournalHosting) bool {
+	if entry.StackStopPlan != nil {
+		return true
+	}
 	return entry.Plan != nil && (entry.Plan.Stack != nil || entry.Plan.Snapshot.Stack != (domain.HostingStackRef{})) || entry.Prepared != nil && (entry.Prepared.Release.Stack != (domain.HostingStackReleaseRef{}) || len(entry.Prepared.StackImages) > 0) || entry.Result != nil && entry.Result.Result.Stack != nil
 }
 func journalStateUsesStack(state journalState) bool {

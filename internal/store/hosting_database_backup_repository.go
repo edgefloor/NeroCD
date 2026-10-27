@@ -6,6 +6,11 @@ import (
 	"nerocd/internal/domain"
 )
 
+// HostingDatabaseBackupComponentRepository exposes settled component eligibility without demand.
+type HostingDatabaseBackupComponentRepository interface {
+	DatabaseBackupComponents(context.Context, string, string) (domain.HostingDatabaseBackupComponents, error)
+}
+
 // HostingDatabaseBackupRepository keeps hosted logical backups independent of
 // controller backups and upload archives. Only encrypted records cross admission.
 type HostingDatabaseBackupRepository interface {

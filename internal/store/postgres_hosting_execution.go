@@ -217,6 +217,9 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 			}
 		}
 	}
+	if err = loadStackStopPlan(ctx, q, &op); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = loadHostingStackSource(ctx, q, &op); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -373,6 +376,10 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 			return domain.HostingOperation{}, readErr
 		}
 		snap.Stack = domain.HostingStackRef{Generation: snap.ResourceGeneration, Hash: version.DefinitionHash}
+		if _, err = stackStartReference(ctx, tx, snap.BindingID, in.ManagedStack.ExpectedStoppedOperationID); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		snap.StackStoppedOperationID = in.ManagedStack.ExpectedStoppedOperationID
 	} else {
 		if desired.Kind != "image" || in.ManagedStack != nil {
 			return domain.HostingOperation{}, ErrConflict
@@ -637,7 +644,9 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 		return nil
 	}
 	runID, mode := "run_"+id, "deploy"
-	if op.CleanupPlan != nil {
+	if op.StackStopPlan != nil {
+		runID, mode = "stack_stop_"+id, domain.HostingStackStopMode
+	} else if op.CleanupPlan != nil {
 		runID, mode = "cleanup_"+id, "cleanup"
 	}
 	spec := domain.RunSpec{Type: hostingSnapshotTaskType(op.Snapshot), Inputs: map[string]any{}, HostingOperationID: id, HostingMode: mode}
@@ -649,9 +658,12 @@ func (s *PostgresStore) PrepareDeployment(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
-	if mode == "cleanup" {
+	switch mode {
+	case domain.HostingStackStopMode:
+		err = sqlcgen.New(tx).CreateHostingStackStopTaskTarget(ctx, sqlcgen.CreateHostingStackStopTaskTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID})
+	case "cleanup":
 		_, err = sqlcgen.New(tx).CreateHostingCleanupTaskTarget(ctx, sqlcgen.CreateHostingCleanupTaskTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID})
-	} else {
+	default:
 		_, err = sqlcgen.New(tx).CreateHostingDeploymentTarget(ctx, sqlcgen.CreateHostingDeploymentTargetParams{RunID: runID, OperationID: id, BindingID: op.BindingID, RunnerID: op.Snapshot.RunnerID})
 	}
 	if err != nil {
@@ -742,6 +754,28 @@ func (s *PostgresStore) HostingRunnerPlan(ctx context.Context, runnerID string, 
 		return domain.HostingOperation{}, err
 	}
 	op.TaskMode = mode
+	if mode == domain.HostingStackStopMode {
+		if op.StackStopPlan == nil || op.RunID != a.RunID || op.MutationHold {
+			return op, ErrConflict
+		}
+		if err = stackStopAuthority(ctx, tx, op, false); err != nil {
+			return op, err
+		}
+		if _, err = sqlcgen.New(tx).BeginHostingPreparation(ctx, op.ID); err != nil {
+			return op, err
+		}
+		if _, err = sqlcgen.New(tx).FinishHostingPreparation(ctx, op.ID); err != nil {
+			return op, err
+		}
+		out, err := hostingTaskOperation(ctx, tx, a)
+		if err != nil {
+			return op, err
+		}
+		if err = hostingAuthorityExists(ctx, tx, runnerID, a, true); err != nil {
+			return op, err
+		}
+		return out, tx.Commit(ctx)
+	}
 	if mode == "observe" {
 		if !op.ReconcileRequested || op.ReconciliationRunID != a.RunID {
 			return domain.HostingOperation{}, ErrConflict
@@ -1103,6 +1137,9 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err != nil {
 		return op, err
 	}
+	if op.StackStopPlan != nil {
+		return s.admitStackStop(ctx, tx, runnerID, a, op)
+	}
 	storageHeld := op.Snapshot.Storage != (domain.HostingStorageRef{}) && op.MutationHold && op.State == "prepared"
 	if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
 		if !op.MutationHold {
@@ -1251,6 +1288,12 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	op, err := hostingOperation(ctx, tx, in.OperationID)
 	if err != nil {
 		return op, err
+	}
+	if op.StackStopPlan != nil {
+		return s.completeStackStop(ctx, tx, runnerID, in, op)
+	}
+	if in.Result.StackStopped {
+		return op, ErrConflict
 	}
 	if connectionOperation(op) {
 		return s.completeDatabaseConnection(ctx, tx, runnerID, in, op)
@@ -1665,6 +1708,12 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 	if op.RunID != before.RunID || op.ReconciliationRunID != before.ReconciliationRunID || !op.ReconcileRequested || op.ReconciliationRunID != in.RunID || op.BindingID != in.BindingID {
 		return domain.HostingOperation{}, ErrConflict
 	}
+	if op.StackStopPlan != nil {
+		return s.recordStackStopObservation(ctx, tx, runnerID, in, op)
+	}
+	if in.StackStopped {
+		return op, ErrConflict
+	}
 	if connectionOperation(op) {
 		return s.recordDatabaseConnectionObservation(ctx, tx, runnerID, in, op)
 	}
@@ -1902,6 +1951,14 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 			return false, nil
 		}
 	}
+	if op.StackStopPlan != nil || op.Snapshot.StackStoppedOperationID != "" {
+		if e := requireStackLifecycleAgent(ctx, tx, runnerID); e != nil {
+			if errors.Is(e, ErrConflict) {
+				return false, nil
+			}
+			return false, e
+		}
+	}
 	switch mode {
 	case "observe":
 		if !op.ReconcileRequested || op.ReconciliationRunID != run.ID {
@@ -2116,7 +2173,11 @@ func (s *PostgresStore) ClaimHostingObservation(ctx context.Context, runnerID st
 	if err = hostingLockOperationRuns(ctx, tx, before); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if err = hostingRequireMode(ctx, tx, a, "deploy"); err != nil {
+	expectedMode := "deploy"
+	if before.StackStopPlan != nil {
+		expectedMode = domain.HostingStackStopMode
+	}
+	if err = hostingRequireMode(ctx, tx, a, expectedMode); err != nil {
 		return domain.HostingOperation{}, err
 	}
 	if err = hostingAuthorityExists(ctx, tx, runnerID, a, false); err != nil {

@@ -10,7 +10,8 @@ import (
 	"testing"
 )
 
-func TestStackJournalRetainsWholePlanAndRejectsOldReaderVersion(t *testing.T) {
+func stackJournalFixture(t *testing.T) JournalHosting {
+	t.Helper()
 	entry := runtimeJournalFixture(t)
 	definition, err := domain.ParseHostingStack(domain.HostingStackSource{Original: "services:\n  app:\n    image: nginx:alpine\n", PublicComponent: "app", ContainerPort: 80})
 	if err != nil {
@@ -29,6 +30,12 @@ func TestStackJournalRetainsWholePlanAndRejectsOldReaderVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry.Plan = &plan
+	return entry
+}
+
+func TestStackJournalRetainsWholePlanAndRejectsOldReaderVersion(t *testing.T) {
+	entry := stackJournalFixture(t)
+	plan := *entry.Plan
 	dir := filepath.Join(t.TempDir(), "journal")
 	journal, err := OpenAttemptJournal(dir)
 	if err != nil {
@@ -68,5 +75,45 @@ func TestStackJournalRetainsWholePlanAndRejectsOldReaderVersion(t *testing.T) {
 	if opened, err := OpenAttemptJournal(dir); err == nil {
 		_ = opened.Close()
 		t.Fatal("accepted downgraded stack authority")
+	}
+}
+
+func TestStackStopJournalRetainsExactRemovalIntent(t *testing.T) {
+	entry := stackJournalFixture(t)
+	plan := *entry.Plan
+	state := domain.HostingStackState{ObservationComplete: true, PublicComponent: "app", NetworkID: strings.Repeat("a", 64), Components: []domain.HostingStackComponent{{Component: "app", ContainerID: strings.Repeat("b", 64), ImageID: plan.Stack.Images[0].Release.ImageID, OperationID: "hop_deployed", Running: true}}, Volumes: []domain.HostingStackVolume{}}
+	stop, err := domain.CompileHostingStackStopPlan(domain.HostingHealthy{OperationID: "hop_deployed", Snapshot: plan.Snapshot, Release: plan.Release, PlanHash: plan.Hash, Stack: &state}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.RuntimeEnvironment = false
+	entry.RuntimeConfiguration = domain.HostingRuntimeConfigurationRef{}
+	entry.DeliveryID = ""
+	entry.Phase = "stack_stop_intent"
+	entry.Plan = nil
+	entry.StackStopPlan = &stop
+	journal, err := OpenAttemptJournal(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := journal.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if _, err = journal.AppendHosting(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err = journal.DiscardAttempt(entry.Attempt); err == nil {
+		t.Fatal("discarded unresolved stack removal")
+	}
+	if entries := journal.Snapshot().Hosting; len(entries) != 1 || entries[0].StackStopPlan == nil || entries[0].StackStopPlan.Hash != stop.Hash {
+		t.Fatal("lost exact stop intent")
+	}
+	mixed := entry
+	mixed.ID += "mixed"
+	mixed.Plan = &plan
+	if _, err = journal.AppendHosting(mixed); err == nil {
+		t.Fatal("mixed stop/apply intent accepted")
 	}
 }

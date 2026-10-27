@@ -56,10 +56,13 @@ func HostingPlanFamilyMatches(s HostingSnapshot, p HostingApplyPlan) bool {
 		if p.Stack == nil || p.Snapshot != s || p.RetainPrevious || len(p.RetainedReleases) != 0 || p.Storage != nil || p.Database != nil || p.ApplicationDatabase != nil {
 			return false
 		}
-		expected, err := CompileHostingStackPlan(s, p.Release, p.PreviousHealthy, *p.Stack)
+		expected, err := CompileHostingStackPlan(s, p.Release, p.PreviousHealthy, *p.Stack, p.PreviousStopped)
 		return err == nil && expected.Hash == p.Hash
 	}
 
+	if p.PreviousStopped != nil {
+		return false
+	}
 	if p.ApplicationDatabase != nil || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
 		return false
 	}

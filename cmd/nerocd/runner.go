@@ -271,6 +271,9 @@ func runRunner(args []string) error {
 	}
 	if *logicalDatabaseBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+		if *hostingRuntimeEnv {
+			registrationCapabilities = append(registrationCapabilities, domain.HostingDatabaseBackupComponentCapability)
+		}
 	}
 	registrationCapabilities, err = runnerStorageArchiveCapabilities(archiveConfig != nil, capabilitiesSpecified || *hostingDatabase || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
 	if err != nil {
@@ -456,7 +459,7 @@ func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string
 		return false
 	}
 	if !enabled {
-		if has(domain.HostingRuntimeEnvironmentCapability) || has(domain.HostingOwnedStorageRuntimeCapability) || has(domain.HostingStackCapability) {
+		if has(domain.HostingRuntimeEnvironmentCapability) || has(domain.HostingOwnedStorageRuntimeCapability) || has(domain.HostingStackCapability) || has(domain.HostingStackLifecycleCapability) {
 			return nil, errors.New("hosting_runtime_env_v1 requires --hosting-runtime-env")
 		}
 		return capabilities, nil
@@ -487,6 +490,9 @@ func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string
 	}
 	if !has(domain.HostingStackCapability) {
 		capabilities = append(capabilities, domain.HostingStackCapability)
+	}
+	if !has(domain.HostingStackLifecycleCapability) {
+		capabilities = append(capabilities, domain.HostingStackLifecycleCapability)
 	}
 	if !has(domain.HostingOwnedStorageCapability) {
 		capabilities = append(capabilities, domain.HostingOwnedStorageCapability)

@@ -88,6 +88,9 @@ func validateLocalBuildRelease(r HostingRelease) error {
 
 // ValidateHostingSnapshotRelease enforces the exclusive registry/local union.
 func ValidateHostingSnapshotRelease(s HostingSnapshot, r HostingRelease) error {
+	if s.StackStoppedOperationID != "" && (s.Stack == (HostingStackRef{}) || !hostingProxyID.MatchString(s.StackStoppedOperationID)) {
+		return errors.New("invalid stopped stack snapshot")
+	}
 	if s.Stack != (HostingStackRef{}) {
 		if s.PolicyVersion != HostingStackPolicyVersion || s.Stack.Generation < 1 || !imageSHA256.MatchString(s.Stack.Hash) || s.ImageReference != "" || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.Storage != (HostingStorageRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || r.Stack == (HostingStackReleaseRef{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
 			return errors.New("invalid stack source/release union")

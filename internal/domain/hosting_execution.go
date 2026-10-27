@@ -70,6 +70,8 @@ func ValidateImageDeploymentTask(run TaskRun) error {
 		prefix = "finalize_"
 	} else if spec.HostingMode == "storage_recover" {
 		prefix = "storage_recover_"
+	} else if spec.HostingMode == HostingStackStopMode {
+		prefix = "stack_stop_"
 	} else if spec.HostingMode == "cleanup" {
 		prefix = "cleanup_"
 	} else if spec.HostingMode != "deploy" {
@@ -104,25 +106,26 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
-	Stack                  HostingStackRef                  `json:"stack,omitzero"`
-	Database               HostingDatabaseExecutionRef      `json:"database,omitzero"`
-	StorageRouteContinuity HostingStorageRouteContinuityRef `json:"storage_route_continuity,omitzero"`
-	Storage                HostingStorageRef                `json:"storage,omitzero"`
-	ResourceID             string                           `json:"resource_id"`
-	ResourceGeneration     int64                            `json:"resource_generation"`
-	ImageReference         string                           `json:"image_reference"`
-	BindingID              string                           `json:"binding_id"`
-	DestinationID          string                           `json:"destination_id"`
-	ServerID               string                           `json:"server_id"`
-	RunnerID               string                           `json:"runner_id"`
-	RuntimeNamespace       string                           `json:"runtime_namespace"`
-	ContainerPort          int                              `json:"container_port"`
-	HostPort               int                              `json:"host_port"`
-	Readiness              HostingReadiness                 `json:"readiness"`
-	PolicyVersion          string                           `json:"policy_version"`
-	LocalBuild             HostingLocalBuildSource          `json:"local_build,omitzero"`
-	RuntimeConfiguration   HostingRuntimeConfigurationRef   `json:"runtime_configuration,omitzero"`
-	ApplicationDatabase    HostingApplicationDatabaseRef    `json:"application_database,omitzero"`
+	StackStoppedOperationID string                           `json:"stack_stopped_operation_id,omitempty"`
+	Stack                   HostingStackRef                  `json:"stack,omitzero"`
+	Database                HostingDatabaseExecutionRef      `json:"database,omitzero"`
+	StorageRouteContinuity  HostingStorageRouteContinuityRef `json:"storage_route_continuity,omitzero"`
+	Storage                 HostingStorageRef                `json:"storage,omitzero"`
+	ResourceID              string                           `json:"resource_id"`
+	ResourceGeneration      int64                            `json:"resource_generation"`
+	ImageReference          string                           `json:"image_reference"`
+	BindingID               string                           `json:"binding_id"`
+	DestinationID           string                           `json:"destination_id"`
+	ServerID                string                           `json:"server_id"`
+	RunnerID                string                           `json:"runner_id"`
+	RuntimeNamespace        string                           `json:"runtime_namespace"`
+	ContainerPort           int                              `json:"container_port"`
+	HostPort                int                              `json:"host_port"`
+	Readiness               HostingReadiness                 `json:"readiness"`
+	PolicyVersion           string                           `json:"policy_version"`
+	LocalBuild              HostingLocalBuildSource          `json:"local_build,omitzero"`
+	RuntimeConfiguration    HostingRuntimeConfigurationRef   `json:"runtime_configuration,omitzero"`
+	ApplicationDatabase     HostingApplicationDatabaseRef    `json:"application_database,omitzero"`
 }
 
 // HostingRelease binds registry content and local image identity to one daemon.
@@ -151,6 +154,7 @@ type HostingHealthy struct {
 
 // HostingApplyPlan is compiled once from an immutable release and target.
 type HostingApplyPlan struct {
+	PreviousStopped     *HostingStackStopped            `json:"previous_stopped,omitempty"`
 	Stack               *HostingStackPlan               `json:"stack,omitempty"`
 	Database            *HostingDatabasePlan            `json:"database,omitempty"`
 	Storage             *HostingStoragePlan             `json:"storage,omitempty"`
@@ -174,6 +178,7 @@ type HostingReceipt struct {
 // HostingResult is nonsecret durable evidence, never a command or arbitrary URL.
 // Uncertain results retain the independent mutation hold.
 type HostingResult struct {
+	StackStopped        bool               `json:"stack_stopped,omitempty"`
 	Stack               *HostingStackState `json:"stack,omitempty"`
 	Outcome             string             `json:"outcome"`
 	ContainerID         string             `json:"container_id,omitempty"`
@@ -188,6 +193,7 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
+	StackStopPlan                      *HostingStackStopPlan                      `json:"stack_stop_plan,omitempty"`
 	StackSource                        *HostingStackDefinition                    `json:"stack_source,omitempty"`
 	StackCreatePermitted               bool                                       `json:"stack_create_permitted,omitempty"`
 	ApplicationDatabaseStorage         *HostingApplicationDatabaseStorage         `json:"application_database_storage,omitempty"`
@@ -250,6 +256,7 @@ type HostingCompleteRequest struct {
 // HostingObservation is read-only evidence compared against an already durable result.
 // Observation alone never authorizes replaying a workload mutation.
 type HostingObservation struct {
+	StackStopped      bool               `json:"stack_stopped,omitempty"`
 	Stack             *HostingStackState `json:"stack,omitempty"`
 	NoOwnedContainers bool               `json:"no_owned_containers"`
 	HostingAuthority
@@ -264,6 +271,9 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.ManagedStack != nil && in.ManagedStack.ExpectedStoppedOperationID != "" && !hostingProxyID.MatchString(in.ManagedStack.ExpectedStoppedOperationID) {
+		return errors.New("invalid stopped operation selection")
+	}
 	if in.ManagedStack != nil && (!in.ManagedStack.AcknowledgeInterruption || in.ApplicationDatabaseStorage != nil || in.ApplicationDatabaseRouteContinuity != nil) {
 		return errors.New("managed stack requires explicit interrupting replacement acknowledgment")
 	}

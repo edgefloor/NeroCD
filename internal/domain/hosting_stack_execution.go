@@ -18,7 +18,8 @@ const (
 
 // HostingStackDeploymentInput acknowledges the stack-wide interrupting replacement.
 type HostingStackDeploymentInput struct {
-	AcknowledgeInterruption bool `json:"acknowledge_interruption"`
+	AcknowledgeInterruption    bool   `json:"acknowledge_interruption"`
+	ExpectedStoppedOperationID string `json:"expected_stopped_operation_id,omitempty"`
 }
 
 // HostingStackRef selects one immutable source normalization.
@@ -122,7 +123,7 @@ func ValidateHostingStackImages(definition HostingStackDefinition, daemon string
 }
 
 // CompileHostingStackPlan hashes the whole managed stack under its destination authority.
-func CompileHostingStackPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, stack HostingStackPlan) (HostingApplyPlan, error) {
+func CompileHostingStackPlan(snapshot HostingSnapshot, release HostingRelease, previous *HostingHealthy, stack HostingStackPlan, stopped ...*HostingStackStopped) (HostingApplyPlan, error) {
 	var zero HostingApplyPlan
 	if snapshot.PolicyVersion != HostingStackPolicyVersion || snapshot.Stack.Generation != snapshot.ResourceGeneration || snapshot.Stack.Generation < 1 || snapshot.Stack.Hash != HostingDocumentHash(stack.Definition) || snapshot.ImageReference != "" || snapshot.LocalBuild != (HostingLocalBuildSource{}) || snapshot.Database != (HostingDatabaseExecutionRef{}) || snapshot.Storage != (HostingStorageRef{}) || snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || snapshot.ContainerPort != stack.Definition.ContainerPort || snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || ValidateHostingRuntimeConfigurationRef(snapshot) != nil || ValidateHostingStorageRouteContinuitySnapshot(snapshot) != nil {
 		return zero, errors.New("invalid stack snapshot")
@@ -151,6 +152,19 @@ func CompileHostingStackPlan(snapshot HostingSnapshot, release HostingRelease, p
 		}
 	}
 	plan := HostingApplyPlan{Snapshot: snapshot, Release: release, PreviousHealthy: previous, CompilerVersion: HostingStackCompilerVersion, Stack: &stack}
+	if len(stopped) > 1 {
+		return zero, errors.New("invalid stopped predecessor")
+	}
+	if len(stopped) == 1 && stopped[0] != nil {
+		stop := stopped[0]
+		if stop.Validate() != nil || previous == nil || snapshot.StackStoppedOperationID != stop.StopOperationID || HostingDocumentHash(stop.Target) != HostingDocumentHash(previous) {
+			return zero, errors.New("stopped predecessor changed")
+		}
+		plan.PreviousStopped = stop
+	} else if snapshot.StackStoppedOperationID != "" {
+		return zero, errors.New("stopped predecessor proof missing")
+	}
+
 	plan.Hash = HostingDocumentHash(plan)
 	return plan, nil
 }

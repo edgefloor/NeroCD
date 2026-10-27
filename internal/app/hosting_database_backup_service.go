@@ -29,7 +29,7 @@ func (s *Service) RequestDatabaseBackup(ctx context.Context, resource string, in
 	if err != nil {
 		return zero, err
 	}
-	if r.Kind != "database" {
+	if r.Kind != "database" && (in.Component == "" || r.Source.Kind != "compose") {
 		return zero, store.ErrNotFound
 	}
 	repo, err := s.databaseBackupRepository()
@@ -87,6 +87,24 @@ func (s *Service) RequestDatabaseBackupRestore(ctx context.Context, backup strin
 	if err != nil {
 		return zero, err
 	}
+	if in.ComponentTarget != nil {
+		if _, _, err = s.resourceForDestinationRole(ctx, in.ComponentTarget.ResourceID, domain.RoleOwner); err != nil {
+			return zero, err
+		}
+		id, e := prefixedID("dbr")
+		if e != nil {
+			return zero, e
+		}
+		event, e := s.auditEvent(ctx, actor.ID, "hosting.database_backup.restore_requested", id, nil)
+		if e != nil {
+			return zero, e
+		}
+		repo, e := s.databaseBackupRepository()
+		if e != nil {
+			return zero, e
+		}
+		return repo.RequestDatabaseBackupRestore(ctx, id, backup, actor.ID, in, domain.HostingDatabaseCreateInput{}, nil, event)
+	}
 	source, err := s.GetHostingDatabase(ctx, original.SourceResourceID)
 	if err != nil {
 		return zero, err
@@ -126,6 +144,19 @@ func (s *Service) RequestDatabaseBackupRestore(ctx context.Context, backup strin
 		return zero, err
 	}
 	return repo.RequestDatabaseBackupRestore(ctx, id, backup, actor.ID, in, create, records, event)
+}
+
+// DatabaseBackupComponents reads settled eligibility without opening a backup operation.
+func (s *Service) DatabaseBackupComponents(ctx context.Context, resource string) (domain.HostingDatabaseBackupComponents, error) {
+	_, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)
+	if err != nil {
+		return domain.HostingDatabaseBackupComponents{}, err
+	}
+	repo, ok := s.hosting.(store.HostingDatabaseBackupComponentRepository)
+	if !ok {
+		return domain.HostingDatabaseBackupComponents{}, store.ErrHostingDatabaseUnavailable
+	}
+	return repo.DatabaseBackupComponents(ctx, actor.ID, resource)
 }
 
 // RunnerDatabaseBackupPlan returns a backup plan for the authenticated runner.

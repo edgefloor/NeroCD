@@ -346,6 +346,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/database-backup-components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read settled Compose PostgreSQL component eligibility
+         * @description Authorized settled operation evidence only; creates no demand. The runner verifies the live official PostgreSQL16 profile before effects. Logical database archives do not contain uploaded files.
+         */
+        get: operations["getHostingDatabaseBackupComponents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/database-backups": {
         parameters: {
             query?: never;
@@ -4841,6 +4861,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/stack-lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** getHostingStackLifecycle */
+        get: operations["getHostingStackLifecycle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/stack-stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** stopHostingStack */
+        post: operations["stopHostingStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5210,16 +5264,49 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        HostingDatabaseBackupComponentTarget: {
+            resource_id: string;
+            component: string;
+            expected_deployed_operation_id: string;
+            expected_resource_generation: number;
+            /** @enum {boolean} */
+            acknowledge_replacement: true;
+        };
+        HostingDatabaseBackupComponentPlan: {
+            source: string;
+            target?: string;
+        };
+        HostingDatabaseBackupComponent: {
+            component: string;
+            /** @enum {string} */
+            engine: "postgresql";
+            /** @enum {integer} */
+            major_version: 16;
+            running: boolean;
+            eligible: boolean;
+            reason: string;
+        };
+        HostingDatabaseBackupComponents: {
+            resource_id: string;
+            resource_generation: number;
+            operation_id?: string;
+            available: boolean;
+            reason: string;
+            components: components["schemas"]["HostingDatabaseBackupComponent"][];
+        };
         HostingDatabaseBackupInput: {
             request_id: string;
             expected_resource_generation: number;
             remote_target?: components["schemas"]["BackupTargetSelection"];
-        };
+            component?: string;
+            expected_deployed_operation_id?: string;
+        } & (unknown | unknown);
         HostingDatabaseBackupRestoreInput: {
             request_id: string;
-            name: string;
+            name?: string;
             remote_source?: components["schemas"]["BackupRemoteSource"];
-        };
+            component_target?: components["schemas"]["HostingDatabaseBackupComponentTarget"];
+        } & (unknown | unknown);
         HostingDatabaseBackupBlob: {
             digest: string;
             bytes: number;
@@ -5231,7 +5318,7 @@ export interface components {
             timeout_seconds: number;
             id: string;
             /** @enum {string} */
-            version: "postgresql.logical-local.v1";
+            version: "postgresql.logical-local.v1" | "postgresql.compose-logical-local.v1";
             project_id: string;
             source_resource_id: string;
             source_generation: number;
@@ -5252,15 +5339,19 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             remote_target?: components["schemas"]["BackupTargetSelection"];
+            source_component?: string;
+            source_deployed_operation_id?: string;
+            target_component?: string;
+            target_deployed_operation_id?: string;
         };
         HostingDatabaseBackupPlan: {
             operation: components["schemas"]["HostingDatabaseBackupOperation"];
             actor_id: string;
             runner_id: string;
             source: components["schemas"]["HostingHealthy"];
-            source_storage: components["schemas"]["HostingStorage"];
+            source_storage?: components["schemas"]["HostingStorage"];
             source_plan: components["schemas"]["HostingApplyPlan"];
-            credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
+            credentials?: components["schemas"]["HostingDatabaseCredentialRef"][];
             target?: components["schemas"]["HostingHealthy"];
             target_storage?: components["schemas"]["HostingStorage"];
             target_plan?: components["schemas"]["HostingApplyPlan"];
@@ -5268,7 +5359,18 @@ export interface components {
             max_bytes: number;
             timeout_seconds: number;
             hash: string;
-        };
+            component?: components["schemas"]["HostingDatabaseBackupComponentPlan"];
+        } & ({
+            operation?: {
+                /** @enum {unknown} */
+                version?: "postgresql.logical-local.v1";
+            };
+        } | {
+            operation?: {
+                /** @enum {unknown} */
+                version?: "postgresql.compose-logical-local.v1";
+            };
+        });
         HostingDatabaseBackupMutation: {
             operation_id: string;
             run_id: string;
@@ -5283,6 +5385,10 @@ export interface components {
             /** @enum {string} */
             failure_code?: "execution_failed" | "publication_failed" | "interrupted";
             local_copy?: components["schemas"]["BackupLocalCopyProof"];
+            /** @enum {string} */
+            component_version?: "postgresql.compose-logical-local.v1";
+            writers?: components["schemas"]["HostingStorageArchiveWriterState"][];
+            writers_resumed?: boolean;
         };
         ServerBootstrapTarget: {
             ip: string;
@@ -6432,6 +6538,7 @@ export interface components {
             hash: string;
         };
         HostingStorageDeploymentOptions: {
+            stopped_operation_id?: string;
             stack_ref?: components["schemas"]["HostingStackRef"];
             application_database_storage: components["schemas"]["HostingApplicationDatabaseStorageReview"] | null;
             resource_id: components["schemas"]["HostingIdentifier"];
@@ -7112,6 +7219,7 @@ export interface components {
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
         };
         HostingSnapshot: {
+            stack_stopped_operation_id?: string;
             stack?: components["schemas"]["HostingStackRef"];
             application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
             database?: components["schemas"]["HostingDatabaseExecutionRef"];
@@ -7197,6 +7305,7 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            previous_stopped?: components["schemas"]["HostingStackStopped"];
             stack?: components["schemas"]["HostingStackPlan"];
             application_database?: components["schemas"]["HostingApplicationDatabasePlan"];
             database?: components["schemas"]["HostingDatabasePlan"];
@@ -7217,6 +7326,7 @@ export interface components {
             created_at: string;
         };
         HostingResult: {
+            stack_stopped?: boolean;
             stack?: components["schemas"]["HostingStackState"];
             /** @enum {string} */
             outcome: "succeeded" | "failed";
@@ -7265,6 +7375,7 @@ export interface components {
             phase?: "" | "verifying" | "claim_observation";
         };
         HostingObservation: {
+            stack_stopped?: boolean;
             stack?: components["schemas"]["HostingStackState"];
             operation_id: string;
             run_id: string;
@@ -7311,7 +7422,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize" | "storage_recover";
+            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize" | "storage_recover" | "stack_stop";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
@@ -7319,10 +7430,11 @@ export interface components {
             application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorage"];
             application_database_storage_state?: components["schemas"]["HostingApplicationDatabaseStorageState"];
             application_database_yield?: components["schemas"]["HostingApplicationDatabaseYieldReceipt"];
+            stack_stop_plan?: components["schemas"]["HostingStackStopPlan"];
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "finalize" | "storage_recover";
+            task_mode?: "deploy" | "observe" | "cleanup" | "finalize" | "storage_recover" | "stack_stop";
         } | {
             snapshot?: components["schemas"]["HostingStorageArchiveZeroSnapshot"];
             /** @enum {string} */
@@ -9958,6 +10070,7 @@ export interface components {
         HostingStackDeploymentInput: {
             /** @constant */
             acknowledge_interruption: true;
+            expected_stopped_operation_id?: string;
         };
         HostingStackRef: {
             /** Format: int64 */
@@ -10042,6 +10155,32 @@ export interface components {
             attempt: number;
             plan_hash: string;
             volumes: components["schemas"]["HostingStackVolume"][];
+        };
+        HostingStackLifecycle: {
+            resource_id: string;
+            /** Format: int64 */
+            resource_generation: number;
+            /** @enum {string} */
+            state: "running" | "stopped" | "held" | "unavailable";
+            deployed_operation_id?: string;
+            stop_operation_id?: string;
+        };
+        HostingStackStopInput: {
+            idempotency_key: string;
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_generation: number;
+        };
+        HostingStackStopped: {
+            stop_operation_id: string;
+            target: components["schemas"]["HostingHealthy"];
+        };
+        HostingStackStopPlan: {
+            target: components["schemas"]["HostingHealthy"];
+            target_plan: components["schemas"]["HostingApplyPlan"];
+            /** @enum {string} */
+            compiler_version: "managed-compose.stop.v1";
+            hash: string;
         };
     };
     responses: {
@@ -11312,6 +11451,77 @@ export interface operations {
             };
             /** @description Stale version, generation or placement */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostingDatabaseBackupComponents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe logical backup state or private runner plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupComponents"];
+                };
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request rejected or unavailable; never assume effects did not occur */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20504,6 +20714,68 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    getHostingStackLifecycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled lifecycle evidence; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStackLifecycle"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    stopHostingStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStackStopInput"];
+            };
+        };
+        responses: {
+            /** @description Settled lifecycle evidence; Cache-Control: no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
 }

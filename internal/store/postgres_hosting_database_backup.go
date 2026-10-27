@@ -39,6 +39,9 @@ func databaseBackupView(r sqlcgen.HostingDatabaseBackup) (domain.HostingDatabase
 		return domain.HostingDatabaseBackupOperation{}, err
 	}
 	v := domain.HostingDatabaseBackupOperation{RemoteTarget: p.Operation.RemoteTarget, MaxBytes: p.MaxBytes, TimeoutSeconds: p.TimeoutSeconds, ID: r.ID, Version: domain.HostingDatabaseBackupVersion, ProjectID: r.ProjectID, SourceResourceID: r.SourceResourceID, SourceGeneration: r.SourceGeneration, BackupID: r.BackupID, Mode: r.Mode, State: r.State, TargetResourceID: proxyString(r.TargetResourceID), Consistency: "logical_snapshot_source_writable", FailureCode: r.FailureCode, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	v.Version = p.Operation.Version
+	v.SourceComponent, v.SourceDeployedOperationID = p.Operation.SourceComponent, p.Operation.SourceDeployedOperationID
+	v.TargetComponent, v.TargetDeployedOperationID = p.Operation.TargetComponent, p.Operation.TargetDeployedOperationID
 	if r.Blob != nil {
 		var b domain.HostingDatabaseBackupBlob
 		if json.Unmarshal(r.Blob, &b) != nil || b.Validate() != nil {
@@ -66,7 +69,11 @@ func databaseBackupSchema(ctx context.Context, q *sqlcgen.Queries) error {
 	return nil
 }
 func databaseBackupAgent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan) error {
-	for _, capability := range []string{domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability} {
+	capabilities := []string{domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	if p.Component != nil {
+		capabilities = append(capabilities, domain.HostingDatabaseBackupComponentCapability, domain.HostingStackCapability)
+	}
+	for _, capability := range capabilities {
 		ok, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: p.RunnerID, Capability: capability})
 		if err != nil {
 			return err
@@ -150,6 +157,9 @@ func databaseBackupCurrent(ctx context.Context, tx pgx.Tx, r sqlcgen.HostingData
 	if err != nil {
 		return p, err
 	}
+	if p.Component != nil {
+		return databaseBackupComponentCurrent(ctx, tx, r, p)
+	}
 	if r.Mode == "restore" {
 		if err = databaseBackupRestoreAuthority(ctx, tx, r.CreatedBy, p); err != nil {
 			return p, err
@@ -219,6 +229,9 @@ func (s *PostgresStore) RequestDatabaseBackup(ctx context.Context, id, resource,
 // requestDatabaseBackupTx shares the exact immediate admission and River enqueue
 // with schedule occurrences; its caller owns the surrounding transaction.
 func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, in domain.HostingDatabaseBackupInput) (domain.HostingDatabaseBackupOperation, error) {
+	if in.Component != "" {
+		return s.requestDatabaseBackupComponent(ctx, tx, id, resource, actor, in)
+	}
 	var zero domain.HostingDatabaseBackupOperation
 	q := sqlcgen.New(tx)
 	if s.hostingJobs == nil || !s.hostingJobs.DatabaseBackupEnabled() {
@@ -349,11 +362,11 @@ func (s *PostgresStore) ListDatabaseBackups(ctx context.Context, actor, resource
 		if err = proxyAuthorize(ctx, tx, actor, r.ProjectID, domain.RoleViewer, false); err != nil {
 			return nil, err
 		}
-		v, err := hostingDatabaseLoad(ctx, q, resource)
+		placement, err := q.RuntimeLogCurrentBinding(ctx, resource)
 		if err != nil {
 			return nil, err
 		}
-		if err = databaseBindingGrant(ctx, q, r.ProjectID, v.Binding.DestinationID); err != nil {
+		if err = databaseBindingGrant(ctx, q, r.ProjectID, placement.DestinationID); err != nil {
 			return nil, err
 		}
 		rows, err := q.ListDatabaseBackups(ctx, resource)
@@ -374,6 +387,14 @@ func (s *PostgresStore) ListDatabaseBackups(ctx context.Context, actor, resource
 
 // RequestDatabaseBackupRestore admits restoration into a new private database resource.
 func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, backup, actor string, in domain.HostingDatabaseBackupRestoreInput, create domain.HostingDatabaseCreateInput, records []HostingDatabaseCredentialRecord, event domain.AuditEvent) (domain.HostingDatabaseBackupOperation, error) {
+	if in.ComponentTarget != nil {
+		if in.Validate() != nil {
+			return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup
+		}
+		return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupOperation, error) {
+			return s.requestDatabaseBackupComponentRestore(ctx, tx, id, backup, actor, in)
+		})
+	}
 	if in.Validate() != nil || create.Validate() != nil {
 		return domain.HostingDatabaseBackupOperation{}, domain.ErrInvalidDatabaseBackup
 	}
@@ -485,7 +506,7 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 		if err != nil {
 			return false, err
 		}
-		if r.Mode == "restore" {
+		if r.Mode == "restore" && p.Component == nil {
 			var downloadState string
 			downloadState, e := sqlcgen.New(tx).ReadDatabaseBackupDownloadState(ctx, &r.ID)
 			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
@@ -642,8 +663,15 @@ func (s *PostgresStore) DatabaseBackupMutation(ctx context.Context, runner strin
 		if err != nil {
 			return zero, err
 		}
-		if in.PlanHash != p.Hash || !r.OwnershipHeld || in.Blob != nil && in.Blob.Bytes > p.MaxBytes {
+		if in.PlanHash != p.Hash || !r.OwnershipHeld || in.Blob != nil && in.Blob.Bytes > p.MaxBytes || p.ValidateComponentMutation(in) != nil {
 			return zero, ErrConflict
+		}
+		if p.Component != nil && p.Operation.Mode == "restore" && in.Phase != "intent" && in.Phase != "failed" {
+			intent, e := q.ReadDatabaseBackupReceipt(ctx, sqlcgen.ReadDatabaseBackupReceiptParams{OperationID: r.ID, Phase: "intent"})
+			var original domain.HostingDatabaseBackupMutation
+			if e != nil || json.Unmarshal(intent.Body, &original) != nil || domain.HostingDocumentHash(original.Writers) != domain.HostingDocumentHash(in.Writers) {
+				return zero, ErrConflict
+			}
 		}
 		state := r.State
 		hold := true

@@ -132,10 +132,27 @@ func TestDatabaseBackupSchemaMatchesTypedFields(t *testing.T) {
 			}
 		}
 	}
-	raw, _ := json.Marshal(domain.HostingDatabaseBackupInput{RequestID: "backup", ExpectedResourceGeneration: 1})
-	var value any
-	_ = json.Unmarshal(raw, &value)
-	if err = doc.Components.Schemas["HostingDatabaseBackupInput"].Value.VisitJSON(value); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name, schema string
+		input        any
+	}{
+		{"standalone backup", "HostingDatabaseBackupInput", domain.HostingDatabaseBackupInput{RequestID: "backup", ExpectedResourceGeneration: 1}},
+		{"component backup", "HostingDatabaseBackupInput", domain.HostingDatabaseBackupInput{RequestID: "backup", ExpectedResourceGeneration: 1, Component: "postgresql", ExpectedDeployedOperationID: "hop_deployed"}},
+		{"standalone restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", Name: "New database"}},
+		{"component restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: "res_target", Component: "postgresql", ExpectedDeployedOperationID: "hop_target", ExpectedResourceGeneration: 1, AcknowledgeReplacement: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var value any
+			if err = json.Unmarshal(raw, &value); err != nil {
+				t.Fatal(err)
+			}
+			if err = doc.Components.Schemas[tc.schema].Value.VisitJSON(value); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

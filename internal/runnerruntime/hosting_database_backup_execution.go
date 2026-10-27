@@ -55,6 +55,11 @@ func executeDatabaseBackupWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 	record := func(phase string, blob *domain.HostingDatabaseBackupBlob, failure string) (runner.JournalDatabaseBackup, error) {
 		id := attemptMutationKey("dbbackup", a.LeaseID, a.Attempt, phase)
 		request := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, Blob: blob, FailureCode: failure}
+		if p.Component != nil {
+			request.ComponentVersion = domain.HostingDatabaseBackupComponentVersion
+			request.Writers = append([]domain.HostingStorageArchiveWriterState(nil), e.writers...)
+			request.WritersResumed = p.Operation.Mode == "backup" || e.writersResumed
+		}
 		if phase == "complete" && p.Operation.Mode == "backup" {
 			request.LocalCopy = e.localCopy
 		}
@@ -175,5 +180,5 @@ func reconcileDatabaseBackupJournal(ctx context.Context, c Config, j *runner.Att
 func databaseBackupReceiptMatches(p domain.HostingDatabaseBackupPlan, in domain.HostingDatabaseBackupMutation, out domain.HostingDatabaseBackupOperation) bool {
 	original := p.Operation
 	held := in.Phase == "intent" || in.Phase == "uncertain" || in.Phase == "failed" && original.Mode == "restore"
-	return out.ID == original.ID && out.Version == original.Version && out.ProjectID == original.ProjectID && out.SourceResourceID == original.SourceResourceID && out.SourceGeneration == original.SourceGeneration && out.BackupID == original.BackupID && out.Mode == original.Mode && out.TargetResourceID == original.TargetResourceID && out.MaxBytes == p.MaxBytes && out.TimeoutSeconds == p.TimeoutSeconds && out.OwnershipHeld == held && out.Consistency == "logical_snapshot_source_writable"
+	return out.ID == original.ID && out.Version == original.Version && out.ProjectID == original.ProjectID && out.SourceResourceID == original.SourceResourceID && out.SourceGeneration == original.SourceGeneration && out.BackupID == original.BackupID && out.Mode == original.Mode && out.TargetResourceID == original.TargetResourceID && out.SourceComponent == original.SourceComponent && out.SourceDeployedOperationID == original.SourceDeployedOperationID && out.TargetComponent == original.TargetComponent && out.TargetDeployedOperationID == original.TargetDeployedOperationID && out.MaxBytes == p.MaxBytes && out.TimeoutSeconds == p.TimeoutSeconds && out.OwnershipHeld == held && out.Consistency == "logical_snapshot_source_writable"
 }

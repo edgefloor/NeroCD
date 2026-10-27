@@ -299,3 +299,13 @@ test("Compose authority uses a stack reference with no single storage anchor", a
     await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
   }
 });
+
+test("stopped Compose options retain predecessor evidence and require a valid stop reference", async () => {
+  const stopped = { ...storageOptions, storage_ref: null, stack_ref: { generation: 1, hash: "sha256:" + "a".repeat(64) }, stopped_operation_id: "hop_stop" };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(stopped))));
+  expect(await getStorageDeploymentOptions(scope)).toEqual(stopped);
+  for (const value of [{ ...stopped, stopped_operation_id: "" }, { ...stopped, stopped_operation_id: "../foreign" }, { ...stopped, stack_ref: undefined }, { ...stopped, previous_healthy_operation_id: null }, { ...initialOptions, stopped_operation_id: "hop_stop" }]) {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
+    await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
+  }
+});

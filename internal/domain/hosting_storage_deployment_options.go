@@ -4,6 +4,7 @@ package domain
 // must independently recheck the current resource, storage and route authority.
 // Missing predecessor values remain null instead of supplying guessed defaults.
 type HostingStorageDeploymentOptions struct {
+	StoppedOperationID         *string                                  `json:"stopped_operation_id,omitempty"`
 	StackRef                   *HostingStackRef                         `json:"stack_ref,omitempty"`
 	ApplicationDatabaseStorage *HostingApplicationDatabaseStorageReview `json:"application_database_storage"`
 	ResourceID                 string                                   `json:"resource_id"`

@@ -12,7 +12,15 @@ func hostingDatabaseBackupRunnerPath(path string) bool {
 	return path == "/api/v1/runners/hosting/database-backup/plan" || path == "/api/v1/runners/hosting/database-backup/mutation"
 }
 func hostingDatabaseBackupPath(path string) bool {
-	return hostingDatabaseBackupRunnerPath(path) || strings.HasPrefix(path, "/api/v1/database-backups/") || strings.HasSuffix(path, "/database-backups")
+	return hostingDatabaseBackupRunnerPath(path) || strings.HasPrefix(path, "/api/v1/database-backups/") || strings.HasSuffix(path, "/database-backups") || strings.HasSuffix(path, "/database-backup-components")
+}
+
+func (s *Server) hostingDatabaseBackupComponents(w http.ResponseWriter, r *http.Request) {
+	if !databaseBackupParameters(w, r) {
+		return
+	}
+	v, err := s.app.DatabaseBackupComponents(r.Context(), r.PathValue("id"))
+	proxyResponse(w, http.StatusOK, v, err)
 }
 func databaseBackupParameters(w http.ResponseWriter, r *http.Request) bool {
 	if r.URL.RawQuery != "" || r.Method == http.MethodGet && (r.ContentLength != 0 || len(r.TransferEncoding) != 0) {
@@ -83,7 +91,11 @@ func (s *Server) runnerDatabaseBackupMutation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var in domain.HostingDatabaseBackupMutation
-	if !decodeDatabaseBackup(w, r, &in) {
+	// Component intent includes at most sixteen exact writer identities. Keep
+	// legacy request bounds while admitting that bounded versioned evidence.
+	raw, err := io.ReadAll(io.LimitReader(r.Body, (64<<10)+1))
+	if err != nil || len(raw) > 64<<10 || domain.DecodeHostingDatabaseBackupJSON(raw, &in) != nil || in.ComponentVersion == "" && len(raw) > 4096 {
+		writeErrorEnvelope(w, 400, "invalid_request", "invalid database backup evidence")
 		return
 	}
 	if in.Validate() != nil {

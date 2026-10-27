@@ -25,9 +25,11 @@ var ErrInvalidDatabaseBackup = errors.New("invalid hosted PostgreSQL backup requ
 
 // HostingDatabaseBackupInput identifies one immediate logical snapshot request.
 type HostingDatabaseBackupInput struct {
-	RequestID                  string                 `json:"request_id"`
-	ExpectedResourceGeneration int64                  `json:"expected_resource_generation"`
-	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
+	Component                   string                 `json:"component,omitempty"`
+	ExpectedDeployedOperationID string                 `json:"expected_deployed_operation_id,omitempty"`
+	RequestID                   string                 `json:"request_id"`
+	ExpectedResourceGeneration  int64                  `json:"expected_resource_generation"`
+	RemoteTarget                *BackupTargetSelection `json:"remote_target,omitempty"`
 }
 
 // Validate checks the database backup input fields and invariants.
@@ -35,18 +37,28 @@ func (in HostingDatabaseBackupInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
 	}
+	if (in.Component == "") != (in.ExpectedDeployedOperationID == "") || in.Component != "" && (!stackName.MatchString(in.Component) || !validRuntimeReferenceID(in.ExpectedDeployedOperationID)) {
+		return ErrInvalidDatabaseBackup
+	}
 	return nil
 }
 
 // HostingDatabaseBackupRestoreInput creates an independent private database.
 type HostingDatabaseBackupRestoreInput struct {
-	RequestID    string              `json:"request_id"`
-	Name         string              `json:"name"`
-	RemoteSource *BackupRemoteSource `json:"remote_source,omitempty"`
+	ComponentTarget *HostingDatabaseBackupComponentTarget `json:"component_target,omitempty"`
+	RequestID       string                                `json:"request_id"`
+	Name            string                                `json:"name,omitempty"`
+	RemoteSource    *BackupRemoteSource                   `json:"remote_source,omitempty"`
 }
 
 // Validate checks the database backup restore input fields and invariants.
 func (in HostingDatabaseBackupRestoreInput) Validate() error {
+	if in.ComponentTarget != nil {
+		if !validRuntimeReferenceID(in.RequestID) || in.Name != "" || in.ComponentTarget.Validate() != nil || in.RemoteSource != nil && in.RemoteSource.Validate() != nil {
+			return ErrInvalidDatabaseBackup
+		}
+		return nil
+	}
 	for _, r := range in.Name {
 		if unicode.IsControl(r) {
 			return ErrInvalidDatabaseBackup
@@ -76,47 +88,58 @@ func (b HostingDatabaseBackupBlob) Validate() error {
 // HostingDatabaseBackupOperation is safe for project viewers. Local locations,
 // credential references and runner lease authority are deliberately separate.
 type HostingDatabaseBackupOperation struct {
-	RemoteTarget     *BackupTargetSelection     `json:"remote_target,omitempty"`
-	MaxBytes         int64                      `json:"max_bytes"`
-	TimeoutSeconds   int                        `json:"timeout_seconds"`
-	ID               string                     `json:"id"`
-	Version          string                     `json:"version"`
-	ProjectID        string                     `json:"project_id"`
-	SourceResourceID string                     `json:"source_resource_id"`
-	SourceGeneration int64                      `json:"source_generation"`
-	BackupID         string                     `json:"backup_id"`
-	Mode             string                     `json:"mode"`
-	State            string                     `json:"state"`
-	TargetResourceID string                     `json:"target_resource_id,omitempty"`
-	Blob             *HostingDatabaseBackupBlob `json:"blob,omitempty"`
-	Consistency      string                     `json:"consistency"`
-	FailureCode      string                     `json:"failure_code,omitempty"`
-	OwnershipHeld    bool                       `json:"ownership_held"`
-	CreatedAt        time.Time                  `json:"created_at"`
-	UpdatedAt        time.Time                  `json:"updated_at"`
+	SourceComponent           string                     `json:"source_component,omitempty"`
+	SourceDeployedOperationID string                     `json:"source_deployed_operation_id,omitempty"`
+	TargetComponent           string                     `json:"target_component,omitempty"`
+	TargetDeployedOperationID string                     `json:"target_deployed_operation_id,omitempty"`
+	RemoteTarget              *BackupTargetSelection     `json:"remote_target,omitempty"`
+	MaxBytes                  int64                      `json:"max_bytes"`
+	TimeoutSeconds            int                        `json:"timeout_seconds"`
+	ID                        string                     `json:"id"`
+	Version                   string                     `json:"version"`
+	ProjectID                 string                     `json:"project_id"`
+	SourceResourceID          string                     `json:"source_resource_id"`
+	SourceGeneration          int64                      `json:"source_generation"`
+	BackupID                  string                     `json:"backup_id"`
+	Mode                      string                     `json:"mode"`
+	State                     string                     `json:"state"`
+	TargetResourceID          string                     `json:"target_resource_id,omitempty"`
+	Blob                      *HostingDatabaseBackupBlob `json:"blob,omitempty"`
+	Consistency               string                     `json:"consistency"`
+	FailureCode               string                     `json:"failure_code,omitempty"`
+	OwnershipHeld             bool                       `json:"ownership_held"`
+	CreatedAt                 time.Time                  `json:"created_at"`
+	UpdatedAt                 time.Time                  `json:"updated_at"`
 }
 
 // HostingDatabaseBackupPlan is delivered only to the authenticated exact runner.
 // The location ID is opaque: its path is selected by protected operator config.
 type HostingDatabaseBackupPlan struct {
-	Operation      HostingDatabaseBackupOperation `json:"operation"`
-	ActorID        string                         `json:"actor_id"`
-	RunnerID       string                         `json:"runner_id"`
-	Source         HostingHealthy                 `json:"source"`
-	SourceStorage  HostingStorage                 `json:"source_storage"`
-	SourcePlan     HostingApplyPlan               `json:"source_plan"`
-	Credentials    []HostingDatabaseCredentialRef `json:"credentials"`
-	Target         *HostingHealthy                `json:"target,omitempty"`
-	TargetStorage  *HostingStorage                `json:"target_storage,omitempty"`
-	TargetPlan     *HostingApplyPlan              `json:"target_plan,omitempty"`
-	LocationID     string                         `json:"location_id"`
-	MaxBytes       int64                          `json:"max_bytes"`
-	TimeoutSeconds int                            `json:"timeout_seconds"`
-	Hash           string                         `json:"hash"`
+	Component      *HostingDatabaseBackupComponentPlan `json:"component,omitempty"`
+	Operation      HostingDatabaseBackupOperation      `json:"operation"`
+	ActorID        string                              `json:"actor_id"`
+	RunnerID       string                              `json:"runner_id"`
+	Source         HostingHealthy                      `json:"source"`
+	SourceStorage  HostingStorage                      `json:"source_storage,omitzero"`
+	SourcePlan     HostingApplyPlan                    `json:"source_plan"`
+	Credentials    []HostingDatabaseCredentialRef      `json:"credentials,omitempty"`
+	Target         *HostingHealthy                     `json:"target,omitempty"`
+	TargetStorage  *HostingStorage                     `json:"target_storage,omitempty"`
+	TargetPlan     *HostingApplyPlan                   `json:"target_plan,omitempty"`
+	LocationID     string                              `json:"location_id"`
+	MaxBytes       int64                               `json:"max_bytes"`
+	TimeoutSeconds int                                 `json:"timeout_seconds"`
+	Hash           string                              `json:"hash"`
 }
 
 // Validate checks the database backup plan fields and invariants.
 func (p HostingDatabaseBackupPlan) Validate() error {
+	if p.Operation.Version == HostingDatabaseBackupComponentVersion {
+		return p.validateComponent()
+	}
+	if p.Component != nil || p.Operation.SourceComponent != "" || p.Operation.SourceDeployedOperationID != "" || p.Operation.TargetComponent != "" || p.Operation.TargetDeployedOperationID != "" {
+		return ErrInvalidDatabaseBackup
+	}
 	hash := p.Hash
 	p.Hash = ""
 	if hash != HostingDocumentHash(p) || p.Operation.Version != HostingDatabaseBackupVersion || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || p.RunnerID != p.Source.Snapshot.RunnerID || p.Operation.SourceResourceID != p.Source.Snapshot.ResourceID || p.SourcePlan.Hash != p.Source.PlanHash || (ValidateHostingDatabasePlan(p.SourcePlan) != nil && ValidateHostingDatabasePlanV2(p.SourcePlan) != nil) || ValidateHostingHealthyStorage(p.Source) != nil || p.Source.Snapshot.Database.Engine != "postgresql" || p.Source.Snapshot.Database.RecipeVersion != HostingDatabasePostgresRecipe || p.SourceStorage.Validate() != nil || p.SourceStorage.Reference() != p.Source.Snapshot.Storage || p.MaxBytes < 5 || p.MaxBytes > HostingDatabaseBackupMaxBytes || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || p.LocationID != p.Operation.BackupID {
@@ -138,7 +161,10 @@ func (p HostingDatabaseBackupPlan) Validate() error {
 // HostingDatabaseBackupMutation is append-before-send phase evidence. Intent is
 // recorded before effects; replay may report a receipt but never repeat import.
 type HostingDatabaseBackupMutation struct {
-	LocalCopy *BackupLocalCopyProof `json:"local_copy,omitempty"`
+	ComponentVersion string                             `json:"component_version,omitempty"`
+	Writers          []HostingStorageArchiveWriterState `json:"writers,omitempty"`
+	WritersResumed   bool                               `json:"writers_resumed,omitempty"`
+	LocalCopy        *BackupLocalCopyProof              `json:"local_copy,omitempty"`
 	HostingAuthority
 	ReceiptID   string                     `json:"receipt_id"`
 	PlanHash    string                     `json:"plan_hash"`
@@ -149,6 +175,13 @@ type HostingDatabaseBackupMutation struct {
 
 // Validate checks the database backup mutation fields and invariants.
 func (in HostingDatabaseBackupMutation) Validate() error {
+	if in.ComponentVersion == "" {
+		if len(in.Writers) != 0 || in.WritersResumed {
+			return ErrInvalidDatabaseBackup
+		}
+	} else if in.ComponentVersion != HostingDatabaseBackupComponentVersion || len(in.Writers) > 16 || in.Phase == "complete" && !in.WritersResumed {
+		return ErrInvalidDatabaseBackup
+	}
 	if in.LocalCopy != nil && (in.Phase != "complete" || in.LocalCopy.Validate() != nil || in.Blob == nil || in.LocalCopy.Bytes != in.Blob.Bytes) {
 		return ErrInvalidDatabaseBackup
 	}
@@ -187,7 +220,7 @@ func ValidateDatabaseBackupTask(run TaskRun) error {
 // DecodeHostingDatabaseBackupJSON validates one bounded closed protocol document.
 func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 	trimmed := bytes.TrimSpace(raw)
-	if len(raw) > 1<<20 || len(trimmed) == 0 || trimmed[0] != '{' || !validRuntimeJSONUnicode(raw) || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {
+	if len(raw) > 1<<20 || len(trimmed) == 0 || trimmed[0] != '{' || !validRuntimeJSONUnicode(raw) || !databaseBackupUniqueJSON(json.NewDecoder(bytes.NewReader(raw)), false) {
 		return ErrInvalidDatabaseBackup
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -198,12 +231,54 @@ func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 	return nil
 }
 
+// Environment is a case-sensitive string map in saved Compose definitions.
+// All other protocol keys retain the canonical lowercase rule. Typed decoding
+// below still rejects unknown fields and non-string environment values.
+func databaseBackupUniqueJSON(d *json.Decoder, environment bool) bool {
+	token, err := d.Token()
+	if err != nil {
+		return false
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return true
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for d.More() {
+			token, err := d.Token()
+			key, ok := token.(string)
+			if err != nil || !ok || !environment && key != strings.ToLower(key) || seen[key] {
+				return false
+			}
+			seen[key] = true
+			if !databaseBackupUniqueJSON(d, !environment && key == "environment") {
+				return false
+			}
+		}
+	case '[':
+		for d.More() {
+			if !databaseBackupUniqueJSON(d, false) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	_, err = d.Token()
+	return err == nil
+}
+
 // Validate checks the database backup operation fields and invariants.
 func (o HostingDatabaseBackupOperation) Validate() error {
+	if o.validateComponentIdentity() != nil {
+		return ErrInvalidDatabaseBackup
+	}
 	if o.RemoteTarget != nil && o.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
 	}
-	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || o.Version != HostingDatabaseBackupVersion || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {
+	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || (o.Version != HostingDatabaseBackupVersion && o.Version != HostingDatabaseBackupComponentVersion) || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {
 		return ErrInvalidDatabaseBackup
 	}
 	switch o.State {

@@ -299,7 +299,7 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 		if plan.Stack == nil {
 			return errors.New("stack plan is missing")
 		}
-		expected, err := domain.CompileHostingStackPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, *plan.Stack)
+		expected, err := domain.CompileHostingStackPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, *plan.Stack, plan.PreviousStopped)
 		if err != nil || expected.Hash != hash {
 			return errors.New("invalid immutable stack plan")
 		}
@@ -667,6 +667,10 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 
 // Observe inspects only the persisted target and never changes workloads.
 func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOperation) (domain.HostingObservation, error) {
+	if operation.StackStopPlan != nil {
+		state, err := e.observeStoppedStack(ctx, *operation.StackStopPlan)
+		return domain.HostingObservation{BindingID: operation.BindingID, Stack: &state, StackStopped: err == nil, NoOwnedContainers: err == nil, DaemonID: operation.StackStopPlan.Target.Release.DaemonID, PlanHash: operation.StackStopPlan.Hash, ReleaseHash: operation.StackStopPlan.Target.Release.Hash}, err
+	}
 	if operation.Snapshot.Stack != (domain.HostingStackRef{}) {
 		return e.observeStack(ctx, operation)
 	}
