@@ -234,3 +234,54 @@ test.each(["", "../project", "project?x=y"])(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+test.each([
+  "runner_unavailable",
+  "runner_ineligible",
+  "unsupported_runtime",
+] as const)(
+  "keeps an eligible destination usable beside %s with missing features",
+  async (reason) => {
+    const unavailable = {
+      ...options.items[0]!,
+      destination: { ...options.items[0]!.destination, id: "unavailable" },
+      available: false,
+      reason_code: reason,
+      missing_capabilities: ["image_deploy"],
+    };
+    const page = {
+      ...options,
+      items: [options.items[0]!, unavailable],
+      total: 2,
+    };
+    mock(page);
+    const decoded = await getCatalogDestinationOptions("project", template, 0);
+    expect(decoded).toEqual(page);
+    expect(decoded.items[0]!.available).toBe(true);
+    expect(decoded.items[1]!.missing_capabilities).toEqual(["image_deploy"]);
+  },
+);
+
+test.each([
+  { ...options.items[0]!, missing_capabilities: ["image_deploy"] },
+  {
+    ...options.items[0]!,
+    available: false,
+    reason_code: "runner_unavailable",
+    missing_capabilities: ["not_required"],
+  },
+  {
+    ...options.items[0]!,
+    available: false,
+    reason_code: "runner_ineligible",
+    missing_capabilities: ["image_deploy", "image_deploy"],
+  },
+])(
+  "retains strict available and missing-feature list validation %j",
+  async (item) => {
+    mock({ ...options, items: [item] });
+    await expect(
+      getCatalogDestinationOptions("project", template, 0),
+    ).rejects.toThrow();
+  },
+);

@@ -173,9 +173,8 @@ export async function getCatalogDestinationOptions(
       (item.available
         ? item.reason_code !== "" || item.missing_capabilities.length !== 0
         : !Object.hasOwn(reasons, String(item.reason_code))) ||
-      (item.reason_code === "missing_capabilities"
-        ? item.missing_capabilities.length === 0
-        : item.missing_capabilities.length !== 0) ||
+      (item.reason_code === "missing_capabilities" &&
+        item.missing_capabilities.length === 0) ||
       !item.missing_capabilities.every((capability) =>
         r.required_capabilities.includes(capability),
       )
