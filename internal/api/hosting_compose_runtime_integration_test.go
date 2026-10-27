@@ -553,8 +553,7 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 		t.Fatal(err)
 	}
 	assertWriters(since)
-	f.catalogBrowser.set("failure_backup_id", failedBackup.ID)
-	f.catalogBrowser.set("volume_recheck", resource.ID)
+	f.catalogBrowser.set("volume_recheck", failedBackup.ID)
 	if f.catalogBrowser.await(t, "volume_checked") != taskID {
 		t.Fatal("application task/upload/new writes lost after volume backup compensation")
 	}
