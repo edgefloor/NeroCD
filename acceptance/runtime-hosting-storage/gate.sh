@@ -579,7 +579,66 @@ host_docker exec "$outer" df -Pi / /var/lib/docker /tmp > "$evidence/guest-inode
 minimum_kib=2097152
 if [[ "$git_compose" == true ]]; then minimum_kib=3407872; fi
 awk -v minimum="$minimum_kib" 'NR>1 && $4<minimum {exit 1}' "$evidence/guest-filesystem-before-test"
-if [[ "$git_compose" == true ]]; then awk 'NR>1 && $4<65536 {exit 1}' "$evidence/guest-inodes-before-test"; fi
+# GIT_INODE_PREREQUISITE_BEGIN
+# Some guest filesystems expose no inode counters. Require the same reserve by
+# allocation there, while keeping reported exhaustion and invalid output closed.
+git_inode_capacity() {
+ local path=$1 key=$2 decision
+ host_docker exec "$outer" timeout 5 df -Pi "$path" > "$evidence/git-inodes-$key"
+ decision=$(python3 - "$evidence/git-inodes-$key" "$path" <<'INODE_COUNTERS'
+import re,sys
+lines=open(sys.argv[1]).read().splitlines()
+if sys.argv[2] not in ["/", "/var/lib/docker", "/tmp"] or len(lines)!=2:
+ raise SystemExit("invalid inode measurement")
+fields=lines[1].split()
+if len(fields)!=6 or not re.fullmatch(r"(?:100|[0-9]{1,2})%", fields[4]) or any(not re.fullmatch(r"[0-9]+", value) for value in fields[1:4]):
+ raise SystemExit("invalid inode counters")
+total,used,available=map(int,fields[1:4])
+if (total,used,available)==(0,0,0): print("allocation-required")
+elif total==0 or used+available>total: raise SystemExit("inconsistent inode counters")
+elif available<65536: raise SystemExit("insufficient inode reserve")
+else: print("reported-reserve")
+INODE_COUNTERS
+ ) || return 1
+ printf 'path=%s decision=%s\n' "$path" "$decision" > "$evidence/git-inode-proof-$key"
+ if [[ "$decision" == allocation-required ]]; then
+  host_docker exec "$outer" timeout -k 5 30 sh -ec '
+base=$1
+case "$base" in /|/var/lib/docker|/tmp) ;; *) exit 1;; esac
+probe=$(mktemp -d "$base/.nerocd-inodes.XXXXXX")
+identity=$(stat -c "%d:%i" "$probe")
+cleanup() {
+ test "$(stat -c "%d:%i" "$probe")" = "$identity" || return 1
+ rm -rf -- "$probe"
+ test ! -e "$probe" && test ! -L "$probe"
+ printf "removed=%s identity=%s\n" "$probe" "$identity"
+}
+trap cleanup EXIT
+trap "exit 1" HUP INT TERM
+printf "created=%s identity=%s\n" "$probe" "$identity"
+count=0
+i=0
+while test "$i" -lt 256; do
+ mkdir "$probe/$i"
+ j=0
+ while test "$j" -lt 256; do
+  : > "$probe/$i/$j"
+  count=$((count+1))
+  j=$((j+1))
+ done
+ i=$((i+1))
+done
+test "$count" -eq 65536
+printf "allocated=%s path=%s\n" "$count" "$base"
+' sh "$path" >> "$evidence/git-inode-proof-$key" 2>&1
+ fi
+}
+if [[ "$git_compose" == true ]]; then
+ git_inode_capacity / root
+ git_inode_capacity /var/lib/docker docker
+ git_inode_capacity /tmp tmp
+fi
+# GIT_INODE_PREREQUISITE_END
 ready=false
 for _ in $(seq 1 60); do
  if [[ $(inner_docker exec --env PGPASSWORD=isolated_fixture_only "$pg" psql --host=127.0.0.1 --username=nerocd --dbname=nerocd_storage_runtime --no-psqlrc --tuples-only --no-align --command='SELECT current_database()' 2>/dev/null || true) == nerocd_storage_runtime ]]; then ready=true; break; fi

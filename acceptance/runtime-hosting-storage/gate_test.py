@@ -1278,5 +1278,91 @@ class GitComposeContractTests(unittest.TestCase):
         for contract in ['cgroup.type', 'cgroup.procs', 'cgroup.subtree_control', 'cpu.max', 'memory.max', 'memory.swap.max', 'pids.max', '/proc/$pid/cgroup', 'wait "$pid"', 'rmdir "$child"']:
             self.assertIn(contract, prerequisite)
 
+
+class GitInodePrerequisiteTests(unittest.TestCase):
+    @staticmethod
+    def block():
+        return GATE.read_text().split('# GIT_INODE_PREREQUISITE_BEGIN', 1)[1].split('# GIT_INODE_PREREQUISITE_END', 1)[0]
+
+    def test_counters_distinguish_unknown_exhausted_and_malformed(self):
+        validator = self.block().split("<<'INODE_COUNTERS'\n", 1)[1].split('\nINODE_COUNTERS', 1)[0]
+        cases = [
+            ('0 0 0', 'allocation-required'),
+            ('100000 34464 65536', 'reported-reserve'),
+            ('100000 34465 65535', None),
+            ('100000 100000 0', None),
+            ('0 1 0', None), ('0 0 1', None),
+            ('100000 99999 65536', None),
+            ('unknown 0 0', None), ('-1 0 0', None),
+            ('1 2', None),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'df'
+            for counters, expected in cases:
+                with self.subTest(counters=counters):
+                    # The mount label is intentionally unrelated to the requested path.
+                    path.write_text('Filesystem Inodes Used Available Capacity Mounted on\n/dev/vdb1 ' + counters + ' 0% /etc/resolv.conf\n')
+                    result = subprocess.run([sys.executable, '-c', validator, str(path), '/var/lib/docker'], capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, expected is not None, result.stderr)
+                    if expected: self.assertEqual(result.stdout.strip(), expected)
+            for body in ['', 'Filesystem Inodes Used Available Capacity Mounted on\n', 'header\na 0 0 0 0% /\nb 0 0 0 0% /\n']:
+                path.write_text(body)
+                result = subprocess.run([sys.executable, '-c', validator, str(path), '/var/lib/docker'], capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+            path.write_text('header\na 0 0 0 0% /\n')
+            result = subprocess.run([sys.executable, '-c', validator, str(path), '/foreign'], capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_unknown_requires_bounded_allocation_on_explicit_path(self):
+        for counters, allocation_status in [('0 0 0', 0), ('0 0 0', 1), ('0 0 0', 124), ('100000 34464 65536', 0), ('100000 100000 0', 0)]:
+            with self.subTest(counters=counters, status=allocation_status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prelude = r"""
+set -euo pipefail
+outer=owned; git_compose=false
+host_docker() {
+ printf '%s\n' "$@" >> "$evidence/calls"
+ if [[ "$5" == df ]]; then
+  [[ "$*" == 'exec owned timeout 5 df -Pi /var/lib/docker' ]] || return 90
+  printf 'Filesystem Inodes Used Available Capacity Mounted on\n/dev/vdb1 %s 0%% /etc/resolv.conf\n' "$counters"
+ else
+  [[ "$1 $2 $3 $4 $5 $6 $7 $8" == 'exec owned timeout -k 5 30 sh -ec' ]] || return 91
+  [[ "${10} ${11}" == 'sh /var/lib/docker' ]] || return 92
+  touch "$evidence/allocated"
+  return "$allocation_status"
+ fi
+}
+"""
+                run = subprocess.run(['bash', '-c', prelude + self.block() + '\ngit_inode_capacity /var/lib/docker docker\n'], env={**os.environ, 'evidence': str(root), 'counters': counters, 'allocation_status': str(allocation_status)}, capture_output=True, text=True, timeout=5)
+                expected = allocation_status == 0 and counters != '100000 100000 0'
+                self.assertEqual(run.returncode == 0, expected, run.stderr)
+                self.assertEqual((root / 'allocated').exists(), counters == '0 0 0')
+
+    def test_actual_allocation_cleanup_and_failure_preserves_foreign_files(self):
+        script = self.block().split("timeout -k 5 30 sh -ec '\n", 1)[1].split("\n' sh \"$path\"", 1)[0]
+        for fail in [False, True]:
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                foreign = root / 'foreign'; foreign.mkdir(); (foreign / 'keep').touch()
+                prelude = 'mktemp() { command mktemp -d "$TEST_ROOT/probe.XXXXXX"; }\n'
+                prelude += "stat() { python3 -c 'import os,sys; s=os.stat(sys.argv[1], follow_symlinks=False); print(str(s.st_dev)+\":\"+str(s.st_ino))' \"$3\"; }\n"
+                if fail: prelude += 'mkdir() { return 1; }\n'
+                result = subprocess.run(['sh', '-ec', prelude + script, 'sh', '/var/lib/docker'], env={**os.environ, 'TEST_ROOT': str(root)}, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode == 0, not fail, result.stderr)
+                self.assertIn('created=', result.stdout)
+                self.assertIn('removed=', result.stdout)
+                self.assertEqual(list(root.iterdir()), [foreign])
+                self.assertTrue((foreign / 'keep').exists())
+                if not fail: self.assertIn('allocated=65536 path=/var/lib/docker', result.stdout)
+
+    def test_explicit_paths_keep_allocation_inside_owned_guest(self):
+        block = self.block()
+        for path, key in [('/', 'root'), ('/var/lib/docker', 'docker'), ('/tmp', 'tmp')]:
+            self.assertIn('git_inode_capacity ' + path + ' ' + key, block)
+        self.assertIn('host_docker exec "$outer" timeout 5 df -Pi "$path"', block)
+        self.assertIn('identity=$(stat -c "%d:%i" "$probe")', block)
+        self.assertIn('test "$(stat -c "%d:%i" "$probe")" = "$identity"', block)
+        self.assertIn('test ! -e "$probe" && test ! -L "$probe"', block)
+
 if __name__ == "__main__":
     unittest.main()
