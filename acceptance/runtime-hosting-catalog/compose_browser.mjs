@@ -462,6 +462,7 @@ try {
   await hosting(page);
   step="review_component_database_import";
   await schedules.getByRole("button",{name:"Refresh schedules",exact:true}).click();
+  await schedules.getByRole("listitem").filter({hasText:schedule.id}).getByRole("button",{name:"View occurrences",exact:true}).click();
   await expect(schedules.getByRole("region",{name:"Backup schedule occurrences",exact:true})).toContainText("succeeded");
   await backups.getByRole("button",{name:"Refresh database backup history",exact:true}).click();
   await backups.getByRole("combobox",{name:"Backup to restore",exact:true}).selectOption(logicalBackup.id);
