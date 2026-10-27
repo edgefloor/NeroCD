@@ -436,3 +436,147 @@ func TestComposeArchiveWireAndJournalPreserveEnvironmentMapKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestComposeArchiveHeldJournalComposesWithUnrelatedStackAndDatabaseBackup(t *testing.T) {
+	x, c, e, dir := archiveRuntimeFixture(t)
+	p := composeArchiveTestPlan(t)
+	x.p = p
+	c.op.ProjectID = p.ProjectID
+	c.op.ResourceID = p.SourceResourceID()
+	c.op.BindingID = p.SourceBindingID()
+	c.op.StorageArchive.Plan = p
+	e.writers = p.WriterStates()
+	e.writers[0].Running = true
+	e.failAt = "cleanup"
+	if err := x.execute(c.op); err == nil {
+		t.Fatal("cleanup failure did not retain held archive")
+	}
+	if len(x.j.Snapshot().StorageArchive) == 0 {
+		t.Fatal("held archive evidence missing")
+	}
+	plan := stackTestPlan(t)
+	snapshot := plan.Snapshot
+	snapshot.ResourceID = "unrelated_stack_resource"
+	snapshot.BindingID = "unrelated_stack_binding"
+	stack := *plan.Stack
+	stack.NetworkName = domain.HostingStackObjectID(snapshot.BindingID, "network", "private")
+	var err error
+	plan, err = domain.CompileHostingStackPlan(snapshot, plan.Release, nil, stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storageArchiveConflict(x.j.Snapshot(), domain.HostingStorageRef{}, snapshot.BindingID, "unrelated_stack_operation", "") {
+		t.Fatal("held archive globally blocked unrelated stack")
+	}
+	now := time.Now().UTC()
+	entry := runner.JournalHosting{ID: "unrelated_stack_intent", Phase: "apply_intent", OperationID: "unrelated_stack_operation", Plan: &plan, RuntimeEnvironment: true, RuntimeConfiguration: snapshot.RuntimeConfiguration, DeliveryID: strings.Repeat("a", 32), CreatedAt: now, Attempt: runner.AttemptIdentity{RunID: "deploy_unrelated_stack_operation", LeaseID: "other_stack_lease", Attempt: 1, Fence: "other_stack_fence", CreatedAt: now, ExpiresAt: now.Add(time.Minute)}}
+	if _, err = x.j.AppendHosting(entry); err != nil {
+		t.Fatal("ordinary unrelated stack intent", err)
+	}
+	if err = x.j.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWrapper := func(raw []byte, base int) {
+		t.Helper()
+		var wire struct {
+			Version int `json:"version"`
+			Base    int `json:"stack_base_version"`
+		}
+		if json.Unmarshal(raw, &wire) != nil || wire.Version != 23 || wire.Base != base {
+			t.Fatalf("mixed journal wrapper version=%d base=%d", wire.Version, wire.Base)
+		}
+	}
+	assertWrapper(raw, 12)
+	opened, err := runner.OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal("held archive plus unrelated stack restart", err)
+	}
+	if len(opened.Snapshot().StorageArchive) == 0 || len(opened.Snapshot().Hosting) != 1 || opened.Snapshot().Hosting[0].Plan.Stack.Definition.Services[0].Environment["PASSWORD"] != "${PASSWORD:?required}" {
+		t.Fatal("mixed restart changed stack environment proof")
+	}
+	if err = opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reject := func(name string, raw []byte, old, replacement string) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(string(raw), old, replacement, 1)
+			if bad == string(raw) {
+				t.Fatal("negative mutation missed mixed fixture")
+			}
+			if err := os.WriteFile(filepath.Join(dir, "journal.json"), []byte(bad), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if opened, err := runner.OpenAttemptJournal(dir); err == nil {
+				_ = opened.Close()
+				t.Fatal("ambiguous sibling accepted before wrapper normalization")
+			}
+		})
+	}
+	reject("hosting typed alias", raw, `"operation_id":"unrelated_stack_operation"`, `"Operation_id":"unrelated_stack_operation"`)
+	reject("hosting duplicate typed field", raw, `"operation_id":"unrelated_stack_operation"`, `"operation_id":"unrelated_stack_operation","operation_id":"unrelated_stack_operation"`)
+	reject("hosting unknown field", raw, `"id":"unrelated_stack_intent"`, `"unknown_sibling":true,"id":"unrelated_stack_intent"`)
+	reject("hosting duplicate environment key", raw, `"PASSWORD":"${PASSWORD:?required}"`, `"PASSWORD":"first","PASSWORD":"${PASSWORD:?required}"`)
+	if err = os.WriteFile(filepath.Join(dir, "journal.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	opened, err = runner.OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A component logical backup is the other journal family that legitimately
+	// contains a managed Compose definition. Keep its existing map grammar too.
+	_, databasePlan, _, _ := componentBackupEngineFixture(t, "backup")
+	databasePlan.SourcePlan.Snapshot.ResourceID = "unrelated_database_resource"
+	databasePlan.SourcePlan.Snapshot.BindingID = "unrelated_database_binding"
+	databasePlan.SourcePlan.Stack.NetworkName = domain.HostingStackObjectID(databasePlan.SourcePlan.Snapshot.BindingID, "network", "private")
+	for i := range databasePlan.SourcePlan.Stack.Volumes {
+		databasePlan.SourcePlan.Stack.Volumes[i].VolumeName = domain.HostingStackObjectID(databasePlan.SourcePlan.Snapshot.BindingID, "volume", databasePlan.SourcePlan.Stack.Volumes[i].Name)
+	}
+	databasePlan.SourcePlan.Hash = ""
+	databasePlan.SourcePlan.Hash = domain.HostingDocumentHash(databasePlan.SourcePlan)
+	databasePlan.Source.Snapshot = databasePlan.SourcePlan.Snapshot
+	databasePlan.Source.PlanHash = databasePlan.SourcePlan.Hash
+	databasePlan.Source.Stack.Volumes = databasePlan.SourcePlan.Stack.Volumes
+	databasePlan.Operation.SourceResourceID = databasePlan.Source.Snapshot.ResourceID
+	databasePlan.Hash = ""
+	databasePlan.Hash = domain.HostingDocumentHash(databasePlan)
+	if err = databasePlan.Validate(); err != nil {
+		t.Fatal("unrelated component backup proof", err)
+	}
+	dbEntry, _ := backupJournalEntries(t, databasePlan)
+	dbEntry.Request.ComponentVersion = domain.HostingDatabaseBackupComponentVersion
+	if _, err = opened.AppendDatabaseBackup(dbEntry); err != nil {
+		_ = opened.Close()
+		t.Fatal(err)
+	}
+	if err = opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(filepath.Join(dir, "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWrapper(raw, 18)
+	opened, err = runner.OpenAttemptJournal(dir)
+	if err != nil {
+		t.Fatal("archive/stack/component-backup mixed restart", err)
+	}
+	snapshotState := opened.Snapshot()
+	if len(snapshotState.StorageArchive) == 0 || len(snapshotState.Hosting) != 1 || len(snapshotState.DatabaseBackup) != 1 || snapshotState.DatabaseBackup[0].Plan.SourcePlan.Stack.Definition.Services[1].Environment["POSTGRES_PASSWORD"] != "${PASSWORD}" {
+		_ = opened.Close()
+		t.Fatal("component backup map changed")
+	}
+	if err = opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reject("component backup unknown field", raw, `"database_backup":[{`, `"database_backup":[{"unknown_sibling":true,`)
+	reject("component backup typed alias", raw, `"source_component":"db"`, `"Source_component":"db"`)
+	reject("component backup duplicate typed field", raw, `"source_component":"db"`, `"source_component":"db","source_component":"db"`)
+	reject("component backup duplicate environment key", raw, `"POSTGRES_PASSWORD":"${PASSWORD}"`, `"POSTGRES_PASSWORD":"first","POSTGRES_PASSWORD":"${PASSWORD}"`)
+}

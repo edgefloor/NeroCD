@@ -126,6 +126,15 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
 		}
+		// Validate the original bytes before a stack wrapper is normalized. Re-marshal
+		// would otherwise erase duplicate keys and typed field case aliases.
+		composeArchive := journalStateUsesComposeStorageArchive(j.state)
+		if composeArchive {
+			if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {
+				_ = store.Close()
+				return nil, err
+			}
+		}
 		if j.state.Version == 23 {
 			contents, err = decodeStackJournal(contents, &j.state)
 			if err != nil {
@@ -136,12 +145,7 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 			_ = store.Close()
 			return nil, errors.New("managed stack journal requires version 23")
 		}
-		if journalStateUsesComposeStorageArchive(j.state) {
-			if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {
-				_ = store.Close()
-				return nil, err
-			}
-		} else {
+		if !composeArchive {
 			switch j.state.Version {
 			case 12, 13:
 				if err := decodeStorageArchiveJournal(contents, &j.state); err != nil {

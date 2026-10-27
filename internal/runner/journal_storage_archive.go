@@ -31,7 +31,7 @@ func decodeStorageArchiveJournal(raw []byte, state *journalState) error {
 		}
 		seen[key] = true
 		valid := false
-		if key == "storage_archive" {
+		if key == "storage_archive" || key == "hosting" && journalStateUsesStack(*state) || key == "database_backup" && journalStateUsesComposeDatabaseBackup(*state) {
 			valid = storageArchiveJournalUnique(d, false)
 		} else {
 			valid = databaseJournalUnique(d)
@@ -362,8 +362,8 @@ func cloneStorageArchiveEntries(entries []JournalStorageArchive) []JournalStorag
 	return clones
 }
 
-// Saved Compose environment values are case-sensitive string maps. This codec
-// is used only within storage_archive; other journal families retain their codec.
+// Saved Compose environment values are case-sensitive string maps. Only
+// archive, managed stack, and component database backup subtrees use this codec.
 func storageArchiveJournalUnique(d *json.Decoder, environment bool) bool {
 	token, err := d.Token()
 	if err != nil {
@@ -403,6 +403,15 @@ func storageArchiveJournalUnique(d *json.Decoder, environment bool) bool {
 func journalStateUsesComposeStorageArchive(state journalState) bool {
 	for _, entry := range state.StorageArchive {
 		if entry.Plan.ComposeSource != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func journalStateUsesComposeDatabaseBackup(state journalState) bool {
+	for _, entry := range state.DatabaseBackup {
+		if entry.Plan.Component != nil {
 			return true
 		}
 	}
