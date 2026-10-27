@@ -87,12 +87,14 @@ async function signIn(p, email, password) {
     p.getByRole("button", { name: "Account", exact: true }),
   ).toBeVisible();
 }
-async function hosting(p) {
+async function hosting(p, beforeEnvironmentSelection) {
   await p.goto("/projects");
   const h = p.getByRole("region", { name: "Project hosting", exact: true });
   await h
     .getByLabel("Hosting project", { exact: true })
     .selectOption("proj_platform");
+  // Arm response waits after navigation retires requests from the old document.
+  beforeEnvironmentSelection?.();
   await h
     .getByRole("button", { name: "storage runtime fixture", exact: true })
     .click();
@@ -329,9 +331,12 @@ try {
   await appContext.close();
   step = "await_compose_volume_schedule_phase";
   await state("volume_schedule");
-  const initialVolumeDiscovery = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-volumes`);
+  let initialVolumeDiscovery;
   step = "open_compose_volume_schedule_page";
-  await hosting(page);
+  await hosting(page, () => {
+    initialVolumeDiscovery = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-volumes`);
+    void initialVolumeDiscovery.catch(() => {});
+  });
   step = "read_initial_compose_volume_eligibility";
   const initialVolumeEvidence = await checkedResponse(initialVolumeDiscovery, 200);
   safe.volume_schedule_eligibility_available = initialVolumeEvidence.available === true;
@@ -432,11 +437,13 @@ try {
   await report("app_start_checked", String(taskID));
   step = "await_compose_volume_schedule_run_phase";
   await state("volume_schedule_run");
-  const savedScheduleList = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-schedules`);
-  void savedScheduleList.catch(() => {});
+  let savedScheduleList;
   try {
     step = "open_compose_volume_schedule_run_page";
-    await hosting(page);
+    await hosting(page, () => {
+      savedScheduleList = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-schedules`);
+      void savedScheduleList.catch(() => {});
+    });
     step = "read_saved_compose_volume_schedule_list";
     const listed = await savedScheduleList;
     safe.volume_schedule_run_list_status = listed.status();
