@@ -1610,22 +1610,25 @@ type HostingStorageBackupRetentionResume struct {
 }
 
 type HostingStorageBackupSchedule struct {
-	ID                  string     `json:"id"`
-	ProjectID           string     `json:"project_id"`
-	ResourceID          string     `json:"resource_id"`
-	BindingID           string     `json:"binding_id"`
-	DestinationID       string     `json:"destination_id"`
-	StorageID           string     `json:"storage_id"`
-	SourceReferenceHash string     `json:"source_reference_hash"`
-	ActorID             string     `json:"actor_id"`
-	Revision            int64      `json:"revision"`
-	Frequency           string     `json:"frequency"`
-	Timezone            string     `json:"timezone"`
-	Enabled             bool       `json:"enabled"`
-	LastScheduledAt     *time.Time `json:"last_scheduled_at"`
-	CheckedAt           time.Time  `json:"checked_at"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	ID                      string     `json:"id"`
+	ProjectID               string     `json:"project_id"`
+	ResourceID              string     `json:"resource_id"`
+	BindingID               string     `json:"binding_id"`
+	DestinationID           string     `json:"destination_id"`
+	StorageID               *string    `json:"storage_id"`
+	SourceReferenceHash     string     `json:"source_reference_hash"`
+	ActorID                 string     `json:"actor_id"`
+	Revision                int64      `json:"revision"`
+	Frequency               string     `json:"frequency"`
+	Timezone                string     `json:"timezone"`
+	Enabled                 bool       `json:"enabled"`
+	LastScheduledAt         *time.Time `json:"last_scheduled_at"`
+	CheckedAt               time.Time  `json:"checked_at"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	SourceFamily            string     `json:"source_family"`
+	SourceVolume            *string    `json:"source_volume"`
+	AcknowledgeInterruption bool       `json:"acknowledge_interruption"`
 }
 
 type HostingStorageBackupScheduleOccurrence struct {
@@ -1659,6 +1662,7 @@ type HostingStorageBackupScheduleVersion struct {
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
 	RemoteTarget               []byte `json:"remote_target"`
+	AcknowledgeInterruption    bool   `json:"acknowledge_interruption"`
 }
 
 type HostingStorageBackupTransfer struct {

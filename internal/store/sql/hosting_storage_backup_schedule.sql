@@ -8,7 +8,7 @@ SELECT * FROM hosting_storage_backup_schedules WHERE resource_id=$1 ORDER BY cre
 SELECT * FROM hosting_storage_backup_schedule_requests WHERE resource_id=$1 AND request_id=$2;
 -- name: ListStorageBackupOccurrences :many
 SELECT o.id,o.schedule_id,o.schedule_revision,o.scheduled_at,o.operation_id,o.created_at,
- s.project_id,s.resource_id,v.frequency,v.timezone,
+ s.project_id,s.resource_id,coalesce(s.source_volume,'')::text AS volume,v.frequency,v.timezone,
  coalesce(b.id,'')::text AS backup_id,
  (CASE WHEN o.state='admitted' THEN op.state ELSE o.state END)::text AS state,
  (CASE WHEN o.state='admitted' THEN coalesce(r.body->'result'->>'failure_code','') ELSE o.reason END)::text AS reason,
@@ -27,11 +27,11 @@ SELECT remote_target FROM hosting_storage_backup_schedule_versions WHERE schedul
 -- name: CountStorageBackupSchedules :one
 SELECT count(*) FROM hosting_storage_backup_schedules WHERE resource_id=$1;
 -- name: CreateStorageBackupSchedule :exec
-INSERT INTO hosting_storage_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,storage_id,source_reference_hash) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11);
+INSERT INTO hosting_storage_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,storage_id,source_reference_hash,source_family,source_volume,acknowledge_interruption) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$14);
 -- name: UpdateStorageBackupSchedule :exec
 UPDATE hosting_storage_backup_schedules SET actor_id=$2,revision=revision+1,frequency=$3,timezone=$4,enabled=$5,updated_at=clock_timestamp() WHERE id=$1;
 -- name: InsertStorageBackupScheduleVersion :exec
-INSERT INTO hosting_storage_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,remote_target) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+INSERT INTO hosting_storage_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,remote_target,acknowledge_interruption) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
 -- name: InsertStorageBackupScheduleRequest :exec
 INSERT INTO hosting_storage_backup_schedule_requests(resource_id,request_id,actor_id,request_hash,schedule_id,revision,response) VALUES($1,$2,$3,$4,$5,$6,$7);
 -- name: StorageBackupScheduleSchemaPresent :one

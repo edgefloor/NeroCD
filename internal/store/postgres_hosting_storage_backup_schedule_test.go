@@ -199,7 +199,7 @@ func TestPostgresStorageBackupScheduleGenerationAndFrozenSource(t *testing.T) {
 					}
 				}()
 				q := sqlcgen.New(tx)
-				if err = q.CreateStorageBackupSchedule(f.ctx, sqlcgen.CreateStorageBackupScheduleParams{ID: schedule, ProjectID: f.resource.ProjectID, ResourceID: f.resource.ID, BindingID: f.storage.BindingID, DestinationID: destination, StorageID: f.storage.ID, SourceReferenceHash: hash, ActorID: "usr_bootstrap", Frequency: "every_minute", Timezone: "UTC", Enabled: true}); err != nil {
+				if err = q.CreateStorageBackupSchedule(f.ctx, sqlcgen.CreateStorageBackupScheduleParams{ID: schedule, ProjectID: f.resource.ProjectID, ResourceID: f.resource.ID, BindingID: f.storage.BindingID, DestinationID: destination, StorageID: &f.storage.ID, SourceFamily: "image", SourceReferenceHash: hash, ActorID: "usr_bootstrap", Frequency: "every_minute", Timezone: "UTC", Enabled: true}); err != nil {
 					t.Fatal(err)
 				}
 				if err = q.InsertStorageBackupScheduleVersion(f.ctx, sqlcgen.InsertStorageBackupScheduleVersionParams{ScheduleID: schedule, Revision: 1, ActorID: "usr_bootstrap", ExpectedResourceGeneration: f.resource.Generation, Frequency: "every_minute", Timezone: "UTC", Enabled: true}); err != nil {

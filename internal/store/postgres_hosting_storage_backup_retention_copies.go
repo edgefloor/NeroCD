@@ -18,7 +18,14 @@ type storageRetentionScope struct {
 }
 
 func storageRetentionScopeAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (storageRetentionScope, error) {
-	r, b, st, e := storageBackupScheduleAuthority(ctx, tx, actor, resource, role)
+	r, b, e := storageBackupScheduleAuthority(ctx, tx, actor, resource, role)
+	if e != nil {
+		return storageRetentionScope{}, e
+	}
+	if r.Source.Kind != "image" {
+		return storageRetentionScope{}, ErrConflict
+	}
+	st, e := currentHostingStorage(ctx, tx, r.ProjectID, resource)
 	return storageRetentionScope{r, b, st}, e
 }
 func storageRetentionActive(ctx context.Context, tx pgx.Tx, runner, backup string) (bool, error) {

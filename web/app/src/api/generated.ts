@@ -5169,6 +5169,12 @@ export interface components {
             secret_key: string;
         };
         HostingStorageBackupScheduleInput: {
+            /** @description Current settled Compose deployment. Required on create or enabled updates; not pinned for future occurrences. */
+            expected_deployed_operation_id?: string;
+            /** @description Managed Compose named volume. Required for Compose schedules; omitted for image schedules. */
+            volume?: string;
+            /** @description Compose schedule consent to stop and resume running volume users. Required true when creating or enabling. */
+            acknowledge_interruption?: boolean;
             request_id: string;
             /** Format: int64 */
             expected_resource_generation: number;
@@ -5182,9 +5188,13 @@ export interface components {
             remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingStorageBackupSchedule: {
+            /** @description Managed Compose named volume. Required for Compose schedules; omitted for image schedules. */
+            volume?: string;
+            /** @description Compose schedule consent to stop and resume running volume users. Required true when creating or enabling. */
+            acknowledge_interruption?: boolean;
             id: string;
-            /** @constant */
-            version: "hosting.storage-backup.schedule.v1";
+            /** @enum {string} */
+            version: "hosting.storage-backup.schedule.v1" | "managed-compose.local-volume-archive.schedule.v1";
             project_id: string;
             resource_id: string;
             /** Format: int64 */
@@ -5203,6 +5213,7 @@ export interface components {
             remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingStorageBackupOccurrence: {
+            volume?: string;
             id: string;
             schedule_id: string;
             project_id: string;

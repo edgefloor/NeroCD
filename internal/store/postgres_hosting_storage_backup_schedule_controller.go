@@ -83,8 +83,8 @@ func (s *PostgresStore) reconcileStorageBackupSchedule(ctx context.Context, id s
 		if e != nil {
 			return false, e
 		}
-		resource, binding, storage, e := storageBackupScheduleAuthority(ctx, admission, schedule.ActorID, schedule.ResourceID, domain.RoleOwner)
-		if e == nil && (binding.ID != schedule.BindingID || binding.DestinationID != schedule.DestinationID || storage.ID != schedule.StorageID || domain.HostingDocumentHash(storage.Reference()) != schedule.SourceReferenceHash) {
+		resource, binding, e := storageBackupScheduleAuthority(ctx, admission, schedule.ActorID, schedule.ResourceID, domain.RoleOwner)
+		if e == nil && (binding.ID != schedule.BindingID || binding.DestinationID != schedule.DestinationID || (resource.Source.Kind == "compose") != (schedule.SourceFamily == "compose")) {
 			reason = "placement_changed"
 			e = ErrConflict
 		}
@@ -104,11 +104,26 @@ func (s *PostgresStore) reconcileStorageBackupSchedule(ctx context.Context, id s
 				e = ErrConflict
 			}
 		}
+		var storage domain.HostingStorage
+		var compose *domain.HostingStorageArchiveComposeSource
+		if e == nil {
+			storage, compose, e = storageBackupScheduleSource(ctx, admission, schedule.ActorID, resource, proxyString(schedule.SourceVolume))
+			if e == nil && (storageBackupScheduleOrigin(storage, compose) != schedule.SourceReferenceHash || compose == nil && storage.ID != proxyString(schedule.StorageID)) {
+				reason = "placement_changed"
+				e = ErrConflict
+			}
+		}
 		if e == nil {
 			var selection *domain.BackupTargetSelection
 			selection, e = storageBackupScheduleSelection(ctx, admission, id, schedule.Revision)
 			if e == nil {
-				_, e = s.requestStorageBackupTx(ctx, admission, operation, schedule.ResourceID, schedule.ActorID, domain.HostingStorageBackupInput{RequestID: hash[:32], ExpectedResourceGeneration: resource.Generation, RemoteTarget: selection})
+				input := domain.HostingStorageBackupInput{RequestID: hash[:32], ExpectedResourceGeneration: resource.Generation, RemoteTarget: selection}
+				if compose != nil {
+					input.Volume = compose.Volume.Name
+					input.ExpectedDeployedOperationID = compose.Healthy.OperationID
+					input.AcknowledgeInterruption = schedule.AcknowledgeInterruption
+				}
+				_, e = s.requestStorageBackupTx(ctx, admission, operation, schedule.ResourceID, schedule.ActorID, input)
 			}
 		}
 		if e != nil {

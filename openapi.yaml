@@ -10278,6 +10278,10 @@ components:
           "enabled"
         ],
         "properties": {
+          "expected_deployed_operation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", "description": "Current settled Compose deployment. Required on create or enabled updates; not pinned for future occurrences."},
+          "volume": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,62}$", "description": "Managed Compose named volume. Required for Compose schedules; omitted for image schedules."},
+          "acknowledge_interruption": {"type": "boolean", "description": "Compose schedule consent to stop and resume running volume users. Required true when creating or enabling."},
+
           "request_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{32}$"
@@ -10329,13 +10333,16 @@ components:
           "updated_at"
         ],
         "properties": {
+          "volume": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,62}$", "description": "Managed Compose named volume. Required for Compose schedules; omitted for image schedules."},
+          "acknowledge_interruption": {"type": "boolean", "description": "Compose schedule consent to stop and resume running volume users. Required true when creating or enabling."},
+
           "id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
           },
           "version": {
             "type": "string",
-            "const": "hosting.storage-backup.schedule.v1"
+            "enum": ["hosting.storage-backup.schedule.v1", "managed-compose.local-volume-archive.schedule.v1"]
           },
           "project_id": {
             "type": "string",
@@ -10401,6 +10408,7 @@ components:
           "created_at"
         ],
         "properties": {
+          "volume": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,62}$"},
           "id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"

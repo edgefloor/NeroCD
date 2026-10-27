@@ -14,25 +14,68 @@ import (
 )
 
 func storageBackupScheduleView(r sqlcgen.HostingStorageBackupSchedule) domain.HostingStorageBackupSchedule {
-	return domain.HostingStorageBackupSchedule{ID: r.ID, Version: domain.HostingStorageBackupScheduleVersion, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	version := domain.HostingStorageBackupScheduleVersion
+	if r.SourceFamily == "compose" {
+		version = domain.HostingComposeStorageBackupScheduleVersion
+	}
+	return domain.HostingStorageBackupSchedule{Volume: proxyString(r.SourceVolume), AcknowledgeInterruption: r.AcknowledgeInterruption, ID: r.ID, Version: version, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
 // Placement admission precedes the schedule lock in both writers and controller
 // passes. Current actor checks do not inherit a former owner's privileges.
-func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (domain.Resource, domain.ResourceBinding, domain.HostingStorage, error) {
-	var zero domain.HostingStorage
+func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (domain.Resource, domain.ResourceBinding, error) {
 	if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
-		return domain.Resource{}, domain.ResourceBinding{}, zero, err
+		return domain.Resource{}, domain.ResourceBinding{}, err
 	}
-	r, b, err := hostingStoragePlacement(ctx, tx, actor, resource, role)
+	r, b, err := archivePlacement(ctx, tx, actor, resource, role)
 	if err != nil {
-		return r, b, zero, err
+		return r, b, err
 	}
-	st, err := currentHostingStorage(ctx, tx, r.ProjectID, resource)
+	return r, b, proxyCheckLegacyToken(ctx, tx, actor)
+}
+
+// Runtime eligibility is deliberately separate from metadata authority. Replay,
+// history and disablement must remain usable while the source is stopped or held.
+func storageBackupScheduleSource(ctx context.Context, tx pgx.Tx, actor string, r domain.Resource, volume string) (domain.HostingStorage, *domain.HostingStorageArchiveComposeSource, error) {
+	if r.Source.Kind != "compose" {
+		st, err := currentHostingStorage(ctx, tx, r.ProjectID, r.ID)
+		return st, nil, err
+	}
+	h, op, generation, err := databaseBackupComponentSource(ctx, tx, actor, r.ID, "", domain.RoleOwner)
 	if err != nil {
-		return r, b, zero, err
+		return domain.HostingStorage{}, nil, err
 	}
-	return r, b, st, proxyCheckLegacyToken(ctx, tx, actor)
+	if generation != h.Snapshot.ResourceGeneration {
+		return domain.HostingStorage{}, nil, ErrConflict
+	}
+	c := &domain.HostingStorageArchiveComposeSource{Healthy: h, Plan: *op.Plan}
+	for _, v := range h.Stack.Volumes {
+		if v.Name == volume {
+			c.Volume = v
+		}
+	}
+	if c.Volume.Name == "" {
+		return domain.HostingStorage{}, nil, ErrConflict
+	}
+	used := false
+	for _, svc := range op.Plan.Stack.Definition.Services {
+		for _, m := range svc.Mounts {
+			if m.Volume == volume {
+				used = true
+			}
+		}
+	}
+	if !used {
+		return domain.HostingStorage{}, nil, ErrConflict
+	}
+	return domain.HostingStorage{}, c, composeArchiveVolume(ctx, tx, *c)
+}
+
+func storageBackupScheduleOrigin(st domain.HostingStorage, c *domain.HostingStorageArchiveComposeSource) string {
+	if c != nil {
+		return domain.HostingDocumentHash(c.Volume)
+	}
+	return domain.HostingDocumentHash(st.Reference())
 }
 
 func storageBackupScheduleSelection(ctx context.Context, tx pgx.Tx, id string, revision int64) (*domain.BackupTargetSelection, error) {
@@ -74,7 +117,7 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingStorageBackupSchedule, error) {
 		var zero domain.HostingStorageBackupSchedule
-		resourceValue, binding, storageValue, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner)
+		resourceValue, binding, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner)
 		if err != nil {
 			return zero, err
 		}
@@ -96,6 +139,28 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		if resourceValue.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
+		if (resourceValue.Source.Kind == "compose") != (in.Volume != "") {
+			return zero, ErrConflict
+		}
+		var storageValue domain.HostingStorage
+		var compose *domain.HostingStorageArchiveComposeSource
+		if in.Enabled || existingID == "" || in.Volume == "" {
+			storageValue, compose, err = storageBackupScheduleSource(ctx, tx, actor, resourceValue, in.Volume)
+			if err != nil {
+				return zero, err
+			}
+			if compose != nil && compose.Healthy.OperationID != in.ExpectedDeployedOperationID {
+				return zero, ErrConflict
+			}
+		}
+		family := "image"
+		var storageID, sourceVolume *string
+		if in.Volume != "" {
+			family = "compose"
+			sourceVolume = &in.Volume
+		} else {
+			storageID = &storageValue.ID
+		}
 		if existingID == "" {
 			count, countErr := q.CountStorageBackupSchedules(ctx, resource)
 			if countErr != nil {
@@ -104,13 +169,13 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 			if count >= 100 {
 				return zero, ErrConflict
 			}
-			err = q.CreateStorageBackupSchedule(ctx, sqlcgen.CreateStorageBackupScheduleParams{ID: id, ProjectID: resourceValue.ProjectID, ResourceID: resource, BindingID: binding.ID, DestinationID: binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, StorageID: storageValue.ID, SourceReferenceHash: domain.HostingDocumentHash(storageValue.Reference())})
+			err = q.CreateStorageBackupSchedule(ctx, sqlcgen.CreateStorageBackupScheduleParams{ID: id, ProjectID: resourceValue.ProjectID, ResourceID: resource, BindingID: binding.ID, DestinationID: binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, StorageID: storageID, SourceReferenceHash: storageBackupScheduleOrigin(storageValue, compose), SourceFamily: family, SourceVolume: sourceVolume, AcknowledgeInterruption: in.Volume != ""})
 		} else {
 			prior, e := q.LockStorageBackupSchedule(ctx, existingID)
 			if e != nil {
 				return zero, hostingError(e)
 			}
-			if prior.ResourceID != resource || prior.ProjectID != resourceValue.ProjectID || prior.Revision != in.ExpectedVersion || prior.BindingID != binding.ID || prior.DestinationID != binding.DestinationID || prior.StorageID != storageValue.ID || prior.SourceReferenceHash != domain.HostingDocumentHash(storageValue.Reference()) {
+			if prior.ResourceID != resource || prior.ProjectID != resourceValue.ProjectID || prior.Revision != in.ExpectedVersion || prior.BindingID != binding.ID || prior.DestinationID != binding.DestinationID || prior.SourceFamily != family || proxyString(prior.SourceVolume) != in.Volume || (in.Enabled || in.Volume == "") && (proxyString(prior.StorageID) != proxyString(storageID) || prior.SourceReferenceHash != storageBackupScheduleOrigin(storageValue, compose)) {
 				return zero, ErrConflict
 			}
 			id = existingID
@@ -134,7 +199,7 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		if selection != nil {
 			remote = buildJSON(selection)
 		}
-		err = q.InsertStorageBackupScheduleVersion(ctx, sqlcgen.InsertStorageBackupScheduleVersionParams{ScheduleID: id, Revision: saved.Revision, ActorID: actor, ExpectedResourceGeneration: in.ExpectedResourceGeneration, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, RemoteTarget: remote})
+		err = q.InsertStorageBackupScheduleVersion(ctx, sqlcgen.InsertStorageBackupScheduleVersionParams{ScheduleID: id, Revision: saved.Revision, ActorID: actor, ExpectedResourceGeneration: in.ExpectedResourceGeneration, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled, RemoteTarget: remote, AcknowledgeInterruption: saved.AcknowledgeInterruption})
 		if err != nil {
 			return zero, fmt.Errorf("insert storage backup schedule version: %w", err)
 		}
@@ -145,7 +210,12 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 			if err = s.archiveConfigured(ctx, q); err != nil {
 				return zero, err
 			}
-			if err = s.storageBackupScheduleTarget(ctx, tx, actor, storageValue, selection); err != nil {
+			if compose != nil {
+				err = archiveRunner(ctx, tx, domain.HostingStorageArchivePlan{ComposeSource: compose, ProjectID: resourceValue.ProjectID, DestinationID: binding.DestinationID, RunnerID: compose.Healthy.Snapshot.RunnerID, ServerID: compose.Healthy.Snapshot.ServerID})
+			} else {
+				err = s.storageBackupScheduleTarget(ctx, tx, actor, storageValue, selection)
+			}
+			if err != nil {
 				return zero, err
 			}
 		}
@@ -166,7 +236,7 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 // ListStorageBackupSchedules lists authorized storage backup schedules for a resource.
 func (s *PostgresStore) ListStorageBackupSchedules(ctx context.Context, actor, resource string) ([]domain.HostingStorageBackupSchedule, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingStorageBackupSchedule, error) {
-		if _, _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
+		if _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
 			return nil, err
 		}
 		rows, err := sqlcgen.New(tx).ListStorageBackupSchedules(ctx, resource)
@@ -190,7 +260,7 @@ func (s *PostgresStore) ListStorageBackupSchedules(ctx context.Context, actor, r
 // schedule.
 func (s *PostgresStore) ListStorageBackupOccurrences(ctx context.Context, actor, resource, id string) ([]domain.HostingStorageBackupOccurrence, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingStorageBackupOccurrence, error) {
-		if _, _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
+		if _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
 			return nil, err
 		}
 		q := sqlcgen.New(tx)
@@ -207,7 +277,7 @@ func (s *PostgresStore) ListStorageBackupOccurrences(ctx context.Context, actor,
 		}
 		out := make([]domain.HostingStorageBackupOccurrence, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, domain.HostingStorageBackupOccurrence{ID: r.ID, ScheduleID: r.ScheduleID, ProjectID: r.ProjectID, ResourceID: r.ResourceID, ScheduleRevision: r.ScheduleRevision, ScheduledAt: r.ScheduledAt, Frequency: r.Frequency, Timezone: r.Timezone, BackupID: r.BackupID, OperationID: proxyString(r.OperationID), State: r.State, Reason: r.Reason, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt})
+			out = append(out, domain.HostingStorageBackupOccurrence{Volume: r.Volume, ID: r.ID, ScheduleID: r.ScheduleID, ProjectID: r.ProjectID, ResourceID: r.ResourceID, ScheduleRevision: r.ScheduleRevision, ScheduledAt: r.ScheduledAt, Frequency: r.Frequency, Timezone: r.Timezone, BackupID: r.BackupID, OperationID: proxyString(r.OperationID), State: r.State, Reason: r.Reason, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt})
 		}
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})

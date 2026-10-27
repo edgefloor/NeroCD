@@ -37,21 +37,24 @@ func (q *Queries) CountStorageBackupSchedules(ctx context.Context, resourceID st
 }
 
 const createStorageBackupSchedule = `-- name: CreateStorageBackupSchedule :exec
-INSERT INTO hosting_storage_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,storage_id,source_reference_hash) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11)
+INSERT INTO hosting_storage_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,storage_id,source_reference_hash,source_family,source_volume,acknowledge_interruption) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$14)
 `
 
 type CreateStorageBackupScheduleParams struct {
-	ID                  string `json:"id"`
-	ProjectID           string `json:"project_id"`
-	ResourceID          string `json:"resource_id"`
-	BindingID           string `json:"binding_id"`
-	DestinationID       string `json:"destination_id"`
-	ActorID             string `json:"actor_id"`
-	Frequency           string `json:"frequency"`
-	Timezone            string `json:"timezone"`
-	Enabled             bool   `json:"enabled"`
-	StorageID           string `json:"storage_id"`
-	SourceReferenceHash string `json:"source_reference_hash"`
+	ID                      string  `json:"id"`
+	ProjectID               string  `json:"project_id"`
+	ResourceID              string  `json:"resource_id"`
+	BindingID               string  `json:"binding_id"`
+	DestinationID           string  `json:"destination_id"`
+	ActorID                 string  `json:"actor_id"`
+	Frequency               string  `json:"frequency"`
+	Timezone                string  `json:"timezone"`
+	Enabled                 bool    `json:"enabled"`
+	StorageID               *string `json:"storage_id"`
+	SourceReferenceHash     string  `json:"source_reference_hash"`
+	SourceFamily            string  `json:"source_family"`
+	SourceVolume            *string `json:"source_volume"`
+	AcknowledgeInterruption bool    `json:"acknowledge_interruption"`
 }
 
 func (q *Queries) CreateStorageBackupSchedule(ctx context.Context, arg CreateStorageBackupScheduleParams) error {
@@ -67,6 +70,9 @@ func (q *Queries) CreateStorageBackupSchedule(ctx context.Context, arg CreateSto
 		arg.Enabled,
 		arg.StorageID,
 		arg.SourceReferenceHash,
+		arg.SourceFamily,
+		arg.SourceVolume,
+		arg.AcknowledgeInterruption,
 	)
 	return err
 }
@@ -150,7 +156,7 @@ func (q *Queries) InsertStorageBackupScheduleRequest(ctx context.Context, arg In
 }
 
 const insertStorageBackupScheduleVersion = `-- name: InsertStorageBackupScheduleVersion :exec
-INSERT INTO hosting_storage_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,remote_target) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO hosting_storage_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,remote_target,acknowledge_interruption) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
 type InsertStorageBackupScheduleVersionParams struct {
@@ -162,6 +168,7 @@ type InsertStorageBackupScheduleVersionParams struct {
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
 	RemoteTarget               []byte `json:"remote_target"`
+	AcknowledgeInterruption    bool   `json:"acknowledge_interruption"`
 }
 
 func (q *Queries) InsertStorageBackupScheduleVersion(ctx context.Context, arg InsertStorageBackupScheduleVersionParams) error {
@@ -174,13 +181,14 @@ func (q *Queries) InsertStorageBackupScheduleVersion(ctx context.Context, arg In
 		arg.Timezone,
 		arg.Enabled,
 		arg.RemoteTarget,
+		arg.AcknowledgeInterruption,
 	)
 	return err
 }
 
 const listStorageBackupOccurrences = `-- name: ListStorageBackupOccurrences :many
 SELECT o.id,o.schedule_id,o.schedule_revision,o.scheduled_at,o.operation_id,o.created_at,
- s.project_id,s.resource_id,v.frequency,v.timezone,
+ s.project_id,s.resource_id,coalesce(s.source_volume,'')::text AS volume,v.frequency,v.timezone,
  coalesce(b.id,'')::text AS backup_id,
  (CASE WHEN o.state='admitted' THEN op.state ELSE o.state END)::text AS state,
  (CASE WHEN o.state='admitted' THEN coalesce(r.body->'result'->>'failure_code','') ELSE o.reason END)::text AS reason,
@@ -204,6 +212,7 @@ type ListStorageBackupOccurrencesRow struct {
 	CreatedAt        time.Time `json:"created_at"`
 	ProjectID        string    `json:"project_id"`
 	ResourceID       string    `json:"resource_id"`
+	Volume           string    `json:"volume"`
 	Frequency        string    `json:"frequency"`
 	Timezone         string    `json:"timezone"`
 	BackupID         string    `json:"backup_id"`
@@ -230,6 +239,7 @@ func (q *Queries) ListStorageBackupOccurrences(ctx context.Context, scheduleID s
 			&i.CreatedAt,
 			&i.ProjectID,
 			&i.ResourceID,
+			&i.Volume,
 			&i.Frequency,
 			&i.Timezone,
 			&i.BackupID,
@@ -248,7 +258,7 @@ func (q *Queries) ListStorageBackupOccurrences(ctx context.Context, scheduleID s
 }
 
 const listStorageBackupSchedules = `-- name: ListStorageBackupSchedules :many
-SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at FROM hosting_storage_backup_schedules WHERE resource_id=$1 ORDER BY created_at,id LIMIT 100
+SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, source_family, source_volume, acknowledge_interruption FROM hosting_storage_backup_schedules WHERE resource_id=$1 ORDER BY created_at,id LIMIT 100
 `
 
 func (q *Queries) ListStorageBackupSchedules(ctx context.Context, resourceID string) ([]HostingStorageBackupSchedule, error) {
@@ -277,6 +287,9 @@ func (q *Queries) ListStorageBackupSchedules(ctx context.Context, resourceID str
 			&i.CheckedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceFamily,
+			&i.SourceVolume,
+			&i.AcknowledgeInterruption,
 		); err != nil {
 			return nil, err
 		}
@@ -289,7 +302,7 @@ func (q *Queries) ListStorageBackupSchedules(ctx context.Context, resourceID str
 }
 
 const lockStorageBackupSchedule = `-- name: LockStorageBackupSchedule :one
-SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at FROM hosting_storage_backup_schedules WHERE id=$1 FOR UPDATE
+SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, source_family, source_volume, acknowledge_interruption FROM hosting_storage_backup_schedules WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockStorageBackupSchedule(ctx context.Context, id string) (HostingStorageBackupSchedule, error) {
@@ -312,12 +325,15 @@ func (q *Queries) LockStorageBackupSchedule(ctx context.Context, id string) (Hos
 		&i.CheckedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceFamily,
+		&i.SourceVolume,
+		&i.AcknowledgeInterruption,
 	)
 	return i, err
 }
 
 const readStorageBackupSchedule = `-- name: ReadStorageBackupSchedule :one
-SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at FROM hosting_storage_backup_schedules WHERE id=$1
+SELECT id, project_id, resource_id, binding_id, destination_id, storage_id, source_reference_hash, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, source_family, source_volume, acknowledge_interruption FROM hosting_storage_backup_schedules WHERE id=$1
 `
 
 func (q *Queries) ReadStorageBackupSchedule(ctx context.Context, id string) (HostingStorageBackupSchedule, error) {
@@ -340,6 +356,9 @@ func (q *Queries) ReadStorageBackupSchedule(ctx context.Context, id string) (Hos
 		&i.CheckedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceFamily,
+		&i.SourceVolume,
+		&i.AcknowledgeInterruption,
 	)
 	return i, err
 }

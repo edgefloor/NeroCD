@@ -28,13 +28,16 @@ func (s *Server) saveStorageBackupSchedule(w http.ResponseWriter, r *http.Reques
 	// Explicit pointers distinguish disabling from an omitted/null boolean and
 	// creation's version zero from an omitted compare-and-swap precondition.
 	var in struct {
-		RemoteTarget               *domain.BackupTargetSelection `json:"remote_target,omitempty"`
-		RequestID                  string                        `json:"request_id"`
-		ExpectedResourceGeneration int64                         `json:"expected_resource_generation"`
-		ExpectedVersion            *int64                        `json:"expected_version"`
-		Frequency                  string                        `json:"frequency"`
-		Timezone                   string                        `json:"timezone"`
-		Enabled                    *bool                         `json:"enabled"`
+		Volume                      string                        `json:"volume,omitempty"`
+		ExpectedDeployedOperationID string                        `json:"expected_deployed_operation_id,omitempty"`
+		AcknowledgeInterruption     bool                          `json:"acknowledge_interruption,omitempty"`
+		RemoteTarget                *domain.BackupTargetSelection `json:"remote_target,omitempty"`
+		RequestID                   string                        `json:"request_id"`
+		ExpectedResourceGeneration  int64                         `json:"expected_resource_generation"`
+		ExpectedVersion             *int64                        `json:"expected_version"`
+		Frequency                   string                        `json:"frequency"`
+		Timezone                    string                        `json:"timezone"`
+		Enabled                     *bool                         `json:"enabled"`
 	}
 	if !decodeStorageArchive(w, r, &in) {
 		return
@@ -43,7 +46,7 @@ func (s *Server) saveStorageBackupSchedule(w http.ResponseWriter, r *http.Reques
 		writeErrorEnvelope(w, 400, "invalid_request", "backup schedule preconditions required")
 		return
 	}
-	v, e := s.app.SaveStorageBackupSchedule(r.Context(), r.PathValue("id"), r.PathValue("schedule_id"), domain.HostingStorageBackupScheduleInput{RemoteTarget: in.RemoteTarget, RequestID: in.RequestID, ExpectedResourceGeneration: in.ExpectedResourceGeneration, ExpectedVersion: *in.ExpectedVersion, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: *in.Enabled})
+	v, e := s.app.SaveStorageBackupSchedule(r.Context(), r.PathValue("id"), r.PathValue("schedule_id"), domain.HostingStorageBackupScheduleInput{Volume: in.Volume, ExpectedDeployedOperationID: in.ExpectedDeployedOperationID, AcknowledgeInterruption: in.AcknowledgeInterruption, RemoteTarget: in.RemoteTarget, RequestID: in.RequestID, ExpectedResourceGeneration: in.ExpectedResourceGeneration, ExpectedVersion: *in.ExpectedVersion, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: *in.Enabled})
 	proxyResponse(w, 200, v, e)
 }
 func (s *Server) hostingStorageBackupOccurrences(w http.ResponseWriter, r *http.Request) {

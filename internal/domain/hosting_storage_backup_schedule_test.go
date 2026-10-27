@@ -33,3 +33,47 @@ func TestHostingStorageBackupScheduleInput(t *testing.T) {
 		})
 	}
 }
+
+func TestHostingComposeStorageBackupScheduleInput(t *testing.T) {
+	valid := HostingStorageBackupScheduleInput{RequestID: strings.Repeat("a", 32), ExpectedResourceGeneration: 1, Volume: "uploads", ExpectedDeployedOperationID: "hop_source", AcknowledgeInterruption: true, Frequency: "daily", Timezone: "UTC", Enabled: true}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"no_consent", "no_deployment", "invalid_deployment", "invalid_volume", "remote", "image_consent", "image_deployment", "disabled_create"} {
+		t.Run(name, func(t *testing.T) {
+			in := valid
+			switch name {
+			case "no_consent":
+				in.AcknowledgeInterruption = false
+			case "no_deployment":
+				in.ExpectedDeployedOperationID = ""
+			case "invalid_deployment":
+				in.ExpectedDeployedOperationID = "../hop"
+			case "invalid_volume":
+				in.Volume = "../uploads"
+			case "remote":
+				in.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
+			case "image_consent":
+				in.Volume = ""
+				in.ExpectedDeployedOperationID = ""
+			case "image_deployment":
+				in.Volume = ""
+				in.AcknowledgeInterruption = false
+			case "disabled_create":
+				in.Enabled = false
+				in.ExpectedDeployedOperationID = ""
+			}
+			if in.Validate() == nil {
+				t.Fatal("invalid selector accepted")
+			}
+		})
+	}
+	disabled := valid
+	disabled.ExpectedVersion = 1
+	disabled.Enabled = false
+	disabled.ExpectedDeployedOperationID = ""
+	disabled.AcknowledgeInterruption = false
+	if err := disabled.Validate(); err != nil {
+		t.Fatal("runtime-independent disable rejected", err)
+	}
+}
