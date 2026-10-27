@@ -296,7 +296,7 @@ try {
   const projectID = (await projectResult.json()).id;
   const taskID = await addTask(app, taskTitle);
   await app.goto(`/tasks/${taskID}`);
-  await expect(app.getByRole("heading", { name: taskTitle, exact: true })).toBeVisible();
+  await expect(app.getByRole("heading", { name: "Title", exact: true })).toHaveText(taskTitle);
   await upload(app, filename, payload);
   await download(app, filename, payload);
   safe.app_signup_task_upload = true;
@@ -323,7 +323,7 @@ try {
   if (loggedIn.status() !== 200) throw Error("fresh login rejected");
   await expect(fresh.locator("#loginform")).toHaveCount(0);
   await fresh.goto(`/tasks/${taskID}`);
-  await expect(fresh.getByRole("heading", { name: taskTitle, exact: true })).toBeVisible();
+  await expect(fresh.getByRole("heading", { name: "Title", exact: true })).toHaveText(taskTitle);
   await download(fresh, filename, payload);
   const newPayload = Buffer.from("New attachment after saved Compose redeployment\n");
   await upload(fresh, "compose-after-redeploy.txt", newPayload);
