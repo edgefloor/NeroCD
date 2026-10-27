@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -543,7 +544,10 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 		return domain.ClaimedRun{}, err
 	}
 	claim.PrimitivePlan = plan
-	_ = s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: claim.Run.ID, Sequence: 2, Stream: domain.LogSystem, Message: "Run leased to runner " + claim.Lease.RunnerID, CreatedAt: time.Now().UTC()})
+	if err := s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: claim.Run.ID, Sequence: 2, Stream: domain.LogSystem, Message: "Run leased to runner " + claim.Lease.RunnerID, CreatedAt: time.Now().UTC()}); err != nil {
+		// Return the successful claim even when its supplementary log fails.
+		slog.WarnContext(ctx, "runner lease log write failed", "run_id", diagnosticID(claim.Run.ID), "runner_id", diagnosticID(claim.Lease.RunnerID), "lease_id", diagnosticID(claim.Lease.ID))
+	}
 	return claim, nil
 }
 

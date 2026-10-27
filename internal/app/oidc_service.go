@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -238,15 +239,19 @@ func (s *Service) ProvisionOIDCIdentity(ctx context.Context, input OIDCProvision
 }
 
 func (s *Service) auditOIDCDenial(ctx context.Context, reason, userID string) {
-	auditID, err := prefixedID("audit")
-	if err != nil {
-		return
-	}
 	actor, target := "system", "oidc-session"
 	if userID != "" {
 		actor, target = userID, userID
 	}
-	_ = s.audit.CreateAuditEvent(ctx, domain.AuditEvent{ID: auditID, ActorID: actor, Action: "session.create.denied", TargetID: target, Metadata: map[string]any{"provider": "oidc", "reason": reason}, CreatedAt: s.clock().UTC()})
+	auditID, err := prefixedID("audit")
+	if err != nil {
+		slog.WarnContext(ctx, "OIDC denial audit write failed", "action", "session.create.denied", "actor_id", diagnosticID(actor), "reason", reason, "stage", "generate_id")
+		return
+	}
+	if err := s.audit.CreateAuditEvent(ctx, domain.AuditEvent{ID: auditID, ActorID: actor, Action: "session.create.denied", TargetID: target, Metadata: map[string]any{"provider": "oidc", "reason": reason}, CreatedAt: s.clock().UTC()}); err != nil {
+		// Provider and persistence errors may contain secrets; log only context.
+		slog.WarnContext(ctx, "OIDC denial audit write failed", "action", "session.create.denied", "actor_id", diagnosticID(actor), "reason", reason, "stage", "create_event")
+	}
 }
 
 func oidcHash(value string) string {

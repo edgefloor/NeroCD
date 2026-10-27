@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -533,7 +534,10 @@ func (s *Service) markWorkflowStepRunning(ctx context.Context, run domain.TaskRu
 	if err != nil {
 		return domain.TaskRun{}, err
 	}
-	_ = s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: run.ID, Sequence: 2, Stream: domain.LogSystem, Message: "Workflow step started: " + run.Workflow.Steps[index].ID, CreatedAt: startedAt})
+	if err := s.runs.CreateRunLog(ctx, domain.RunLog{ID: mustPrefixedID("log"), RunID: run.ID, Sequence: 2, Stream: domain.LogSystem, Message: "Workflow step started: " + run.Workflow.Steps[index].ID, CreatedAt: startedAt}); err != nil {
+		// The workflow transition is authoritative; this log is supplementary.
+		slog.WarnContext(ctx, "workflow step log write failed", "run_id", diagnosticID(run.ID), "step_index", index)
+	}
 	return updated, nil
 }
 
@@ -858,7 +862,25 @@ func (s *Service) writeDeniedAudit(ctx context.Context, principal auth.Principal
 	}
 	metadata["provider"] = principal.Provider
 	metadata["roles"] = principal.Roles
-	_ = s.writeAudit(ctx, principal.ID, action, targetID, metadata)
+	if err := s.writeAudit(ctx, principal.ID, action, targetID, metadata); err != nil {
+		// Keep the denial authoritative. Errors, metadata and targets can contain
+		// credentials or session identifiers and must not enter operator logs.
+		slog.WarnContext(ctx, "denial audit write failed", "action", action, "actor_id", diagnosticID(principal.ID))
+	}
+}
+
+// diagnosticID admits only bounded identifier text to operator logs.
+func diagnosticID(id string) string {
+	if id == "" || len(id) > 128 {
+		return "unavailable"
+	}
+	for _, c := range id {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			continue
+		}
+		return "unavailable"
+	}
+	return id
 }
 
 func paginateForService[T any](items []T, page store.Page) store.PageResult[T] {
