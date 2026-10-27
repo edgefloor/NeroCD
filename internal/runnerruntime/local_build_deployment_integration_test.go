@@ -8,15 +8,12 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/http/cgi"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +24,7 @@ import (
 
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
+	"nerocd/internal/hostingfixture"
 	"nerocd/internal/hostingproxy"
 	"nerocd/internal/runner"
 )
@@ -52,50 +50,15 @@ func localBuildFixtureHTTP(t *testing.T, op domain.HostingOperation, want string
 
 func mutableLocalBuildGit(t *testing.T) (string, func(string, bool)) {
 	t.Helper()
-	actual, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	work := filepath.Join(root, "work")
-	if err = os.Mkdir(work, 0700); err != nil {
-		t.Fatal(err)
-	}
-	checkoutCommand(t, work, "init", "-q", "-b", "main")
-	update := func(body string, fail bool) {
-		t.Helper()
+	files := func(body string, fail bool) map[string]string {
 		dockerfile := "FROM " + hostingbuild.StaticImage + "\nCOPY --chmod=0644 index.html /usr/share/nginx/html/index.html\n"
 		if fail {
 			dockerfile += "RUN exit 9\n"
 		}
-		for name, value := range map[string]string{"Dockerfile": dockerfile, "index.html": body} {
-			if e := os.WriteFile(filepath.Join(work, name), []byte(value), 0600); e != nil {
-				t.Fatal(e)
-			}
-		}
-		checkoutCommand(t, work, "add", ".")
-		checkoutCommand(t, work, "commit", "-qm", "fixture update")
+		return map[string]string{"Dockerfile": dockerfile, "index.html": body}
 	}
-	update("local-A\n", false)
-	checkoutCommand(t, root, "clone", "--bare", work, "repo.git")
-	server := httptest.NewTLSServer(&cgi.Handler{Path: actual, Args: []string{"http-backend"}, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}})
-	t.Cleanup(server.Close)
-	cert := filepath.Join(root, "ca.pem")
-	if err = os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(root, "bin")
-	if err = os.Mkdir(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec "+shellQuote(actual)+" -c http.sslCAInfo="+shellQuote(cert)+" \"$@\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	return strings.Replace(server.URL, "127.0.0.1", "example.com", 1) + "/repo.git", func(body string, fail bool) {
-		update(body, fail)
-		checkoutCommand(t, work, "push", filepath.Join(root, "repo.git"), "main")
-	}
+	url, update, _ := hostingfixture.GitHTTPS(t, files("local-A\n", false), "", "")
+	return strings.Replace(url, "127.0.0.1", "example.com", 1), func(body string, fail bool) { update(files(body, fail)) }
 }
 
 func TestLocalBuildProductionHTTPS(t *testing.T) {

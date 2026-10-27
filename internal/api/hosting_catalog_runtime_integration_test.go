@@ -48,9 +48,18 @@ func catalogRuntimeServer(t *testing.T, pg *store.PostgresStore) *Server {
 	if err != nil {
 		t.Fatal("fixture keyring")
 	}
-	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	var hosting store.HostingRepository = pg
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+		hosting = gitComposeRuntimeHosting{pg}
+	}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: hosting, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
 		t.Fatal("fixture service")
+	}
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+		if err := service.ConfigureHostingGitHosts([]string{"example.com"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	origin := os.Getenv("NEROCD_CATALOG_BROWSER_ORIGIN")
 	parsed, err := url.Parse(origin)
@@ -239,6 +248,7 @@ type catalogRuntimeBrowser struct {
 	mu                sync.Mutex
 	key, phase, id    string
 	imageReference    string
+	gitRepository     string
 	reports           chan hostingStorageRemoteRuntimeReport
 	original, retried *domain.HostingCatalogInstallation
 }
@@ -329,10 +339,10 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		b.mu.Lock()
-		phase, id, imageReference := b.phase, b.id, b.imageReference
+		phase, id, imageReference, gitRepository := b.phase, b.id, b.imageReference, b.gitRepository
 		b.mu.Unlock()
 		if r.Method == "GET" && r.URL.Path == "/__catalog_fixture/state" {
-			writeJSON(w, 200, map[string]string{"phase": phase, "id": id, "image_reference": imageReference})
+			writeJSON(w, 200, map[string]string{"phase": phase, "id": id, "image_reference": imageReference, "git_repository": gitRepository})
 			return true
 		}
 		if r.Method == "POST" && r.URL.Path == "/__catalog_fixture/report" {
@@ -343,7 +353,7 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 				w.WriteHeader(400)
 				return true
 			}
-			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked", "volume_schedule": "volume_scheduled", "volume_schedule_run": "volume_schedule_backed_up", "volume_backup": "volume_backed_up", "volume_recheck": "volume_checked", "volume_remote_backup": "volume_remote_backed_up", "volume_remote_retry": "volume_remote_retried", "database_backup": "database_backed_up", "database_mutate": "database_source_mutated", "database_import": "database_imported", "database_check": "database_checked"}[phase]
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "app_failure_recheck": "app_failure_checked", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked", "volume_schedule": "volume_scheduled", "volume_schedule_run": "volume_schedule_backed_up", "volume_backup": "volume_backed_up", "volume_recheck": "volume_checked", "volume_remote_backup": "volume_remote_backed_up", "volume_remote_retry": "volume_remote_retried", "database_backup": "database_backed_up", "database_mutate": "database_source_mutated", "database_import": "database_imported", "database_check": "database_checked"}[phase]
 			if v.Action != expected {
 				w.WriteHeader(409)
 				return true

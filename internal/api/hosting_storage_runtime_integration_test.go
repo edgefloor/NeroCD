@@ -62,6 +62,7 @@ type storageRuntimeFixture struct {
 	archiveCompletions                                  atomic.Int64
 	capabilities                                        []string
 	archiveConfig                                       string
+	buildConfig                                         string
 	lastOperation                                       atomic.Pointer[domain.HostingOperation]
 	diagnosticsRegistered                               bool
 	preserveRoot                                        bool
@@ -287,6 +288,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		caps = append(caps, "hosting_registry_pull_v1", domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability, domain.HostingApplicationDatabaseCapability)
 	}
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+		caps = append(caps, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability)
+	}
 	f.capabilities = append([]string(nil), caps...)
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, http.MethodPost, "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
 	credential := "ncr_storage_runtime_fixture_only"
@@ -346,6 +350,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		if err := os.Mkdir(filepath.Join(f.root, "runner"), 0700); err != nil {
 			t.Fatal("private fixture configured work root", err)
 		}
+	}
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+		configureGitComposeRuntime(t, f, pg)
 	}
 	f.start(caps)
 	return f
@@ -420,6 +427,9 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		command.Args = append(command.Args, "--hosting-registry-pull", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute", "--hosting-database", "--hosting-database-network-capture", "--hosting-database-network-upgrade", "--hosting-application-database", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+	}
+	if f.buildConfig != "" {
+		command.Args = append(command.Args, "--build-config-file", f.buildConfig)
 	}
 	if f.archiveConfig != "" {
 		command.Args = append(command.Args, "--storage-archive-config-file", f.archiveConfig)

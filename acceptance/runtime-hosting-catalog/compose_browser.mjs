@@ -189,6 +189,28 @@ try {
   safe.served_assets_match_manifest = true;
   await signIn(page, "admin@example.local", "admin");
   const h = await hosting(page);
+  const gitCompose=Boolean(initial.git_repository);
+  let resource;
+  if (gitCompose) {
+    step="save_git_compose_application";
+    const form=h.getByRole("form",{name:"Create application",exact:true});
+    await form.getByLabel("Application source",{exact:true}).selectOption("git");
+    await form.getByLabel("Application name",{exact:true}).fill(applicationName);
+    await form.getByLabel("Git repository URL",{exact:true}).fill(initial.git_repository);
+    await form.getByLabel("Git branch, tag, or commit",{exact:true}).fill("main");
+    await form.getByLabel("Git source access",{exact:true}).selectOption("https_basic");
+    await form.getByLabel("Build strategy",{exact:true}).selectOption("compose");
+    await form.getByLabel("Context directory",{exact:true}).fill("project");
+    await form.getByLabel("Compose file",{exact:true}).fill("deploy/compose.yaml");
+    await form.getByLabel("Public Compose service",{exact:true}).fill("vikunja");
+    await form.getByLabel("Public Compose service port",{exact:true}).fill("3456");
+    const saved=response(page,"/api/v1/resources");
+    await form.getByRole("button",{name:"Save application",exact:true}).click();
+    resource=await checkedResponse(saved,201);
+    if(resource.source.git.settings.compose_file!=="deploy/compose.yaml"||resource.source.git.repository_url!==initial.git_repository)throw Error("saved Git Compose source mismatch");
+    safe.browser_git_compose_create=true;
+    safe.saved_compose_configuration=true;
+  } else {
   step = "install_catalog_compose";
   const source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
   if (createHash("sha256").update(source).digest("hex") !== "2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767") throw Error("shipped Compose example changed");
@@ -218,7 +240,7 @@ try {
   const retryInstall = await retryWait;
   if (retryInstall.status() !== 201 || retryInstall.request().postData() !== originalRequest) throw Error("catalog retry changed request");
   const installed = await checkedResponse(retryInstall, 201);
-  const resource = installed.resource;
+  resource = installed.resource;
   if (!resource?.id || resource.generation !== 1 || resource.source.kind !== "compose" || resource.source.compose.original !== source || installed.request.template_id !== "vikunja-with-postgresql" || installed.request.immutable_version !== "coolify-b12d1386.vikunja-2.7.1.v1" || installed.request.public_url !== appOrigin || installed.binding.destination_id !== initial.id || installed.runtime_configuration.generation !== 1 || !installed.runtime_configuration.hash || installed.storage_ref.storage_id !== "" || installed.storage_ref.generation !== 0 || installed.storage_ref.hash !== "") throw Error("catalog Compose installation receipt mismatch");
   if (!Array.isArray(installed.credentials) || installed.credentials.length !== 2 || installed.credentials.some(v => !["SERVICE_PASSWORD_POSTGRESQL", "SERVICE_PASSWORD_JWTSECRET"].includes(v.name) || v.kind !== "managed_secret" || !v.secret?.secret_id || v.secret.version !== 1 || v.value !== undefined)) throw Error("generated runtime secret references missing");
   await expect(catalog).toContainText(`Installed ${applicationName}`);
@@ -228,12 +250,48 @@ try {
   safe.catalog_compose_original_source = true;
   safe.catalog_compose_generated_runtime_refs = true;
   safe.saved_compose_configuration = true;
+  }
   const resourceID = resource.id;
   const application = h.getByRole("article", { name: applicationName, exact: true });
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
   let selectedRegistrySecret;
+  let lastBuild;
+  async function deployGit(stoppedOperation) {
+    step="git_compose_build_and_deploy";
+    const builds=application.getByRole("region",{name:`Git builds for ${applicationName}`,exact:true});
+    await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
+    if(!stoppedOperation) {
+      const requestBuild=builds.getByRole("region",{name:"Request private Git build",exact:true});
+      const grants=requestBuild.getByLabel("Private source grant",{exact:true});
+      await expect(grants.locator("option:not([value=\"\"]):not([disabled])")).toHaveCount(1);
+      await grants.selectOption(await grants.locator("option:not([value=\"\"]):not([disabled])").getAttribute("value"));
+      await requestBuild.getByRole("checkbox").check();
+      const requested=response(page,`/api/v1/resources/${resourceID}/builds`);
+      await requestBuild.getByRole("button",{name:"Request private Git build",exact:true}).click();
+      lastBuild=(await checkedResponse(requested,202)).build.id;
+      const stopAt=Date.now()+5*60_000;
+      let built;
+      while(Date.now()<stopAt){const r=await context.request.get(`/api/v1/hosting-builds/${lastBuild}`);if(r.status()!==200)throw Error("build readback denied");built=(await r.json()).build;if(["succeeded","failed","canceled"].includes(built.state))break;await new Promise(r=>setTimeout(r,250));}
+      if(built?.state!=="succeeded"||!built.compose_result?.hash||!built.source_receipt?.commit||built.artifact)throw Error("Git Compose build did not produce immutable result");
+      safe.browser_git_compose_build_receipt=true;
+    }
+    await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
+    await builds.getByRole("button",{name:`View build ${lastBuild}`,exact:true}).click();
+    const deployment=builds.getByRole("form",{name:"Deploy selected build",exact:true});
+    await deployment.getByLabel("Build readiness path",{exact:true}).fill("/health");
+    await deployment.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("120");
+    await deployment.getByRole("checkbox").check();
+    const requested=response(page,`/api/v1/resources/${resourceID}/deployments/from-build`);
+    await deployment.getByRole("button",{name:stoppedOperation?"Start selected Compose build":"Deploy selected build",exact:true}).click();
+    const r=await requested;
+    const input=r.request().postDataJSON();
+    if(input.build_id!==lastBuild||input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation)throw Error("from-build immutable authority mismatch");
+    safe.browser_git_compose_from_build=true;
+    return (await checkedResponse(r,202)).id;
+  }
   async function deploy(replacement, stoppedOperation) {
+    if(gitCompose)return deployGit(stoppedOperation);
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
       step = "verify_catalog_compose_readiness";
@@ -359,6 +417,8 @@ try {
   safe.app_signup_task_upload = true;
   await report("app_created", String(taskID));
   await appContext.close();
+  let volumeBackups,volumeSchedules,volumeSchedule;
+  if(!gitCompose){
   step = "await_compose_volume_schedule_phase";
   await state("volume_schedule");
   let initialVolumeDiscovery;
@@ -375,8 +435,8 @@ try {
   safe.volume_schedule_eligibility_available = initialVolumeEvidence.available === true;
   safe.volume_schedule_eligibility_reason = ["unavailable", "unsupported_source", "archive_unavailable", "deployment_changed", "runner_unavailable", "requires_runtime_ownership_verification", "no_eligible_volumes"].includes(initialVolumeEvidence.reason) ? initialVolumeEvidence.reason : "other";
   if (initialVolumeEvidence.available !== true || initialVolumeEvidence.operation_id !== firstOperation || !initialVolumeEvidence.volumes?.some(v => v.volume === "vikunja-data" && v.eligible === true)) throw Error("initial Compose volume schedule eligibility unavailable");
-  const volumeBackups = application.getByRole("region", {name:"Compose volume backups",exact:true});
-  const volumeSchedules = volumeBackups.getByRole("region", {name:"Recurring Compose volume backups",exact:true});
+  volumeBackups = application.getByRole("region", {name:"Compose volume backups",exact:true});
+  volumeSchedules = volumeBackups.getByRole("region", {name:"Recurring Compose volume backups",exact:true});
   step = "select_initial_scheduled_compose_volume";
   await volumeBackups.getByRole("combobox", {name:"Named volume to back up",exact:true}).selectOption("vikunja-data");
   step = "set_initial_compose_volume_schedule_frequency";
@@ -402,12 +462,14 @@ try {
   step = "await_initial_compose_volume_schedule_response";
   const volumeScheduleResponse = await volumeSchedulePending;
   step = "validate_initial_compose_volume_schedule_response";
-  const volumeSchedule = await checkedResponse(Promise.resolve(volumeScheduleResponse),200);
+  volumeSchedule = await checkedResponse(Promise.resolve(volumeScheduleResponse),200);
   const volumeScheduleBody = volumeScheduleResponse.request().postDataJSON();
   if(volumeSchedule.version!=="managed-compose.local-volume-archive.schedule.v1" || volumeSchedule.volume!=="vikunja-data" || volumeSchedule.enabled || volumeSchedule.acknowledge_interruption!==true || volumeScheduleBody.expected_deployed_operation_id!==firstOperation || volumeScheduleBody.acknowledge_interruption!==true || volumeScheduleBody.remote_target)throw Error("volume schedule identity changed");
   safe.browser_compose_volume_schedule_saved_disabled=true;
   step = "report_disabled_compose_volume_schedule";
   await report("volume_scheduled", volumeSchedule.id);
+  }
+  if(gitCompose){await state("app_failure_recheck");await checkApplication("compose-after-failed-build");safe.git_failures_preserved_records_uploads=true;await report("app_failure_checked",String(taskID));}
   await state("redeploy");
   // Reload the Go-served page to fetch current continuity authority.
   await hosting(page);
@@ -468,6 +530,7 @@ try {
   await checkApplication("compose-after-start");
   safe.browser_stack_stop_start_persistence = true;
   await report("app_start_checked", String(taskID));
+  if(!gitCompose){
   step = "await_compose_volume_schedule_run_phase";
   await state("volume_schedule_run");
   let savedScheduleList;
@@ -840,6 +903,7 @@ try {
   safe.database_only_original_uploads_not_restored=true;
   safe.database_source_later_write_excluded_target_writes_independent=true;
   await report("database_checked",String(taskID));
+  }
   await state("complete");
   await report("done", resourceID);
   safe.status = "passed";
