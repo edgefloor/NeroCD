@@ -874,3 +874,29 @@ test("late catalog readiness defaults preserve edits made by the operator", asyn
   expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/custom");
   expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("30");
 });
+
+test("late catalog metadata preserves captured Compose readiness and identical retry body", async () => {
+  let finish!: (response: Response) => void;
+  let attempts = 0;
+  const fetch = composeBackend(false, (url, init) => {
+    if (url.endsWith("/catalog-installation")) return new Promise<Response>(resolve => { finish = resolve; });
+    if (url.endsWith("/deployments") && init.method === "POST" && ++attempts === 1) throw new TypeError("lost receipt");
+    return undefined;
+  });
+  setup("maintainer", [], false, compose);
+  await reviewCompose();
+  await act(async () => finish(json({
+    id: compose.id, resource: compose, binding, storage_ref: { storage_id: "", generation: 0, hash: "" },
+    template: { definition: { container_port: 3000, readiness: { path: "/health", timeout_seconds: 120 }, compose: compose.source.kind === "compose" ? compose.source.compose : undefined } },
+  })));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/");
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("30");
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
+  expect(writes).toHaveLength(2);
+  expect(writes[0]![1].body).toBe(writes[1]![1].body);
+  expect(JSON.parse(String(writes[0]![1].body)).readiness).toEqual({ path: "/", timeout_seconds: 30 });
+});

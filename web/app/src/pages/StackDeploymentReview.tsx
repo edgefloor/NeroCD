@@ -30,18 +30,18 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
     retry: false,
     gcTime: 0,
   });
-  useEffect(() => {
-    if (!catalog.data || catalogDefaults.current) return;
-    catalogDefaults.current = true;
-    if (catalog.data.resource.project_id !== scope.project || !catalog.data.template.definition.compose || readinessEdited.current) return;
-    setPath(catalog.data.template.definition.readiness.path);
-    setTimeout(String(catalog.data.template.definition.readiness.timeout_seconds));
-  }, [catalog.data, scope.project]);
   const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
   const [review, setReview] = useState<Review>();
   const [confirmed, setConfirmed] = useState(false);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!catalog.data || catalogDefaults.current) return;
+    catalogDefaults.current = true;
+    if (catalog.data.resource.project_id !== scope.project || !catalog.data.template.definition.compose || readinessEdited.current || review || busy) return;
+    setPath(catalog.data.template.definition.readiness.path);
+    setTimeout(String(catalog.data.template.definition.readiness.timeout_seconds));
+  }, [catalog.data, scope.project, review, busy]);
   const [conflict, setConflict] = useState(false);
   const [restoreHeld, setRestoreHeld] = useState(false);
   const [error, setError] = useState("");
