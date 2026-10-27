@@ -303,7 +303,7 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 		}
 	}
 	export := filepath.Join(dir, "image.oci.tar")
-	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=oci,dest=" + export + ",compression=gzip,force-compression=true", source}
+	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=docker,oci-mediatypes=true,dest=" + export + ",compression=gzip,force-compression=true", source}
 	if r.BuildTarget != "" {
 		buildArgs = append(buildArgs[:len(buildArgs)-1], "--target", r.BuildTarget, source)
 	}
@@ -316,6 +316,11 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 	identity, err := validateExport(ctx, export, filepath.Join(dir, "validated"), r.Platform, l)
 	if err != nil {
 		return result, err
+	}
+	// New imports require the native compatibility mapping validated above.
+	// Legacy OCI-only receipts remain replayable without another import.
+	if _, err = os.Stat(filepath.Join(dir, "validated", "manifest.json")); err != nil {
+		return result, errors.New("docker-compatible export manifest required before import")
 	}
 	if err = e.daemon(ctx, dir, r.DaemonID); err != nil {
 		return result, err

@@ -71,7 +71,7 @@ func validateExport(ctx context.Context, archive, dir, platform string, l Limits
 		if h.Typeflag == tar.TypeDir && (name == "blobs/" || name == "blobs/sha256/") {
 			continue
 		}
-		valid := name == "index.json" || name == "oci-layout" || (strings.HasPrefix(name, "blobs/sha256/") && digestPattern.MatchString("sha256:"+strings.TrimPrefix(name, "blobs/sha256/")))
+		valid := name == "index.json" || name == "oci-layout" || name == "manifest.json" || (strings.HasPrefix(name, "blobs/sha256/") && digestPattern.MatchString("sha256:"+strings.TrimPrefix(name, "blobs/sha256/")))
 		if !valid || h.Typeflag != tar.TypeReg || h.Size < 0 || h.Size > l.ExportBytes-total {
 			return out, errors.New("invalid OCI archive member or size")
 		}
@@ -249,10 +249,76 @@ func validateExport(ctx context.Context, archive, dir, platform string, l Limits
 			return out, errors.New("OCI layer diffID mismatch")
 		}
 	}
+	if _, present := seen["manifest.json"]; present {
+		raw, err := read("manifest.json")
+		if err != nil {
+			return out, err
+		}
+		if err := validateDockerImportManifest(raw, cp, m.Layers); err != nil {
+			return out, err
+		}
+		used["manifest.json"] = true
+	}
 	for name := range seen {
 		if !used[name] {
 			return out, fmt.Errorf("unreferenced OCI member: %s", name)
 		}
 	}
 	return imageIdentity{Index: sum(indexBytes), Manifest: manifest.Digest, Config: m.Config.Digest, Platform: platform}, nil
+}
+
+// The native Docker exporter can retain the same OCI layout and add one classic
+// import mapping. Bind it to the fully validated OCI graph before daemon import;
+// tags and any second image would introduce unrelated daemon mutations.
+func validateDockerImportManifest(raw []byte, config string, layers []descriptor) error {
+	invalid := errors.New("docker import mapping does not match validated OCI image")
+	d := json.NewDecoder(strings.NewReader(string(raw)))
+	if token, err := d.Token(); err != nil || token != json.Delim('[') {
+		return invalid
+	}
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return invalid
+	}
+	seen := map[string]bool{}
+	var mappedConfig string
+	var mappedLayers, tags []string
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return invalid
+		}
+		seen[key] = true
+		switch key {
+		case "Config":
+			err = d.Decode(&mappedConfig)
+		case "Layers":
+			err = d.Decode(&mappedLayers)
+		case "RepoTags":
+			err = d.Decode(&tags)
+		default:
+			return invalid
+		}
+		if err != nil {
+			return invalid
+		}
+	}
+	if token, err := d.Token(); err != nil || token != json.Delim('}') {
+		return invalid
+	}
+	if token, err := d.Token(); err != nil || token != json.Delim(']') {
+		return invalid
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return invalid
+	}
+	if !seen["Config"] || !seen["Layers"] || mappedConfig != config || len(tags) != 0 || len(mappedLayers) != len(layers) {
+		return invalid
+	}
+	for i, layer := range layers {
+		if mappedLayers[i] != "blobs/sha256/"+strings.TrimPrefix(layer.Digest, "sha256:") {
+			return invalid
+		}
+	}
+	return nil
 }
