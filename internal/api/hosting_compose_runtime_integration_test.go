@@ -51,7 +51,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	}
 	const publicImage = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 	var repository string
-	var updateRepository func(string, bool) string
+	var updateRepository func(string, bool, string) string
 	var unavailableRepository func(bool)
 	var expectedCommitA, expectedCommitB string
 	gitPassword := hostingStorageRemoteRuntimeRandom(t)
@@ -70,12 +70,18 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	registryPassword := hostingStorageRemoteRuntimeRandom(t)
 	storageRuntimeDocker(t, "pull", publicImage)
 	pinnedImageID := strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}")))
-	var protectedImage, replacementImage string
+	var protectedImage, replacementImage, registryImageID string
 	var registrySecrets map[string]domain.ManagedSecret
 	var registryRef domain.HostingRegistryCredentialRef
 	var assertReferenceAbsent func(string)
-	if !gitCompose {
-		protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, publicImage)
+	{
+		protectedSource := publicImage
+		if gitCompose {
+			protectedSource = gitComposeFixturePostgres
+			storageRuntimeDocker(t, "pull", protectedSource)
+			registryImageID = strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", protectedSource, "--format", "{{.Id}}")))
+		}
+		protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, protectedSource)
 		manifestRequest, _ := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
 		manifestRequest.SetBasicAuth("fixture", registryPassword)
 		manifestRequest.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
@@ -417,12 +423,12 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if failedSource.FailureCode != "source_failed" {
 			t.Fatal("fetch failure did not settle safely")
 		}
-		updateRepository("failed-build", true)
+		updateRepository("failed-build", true, "")
 		failedBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-build-failed", "failed")
 		if failedBuild.FailureCode != "build_failed" {
 			t.Fatal("build failure did not settle safely")
 		}
-		updateRepository("missing-registry", false)
+		updateRepository("missing-registry", false, "")
 		pullBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-pull-failure-build", "succeeded")
 		pullOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
 		if !pullOptions.Available || pullOptions.ResourceGeneration != resource.Generation || pullOptions.HostPort == nil || *pullOptions.HostPort != first.Snapshot.HostPort || pullOptions.StorageRouteContinuity == nil {
@@ -433,7 +439,30 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if denied.MutationHold || denied.Result != nil && denied.Result.Uncertain {
 			t.Fatal("failed registry pull acquired mutation authority")
 		}
-		expectedCommitB = updateRepository("B", false)
+		expectedCommitB = updateRepository("B", false, replacementImage)
+		privateBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-private-registry-build", "succeeded")
+		protectedImage = replacementImage
+		assertReferenceAbsent(protectedImage)
+		privateOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+		if !privateOptions.Available || privateOptions.HostPort == nil || *privateOptions.HostPort != first.Snapshot.HostPort || privateOptions.StorageRouteContinuity == nil {
+			t.Fatal("private Git replacement lacks fresh continuity authority")
+		}
+		wrong := domain.HostingBuildDeploymentInput{BuildID: privateBuild.ID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-private-wrong", ContainerPort: 3456, HostPort: *privateOptions.HostPort, StorageRouteContinuity: privateOptions.StorageRouteContinuity, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, RegistryCredential: &domain.HostingRegistryCredentialRef{SecretID: registrySecrets["wrong"].ID, Version: 1}}
+		denied = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", wrong, 202)
+		if denied.Snapshot.RegistryCredential != *wrong.RegistryCredential {
+			t.Fatal("Git wrong registry credential was not frozen")
+		}
+		denied = f.await(denied.ID, "failed")
+		if denied.MutationHold || denied.Result != nil && denied.Result.Uncertain {
+			t.Fatal("Git denied registry pull acquired mutation authority")
+		}
+		wrong.RegistryCredential = &registryRef
+		storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", wrong, 409)
+		revoked := registrySecrets["revoked"]
+		storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/managed-secrets/"+revoked.ID+"/revoke", app.ManagedSecretRevokeInput{ExpectedVersion: 1}, 200)
+		wrong.IdempotencyKey = "git-compose-private-revoked"
+		wrong.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: revoked.ID, Version: 1}
+		storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", wrong, 409)
 	} else {
 		changedCompose := *resource.Source.Compose
 		changedCompose.Original = strings.Replace(changedCompose.Original, publicImage, replacementImage, 1)
@@ -515,7 +544,6 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if replacementBuild.SourceReceipt == nil || replacementBuild.SourceReceipt.Commit == selectedBuild.SourceReceipt.Commit || replacementBuild.SourceReceipt.Commit != expectedCommitB || replacementBuild.ComposeResult == nil || replacementBuild.ComposeResult.Hash != second.Snapshot.GitCompose.ResultHash {
 			t.Fatal("redeploy did not bind changed immutable source receipt")
 		}
-		registryRef = domain.HostingRegistryCredentialRef{}
 		if first.Snapshot.GitCompose == second.Snapshot.GitCompose || first.Release.Hash == second.Release.Hash {
 			t.Fatal("Git commit did not change immutable release")
 		}
@@ -583,7 +611,11 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	if lifecycle.State != "stopped" || lifecycle.StopOperationID != stopped.ID {
 		t.Fatal("missing explicit stopped state")
 	}
-	if !gitCompose {
+	if gitCompose {
+		storageRuntimeDocker(t, "image", "rm", "--force", registryImageID)
+		assertReferenceAbsent(registryImageID)
+		assertReferenceAbsent(protectedImage)
+	} else {
 		storageRuntimeDocker(t, "image", "rm", "--force", pinnedImageID)
 		assertReferenceAbsent(pinnedImageID)
 		assertReferenceAbsent(protectedImage)
@@ -694,7 +726,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	var failed domain.HostingOperation
 	var failedBuildInput domain.HostingBuildDeploymentInput
 	if gitCompose {
-		failedBuildInput = domain.HostingBuildDeploymentInput{BuildID: started.Snapshot.GitCompose.BuildID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, StorageRouteContinuity: options.StorageRouteContinuity, Readiness: bad.Readiness, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}
+		failedBuildInput = domain.HostingBuildDeploymentInput{BuildID: started.Snapshot.GitCompose.BuildID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, RegistryCredential: &registryRef, StorageRouteContinuity: options.StorageRouteContinuity, Readiness: bad.Readiness, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}
 		failed = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", failedBuildInput, 202)
 	} else {
 		failed = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)
@@ -722,9 +754,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 			t.Fatal("managed credential entered ordinary operation/journal/log output")
 		}
 	}
-	if !gitCompose {
-		registryRuntimeArtifactSecrecy(t, f, ordinary, registryPassword)
-	}
+	registryRuntimeArtifactSecrecy(t, f, ordinary, registryPassword)
 	clear(journal)
 	clear(ordinary)
 	if gitCompose {

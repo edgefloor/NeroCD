@@ -83,13 +83,15 @@ func gitComposeRuntimeBuildPolicy(identity string) domain.HostingBuildPolicy {
 	return domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: identity, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, GitCompose: true, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 4 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 256 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
 }
 
-func gitComposeRuntimeRepository(t *testing.T, raw, base, password string) (string, func(string, bool) string, func(bool), string) {
+func gitComposeRuntimeRepository(t *testing.T, raw, base, password string) (string, func(string, bool, string) string, func(bool), string) {
 	t.Helper()
-	files := func(marker string, fail bool) map[string]string {
-		return gitComposeFixtureFiles(raw, base, marker, fail)
+	files := func(marker string, fail bool, registryImage string) map[string]string {
+		return gitComposeFixtureFiles(raw, base, marker, fail, registryImage)
 	}
-	url, update, unavailable := hostingfixture.GitHTTPS(t, files("A", false), "fixture-user", password)
-	return strings.Replace(url, "127.0.0.1", "example.com", 1), func(marker string, fail bool) string { return update(files(marker, fail)) }, unavailable, update(nil)
+	url, update, unavailable := hostingfixture.GitHTTPS(t, files("A", false, ""), "fixture-user", password)
+	return strings.Replace(url, "127.0.0.1", "example.com", 1), func(marker string, fail bool, registryImage string) string {
+		return update(files(marker, fail, registryImage))
+	}, unavailable, update(nil)
 }
 
 func gitComposeRuntimeInstall(f *storageRuntimeFixture, resource domain.Resource) {

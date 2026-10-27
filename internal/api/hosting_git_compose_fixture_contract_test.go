@@ -11,13 +11,18 @@ import (
 	"nerocd/internal/domain"
 )
 
+const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
+
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 
-func gitComposeFixtureFiles(raw, base, marker string, fail bool) map[string]string {
+func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage string) map[string]string {
 	compose := strings.Replace(raw, "    image: "+base, "    build: ../app\n    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
 	compose = strings.Replace(compose, "\n  postgresql:\n", "\n  version:\n    image: nerocd-vikunja:prepared\n    command: [version]\n\n  postgresql:\n", 1)
 	compose = strings.Replace(compose, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
+	if registryImage != "" {
+		compose = strings.Replace(compose, gitComposeFixturePostgres, registryImage, 1)
+	}
 	if marker == "missing-registry" {
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
@@ -57,8 +62,9 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}
-	for _, marker := range []string{"A", "B", "missing-registry"} {
-		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false)
+	for _, fixture := range []struct{ marker, registryImage string }{{"A", ""}, {"B", ""}, {"missing-registry", ""}, {"B", "127.0.0.1:25001/nerocd-fixture:b@sha256:" + strings.Repeat("a", 64)}} {
+		marker := fixture.marker
+		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false, fixture.registryImage)
 		definition, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: files["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings)
 		if err != nil {
 			t.Fatal("actual Git Compose fixture parser", err)
@@ -71,6 +77,25 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			t.Fatal("version alias lost built owner")
 		}
 		for _, service := range definition.Services {
+			owner, ownerErr := domain.HostingStackBuildOwner(definition, service.Name)
+			if ownerErr != nil || (service.Name == "vikunja" || service.Name == "version") && owner != "vikunja" || (service.Name == "postgresql" || service.Name == "init") && owner != "" {
+				t.Fatal("registry-only services and local owner/alias coverage changed")
+			}
+			if service.Name == "postgresql" {
+				expectedImage := gitComposeFixturePostgres
+				if marker == "missing-registry" {
+					expectedImage = "postgres:nerocd-required-missing-20261027"
+				}
+				if fixture.registryImage != "" {
+					expectedImage = fixture.registryImage
+				}
+				if service.Image != expectedImage || service.Build != nil {
+					t.Fatal("registry fixture did not isolate the expected PostgreSQL image")
+				}
+			}
+			if service.Name == "version" && (service.Build != nil || len(service.Command) != 1 || service.Command[0] != "version") {
+				t.Fatal("local image alias changed its verified version command")
+			}
 			if service.Name == "init" && !strings.Contains(strings.Join(service.Command, "\n"), "nerocd-init-log-fixture") {
 				t.Fatal("generated Git init command omitted required component log marker", marker)
 			}
@@ -93,6 +118,20 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"from_build", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-deploy", ContainerPort: 3456, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, new(domain.HostingBuildDeploymentInput)},
 		{"from_build_replacement", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-replace", ContainerPort: 3456, HostPort: 21001, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, StorageRouteContinuity: &domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: 2, ExpectedLoadedProxyOperationID: "pop_loaded", Routes: []domain.HostingRouteSwitchSelection{{RouteID: "route_fixture", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_previous"}}}}, new(domain.HostingBuildDeploymentInput)},
 	}
+	private := bodies[len(bodies)-1].in.(domain.HostingBuildDeploymentInput)
+	private.IdempotencyKey = "git-compose-private-replace"
+	private.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_registry", Version: 1}
+	bodies = append(bodies, struct {
+		name    string
+		in, out any
+	}{"from_build_private_replacement", private, new(domain.HostingBuildDeploymentInput)})
+	start := private
+	start.IdempotencyKey = "git-compose-private-start"
+	start.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true, ExpectedStoppedOperationID: "hop_stopped"}
+	bodies = append(bodies, struct {
+		name    string
+		in, out any
+	}{"from_build_private_start", start, new(domain.HostingBuildDeploymentInput)})
 	for _, tc := range bodies {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := json.Marshal(tc.in)
@@ -123,6 +162,9 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"POST", "/api/v1/resources", "POST /api/v1/resources"},
 		{"POST", "/api/v1/resources/resource_fixture/binding", "POST /api/v1/resources/{id}/binding"},
 		{"POST", "/api/v1/managed-secrets", "POST /api/v1/managed-secrets"},
+		{"GET", "/api/v1/managed-secrets", "GET /api/v1/managed-secrets"},
+		{"GET", "/api/v1/managed-secrets/msec_registry/versions", "GET /api/v1/managed-secrets/{id}/versions"},
+		{"POST", "/api/v1/managed-secrets/msec_registry/revoke", "POST /api/v1/managed-secrets/{id}/revoke"},
 		{"POST", "/api/v1/resources/resource_fixture/source-grants", "POST /api/v1/resources/{id}/source-grants"},
 		{"POST", "/api/v1/resources/resource_fixture/builds", "POST /api/v1/resources/{id}/builds"},
 		{"GET", "/api/v1/hosting-builds/build_fixture", "GET /api/v1/hosting-builds/{id}"},

@@ -304,6 +304,15 @@ try {
     await deployment.getByLabel("Build readiness path",{exact:true}).fill("/health");
     await deployment.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("120");
     if(replacement) {
+      step="git_compose_select_registry_credential";
+      const registry=builds.getByRole("region",{name:"Image registry credentials",exact:true});
+      await registry.getByLabel("Image access",{exact:true}).selectOption("private");
+      const secrets=registry.getByLabel("Registry credential secret",{exact:true});
+      const correct=secrets.getByRole("option").filter({hasText:"Compose registry correct · "});
+      await expect(correct).toHaveCount(1);
+      selectedRegistrySecret=await correct.getAttribute("value");
+      await secrets.selectOption(selectedRegistrySecret);
+      await registry.getByLabel("Registry credential version",{exact:true}).selectOption("1");
       step="git_compose_review_route_continuity";
       await expect(builds.locator('[aria-label="Compose route continuity review"]')).toContainText("Keep HTTPS route catalog-runtime.example.test/");
     }
@@ -318,10 +327,13 @@ try {
     step="git_compose_verify_from_build_authority";
     if(input.build_id!==lastBuild||input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation)throw Error("from-build immutable authority mismatch");
     if(Boolean(input.storage_route_continuity)!==replacement)throw Error("from-build route continuity authority missing");
+    if(replacement ? input.registry_credential?.secret_id!==selectedRegistrySecret || input.registry_credential?.version!==1 : input.registry_credential!==undefined)throw Error("from-build registry selection mismatch");
     if(replacement && (input.host_port!==gitHostPort || !(input.storage_route_continuity.expected_loaded_generation>0) || !input.storage_route_continuity.expected_loaded_proxy_operation_id || input.storage_route_continuity.routes?.length!==1))throw Error("from-build stable-port route authority changed");
     safe.browser_git_compose_from_build=true;
     step="git_compose_verify_from_build_acceptance";
     const operation=await checkedResponse(r,202);
+    if(replacement && (operation.snapshot?.registry_credential?.secret_id!==selectedRegistrySecret || operation.snapshot?.registry_credential?.version!==1))throw Error("admitted Git registry credential missing");
+    if(replacement)safe.browser_git_compose_registry_selection=true;
     if(!replacement){gitHostPort=operation.snapshot?.host_port;if(!(gitHostPort>=1024))throw Error("initial Git stack port missing");}
     else {if(operation.snapshot?.host_port!==gitHostPort || !operation.snapshot?.storage_route_continuity?.hash)throw Error("admitted Git route continuity missing");safe.browser_git_compose_route_continuity=true;}
     return operation.id;
