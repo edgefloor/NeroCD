@@ -379,15 +379,21 @@ func (s *PostgresStore) completeHostingStack(ctx context.Context, tx pgx.Tx, run
 
 // stackDeploymentOptions uses the existing read-only route continuity proof.
 func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project string, source domain.ResourceSource, view *domain.HostingStorageDeploymentOptions, finish func(string) (domain.HostingStorageDeploymentOptions, error)) (domain.HostingStorageDeploymentOptions, error) {
-	if source.Compose == nil {
+	var definition domain.HostingStackDefinition
+	if source.Kind == "compose" {
+		if source.Compose == nil {
+			return finish("unsupported_source")
+		}
+		var err error
+		definition, err = domain.ParseHostingStack(*source.Compose)
+		if err != nil {
+			return finish("unsupported_source")
+		}
+		ref := domain.HostingStackRef{Generation: view.ResourceGeneration, Hash: domain.HostingDocumentHash(definition)}
+		view.StackRef = &ref
+	} else if source.Kind != "git" {
 		return finish("unsupported_source")
 	}
-	definition, err := domain.ParseHostingStack(*source.Compose)
-	if err != nil {
-		return finish("unsupported_source")
-	}
-	ref := domain.HostingStackRef{Generation: view.ResourceGeneration, Hash: domain.HostingDocumentHash(definition)}
-	view.StackRef = &ref
 	q := sqlcgen.New(tx)
 	placement, err := q.ProxyResourceTarget(ctx, resource)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -406,6 +412,13 @@ func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project st
 	env, err := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: placement.RunnerID, Capability: domain.HostingRuntimeEnvironmentCapability})
 	if err != nil {
 		return *view, err
+	}
+	if source.Kind == "git" {
+		capable, err := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: placement.RunnerID, Capability: domain.HostingGitComposeBuildCapability})
+		if err != nil {
+			return *view, err
+		}
+		eligible = eligible && capable
 	}
 	if !eligible || !env {
 		return finish("runner_ineligible")
@@ -430,6 +443,9 @@ func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project st
 		return finish("busy")
 	}
 	if missing || len(state.Healthy) == 0 {
+		if source.Kind == "git" {
+			return finish("no_previous_healthy")
+		}
 		history, readErr := q.HostingStackMutationHistory(ctx, placement.BindingID)
 		if readErr != nil {
 			return *view, readErr
@@ -440,7 +456,24 @@ func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project st
 		return finish("initial_deployment")
 	}
 	var healthy domain.HostingHealthy
-	if json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingStackHealthy(healthy) != nil || healthy.Snapshot.ResourceID != resource || healthy.Snapshot.BindingID != placement.BindingID || healthy.Snapshot.DestinationID != placement.DestinationID || healthy.Snapshot.ServerID != placement.ServerID || healthy.Snapshot.RunnerID != placement.RunnerID || healthy.Snapshot.ContainerPort != definition.ContainerPort || state.DaemonID == nil || *state.DaemonID != healthy.Release.DaemonID {
+	if json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingStackHealthy(healthy) != nil || healthy.Snapshot.ResourceID != resource || healthy.Snapshot.BindingID != placement.BindingID || healthy.Snapshot.DestinationID != placement.DestinationID || healthy.Snapshot.ServerID != placement.ServerID || healthy.Snapshot.RunnerID != placement.RunnerID || state.DaemonID == nil || *state.DaemonID != healthy.Release.DaemonID {
+		return finish("stale_storage")
+	}
+	if source.Kind == "git" {
+		if healthy.Snapshot.GitCompose == (domain.HostingGitComposeRef{}) {
+			return finish("unsupported_source")
+		}
+		definition, _, err = hostingSelectedStackDefinition(ctx, tx, resource, project, healthy.Snapshot)
+		if errors.Is(err, ErrConflict) {
+			return finish("stale_storage")
+		}
+		if err != nil {
+			return *view, err
+		}
+		ref := healthy.Snapshot.Stack
+		view.StackRef = &ref
+	}
+	if healthy.Snapshot.ContainerPort != definition.ContainerPort {
 		return finish("stale_storage")
 	}
 	stopped, err := readStackStopped(ctx, tx, placement.BindingID)

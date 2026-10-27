@@ -433,7 +433,7 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	continuity, err := prepareStorageContinuity(ctx, tx, id, projectID, &snap, in)
+	continuity, err := prepareStorageContinuity(ctx, tx, id, projectID, &snap, in, domain.HostingDocumentHash(in))
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}

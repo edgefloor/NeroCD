@@ -13971,6 +13971,9 @@ components:
       additionalProperties: false
       required: [build_id, expected_source_generation, expected_generation, idempotency_key, container_port, readiness]
       properties:
+        storage_route_continuity:
+          $ref: "#/components/schemas/HostingStorageRouteContinuityInput"
+          description: Explicit current route and proxy selections for a Git Compose same-port replacement. Requires managed_stack and the exact current successful Compose build.
         managed_stack: {$ref: "#/components/schemas/HostingStackDeploymentInput"}
         expected_runtime_configuration_generation:
           type: integer

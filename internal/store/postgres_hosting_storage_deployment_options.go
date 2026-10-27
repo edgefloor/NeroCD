@@ -123,7 +123,7 @@ func (s *PostgresStore) HostingStorageDeploymentOptions(ctx context.Context, res
 	if json.Unmarshal(r.Source, &source) != nil || r.Kind != "application" {
 		return finish("unsupported_source")
 	}
-	if source.Kind == "compose" {
+	if source.Kind == "compose" || source.Kind == "git" {
 		return stackDeploymentOptions(ctx, tx, resource, project, source, &view, finish)
 	}
 	if source.Kind != "image" {

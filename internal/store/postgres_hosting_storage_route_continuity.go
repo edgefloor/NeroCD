@@ -239,7 +239,7 @@ func storageContinuityRouteIDs(c domain.HostingStorageRouteContinuity) []string 
 	return ids
 }
 
-func prepareStorageContinuity(ctx context.Context, tx pgx.Tx, operation, project string, snap *domain.HostingSnapshot, in domain.HostingDeploymentInput) (*domain.HostingStorageRouteContinuity, error) {
+func prepareStorageContinuity(ctx context.Context, tx pgx.Tx, operation, project string, snap *domain.HostingSnapshot, in domain.HostingDeploymentInput, requestHash string) (*domain.HostingStorageRouteContinuity, error) {
 	if in.StorageRouteContinuity == nil {
 		return nil, nil
 	}
@@ -272,7 +272,7 @@ func prepareStorageContinuity(ctx context.Context, tx pgx.Tx, operation, project
 	if err = json.Unmarshal(raw, &healthy); err != nil {
 		return nil, err
 	}
-	c := &domain.HostingStorageRouteContinuity{OperationID: operation, RequestHash: domain.HostingDocumentHash(in), Request: *in.StorageRouteContinuity, ProxyID: p.ID, ProjectID: project, ResourceID: snap.ResourceID, BindingID: snap.BindingID, DestinationID: snap.DestinationID, ServerID: snap.ServerID, RunnerID: snap.RunnerID, HostPort: snap.HostPort, DaemonID: p.DaemonID, PreviousHealthy: healthy, LoadedSnapshotHash: domain.HostingDocumentHash(prior.Snapshot)}
+	c := &domain.HostingStorageRouteContinuity{OperationID: operation, RequestHash: requestHash, Request: *in.StorageRouteContinuity, ProxyID: p.ID, ProjectID: project, ResourceID: snap.ResourceID, BindingID: snap.BindingID, DestinationID: snap.DestinationID, ServerID: snap.ServerID, RunnerID: snap.RunnerID, HostPort: snap.HostPort, DaemonID: p.DaemonID, PreviousHealthy: healthy, LoadedSnapshotHash: domain.HostingDocumentHash(prior.Snapshot)}
 	snap.StorageRouteContinuity.Hash = domain.HostingDocumentHash(c)
 	if c.Validate(*snap) != nil {
 		return nil, ErrConflict
@@ -297,8 +297,21 @@ func readStorageContinuity(ctx context.Context, tx pgx.Tx, op domain.HostingOper
 		return c, "", err
 	}
 	body, accepted, hash, state, requestHash := row.Descriptor, row.AcceptedRequest, row.DescriptorHash, row.State, row.RequestHash
-	var input domain.HostingDeploymentInput
-	if json.Unmarshal(body, &c) != nil || json.Unmarshal(accepted, &input) != nil || c.OperationID != op.ID || c.ProjectID != op.ProjectID || c.RequestHash != requestHash || domain.HostingDocumentHash(input) != requestHash || hash != op.Snapshot.StorageRouteContinuity.Hash || c.Validate(op.Snapshot) != nil {
+	var acceptedHash string
+	if op.Snapshot.GitCompose != (domain.HostingGitComposeRef{}) {
+		var input domain.HostingBuildDeploymentInput
+		if json.Unmarshal(accepted, &input) != nil || domain.ValidateHostingBuildDeployment(input) != nil || input.BuildID != op.Snapshot.GitCompose.BuildID || input.ExpectedSourceGeneration != op.Snapshot.GitCompose.SourceGeneration || input.ExpectedGeneration != op.Snapshot.ResourceGeneration {
+			return c, state, ErrConflict
+		}
+		acceptedHash = domain.HostingDocumentHash(input)
+	} else {
+		var input domain.HostingDeploymentInput
+		if json.Unmarshal(accepted, &input) != nil {
+			return c, state, ErrConflict
+		}
+		acceptedHash = domain.HostingDocumentHash(input)
+	}
+	if json.Unmarshal(body, &c) != nil || c.OperationID != op.ID || c.ProjectID != op.ProjectID || c.RequestHash != requestHash || acceptedHash != requestHash || hash != op.Snapshot.StorageRouteContinuity.Hash || c.Validate(op.Snapshot) != nil {
 		return c, state, ErrConflict
 	}
 	return c, state, nil

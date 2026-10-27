@@ -118,3 +118,27 @@ func TestLocalBuildTaskIsInternalAndCanonical(t *testing.T) {
 		t.Fatal("nested internal task accepted")
 	}
 }
+
+func TestBuildDeploymentContinuityRequiresManagedCompose(t *testing.T) {
+	in := HostingBuildDeploymentInput{BuildID: "build", ExpectedSourceGeneration: 1, ExpectedGeneration: 1, IdempotencyKey: "deploy", ContainerPort: 80, HostPort: 18080, Readiness: HostingReadiness{Path: "/", TimeoutSeconds: 5}}
+	old := HostingDocumentHash(in)
+	raw, err := json.Marshal(in)
+	if err != nil || strings.Contains(string(raw), "storage_route_continuity") {
+		t.Fatal("absent field changed legacy document", err)
+	}
+	in.StorageRouteContinuity = &HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: 2, ExpectedLoadedProxyOperationID: "pop_loaded", Routes: []HostingRouteSwitchSelection{{RouteID: "route_web", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_prior"}}}
+	if ValidateHostingBuildDeployment(in) == nil {
+		t.Fatal("ordinary local build accepted route continuity")
+	}
+	in.ManagedStack = &HostingStackDeploymentInput{AcknowledgeInterruption: true}
+	if err = ValidateHostingBuildDeployment(in); err != nil {
+		t.Fatal(err)
+	}
+	if in.DeploymentInput().StorageRouteContinuity != in.StorageRouteContinuity || HostingDocumentHash(in) == old {
+		t.Fatal("continuity absent from shared validation/hash")
+	}
+	in.HostPort = 0
+	if ValidateHostingBuildDeployment(in) == nil {
+		t.Fatal("continuity accepted without explicit stable port")
+	}
+}

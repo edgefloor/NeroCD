@@ -59,6 +59,16 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 	if err := domain.ValidateHostingBuildDeployment(in); err != nil {
 		return domain.HostingOperation{}, false, ErrConflict
 	}
+	if in.StorageRouteContinuity != nil {
+		canonical, err := domain.CanonicalHostingStorageRouteContinuityInput(*in.StorageRouteContinuity)
+		if err != nil {
+			return domain.HostingOperation{}, false, ErrConflict
+		}
+		in.StorageRouteContinuity = &canonical
+		if _, _, err = storageContinuityPrelock(ctx, tx, resourceID); err != nil {
+			return domain.HostingOperation{}, false, err
+		}
+	}
 	if err := lockHostingResourceDestination(ctx, tx, resourceID); err != nil {
 		return domain.HostingOperation{}, false, err
 	}
@@ -123,7 +133,7 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 		}
 		snap.StackStoppedOperationID = in.ManagedStack.ExpectedStoppedOperationID
 	} else {
-		if in.ManagedStack != nil {
+		if in.ManagedStack != nil || in.StorageRouteContinuity != nil {
 			return domain.HostingOperation{}, false, ErrConflict
 		}
 		snap.LocalBuild = domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}
@@ -139,6 +149,10 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 		return domain.HostingOperation{}, false, err
 	}
 	if err = hostingTargetGate(ctx, tx, projectID, snap, true); err != nil {
+		return domain.HostingOperation{}, false, err
+	}
+	continuity, err := prepareStorageContinuity(ctx, tx, id, projectID, &snap, in.DeploymentInput(), domain.HostingDocumentHash(in))
+	if err != nil {
 		return domain.HostingOperation{}, false, err
 	}
 	if err = s.resolveHostingReleasePort(ctx, tx, &snap, in.HostPort); err != nil {
@@ -193,6 +207,11 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 	}
 	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
 		return domain.HostingOperation{}, false, err
+	}
+	if continuity != nil {
+		if err = sqlcgen.New(tx).CreateStorageRouteContinuity(ctx, sqlcgen.CreateStorageRouteContinuityParams{OperationID: id, ProxyID: continuity.ProxyID, Descriptor: buildJSON(continuity), DescriptorHash: snap.StorageRouteContinuity.Hash, AcceptedRequest: buildJSON(in)}); err != nil {
+			return domain.HostingOperation{}, false, hostingError(err)
+		}
 	}
 	if b.Artifact != nil {
 		if _, err = sqlcgen.New(tx).CreateHostingOperationBuildArtifact(ctx, sqlcgen.CreateHostingOperationBuildArtifactParams{OperationID: id, BuildID: b.ID, ArtifactHash: snap.LocalBuild.ArtifactHash}); err != nil {
