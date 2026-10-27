@@ -142,6 +142,7 @@ func (f *buildFixtureClient) BuildComplete(_ context.Context, r hostingbuildprot
 		f.build.State = r.Completion.State
 		f.build.FailureCode = r.Completion.FailureCode
 		f.build.Artifact = r.Completion.Artifact
+		f.build.ComposeResult = r.Completion.ComposeResult
 		f.build.Revision++
 		f.live = false
 		f.receipts = append(f.receipts, ack)

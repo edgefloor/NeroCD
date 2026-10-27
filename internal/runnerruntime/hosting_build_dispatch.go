@@ -98,7 +98,14 @@ func executeBuildClaim(parent context.Context, server, token string, claim domai
 	watcher := startLeaseWatcher(operation, server, token, claim.Lease, poll, supervisor.cancel, validator)
 	defer watcher.Stop()
 	a := buildAuthority(journalAttemptIdentity(claim.Run.ID, claim.Lease, nil), claim.Run.RunSpec.HostingBuildID)
-	return executor.Execute(operation, a, journalAttemptIdentity(claim.Run.ID, claim.Lease, nil))
+	return executor.Execute(operation, a, journalAttemptIdentity(claim.Run.ID, claim.Lease, nil), func(ctx context.Context) error {
+		watcher.Stop()
+		renewer.Stop()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return supervisor.Context().Err()
+	})
 }
 
 func validateRuntimeIdentity(parent context.Context, c Config) error {

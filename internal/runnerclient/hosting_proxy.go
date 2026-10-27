@@ -81,6 +81,7 @@ type RuntimeExecutionOptions struct {
 	DatabaseNetworkCaptureAutomatic                                                                                              bool
 	DatabaseNetworkCapture, DatabaseUpgrade                                                                                      bool
 	StorageArchive, StorageArchiveTrustedLoopbackHTTP                                                                            bool
+	ComposeBuild                                                                                                                 bool
 	Database, Proxy, Build, LocalBuild, PrivateGit, RuntimeEnvironment, Observation, RuntimeLogs, Readiness, ProxyVerifiedSwitch bool
 	DatabaseTrustedLoopbackHTTP, ReadinessTrustedLoopbackHTTP                                                                    bool
 }
@@ -143,6 +144,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		buildCapable = buildCapable || capability == domain.HostingBuildTaskType
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
+	}
+	composeCapable := false
+	for _, capability := range result.Capabilities {
+		composeCapable = composeCapable || capability == domain.HostingGitComposeBuildCapability
+	}
+	if composeCapable != options.ComposeBuild || composeCapable && (!buildConfigured || !buildCapable || shellCapable) {
+		return "", errors.New("git Compose build capability requires explicit configuration")
 	}
 	if verifiedSwitchCapable != options.ProxyVerifiedSwitch || verifiedSwitchCapable && !proxyConfigured {
 		return "", errors.New("authenticated verified proxy switch capability does not match explicit local configuration")

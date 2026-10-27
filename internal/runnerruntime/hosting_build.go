@@ -43,6 +43,7 @@ type BuildTarget struct{ RunnerID, ServerID, DestinationID, BindingID string }
 // BuildConfig contains explicit operator settings. Policy must exactly match the
 // server snapshot. SourceRoot and Engine.StateDir must be separate owned roots.
 type BuildConfig struct {
+	Compose                        bool `json:"compose,omitempty"`
 	PrivateGit                     *PrivateGitConfig
 	SourceRoot                     string
 	Engine                         hostingbuild.Config
@@ -138,7 +139,7 @@ func validBuildPlacementID(id string) bool {
 	return true
 }
 func validatedBuildEngine(c BuildConfig) (*hostingbuild.Engine, error) {
-	if domain.ValidateHostingBuildPolicy(c.Policy) != nil || c.Policy.Platform != "linux/"+runtime.GOARCH || c.StatusInterval < 10*time.Millisecond || c.StatusInterval > time.Second || c.RequestTimeout < 10*time.Millisecond || c.RequestTimeout > 30*time.Second {
+	if c.Compose != c.Policy.GitCompose || domain.ValidateHostingBuildPolicy(c.Policy) != nil || c.Policy.Platform != "linux/"+runtime.GOARCH || c.StatusInterval < 10*time.Millisecond || c.StatusInterval > time.Second || c.RequestTimeout < 10*time.Millisecond || c.RequestTimeout > 30*time.Second {
 		return nil, errors.New("invalid explicit build configuration")
 	}
 	for _, id := range []string{c.Target.RunnerID, c.Target.ServerID, c.Target.DestinationID} {
@@ -206,6 +207,9 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	s := b.Snapshot
 	unhashed := s
 	unhashed.InputID = ""
+	if s.Source.Settings.Strategy == "compose" && (!e.config.Compose || !s.Policy.GitCompose) {
+		return errors.New("git Compose build requires explicit runner and operator policy")
+	}
 	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildTriggerRevision(s) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || !e.validBuildCredentialSnapshot(s) || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
 		return errors.New("build immutable snapshot or target mismatch")
 	}
@@ -262,7 +266,10 @@ func (e *BuildExecutor) phase(ctx context.Context, call func(context.Context) (h
 
 // Execute requires a bounded operation deadline. The caller owns same-tuple lease
 // renewal and cancels ctx on loss; the historical attempt expiry is not a cutoff.
-func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthority, at runner.AttemptIdentity) error {
+func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthority, at runner.AttemptIdentity, completionDrain ...func(context.Context) error) error {
+	if len(completionDrain) > 1 || len(completionDrain) == 1 && completionDrain[0] == nil {
+		return errors.New("invalid build completion drain")
+	}
 	deadline, ok := ctx.Deadline()
 	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > e.config.Policy.Limits.Deadline || hostingbuildprotocol.ValidateAuthority(a) != nil || buildAuthority(at, a.BuildID) != a || at.CreatedAt.IsZero() || !at.ExpiresAt.After(at.CreatedAt) {
 		return errors.New("bounded build context and exact attempt required")
@@ -291,7 +298,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if err = requireLive(status); err != nil {
 		return err
 	}
-	if status.Build.State != "queued" || status.Build.SourceReceipt != nil || status.Build.Artifact != nil {
+	if status.Build.State != "queued" || status.Build.SourceReceipt != nil || status.Build.Artifact != nil || status.Build.ComposeResult != nil {
 		return errors.New("build already started without local execution evidence")
 	}
 	// A fresh server response cannot authorize adoption of engine state left
@@ -380,8 +387,10 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	}
 	defer join()
 	var built hostingbuild.Result
+	var composed *domain.HostingBuildComposeResult
 	buildFailed := errors.New("local build failed after confirmed engine cleanup")
-	var current domain.HostingBuild
+	failureCode := "build_failed"
+	current := response.Build
 	checkout := e.checkout
 	if s.Source.CredentialKind == "https_basic" {
 		if e.privateCheckout == nil {
@@ -476,7 +485,17 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 		if live.Build.DaemonID != daemon || live.Build.State != "building" {
 			return errors.New("build preparation lost")
 		}
-		result, buildErr := e.engine.(buildOutputEngine).BuildWithOutput(c, buildEngineRequest(s, path, daemon), output.Sink)
+		var result hostingbuild.Result
+		var buildErr error
+		if s.Source.Settings.Strategy == "compose" {
+			var prepared domain.HostingBuildComposeResult
+			prepared, buildErr = e.buildCompose(c, current, path, output.Sink)
+			if buildErr == nil {
+				composed = &prepared
+			}
+		} else {
+			result, buildErr = e.engine.(buildOutputEngine).BuildWithOutput(c, buildEngineRequest(s, path, daemon), output.Sink)
+		}
 		if buildErr != nil {
 			if errors.Is(buildErr, hostingbuild.ErrOutputSink) || output.failed {
 				return errors.New("build output delivery unresolved; intent retained")
@@ -496,6 +515,17 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	watchMu.Lock()
 	observerErr := watchErr
 	watchMu.Unlock()
+	if s.Source.Settings.Strategy == "compose" && observerErr == nil && ctx.Err() == nil && settledComposeSourceFailure(err, filepath.Join(e.config.SourceRoot, a.BuildID), e.config.Engine.StateDir) {
+		err = buildFailed
+		failureCode = "source_failed"
+		if output == nil {
+			output, err = newBuildOutputAdapter(e, a, at)
+			if err != nil {
+				return err
+			}
+			err = buildFailed
+		}
+	}
 	if err != nil && err != buildFailed || observerErr != nil || ctx.Err() != nil {
 		return errors.New("build execution or cleanup unresolved; journal retained")
 	}
@@ -507,11 +537,20 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	}
 	artifact := buildArtifact(built, current)
 	completion := hostingbuildprotocol.Completion{State: "succeeded", Artifact: &artifact}
-	if err == buildFailed {
-		completion = hostingbuildprotocol.Completion{State: "failed", FailureCode: "build_failed"}
+	if s.Source.Settings.Strategy == "compose" {
+		completion = hostingbuildprotocol.Completion{State: "succeeded", ComposeResult: composed}
 	}
-	if completion.State == "succeeded" && (domain.ValidateHostingBuildArtifact(artifact, current) != nil || built.BuildID != s.BuildID || built.SourceID != s.Source.ID || built.InputID != s.InputID) {
-		return errors.New("local build result identity mismatch")
+	if err == buildFailed {
+		completion = hostingbuildprotocol.Completion{State: "failed", FailureCode: failureCode}
+	}
+	if completion.State == "succeeded" {
+		if s.Source.Settings.Strategy == "compose" {
+			if composed == nil || domain.ValidateHostingBuildComposeResult(*composed, current) != nil {
+				return errors.New("compose build result identity mismatch")
+			}
+		} else if domain.ValidateHostingBuildArtifact(artifact, current) != nil || built.BuildID != s.BuildID || built.SourceID != s.Source.ID || built.InputID != s.InputID {
+			return errors.New("local build result identity mismatch")
+		}
 	}
 	live, err := e.status(ctx, a, &s)
 	if err != nil {
@@ -520,7 +559,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if err = requireLive(live); err != nil {
 		return err
 	}
-	if live.Build.DaemonID != current.DaemonID || live.Build.SourceReceipt == nil || *live.Build.SourceReceipt != *current.SourceReceipt {
+	if live.Build.DaemonID != current.DaemonID || domain.HostingDocumentHash(live.Build.SourceReceipt) != domain.HostingDocumentHash(current.SourceReceipt) || completion.FailureCode != "source_failed" && live.Build.SourceReceipt == nil {
 		return errors.New("completion target changed")
 	}
 	id, err := runner.NewJournalID("build_result")
@@ -531,6 +570,17 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	entry := runner.JournalBuild{ID: id, Attempt: at, BuildID: a.BuildID, Phase: "result", Result: &req, CreatedAt: time.Now().UTC()}
 	if _, err = e.journal.AppendBuild(entry); err != nil {
 		return err
+	}
+	// The result is durable and source/engine/log cleanup has completed. Join
+	// outer authority workers before our own terminal publish, retaining the
+	// supervisor's local expiry, parent cancellation and every server fence.
+	if len(completionDrain) == 1 {
+		if err = completionDrain[0](ctx); err != nil {
+			return err
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	r, err := e.phase(ctx, func(c context.Context) (hostingbuildprotocol.PhaseResponse, error) {
 		return e.client.BuildComplete(c, req)

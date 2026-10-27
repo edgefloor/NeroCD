@@ -30,8 +30,22 @@ type protectedComposeCommand interface {
 type stackRegistryDelivery func(context.Context, string) (*domain.HostingRegistryCredentialDelivery, error)
 
 // prepareStack resolves every image before the caller can request mutation authority.
-func (e *imageEngine) prepareStack(ctx context.Context, definition domain.HostingStackDefinition, deliver stackRegistryDelivery) (domain.HostingRelease, []domain.HostingStackImage, error) {
+func (e *imageEngine) prepareStack(ctx context.Context, definition domain.HostingStackDefinition, deliver stackRegistryDelivery, composed ...*domain.HostingBuildComposeResult) (domain.HostingRelease, []domain.HostingStackImage, error) {
 	var zero domain.HostingRelease
+	var prepared *domain.HostingBuildComposeResult
+	if len(composed) > 1 {
+		return zero, nil, errors.New("invalid Compose artifact authority")
+	}
+	if len(composed) == 1 {
+		prepared = composed[0]
+	}
+	if prepared != nil {
+		expected := *prepared
+		expected.Hash = ""
+		if prepared.Hash != domain.HostingDocumentHash(expected) || domain.HostingDocumentHash(prepared.Definition) != domain.HostingDocumentHash(definition) {
+			return zero, nil, errors.New("compose artifact definition changed")
+		}
+	}
 	if err := e.prepareCompose(ctx); err != nil {
 		return zero, nil, errors.New("managed stack requires Docker Compose v2")
 	}
@@ -42,6 +56,19 @@ func (e *imageEngine) prepareStack(ctx context.Context, definition domain.Hostin
 	images := make([]domain.HostingStackImage, 0, len(definition.Services))
 	registries := make([]string, len(definition.Services))
 	for i, service := range definition.Services {
+		owner, ownerErr := domain.HostingStackBuildOwner(definition, service.Name)
+		if ownerErr != nil {
+			return zero, nil, ownerErr
+		}
+		if owner != "" {
+			if prepared == nil {
+				return zero, nil, errors.New("compose component requires admitted local artifact")
+			}
+			if _, ok := domain.HostingComposeBuildArtifact(*prepared, service.Name); !ok {
+				return zero, nil, errors.New("compose component artifact authority missing")
+			}
+			continue
+		}
 		registries[i], err = domain.HostingImageRegistry(service.Image)
 		if err != nil {
 			return zero, nil, errors.New("invalid stack image registry")
@@ -49,6 +76,16 @@ func (e *imageEngine) prepareStack(ctx context.Context, definition domain.Hostin
 	}
 	selectedRegistry := ""
 	for i, service := range definition.Services {
+		if prepared != nil {
+			if artifact, local := domain.HostingComposeBuildArtifact(*prepared, service.Name); local {
+				release, localErr := domain.NewHostingLocalBuildRelease(artifact)
+				if localErr != nil || artifact.DaemonID != daemon || e.verifyLocalRelease(ctx, release) != nil || e.verifyDaemon(ctx, daemon) != nil {
+					return zero, nil, errors.New("admitted Compose component image unavailable")
+				}
+				images = append(images, domain.HostingStackImage{Component: service.Name, Release: release})
+				continue
+			}
+		}
 		var credential *domain.HostingRegistryCredentialDelivery
 		if deliver != nil && (selectedRegistry == "" || registries[i] == selectedRegistry) {
 			credential, err = deliver(ctx, service.Name)
@@ -126,7 +163,11 @@ func renderStack(operation string, plan domain.HostingApplyPlan, environment *ho
 		}
 		services := map[string]any{}
 		for i, service := range plan.Stack.Definition.Services {
-			item := map[string]any{"image": plan.Stack.Images[i].Release.CanonicalImage, "container_name": domain.HostingStackObjectID(plan.Snapshot.BindingID, "component", service.Name), "labels": map[string]string{imageBindingLabel: plan.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: plan.Release.Hash, imagePlanLabel: plan.Hash, stackComponentLabel: service.Name}}
+			imageReference := plan.Stack.Images[i].Release.CanonicalImage
+			if plan.Stack.Images[i].Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+				imageReference = plan.Stack.Images[i].Release.ImageID
+			}
+			item := map[string]any{"image": imageReference, "container_name": domain.HostingStackObjectID(plan.Snapshot.BindingID, "component", service.Name), "labels": map[string]string{imageBindingLabel: plan.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: plan.Release.Hash, imagePlanLabel: plan.Hash, stackComponentLabel: service.Name}}
 			if service.Command != nil {
 				command := make([]string, len(service.Command))
 				for n, value := range service.Command {

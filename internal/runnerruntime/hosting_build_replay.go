@@ -26,6 +26,9 @@ func buildResultAcknowledged(r hostingbuildprotocol.PhaseResponse, entry runner.
 	if req.Completion.Artifact != nil && (r.Build.Artifact == nil || *r.Build.Artifact != *req.Completion.Artifact) {
 		return errors.New("build completion artifact changed")
 	}
+	if req.Completion.ComposeResult != nil && (r.Build.ComposeResult == nil || domain.HostingDocumentHash(*r.Build.ComposeResult) != domain.HostingDocumentHash(*req.Completion.ComposeResult)) {
+		return errors.New("compose build completion result changed")
+	}
 	if req.Completion.FailureCode != r.Build.FailureCode {
 		return errors.New("build completion failure changed")
 	}
@@ -125,6 +128,9 @@ func (e *BuildExecutor) reconcileBuildEntry(ctx context.Context, entry runner.Jo
 		}
 		if req.Completion.Artifact != nil && domain.ValidateHostingBuildArtifact(*req.Completion.Artifact, status.Build) != nil {
 			return errors.New("retained artifact binding changed")
+		}
+		if req.Completion.ComposeResult != nil && domain.ValidateHostingBuildComposeResult(*req.Completion.ComposeResult, status.Build) != nil {
+			return errors.New("retained Compose result binding changed")
 		}
 		phase, phaseErr := hostingbuildprotocol.CompletionPhase(req.Completion)
 		if phaseErr != nil {

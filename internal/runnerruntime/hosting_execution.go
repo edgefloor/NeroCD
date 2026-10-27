@@ -122,7 +122,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		}
 		switch {
 		case op.StackSource != nil:
-			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource, deliver)
+			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource, deliver, op.ComposeResult)
 		case deliver != nil:
 			var material *domain.HostingRegistryCredentialDelivery
 			material, prepareErr = deliver(supervisor.Context(), "")

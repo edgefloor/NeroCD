@@ -191,3 +191,26 @@ func TestRunnerBuildTriggerRevisionCapability(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerGitComposeExplicitConfigurationAndCapabilities(t *testing.T) {
+	c, err := decodeRunnerBuildConfig([]byte(`{"version":1,"compose":true,"policy":{"git_compose":true}}`))
+	if err != nil || !c.Compose || !c.Policy.GitCompose {
+		t.Fatal("Compose operator opt-in lost", err)
+	}
+	capabilities, err := runnerBuildCapabilities(c, false, true, []string{domain.HostingBuildTaskType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, capability := range capabilities {
+		found = found || capability == domain.HostingGitComposeBuildCapability
+	}
+	if !found {
+		t.Fatal("configured Compose capability not advertised")
+	}
+	for _, bad := range []*runnerruntime.BuildConfig{nil, {}, {Compose: true}, {Policy: domain.HostingBuildPolicy{GitCompose: true}}} {
+		if _, err := runnerBuildCapabilities(bad, false, true, []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability}); err == nil {
+			t.Fatal("unconfigured or mismatched Compose opt-in accepted")
+		}
+	}
+}
