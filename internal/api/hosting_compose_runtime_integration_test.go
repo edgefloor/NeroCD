@@ -564,7 +564,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		beforeRecovery := storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+second.ID, nil, 200)
 		rows := func() string {
 			var value string
-			if err := f.database.QueryRow(t.Context(), `SELECT jsonb_build_array((SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_apply_admissions),(SELECT count(*) FROM hosting_storage_operation_admissions),(SELECT jsonb_agg(to_jsonb(v) ORDER BY binding_id,volume_name) FROM hosting_compose_volumes v))::text`).Scan(&value); err != nil {
+			if err := f.database.QueryRow(t.Context(), gitComposeRecoveryWriterRows).Scan(&value); err != nil {
 				t.Fatal(err)
 			}
 			return value

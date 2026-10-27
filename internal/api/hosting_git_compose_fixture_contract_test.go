@@ -15,6 +15,7 @@ import (
 
 const gitComposeRejectProxyQueue = `CREATE FUNCTION reject_recovery_queue() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.proxy_generation_requested' THEN RAISE EXCEPTION 'fixture queue rejection'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_recovery_queue BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_recovery_queue()`
 const gitComposeAllowProxyQueue = `DROP TRIGGER IF EXISTS reject_recovery_queue ON audit_events; DROP FUNCTION IF EXISTS reject_recovery_queue()`
+const gitComposeRecoveryWriterRows = `SELECT jsonb_build_array((SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_apply_admissions),(SELECT count(*) FROM hosting_storage_operation_admissions),(SELECT jsonb_agg(to_jsonb(v) ORDER BY binding_id,volume_name) FROM hosting_compose_volumes v))::text`
 
 const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
 
@@ -199,6 +200,10 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 
 func TestGitComposeProxyQueueFailureInjection(t *testing.T) {
 	_, _, database := newHostingBuildAPIFixture(t)
+	var rows string
+	if err := database.QueryRow(t.Context(), gitComposeRecoveryWriterRows).Scan(&rows); err != nil {
+		t.Fatal("runtime recovery snapshot query rejected by fixture schema", err)
+	}
 	if _, err := database.Exec(t.Context(), gitComposeRejectProxyQueue); err != nil {
 		t.Fatal(err)
 	}
