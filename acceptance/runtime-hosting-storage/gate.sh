@@ -396,6 +396,7 @@ host_docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/inter
 for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
 if [[ "$remote" == true || "$managed_compose" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
+if [[ "$managed_compose" == true ]]; then host_docker cp openapi.yaml "$outer:/workspace/openapi.yaml"; fi
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
 # BASE_IMAGE_PRELOAD_BEGIN
 # Qualify digest lookup in the guest itself. Host OCI descriptor IDs are not
