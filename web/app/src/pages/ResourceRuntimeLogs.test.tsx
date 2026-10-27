@@ -172,3 +172,26 @@ test("refreshing component targets closes the prior session and requires selecti
   expect(fetch.mock.calls.filter(([, options]) => options.method === "DELETE")).toHaveLength(1);
   const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
 });
+
+test.each(["app", "db", "init"])("Compose %s requires the selected reader to enter the viewport before Follow can POST", async component => {
+  let intersect!: (visible: boolean) => void;
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: (entries: { isIntersecting: boolean }[]) => void) { intersect = visible => callback([{ isIntersecting: visible }]); }
+    observe() {}
+    disconnect() {}
+  });
+  const fetch = backend(url => url.endsWith("/runtime-log-sessions") ? new Promise<Response>(() => {}) : undefined);
+  setup(true);
+  await act(async () => fireEvent.change(screen.getByRole("combobox", { name: "Compose component" }), { target: { value: component } }));
+  const follow = screen.getByRole<HTMLButtonElement>("button", { name: "Follow runtime logs" });
+  expect(follow.disabled).toBe(true);
+  await act(async () => intersect(false));
+  await click("Follow runtime logs");
+  expect(fetch).not.toHaveBeenCalled();
+  await act(async () => intersect(true));
+  expect(follow.disabled).toBe(false);
+  expect(fetch).not.toHaveBeenCalled();
+  await click("Follow runtime logs");
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(fetch.mock.calls[0]![1].body))).toMatchObject({ component, expected_operation_id: "op" });
+});
