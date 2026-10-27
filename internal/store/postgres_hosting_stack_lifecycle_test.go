@@ -1,7 +1,15 @@
 package store_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"nerocd/internal/api"
+	"nerocd/web"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -57,7 +65,43 @@ func TestPostgresHostingStackStopAndStart(t *testing.T) {
 			if _, err := pg.RequestHostingStackStop(ctx, "hop_stale_stop", f.resource.ID, "usr_bootstrap", stale, destinationEvent("stale_stop")); !errors.Is(err, store.ErrConflict) {
 				t.Fatal("stale deployment admitted", err)
 			}
-			stop, err := pg.RequestHostingStackStop(ctx, "hop_stack_stop", f.resource.ID, "usr_bootstrap", input, destinationEvent("stack_stop"))
+			var stop domain.HostingOperation
+			if mode == "confirmed" {
+				service := proxyTokenApplication(t, pg)
+				session, err := service.CreateSession(ctx, "admin@example.local", "admin")
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := httptest.NewRequest(http.MethodPost, "/api/v1/resources/"+f.resource.ID+"/stack-stop", bytes.NewReader(body)).WithContext(ctx)
+				request.Header.Set("Authorization", "Bearer "+session.Token)
+				request.Header.Set("Content-Type", "application/json")
+				handler := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+				f.exec(t, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, runner, domain.HostingStackLifecycleCapability)
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, request)
+				if recorder.Code != 409 {
+					t.Fatalf("old enrolled agent Stop status=%d body=%s", recorder.Code, recorder.Body.String())
+				}
+				f.exec(t, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, runner, domain.HostingStackLifecycleCapability)
+				request = httptest.NewRequest(http.MethodPost, "/api/v1/resources/"+f.resource.ID+"/stack-stop", bytes.NewReader(body)).WithContext(ctx)
+				request.Header.Set("Authorization", "Bearer "+session.Token)
+				request.Header.Set("Content-Type", "application/json")
+				recorder = httptest.NewRecorder()
+				handler.ServeHTTP(recorder, request)
+				if recorder.Code != 202 {
+					t.Fatalf("Stop API status=%d body=%s", recorder.Code, recorder.Body.String())
+				}
+				if err = json.Unmarshal(recorder.Body.Bytes(), &stop); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				stop, err = pg.RequestHostingStackStop(ctx, "hop_stack_stop", f.resource.ID, "usr_bootstrap", input, destinationEvent("stack_stop"))
+			}
+
 			if err != nil {
 				t.Fatal(err)
 			}

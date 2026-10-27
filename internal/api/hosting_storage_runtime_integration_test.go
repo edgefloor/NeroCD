@@ -259,7 +259,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingStackCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
+			caps = append(caps, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
 		}
 	}
 	f.capabilities = append([]string(nil), caps...)

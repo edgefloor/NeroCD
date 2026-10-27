@@ -364,12 +364,17 @@ try {
   await report("app_checked", String(taskID));
   await state("stop");
   await hosting(page);
+  step = "review_compose_stop";
   const lifecycle = application.getByRole("region", { name: "Compose lifecycle", exact: true });
   await lifecycle.getByRole("button", { name: "Refresh Compose lifecycle", exact: true }).click();
   await lifecycle.getByRole("button", { name: "Review Stop Compose", exact: true }).click();
   const stopping = response(page, `/api/v1/resources/${resourceID}/stack-stop`);
+  step = "submit_compose_stop";
   await lifecycle.getByRole("button", { name: "Confirm Stop Compose", exact: true }).click();
-  const stopped = await checkedResponse(stopping, 202);
+  const stopResponse = await stopping;
+  safe.stop_response_status = stopResponse.status();
+  const stopped = await checkedResponse(stopResponse, 202);
+  step = "validate_compose_stop_target";
   if (stopped.stack_stop_plan?.target?.operation_id !== secondOperation) throw Error("Stop target changed");
   await report("stopped", stopped.id);
   await state("start");
