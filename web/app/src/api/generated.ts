@@ -9942,7 +9942,7 @@ export interface components {
         HostingStackService: {
             name: string;
             image: string;
-            command?: string[];
+            command?: string[] | null;
             environment?: {
                 [key: string]: string;
             };

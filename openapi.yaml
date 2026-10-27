@@ -21209,6 +21209,7 @@ components:
           },
           "command": {
             "type": "array",
+            "nullable": true,
             "maxItems": 128,
             "items": {
               "type": "string"
