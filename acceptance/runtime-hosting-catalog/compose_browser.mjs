@@ -223,12 +223,16 @@ try {
   async function deploy(replacement) {
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
+      step = "configure_compose_readiness";
       await review.getByLabel("Readiness path", { exact: true }).fill("/health");
       await review.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
     }
+    step = "review_compose_options";
     await review.getByRole("button", { name: "Review current Compose deployment", exact: true }).click();
+    step = "acknowledge_compose_interruption";
     await review.getByRole("checkbox").check();
     const pending = response(page, `/api/v1/resources/${resourceID}/deployments`);
+    step = "submit_compose_deployment";
     await review.getByRole("button", { name: "Deploy reviewed Compose", exact: true }).click();
     const result = await pending;
     if (result.status() !== 202) throw Error("Compose deployment rejected");

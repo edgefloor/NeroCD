@@ -218,7 +218,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [acceptedRefreshError, setAcceptedRefreshError] = useState("");
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
-  const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" || resource.source.kind === "compose" });
+  const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" || resource.source.kind === "compose" && Boolean(binding.data) });
   const stateless = !storageOptions.isError && storageOptions.data?.reason === "storage_unconfigured" && storageOptions.data.storage_ref === null;
   const base = reviewed ?? resource;
   const restoreHeld = restoreRejected || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
@@ -331,7 +331,8 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data && resource.source.kind !== "compose" ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {resource.source.kind === "compose" ? <>
-      {storageOptions.isPending ? <p role="status">Loading Compose deployment options...</p> : null}
+      {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
+      {binding.data && storageOptions.isPending ? <p role="status">Loading Compose deployment options...</p> : null}
       {storageOptions.isError ? <><p role="alert">Compose deployment authority is unavailable. Refresh before reviewing a deployment.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry Compose deployment options</Button></> : null}
       {writable && storageOptions.data && !storageOptions.isError ? <StackDeploymentReview key={binding.data?.id ?? "unbound"} resource={resource} scope={{ actor, project: resource.project_id, resource: resource.id }} bindingID={binding.data?.id ?? ""} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
       {!writable ? <p className="text-xs text-muted-foreground">Project maintainer access is required to deploy saved Compose.</p> : null}

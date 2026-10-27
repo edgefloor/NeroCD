@@ -614,6 +614,19 @@ test("deployment response with another runtime generation cannot select an opera
 const compose: Resource = { ...resource, source: { kind: "compose", compose: { original: "services:\n  web:\n    image: team/web:1\n    environment:\n      - TOKEN=${TOKEN:?required}\n", public_component: "web", container_port: 3000 } } };
 const stackRef = { generation: 1, hash: `sha256:${"a".repeat(64)}` };
 const stackOptions = { resource_id: "resource", resource_generation: 1, stack_ref: stackRef, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: true, reason: "initial_deployment", routes: [], storage_route_continuity: null };
+test("saving the first Compose destination loads current deployment options", async () => {
+  let bound = false;
+  backend((url) => {
+    if (url.endsWith("/binding")) return bound ? json(binding) : json({}, 404);
+    if (url.endsWith("/storage-deployment-options")) return json(bound ? stackOptions : { ...stackOptions, available: false, reason: "unbound" });
+    return undefined;
+  });
+  setup("maintainer", [], false, compose);
+  await screen.findByText("Save a desired destination before requesting deployment.");
+  bound = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: ["resourceBinding", "project", "resource"] }); });
+  await screen.findByLabelText("Readiness path");
+});
 function composeBackend(replacement = false, handler?: Parameters<typeof backend>[0]) {
   const continuity = { expected_loaded_generation: 4, expected_loaded_proxy_operation_id: "proxy_old", routes: [{ route_id: "route", expected_version: 2, expected_selected_release_operation_id: "hop_old" }] };
   const options = replacement ? { ...stackOptions, reason: "available", previous_healthy_operation_id: "hop_old", host_port: 8080, container_port: 3000, readiness: { path: "/ready", timeout_seconds: 20 }, routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 2, selected_release_operation_id: "hop_old" }], storage_route_continuity: continuity } : stackOptions;
