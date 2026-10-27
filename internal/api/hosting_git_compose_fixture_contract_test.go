@@ -87,6 +87,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"build", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: "source-grant-fixture", IdempotencyKey: "git-compose-build"}, new(domain.HostingBuildRequest)},
 		{"runtime", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("c", 32), Entries: []domain.HostingRuntimeEntry{}}, new(domain.HostingRuntimeConfigurationInput)},
 		{"from_build", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-deploy", ContainerPort: 3456, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, new(domain.HostingBuildDeploymentInput)},
+		{"from_build_replacement", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-replace", ContainerPort: 3456, HostPort: 21001, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, StorageRouteContinuity: &domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: 2, ExpectedLoadedProxyOperationID: "pop_loaded", Routes: []domain.HostingRouteSwitchSelection{{RouteID: "route_fixture", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_previous"}}}}, new(domain.HostingBuildDeploymentInput)},
 	}
 	for _, tc := range bodies {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +124,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"GET", "/api/v1/hosting-builds/build_fixture", "GET /api/v1/hosting-builds/{id}"},
 		{"PUT", "/api/v1/resources/resource_fixture/runtime-configuration", "PUT /api/v1/resources/{id}/runtime-configuration"},
 		{"POST", "/api/v1/resources/resource_fixture/deployments/from-build", "POST /api/v1/resources/{id}/deployments/from-build"},
+		{"GET", "/api/v1/resources/resource_fixture/storage-deployment-options", "GET /api/v1/resources/{id}/storage-deployment-options"},
 		{"GET", "/api/v1/resources/resource_fixture/stack-lifecycle", "GET /api/v1/resources/{id}/stack-lifecycle"},
 		{"POST", "/api/v1/resources/resource_fixture/stack-stop", "POST /api/v1/resources/{id}/stack-stop"},
 	} {

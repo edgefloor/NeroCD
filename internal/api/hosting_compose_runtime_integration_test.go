@@ -424,7 +424,11 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		}
 		updateRepository("missing-registry", false)
 		pullBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-pull-failure-build", "succeeded")
-		denied = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", domain.HostingBuildDeploymentInput{BuildID: pullBuild.ID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-pull-failed", ContainerPort: 3456, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, 202)
+		pullOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+		if !pullOptions.Available || pullOptions.ResourceGeneration != resource.Generation || pullOptions.HostPort == nil || *pullOptions.HostPort != first.Snapshot.HostPort || pullOptions.StorageRouteContinuity == nil {
+			t.Fatal("routed Git replacement omitted fresh stable-port continuity authority")
+		}
+		denied = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", domain.HostingBuildDeploymentInput{BuildID: pullBuild.ID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-pull-failed", ContainerPort: 3456, HostPort: *pullOptions.HostPort, StorageRouteContinuity: pullOptions.StorageRouteContinuity, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, 202)
 		denied = f.await(denied.ID, "failed")
 		if denied.MutationHold || denied.Result != nil && denied.Result.Uncertain {
 			t.Fatal("failed registry pull acquired mutation authority")
@@ -682,15 +686,15 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		}
 
 	}
-	var options domain.HostingStorageDeploymentOptions
-	if !gitCompose {
-		options = storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+	if gitCompose && (!options.Available || options.HostPort == nil || *options.HostPort != first.Snapshot.HostPort || options.StorageRouteContinuity == nil) {
+		t.Fatal("failed-readiness Git replacement omitted fresh route continuity authority")
 	}
 	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, RegistryCredential: &registryRef, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
 	var failed domain.HostingOperation
 	var failedBuildInput domain.HostingBuildDeploymentInput
 	if gitCompose {
-		failedBuildInput = domain.HostingBuildDeploymentInput{BuildID: started.Snapshot.GitCompose.BuildID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: bad.Readiness, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}
+		failedBuildInput = domain.HostingBuildDeploymentInput{BuildID: started.Snapshot.GitCompose.BuildID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, StorageRouteContinuity: options.StorageRouteContinuity, Readiness: bad.Readiness, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}
 		failed = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", failedBuildInput, 202)
 	} else {
 		failed = storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)

@@ -742,7 +742,7 @@ text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.a
 if len(sys.argv)>3 and sys.argv[3]=="true":
  if "Git Compose: private HTTPS source and exact receipt built;" not in text or "--- PASS: TestHostingGitComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Git Compose runtime test did not pass")
  if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Git Compose browser did not pass")
- for key in ["browser_git_compose_create","browser_git_compose_build_receipt","browser_git_compose_from_build","git_failures_preserved_records_uploads","served_assets_match_manifest","saved_compose_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence"]:
+ for key in ["browser_git_compose_create","browser_git_compose_build_receipt","browser_git_compose_from_build","browser_git_compose_route_continuity","git_failures_preserved_records_uploads","served_assets_match_manifest","saved_compose_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence"]:
   if browser.get(key) is not True:raise SystemExit("connected Git Compose proof missing: "+key)
  raise SystemExit(0)
 if "catalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start" not in text:raise SystemExit("private Compose registry assertions missing")

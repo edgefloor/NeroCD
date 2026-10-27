@@ -263,8 +263,8 @@ try {
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
   let selectedRegistrySecret;
-  let lastBuild;
-  async function deployGit(stoppedOperation) {
+  let lastBuild, gitHostPort;
+  async function deployGit(replacement, stoppedOperation) {
     step="git_compose_refresh_build_history";
     const builds=application.getByRole("region",{name:`Git builds for ${applicationName}`,exact:true});
     await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
@@ -303,8 +303,12 @@ try {
     step="git_compose_configure_deployment_readiness";
     await deployment.getByLabel("Build readiness path",{exact:true}).fill("/health");
     await deployment.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("120");
+    if(replacement) {
+      step="git_compose_review_route_continuity";
+      await expect(deployment).toContainText("Keep HTTPS route catalog-runtime.example.test/");
+    }
     step="git_compose_acknowledge_stack_interruption";
-    await deployment.getByRole("checkbox").check();
+    await deployment.getByRole("checkbox",{name:/^I reviewed this exact successful Compose build/}).check();
     const requested=response(page,`/api/v1/resources/${resourceID}/deployments/from-build`);
     step="git_compose_request_from_build_deployment";
     await deployment.getByRole("button",{name:stoppedOperation?"Start selected Compose build":"Deploy selected build",exact:true}).click();
@@ -313,12 +317,17 @@ try {
     const input=r.request().postDataJSON();
     step="git_compose_verify_from_build_authority";
     if(input.build_id!==lastBuild||input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation)throw Error("from-build immutable authority mismatch");
+    if(Boolean(input.storage_route_continuity)!==replacement)throw Error("from-build route continuity authority missing");
+    if(replacement && (input.host_port!==gitHostPort || !(input.storage_route_continuity.expected_loaded_generation>0) || !input.storage_route_continuity.expected_loaded_proxy_operation_id || input.storage_route_continuity.routes?.length!==1))throw Error("from-build stable-port route authority changed");
     safe.browser_git_compose_from_build=true;
     step="git_compose_verify_from_build_acceptance";
-    return (await checkedResponse(r,202)).id;
+    const operation=await checkedResponse(r,202);
+    if(!replacement){gitHostPort=operation.snapshot?.host_port;if(!(gitHostPort>=1024))throw Error("initial Git stack port missing");}
+    else {if(operation.snapshot?.host_port!==gitHostPort || !operation.snapshot?.storage_route_continuity?.hash)throw Error("admitted Git route continuity missing");safe.browser_git_compose_route_continuity=true;}
+    return operation.id;
   }
   async function deploy(replacement, stoppedOperation) {
-    if(gitCompose)return deployGit(stoppedOperation);
+    if(gitCompose)return deployGit(replacement,stoppedOperation);
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
       step = "verify_catalog_compose_readiness";
