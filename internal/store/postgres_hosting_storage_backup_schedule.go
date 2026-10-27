@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store/sqlcgen"
 )
@@ -27,10 +28,31 @@ func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resou
 	if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
 		return domain.Resource{}, domain.ResourceBinding{}, err
 	}
-	r, b, err := archivePlacement(ctx, tx, actor, resource, role)
+	q := sqlcgen.New(tx)
+	row, err := q.LockHostingRuntimeResource(ctx, resource)
 	if err != nil {
-		return r, b, err
+		return domain.Resource{}, domain.ResourceBinding{}, hostingError(err)
 	}
+	r := domain.Resource{ID: row.ID, ProjectID: row.ProjectID, Kind: row.Kind, Generation: row.Generation}
+	if json.Unmarshal(row.Source, &r.Source) != nil {
+		return r, domain.ResourceBinding{}, ErrConflict
+	}
+	if err = proxyAuthorize(ctx, tx, actor, r.ProjectID, role, false); err != nil {
+		return r, domain.ResourceBinding{}, err
+	}
+	if r.Kind != "application" || (r.Source.Kind != "image" && r.Source.Kind != "compose") {
+		return r, domain.ResourceBinding{}, ErrConflict
+	}
+	binding, err := q.GetResourceBinding(ctx, resource)
+	if err != nil {
+		return r, domain.ResourceBinding{}, hostingError(err)
+	}
+	if _, err = q.LockHostingStorageGrant(ctx, sqlcgen.LockHostingStorageGrantParams{DestinationID: binding.DestinationID, ProjectID: r.ProjectID}); errors.Is(err, pgx.ErrNoRows) {
+		return r, domain.ResourceBinding{}, auth.ErrForbidden
+	} else if err != nil {
+		return r, domain.ResourceBinding{}, err
+	}
+	b := bindingFromDestinationSQL(binding)
 	return r, b, proxyCheckLegacyToken(ctx, tx, actor)
 }
 
