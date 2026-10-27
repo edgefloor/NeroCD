@@ -116,9 +116,25 @@ const taskTitle = "Saved Compose persistence task";
 const appResponse = (p, method, pattern) => p.waitForResponse((r) =>
   [method].flat().includes(r.request().method()) && [appOrigin, restoreOrigin].includes(new URL(r.url()).origin) && pattern.test(new URL(r.url()).pathname));
 async function checkedResponse(pending, status) {
+  delete safe.checked_response_status;
+  delete safe.checked_response_failure;
   const result = await pending;
-  if (result.status() !== status) throw Error("unexpected application response");
-  return result.json();
+  safe.checked_response_status = result.status();
+  if (result.status() !== status) {
+    safe.checked_response_failure = "status_mismatch";
+    throw Error("unexpected application response");
+  }
+  let body;
+  try { body = await result.body(); }
+  catch (error) {
+    safe.checked_response_failure = "body_read_failed";
+    throw error;
+  }
+  try { return JSON.parse(body.toString("utf8")); }
+  catch (error) {
+    safe.checked_response_failure = "invalid_json";
+    throw error;
+  }
 }
 async function upload(p, name, content) {
   step = "upload_attachment";
@@ -334,7 +350,10 @@ try {
   let initialVolumeDiscovery;
   step = "open_compose_volume_schedule_page";
   await hosting(page, () => {
-    initialVolumeDiscovery = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-volumes`);
+    initialVolumeDiscovery = page.waitForResponse(async r => {
+      if (r.request().method() !== "GET" || new URL(r.url()).pathname !== `/api/v1/resources/${resourceID}/storage-backup-volumes`) return false;
+      try { return await r.finished() === null; } catch { return false; }
+    });
     void initialVolumeDiscovery.catch(() => {});
   });
   step = "read_initial_compose_volume_eligibility";
@@ -441,7 +460,10 @@ try {
   try {
     step = "open_compose_volume_schedule_run_page";
     await hosting(page, () => {
-      savedScheduleList = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-schedules`);
+      savedScheduleList = page.waitForResponse(async r => {
+        if (r.request().method() !== "GET" || new URL(r.url()).pathname !== `/api/v1/resources/${resourceID}/storage-backup-schedules`) return false;
+        try { return await r.finished() === null; } catch { return false; }
+      });
       void savedScheduleList.catch(() => {});
     });
     step = "read_saved_compose_volume_schedule_list";
