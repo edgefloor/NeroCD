@@ -21,8 +21,11 @@ cancel an admitted archive or clear its ownership hold.
 ## Schedule a Compose named volume
 
 In **Compose volume backups**, select an eligible named volume. In **Recurring
-Compose volume backups**, enter the frequency and timezone, then choose
-**Review Compose volume schedule**. Review the current deployment and acknowledge
+Compose volume backups**, enter the frequency and timezone. Use **Remote scheduled
+Compose backup target** to select a validated target revision, or leave it empty
+for a local archive. This selection is separate from the immediate backup target.
+Choose **Review Compose volume schedule**. Review the target revision and current
+deployment, then acknowledge
 interruption of the selected volume's running writers for every due backup.
 Choose **Confirm Compose volume schedule**. Even an initially disabled schedule
 requires this fresh review. Enabling or editing an enabled schedule requires a
@@ -33,8 +36,11 @@ select another volume. Redeployment can change component containers while
 preserving the selected volume's recorded creation origin. Each due occurrence
 resolves the current settled deployment and records its exact operation identity.
 It uses the existing [archive controller](hosting-storage-archive.md) and writer
-recovery protocol. Other volumes are excluded. These schedules create local
-archives only and do not provide coordinated database and upload snapshots.
+recovery protocol. Other volumes are excluded. Each occurrence preserves a local
+archive and can upload that same archive to the schedule's selected target after
+writers resume. A failed upload retains local success. Use the existing remote
+transfer history to retry the same blob without another archive or interruption.
+The schedule does not provide coordinated database and upload snapshots.
 
 Use **View schedule** and **View scheduled archive** to inspect occurrences and
 archive results. Owners can disable an existing schedule without fresh runtime
@@ -66,15 +72,20 @@ Compose uses the same endpoints and common input fields. Add `volume`,
 creating a schedule, including a disabled one, or saving an enabled revision.
 The deployment must match fresh eligible volume evidence. A disabled update
 retains `volume` but can omit the deployment and acknowledgement fields.
-`remote_target` is rejected for Compose. Image schedules keep their existing
-input contract.
+Optional `remote_target: {target_id, revision}` pins the target for the saved
+Compose revision. Image schedules keep their existing input contract. A disable
+can retain that saved selection even while remote validation or runtime evidence
+is unavailable. Current authorization still applies.
 
 Compose schedule metadata uses
 `managed-compose.local-volume-archive.schedule.v1` and exposes `volume` and retained
 `acknowledge_interruption`. Occurrences expose the selected volume alongside
 their schedule revision, linked backup, operation, and ownership state. The
 controller verifies the stable volume origin and the schedule actor's current
-authority at each due admission. A changed volume origin cannot silently retarget a schedule.
+authority at each due admission. The immutable occurrence uses that revision's
+exact remote target and rechecks its validation, credential authority and required
+capabilities before admitting new work. A changed volume origin or target cannot
+silently retarget an existing occurrence.
 
 ## Timing and execution
 
@@ -146,7 +157,10 @@ Exact archive bytes and ownership, application persistence and new writes,
 failure compensation, and cleanup passed. See the
 [Compose checklist and evidence](hosting-compose.md#accepted-local-named-volume-schedules)
 for source revisions, the earlier unresolved timeout, check limits, and timing.
-Compose remote copies, download, and archive restore remain outside this slice.
+That local qualification does not establish scheduled remote copies. The
+[scheduled Compose remote-copy extension](hosting-storage-remote-backups.md#compose-remote-schedule-qualification)
+records its separate qualification status. Compose download and archive restore
+remain unsupported.
 
 ## Compose upstream reference
 
@@ -158,5 +172,6 @@ schedule against selected persistent storage and dispatches each due volume
 backup, withholding new work while stopped-container recovery is pending.
 NeroCD follows that workflow through its existing scheduler, current authorization,
 immutable occurrence transactions, fenced Go runner, and durable archive recovery.
-This local Compose slice does not implement upstream S3, retention, or broader
-storage-type behavior.
+The optional scheduled remote copy reuses the immediate local archive and S3
+transfer sequence. Retention and broader storage-type behavior remain outside
+this Compose slice.

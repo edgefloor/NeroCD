@@ -134,7 +134,7 @@ explicit storage-archive recovery action. Recovery resumes recorded writers;
 it does not restore archived application data.
 
 Compose volume backups reuse the installed archive helper and configured size
-limits. [Local named-volume schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
+limits. [Named-volume schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
 reuse that controller and archive runner. Each occurrence resolves the current
 settled deployment while preserving the selected volume's recorded origin.
 Schedule creation and enabling require fresh deployment review and consent for
@@ -151,7 +151,11 @@ reviewing the backup. The [Compose remote workflow](hosting-storage-remote-backu
 retains the local archive, resumes writers, and then uploads the exact blob.
 Failed upload retry does not stop writers or archive the volume again. The
 remote extension [passed qualification](hosting-storage-remote-backups.md#accepted-compose-remote-copy).
-Local schedules remain local-only.
+Recurring backups have a separate **Remote scheduled Compose backup target**
+selection and review. Each due occurrence uses its saved target revision and
+current authority, preserves the local archive, then uploads after writer
+resumption. See [scheduled remote-copy qualification](hosting-storage-remote-backups.md#compose-remote-schedule-qualification)
+for its status and evidence.
 
 ## Qualification
 
@@ -421,8 +425,12 @@ protected-runtime PostgreSQL experiment took 4.390 seconds separately. Review
 and waiting time were not instrumented. These categories cannot be added into an
 elapsed-time percentage.
 
-Compose remote transfer, download, archive restore, bind mounts, raw Compose,
-Git Compose, and mixed build/image stacks remain unsupported or unqualified.
+This local schedule qualification did not cover remote transfer. The separate
+[immediate remote-copy qualification](hosting-storage-remote-backups.md#accepted-compose-remote-copy)
+and [scheduled remote-copy qualification](hosting-storage-remote-backups.md#compose-remote-schedule-qualification)
+record their own status and scope. Compose download, archive restore, bind mounts,
+raw Compose, Git Compose and mixed build/image stacks remain unsupported or
+unqualified.
 Coordinated database and upload recovery is a separate NeroCD expansion, not an
 upstream workflow implemented by `VolumeBackupRecoveryJob`. No coordinated
 snapshot, full parity, or automatic rollback claim follows from this qualification.

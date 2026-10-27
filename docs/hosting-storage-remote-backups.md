@@ -80,8 +80,11 @@ advertised with uploads disabled so recovery can resume writers. New uploads
 still require the existing transfer capabilities, configuration, target validation,
 and current authority.
 
-Compose schedules remain local-only. This workflow provides no Compose remote
-download, archive restore, or coordinated database and upload recovery point.
+[Compose schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
+can pin a validated target revision for each saved schedule revision. They use
+the same local archive, writer resumption, independent transfer and same-archive
+retry sequence. This workflow provides no Compose remote download, archive
+restore, or coordinated database and upload recovery point.
 The pinned behavioral reference is
 `app/Jobs/VolumeBackupJob.php` at Coolify revision
 `b12d1386f3d458618b4c579babcd1e339c6c40b3`, which archives the selected volume,
@@ -238,3 +241,82 @@ All times below are UTC on 2026-10-27. Receipt directories use the prefix
 
 The evidence index retains source-check logs and command timestamps at their
 original revisions. Only acceptance fixtures changed after `1b56db8`.
+
+<a id="compose-remote-schedule-qualification"></a>
+
+## Scheduled Compose remote-copy qualification
+
+The complete workflow passed on 2026-10-27 at
+`26998a435215fc0b8ceec5c0f076165af698ddd0`. The existing
+`bash acceptance/runtime-hosting-storage/gate.sh --managed-compose` command
+exited zero after 244 seconds, 12:49:46–12:53:50 UTC. Its physical runtime test
+took 154.03 seconds.
+
+- [x] Saved a schedule with an exact remote target revision and linked its due
+  occurrence to the resulting archive. Disabled the schedule after that occurrence.
+- [x] An `access_denied` upload retained local archive success and resumed writers.
+  Retry uploaded the exact 6,144-byte archive with one helper start, zero component
+  events during retry and two writer-resumption checks.
+- [x] The actual application and PostgreSQL served traffic and retained records and
+  uploads across redeployment and Stop/Start. Local archives, database backup and
+  separate-target import, and failed replacement safeguards also passed.
+- [x] All 41 baseline container profiles and 236 volume profiles remained exact,
+  with no additions. The user instance's identity, content and health were unchanged.
+  The owned outer container and volume were absent after cleanup.
+
+Independent hygiene, specification and security reviews were clean at source
+candidate `2d19107082b7bd943b2158508241878569196e95` and approved the exact repair
+at `26998a435215fc0b8ceec5c0f076165af698ddd0`. Full `make verify` passed at
+`2d191070`, including formatting, vet, pinned lint with zero findings, Go tests
+and shell checks. The full WebUI suite passed 129 files and 1,939 tests in 29.85
+seconds. Fresh UI and Go embedding builds, pinned Linux SQL/OpenAPI/route generation,
+and the real Linux fixture decoder and phase checks passed. The UI artifact
+manifest is `ui-manifest-2d191.json`.
+
+The repair uses canonical destination-before-resource locking in volume discovery.
+A deterministic real PostgreSQL check reproduced `40P01` before the repair in
+2.43 seconds and passed afterward in 1.45 seconds. Focused archive, recovery,
+grant and outage checks passed in 9.003 seconds, and HTTP 500 redaction passed
+in 0.631 seconds. Affected checks also passed at the repaired candidate from
+12:46:58 to 12:47:13 UTC. UI, runner and generated evidence retains its `2d191070`
+source because the repair leaves those sources unchanged. Fresh preflight at
+12:49:11 UTC confirmed the exact daemon and image pins, free port 25443, no owned
+fixture objects, unchanged baseline and user instance, and 44.8 GB available.
+Full `make check` and unrelated product suites were not run.
+
+The first gate at `2d191070` remains failed. It ran from 12:38:26 to 12:40:44 UTC,
+138 seconds, and stopped before the new scheduled remote-copy phase. At phase
+`volume_schedule`, step `read_initial_compose_volume_eligibility`, the initial
+`GET storage-backup-volumes` completed with HTTP 500 and `status_mismatch`.
+The preceding Go observation reported all eligibility conditions true. That
+historical HTTP 500 remains unattributed because server logs were discarded.
+The independently reproduced deadlock does not establish that run's cause.
+Cleanup and preservation passed with the same exact 41-container and 236-volume
+baseline and unchanged user instance. Its original evidence is
+`/tmp/nerocd-storage-runtime-20261024.c3FmyY`. The failed-run durable index is
+`/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/2d19107082b7bd943b2158508241878569196e95/evidence-index.json`,
+SHA-256 `5163796a30b46cf1a96602d816eede29f92248ab28fc5d69daf890703614f5e7`.
+The final audited durable index is
+`/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/26998a435215fc0b8ceec5c0f076165af698ddd0/evidence-index.json`,
+SHA-256 `a07c8b1c11413a9c22893b6c8b6e17def7abeb7ec78bed0854435369c3108ad8`.
+It retains 45 selected safe files, including source checks, command timestamps,
+artifact manifests, physical proof and the separately preserved failed-run receipt.
+Private raw inventories and sessions remain excluded.
+
+Prior local schedule evidence at `1df3c90a1aef7b3f4235b4ba43eb239415b29e51` and
+immediate remote-copy evidence at `f927e59d7470b2b6e0b86074f4ac411200aece02` retains
+its original source and scope. This scheduled extension qualifies the same
+bounded managed Compose profile. Production S3 HTTPS, additional providers,
+Compose remote download and archive restore, bind mounts, cross-host recovery,
+and coordinated database and upload snapshots remain unsupported or unqualified.
+
+Delivery times below are UTC. Worker estimates include some checks and waiting.
+Concurrent windows overlap and cannot be added into elapsed-time percentages.
+
+| Category | Recorded time and limitation |
+| --- | --- |
+| Implementation | Backend approximately 12:27:04–12:28:10, UI approximately 12:26:55–12:28:30. Acceptance changes 12:29:40–12:32:51, 191 seconds including compilation and contract waiting. |
+| Product-defect repair | Lock-order diagnosis and reproduction approximately 12:41–12:44:26. Repair authored at 12:44:26, checks 12:44:51–12:45:01, commit 12:45:45. These windows include diagnosis and validation rather than pure coding time. |
+| Fixture repair | Backend fixture diagnosis approximately 12:28:10–12:30:00, including PostgreSQL failures of 26.821 and 11.665 seconds and a passing 8.578-second focused check. UI label correction approximately 15 seconds. |
+| Test execution | Full `make verify` 12:33:16–12:37:21, 245 seconds, including 200.968 seconds of Go runtime tests. WebUI tests and fresh builds took 48 seconds, generated checks 54 seconds, concurrently. UI focused checks passed 69 tests in 0.866 seconds. First gate failed in 138 seconds. Repaired-candidate gate passed in 244 seconds, 12:49:46–12:53:50, including the 154.03-second runtime test. |
+| Review and waiting | Three clean source reviews and three clean repair reviews. Separate execution and waiting durations are unavailable. |
