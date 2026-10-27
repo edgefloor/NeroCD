@@ -65,10 +65,6 @@ func databaseBackupComponentSource(ctx context.Context, tx pgx.Tx, actor, resour
 	if err = databaseBindingGrant(ctx, q, r.ProjectID, r.DestinationID); err != nil {
 		return h, op, 0, err
 	}
-	var source domain.ResourceSource
-	if json.Unmarshal(r.Source, &source) != nil || source.Kind != "compose" {
-		return h, op, 0, ErrConflict
-	}
 	state, err := q.LockObservationSettledState(ctx, r.BindingID)
 	if err != nil {
 		return h, op, 0, err

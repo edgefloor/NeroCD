@@ -145,6 +145,9 @@ func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runne
 		if !slices.Contains(current.Capabilities, domain.HostingRuntimeLogsCapability) || p.mutation || domain.ValidateHostingStackHealthy(h) != nil || snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace {
 			return p, ErrConflict
 		}
+		if _, _, err = hostingSelectedStackDefinition(ctx, tx, resource, p.project, snap); err != nil {
+			return p, err
+		}
 		p.healthy = &h
 		return p, gateErr
 	}

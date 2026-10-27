@@ -45,12 +45,17 @@ func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 		return zero, ErrConflict
 	}
 	if err = databaseBindingGrant(ctx, q, target.ProjectID, target.DestinationID); err != nil {
-		if errors.Is(err, ErrConflict) && source.Kind == "compose" {
+		if errors.Is(err, ErrConflict) && (source.Kind == "compose" || source.Kind == "git") {
 			return zero, auth.ErrForbidden
 		}
 		return zero, err
 	}
-	if source.Kind == "compose" {
+	if source.Kind == "git" {
+		if _, err = hostingHistoricalStackSnapshot(ctx, tx, resource, target.ProjectID, target.BindingID); err != nil {
+			return zero, err
+		}
+	}
+	if source.Kind == "compose" || source.Kind == "git" {
 		return databaseBackupScheduleSource{Resource: domain.Resource{ID: resource, ProjectID: target.ProjectID, Generation: target.Generation, Source: source}, Binding: domain.ResourceBinding{ID: target.BindingID, DestinationID: target.DestinationID}}, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	value, err := hostingDatabaseLoad(ctx, q, resource)
@@ -92,7 +97,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if value.Resource.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
-		if (value.Resource.Source.Kind == "compose") != (in.Component != "") {
+		if (value.Resource.Source.Kind == "compose" || value.Resource.Source.Kind == "git") != (in.Component != "") {
 			return zero, ErrConflict
 		}
 		if in.Component != "" && (in.Enabled || existingID == "") {

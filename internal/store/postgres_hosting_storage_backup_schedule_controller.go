@@ -84,7 +84,7 @@ func (s *PostgresStore) reconcileStorageBackupSchedule(ctx context.Context, id s
 			return false, e
 		}
 		resource, binding, e := storageBackupScheduleAuthority(ctx, admission, schedule.ActorID, schedule.ResourceID, domain.RoleOwner)
-		if e == nil && (binding.ID != schedule.BindingID || binding.DestinationID != schedule.DestinationID || (resource.Source.Kind == "compose") != (schedule.SourceFamily == "compose")) {
+		if e == nil && (binding.ID != schedule.BindingID || binding.DestinationID != schedule.DestinationID || (resource.Source.Kind == "compose" || resource.Source.Kind == "git") != (schedule.SourceFamily == "compose")) {
 			reason = "placement_changed"
 			e = ErrConflict
 		}

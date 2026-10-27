@@ -27,7 +27,7 @@ func archivePlacement(ctx context.Context, tx pgx.Tx, actor, resource, role stri
 	if err = proxyAuthorize(ctx, tx, actor, r.ProjectID, role, false); err != nil {
 		return r, domain.ResourceBinding{}, err
 	}
-	if r.Kind != "application" || r.Source.Kind != "image" && r.Source.Kind != "compose" {
+	if r.Kind != "application" || r.Source.Kind != "image" && r.Source.Kind != "compose" && r.Source.Kind != "git" {
 		return r, domain.ResourceBinding{}, ErrConflict
 	}
 	b, err := q.GetResourceBinding(ctx, resource)
@@ -36,6 +36,11 @@ func archivePlacement(ctx context.Context, tx pgx.Tx, actor, resource, role stri
 	}
 	if err = databaseBindingGrant(ctx, q, r.ProjectID, b.DestinationID); err != nil {
 		return r, domain.ResourceBinding{}, err
+	}
+	if r.Source.Kind == "git" {
+		if _, err = hostingHistoricalStackSnapshot(ctx, tx, resource, r.ProjectID, b.ID); err != nil {
+			return r, domain.ResourceBinding{}, err
+		}
 	}
 	return r, bindingFromDestinationSQL(b), nil
 }
@@ -66,7 +71,7 @@ func (s *PostgresStore) StorageBackupVolumes(ctx context.Context, actor, resourc
 			return out, err
 		}
 		out.ResourceGeneration = r.Generation
-		if r.Source.Kind != "compose" {
+		if r.Source.Kind != "compose" && r.Source.Kind != "git" {
 			out.Reason = "unsupported_source"
 			return out, nil
 		}
@@ -84,7 +89,7 @@ func (s *PostgresStore) StorageBackupVolumes(ctx context.Context, actor, resourc
 		if err != nil {
 			return out, err
 		}
-		if generation != h.Snapshot.ResourceGeneration {
+		if generation != h.Snapshot.ResourceGeneration && h.Snapshot.GitCompose == (domain.HostingGitComposeRef{}) {
 			out.Reason = "deployment_changed"
 			return out, nil
 		}
@@ -138,7 +143,7 @@ func (s *PostgresStore) requestComposeStorageBackup(ctx context.Context, tx pgx.
 	if err != nil {
 		return zero, err
 	}
-	if generation != in.ExpectedResourceGeneration || generation != h.Snapshot.ResourceGeneration || h.OperationID != in.ExpectedDeployedOperationID {
+	if generation != in.ExpectedResourceGeneration || generation != h.Snapshot.ResourceGeneration && h.Snapshot.GitCompose == (domain.HostingGitComposeRef{}) || h.OperationID != in.ExpectedDeployedOperationID {
 		return zero, ErrConflict
 	}
 	c := &domain.HostingStorageArchiveComposeSource{Healthy: h, Plan: *op.Plan, Retained: []domain.HostingStorageArchiveStackProof{}}

@@ -29,7 +29,7 @@ func (s *Service) RequestDatabaseBackup(ctx context.Context, resource string, in
 	if err != nil {
 		return zero, err
 	}
-	if r.Kind != "database" && (in.Component == "" || r.Source.Kind != "compose") {
+	if r.Kind != "database" && (in.Component == "" || (r.Source.Kind != "compose" && r.Source.Kind != "git")) {
 		return zero, store.ErrNotFound
 	}
 	repo, err := s.databaseBackupRepository()

@@ -40,7 +40,7 @@ func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resou
 	if err = proxyAuthorize(ctx, tx, actor, r.ProjectID, role, false); err != nil {
 		return r, domain.ResourceBinding{}, err
 	}
-	if r.Kind != "application" || (r.Source.Kind != "image" && r.Source.Kind != "compose") {
+	if r.Kind != "application" || (r.Source.Kind != "image" && r.Source.Kind != "compose" && r.Source.Kind != "git") {
 		return r, domain.ResourceBinding{}, ErrConflict
 	}
 	binding, err := q.GetResourceBinding(ctx, resource)
@@ -52,6 +52,11 @@ func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resou
 	} else if err != nil {
 		return r, domain.ResourceBinding{}, err
 	}
+	if r.Source.Kind == "git" {
+		if _, err = hostingHistoricalStackSnapshot(ctx, tx, resource, r.ProjectID, binding.ID); err != nil {
+			return r, domain.ResourceBinding{}, err
+		}
+	}
 	b := bindingFromDestinationSQL(binding)
 	return r, b, proxyCheckLegacyToken(ctx, tx, actor)
 }
@@ -59,7 +64,7 @@ func storageBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resou
 // Runtime eligibility is deliberately separate from metadata authority. Replay,
 // history and disablement must remain usable while the source is stopped or held.
 func storageBackupScheduleSource(ctx context.Context, tx pgx.Tx, actor string, r domain.Resource, volume string) (domain.HostingStorage, *domain.HostingStorageArchiveComposeSource, error) {
-	if r.Source.Kind != "compose" {
+	if volume == "" {
 		st, err := currentHostingStorage(ctx, tx, r.ProjectID, r.ID)
 		return st, nil, err
 	}
@@ -67,7 +72,7 @@ func storageBackupScheduleSource(ctx context.Context, tx pgx.Tx, actor string, r
 	if err != nil {
 		return domain.HostingStorage{}, nil, err
 	}
-	if generation != h.Snapshot.ResourceGeneration {
+	if generation != h.Snapshot.ResourceGeneration && h.Snapshot.GitCompose == (domain.HostingGitComposeRef{}) {
 		return domain.HostingStorage{}, nil, ErrConflict
 	}
 	c := &domain.HostingStorageArchiveComposeSource{Healthy: h, Plan: *op.Plan}
@@ -161,7 +166,7 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 		if resourceValue.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
-		if (resourceValue.Source.Kind == "compose") != (in.Volume != "") {
+		if (resourceValue.Source.Kind == "compose" || resourceValue.Source.Kind == "git") != (in.Volume != "") {
 			return zero, ErrConflict
 		}
 		var storageValue domain.HostingStorage

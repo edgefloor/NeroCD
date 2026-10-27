@@ -215,3 +215,81 @@ SELECT to_regclass(current_schema()||'.hosting_builds') IS NOT NULL
  AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(current_schema()||'.hosting_build_compose_results') AND tgname='hosting_build_compose_body' AND tgenabled IN('O','A'));
 $$;
 DO $$ BEGIN EXECUTE format('ALTER FUNCTION %I.nerocd_hosting_build_schema_compatible() SET search_path TO %I, pg_catalog, pg_temp',current_schema(),current_schema()); END;$$;
+
+-- Existing stacks retain backup authority after a desired Git source edit. This
+-- proof uses the exact committed deployment snapshot and successful build result.
+CREATE FUNCTION nerocd_hosting_git_stack_archive_origin(resource_key text, project_key text, binding_key text, healthy jsonb)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+SELECT EXISTS(
+ SELECT 1 FROM hosting_snapshots selected
+ JOIN hosting_operations deployed ON deployed.id=selected.operation_id
+ JOIN hosting_builds build ON build.id=selected.body->'git_compose'->>'build_id'
+ JOIN hosting_build_compose_results result ON result.build_id=build.id
+ WHERE selected.operation_id=healthy->>'operation_id' AND selected.body=healthy->'snapshot'
+ AND deployed.state='succeeded' AND deployed.resource_id=resource_key AND deployed.project_id=project_key AND deployed.binding_id=binding_key
+ AND build.state='succeeded' AND build.resource_id=resource_key AND build.project_id=project_key
+ AND selected.body->>'resource_id'=resource_key AND selected.body->>'binding_id'=binding_key
+ AND build.snapshot->>'resource_generation'=selected.body->>'resource_generation'
+ AND build.snapshot->'source'->>'generation'=selected.body->'git_compose'->>'source_generation'
+ AND build.snapshot->>'binding_id'=selected.body->>'binding_id'
+ AND build.snapshot->>'destination_id'=selected.body->>'destination_id'
+ AND build.snapshot->>'server_id'=selected.body->>'server_id'
+ AND build.snapshot->>'runner_id'=selected.body->>'runner_id'
+ AND build.daemon_id=healthy->'release'->>'daemon_id'
+ AND result.body_hash=selected.body->'git_compose'->>'result_hash'
+ AND result.definition_hash=selected.body->'stack'->>'hash'
+);
+$$;
+CREATE OR REPLACE FUNCTION nerocd_storage_archive_consistent() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE p hosting_storage_archive_plans; o hosting_operations; src hosting_storage; dst hosting_storage;
+BEGIN
+ SELECT * INTO STRICT p FROM hosting_storage_archive_plans WHERE operation_id=NEW.operation_id;
+ SELECT * INTO STRICT o FROM hosting_operations WHERE id=p.operation_id;
+
+ IF p.source_family='compose' THEN
+  IF p.mode='restore' OR p.target_resource_id IS NOT NULL OR p.source_storage_id IS NOT NULL
+   OR o.resource_id IS DISTINCT FROM p.source_resource_id OR o.binding_id IS DISTINCT FROM p.source_binding_id
+   OR o.project_id IS DISTINCT FROM p.body->>'project_id'
+   OR p.body->'compose_source'->'healthy'->'snapshot'->>'resource_id' IS DISTINCT FROM p.source_resource_id
+   OR p.body->'compose_source'->'healthy'->'snapshot'->>'binding_id' IS DISTINCT FROM p.source_binding_id
+   OR p.body->'compose_source'->'volume'->>'name' IS DISTINCT FROM p.source_volume
+   OR p.body->'compose_source'->'healthy'->'snapshot'->>'destination_id' IS DISTINCT FROM p.body->>'destination_id'
+   OR p.body->'compose_source'->'healthy'->'snapshot'->>'runner_id' IS DISTINCT FROM p.body->>'runner_id'
+   OR EXISTS(SELECT 1 FROM hosting_apply_plans WHERE operation_id=o.id)
+   OR EXISTS(SELECT 1 FROM hosting_releases WHERE operation_id=o.id)
+   OR EXISTS(SELECT 1 FROM hosting_receipts WHERE operation_id=o.id)
+   OR NOT EXISTS(SELECT 1 FROM hosting_compose_volumes v WHERE v.binding_id=p.source_binding_id AND v.name=p.source_volume
+    AND v.state='materialized' AND v.destination_id=p.body->>'destination_id' AND v.daemon_id=p.body->'helper'->>'daemon_id'
+    AND v.volume_name=p.body->'compose_source'->'volume'->>'volume_name'
+    AND v.creation_operation_id=p.body->'compose_source'->'volume'->>'creation_operation_id'
+    AND v.creation_nonce=p.body->'compose_source'->'volume'->>'creation_nonce'
+    AND v.created_at=p.body->'compose_source'->'volume'->>'created_at')
+   OR NOT EXISTS(SELECT 1 FROM hosting_apply_plans a JOIN hosting_operations d ON d.id=a.operation_id
+    WHERE a.operation_id=p.body->'compose_source'->'healthy'->>'operation_id'
+    AND a.body=p.body->'compose_source'->'plan' AND a.body_hash=p.body->'compose_source'->'healthy'->>'plan_hash'
+    AND d.resource_id=p.source_resource_id AND d.binding_id=p.source_binding_id AND d.project_id=o.project_id AND d.state='succeeded')
+  THEN RAISE EXCEPTION 'compose archive source identity mismatch' USING ERRCODE='23514'; END IF;
+  IF p.mode='backup' AND NOT EXISTS(SELECT 1 FROM hosting_binding_state b JOIN resources r ON r.id=p.source_resource_id
+    WHERE b.binding_id=p.source_binding_id AND b.healthy=p.body->'compose_source'->'healthy' AND b.hold_operation_id=p.operation_id
+    AND b.restore_admitted AND (r.generation=(p.body->'compose_source'->'healthy'->'snapshot'->>'resource_generation')::bigint
+     OR (r.source->>'kind'='git' AND nerocd_hosting_git_stack_archive_origin(p.source_resource_id,o.project_id,p.source_binding_id,p.body->'compose_source'->'healthy'))))
+  THEN RAISE EXCEPTION 'compose archive source is not settled' USING ERRCODE='23514'; END IF;
+  IF p.mode='recover' AND NOT EXISTS(SELECT 1 FROM hosting_storage_archive_plans original WHERE original.operation_id=p.recovery_of_operation_id
+    AND original.source_family='compose' AND original.source_volume=p.source_volume AND original.body->'compose_source'=p.body->'compose_source')
+  THEN RAISE EXCEPTION 'compose archive recovery source mismatch' USING ERRCODE='23514'; END IF;
+  RETURN NULL;
+ END IF;
+ SELECT * INTO STRICT src FROM hosting_storage WHERE id=p.source_storage_id;
+ IF o.project_id<>src.project_id OR src.resource_id<>p.source_resource_id OR src.binding_id<>p.source_binding_id OR src.destination_id<>p.body->>'destination_id' OR o.project_id<>p.body->>'project_id' OR EXISTS(SELECT 1 FROM hosting_apply_plans WHERE operation_id=o.id) OR EXISTS(SELECT 1 FROM hosting_releases WHERE operation_id=o.id) OR EXISTS(SELECT 1 FROM hosting_receipts WHERE operation_id=o.id) OR EXISTS(SELECT 1 FROM hosting_task_targets WHERE operation_id=o.id) THEN RAISE EXCEPTION 'archive family or source mismatch' USING ERRCODE='23514'; END IF;
+ IF p.target_resource_id IS NULL THEN
+  IF o.resource_id<>p.source_resource_id OR o.binding_id<>p.source_binding_id THEN RAISE EXCEPTION 'archive source binding mismatch' USING ERRCODE='23514'; END IF;
+ ELSE
+  SELECT * INTO STRICT dst FROM hosting_storage WHERE id=p.target_storage_id;
+  IF dst.resource_id<>p.target_resource_id OR dst.binding_id<>p.target_binding_id OR dst.project_id<>src.project_id OR dst.destination_id<>src.destination_id OR dst.mount_path<>src.mount_path OR o.resource_id<>dst.resource_id OR o.binding_id<>dst.binding_id OR p.body->'target'->'storage'->>'id'<>dst.id THEN RAISE EXCEPTION 'archive new target mismatch' USING ERRCODE='23514'; END IF;
+ END IF;
+ RETURN NULL;
+END $$;
+DO $$ DECLARE owner_schema text:=current_schema(); BEGIN
+ EXECUTE format('ALTER FUNCTION %I.nerocd_hosting_git_stack_archive_origin(text,text,text,jsonb) SET search_path TO pg_catalog,%I,pg_temp',owner_schema,owner_schema);
+ EXECUTE format('ALTER FUNCTION %I.nerocd_storage_archive_consistent() SET search_path TO pg_catalog,%I,pg_temp',owner_schema,owner_schema);
+END $$;

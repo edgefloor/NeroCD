@@ -29,7 +29,7 @@ func (s *Service) SaveDatabaseBackupSchedule(ctx context.Context, resource, sche
 	if err != nil {
 		return zero, err
 	}
-	if r.Kind != "database" && r.Source.Kind != "compose" {
+	if r.Kind != "database" && (r.Source.Kind != "compose" && r.Source.Kind != "git") {
 		return zero, store.ErrNotFound
 	}
 	repo, err := s.databaseBackupScheduleRepository()

@@ -224,7 +224,7 @@ func (s *Service) RunnerStorageArchiveComplete(ctx context.Context, in domain.Ho
 }
 
 func supportedHostingArchive(r domain.Resource) error {
-	if r.Kind == "application" && r.Source.Kind == "compose" {
+	if r.Kind == "application" && (r.Source.Kind == "compose" || r.Source.Kind == "git") {
 		return nil
 	}
 	return supportedHostingStorage(r)

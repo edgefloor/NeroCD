@@ -386,7 +386,7 @@ func (s *PostgresStore) requestStorageBackupTx(ctx context.Context, tx pgx.Tx, i
 	if err = s.archiveConfigured(ctx, q); err != nil {
 		return zero, err
 	}
-	if r.Source.Kind == "compose" {
+	if r.Source.Kind == "compose" || r.Source.Kind == "git" {
 		return s.requestComposeStorageBackup(ctx, tx, id, resource, actor, hash, in)
 	}
 	if in.Volume != "" {

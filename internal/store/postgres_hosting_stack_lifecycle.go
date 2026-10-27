@@ -93,10 +93,6 @@ func (s *PostgresStore) HostingStackLifecycle(ctx context.Context, actor, resour
 		if err = authorizeBuildActor(ctx, tx, actor, r.ProjectID, "viewer"); err != nil {
 			return out, err
 		}
-		var source domain.ResourceSource
-		if json.Unmarshal(r.Source, &source) != nil || source.Kind != "compose" {
-			return out, nil
-		}
 		binding, err := q.RuntimeLogCurrentBinding(ctx, resource)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return out, nil
@@ -111,6 +107,18 @@ func (s *PostgresStore) HostingStackLifecycle(ctx context.Context, actor, resour
 		if err != nil {
 			return out, err
 		}
+		var source domain.ResourceSource
+		if json.Unmarshal(r.Source, &source) != nil || source.Kind != "compose" && source.Kind != "git" {
+			return out, nil
+		}
+		if source.Kind == "git" {
+			if _, err = hostingHistoricalStackSnapshot(ctx, tx, resource, r.ProjectID, binding.ID); err != nil {
+				if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+					return out, nil
+				}
+				return out, err
+			}
+		}
 		if state.HoldOperationID != nil || !state.RestoreAdmitted {
 			out.State = "held"
 			return out, nil
@@ -120,6 +128,9 @@ func (s *PostgresStore) HostingStackLifecycle(ctx context.Context, actor, resour
 			return out, err
 		}
 		if stopped != nil {
+			if _, _, err = hostingSelectedStackDefinition(ctx, tx, resource, r.ProjectID, stopped.Target.Snapshot); err != nil {
+				return out, err
+			}
 			out.State = "stopped"
 			out.StopOperationID = stopped.StopOperationID
 			out.DeployedOperationID = stopped.Target.OperationID
@@ -127,6 +138,9 @@ func (s *PostgresStore) HostingStackLifecycle(ctx context.Context, actor, resour
 		}
 		var healthy domain.HostingHealthy
 		if len(state.Healthy) > 0 && json.Unmarshal(state.Healthy, &healthy) == nil && domain.ValidateHostingStackHealthy(healthy) == nil {
+			if _, _, err = hostingSelectedStackDefinition(ctx, tx, resource, r.ProjectID, healthy.Snapshot); err != nil {
+				return out, err
+			}
 			out.State = "running"
 			out.DeployedOperationID = healthy.OperationID
 		}
@@ -166,10 +180,6 @@ func (s *PostgresStore) RequestHostingStackStop(ctx context.Context, id, resourc
 			return zero, err
 		}
 		if r.Generation != in.ExpectedGeneration {
-			return zero, ErrConflict
-		}
-		var source domain.ResourceSource
-		if json.Unmarshal(r.Source, &source) != nil || source.Kind != "compose" {
 			return zero, ErrConflict
 		}
 		state, err := q.LockObservationSettledState(ctx, r.BindingID)
@@ -448,4 +458,31 @@ func (s *PostgresStore) recordStackStopObservation(ctx context.Context, tx pgx.T
 		return op, err
 	}
 	return out, tx.Commit(ctx)
+}
+
+// hostingHistoricalStackSnapshot admits stack metadata from a committed deployment,
+// including a stopped deployment, independently of newer desired Git settings.
+// Callers retain their current actor and destination authorization checks.
+func hostingHistoricalStackSnapshot(ctx context.Context, db sqlcgen.DBTX, resource, project, binding string) (domain.HostingSnapshot, error) {
+	var healthy domain.HostingHealthy
+	stopped, err := readStackStopped(ctx, db, binding)
+	if err != nil {
+		return domain.HostingSnapshot{}, err
+	}
+	if stopped != nil {
+		healthy = stopped.Target
+	} else {
+		raw, err := sqlcgen.New(db).GetHostingHealthy(ctx, binding)
+		if err != nil {
+			return domain.HostingSnapshot{}, hostingError(err)
+		}
+		if json.Unmarshal(raw, &healthy) != nil {
+			return domain.HostingSnapshot{}, ErrConflict
+		}
+	}
+	if domain.ValidateHostingStackHealthy(healthy) != nil || healthy.Snapshot.BindingID != binding {
+		return domain.HostingSnapshot{}, ErrConflict
+	}
+	_, _, err = hostingSelectedStackDefinition(ctx, db, resource, project, healthy.Snapshot)
+	return healthy.Snapshot, err
 }
