@@ -35,7 +35,7 @@ func (c Client) HostingStorageBackupDownloadPlan(ctx context.Context, a domain.H
 	if err := c.post(databaseBackupProtectedContext(ctx), "/api/v1/runners/hosting/storage-backup-download/plan", a, &out); err != nil {
 		return domain.HostingStorageBackupDownloadPlan{}, storageDownloadError(ctx)
 	}
-	if out.value.Validate() != nil || !time.Now().Before(out.value.ExpiresAt) {
+	if out.value.Validate() != nil || out.value.SessionID != a.OperationID || !time.Now().Before(out.value.ExpiresAt) {
 		return domain.HostingStorageBackupDownloadPlan{}, domain.ErrInvalidStorageBackupDownload
 	}
 	return out.value, nil
@@ -82,7 +82,7 @@ func (r *storageDownloadReader) Read(p []byte) (int, error) {
 // StreamStorageBackupDownload sends one archive once. It never retries bytes;
 // only the caller's ordinary durable run completion may later be replayed.
 func (c Client) StreamStorageBackupDownload(parent context.Context, in domain.HostingStorageBackupDownloadStream, p domain.HostingStorageBackupDownloadPlan, src io.Reader) error {
-	if src == nil || in.Validate() != nil || p.Validate() != nil || in.PlanHash != p.Hash || !time.Now().Before(p.ExpiresAt) {
+	if (src == nil) != (in.FailureCode != "") || in.Validate() != nil || p.Validate() != nil || in.PlanHash != p.Hash || in.OperationID != p.SessionID || !time.Now().Before(p.ExpiresAt) {
 		return domain.ErrInvalidStorageBackupDownload
 	}
 	deadline := time.Now().Add(300 * time.Second)
@@ -116,19 +116,27 @@ func (c Client) StreamStorageBackupDownload(parent context.Context, in domain.Ho
 	if _, err = part.Write(metadata); err != nil {
 		return domain.ErrInvalidStorageBackupDownload
 	}
-	ah := make(textproto.MIMEHeader)
-	ah.Set("Content-Disposition", `form-data; name="archive"; filename="archive.tar"`)
-	ah.Set("Content-Type", "application/x-tar")
-	if _, err = mw.CreatePart(ah); err != nil {
-		return domain.ErrInvalidStorageBackupDownload
+	var body io.Reader
+	if in.FailureCode != "" {
+		if err = mw.Close(); err != nil {
+			return domain.ErrInvalidStorageBackupDownload
+		}
+		body = bytes.NewReader(prefix.Bytes())
+	} else {
+		ah := make(textproto.MIMEHeader)
+		ah.Set("Content-Disposition", `form-data; name="archive"; filename="archive.tar"`)
+		ah.Set("Content-Type", "application/x-tar")
+		if _, err = mw.CreatePart(ah); err != nil {
+			return domain.ErrInvalidStorageBackupDownload
+		}
+		// Keep only bounded multipart framing in memory.
+		start := append([]byte(nil), prefix.Bytes()...)
+		prefix.Reset()
+		if err = mw.Close(); err != nil {
+			return domain.ErrInvalidStorageBackupDownload
+		}
+		body = io.MultiReader(bytes.NewReader(start), &storageDownloadReader{src: src, remaining: p.Blob.SizeBytes, ctx: ctx}, bytes.NewReader(prefix.Bytes()))
 	}
-	// Build only the bounded framing in memory, never the archive itself.
-	start := append([]byte(nil), prefix.Bytes()...)
-	prefix.Reset()
-	if err = mw.Close(); err != nil {
-		return domain.ErrInvalidStorageBackupDownload
-	}
-	body := io.MultiReader(bytes.NewReader(start), &storageDownloadReader{src: src, remaining: p.Blob.SizeBytes, ctx: ctx}, bytes.NewReader(prefix.Bytes()))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Server+"/api/v1/runners/hosting/storage-backup-download/stream", body)
 	if err != nil {
 		return storageDownloadError(ctx)

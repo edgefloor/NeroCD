@@ -69,19 +69,35 @@ func streamStorageBackupDownload(parent context.Context, c runnerclient.Client, 
 	}
 	ctx, cancel := context.WithDeadline(parent, deadline)
 	defer cancel()
+	recheck := func() error {
+		freshCtx, freshCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer freshCancel()
+		fresh, err := c.HostingStorageBackupDownloadPlan(freshCtx, a)
+		if err != nil || domain.HostingDocumentHash(fresh) != domain.HostingDocumentHash(p) {
+			return errStorageDownload
+		}
+		return nil
+	}
+	unavailable := func() error {
+		if recheck() != nil {
+			return errStorageDownload
+		}
+		_ = c.StreamStorageBackupDownload(ctx, domain.HostingStorageBackupDownloadStream{HostingAuthority: a, PlanHash: p.Hash, FailureCode: "archive_unavailable"}, p, nil)
+		return errStorageDownload
+	}
 	store, err := artifactfs.OpenStore(root, domain.HostingStorageArchiveMaxBytes)
 	if err != nil {
-		return errStorageDownload
+		return unavailable()
 	}
 	defer func() { _ = store.Close() }()
 	proof := artifactfs.Ownership{PoolID: p.LocalCopy.PoolID, Device: p.LocalCopy.Device, Inode: p.LocalCopy.Inode, Bytes: p.LocalCopy.Bytes, Created: p.LocalCopy.Created}
 	file, blob, err := store.OpenOwned(ctx, strings.TrimPrefix(p.Blob.SHA256, "sha256:"), proof)
 	if err != nil {
-		return errStorageDownload
+		return unavailable()
 	}
 	defer func() { _ = file.Close() }()
 	if blob.Size != p.Blob.SizeBytes || "sha256:"+blob.SHA256 != p.Blob.SHA256 {
-		return errStorageDownload
+		return unavailable()
 	}
 	// Cancellation owns descriptor closure. Join the callback before returning so
 	// no attempt-owned cleanup survives supervisor teardown.
@@ -92,6 +108,9 @@ func streamStorageBackupDownload(parent context.Context, c runnerclient.Client, 
 			<-closed
 		}
 	}()
+	if recheck() != nil {
+		return errStorageDownload
+	}
 	err = c.StreamStorageBackupDownload(ctx, domain.HostingStorageBackupDownloadStream{HostingAuthority: a, PlanHash: p.Hash}, p, file)
 	if ctx.Err() != nil {
 		return ctx.Err()
