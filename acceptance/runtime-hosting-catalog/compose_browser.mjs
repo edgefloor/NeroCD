@@ -447,20 +447,22 @@ try {
     step = "select_saved_compose_volume_schedule";
     await volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true}).click();
   } catch (error) {
-    // Only bounded state from this failed selection enters the safe receipt.
-    safe.volume_schedule_run_region_count = await volumeSchedules.count();
-    const savedButton = volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true});
-    safe.volume_schedule_run_button_count = await savedButton.count();
-    if (safe.volume_schedule_run_button_count === 1)
-      safe.volume_schedule_run_button_disabled = await savedButton.isDisabled();
-    const text = await application.innerText().catch(() => "");
-    safe.volume_schedule_run_error_category = [
-      ["Schedule metadata is unavailable.", "schedule_metadata_unavailable"],
-      ["Compose backup access is unavailable.", "compose_backup_access_unavailable"],
-      ["Deployment permission is unavailable.", "deployment_permission_unavailable"],
-      ["Deployment access is pending or unavailable.", "deployment_access_pending"],
-      ["Unable to refresh deployment information.", "deployment_information_unavailable"],
-    ].find(([message]) => text.includes(message))?.[1] ?? "unclassified";
+    // Diagnostic reads are immediate and best effort; retain the workflow error.
+    try {
+      safe.volume_schedule_run_region_count = await volumeSchedules.count();
+      const savedButton = volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true});
+      safe.volume_schedule_run_button_count = await savedButton.count();
+      const disabled = await savedButton.evaluateAll(buttons => buttons.length === 1 ? buttons[0].matches(":disabled") : undefined);
+      if (disabled !== undefined) safe.volume_schedule_run_button_disabled = disabled;
+      const text = await application.evaluateAll(nodes => nodes.map(node => node.textContent ?? "").join("\n"));
+      safe.volume_schedule_run_error_category = [
+        ["Schedule metadata is unavailable.", "schedule_metadata_unavailable"],
+        ["Compose backup access is unavailable.", "compose_backup_access_unavailable"],
+        ["Deployment permission is unavailable.", "deployment_permission_unavailable"],
+        ["Deployment access is pending or unavailable.", "deployment_access_pending"],
+        ["Unable to refresh deployment information.", "deployment_information_unavailable"],
+      ].find(([message]) => text.includes(message))?.[1] ?? "unclassified";
+    } catch {}
     throw error;
   }
   step = "enable_saved_compose_volume_schedule_draft";
