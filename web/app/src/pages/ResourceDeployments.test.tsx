@@ -81,6 +81,7 @@ test("storage receipt retry survives history acquiring the admitted operation mu
   const admitted = { ...operation, mutation_hold: true, snapshot: { ...operation.snapshot, storage } };
   let held = false, submissions = 0;
   const fetch = backend((url, init) => {
+    if (url.endsWith("/stack-lifecycle")) return json({ resource_id: "resource", resource_generation: 1, state: "unavailable" });
     if (url.endsWith("/storage-deployment-options")) return json(options);
     if (url.endsWith("/deployments") && init.method === "POST") {
       if (++submissions === 1) { held = true; throw new TypeError("accepted response lost"); }
@@ -722,4 +723,27 @@ test("Compose review permission denial clears deployment drafts", async () => {
   await screen.findByText(/Deployment permission is unavailable/);
   expect(screen.queryByRole("region", { name: "Saved Compose deployment review" })).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+});
+
+test("Start reviews saved configuration and freezes the exact stopped reference", async () => {
+  let attempts = 0;
+  const fetch = composeBackend(true, (url, init) => {
+    if (url.endsWith("/stack-lifecycle")) return json({ resource_id: "resource", resource_generation: 1, state: "stopped", deployed_operation_id: "hop_old", stop_operation_id: "stop_one" });
+    if (url.endsWith("/storage-deployment-options")) return json({ ...stackOptions, stopped_operation_id: "stop_one", reason: "available", previous_healthy_operation_id: "hop_old", host_port: 8080, container_port: 3000, readiness: { path: "/ready", timeout_seconds: 20 } });
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      if (++attempts === 1) throw new TypeError("lost receipt");
+      const input = JSON.parse(String(init.body));
+      return json({ ...operation, snapshot: { ...operation.snapshot, stack: stackRef, stack_stopped_operation_id: "stop_one", host_port: input.host_port, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" } } }, 202);
+    }
+  });
+  setup("maintainer", [], false, compose);
+  fireEvent.click(await screen.findByRole("button", { name: "Review current Compose start" }));
+  await screen.findByText(/Starts from recorded stop operation stop_one/);
+  fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
+  fireEvent.click(screen.getByRole("button", { name: "Start reviewed Compose" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+  expect(JSON.parse(String(writes[0]![1].body))).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, managed_stack: { acknowledge_interruption: true, expected_stopped_operation_id: "stop_one" } });
 });

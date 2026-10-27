@@ -6,8 +6,13 @@ import { ApiError } from "./errors";
 import { getResourceBinding } from "./destinations";
 
 export type HostingBuildDeploymentInput = components["schemas"]["HostingBuildDeploymentInput"];
-export type HostingDeploymentInput = components["schemas"]["HostingDeploymentInput"];
-export type HostingOperation = components["schemas"]["HostingOperation"];
+export type HostingDeploymentInput = components["schemas"]["HostingDeploymentInput"] & { managed_stack?: { acknowledge_interruption: boolean; expected_stopped_operation_id?: string } };
+export type HostingOperation = components["schemas"]["HostingOperation"] & {
+  stack_stop_plan?: { target: components["schemas"]["HostingHealthy"]; target_plan: components["schemas"]["HostingApplyPlan"]; compiler_version: string; hash: string };
+  snapshot: { stack_stopped_operation_id?: string };
+  plan?: { previous_stopped?: { stop_operation_id: string; target: components["schemas"]["HostingHealthy"] } };
+  result?: { stack_stopped?: boolean };
+};
 export type HostingOperationList = components["schemas"]["HostingOperationList"];
 export type HostingCleanupInput = components["schemas"]["HostingCleanupInput"];
 export type HostingRetainedRelease = components["schemas"]["HostingRetainedRelease"];

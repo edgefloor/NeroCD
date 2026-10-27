@@ -31,6 +31,7 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
   const request = useRef<AbortController | null>(null);
   useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
   const shown = review?.options ?? options;
+  const starting = Boolean(shown.stopped_operation_id);
   const initial = shown.reason === "initial_deployment";
   const paused = blocked || restoreHeld;
   async function prepare() {
@@ -53,7 +54,7 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
         expected_generation: current.resource_generation,
         ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}),
         idempotency_key: crypto.randomUUID(),
-        managed_stack: { acknowledge_interruption: true },
+        managed_stack: { acknowledge_interruption: true, ...(current.stopped_operation_id ? { expected_stopped_operation_id: current.stopped_operation_id } : {}) },
         container_port: first ? source.container_port : current.container_port!,
         ...(first ? hostPort === "" ? {} : { host_port: Number(hostPort) } : { host_port: current.host_port! }),
         readiness,
@@ -74,7 +75,9 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
       const operation = await boundedStorageRequest((signal) => requestHostingDeployment(resource.id, review.input, { signal }), controller.signal);
       if (!active.current || controller.signal.aborted) return;
       const stackRef = "stack" in operation.snapshot ? operation.snapshot.stack : undefined;
-      if (!operation.id || operation.resource_id !== scope.resource || operation.project_id !== scope.project || operation.binding_id !== bindingID ||
+      if (operation.snapshot.stack_stopped_operation_id !== review.input.managed_stack?.expected_stopped_operation_id ||
+        operation.plan && review.input.managed_stack?.expected_stopped_operation_id && operation.plan.previous_stopped?.stop_operation_id !== review.input.managed_stack.expected_stopped_operation_id ||
+        !operation.id || operation.resource_id !== scope.resource || operation.project_id !== scope.project || operation.binding_id !== bindingID ||
         operation.snapshot.resource_generation !== review.input.expected_generation ||
         stackRef?.generation !== review.options.stack_ref?.generation || stackRef?.hash !== review.options.stack_ref?.hash ||
         (operation.snapshot.runtime_configuration?.generation ?? 0) !== (review.input.expected_runtime_configuration_generation ?? 0) ||
@@ -100,9 +103,10 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
   }
   if (!source) return null;
   return <section className="min-w-0 space-y-3 rounded-lg border p-3" aria-label="Saved Compose deployment review">
-    <h6 className="font-medium">Deploy saved Compose</h6>
+    <h6 className="font-medium">{starting ? "Start saved Compose" : "Deploy saved Compose"}</h6>
     <p>Deploy all saved components together. Public component: {source.public_component}, container port {source.container_port}.</p>
     <p className="text-sm">Save referenced variables and managed secret versions in Runtime configuration before deployment. Required values are checked before the current stack stops. Secret values are never shown here.</p>
+    {starting ? <p className="text-sm">Start recreates containers from the current saved configuration and reuses retained named volumes. Container IDs may change. Review variables, managed secret references and HTTPS routes before starting.</p> : null}
     {initial ? <><p className="text-sm">The first deployment creates owned named volumes as needed and retains existing data. Configure the existing HTTPS route after the stack settles healthy.</p>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label htmlFor={`${id}-host`}>Runner-local host port (optional)<Input id={`${id}-host`} type="number" min={1024} max={65535} value={hostPort} disabled={busy || Boolean(review)} onChange={(e) => setHostPort(e.target.value)} placeholder="Automatic allocation" /></label>
@@ -110,16 +114,17 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
         <label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={busy || Boolean(review)} onChange={(e) => setTimeout(e.target.value)} /></label>
       </div></> : <p className="text-sm">Redeployment stops the previous stack before replacement readiness and reuses its port and retained volumes. Existing selected HTTPS routes are carried forward through the server's continuity plan. Data writes are not rolled back.</p>}
     {!options.available ? <p role="status">Compose deployment unavailable: {options.reason}. Refresh deployment information after resolving this condition.</p> : null}
-    <Button type="button" variant="outline" disabled={busy || paused || mutationHeld || !bindingID || sent && !conflict} onClick={() => void prepare()}>Review current Compose deployment</Button>
+    <Button type="button" variant="outline" disabled={busy || paused || mutationHeld || !bindingID || sent && !conflict} onClick={() => void prepare()}>{starting ? "Review current Compose start" : "Review current Compose deployment"}</Button>
     {review ? <section className="min-w-0 space-y-2 break-all" aria-label="Reviewed Compose deployment">
       <p>Saved generation {review.input.expected_generation} · Compose generation {review.options.stack_ref?.generation} · runtime generation {review.input.expected_runtime_configuration_generation ?? 0}</p>
       <p>Compose hash: {review.options.stack_ref?.hash}</p>
       <p>Runtime configuration: {review.runtimeNames.length ? review.runtimeNames.join(", ") : "No saved variables or managed secret references. Compose required values must be supplied before deployment."}</p>
       <p>Runner-local port {typeof review.input.host_port === "number" ? review.input.host_port : "automatically allocated"} → {review.input.container_port}, readiness {review.input.readiness.path}.</p>
+      {review.options.stopped_operation_id ? <p>Starts from recorded stop operation {review.options.stopped_operation_id}.</p> : null}
       {review.options.previous_healthy_operation_id ? <p>Replaces healthy operation {review.options.previous_healthy_operation_id}.</p> : null}
       {review.options.routes.map((route) => <p key={route.id}>Keep HTTPS route {route.hostname}{route.path_prefix} · version {route.version}.</p>)}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || sent} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed this saved Compose configuration and acknowledge service interruption during replacement. Named volumes are retained.</span></label>
-      <Button type="button" disabled={busy || paused || conflict || !confirmed || mutationHeld && !sent} onClick={() => void submit()}>{sent ? "Retry identical Compose deployment request" : "Deploy reviewed Compose"}</Button>
+      <Button type="button" disabled={busy || paused || conflict || !confirmed || mutationHeld && !sent} onClick={() => void submit()}>{sent ? "Retry identical Compose deployment request" : starting ? "Start reviewed Compose" : "Deploy reviewed Compose"}</Button>
       {sent ? <p className="text-xs">Request key {review.input.idempotency_key}. The reviewed body is retained for an identical retry.</p> : null}
     </section> : null}
     {accepted ? <p role="status">Deployment request accepted: {accepted}. Inspect the operation for component readiness and public route continuity.</p> : null}

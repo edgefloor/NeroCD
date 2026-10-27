@@ -11,6 +11,8 @@ import { canMaintainProject } from "@/lib/permissions";
 import { maximumPageOffset } from "@/router/search";
 import { boundedStorageRequest, getStorageDeploymentOptions, storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import { StorageContinuityDetail, StorageDeploymentReview } from "./StorageDeploymentReview";
+import { StackLifecycle } from "./StackLifecycle";
+import { stackLifecycleKey } from "@/api/hosting-stack-lifecycle";
 import { StackComponentStatus, StackDeploymentReview } from "./StackDeploymentReview";
 
 const terminalStates = new Set(["succeeded", "failed", "canceled"]);
@@ -69,6 +71,7 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
       {stackRef ? <p className="break-all text-sm">Saved Compose generation {stackRef.generation} · {stackRef.hash}</p> : null}
       <StackComponentStatus operation={operation} />
       {operation.snapshot.storage_route_continuity ? <StorageContinuityDetail scope={{ actor, project: projectID, resource: resourceID }} operation={operationID} /> : null}
+      {operation.stack_stop_plan ? <p>Compose Stop · target {operation.stack_stop_plan.target.operation_id}. Containers are removed; named volumes are retained.</p> : null}
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
@@ -87,7 +90,7 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
       {operation.state === "cancel_requested" || operation.state === "reconciliation_required" ? <p className="text-sm">Apply may have started. Cancellation is not proof of rollback or a stopped workload. An owner can request reconciliation.</p> : null}
       {operation.result ? <section className="space-y-1 text-sm" aria-label={operation.cleanup_plan ? "Recorded cleanup result" : "Recorded deployment result"}>
         <h6 className="font-medium">{operation.cleanup_plan ? "Recorded cleanup result" : "Recorded deployment result"}</h6><p>Outcome: {operation.result.outcome}</p>
-        {operation.cleanup_plan ? <p>Cleanup outcome is recorded for the exact retained container. Data volumes and globally shared images are not deleted by this action.</p> : <p>Readiness recorded at completion: {operation.result.ready ? "passed" : "not confirmed"}.</p>}
+        {operation.stack_stop_plan ? <p>Recorded stopped: {operation.result.stack_stopped ? "yes" : "not confirmed"}. Named volumes are retained.</p> : operation.cleanup_plan ? <p>Cleanup outcome is recorded for the exact retained container. Data volumes and globally shared images are not deleted by this action.</p> : <p>Readiness recorded at completion: {operation.result.ready ? "passed" : "not confirmed"}.</p>}
         {operation.result.restored ? <p>The result records restoration of the previous workload.</p> : null}
         {operation.result.uncertain ? <p>The result is uncertain; do not assume the workload is running or stopped.</p> : null}
       </section> : null}
@@ -236,7 +239,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     if (retired?.aborted) controller.abort();
     retired?.addEventListener("abort", abort, { once: true });
     refreshRequests.current.add(controller);
-    const keys = [hostingDeploymentKeys.history(resource.project_id, resource.id, actor), hostingDeploymentKeys.retained(resource.project_id, resource.id, actor)];
+    const keys = [hostingDeploymentKeys.history(resource.project_id, resource.id, actor), hostingDeploymentKeys.retained(resource.project_id, resource.id, actor), ...(resource.source.kind === "compose" ? [stackLifecycleKey({ actor, project: resource.project_id, resource: resource.id }), storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }).queryKey] : [])];
     try {
       await boundedStorageRequest(async (signal) => {
         const cancel = () => { for (const queryKey of keys) void client.cancelQueries({ queryKey }); };
@@ -331,10 +334,11 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data && resource.source.kind !== "compose" ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {resource.source.kind === "compose" ? <>
+      <StackLifecycle key={binding.data?.id ?? "unbound"} scope={{ actor, project: resource.project_id, resource: resource.id }} generation={resource.generation} writable={writable} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} />
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
       {binding.data && storageOptions.isPending ? <p role="status">Loading Compose deployment options...</p> : null}
       {storageOptions.isError ? <><p role="alert">Compose deployment authority is unavailable. Refresh before reviewing a deployment.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry Compose deployment options</Button></> : null}
-      {writable && storageOptions.data && !storageOptions.isError ? <StackDeploymentReview key={binding.data?.id ?? "unbound"} resource={resource} scope={{ actor, project: resource.project_id, resource: resource.id }} bindingID={binding.data?.id ?? ""} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
+      {writable && storageOptions.data && !storageOptions.isError ? <StackDeploymentReview key={JSON.stringify([binding.data?.id, storageOptions.data.stopped_operation_id])} resource={resource} scope={{ actor, project: resource.project_id, resource: resource.id }} bindingID={binding.data?.id ?? ""} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
       {!writable ? <p className="text-xs text-muted-foreground">Project maintainer access is required to deploy saved Compose.</p> : null}
     </> : null}
     {resource.source.kind === "image" && storageOptions.isPending ? <p role="status">Checking authoritative storage deployment options...</p> : null}

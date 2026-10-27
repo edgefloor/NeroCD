@@ -6,6 +6,7 @@ import { scopedStorage, type HostingStorage } from "./hosting-storage";
 // Older controllers may omit the new review field. Missing evidence never
 // enables a connected storage deployment.
 export type StorageDeploymentOptions = Omit<components["schemas"]["HostingStorageDeploymentOptions"], "application_database_storage"> & {
+  stopped_operation_id?: string;
   application_database_storage?: components["schemas"]["HostingStorageDeploymentOptions"]["application_database_storage"];
 };
 export type StorageContinuityStatus =
@@ -136,6 +137,7 @@ export function validateStorageDeploymentOptions(
       "reason",
       "routes",
       "storage_route_continuity",
+      ...(Object.hasOwn(value, "stopped_operation_id") ? ["stopped_operation_id"] : []),
       ...(Object.hasOwn(value, "stack_ref") ? ["stack_ref"] : []),
       ...(Object.hasOwn(value, "application_database_storage") ? ["application_database_storage"] : []),
     ]) ||
@@ -149,6 +151,7 @@ export function validateStorageDeploymentOptions(
     value.routes.length > 32
   )
     fail();
+  if (value.stopped_operation_id !== undefined && (!identifier(value.stopped_operation_id) || !value.stack_ref || !value.previous_healthy_operation_id || value.reason === "initial_deployment")) fail();
   if (value.stack_ref !== undefined &&
     (!closed(value.stack_ref, ["generation", "hash"]) ||
       !positive(value.stack_ref.generation) ||
