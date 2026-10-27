@@ -255,14 +255,14 @@ func TestRuntimeLogProtectedTransportAndCapabilityParity(t *testing.T) {
 			t.Fatal("unverified append transport accepted")
 		}
 	}
-	for _, caps := range [][]string{{domain.HostingRuntimeLogsCapability}, {domain.HostingRuntimeLogsCapability, "shell"}, {"image_deploy"}} {
+	for _, caps := range [][]string{{domain.HostingRuntimeLogsCapability}, {domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability}, {domain.HostingStackRuntimeLogsCapability}, {domain.HostingRuntimeLogsCapability, "shell"}, {"image_deploy"}} {
 		identity := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_logs", "capabilities": caps})
 		}))
 		client = New(identity.URL, "token")
 		client.HTTP = identity.Client()
 		_, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{RuntimeLogs: true})
-		if (err == nil) != (len(caps) == 1 && caps[0] == domain.HostingRuntimeLogsCapability) {
+		if (err == nil) != (caps[0] == domain.HostingRuntimeLogsCapability && (len(caps) == 1 || caps[1] == domain.HostingStackRuntimeLogsCapability)) {
 			t.Fatal("persisted capability parity failed")
 		}
 		if caps[0] == domain.HostingRuntimeLogsCapability {

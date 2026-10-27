@@ -457,7 +457,7 @@ done
 [[ "$ready" == true ]]
 postgres_capacity before-test
 if [[ "$managed_compose" == true ]]; then
- host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgresHostingStackAuthorityVolumesAndUncertainReplacement$' -test.timeout=3m > "$evidence/stack-store-tests.log" 2>&1
+ host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgresHosting(StackAuthorityVolumesAndUncertainReplacement|StackRuntimeLogTargetAndReplacement|RuntimeLog)' -test.timeout=3m > "$evidence/stack-store-tests.log" 2>&1
 fi
 deletion_mode=''
 if [[ "$deletion" == true ]]; then deletion_mode=disposable-dind; fi

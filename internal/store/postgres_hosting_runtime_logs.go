@@ -40,6 +40,26 @@ func runtimeLogTarget(h domain.HostingHealthy) domain.HostingRuntimeLogTarget {
 	return domain.HostingRuntimeLogTarget{ResourceID: s.ResourceID, BindingID: s.BindingID, DestinationID: s.DestinationID, ServerID: s.ServerID, RunnerID: s.RunnerID, OperationID: h.OperationID, DaemonID: h.Release.DaemonID, ContainerID: h.ContainerID, ImageID: h.Release.ImageID, ReleaseHash: h.Release.Hash, PlanHash: h.PlanHash, RuntimeNamespace: s.RuntimeNamespace}
 }
 
+func runtimeLogStackTarget(h domain.HostingHealthy, component string) (domain.HostingRuntimeLogTarget, error) {
+	if domain.ValidateHostingStackHealthy(h) != nil {
+		return domain.HostingRuntimeLogTarget{}, ErrConflict
+	}
+	for _, item := range h.Stack.Components {
+		if item.Component != component {
+			continue
+		}
+		target := runtimeLogTarget(h)
+		target.Component = component
+		target.ContainerName = domain.HostingStackObjectID(target.BindingID, "component", component)
+		target.ContainerID, target.ImageID = item.ContainerID, item.ImageID
+		if target.Validate() != nil {
+			return domain.HostingRuntimeLogTarget{}, ErrConflict
+		}
+		return target, nil
+	}
+	return domain.HostingRuntimeLogTarget{}, ErrConflict
+}
+
 func runtimeLogPublic(row sqlcgen.HostingRuntimeLogSession, now time.Time) (domain.HostingRuntimeLogSession, error) {
 	var target domain.HostingRuntimeLogTarget
 	if json.Unmarshal(row.Target, &target) != nil {
@@ -140,7 +160,7 @@ func lockRuntimeLogOriginalAuthority(ctx context.Context, tx pgx.Tx, before sqlc
 	if err != nil {
 		return before, false, err
 	}
-	if current.Status != "active" || current.TokenHash != before.CredentialHash || !slices.Contains(current.Capabilities, domain.HostingRuntimeLogsCapability) || slices.Contains(current.Capabilities, "shell") {
+	if current.Status != "active" || current.TokenHash != before.CredentialHash || !slices.Contains(current.Capabilities, domain.HostingRuntimeLogsCapability) || target.Component != "" && !slices.Contains(current.Capabilities, domain.HostingStackRuntimeLogsCapability) || slices.Contains(current.Capabilities, "shell") {
 		return before, false, auth.ErrForbidden
 	}
 	enrollment, err := q.LockObservationEnrollment(ctx, sqlcgen.LockObservationEnrollmentParams{RunnerID: target.RunnerID, CredentialHash: &current.TokenHash})
@@ -151,7 +171,12 @@ func lockRuntimeLogOriginalAuthority(ctx context.Context, tx pgx.Tx, before sqlc
 		return before, false, auth.ErrForbidden
 	}
 	var healthy domain.HostingHealthy
-	if len(state.Healthy) == 0 || json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) != nil || runtimeLogTarget(healthy) != target {
+	if len(state.Healthy) == 0 || json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) != nil {
+		changed = true
+	} else if target.Component != "" {
+		selected, selectErr := runtimeLogStackTarget(healthy, target.Component)
+		changed = changed || state.HoldOperationID != nil || selectErr != nil || selected != target
+	} else if runtimeLogTarget(healthy) != target {
 		changed = true
 	}
 	row, err := q.LockRuntimeLogSession(ctx, before.ID)
@@ -231,7 +256,11 @@ func (s *PostgresStore) OpenRuntimeLogSession(ctx context.Context, actor, resour
 		if in.RequestExpiresAt.After(now.Add(30 * time.Second)) {
 			return zero, ErrConflict
 		}
-		p, err := lockHostingSettledPlacement(ctx, tx, resource, "", "", domain.HostingRuntimeLogsCapability)
+		capability := domain.HostingRuntimeLogsCapability
+		if in.Component != "" {
+			capability = domain.HostingStackRuntimeLogsCapability
+		}
+		p, err := lockHostingSettledPlacement(ctx, tx, resource, "", "", capability)
 		if err != nil {
 			return zero, err
 		}
@@ -253,6 +282,15 @@ func (s *PostgresStore) OpenRuntimeLogSession(ctx context.Context, actor, resour
 			return zero, err
 		}
 		targetIdentity := runtimeLogTarget(*p.healthy)
+		if in.Component != "" {
+			if p.healthy.OperationID != in.ExpectedOperationID {
+				return zero, ErrConflict
+			}
+			targetIdentity, err = runtimeLogStackTarget(*p.healthy, in.Component)
+			if err != nil {
+				return zero, err
+			}
+		}
 		if err = targetIdentity.Validate(); err != nil {
 			return zero, ErrConflict
 		}
@@ -566,6 +604,19 @@ func (s *PostgresStore) AppendRuntimeLogs(ctx context.Context, runner, credentia
 		now, err := runtimeLogPublicationDeadline(ctx, tx, row)
 		if err != nil {
 			return out, err
+		}
+		var target domain.HostingRuntimeLogTarget
+		if json.Unmarshal(row.Target, &target) != nil {
+			return out, ErrConflict
+		}
+		component := target.Component
+		if component == "" {
+			component = "application"
+		}
+		for _, event := range in.Events {
+			if event.Component != component {
+				return out, ErrConflict
+			}
 		}
 		if row.InstanceID != in.InstanceID || row.CollectionEpoch != in.CollectionEpoch {
 			if err = q.MarkRuntimeLogGap(ctx, row.ID); err != nil {

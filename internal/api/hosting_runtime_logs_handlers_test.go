@@ -60,6 +60,9 @@ func TestHostingRuntimeLogRegisteredHTTPStrictAuthAndCookieRevocation(t *testing
 	if w := call("POST", openPath, token, string(raw), 503); w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("cache policy missing")
 	}
+	selected := strings.TrimSuffix(string(raw), "}") + `,"component":"init","expected_operation_id":"hop_settled"}`
+	call("POST", openPath, token, selected, 503)
+	call("POST", openPath, token, strings.TrimSuffix(string(raw), "}")+`,"component":"init"}`, 400)
 	for _, body := range []string{`{"request_id":"a","request_id":"b"}`, strings.Replace(string(raw), `"request_id":`, `"Request_ID":`, 1), strings.TrimSuffix(string(raw), "}") + `,"container_id":"foreign"}`, `null`, string(raw) + ` {}`} {
 		call("POST", openPath, token, body, 400)
 	}

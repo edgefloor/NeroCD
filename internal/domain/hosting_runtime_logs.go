@@ -16,6 +16,7 @@ import (
 // Runtime log limits bound demand, collector authority, plaintext and responses.
 const (
 	HostingRuntimeLogsCapability      = "hosting_runtime_logs_v1"
+	HostingStackRuntimeLogsCapability = "hosting_runtime_stack_logs_v1"
 	HostingRuntimeLogDemandSeconds    = 30
 	HostingRuntimeLogLeaseSeconds     = 10
 	HostingRuntimeLogRetentionSeconds = 300
@@ -31,8 +32,10 @@ var runtimeLogRandomID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // HostingRuntimeLogOpen freezes a short admission deadline across retries.
 type HostingRuntimeLogOpen struct {
-	RequestID        string    `json:"request_id"`
-	RequestExpiresAt time.Time `json:"request_expires_at"`
+	RequestID           string    `json:"request_id"`
+	RequestExpiresAt    time.Time `json:"request_expires_at"`
+	Component           string    `json:"component,omitempty"`
+	ExpectedOperationID string    `json:"expected_operation_id,omitempty"`
 }
 
 // Canonical validates the stable request identity; admission checks database time.
@@ -40,12 +43,17 @@ func (in HostingRuntimeLogOpen) Canonical() (HostingRuntimeLogOpen, error) {
 	if !runtimeLogRandomID.MatchString(in.RequestID) || in.RequestExpiresAt.IsZero() || in.RequestExpiresAt.Year() < 1 || in.RequestExpiresAt.Year() > 9999 {
 		return HostingRuntimeLogOpen{}, errors.New("invalid runtime log request")
 	}
+	if in.Component == "" && in.ExpectedOperationID != "" || in.Component != "" && (!stackName.MatchString(in.Component) || !observationID(in.ExpectedOperationID, false)) {
+		return HostingRuntimeLogOpen{}, errors.New("invalid runtime log component selection")
+	}
 	in.RequestExpiresAt = in.RequestExpiresAt.UTC().Truncate(time.Microsecond)
 	return in, nil
 }
 
 // HostingRuntimeLogTarget is the immutable settled container chosen by the server.
 type HostingRuntimeLogTarget struct {
+	Component        string `json:"component,omitempty"`
+	ContainerName    string `json:"container_name,omitempty"`
 	ResourceID       string `json:"resource_id"`
 	BindingID        string `json:"binding_id"`
 	DestinationID    string `json:"destination_id"`
@@ -62,6 +70,9 @@ type HostingRuntimeLogTarget struct {
 
 // Validate bounds every exact container identity without accepting runtime selectors.
 func (target HostingRuntimeLogTarget) Validate() error {
+	if target.Component == "" && target.ContainerName != "" || target.Component != "" && (!stackName.MatchString(target.Component) || target.ContainerName != HostingStackObjectID(target.BindingID, "component", target.Component)) {
+		return errors.New("invalid runtime log component identity")
+	}
 	for _, value := range []string{target.ResourceID, target.BindingID, target.DestinationID, target.ServerID, target.RunnerID, target.OperationID, target.DaemonID, target.ContainerID, target.RuntimeNamespace} {
 		if !observationID(value, false) {
 			return errors.New("invalid runtime log target identity")
@@ -156,7 +167,7 @@ func (in HostingRuntimeLogBatch) Canonical() (HostingRuntimeLogBatch, error) {
 	out := in
 	out.Events = append([]HostingRuntimeLogEvent{}, in.Events...)
 	for i, event := range out.Events {
-		if event.Component != "application" || event.Stream != "stdout" && event.Stream != "stderr" && event.Stream != "combined" || len(event.Message) > HostingRuntimeLogMessageLimit || !utf8.ValidString(event.Message) || strings.ContainsRune(event.Message, 0) {
+		if !stackName.MatchString(event.Component) || event.Stream != "stdout" && event.Stream != "stderr" && event.Stream != "combined" || len(event.Message) > HostingRuntimeLogMessageLimit || !utf8.ValidString(event.Message) || strings.ContainsRune(event.Message, 0) {
 			return HostingRuntimeLogBatch{}, errors.New("invalid runtime log event")
 		}
 		if event.SourceTimestamp != nil {

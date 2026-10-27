@@ -259,6 +259,22 @@ try {
   }
   safe.responsive_widths = [1280, 320, 390, 430];
   await page.setViewportSize({ width: 1280, height: 900 });
+  step = "follow_component_logs";
+  const logRegion = application.getByRole("region", { name: `Runtime logs for ${applicationName}`, exact: true });
+  const selector = logRegion.getByRole("combobox", { name: "Compose component", exact: true });
+  for (const component of ["vikunja", "postgresql", "init"]) {
+    await selector.selectOption(component);
+    const opened = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/runtime-log-sessions`);
+    await logRegion.getByRole("button", { name: "Follow runtime logs", exact: true }).click();
+    const session = await checkedResponse(opened, 200);
+    if (session.target.component !== component || session.target.operation_id !== firstOperation || !session.target.container_name) throw Error("component target identity missing");
+    await expect(logRegion).toContainText(session.id);
+    const closed = page.waitForResponse((r) => r.request().method() === "DELETE" && new URL(r.url()).pathname === `/api/v1/runtime-log-sessions/${session.id}`);
+    await logRegion.getByRole("button", { name: "Stop following", exact: true }).click();
+    await checkedResponse(closed, 200);
+    await selector.selectOption("");
+  }
+  safe.browser_component_log_selection_follow_close = true;
   safe.healthy_components = true;
   await report("healthy", resourceID);
   await state("route");

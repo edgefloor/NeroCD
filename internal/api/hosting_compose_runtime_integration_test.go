@@ -141,11 +141,18 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	verifyHTTPS()
 	b.set("app_create", resourceID)
 	taskID := b.await(t, "app_created")
+	logSession := composeRuntimeFollow(t, f, resourceID, first, "vikunja", false)
 	b.set("redeploy", resourceID)
 	second := f.await(b.await(t, "redeployed"), "succeeded")
 	if second.Plan == nil || second.Result == nil || second.Result.Stack == nil || second.Snapshot.HostPort != first.Snapshot.HostPort || second.Snapshot.RuntimeConfiguration != first.Snapshot.RuntimeConfiguration || !reflect.DeepEqual(second.Result.Stack.Volumes, first.Result.Stack.Volumes) || second.Result.Stack.NetworkID != first.Result.Stack.NetworkID {
 		t.Fatal("redeploy changed port, runtime references, volume origins or private network")
 	}
+	logPage := storageRuntimeJSON[domain.HostingRuntimeLogPage](f, "GET", "/api/v1/runtime-log-sessions/"+logSession.ID+"/logs", nil, 200)
+	if logPage.Session.State != "target_changed" || logPage.Session.Target != logSession.Target {
+		t.Fatal("component follow silently retargeted on redeploy")
+	}
+	composeRuntimeFollow(t, f, resourceID, second, "postgresql", true)
+	composeRuntimeFollow(t, f, resourceID, second, "init", true)
 	verify(second)
 	if composeRuntimeUploadOwnership(t, second) != uploadOwnership {
 		t.Fatal("redeploy changed retained upload directory ownership or mode")
@@ -248,4 +255,41 @@ func composeRuntimeWriterBarrier(t *testing.T, previous, current domain.HostingO
 			t.Fatal("new stack writer started before every predecessor stopped")
 		}
 	}
+}
+
+// Empty init output is legitimate; following is still bound to its retained ID.
+func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID string, operation domain.HostingOperation, component string, closeSession bool) domain.HostingRuntimeLogSession {
+	t.Helper()
+	requestID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if component == "postgresql" {
+		requestID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	}
+	if component == "init" {
+		requestID = "cccccccccccccccccccccccccccccccc"
+	}
+	input := domain.HostingRuntimeLogOpen{RequestID: requestID, RequestExpiresAt: time.Now().UTC().Add(25 * time.Second), Component: component, ExpectedOperationID: operation.ID}
+	session := storageRuntimeJSON[domain.HostingRuntimeLogSession](f, "POST", "/api/v1/resources/"+resourceID+"/runtime-log-sessions", input, 200)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		page := storageRuntimeJSON[domain.HostingRuntimeLogPage](f, "GET", "/api/v1/runtime-log-sessions/"+session.ID+"/logs", nil, 200)
+		if page.Session.Target.Component != component || page.Session.Target.OperationID != operation.ID {
+			t.Fatal("component log target changed")
+		}
+		for _, event := range page.Items {
+			if event.Component != component {
+				t.Fatal("cross-component log output")
+			}
+		}
+		if page.Session.State == "following" && (component == "init" || len(page.Items) > 0) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("component collector did not follow/read", component, page.Session.State)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if closeSession {
+		storageRuntimeJSON[domain.HostingRuntimeLogSession](f, "DELETE", "/api/v1/runtime-log-sessions/"+session.ID, nil, 200)
+	}
+	return session
 }

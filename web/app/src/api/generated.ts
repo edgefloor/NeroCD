@@ -5644,6 +5644,10 @@ export interface components {
             request_id: string;
             /** Format: date-time */
             request_expires_at: string;
+            /** @description Saved Compose component; supply together with expected_operation_id. */
+            component?: string;
+            /** @description Expected current settled Compose operation; never a Docker identifier. */
+            expected_operation_id?: string;
         };
         HostingRuntimeLogTarget: {
             resource_id: string;
@@ -5658,6 +5662,9 @@ export interface components {
             release_hash: string;
             plan_hash: string;
             runtime_namespace: string;
+            component?: string;
+            /** @description Controller-derived exact Compose component name. */
+            container_name?: string;
         };
         HostingRuntimeLogSession: {
             id: string;
@@ -5705,8 +5712,8 @@ export interface components {
             end_of_sweep: boolean;
         };
         HostingRuntimeLogEvent: {
-            /** @enum {string} */
-            component: "application";
+            /** @description Must equal the immutable session target component, or application for legacy single-app sessions. */
+            component: string;
             /** @enum {string} */
             stream: "stdout" | "stderr" | "combined";
             /** @description Sensitive UTF-8 application output, at most16KiB encoded bytes. Known runner bearer redaction is defense in depth; arbitrary application secrets may remain. */
@@ -5744,8 +5751,8 @@ export interface components {
             sequence: number;
             /** Format: date-time */
             received_at: string;
-            /** @enum {string} */
-            component: "application";
+            /** @description Must equal the immutable session target component, or application for legacy single-app sessions. */
+            component: string;
             /** @enum {string} */
             stream: "stdout" | "stderr" | "combined";
             /** @description Sensitive UTF-8 application output, at most16KiB encoded bytes. Known runner bearer redaction is defense in depth; arbitrary application secrets may remain. */

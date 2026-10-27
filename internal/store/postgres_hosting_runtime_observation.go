@@ -124,6 +124,15 @@ func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runne
 		return p, ErrConflict
 	}
 	snap := h.Snapshot
+	// Only the distinct stack-log capability admits whole-stack receipts. The
+	// ordinary observation/single-container path below keeps its original gates.
+	if capability == domain.HostingStackRuntimeLogsCapability {
+		if !slices.Contains(current.Capabilities, domain.HostingRuntimeLogsCapability) || p.mutation || domain.ValidateHostingStackHealthy(h) != nil || snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace {
+			return p, ErrConflict
+		}
+		p.healthy = &h
+		return p, gateErr
+	}
 	if snap.ResourceID != resource || snap.BindingID != p.binding || snap.DestinationID != p.destination || snap.ServerID != p.server || snap.RunnerID != p.runner || snap.RuntimeNamespace != p.namespace || h.OperationID == "" || h.ContainerID == "" || len(h.ContainerID) > 128 || h.PlanHash == "" || snap.HostPort < 1024 || domain.ValidateHostingSnapshotRelease(snap, h.Release) != nil {
 		return p, ErrConflict
 	}

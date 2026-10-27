@@ -177,6 +177,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if logCap != options.RuntimeLogs || logCap && shellCapable {
 		return "", errors.New("authenticated runtime log capability does not match explicit configuration")
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingStackRuntimeLogsCapability && (!options.RuntimeLogs || !logCap || shellCapable) {
+			return "", errors.New("authenticated stack runtime log capability requires configured runtime logs")
+		}
+	}
 	readinessCap := false
 	for _, capability := range result.Capabilities {
 		readinessCap = readinessCap || capability == domain.ServerReadinessCapability

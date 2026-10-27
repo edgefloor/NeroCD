@@ -243,10 +243,16 @@ func (c *runtimeLogCollector) session(parent context.Context, grant runtimeLogGr
 	}
 	queue := runtimeLogQueue{events: make(chan domain.HostingRuntimeLogEvent, 64)}
 	readerDone := make(chan struct{})
+	component := grant.claim.Target.Component
 	go func() {
 		defer close(readerDone)
 		defer func() { _ = body.Close() }()
-		_ = readRuntimeDockerLogs(ctx, body, identity.TTY, c.token, func(event domain.HostingRuntimeLogEvent) error { return queue.push(ctx, event) })
+		_ = readRuntimeDockerLogs(ctx, body, identity.TTY, c.token, func(event domain.HostingRuntimeLogEvent) error {
+			if component != "" {
+				event.Component = component
+			}
+			return queue.push(ctx, event)
+		})
 	}()
 	defer func() { cancel(); _ = body.Close(); <-readerDone }()
 	flush := time.NewTicker(time.Second)

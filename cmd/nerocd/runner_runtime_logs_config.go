@@ -7,11 +7,13 @@ import (
 
 func runnerRuntimeLogsCapabilities(enabled, execute, once bool, complete string, specified bool, capabilities []string) ([]string, error) {
 	hasObservation := false
-	result := make([]string, 0, len(capabilities)+1)
+	hasStack := false
+	result := make([]string, 0, len(capabilities)+2)
 	for _, capability := range capabilities {
 		if capability == domain.HostingRuntimeLogsCapability {
 			hasObservation = true
 		}
+		hasStack = hasStack || capability == domain.HostingStackRuntimeLogsCapability
 		if enabled && capability == "shell" {
 			if specified {
 				return nil, errors.New("hosting runtime logs cannot share explicit shell capability")
@@ -21,8 +23,8 @@ func runnerRuntimeLogsCapabilities(enabled, execute, once bool, complete string,
 		result = append(result, capability)
 	}
 	if !enabled {
-		if hasObservation {
-			return nil, errors.New("hosting_runtime_logs_v1 requires --hosting-runtime-logs")
+		if hasObservation || hasStack {
+			return nil, errors.New("runtime log capabilities require --hosting-runtime-logs")
 		}
 		return capabilities, nil
 	}
@@ -31,6 +33,9 @@ func runnerRuntimeLogsCapabilities(enabled, execute, once bool, complete string,
 	}
 	if !hasObservation {
 		result = append(result, domain.HostingRuntimeLogsCapability)
+	}
+	if !hasStack {
+		result = append(result, domain.HostingStackRuntimeLogsCapability)
 	}
 	return result, nil
 }

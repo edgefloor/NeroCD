@@ -259,7 +259,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingStackCapability)
+			caps = append(caps, domain.HostingStackCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
 		}
 	}
 	f.capabilities = append([]string(nil), caps...)
@@ -377,6 +377,9 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 	command := exec.CommandContext(ctx, "/fixture/nerocd-proxy-fixture", "runner", "--server", f.control.URL, "--credential-file", filepath.Join(f.root, "credential"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "runner"), "--poll-interval", "100ms", "--cancel-poll-interval", "100ms", "--capabilities", strings.Join(capabilities, ","), "--proxy-state-root", filepath.Join(f.root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch")
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		command.Args = append(command.Args, "--hosting-runtime-env")
+	}
+	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+		command.Args = append(command.Args, "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock")
 	}
 	if f.archiveConfig != "" {
 		command.Args = append(command.Args, "--storage-archive-config-file", f.archiveConfig)
