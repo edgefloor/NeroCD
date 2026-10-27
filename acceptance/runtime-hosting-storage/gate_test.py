@@ -1154,7 +1154,7 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
     def test_private_registry_requires_complete_connected_runtime_receipt(self):
         source = Path(__file__).with_name("gate.sh").read_text()
         validator = source.split("<<'CATALOG_BROWSER_PASS'\n", 1)[1].split("\nCATALOG_BROWSER_PASS", 1)[0]
-        required = ["served_assets_match_manifest", "browser_deployment", "registry_credential_selected", "registry_snapshot_pinned"]
+        required = ["served_assets_match_manifest", "browser_deployment", "registry_credential_selected", "registry_snapshot_pinned", "browser_stateless_registry_deployment", "browser_storage_registry_deployment", "browser_route_selection"]
         for kind in ["valid", *required, "false", "numeric", "widths", "intercepted", "skip", "runtime"]:
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

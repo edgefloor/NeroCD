@@ -149,6 +149,37 @@ async function kumaMonitor(p, name) {
   await expect(p.getByRole("cell", { name: "Up", exact: true }).first()).toBeVisible({ timeout: 30000 });
   return id;
 }
+async function submitCatalogRoute(application, name, resourceID, operationID) {
+  const routes = application.getByRole("region", {
+    name: `Routes for ${name}`,
+    exact: true,
+  });
+  await routes
+    .getByRole("button", { name: "Refresh resource routes", exact: true })
+    .click();
+  const routeForm = routes.getByRole("form", {
+    name: `Configure route for ${name}`,
+    exact: true,
+  });
+  await routeForm
+    .getByLabel("Route hostname", { exact: true })
+    .fill("catalog-runtime.example.test");
+  await routeForm
+    .getByLabel("Expected settled healthy deployment", { exact: true })
+    .selectOption(operationID);
+  const routeWait = response(
+    page,
+    `/api/v1/resources/${resourceID}/routes`,
+  );
+  await routeForm
+    .getByRole("button", { name: "Save desired route", exact: true })
+    .click();
+  const routed = await routeWait;
+  if (routed.status() !== 202) throw Error("route request rejected");
+  const route = await routed.json();
+  safe.browser_route_selection = true;
+  await report("routed", route.operation_id);
+}
 async function privateRegistryDeploy(initial) {
   await report("installed", initial.id);
   let last;
@@ -161,11 +192,14 @@ async function privateRegistryDeploy(initial) {
     const application = h.getByRole("article", { name, exact: true });
     const form = stored ? application.getByRole("region", { name: "Persistent upload deployment review", exact: true }) : application.getByRole("form", { name: `Deploy image for ${name}`, exact: true });
     const credentials = form.getByRole("region", { name: "Image registry credentials", exact: true });
+    restoredDeploymentStep = "select_registry_access";
     await credentials.getByLabel("Image access", { exact: true }).selectOption("private");
     const option = credentials.getByLabel("Registry credential secret", { exact: true }).getByRole("option", { name: /^private registry correct · / });
     await expect(option).toHaveCount(1);
     const secretID = await option.getAttribute("value");
+    restoredDeploymentStep = "select_registry_secret";
     await credentials.getByLabel("Registry credential secret", { exact: true }).selectOption(secretID);
+    restoredDeploymentStep = "select_registry_version";
     await credentials.getByLabel("Registry credential version", { exact: true }).selectOption("1");
     for (const width of [1280, 320, 390, 430]) {
       await page.setViewportSize({ width, height: 900 });
@@ -180,8 +214,10 @@ async function privateRegistryDeploy(initial) {
     await form.getByLabel("Runner-local host port", { exact: true }).fill(port);
     await form.getByLabel("Readiness path", { exact: true }).fill("/");
     if (stored) await form.getByRole("button", { name: "Review current storage deployment", exact: true }).click();
+    restoredDeploymentStep = "acknowledge_deployment";
     await form.getByRole("checkbox").check();
     const waiting = response(page, `/api/v1/resources/${stateValue.id}/deployments`);
+    restoredDeploymentStep = "submit_deployment";
     await form.getByRole("button", { name: stored ? "Deploy reviewed image with uploads" : "Request image deployment", exact: true }).click();
     const result = await waiting;
     if (result.status() !== 202) throw Error("selected registry deployment rejected");
@@ -192,9 +228,13 @@ async function privateRegistryDeploy(initial) {
     safe.registry_credential_selected = true;
     safe.registry_snapshot_pinned = true;
     safe.browser_deployment = true;
+    safe[stored ? "browser_storage_registry_deployment" : "browser_stateless_registry_deployment"] = true;
     last = operation.id;
     await report(action, operation.id);
   }
+  const routed = await state("route");
+  const h = await hosting(page);
+  await submitCatalogRoute(h.getByRole("article", { name: "Private registry uploads", exact: true }), "Private registry uploads", routed.id, last);
   await state("complete");
   await report("done", last);
 }
@@ -409,35 +449,7 @@ try {
   safe.current_viewer_denied_replay = true;
   await report("healthy", operation.id);
   await state("route");
-  const routes = application.getByRole("region", {
-    name: `Routes for ${applicationName}`,
-    exact: true,
-  });
-  await routes
-    .getByRole("button", { name: "Refresh resource routes", exact: true })
-    .click();
-  const routeForm = routes.getByRole("form", {
-    name: `Configure route for ${applicationName}`,
-    exact: true,
-  });
-  await routeForm
-    .getByLabel("Route hostname", { exact: true })
-    .fill("catalog-runtime.example.test");
-  await routeForm
-    .getByLabel("Expected settled healthy deployment", { exact: true })
-    .selectOption(operation.id);
-  const routeWait = response(
-    page,
-    `/api/v1/resources/${installed.resource.id}/routes`,
-  );
-  await routeForm
-    .getByRole("button", { name: "Save desired route", exact: true })
-    .click();
-  const routed = await routeWait;
-  if (routed.status() !== 202) throw Error("route request rejected");
-  const route = await routed.json();
-  safe.browser_route_selection = true;
-  await report("routed", route.operation_id);
+  await submitCatalogRoute(application, applicationName, installed.resource.id, operation.id);
   if (actual) {
     await state("app_create");
     appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
@@ -610,7 +622,7 @@ try {
 } catch (error) {
   safe.failure = stopped ? "cancelled" : "browser_workflow_failed";
   safe.failed_phase = phase;
-  if (phase === "restore_deploy" && restoredDeploymentStep)
+  if ((phase === "restore_deploy" || privateRegistry) && restoredDeploymentStep)
     safe.failed_step = restoredDeploymentStep;
   safe.error_class = ["TimeoutError", "AssertionError", "TypeError"].includes(
     error?.name,

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,94 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
 )
+
+func registryRuntimeConfigurationInput(resource domain.Resource) domain.HostingRuntimeConfigurationInput {
+	value := "registry-runtime-present"
+	return domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: resource.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("7", 32), Entries: []domain.HostingRuntimeEntry{{Name: "REGISTRY_FIXTURE", Kind: "literal", Value: &value}}}
+}
+
+func TestRegistryRuntimeRequestContracts(t *testing.T) {
+	resource := domain.Resource{ID: "res_93243519f9444c36ad33c36fbe7801b7", Generation: 1}
+	decode := func(t *testing.T, body, target any) {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest("POST", "/api/v1/fixture-contract", bytes.NewReader(raw))
+		if !decodeBody(httptest.NewRecorder(), request, target) {
+			t.Fatal("fixture real decoder rejected body")
+		}
+	}
+	t.Run("runtime", func(t *testing.T) {
+		body := registryRuntimeConfigurationInput(resource)
+		var decoded domain.HostingRuntimeConfigurationInput
+		decode(t, body, &decoded)
+		if _, _, err := decoded.Validate(); err != nil {
+			t.Fatal("runtime actual validator", err)
+		}
+		decoded.RequestID = "registry-runtime-" + resource.ID
+		if _, _, err := decoded.Validate(); err == nil {
+			t.Fatal("original invalid request identity accepted")
+		}
+	})
+	t.Run("storage", func(t *testing.T) {
+		body := domain.HostingStorageInput{RequestID: strings.Repeat("6", 32), ExpectedResourceGeneration: 1, MountPath: "/data/uploads"}
+		var decoded domain.HostingStorageInput
+		decode(t, body, &decoded)
+		if err := decoded.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("deployment", func(t *testing.T) {
+		body := registryRuntimeDeploymentInput(resource, domain.HostingRegistryCredentialRef{SecretID: "msec_fixture", Version: 1}, nil)
+		var decoded domain.HostingDeploymentInput
+		decode(t, body, &decoded)
+		if err := domain.ValidateHostingDeployment(decoded); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("secret", func(t *testing.T) {
+		raw, _ := json.Marshal(map[string]string{"registry": "127.0.0.1:25001", "username": "fixture", "password": "fixture-password"})
+		body := app.ManagedSecretInput{ProjectID: "proj_platform", Name: "private registry correct", Value: string(raw)}
+		var decoded app.ManagedSecretInput
+		decode(t, body, &decoded)
+		if err := domain.ValidateHostingName(decoded.Name); err != nil {
+			t.Fatal(err)
+		}
+		credential, err := domain.DecodeHostingRegistryCredential([]byte(decoded.Value))
+		if err != nil || credential.Registry != "127.0.0.1:25001" {
+			t.Fatal("actual strict secret contract")
+		}
+		credential.Close()
+	})
+	t.Run("resource", func(t *testing.T) {
+		body := app.ResourceInput{ProjectID: "proj_platform", ProjectEnvironmentID: "env_fixture", Name: "Private registry uploads", Kind: "application", Source: domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: "127.0.0.1:25001/" + storageRuntimeOwner + ":a"}}}
+		var decoded app.ResourceInput
+		decode(t, body, &decoded)
+		if domain.ValidateHostingName(decoded.Name) != nil || domain.ValidateResourceSource(decoded.Source) != nil {
+			t.Fatal("actual resource validators")
+		}
+	})
+	t.Run("binding", func(t *testing.T) {
+		var decoded app.ResourceBindingInput
+		decode(t, app.ResourceBindingInput{DestinationID: "dest_fixture"}, &decoded)
+		if decoded.DestinationID != "dest_fixture" {
+			t.Fatal("binding decoder")
+		}
+	})
+	t.Run("revoke", func(t *testing.T) {
+		var decoded app.ManagedSecretRevokeInput
+		decode(t, app.ManagedSecretRevokeInput{ExpectedVersion: 1}, &decoded)
+		if decoded.ExpectedVersion != 1 {
+			t.Fatal("revoke decoder")
+		}
+	})
+}
+
+func registryRuntimeDeploymentInput(resource domain.Resource, credential domain.HostingRegistryCredentialRef, continuity *domain.HostingStorageRouteContinuityInput) domain.HostingDeploymentInput {
+	return domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "registry-identical-request", ContainerPort: 8080, HostPort: 20102, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 3}, StorageRouteContinuity: continuity, RegistryCredential: &credential}
+}
 
 // The existing guest registry seeds these scratch images. The second registry
 // requires real Basic authentication; Engine pushes and pulls never use login.
@@ -122,10 +211,9 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 	create := func(name string) domain.Resource {
 		r := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", map[string]any{"project_id": "proj_platform", "project_environment_id": f.environmentID, "name": name, "kind": "application", "source": map[string]any{"kind": "image", "image": domain.ImageSource{Reference: image + ":a"}}}, 201)
 		storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+r.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destinationID}, 201)
-		value := "registry-runtime-present"
 		saved := storageRuntimeJSON[struct {
 			Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
-		}](f, "PUT", "/api/v1/resources/"+r.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: r.Generation, ExpectedRuntimeGeneration: 0, RequestID: "registry-runtime-" + r.ID, Entries: []domain.HostingRuntimeEntry{{Name: "REGISTRY_FIXTURE", Kind: "literal", Value: &value}}}, 200)
+		}](f, "PUT", "/api/v1/resources/"+r.ID+"/runtime-configuration", registryRuntimeConfigurationInput(r), 200)
 		if saved.Configuration.RuntimeGeneration != 1 {
 			t.Fatal("runtime configuration generation")
 		}
@@ -192,16 +280,33 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("stateless private image response")
 	}
 	current := states[1]
+	catalogRuntimeRoute(t, f, stored.ID, current)
+	if !bytes.Equal(f.https("catalog-runtime.example.test", "GET", "/download", nil, 200), payload) {
+		t.Fatal("trusted routed uploads absent")
+	}
+	replacementInput := registryRuntimeDeploymentInput(stored, domain.HostingRegistryCredentialRef{SecretID: correct.ID, Version: 1}, f.continuity(stored, current))
+	replacementInput.IdempotencyKey = "registry-routed-success"
+	current = f.await(storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", replacementInput, 202).ID, "succeeded")
+	f.awaitContinuity(stored.ID, current.ID)
+	if current.Snapshot.Storage != states[1].Snapshot.Storage || current.Snapshot.RuntimeConfiguration != states[1].Snapshot.RuntimeConfiguration || !bytes.Equal(f.https("catalog-runtime.example.test", "GET", "/download", nil, 200), payload) {
+		t.Fatal("private routed replacement lost immutable refs or uploads")
+	}
+	states = append(states, current)
+	routesBefore := storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+stored.ID+"/routes", nil, 200)
+	proxyBefore := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
 	before := storageRuntimeDocker(t, "inspect", current.Result.ContainerID)
 	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+stored.ID+"/storage-deployment-options", nil, 200)
-	body := map[string]any{"expected_generation": stored.Generation, "expected_runtime_configuration_generation": 1, "idempotency_key": "registry-identical-request", "container_port": 8080, "host_port": 20102, "readiness": domain.HostingReadiness{Path: "/", TimeoutSeconds: 3}, "storage_route_continuity": options.StorageRouteContinuity, "registry_credential": map[string]any{"secret_id": wrong.ID, "version": 1}}
+	if !options.Available || options.StorageRouteContinuity == nil {
+		t.Fatal("routed private replacement options unavailable")
+	}
+	body := registryRuntimeDeploymentInput(stored, domain.HostingRegistryCredentialRef{SecretID: wrong.ID, Version: 1}, options.StorageRouteContinuity)
 	failed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", body, 202)
 	replay := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", body, 202)
 	if replay.ID != failed.ID {
 		t.Fatal("identical request changed operation")
 	}
 	failed = f.await(failed.ID, "failed")
-	body["registry_credential"] = map[string]any{"secret_id": correct.ID, "version": 1}
+	body.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: correct.ID, Version: 1}
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", body, 409)
 	if !bytes.Equal(before, storageRuntimeDocker(t, "inspect", current.Result.ContainerID)) {
 		t.Fatal("denied pull mutated previous workload")
@@ -210,17 +315,22 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("denied pull lost uploads")
 	}
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/managed-secrets/"+wrong.ID+"/revoke", app.ManagedSecretRevokeInput{ExpectedVersion: 1}, 200)
-	body["registry_credential"] = map[string]any{"secret_id": wrong.ID, "version": 1}
+	body.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: wrong.ID, Version: 1}
 	historical := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", body, 202)
 	if historical.ID != failed.ID {
 		t.Fatal("revocation lost immutable historical request receipt")
 	}
-	body["registry_credential"] = map[string]any{"secret_id": correct.ID, "version": 1}
+	body.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: correct.ID, Version: 1}
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/managed-secrets/"+correct.ID+"/revoke", app.ManagedSecretRevokeInput{ExpectedVersion: 1}, 200)
-	body["idempotency_key"] = "registry-revoked"
+	body.IdempotencyKey = "registry-revoked"
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+stored.ID+"/deployments", body, 409)
 	if !bytes.Equal(before, storageRuntimeDocker(t, "inspect", current.Result.ContainerID)) || !bytes.Equal(get("GET", "/download", nil, 200), payload) {
 		t.Fatal("revoked credential mutated workload or data")
+	}
+	routesAfter := storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+stored.ID+"/routes", nil, 200)
+	proxyAfter := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+	if !reflect.DeepEqual(routesBefore, routesAfter) || !reflect.DeepEqual(proxyBefore, proxyAfter) || proxyAfter.ActiveOperationID != "" || proxyAfter.HoldOperationID != "" || !bytes.Equal(f.https("catalog-runtime.example.test", "GET", "/download", nil, 200), payload) {
+		t.Fatal("denied credential changed loaded route or trusted upload response")
 	}
 	volume := storageRuntimeDocker(t, "volume", "inspect", storage.VolumeName)
 	if !bytes.Contains(volume, []byte(storage.VolumeName)) {
