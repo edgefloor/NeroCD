@@ -45,6 +45,31 @@ inside that disposable data volume. If ownership, mounts, or process joining can
 verified, cleanup fails and preserves the target for inspection. It never prunes a
 daemon.
 
+## Private registry pulls
+
+Run `bash acceptance/runtime-hosting-storage/gate.sh --private-registry` only
+with authorization for the exact committed candidate. It reuses this guest,
+PostgreSQL, registry, proxy, browser handshake, and preservation machinery.
+The outer name is `nerocd-private-registry-runtime-20261027-dind`, with its sole
+`-docker-data` volume and one dynamic loopback API publication. It adds no host
+application port or Docker socket mount.
+
+The profile seeds a protected registry through Engine requests without login,
+removes cached image references, and deploys stateless and owned-upload images
+through the candidate UI. It checks all four widths and the served asset manifest,
+then trusted HTTPS, routed replacement, identical request recovery, changed-input
+conflict, wrong/revoked credential denial, retained uploads, and secrecy of both
+sent credentials. The explicitly configured work root is fixture-owned mode 0700;
+artifact walks remain mandatory and propagate filesystem errors.
+
+[Qualification and limits](../../docs/hosting-image-deployments.md#private-registry-qualification)
+record source `a1ce5a1b`, the passing 42-second gate and 13.73-second runtime test,
+two retained failed runs, and the durable index/hash. Copy `catalog-browser-safe.json`
+explicitly when retaining safe evidence: the older tar allowlist does not include
+that browser receipt. Raw logs, private inventories, auth files, and credentials
+remain excluded. This mode does not qualify selected credentials for Compose,
+database, or local-build deployments, or registry inventory/login/logout/push.
+
 ## Remote archive qualification
 
 Run `bash acceptance/runtime-hosting-storage/gate.sh --remote` only after the Leader

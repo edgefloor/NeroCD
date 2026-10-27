@@ -49,6 +49,76 @@ the allocated port does not update a public route or client endpoint.
 The host port listens on `127.0.0.1` at the runner. It is not a public application
 URL. This workflow does not provision DNS, HTTPS, a reverse proxy, or SSH access.
 
+## Pull a private image
+
+Behavior follows `DockerRegistryLogins` and `ApplicationDeploymentJob` in pinned
+[Coolify `b12d1386`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3);
+project-secret selection and fenced credential delivery are NeroCD adaptations.
+
+Enable `--hosting-registry-pull` on the dedicated image runner, alongside
+`--execute` and its existing image capabilities. It advertises
+`hosting_registry_pull_v1`. Credential delivery requires verified controller
+HTTPS. Runtime variables still require their separate runtime-environment opt-in.
+
+In either **Request image deployment** or the persistent-upload deployment
+review, choose **Private registry** under **Image access**. Select an active
+project secret and an explicit **Registry credential version**. To create one,
+use **Create a registry credential** and the protected password or token field.
+The secret contains exactly `registry`, `username`, and `password`. Its registry
+must match the image's normalized host, including the port; Docker Hub uses
+`docker.io`. Do not supply a URL or repository path as the registry host.
+
+The request and snapshot pin `registry_credential: {secret_id, version}`. A lost
+response retains that selection for identical retry. Changing it requires a new
+request key. Rotation does not update an accepted snapshot. A historical receipt
+can still be recovered after revocation, but revocation prevents credential
+redelivery and new deployment admission.
+
+The runner pulls through the configured Docker Unix socket before application
+mutation. Authentication stays in the Engine request, without Docker login or a
+durable Docker configuration. The daemon retains its existing registry transport
+policy. Ordinary stateless images and owned-upload images, including routed
+replacement and saved runtime variables, support selection. Compose, database,
+and local-build deployments do not support selected registry credentials.
+
+<a id="private-registry-qualification"></a>
+
+## Qualified private pulls
+
+The native arm64, rootful disposable profile passed at
+`a1ce5a1b755f9dc661f7a04e489e4196a58549a7` on 2026-10-27. The gate took 42 seconds;
+`TestHostingPrivateRegistryCompiledRunnerHTTPS` passed in 13.73 seconds. It proved
+uncached authenticated pulls through both real UI forms, immutable selection and
+retry/conflict behavior, saved runtime delivery, trusted HTTPS routing, successful
+routed replacement, and retained uploads. Wrong or revoked credentials preserved
+the previous container, loaded route, and data. Both credential encodings were
+absent from operation records, runner logs, and artifacts; Docker login
+configuration remained absent. All 41 baseline containers and 236 volumes, plus
+the running user's identity, content, and health, were unchanged after cleanup.
+
+The first 66-second run failed because the driver omitted the required readiness
+timeout. The corrected 94-second run reached its functional assertions, then
+failed because the fixture had not created its configured work directory.
+Its Go result was FAIL at 12.00 seconds; terminating the owned waiting browser
+produced gate exit 143. Both failures and their passing preservation receipts
+remain retained. Focused React and filesystem proofs preceded the repairs.
+
+The original `make verify` at `6e5a30e9` failed in API checks; it is not reported
+as passed. After the handler and test repairs, the full API package passed in
+37.694 seconds, with domain, vet, lint, shell, and fresh embedded-build checks.
+Byte equality retains the earlier 1,950 passing WebUI tests, generated checks,
+and runner/journal checks. The evidence index records source revisions, reviews,
+overlapping timing categories, and missing exclusive durations:
+
+`~/.local/share/nerocd/acceptance/runtime-hosting-private-registry-20261027/a1ce5a1b755f9dc661f7a04e489e4196a58549a7/evidence-index.json`
+
+SHA-256: `2a539175798cee5cc97dc040c3753a47c4e5d20b57fdb4fac84599e751c8908d`.
+
+This qualification uses a task-owned Basic-auth registry on guest loopback HTTP,
+with independently trusted HTTPS for credential delivery and application traffic.
+It does not qualify registry inventory, login/logout, push, other architectures,
+rootless Docker, cross-host execution, public ACME, or full Coolify registry parity.
+
 ## Recover a request
 
 An interrupted connection can leave delivery uncertain. The form preserves the
