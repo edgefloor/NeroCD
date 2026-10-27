@@ -91,18 +91,15 @@ caught it, and the worker corrected and validated the record. The validator's al
 check remained in force. These trials do not establish causality, implicit skill selection,
 or efficiency changes.
 
-## Simple explanation compatibility
+## Historical explanation pilots
 
-The `how` skill's `SIMPLE EXPLAIN` mode fits the current orchestration without an
-adapter. The Leader freezes one read-only `ORCHESTRATOR` packet for
-`read_only_explorer`. That packet can request the upstream overview, key concepts, runtime
-flow, file map, and gotchas. NeroCD's handoff also requires absolute paths, symbols,
-assumptions, risks, and validation commands.
+These pilots used the former packet-based orchestration workflow. Their route checks and
+preflights below describe historical experiments, not requirements for current work.
+Current delegation uses the host's supported tools and the project guidance in `AGENTS.md`.
 
-The `how` skill remains unchanged. A direct `spawn_agent` call with `read_only_explorer` is
-the host equivalent of the upstream read-only `Task` call with `generalPurpose`; this mapping
-does not claim native discovery of Cursor configuration. Critique remains unpiloted, although
-its unchanged reference files are installed.
+The pilots used the unchanged `how` skill to request an overview, key concepts, runtime
+flow, file map, and gotchas. They did not establish native discovery of Cursor configuration.
+Critique remained unpiloted.
 
 The earlier `SIMPLE EXPLAIN` pilot, `Explain documentation checker strict behavior`, used one
 child in a clean checkout. Its actual route was Sol/high despite a requested Terra/medium route,
