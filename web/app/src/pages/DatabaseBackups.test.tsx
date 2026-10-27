@@ -24,7 +24,10 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { DatabaseBackups } from "./DatabaseBackups";
+import * as hosting from "../api/hosting";
+vi.mock("../api/hosting", async original => ({...(await original<typeof import("../api/hosting")>()), listResources:vi.fn()}));
+vi.mock("./ResourceDatabase",()=>({useDatabaseAccess:()=>({ready:true,refreshing:false,viewer:true,owner:true,scope:{actor:"owner",project:"project",environment:"env"}})}));
+import { DatabaseBackups, ResourceComposeDatabaseBackups } from "./DatabaseBackups";
 import type { HostingDatabase } from "../api/hosting-databases";
 import type { DatabaseBackup } from "../api/hosting-database-backups";
 import { ApiError } from "../api/errors";
@@ -40,6 +43,7 @@ vi.mock("../api/hosting-database-backups", async (original) => {
     await original<typeof import("../api/hosting-database-backups")>();
   return {
     ...actual,
+    getDatabaseBackupComponents: vi.fn(),
     listDatabaseBackups: vi.fn(),
     requestDatabaseBackup: vi.fn(),
     restoreDatabaseBackup: vi.fn(),
@@ -470,4 +474,33 @@ test("backup workflow includes the retention policy and history panel", async ()
   await screen.findByRole("region", { name: "Database backup retention" });
   await screen.findByText("No retention policy saved.");
   expect(screen.getByRole("region", { name: "Retention execution history" })).toBeTruthy();
+});
+
+
+test("Compose selection creates no demand and import carries exact distinct settled target",async()=>{
+ const componentBackup={...completed,version:"postgresql.compose-logical-local.v1" as const,source_component:"postgresql",source_deployed_operation_id:"hop_source"};
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([componentBackup]);
+ vi.mocked(api.getDatabaseBackupComponents).mockImplementation(async(_scope,id)=>({resource_id:id,resource_generation:id==="db"?2:3,operation_id:id==="db"?"hop_source":"hop_target",available:true,reason:"available",components:[{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]}));
+ vi.mocked(hosting.listResources).mockResolvedValue({items:[{...database.resource,id:"target",name:"Distinct target",source:{kind:"compose"}}],total:1,limit:100,offset:0} as Awaited<ReturnType<typeof hosting.listResources>>);
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+ render(<QueryClientProvider client={client}><ResourceComposeDatabaseBackups resource={{...database.resource,source:{kind:"compose"}} as hosting.Resource} blocked={false}/></QueryClientProvider>);
+ const selector=await screen.findByRole("combobox",{name:"Database backup component"});
+ await waitFor(()=>expect(selector.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(selector,{target:{value:"postgresql"}});
+ expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole("button",{name:"Create logical backup"}));
+ await waitFor(()=>expect(api.requestDatabaseBackup).toHaveBeenCalled());
+ expect(vi.mocked(api.requestDatabaseBackup).mock.calls[0]?.[2]).toMatchObject({component:"postgresql",expected_deployed_operation_id:"hop_source",expected_resource_generation:2});
+ fireEvent.change(screen.getByRole("combobox",{name:"Backup to restore"}),{target:{value:"backup"}});
+ fireEvent.change(screen.getByRole("combobox",{name:"Restore target application"}),{target:{value:"target"}});
+ const target=screen.getByRole("combobox",{name:"Restore target database component"});
+ await waitFor(()=>expect(target.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(target,{target:{value:"postgresql"}});
+ expect((screen.getByRole("button",{name:"Restore database backup"}) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(screen.getByRole("checkbox",{name:"Replace target database and interrupt its writers"}));
+ await waitFor(()=>expect((screen.getByRole("button",{name:"Restore database backup"}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.click(screen.getByRole("button",{name:"Restore database backup"}));
+ await waitFor(()=>expect(api.restoreDatabaseBackup).toHaveBeenCalled());
+ expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]?.[3]).toEqual({request_id:expect.any(String),component_target:{resource_id:"target",component:"postgresql",expected_deployed_operation_id:"hop_target",expected_resource_generation:3,acknowledge_replacement:true}});
+ expect(screen.getByText(/not uploaded files/)).toBeTruthy();
 });

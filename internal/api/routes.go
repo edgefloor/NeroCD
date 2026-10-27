@@ -63,6 +63,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-schedules/{schedule_id}/occurrences"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backups"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/database-backup-components"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-backups"},
 	{Method: http.MethodGet, Path: "/api/v1/database-backups/{id}"},
 	{Method: http.MethodPost, Path: "/api/v1/database-backups/{id}/restores"},
@@ -442,6 +443,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseBackupTransferMutation
 	case "/api/v1/resources/{id}/database-backups":
 		return s.hostingDatabaseBackups
+	case "/api/v1/resources/{id}/database-backup-components":
+		return s.hostingDatabaseBackupComponents
 
 	case "/api/v1/resources/{id}/storage-backup-schedules":
 		return s.hostingStorageBackupSchedules

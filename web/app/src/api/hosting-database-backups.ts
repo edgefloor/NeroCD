@@ -46,11 +46,15 @@ const allowed = new Set([
   "blob",
   "failure_code",
   "remote_target",
+  "source_component",
+  "source_deployed_operation_id",
+  "target_component",
+  "target_deployed_operation_id",
 ]);
 export function parseDatabaseBackup(
   raw: unknown,
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: Pick<HostingDatabase, "resource">,
 ): DatabaseBackup {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
   const v = raw as Record<string, unknown>;
@@ -68,7 +72,7 @@ export function parseDatabaseBackup(
     Number(v.timeout_seconds) < 1 ||
     Number(v.timeout_seconds) > 3600 ||
     !id(v.id) ||
-    v.version !== "postgresql.logical-local.v1" ||
+    !["postgresql.logical-local.v1", "postgresql.compose-logical-local.v1"].includes(String(v.version)) ||
     v.project_id !== scope.project ||
     v.source_resource_id !== database.resource.id ||
     !Number.isSafeInteger(v.source_generation) ||
@@ -99,6 +103,9 @@ export function parseDatabaseBackup(
         v.target_resource_id === v.source_resource_id
   )
     return fail();
+  const componentVersion = v.version === "postgresql.compose-logical-local.v1";
+  const component = (value: unknown): value is string => typeof value === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(value);
+  if (componentVersion ? !component(v.source_component) || !id(v.source_deployed_operation_id) || (v.mode === "restore" ? !component(v.target_component) || !id(v.target_deployed_operation_id) : v.target_component !== undefined || v.target_deployed_operation_id !== undefined) : [v.source_component, v.source_deployed_operation_id, v.target_component, v.target_deployed_operation_id].some(value => value !== undefined)) return fail();
   if (v.blob !== undefined) {
     const b = v.blob as Record<string, unknown>;
     if (
@@ -132,7 +139,8 @@ export function parseDatabaseBackup(
     max_bytes: Number(v.max_bytes),
     timeout_seconds: Number(v.timeout_seconds),
     id: v.id,
-    version: "postgresql.logical-local.v1",
+    version: v.version as DatabaseBackup["version"],
+    ...(componentVersion ? { source_component: String(v.source_component), source_deployed_operation_id: String(v.source_deployed_operation_id), ...(v.mode === "restore" ? {target_component: String(v.target_component), target_deployed_operation_id: String(v.target_deployed_operation_id)} : {}) } : {}),
     project_id: scope.project,
     source_resource_id: database.resource.id,
     source_generation: Number(v.source_generation),
@@ -165,7 +173,7 @@ export const databaseBackupsKey = (scope: DatabaseScope, id: string) =>
   ] as const;
 export async function listDatabaseBackups(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: Pick<HostingDatabase, "resource">,
   signal?: AbortSignal,
 ) {
   const raw = await boundedDatabaseRequest(
@@ -183,7 +191,7 @@ export async function listDatabaseBackups(
 }
 export async function requestDatabaseBackup(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: Pick<HostingDatabase, "resource">,
   input: DatabaseBackupInput,
   signal: AbortSignal,
 ) {
@@ -200,6 +208,7 @@ export async function requestDatabaseBackup(
   const out = parseDatabaseBackup(raw, scope, database);
   if (
     out.mode !== "backup" ||
+    out.source_component !== input.component || out.source_deployed_operation_id !== input.expected_deployed_operation_id ||
     out.remote_target?.target_id !== input.remote_target?.target_id ||
     out.remote_target?.revision !== input.remote_target?.revision
   )
@@ -208,7 +217,7 @@ export async function requestDatabaseBackup(
 }
 export async function restoreDatabaseBackup(
   scope: DatabaseScope,
-  database: HostingDatabase,
+  database: Pick<HostingDatabase, "resource">,
   backup: string,
   input: DatabaseRestoreInput,
   signal: AbortSignal,
@@ -231,6 +240,22 @@ export async function restoreDatabaseBackup(
     signal,
   );
   const out = parseDatabaseBackup(raw, scope, database);
-  if (out.mode !== "restore" || out.backup_id !== backup) return fail();
+  if (out.mode !== "restore" || out.backup_id !== backup || (input.component_target && (out.target_resource_id !== input.component_target.resource_id || out.target_component !== input.component_target.component || out.target_deployed_operation_id !== input.component_target.expected_deployed_operation_id))) return fail();
   return out;
+}
+
+export type DatabaseBackupComponents = components["schemas"]["HostingDatabaseBackupComponents"];
+export async function getDatabaseBackupComponents(scope: DatabaseScope, resource: string, signal?: AbortSignal): Promise<DatabaseBackupComponents> {
+ const raw = await boundedDatabaseRequest(s => request<unknown>(`/api/v1/resources/${encodeURIComponent(resource)}/database-backup-components`, {signal:s,cache:"no-store"}), signal);
+ if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
+ const v = raw as Record<string,unknown>;
+ if (Object.keys(v).some(k => !["resource_id","resource_generation","operation_id","available","reason","components"].includes(k)) || v.resource_id !== resource || !Number.isSafeInteger(v.resource_generation) || Number(v.resource_generation)<1 || typeof v.available !== "boolean" || typeof v.reason !== "string" || (v.operation_id !== undefined && !id(v.operation_id)) || !Array.isArray(v.components) || v.components.length>16) return fail();
+ const seen = new Set<string>();
+ for (const item of v.components) {
+  if (!item || typeof item !== "object" || Array.isArray(item) || Object.keys(item).sort().join() !== "component,eligible,engine,major_version,reason,running" || typeof item.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(item.component) || seen.has(item.component) || item.engine !== "postgresql" || item.major_version !== 16 || typeof item.running !== "boolean" || typeof item.eligible !== "boolean" || typeof item.reason !== "string") return fail();
+  seen.add(item.component);
+ }
+ if (v.available && (!id(v.operation_id) || v.components.length===0)) return fail();
+ void scope;
+ return raw as DatabaseBackupComponents;
 }

@@ -1,4 +1,4 @@
-import { DatabaseBackups } from "./DatabaseBackups";
+import { DatabaseBackups, ResourceComposeDatabaseBackups } from "./DatabaseBackups";
 import { useDatabaseAccess } from "./ResourceDatabase";
 import { getHostingDatabase, validateDatabase } from "@/api/hosting-databases";
 import { getNotificationRecoveryTransfer, getNotificationRecoveryBackup, parseBackupRecoveryLocator, type BackupRecoveryLocator } from "@/api/hosting-backup-notifications";
@@ -180,6 +180,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       {/* Status verifies its own viewer authority and does not depend on legacy task reads. */}
       <ResourceRuntimeStatus resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeLogs resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} />
+      <ResourceComposeDatabaseBackups resource={resource} blocked={blocked || resources.isError || resources.isPending || resources.isFetching} />
       <ResourceRuntimeConfiguration resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceStorage resource={resource} blocked={blocked || resources.isError || resources.isPending} />
       <ResourceDatabaseConnections resource={resource} writable={writable} blocked={blocked || resources.isError} />

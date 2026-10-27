@@ -271,6 +271,9 @@ func runRunner(args []string) error {
 	}
 	if *logicalDatabaseBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+		if *hostingRuntimeEnv {
+			registrationCapabilities = append(registrationCapabilities, domain.HostingDatabaseBackupComponentCapability)
+		}
 	}
 	registrationCapabilities, err = runnerStorageArchiveCapabilities(archiveConfig != nil, capabilitiesSpecified || *hostingDatabase || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
 	if err != nil {

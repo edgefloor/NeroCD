@@ -3,6 +3,7 @@ import { request } from "./client";
 vi.mock("./client", () => ({ request: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
 import {
+  getDatabaseBackupComponents,
   parseDatabaseBackup,
   requestDatabaseBackup,
   restoreDatabaseBackup,
@@ -133,4 +134,23 @@ test("remote restore accepts a saved transfer reference and rejects arbitrary ob
     ),
   ).rejects.toThrow();
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+
+test("component backup response binds exact selected deployed operation and closed identity", async()=>{
+ const component={...operation,version:"postgresql.compose-logical-local.v1",source_component:"postgresql",source_deployed_operation_id:"hop_current"};
+ const input={request_id:"request",expected_resource_generation:1,component:"postgresql",expected_deployed_operation_id:"hop_current"};
+ vi.mocked(request).mockResolvedValue(component);
+ expect((await requestDatabaseBackup(scope,db,input,new AbortController().signal)).source_component).toBe("postgresql");
+ vi.mocked(request).mockResolvedValue({...component,source_deployed_operation_id:"hop_other"});
+ await expect(requestDatabaseBackup(scope,db,input,new AbortController().signal)).rejects.toThrow();
+ expect(()=>parseDatabaseBackup({...operation,source_component:"postgresql"},scope,db)).toThrow();
+});
+test("component discovery rejects foreign resource and Docker identity fields",async()=>{
+ const targets={resource_id:"db",resource_generation:1,operation_id:"hop_current",available:true,reason:"available",components:[{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]};
+ vi.mocked(request).mockResolvedValue(targets);
+ expect((await getDatabaseBackupComponents(scope,"db")).operation_id).toBe("hop_current");
+ for(const value of [{...targets,resource_id:"foreign"},{...targets,components:[{...targets.components[0],container_id:"untrusted"}]}]){
+  vi.mocked(request).mockResolvedValue(value);await expect(getDatabaseBackupComponents(scope,"db")).rejects.toThrow();
+ }
 });

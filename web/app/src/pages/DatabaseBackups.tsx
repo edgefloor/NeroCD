@@ -1,3 +1,5 @@
+import { listResources, type Resource } from "../api/hosting";
+import { useDatabaseAccess } from "./ResourceDatabase";
 import type { BackupRecoveryLocator } from "../api/hosting-backup-notifications";
 import {
   BackupDestinationSelect,
@@ -26,6 +28,7 @@ import {
   type HostingDatabase,
 } from "../api/hosting-databases";
 import {
+  getDatabaseBackupComponents,
   databaseBackupsKey,
   listDatabaseBackups,
   requestDatabaseBackup,
@@ -672,4 +675,70 @@ function BackupUploadStatus({
       ) : null}
     </div>
   );
+}
+
+
+// Compose databases keep their owning application identity; they are never
+// represented as fabricated standalone database resources.
+export function ResourceComposeDatabaseBackups({resource,blocked}: {resource: Resource; blocked: boolean}) {
+ const access = useDatabaseAccess(resource.project_id,resource.project_environment_id);
+ if (resource.source.kind !== "compose") return null;
+ if (blocked || !access.ready || access.refreshing || !access.viewer) return <p role="status">Component database backup access is pending or unavailable.</p>;
+ return <ComposeDatabaseBackups key={JSON.stringify([access.scope,resource.id,resource.generation])} resource={resource} scope={access.scope} owner={access.owner} />;
+}
+function ComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:DatabaseScope;owner:boolean}) {
+ const client=useQueryClient();
+ const context={resource};
+ const [component,setComponent]=useState("");
+ const [backup,setBackup]=useState("");
+ const [target,setTarget]=useState("");
+ const [targetComponent,setTargetComponent]=useState("");
+ const [ack,setAck]=useState(false);
+ const [pending,setPending]=useState(false);
+ const [error,setError]=useState<unknown>();
+ const [denied,setDenied]=useState(false);
+ const [attempt,setAttempt]=useState<Attempt>();
+ const lifetime=useRef<AbortController|null>(null);
+ useEffect(()=>{const c=new AbortController();lifetime.current=c;return()=>{c.abort();lifetime.current=null}},[]);
+ const targets=useQuery({queryKey:["database-backup-components",scope,resource.id],queryFn:({signal})=>getDatabaseBackupComponents(scope,resource.id,signal),retry:false,enabled:!denied});
+ const history=useQuery({queryKey:databaseBackupsKey(scope,resource.id),queryFn:({signal})=>listDatabaseBackups(scope,context,signal),retry:false,enabled:!denied,refetchInterval:q=>q.state.data?.some(v=>v.ownership_held && !["uncertain","failed"].includes(v.state))?3000:false});
+ const applications=useQuery({queryKey:["database-import-applications",scope],queryFn:({signal})=>listResources({project_id:scope.project,limit:100,offset:0},{signal}),retry:false,enabled:!denied});
+ const chosen=applications.data?.items.find(r=>r.id===target && r.id!==resource.id && r.source.kind==="compose" && r.project_id===scope.project);
+ const targetEvidence=useQuery({queryKey:["database-backup-components",scope,chosen?.id],queryFn:({signal})=>getDatabaseBackupComponents(scope,chosen!.id,signal),retry:false,enabled:Boolean(chosen)&&!denied});
+ const revoked=databaseDenied(error)||databaseDenied(targets.error)||databaseDenied(history.error)||databaseDenied(applications.error)||databaseDenied(targetEvidence.error);
+ useEffect(()=>{if(revoked){setDenied(true);lifetime.current?.abort();setAttempt(undefined);client.removeQueries({queryKey:databaseBackupsKey(scope,resource.id)});}},[revoked]);
+ useEffect(()=>{setAttempt(undefined);setAck(false)},[component,backup,target,targetComponent]);
+ if(denied||revoked) return <p role="alert">Component database backup access is unavailable.</p>;
+ const source=targets.isSuccess&&!targets.isFetching&&targets.data.available?targets.data:undefined;
+ const destination=targetEvidence.isSuccess&&!targetEvidence.isFetching&&targetEvidence.data.available?targetEvidence.data:undefined;
+ const ready=owner&&!pending&&!history.isPending&&!history.isError&&!history.isFetching;
+ const selected=history.data?.find(v=>v.id===backup&&v.mode==="backup"&&v.state==="succeeded"&&v.blob&&v.version==="postgresql.compose-logical-local.v1");
+ async function submit(next:Attempt){
+  const c=lifetime.current;if(!owner||pending||!c||c.signal.aborted)return;
+  setPending(true);setError(undefined);setAttempt(next);
+  try{
+   if(next.mode==="backup")await requestDatabaseBackup(scope,context,next.input,c.signal);
+   else await restoreDatabaseBackup(scope,context,next.backup,next.input,c.signal);
+   if(c.signal.aborted)return;setAttempt(undefined);await history.refetch();
+  }catch(cause){if(!c.signal.aborted){setError(cause);if(cause instanceof ApiError&&[400,404,409].includes(cause.status))setAttempt(undefined)}}finally{if(!c.signal.aborted)setPending(false)}
+ }
+ return <section aria-label="Component database backups" className="min-w-0 space-y-3 rounded-xl border p-3">
+  <h5 className="font-medium">Compose PostgreSQL logical backups</h5>
+  <p>Qualified official PostgreSQL16 components only. Archives contain database records, not uploaded files or volume contents. The runner verifies the live profile before execution. Source writes may continue during backup.</p>
+  <label className="block">Database backup component<select value={component} disabled={pending} onChange={e=>setComponent(e.target.value)}><option value="">Select a database component</option>{source?.components.filter(c=>c.eligible).map(c=><option key={c.component} value={c.component}>{c.component}</option>)}</select></label>
+  <Button disabled={!ready||!source?.operation_id||!source.components.some(c=>c.component===component&&c.eligible)} onClick={()=>{if(source?.operation_id)void submit({mode:"backup",input:{request_id:databaseRequestID(),expected_resource_generation:source.resource_generation,component,expected_deployed_operation_id:source.operation_id}})}}>Create logical backup</Button>
+  <Button variant="outline" disabled={pending||targets.isFetching} onClick={()=>{setComponent("");setAttempt(undefined);void targets.refetch();}}>Refresh database components</Button>
+  {!source?<p role="status">A settled supported database component is unavailable. Refresh after deployment settles.</p>:null}
+  <label className="block">Backup to restore<select value={backup} disabled={pending} onChange={e=>setBackup(e.target.value)}><option value="">Select a completed backup</option>{history.data?.filter(v=>v.mode==="backup"&&v.state==="succeeded"&&v.blob&&v.version==="postgresql.compose-logical-local.v1").map(v=><option key={v.id} value={v.id}>{v.source_component} · {v.id}</option>)}</select></label>
+  <label className="block">Restore target application<select value={target} disabled={pending} onChange={e=>{setTarget(e.target.value);setTargetComponent("")}}><option value="">Select a distinct deployed Compose application</option>{applications.data?.items.filter(r=>r.id!==resource.id&&r.source.kind==="compose"&&r.project_id===scope.project).map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+  <p>Targets are drawn from the first 100 project applications. The server requires the same authorized destination. Existing target tables are replaced; target credentials and uploaded files remain unchanged.</p>
+  <label className="block">Restore target database component<select value={targetComponent} disabled={pending} onChange={e=>setTargetComponent(e.target.value)}><option value="">Select a target database component</option>{destination?.components.filter(c=>c.eligible).map(c=><option key={c.component} value={c.component}>{c.component}</option>)}</select></label>
+  <label className="block"><input type="checkbox" checked={ack} disabled={pending} onChange={e=>setAck(e.target.checked)}/>Replace target database and interrupt its writers</label>
+  <p>Only target components that were running are stopped and resumed. Failed or uncertain import/resume keeps a mutation hold; do not repeat an uncertain import. Ambiguous launch, lease loss or unconfirmed writer resume requires operator reconciliation; this view cannot release that hold or resume writers manually.</p>
+  <Button disabled={!ready||!selected||!chosen||!destination?.operation_id||!destination.components.some(c=>c.component===targetComponent&&c.eligible)||!ack} onClick={()=>{if(chosen&&destination?.operation_id&&selected)void submit({mode:"restore",backup:selected.id,input:{request_id:databaseRequestID(),component_target:{resource_id:chosen.id,component:targetComponent,expected_deployed_operation_id:destination.operation_id,expected_resource_generation:destination.resource_generation,acknowledge_replacement:true}}})}}>Restore database backup</Button>
+  <Button variant="outline" disabled={pending||history.isFetching} onClick={()=>void history.refetch()}>Refresh database backup history</Button>
+  {history.data?.map(v=><p key={v.id} role="status">{v.id} · {v.mode} · {v.state}{v.ownership_held?" · mutation ownership retained":""}{v.failure_code?` · ${v.failure_code}`:""}</p>)}
+  {error?<p role="alert">{databaseError(error)}</p>:null}
+  {error&&attempt?<Button disabled={pending} onClick={()=>void submit(attempt)}>Retry exact database request</Button>:null}
+ </section>;
 }

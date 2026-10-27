@@ -104,6 +104,7 @@ const response = (p, path) =>
       r.request().method() === "POST" && new URL(r.url()).pathname === path,
   );
 const appOrigin = "https://catalog-runtime.example.test:25443";
+const restoreOrigin = "https://restore.catalog-runtime.example.test:25443";
 const applicationName = "Compose Vikunja acceptance";
 const payload = Buffer.from("NeroCD saved Compose persistent attachment\n");
 const filename = "compose-persistence.txt";
@@ -111,7 +112,7 @@ const username = "composeacceptance";
 const password = randomBytes(24).toString("hex");
 const taskTitle = "Saved Compose persistence task";
 const appResponse = (p, method, pattern) => p.waitForResponse((r) =>
-  [method].flat().includes(r.request().method()) && new URL(r.url()).origin === appOrigin && pattern.test(new URL(r.url()).pathname));
+  [method].flat().includes(r.request().method()) && [appOrigin, restoreOrigin].includes(new URL(r.url()).origin) && pattern.test(new URL(r.url()).pathname));
 async function checkedResponse(pending, status) {
   const result = await pending;
   if (result.status() !== status) throw Error("unexpected application response");
@@ -153,7 +154,7 @@ async function addTask(p, title) {
 }
 try {
   api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key }, timeout: 10000 });
-  browser = await chromium.launch({ headless: true, args: ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] });
+  browser = await chromium.launch({ headless: true, args: ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1, MAP restore.catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] });
   context = await browser.newContext({ baseURL: origin, ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
   page = await context.newPage();
   page.setDefaultTimeout(30000);
@@ -386,6 +387,92 @@ try {
   await checkApplication("compose-after-start");
   safe.browser_stack_stop_start_persistence = true;
   await report("app_start_checked", String(taskID));
+  const backupState = await state("database_backup");
+  await hosting(page);
+  step = "seed_existing_import_target";
+  // Seed an existing target via its real application UI, so --clean replacement
+  // is exercised against initialized tables rather than an empty PostgreSQL DB.
+  const targetContext = await browser.newContext({baseURL:restoreOrigin,ignoreHTTPSErrors:true,acceptDownloads:true,locale:"en-US"});
+  try {
+    const targetPage = await targetContext.newPage();
+    targetPage.setDefaultTimeout(30000);
+    await targetPage.goto("/register");
+    await targetPage.getByLabel("Username",{exact:true}).fill("targetbeforeimport");
+    await targetPage.getByLabel("Email address",{exact:true}).fill("targetbeforeimport@example.test");
+    await targetPage.getByLabel("Password",{exact:true}).fill(password);
+    const seeded=appResponse(targetPage,"POST",/^\/api\/v[12]\/register$/);
+    await targetPage.getByRole("button",{name:"Create account",exact:true}).click();
+    const seededResponse=await seeded;if(![200,201].includes(seededResponse.status()))throw Error("target signup rejected");
+    await expect(targetPage.locator("#registerform")).toHaveCount(0);
+    await targetPage.goto("/projects/new");
+    await targetPage.getByLabel("Title",{exact:true}).fill("Target records to replace");
+    const targetProject=appResponse(targetPage,["PUT","POST"],/^\/api\/v[12]\/projects$/);
+    await targetPage.getByRole("button",{name:"Create",exact:true}).click();
+    const createdTarget=await targetProject;if(![200,201].includes(createdTarget.status()))throw Error("target project rejected");
+    await addTask(targetPage,"Target record to replace");
+  } finally { await targetContext.close(); }
+  const backups=application.getByRole("region",{name:"Component database backups",exact:true});
+  step="request_component_database_backup";
+  await backups.getByRole("combobox",{name:"Database backup component",exact:true}).selectOption("postgresql");
+  const backupPending=response(page,`/api/v1/resources/${resourceID}/database-backups`);
+  await backups.getByRole("button",{name:"Create logical backup",exact:true}).click();
+  const logicalBackup=await checkedResponse(backupPending,202);
+  if(logicalBackup.source_component!=="postgresql"||logicalBackup.source_resource_id!==resourceID)throw Error("backup component identity changed");
+  await report("database_backed_up",logicalBackup.id);
+  await state("database_mutate");
+  step="source_write_after_logical_backup";
+  const sourcePage=freshAppContext.pages()[0];
+  await sourcePage.goto(`/projects/${projectID}`);
+  const afterBackupTitle="Source record after logical backup";
+  const afterBackupTask=await addTask(sourcePage,afterBackupTitle);
+  await report("database_source_mutated",String(afterBackupTask));
+  await state("database_import");
+  await hosting(page);
+  step="review_component_database_import";
+  await backups.getByRole("button",{name:"Refresh database backup history",exact:true}).click();
+  await backups.getByRole("combobox",{name:"Backup to restore",exact:true}).selectOption(logicalBackup.id);
+  await backups.getByRole("combobox",{name:"Restore target application",exact:true}).selectOption(backupState.id);
+  await backups.getByRole("combobox",{name:"Restore target database component",exact:true}).selectOption("postgresql");
+  await backups.getByRole("checkbox",{name:"Replace target database and interrupt its writers",exact:true}).check();
+  const importPending=response(page,`/api/v1/database-backups/${logicalBackup.id}/restores`);
+  await backups.getByRole("button",{name:"Restore database backup",exact:true}).click();
+  const imported=await checkedResponse(importPending,202);
+  if(imported.target_resource_id!==backupState.id||imported.target_component!=="postgresql"||imported.target_resource_id===resourceID)throw Error("import target changed");
+  await report("database_imported",imported.id);
+  await state("database_check");
+  step="verify_fresh_login_logical_replacement";
+  const restoredContext=await browser.newContext({baseURL:restoreOrigin,ignoreHTTPSErrors:true,acceptDownloads:true,locale:"en-US"});
+  try {
+    const restored=await restoredContext.newPage();restored.setDefaultTimeout(30000);
+    await restored.goto("/login");
+    await restored.getByLabel("Username Or Email Address",{exact:true}).fill("targetbeforeimport");
+    await restored.getByLabel("Password",{exact:true}).fill(password);
+    const oldLogin=appResponse(restored,"POST",/^\/api\/v[12]\/login$/);
+    await restored.getByRole("button",{name:"Login",exact:true}).click();
+    if((await oldLogin).status()!==403)throw Error("prior target records survived replacement");
+    await restored.getByLabel("Username Or Email Address",{exact:true}).fill(username);
+    await restored.getByLabel("Password",{exact:true}).fill(password);
+    const restoredLogin=appResponse(restored,"POST",/^\/api\/v[12]\/login$/);
+    await restored.getByRole("button",{name:"Login",exact:true}).click();
+    if((await restoredLogin).status()!==200)throw Error("restored original login rejected");
+    await expect(restored.locator("#loginform")).toHaveCount(0);
+    await restored.goto(`/tasks/${taskID}`);
+    await expect(restored.getByRole("heading",{name:"Title",exact:true})).toHaveText(taskTitle);
+    // DB attachment metadata is restored, but this slice deliberately restores
+    // no upload bytes. New files use the target's independently retained volume.
+    await restored.goto(`/projects/${projectID}`);
+    await expect(restored.getByText(afterBackupTitle,{exact:true})).toHaveCount(0);
+    const newTargetTask=await addTask(restored,"Independent target write after import");
+    await restored.goto(`/tasks/${newTargetTask}`);
+    await upload(restored,"target-after-import.txt",Buffer.from("Independent target upload after logical import\n"));
+    await download(restored,"target-after-import.txt",Buffer.from("Independent target upload after logical import\n"));
+    await sourcePage.goto(`/tasks/${afterBackupTask}`);
+    await expect(sourcePage.getByRole("heading",{name:"Title",exact:true})).toHaveText(afterBackupTitle);
+  } finally { await restoredContext.close(); }
+  safe.browser_component_database_backup_import=true;
+  safe.database_only_original_uploads_not_restored=true;
+  safe.database_source_later_write_excluded_target_writes_independent=true;
+  await report("database_checked",String(taskID));
   await state("complete");
   await report("done", resourceID);
   safe.status = "passed";

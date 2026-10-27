@@ -210,6 +210,72 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if b.await(t, "app_start_checked") != taskID {
 		t.Fatal("fresh login after Start lost application data")
 	}
+	// Provision a distinct already-deployed application through ordinary setup
+	// APIs. Backup and destructive import themselves are requested through UI.
+	target := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("d", 32), ProjectID: resource.ProjectID, ProjectEnvironmentID: resource.ProjectEnvironmentID, Name: "Compose database restore target", Kind: "application", Source: resource.Source}, 201)
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+target.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destinationID}, 201)
+	targetEntries := append([]domain.HostingRuntimeEntry(nil), runtime.Configuration.Entries...)
+	for i := range targetEntries {
+		if targetEntries[i].Name == "SERVICE_URL_VIKUNJA" {
+			value := "https://restore.catalog-runtime.example.test:25443"
+			targetEntries[i].Value = &value
+		}
+	}
+	storageRuntimeJSON[json.RawMessage](f, "PUT", "/api/v1/resources/"+target.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: target.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("e", 32), Entries: targetEntries}, 200)
+	targetDeploy := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+target.ID+"/deployments", domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: target.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "compose-import-target", ContainerPort: 3456, HostPort: first.Snapshot.HostPort + 1, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}}, 202)
+	targetDeploy = f.await(targetDeploy.ID, "succeeded")
+	verify(targetDeploy)
+	for _, a := range started.Result.Stack.Volumes {
+		for _, b := range targetDeploy.Result.Stack.Volumes {
+			if a.VolumeName == b.VolumeName {
+				t.Fatal("import target shares source storage")
+			}
+		}
+	}
+	storageRuntimeJSON[domain.HostingHostnameGrant](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: resource.ProjectID, Hostname: "restore.catalog-runtime.example.test"}, 201)
+	targetRoute := storageRuntimeJSON[domain.HostingRoute](f, "POST", "/api/v1/resources/"+target.ID+"/routes", domain.HostingRouteInput{IdempotencyKey: "compose-import-target-route", Hostname: "restore.catalog-runtime.example.test", PathPrefix: "/", ExpectedHealthyOperationID: targetDeploy.ID}, 202)
+	f.proxyAwait(targetRoute.OperationID)
+	b.set("database_backup", target.ID)
+	backupID := b.await(t, "database_backed_up")
+	awaitBackup := func(id string) domain.HostingDatabaseBackupOperation {
+		t.Helper()
+		for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+			operation := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+id, nil, 200)
+			if operation.State == "succeeded" && !operation.OwnershipHeld {
+				return operation
+			}
+			if operation.State == "failed" || operation.State == "uncertain" {
+				t.Fatalf("component database operation settled %s code=%s held=%t", operation.State, operation.FailureCode, operation.OwnershipHeld)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatal("component database operation deadline")
+		return domain.HostingDatabaseBackupOperation{}
+	}
+	backup := awaitBackup(backupID)
+	if backup.SourceComponent != "postgresql" || backup.SourceDeployedOperationID != started.ID || backup.Version != domain.HostingDatabaseBackupComponentVersion || backup.Blob == nil {
+		t.Fatal("wrong logical component backup")
+	}
+	b.set("database_mutate", resourceID)
+	b.await(t, "database_source_mutated")
+	b.set("database_import", target.ID)
+	imported := awaitBackup(b.await(t, "database_imported"))
+	if imported.BackupID != backupID || imported.TargetResourceID != target.ID || imported.TargetComponent != "postgresql" || imported.TargetDeployedOperationID != targetDeploy.ID || imported.Blob == nil || *imported.Blob != *backup.Blob {
+		t.Fatal("wrong immutable logical import target or archive")
+	}
+	for _, component := range targetDeploy.Result.Stack.Components {
+		var actual struct {
+			Running  bool `json:"Running"`
+			ExitCode int  `json:"ExitCode"`
+		}
+		if json.Unmarshal(storageRuntimeDocker(t, "container", "inspect", component.ContainerID, "--format", "{{json .State}}"), &actual) != nil || actual.Running != component.Running || !component.Running && actual.ExitCode != component.ExitCode {
+			t.Fatal("import failed to preserve target writer/init states")
+		}
+	}
+	b.set("database_check", target.ID)
+	if b.await(t, "database_checked") != taskID {
+		t.Fatal("restored application records missing")
+	}
 	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
 	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
 	failed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)
@@ -232,7 +298,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	clear(journal)
 	clear(ordinary)
-	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, UI Stop removes all writers, UI Start retains records/uploads/credentials/HTTPS, controlled failed replacement held")
+	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, UI Stop removes all writers, UI Start retains records/uploads/credentials/HTTPS, logical DB backup/UI distinct-target transactional replacement/source later-write exclusion/target independent writes (uploads excluded), controlled failed replacement held")
 	b.set("complete", resourceID)
 	b.await(t, "done")
 }

@@ -457,7 +457,7 @@ done
 [[ "$ready" == true ]]
 postgres_capacity before-test
 if [[ "$managed_compose" == true ]]; then
- host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgresHosting(StackAuthorityVolumesAndUncertainReplacement|StackRuntimeLogTargetAndReplacement|StackStopAndStart|RuntimeLog)' -test.timeout=3m > "$evidence/stack-store-tests.log" 2>&1
+ host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgres(ComposeDatabaseBackupAndImportAuthority|Hosting(StackAuthorityVolumesAndUncertainReplacement|StackRuntimeLogTargetAndReplacement|StackStopAndStart|RuntimeLog))' -test.timeout=3m > "$evidence/stack-store-tests.log" 2>&1
 fi
 deletion_mode=''
 if [[ "$deletion" == true ]]; then deletion_mode=disposable-dind; fi
@@ -547,7 +547,7 @@ import json,pathlib,sys
 text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
 if "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Compose runtime test did not pass without skips")
 if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Compose browser did not pass")
-for key in ["served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence"]:
+for key in ["served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence","browser_component_database_backup_import","database_only_original_uploads_not_restored","database_source_later_write_excluded_target_writes_independent"]:
  if browser.get(key) is not True:raise SystemExit("connected Compose browser proof missing: "+key)
 COMPOSE_BROWSER_PASS
 elif [[ "$catalog" == true ]]; then

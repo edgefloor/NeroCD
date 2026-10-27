@@ -186,6 +186,11 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	})
 	roots, proxyRoots := storageRuntimeTrust(t, root)
 	server, pg, database := newHostingBuildAPIFixture(t)
+	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+		if err := pg.ConfigureDatabaseBackupLimits(domain.HostingDatabaseBackupLimits{MaxBytes: 1 << 30, TimeoutSeconds: 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		server = catalogRuntimeServer(t, pg)
 	}
@@ -259,7 +264,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
+			caps = append(caps, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability)
 		}
 	}
 	f.capabilities = append([]string(nil), caps...)
@@ -310,6 +315,13 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		}
 	})
 	t.Cleanup(func() { f.stop(); t.Logf("compiled runner logs:\n%s", f.logs.String()) })
+	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+		for _, name := range []string{"database-state", "database-secrets"} {
+			if err := os.Mkdir(filepath.Join(f.root, name), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	f.start(caps)
 	return f
 }
@@ -379,7 +391,7 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 		command.Args = append(command.Args, "--hosting-runtime-env")
 	}
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-		command.Args = append(command.Args, "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock")
+		command.Args = append(command.Args, "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
 	}
 	if f.archiveConfig != "" {
 		command.Args = append(command.Args, "--storage-archive-config-file", f.archiveConfig)
