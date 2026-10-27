@@ -57,6 +57,7 @@ func mountedContainer(h domain.HostingHealthy, running bool) imageContainer {
 	c.ID, c.Image = h.ContainerID, h.Release.ImageID
 	c.Config.Labels = map[string]string{imageBindingLabel: h.Snapshot.BindingID, imageOperationLabel: h.OperationID, imageReleaseLabel: h.Release.Hash, imagePlanLabel: h.PlanHash}
 	c.State.Running = running
+	c.HostConfig.NetworkMode = "default"
 	c.HostConfig.PortBindings = map[string][]struct {
 		HostIP   string `json:"HostIp"`
 		HostPort string `json:"HostPort"`
@@ -437,6 +438,31 @@ func TestOwnedStorageCleanupVerifiesMountAndLeavesSharedVolume(t *testing.T) {
 			}
 			if f.volume.Name != f.request.Storage.VolumeName || !f.containers[f.candidate].State.Running {
 				t.Fatal("cleanup changed shared storage or current writer")
+			}
+		})
+	}
+}
+
+func TestOwnedStorageRejectsUnsafeCandidateBeforeStart(t *testing.T) {
+	for name, change := range unsafeImageHostChanges() {
+		t.Run(name, func(t *testing.T) {
+			f := mountedTestFixture(t, "")
+			original := f.engine.command
+			f.engine.command = imageCommandFunc(func(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
+				raw, err := original.RunEnvironment(ctx, binary, args, dir, env)
+				if err == nil && len(args) > 6 && args[4] == "container" && args[5] == "inspect" && args[6] == f.candidate {
+					var c imageContainer
+					if err := json.Unmarshal(raw, &c); err != nil {
+						t.Fatal(err)
+					}
+					change(&c)
+					return json.Marshal(c)
+				}
+				return raw, err
+			})
+			result := f.engine.ApplyWithOwnedStorage(t.Context(), "hop_candidate", f.plan, f.request, f.evidence)
+			if result.Ready || !result.Uncertain || !f.created || slices.Contains(f.events, "start "+f.candidate) {
+				t.Fatalf("unsafe candidate started or lost uncertainty: %+v events=%v", result, f.events)
 			}
 		})
 	}

@@ -293,8 +293,13 @@ func (e *imageEngine) verifyOwnedVolumeUsers(ctx context.Context, req hostingOwn
 			return err
 		}
 		var user hostingVolumeUser
-		if json.Unmarshal(raw, &user) != nil || user.ID != id || user.Image != expected.Release.ImageID || !ownedImageContainer(user.imageContainer, req.Storage.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || len(user.Mounts) > 128 {
+		if json.Unmarshal(raw, &user) != nil || user.ID != id || user.Image != expected.Release.ImageID || !ownedImageContainer(user.imageContainer, req.Storage.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || len(user.Mounts) != 1 || len(user.HostConfig.Mounts) > 1 {
 			return errors.New("owned hosting volume user identity mismatch")
+		}
+		for _, mount := range user.HostConfig.Mounts {
+			if mount.Type != "volume" || mount.Source != req.Storage.VolumeName || mount.Target != req.Storage.MountPath || mount.ReadOnly {
+				return errors.New("owned hosting volume configured mount mismatch")
+			}
 		}
 		matches := 0
 		for _, mount := range user.Mounts {

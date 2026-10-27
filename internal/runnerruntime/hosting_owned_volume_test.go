@@ -42,9 +42,10 @@ func ownedVolumeKnownUser(req hostingOwnedVolumeRequest) domain.HostingHealthy {
 func ownedVolumeUserInspection(req hostingOwnedVolumeRequest, known domain.HostingHealthy) map[string]any {
 	return map[string]any{
 		"Id": known.ContainerID, "Image": known.Release.ImageID,
-		"Config": map[string]any{"Labels": map[string]string{imageBindingLabel: req.Storage.BindingID, imageOperationLabel: known.OperationID, imageReleaseLabel: known.Release.Hash, imagePlanLabel: known.PlanHash}},
-		"State":  map[string]bool{"Running": false},
-		"Mounts": []map[string]any{{"Type": "volume", "Name": req.Storage.VolumeName, "Driver": "local", "Destination": req.Storage.MountPath, "RW": true}},
+		"Config":     map[string]any{"Labels": map[string]string{imageBindingLabel: req.Storage.BindingID, imageOperationLabel: known.OperationID, imageReleaseLabel: known.Release.Hash, imagePlanLabel: known.PlanHash}},
+		"State":      map[string]bool{"Running": false},
+		"HostConfig": map[string]any{"NetworkMode": "default"},
+		"Mounts":     []map[string]any{{"Type": "volume", "Name": req.Storage.VolumeName, "Driver": "local", "Destination": req.Storage.MountPath, "RW": true}},
 	}
 }
 

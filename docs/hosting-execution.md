@@ -14,6 +14,16 @@ same explicit endpoint is used for daemon probing, pulling, inspection and apply
 Each engine instance has an empty, owner-only registry configuration; ambient
 registry credentials and Docker contexts are not inherited. Only anonymous public image pulls are supported.
 
+Container inspection checks the default bridge network mode, loopback port mapping,
+and host privileges before accepting ownership or readiness. Privileged mode,
+added capabilities, host binds, shared host namespaces, devices, volume inheritance,
+security overrides, and extra published ports fail closed. Stateless plans reject
+mounts. Managed-storage plans allow only their exact local named volume and mount
+path. Checks cover predecessors, retained releases, newly created candidates,
+readiness, observation, and targeted cleanup. Readiness rechecks container identity
+and host policy after a successful HTTP response. The local Docker daemon remains
+trusted; these checks do not provide an OS sandbox for hostile workloads.
+
 ## Request and inspect a deployment
 
 `POST /api/v1/resources/{id}/deployments` requires project maintainer access:

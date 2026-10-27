@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"nerocd/internal/domain"
@@ -87,7 +88,7 @@ func TestImageCleanupPinsTargetAndRetainsAmbiguousEffects(t *testing.T) {
 					if mode == "foreign-label" {
 						operation = "foreign-operation"
 					}
-					return json.Marshal(map[string]any{"Id": target.ContainerID, "Image": target.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: target.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: target.Release.Hash, imagePlanLabel: target.PlanHash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.Snapshot.HostPort)}}}}})
+					return json.Marshal(map[string]any{"Id": target.ContainerID, "Image": target.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: target.Snapshot.BindingID, imageOperationLabel: operation, imageReleaseLabel: target.Release.Hash, imagePlanLabel: target.PlanHash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"NetworkMode": "default", "PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.Snapshot.HostPort)}}}}})
 				case "stop", "rm":
 					if args[len(args)-1] != target.ContainerID {
 						t.Fatalf("wrong mutation target: %v", args)
@@ -245,7 +246,7 @@ func TestImageReadinessUsesOrdinaryOwnedHTTP(t *testing.T) {
 			return []byte(`"daemon-image-test"`), nil
 		}
 		if args[4] == "container" && args[5] == "inspect" {
-			return json.Marshal(map[string]any{"Id": id, "Image": plan.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: plan.Snapshot.BindingID, imageOperationLabel: "hop_image", imageReleaseLabel: plan.Release.Hash, imagePlanLabel: plan.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(port)}}}}})
+			return json.Marshal(map[string]any{"Id": id, "Image": plan.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: plan.Snapshot.BindingID, imageOperationLabel: "hop_image", imageReleaseLabel: plan.Release.Hash, imagePlanLabel: plan.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"NetworkMode": "default", "PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(port)}}}}})
 		}
 		t.Fatalf("readiness mutated Docker: %v", args)
 		return nil, nil
@@ -255,5 +256,115 @@ func TestImageReadinessUsesOrdinaryOwnedHTTP(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("ordinary HTTP requests=%d", requests)
+	}
+}
+
+func unsafeImageHostChanges() map[string]func(*imageContainer) {
+	return map[string]func(*imageContainer){
+		"privileged":        func(c *imageContainer) { c.HostConfig.Privileged = true },
+		"capability":        func(c *imageContainer) { c.HostConfig.CapAdd = []string{"SYS_ADMIN"} },
+		"bind":              func(c *imageContainer) { c.HostConfig.Binds = []string{"/:/host"} },
+		"host-network":      func(c *imageContainer) { c.HostConfig.NetworkMode = "host" },
+		"container-network": func(c *imageContainer) { c.HostConfig.NetworkMode = "container:other" },
+		"missing-network":   func(c *imageContainer) { c.HostConfig.NetworkMode = "" },
+		"host-pid":          func(c *imageContainer) { c.HostConfig.PidMode = "host" },
+		"host-ipc":          func(c *imageContainer) { c.HostConfig.IpcMode = "host" },
+		"host-userns":       func(c *imageContainer) { c.HostConfig.UsernsMode = "host" },
+		"device": func(c *imageContainer) {
+			c.HostConfig.Devices = []json.RawMessage{json.RawMessage(`{"PathOnHost":"/dev/sda"}`)}
+		},
+		"device-request": func(c *imageContainer) {
+			c.HostConfig.DeviceRequests = []json.RawMessage{json.RawMessage(`{"Count":-1}`)}
+		},
+		"security-option": func(c *imageContainer) { c.HostConfig.SecurityOpt = []string{"seccomp=unconfined"} },
+		"volumes-from":    func(c *imageContainer) { c.HostConfig.VolumesFrom = []string{"other"} },
+		"publish-all":     func(c *imageContainer) { c.HostConfig.PublishAllPorts = true },
+		"extra-port":      func(c *imageContainer) { c.HostConfig.PortBindings["81/tcp"] = c.HostConfig.PortBindings["80/tcp"] },
+		"extra-mount": func(c *imageContainer) {
+			c.Mounts = append(c.Mounts, imageMount{Type: "bind", Destination: "/host", RW: true})
+		},
+	}
+}
+
+func TestImageHostPolicyGuardsOwnershipReadinessAndCleanup(t *testing.T) {
+	for name, mutate := range unsafeImageHostChanges() {
+		for _, path := range []string{"previous", "retained", "readiness", "cleanup"} {
+			t.Run(name+"/"+path, func(t *testing.T) {
+				p := imageTestPlan(t)
+				h := domain.HostingHealthy{Snapshot: p.Snapshot, Release: p.Release, OperationID: "prior", PlanHash: p.Hash, ContainerID: strings.Repeat("c", 64)}
+				c := mountedContainer(h, true)
+				mutate(&c)
+				e := testImageEngine(t)
+				e.command = imageCommandFunc(func(_ context.Context, _ string, all []string, _ string, _ []string) ([]byte, error) {
+					args := all[4:]
+					switch {
+					case args[0] == "info":
+						return json.Marshal(p.Release.DaemonID)
+					case args[0] == "image" && args[1] == "inspect":
+						return json.Marshal(inspectedImage{ID: p.Release.ImageID, OS: p.Release.OS, Architecture: p.Release.Architecture})
+					case args[0] == "container" && args[1] == "ls":
+						return []byte(h.ContainerID), nil
+					case args[0] == "container" && args[1] == "inspect":
+						return json.Marshal(c)
+					default:
+						t.Fatalf("unsafe container reached mutation: %v", args)
+						return nil, nil
+					}
+				})
+				switch path {
+				case "previous", "retained":
+					p.Snapshot.PolicyVersion = domain.HostingReleasePolicyVersion
+					var err error
+					if path == "previous" {
+						p, err = domain.CompileRetainedHostingPlan(p.Snapshot, p.Release, &h, nil)
+					} else {
+						p, err = domain.CompileRetainedHostingPlan(p.Snapshot, p.Release, nil, []domain.HostingHealthy{h})
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if result := e.Apply(t.Context(), "next", p); result.Ready || !result.Uncertain {
+						t.Fatalf("unsafe predecessor accepted: %+v", result)
+					}
+				case "readiness":
+					if err := e.readiness(t.Context(), p, h.OperationID, h.ContainerID); err == nil {
+						t.Fatal("unsafe container became ready")
+					}
+				case "cleanup":
+					cleanup, err := domain.CompileHostingCleanupPlan(h, "current")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if result := e.Cleanup(t.Context(), cleanup); result.Outcome == "succeeded" || !result.Uncertain {
+						t.Fatalf("unsafe cleanup accepted: %+v", result)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestImageReadinessRechecksHostPolicyAfterHTTP(t *testing.T) {
+	var probed atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { probed.Store(true); w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	p := imageTestPlan(t)
+	u, _ := url.Parse(server.URL)
+	p.Snapshot.HostPort, _ = strconv.Atoi(u.Port())
+	h := domain.HostingHealthy{Snapshot: p.Snapshot, Release: p.Release, OperationID: "current", PlanHash: p.Hash, ContainerID: strings.Repeat("c", 64)}
+	e := testImageEngine(t)
+	e.command = imageCommandFunc(func(_ context.Context, _ string, args []string, _ string, _ []string) ([]byte, error) {
+		if args[4] == "info" {
+			return json.Marshal(p.Release.DaemonID)
+		}
+		if args[4] != "container" || args[5] != "inspect" {
+			t.Fatalf("unexpected command: %v", args)
+		}
+		c := mountedContainer(h, true)
+		c.HostConfig.Privileged = probed.Load()
+		return json.Marshal(c)
+	})
+	if err := e.readiness(t.Context(), p, h.OperationID, h.ContainerID); err == nil || !probed.Load() {
+		t.Fatalf("host-policy drift escaped readiness recheck: %v", err)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
-	"strconv"
 	"time"
 
 	"nerocd/internal/domain"
@@ -103,19 +102,16 @@ func storageContainerMatches(container imageContainer, expected domain.HostingHe
 	if container.ID != expected.ContainerID || container.Image != expected.Release.ImageID || !ownedImageContainer(container, expected.Snapshot.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) {
 		return false
 	}
-	ports := container.HostConfig.PortBindings[strconv.Itoa(expected.Snapshot.ContainerPort)+"/tcp"]
-	if len(container.HostConfig.PortBindings) != 1 || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(expected.Snapshot.HostPort) {
+	var storage *domain.HostingStoragePlan
+	if expected.Storage != nil {
+		if domain.ValidateHostingHealthyStorage(expected) != nil {
+			return false
+		}
+		storage = &expected.Storage.Plan
+	} else if expected.Snapshot.Storage != (domain.HostingStorageRef{}) {
 		return false
 	}
-	if expected.Storage == nil {
-		return expected.Snapshot.Storage == (domain.HostingStorageRef{}) && len(container.Mounts) == 0
-	}
-	if domain.ValidateHostingHealthyStorage(expected) != nil || len(container.Mounts) != 1 {
-		return false
-	}
-	mount := container.Mounts[0]
-	p := expected.Storage.Plan
-	return mount.Type == "volume" && mount.Name == p.VolumeName && mount.Driver == "local" && mount.Destination == p.MountPath && mount.RW
+	return imageContainerPolicyMatches(container, expected.Snapshot, storage)
 }
 
 func (s *ownedStorageExecution) confirmStopped(ctx context.Context, e *imageEngine, expected domain.HostingHealthy) error {

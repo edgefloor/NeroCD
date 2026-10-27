@@ -197,13 +197,56 @@ type imageContainer struct {
 	State struct {
 		Running bool `json:"Running"`
 	} `json:"State"`
-	Mounts     []imageMount `json:"Mounts"`
-	HostConfig struct {
-		PortBindings map[string][]struct {
-			HostIP   string `json:"HostIp"`
-			HostPort string `json:"HostPort"`
-		} `json:"PortBindings"`
-	} `json:"HostConfig"`
+	Mounts     []imageMount    `json:"Mounts"`
+	HostConfig imageHostConfig `json:"HostConfig"`
+}
+
+// imageHostConfig selects host authority that the image compiler never grants.
+// Managed volume mounts are checked separately against their immutable plan.
+type imageHostConfig struct {
+	Privileged, PublishAllPorts               bool
+	NetworkMode, PidMode, IpcMode, UsernsMode string
+	Binds, CapAdd, VolumesFrom, SecurityOpt   []string
+	Devices, DeviceRequests                   []json.RawMessage
+	Mounts                                    []struct {
+		Type, Source, Target string
+		ReadOnly             bool
+	}
+	PortBindings map[string][]struct {
+		HostIP   string `json:"HostIp"`
+		HostPort string `json:"HostPort"`
+	} `json:"PortBindings"`
+}
+
+func imageHostPolicyMatches(h imageHostConfig) bool {
+	return !h.Privileged && !h.PublishAllPorts && (h.NetworkMode == "default" || h.NetworkMode == "bridge") &&
+		h.PidMode == "" && (h.IpcMode == "" || h.IpcMode == "private") && h.UsernsMode == "" &&
+		len(h.Binds) == 0 && len(h.CapAdd) == 0 && len(h.VolumesFrom) == 0 && len(h.SecurityOpt) == 0 &&
+		len(h.Devices) == 0 && len(h.DeviceRequests) == 0
+}
+
+func imageContainerPolicyMatches(c imageContainer, snapshot domain.HostingSnapshot, storage *domain.HostingStoragePlan) bool {
+	h := c.HostConfig
+	ports := h.PortBindings[strconv.Itoa(snapshot.ContainerPort)+"/tcp"]
+	if !imageHostPolicyMatches(h) || len(h.PortBindings) != 1 || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(snapshot.HostPort) {
+		return false
+	}
+	if storage == nil {
+		return len(c.Mounts) == 0 && len(h.Mounts) == 0
+	}
+	if len(c.Mounts) != 1 || len(h.Mounts) > 1 {
+		return false
+	}
+	mount := c.Mounts[0]
+	if mount.Type != "volume" || mount.Name != storage.VolumeName || mount.Driver != "local" || mount.Destination != storage.MountPath || !mount.RW {
+		return false
+	}
+	for _, configured := range h.Mounts {
+		if configured.Type != "volume" || configured.Source != storage.VolumeName || configured.Target != storage.MountPath || configured.ReadOnly {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *imageEngine) inspectContainer(ctx context.Context, id string) (imageContainer, error) {
@@ -222,7 +265,7 @@ func (e *imageEngine) inspectContainer(ctx context.Context, id string) (imageCon
 }
 func ownedImageContainer(container imageContainer, binding, operation, release, plan string) bool {
 	labels := container.Config.Labels
-	return dockerObjectID.MatchString(container.ID) && labels[imageBindingLabel] == binding && labels[imageOperationLabel] == operation && labels[imageReleaseLabel] == release && labels[imagePlanLabel] == plan
+	return imageHostPolicyMatches(container.HostConfig) && dockerObjectID.MatchString(container.ID) && labels[imageBindingLabel] == binding && labels[imageOperationLabel] == operation && labels[imageReleaseLabel] == release && labels[imagePlanLabel] == plan
 }
 func (e *imageEngine) mutate(ctx context.Context, daemon string, args ...string) ([]byte, error) {
 	if err := e.verifyDaemon(ctx, daemon); err != nil {
@@ -326,7 +369,7 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 	if plan.PreviousHealthy != nil {
 		previous := plan.PreviousHealthy
 		existing, err := e.inspectContainer(ctx, previous.ContainerID)
-		if err != nil || !ownedImageContainer(existing, plan.Snapshot.BindingID, previous.OperationID, previous.Release.Hash, previous.PlanHash) || existing.Image != previous.Release.ImageID {
+		if err != nil || !storageContainerMatches(existing, *previous) {
 			result.Uncertain = true
 			return result
 		}
@@ -354,8 +397,7 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 			return result
 		}
 		if allowed {
-			port := container.HostConfig.PortBindings[strconv.Itoa(expected.Snapshot.ContainerPort)+"/tcp"]
-			if !ownedImageContainer(container, expected.Snapshot.BindingID, expected.OperationID, expected.Release.Hash, expected.PlanHash) || container.Image != expected.Release.ImageID || len(port) != 1 || port[0].HostIP != "127.0.0.1" || port[0].HostPort != strconv.Itoa(expected.Snapshot.HostPort) {
+			if !storageContainerMatches(container, expected) {
 				result.Uncertain = true
 				return result
 			}
@@ -461,6 +503,11 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 			return result
 		}
 	}
+	created, inspectErr := e.inspectContainer(ctx, result.ContainerID)
+	if inspectErr != nil || created.ID != result.ContainerID || created.Image != plan.Release.ImageID || !ownedImageContainer(created, plan.Snapshot.BindingID, operationID, plan.Release.Hash, plan.Hash) || !imageContainerPolicyMatches(created, plan.Snapshot, plan.Storage) {
+		result.Uncertain = true
+		return result
+	}
 	if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", result.ContainerID); err != nil {
 		result.Uncertain = true
 		return result
@@ -487,6 +534,11 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 		return result
 	}
 	if storage != nil && storageCheck(ctx) != nil {
+		result.Uncertain = true
+		return result
+	}
+	failed, inspectErr := e.inspectContainer(ctx, result.ContainerID)
+	if inspectErr != nil || failed.ID != result.ContainerID || failed.Image != plan.Release.ImageID || !ownedImageContainer(failed, plan.Snapshot.BindingID, operationID, plan.Release.Hash, plan.Hash) || !imageContainerPolicyMatches(failed, plan.Snapshot, plan.Storage) {
 		result.Uncertain = true
 		return result
 	}
@@ -556,12 +608,11 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 			return err
 		}
 		container, err := e.inspectContainer(deadline, containerID)
-		if err != nil || !container.State.Running || container.Image != plan.Release.ImageID || !ownedImageContainer(container, plan.Snapshot.BindingID, operationID, plan.Release.Hash, plan.Hash) {
+		if err != nil || container.ID != containerID || !container.State.Running || container.Image != plan.Release.ImageID || !ownedImageContainer(container, plan.Snapshot.BindingID, operationID, plan.Release.Hash, plan.Hash) {
 			return errors.New("readiness target is not the owned running container")
 		}
-		bindings := container.HostConfig.PortBindings[strconv.Itoa(plan.Snapshot.ContainerPort)+"/tcp"]
-		if len(bindings) != 1 || bindings[0].HostIP != "127.0.0.1" || bindings[0].HostPort != strconv.Itoa(plan.Snapshot.HostPort) {
-			return errors.New("owned port mapping changed")
+		if !imageContainerPolicyMatches(container, plan.Snapshot, plan.Storage) {
+			return errors.New("owned container host policy changed")
 		}
 		request, err := http.NewRequestWithContext(deadline, http.MethodGet, probeURL, nil)
 		if err != nil {
@@ -572,6 +623,13 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 			_ = response.Body.Close()
 			if response.StatusCode >= 200 && response.StatusCode <= 399 {
+				if e.verifyDaemon(deadline, plan.Release.DaemonID) != nil {
+					return errors.New("readiness daemon identity changed")
+				}
+				after, inspectErr := e.inspectContainer(deadline, containerID)
+				if inspectErr != nil || after.ID != containerID || !after.State.Running || after.Image != plan.Release.ImageID || !ownedImageContainer(after, plan.Snapshot.BindingID, operationID, plan.Release.Hash, plan.Hash) || !imageContainerPolicyMatches(after, plan.Snapshot, plan.Storage) {
+					return errors.New("readiness target changed during probe")
+				}
 				for _, check := range checks {
 					if err := check(deadline); err != nil {
 						return err
@@ -713,8 +771,7 @@ func (e *imageEngine) Cleanup(ctx context.Context, plan domain.HostingCleanupPla
 			result.Uncertain = true
 			return result
 		}
-		ports := container.HostConfig.PortBindings[strconv.Itoa(target.Snapshot.ContainerPort)+"/tcp"]
-		if !ownedImageContainer(container, target.Snapshot.BindingID, target.OperationID, target.Release.Hash, target.PlanHash) || container.Image != target.Release.ImageID || len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(target.Snapshot.HostPort) {
+		if !storageContainerMatches(container, target) {
 			result.Uncertain = true
 			return result
 		}

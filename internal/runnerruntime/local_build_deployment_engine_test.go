@@ -110,7 +110,7 @@ func TestLocalArtifactApplyUsesExactIDAndNeverPulls(t *testing.T) {
 			case "start":
 				return nil, nil
 			case "inspect":
-				return json.Marshal(map[string]any{"Id": id, "Image": p.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: p.Snapshot.BindingID, imageOperationLabel: "operation", imageReleaseLabel: p.Release.Hash, imagePlanLabel: p.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(port)}}}}})
+				return json.Marshal(map[string]any{"Id": id, "Image": p.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: p.Snapshot.BindingID, imageOperationLabel: "operation", imageReleaseLabel: p.Release.Hash, imagePlanLabel: p.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"NetworkMode": "default", "PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(port)}}}}})
 			}
 		}
 		t.Fatalf("local apply attempted unexpected effect: %v", args)
@@ -145,7 +145,7 @@ func TestLocalArtifactCleanupDoesNotRequireImageCache(t *testing.T) {
 			}
 			return []byte(id), nil
 		case "inspect":
-			return json.Marshal(map[string]any{"Id": id, "Image": p.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: p.Snapshot.BindingID, imageOperationLabel: "old", imageReleaseLabel: p.Release.Hash, imagePlanLabel: p.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(p.Snapshot.HostPort)}}}}})
+			return json.Marshal(map[string]any{"Id": id, "Image": p.Release.ImageID, "Config": map[string]any{"Labels": map[string]string{imageBindingLabel: p.Snapshot.BindingID, imageOperationLabel: "old", imageReleaseLabel: p.Release.Hash, imagePlanLabel: p.Hash}}, "State": map[string]bool{"Running": true}, "HostConfig": map[string]any{"NetworkMode": "default", "PortBindings": map[string]any{"80/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(p.Snapshot.HostPort)}}}}})
 		case "stop":
 			if args[len(args)-1] != id {
 				t.Fatal("wrong cleanup target")

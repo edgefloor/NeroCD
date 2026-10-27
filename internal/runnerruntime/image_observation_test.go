@@ -23,7 +23,7 @@ import (
 func observationContainerJSON(t *testing.T, target domain.HostingObservationTarget, mode string) []byte {
 	t.Helper()
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(target.OperationID), "sha256:")[:16]
-	values := map[string]any{"id": target.ContainerID, "name": "/" + target.RuntimeNamespace + "_" + suffix, "image": target.ImageID, "status": "running", "running": true, "paused": false, "restarting": false, "dead": false, "exit_code": 0, "binding": target.BindingID, "operation": target.OperationID, "release": target.ReleaseHash, "plan": target.PlanHash, "ports": map[string]any{strconv.Itoa(target.ContainerPort) + "/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.HostPort)}}}}
+	values := map[string]any{"host_policy": imageHostConfig{NetworkMode: "default"}, "id": target.ContainerID, "name": "/" + target.RuntimeNamespace + "_" + suffix, "image": target.ImageID, "status": "running", "running": true, "paused": false, "restarting": false, "dead": false, "exit_code": 0, "binding": target.BindingID, "operation": target.OperationID, "release": target.ReleaseHash, "plan": target.PlanHash, "ports": map[string]any{strconv.Itoa(target.ContainerPort) + "/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": strconv.Itoa(target.HostPort)}}}}
 	switch mode {
 	case "exited":
 		values["status"], values["running"], values["exit_code"] = "exited", false, 23
@@ -53,7 +53,7 @@ func observationContainerJSON(t *testing.T, target domain.HostingObservationTarg
 	return raw
 }
 func TestImageObservationClosedEvidenceAndIdentity(t *testing.T) {
-	for _, mode := range []string{"healthy", "http503", "redirect", "exited", "paused", "restarting", "created", "dead", "missing", "inspect-error", "list-error", "daemon-mismatch", "binding", "image", "name", "container", "ports", "probe-stopped", "probe-replaced", "http-failure", "missing-exit-field"} {
+	for _, mode := range []string{"healthy", "http503", "redirect", "exited", "paused", "restarting", "created", "dead", "missing", "inspect-error", "list-error", "daemon-mismatch", "binding", "image", "name", "container", "ports", "probe-stopped", "probe-replaced", "privileged", "capability", "bind", "host-network", "probe-privileged", "http-failure", "missing-exit-field"} {
 		t.Run(mode, func(t *testing.T) {
 			var redirected atomic.Int32
 			other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { redirected.Add(1); w.WriteHeader(200) }))
@@ -109,6 +109,23 @@ func TestImageObservationClosedEvidenceAndIdentity(t *testing.T) {
 					inspectMode = "container"
 				}
 				raw := observationContainerJSON(t, target, inspectMode)
+				policy := imageHostConfig{NetworkMode: "default"}
+				switch mode {
+				case "privileged":
+					policy.Privileged = true
+				case "capability":
+					policy.CapAdd = []string{"SYS_ADMIN"}
+				case "bind":
+					policy.Binds = []string{"/:/host"}
+				case "host-network":
+					policy.NetworkMode = "host"
+				case "probe-privileged":
+					policy.Privileged = inspections > 1
+				}
+				var projection map[string]any
+				_ = json.Unmarshal(raw, &projection)
+				projection["host_policy"] = policy
+				raw, _ = json.Marshal(projection)
 				if mode == "missing-exit-field" {
 					var m map[string]any
 					_ = json.Unmarshal(raw, &m)
