@@ -85,3 +85,15 @@ test("actor is a client identity cache key, not a persisted identifier", async (
     expect.objectContaining({ cache: "no-store", credentials: "include" }),
   ]);
 });
+
+test.each(["actor", "project", "resource", "destination", "binding"])(
+  "rejects empty %s scope before network",
+  async (field) => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      getArchiveDownloadOptions({ ...scope, [field]: "" }, backup),
+    ).rejects.toThrow("scope mismatch");
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
