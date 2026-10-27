@@ -300,13 +300,7 @@ func composeRuntimeWriterBarrier(t *testing.T, previous, current domain.HostingO
 // The explicit acceptance init command has finite output; EOF is disconnected.
 func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID string, operation domain.HostingOperation, component string, closeSession bool) domain.HostingRuntimeLogSession {
 	t.Helper()
-	requestID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if component == "postgresql" {
-		requestID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	}
-	if component == "init" {
-		requestID = "cccccccccccccccccccccccccccccccc"
-	}
+	requestID := hostingStorageRemoteRuntimeRandom(t)[:32]
 	input := domain.HostingRuntimeLogOpen{RequestID: requestID, RequestExpiresAt: time.Now().UTC().Add(25 * time.Second), Component: component, ExpectedOperationID: operation.ID}
 	session := storageRuntimeJSON[domain.HostingRuntimeLogSession](f, "POST", "/api/v1/resources/"+resourceID+"/runtime-log-sessions", input, 200)
 	deadline := time.Now().Add(10 * time.Second)
