@@ -132,8 +132,10 @@ function continuityRecoveryInput(record: HostingOperation, scope: StorageDeploym
 function StorageContinuityRecovery({ scope, operation, record, status, blocked, writable, onUpdated }: {
   scope: StorageDeploymentScope; operation: string; record: HostingOperation; status: StorageContinuityStatus; blocked: boolean; writable: boolean; onUpdated: () => void;
 }) {
-  const principal = useQuery(principalQuery());
-  const members = useQuery(allProjectMembersQuery());
+  // The containing deployment verifies access. Observe its authority without
+  // starting a fetch that would retire the containing deployment intent.
+  const principal = useQuery({ ...principalQuery(), enabled: false });
+  const members = useQuery({ ...allProjectMembersQuery(), enabled: false });
   const [review, setReview] = useState<StorageRouteRecoveryInput>();
   const [confirmed, setConfirmed] = useState(false), [sent, setSent] = useState(false), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [denied, setDenied] = useState(false);
   const [message, setMessage] = useState("");

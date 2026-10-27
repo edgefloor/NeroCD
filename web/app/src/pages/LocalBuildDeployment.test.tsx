@@ -404,3 +404,25 @@ test("public Git Compose cannot accept an unexpected credential in its receipt",
   await setup(true, composeResource); await composeSubmit(); await screen.findByText(/Deployment delivery is unconfirmed/);
   expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
 });
+
+test("mounting routed operation continuity observes parent authority without retiring the selected deployment", async () => {
+  let memberReads = 0, continuityReads = 0;
+  const fetch = composeBackend(url => {
+    if (url.includes("/project-members?")) { memberReads++; return new Promise<Response>(resolve => setTimeout(() => resolve(json({ items: [{ project_id: "p", user_id: "u", role: "maintainer" }], count: 1, total: 1, offset: 0 })), 30)); }
+    if (url.endsWith("/storage-route-continuity/hop_local")) { continuityReads++; return json({ resource_id: "r", operation_id: "hop_local", state: "unresolved", reason: "reconciliation_required" }); }
+    if (url.endsWith("/from-build") || url.endsWith("/hosting-operations/hop_local")) return json({ ...composeOperation, state: "succeeded", mutation_hold: false, restore_ownership_held: false, reconcile_requested: false, complete_receipt: { id: "complete_hop_local", body_hash: `sha256:${"d".repeat(64)}`, created_at: "" }, result: { outcome: "succeeded", ready: true, uncertain: false, restored: false }, snapshot: { ...composeOperation.snapshot, storage_route_continuity: { hash: `sha256:${"e".repeat(64)}` } } }, url.endsWith("/from-build") ? 202 : 200);
+    return runningCompose(url);
+  });
+  await setup(true, composeResource);
+  // The deployment parent has a fresh ten-second authority view. A newly
+  // mounted descendant must not introduce a zero-staleness membership fetch.
+  client.setQueryDefaults(queryKeys.allProjectMembers, { staleTime: 0 });
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  await composeSubmit();
+  await waitFor(() => expect(continuityReads).toBeGreaterThan(0));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  expect.soft(memberReads).toBe(0);
+  expect(screen.getByRole("region", { name: "Deployment operation detail" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Refresh operation" })).toBeTruthy();
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
+});
