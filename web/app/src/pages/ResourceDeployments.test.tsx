@@ -749,3 +749,27 @@ test("Start reviews saved configuration and freezes the exact stopped reference"
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
   expect(JSON.parse(String(writes[0]![1].body))).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, managed_stack: { acknowledge_interruption: true, expected_stopped_operation_id: "stop_one" } });
 });
+
+test("private stateless image retry keeps the exact credential version and sends no secret values", async () => {
+  let writes = 0;
+  const fetch = backend((url, init) => {
+    if (url.includes("managed-secrets")) return json({ items: url.includes("versions") ? [{ secret_id: "credential", version: 1 }, { secret_id: "credential", version: 2 }] : [{ id: "credential", name: "Private registry", project_id: "project", status: "active" }], limit: 20, offset: 0, count: 1, total: 1 });
+    if (url.endsWith("deployments") && init.method === "POST" && ++writes === 1) throw new TypeError("lost");
+  });
+  setup();
+  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  await screen.findByRole("option", { name: "Private registry · credential" });
+  fireEvent.change(screen.getByLabelText("Registry credential secret"), { target: { value: "credential" } });
+  await screen.findByRole("option", { name: "Version 1" });
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  acknowledge(); await request();
+  await screen.findByRole("button", { name: "Retry identical deployment request" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Registry credential version").disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy image for Web" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const calls = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(calls).toHaveLength(2);
+  expect(calls[0]![1].body).toBe(calls[1]![1].body);
+  expect(JSON.parse(calls[0]![1].body as string).registry_credential).toEqual({ secret_id: "credential", version: 1 });
+  expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});

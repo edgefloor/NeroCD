@@ -697,3 +697,26 @@ test("catalog first deployment prefills image settings and pins saved runtime ge
   const body=JSON.parse(fetch.mock.calls.find(([,init])=>init.method==="POST")![1].body as string);
   expect(body).toMatchObject({expected_runtime_configuration_generation:1,container_port:9090,host_port:20101,readiness:{path:"/health",timeout_seconds:120}});
 });
+
+test("stored image review and identical retry pin the selected registry credential version", async () => {
+  let count = 0;
+  const { fetch, selected } = setup((url) => {
+    if (url.includes("managed-secrets")) return json({ items: url.includes("versions") ? [{ secret_id: "credential", version: 1 }] : [{ id: "credential", name: "Private registry", project_id: "project", status: "active" }], limit: 20, offset: 0, count: 1, total: 1 });
+    if (url.endsWith("deployments") && ++count === 1) throw new TypeError("lost");
+  });
+  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  await screen.findByRole("option", { name: "Private registry · credential" });
+  fireEvent.change(screen.getByLabelText("Registry credential secret"), { target: { value: "credential" } });
+  await screen.findByRole("option", { name: "Version 1" });
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  await review();
+  expect(screen.getByLabelText<HTMLSelectElement>("Image access").disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry identical storage deployment request" }));
+  await vi.waitFor(() => expect(selected).toHaveBeenCalledWith("hop"));
+  const calls = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(calls).toHaveLength(2);
+  expect(calls[0]![1].body).toBe(calls[1]![1].body);
+  expect(JSON.parse(calls[0]![1].body as string).registry_credential).toEqual({ secret_id: "credential", version: 1 });
+  expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});

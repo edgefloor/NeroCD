@@ -1,3 +1,4 @@
+import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import { ComposeStorageBackups } from "./ComposeStorageBackups";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -210,6 +211,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState<HostingDeploymentInput>();
+  const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
   const [conflict, setConflict] = useState(false);
   const [current, setCurrent] = useState<Resource>();
   const [reviewed, setReviewed] = useState<Resource>();
@@ -272,7 +274,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (resource.source.kind !== "image" || !stateless || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged) return;
+    if (resource.source.kind !== "image" || !stateless || !canWrite || newAdmissionHeld || submitting.current || !binding.data || conflict || restoreHeld || !acknowledged || (!attempt && !registrySelection.valid)) return;
     submitting.current = true;
     let input = attempt;
     const controller = new AbortController(); request.current = controller;
@@ -289,7 +291,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
         const { runtime_configuration: runtime } = await boundedStorageRequest((signal) => getHostingRuntimeConfiguration(resource.id, { signal }), controller.signal);
         if (!active.current || controller.signal.aborted) return;
         if (runtime.resource_id !== resource.id || runtime.project_id !== resource.project_id || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
-        input = { ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
+        input = { ...(registrySelection.credential ? { registry_credential: { ...registrySelection.credential } } : {}), ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), expected_generation: base.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(portMode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
         setAttempt(input);
       }
       const frozenInput = input;
@@ -357,10 +359,11 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
         <label className="space-y-1" htmlFor={`${id}-path`}>Readiness path<Input id={`${id}-path`} required maxLength={1024} value={path} disabled={busy || Boolean(attempt)} onChange={(event) => { setPath(event.target.value); setAcknowledged(false); }} /></label>
         <label className="space-y-1" htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} required value={timeout} disabled={busy || Boolean(attempt)} onChange={(event) => { setTimeout(event.target.value); setAcknowledged(false); }} /></label>
       </div>
+      <ImageRegistryCredential actor={actor} project={resource.project_id} image={base.source.kind === "image" ? base.source.image.reference : ""} disabled={busy || !!attempt || !canWrite} onChange={setRegistrySelection} onDenied={onDenied} />
       <p className="text-xs text-muted-foreground">The readiness path must be relative to the local origin, such as /health. This is a generic HTTP check without revision-specific response headers. {portMode === "fixed" ? `Port 127.0.0.1:${hostPort}` : "The allocated loopback port"} is local to the runner, not a public application URL. Automatic allocation uses a separate port per release and retains prior containers until explicit cleanup. It does not switch traffic or provision HTTPS.</p>
       {portMode === "fixed" ? <p role="note" className="text-sm">Reusing the current release’s unprotected port on this binding stops the current container before replacement readiness is verified, interrupting service. Retained-release, other-binding, and proxy-protected port conflicts are rejected.</p> : null}
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={(event) => setAcknowledged(event.target.checked)} /><span>I understand that {portMode === "fixed" ? "reusing the current release’s unprotected port stops it before replacement readiness is verified and interrupts service; retained-release, other-binding, and proxy-protected port conflicts are rejected" : "the server allocates a new release port and previous containers remain until explicit cleanup"}. No automatic traffic switch or zero-downtime behavior is promised.</span></label>
-      <Button type="submit" className="h-auto whitespace-normal" disabled={!stateless || !canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
+      <Button type="submit" className="h-auto whitespace-normal" disabled={!stateless || !canWrite || newAdmissionHeld || busy || !binding.data || !acknowledged || conflict || restoreHeld || (!attempt && !registrySelection.valid)}>{restoreHeld ? "Deployment blocked after restore" : newAdmissionHeld ? "Deployment waiting for settlement" : busy ? "Requesting deployment..." : attempt ? "Retry identical deployment request" : "Request image deployment"}</Button>
       {attempt ? <p className="break-all text-xs">Request key: {attempt.idempotency_key}. Submitted settings and resource/runtime generations {attempt.expected_generation}/{attempt.expected_runtime_configuration_generation ?? 0} are retained{restoreHeld ? ". Deployment admission remains blocked." : " for an identical retry."}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {attempt && !restoreHeld ? <section className="space-y-2" aria-label="Review deployment request">

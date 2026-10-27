@@ -1,3 +1,4 @@
+import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
@@ -136,6 +137,7 @@ export function StorageDeploymentReview({
     storage: HostingStorage;
   }>();
   const formID = useId();
+  const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
   const [hostPort, setHostPort] = useState("");
   const [containerPort, setContainerPort] = useState("");
   const [readinessPath, setReadinessPath] = useState("");
@@ -176,7 +178,7 @@ export function StorageDeploymentReview({
     };
   }, []);
   async function prepare() {
-    if (request.current || blocked || mutationHeld || refreshing) return;
+    if (request.current || blocked || mutationHeld || refreshing || !registrySelection.valid) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
@@ -253,6 +255,7 @@ export function StorageDeploymentReview({
       );
       if (!active.current || controller.signal.aborted) return;
       const input: HostingDeploymentInput = {
+        ...(registrySelection.credential ? { registry_credential: { ...registrySelection.credential } } : {}),
         expected_generation: current.resource_generation,
         ...(runtime.runtime_generation > 0 ? {expected_runtime_configuration_generation:runtime.runtime_generation}:{}),
         idempotency_key: crypto.randomUUID(),
@@ -410,6 +413,7 @@ export function StorageDeploymentReview({
           rollback does not undo writes made to uploads.
         </p>
       )}
+      <ImageRegistryCredential actor={scope.actor} project={scope.project} image={resource.source.kind === "image" ? resource.source.image.reference : ""} disabled={blocked || busy || !!review || refreshing} onChange={setRegistrySelection} onDenied={onDenied} />
       {initial ? (
         <form
           id={formID}
@@ -480,7 +484,7 @@ export function StorageDeploymentReview({
         variant="outline"
         className="h-auto max-w-full whitespace-normal"
         disabled={
-          blocked || mutationHeld || busy || refreshing || (sent && !conflict)
+          blocked || mutationHeld || busy || refreshing || !registrySelection.valid || (sent && !conflict)
         }
         onClick={initial ? undefined : () => void prepare()}
       >

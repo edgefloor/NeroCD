@@ -75,3 +75,14 @@ test("storage deployment admission preserves the complete reviewed route CAS and
   expect(fetch.mock.calls[0][1].body).toBe(JSON.stringify(body));
   expect(fetch.mock.calls[1][1].body).toBe(fetch.mock.calls[0][1].body);
 });
+
+test("registry references are pinned, and inline credential fields fail before transport", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ id: "operation" })));
+  vi.stubGlobal("fetch", fetch);
+  const privateInput = { ...input, registry_credential: { secret_id: "credential", version: 2 } };
+  await requestHostingDeployment("resource", privateInput);
+  expect(JSON.parse(fetch.mock.calls[0]![1].body as string).registry_credential).toEqual({ secret_id: "credential", version: 2 });
+  await expect(requestHostingDeployment("resource", { ...input, registry_credential: { secret_id: "credential", version: 2, password: "never" } } as typeof privateInput)).rejects.toThrow("Invalid registry credential reference");
+  await expect(requestHostingDeployment("resource", { ...input, registry_credential: { secret_id: "credential", version: 0 } })).rejects.toThrow("Invalid registry credential reference");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

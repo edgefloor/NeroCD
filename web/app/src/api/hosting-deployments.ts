@@ -27,6 +27,12 @@ const operationPath = (id: string) => `/api/v1/hosting-operations/${encodeURICom
 // Preserve the structured admission code, which the shared generic client does
 // not expose. A restored binding must never become a generation-retry flow.
 export async function requestHostingDeployment(resourceID: string, body: HostingDeploymentInput, options?: Options): Promise<HostingOperation> {
+  if (body.registry_credential !== undefined) {
+    const ref = body.registry_credential;
+    if (!ref || Object.keys(ref).some((key) => !["secret_id", "version"].includes(key)) || typeof ref.secret_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(ref.secret_id) || !Number.isSafeInteger(ref.version) || ref.version < 1)
+      throw new Error("Invalid registry credential reference");
+    return hostingMutation(deploymentsPath(resourceID), { ...body, registry_credential: { secret_id: ref.secret_id, version: ref.version } }, options);
+  }
   return hostingMutation(deploymentsPath(resourceID), body, options);
 }
 export async function requestHostingBuildDeployment(resourceID: string, body: HostingBuildDeploymentInput, options?: Options): Promise<HostingOperation> {
