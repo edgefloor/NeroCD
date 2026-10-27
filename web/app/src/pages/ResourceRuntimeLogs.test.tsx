@@ -195,3 +195,24 @@ test.each(["app", "db", "init"])("Compose %s requires the selected reader to ent
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(fetch.mock.calls[0]![1].body))).toMatchObject({ component, expected_operation_id: "op" });
 });
+
+test("Git component logs follow committed stack provenance despite changed draft strategy", async () => {
+  const fetch = backend(url => url.includes("/deployments?") ? json({ items: [{ id: "op", project_id: "p", resource_id: "r", state: "succeeded", snapshot: { git_compose: { build_id: "prior", source_generation: 1, result_hash: digest }, stack: { generation: 1, hash: digest } } }], total: 1, count: 1, limit: 20, offset: 0 }) : undefined);
+  const view = setup(true);
+  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/example/app", requested_ref: "failed-new-build", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+  await act(async () => { view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={git} blocked={false} /></QueryClientProvider>); });
+  await advance(1);
+  expect(screen.getByLabelText("Compose component")).toBeTruthy();
+  expect(fetch.mock.calls.some(([url]) => url.includes("/deployments?"))).toBe(true);
+  expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
+});
+
+test("Git Compose draft without a committed deployment does not choose component logs", async () => {
+  backend(url => url.includes("/deployments?") ? json({ items: [], total: 0, count: 0, limit: 20, offset: 0 }) : undefined);
+  const view = setup();
+  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 1, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80 } } } };
+  await act(async () => { view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={git} blocked={false} /></QueryClientProvider>); });
+  await advance(1);
+  expect(screen.queryByLabelText("Compose component")).toBeNull();
+  expect(screen.getByRole("button", { name: "Follow runtime logs" })).toBeTruthy();
+});

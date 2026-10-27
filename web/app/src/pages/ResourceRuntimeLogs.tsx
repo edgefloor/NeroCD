@@ -1,3 +1,4 @@
+import { committedGitCompose, hostingDeploymentsQuery } from "@/api/hosting-deployments";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, principalQuery } from "@/api";
@@ -13,7 +14,19 @@ const buttonClass = "h-auto max-w-full whitespace-normal";
 export function ResourceRuntimeLogs({ resource, blocked }: { resource: Resource; blocked: boolean }) {
   const identity = useQuery(principalQuery());
   if (blocked || identity.isPending || identity.isFetching || identity.isError || !identity.data) return <p role="status">Runtime log access is pending or unavailable. Output is cleared.</p>;
-  return <LogOutput key={JSON.stringify([identity.data.provider, identity.data.id, resource.project_id, resource.id])} scope={{ actor: identity.data.id, project: resource.project_id, resource: resource.id }} name={resource.name} compose={resource.source.kind === "compose"} />;
+  const key = JSON.stringify([identity.data.provider, identity.data.id, resource.project_id, resource.id]);
+  const scope = { actor: identity.data.id, project: resource.project_id, resource: resource.id };
+  return resource.source.kind === "git"
+    ? <GitLogOutput key={key} scope={scope} name={resource.name} actor={JSON.stringify([identity.data.provider, identity.data.id])} />
+    : <LogOutput key={key} scope={scope} name={resource.name} compose={resource.source.kind === "compose"} />;
+}
+function GitLogOutput({ scope, name, actor }: { scope: LogScope; name: string; actor: string }) {
+  const history = useQuery(hostingDeploymentsQuery(scope.project, scope.resource, 0, actor));
+  if (history.isPending || history.isError) return <section aria-label={`Runtime logs for ${name}`} className="min-w-0 space-y-2 border-t pt-3">
+    <p role={history.isError ? "alert" : "status"}>Recorded deployment provenance is pending or unavailable. Runtime log output is cleared.</p>
+    <Button variant="outline" disabled={history.isFetching} onClick={() => void history.refetch()}>Refresh runtime log deployment evidence</Button>
+  </section>;
+  return <LogOutput key={String(history.data.items.some(committedGitCompose))} scope={scope} name={name} compose={history.data.items.some(committedGitCompose)} />;
 }
 function LogOutput({ scope, name, compose }: { scope: LogScope; name: string; compose: boolean }) {
   const [shown, setShown] = useState(true);

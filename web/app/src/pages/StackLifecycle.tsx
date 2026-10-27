@@ -5,7 +5,7 @@ import { getStackLifecycle, requestStackStop, stackLifecycleQuery, type StackSto
 import type { StorageDeploymentScope } from "@/api/hosting-storage-deployment";
 import { Button } from "@/components/ui/button";
 
-export function StackLifecycle({ scope, generation, writable, blocked, mutationHeld, onDenied, onSelected, onRefresh }: { scope: StorageDeploymentScope; generation: number; writable: boolean; blocked: boolean; mutationHeld: boolean; onDenied: () => void; onSelected: (id: string) => void; onRefresh: (signal?: AbortSignal) => Promise<void> }) {
+export function StackLifecycle({ scope, generation, writable, blocked, mutationHeld, onDenied, onSelected, onRefresh, gitBuilds = false }: { scope: StorageDeploymentScope; generation: number; writable: boolean; blocked: boolean; mutationHeld: boolean; onDenied: () => void; onSelected: (id: string) => void; onRefresh: (signal?: AbortSignal) => Promise<void>; gitBuilds?: boolean }) {
   const lifecycle = useQuery(stackLifecycleQuery(scope));
   const [review, setReview] = useState<StackStopInput>();
   const [sent, setSent] = useState(false), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false);
@@ -51,7 +51,7 @@ export function StackLifecycle({ scope, generation, writable, blocked, mutationH
     <h6 className="font-medium">Compose lifecycle</h6>
     <p>Recorded lifecycle: {lifecycle.isError || !current ? "unavailable" : current.state}. This is settled operation evidence, not live health monitoring.</p>
     {current?.state === "held" ? <p role="status">Lifecycle is held. Wait for settlement or recovery proof before another action.</p> : null}
-    {current?.state === "stopped" ? <p>Recorded stop operation {current.stop_operation_id}. Start through the saved Compose review below. Start may recreate containers with different IDs and retains named volumes.</p> : null}
+    {current?.state === "stopped" ? <p>Recorded stop operation {current.stop_operation_id}. {gitBuilds ? "Select the deployed successful Git build and review Start in its deployment controls." : "Start through the saved Compose review below."} Start may recreate containers with different IDs and retains named volumes.</p> : null}
     <Button type="button" variant="outline" disabled={busy || lifecycle.isFetching} onClick={() => { if (!sent) setReview(undefined); void lifecycle.refetch(); }}>Refresh Compose lifecycle</Button>
     {writable ? <Button type="button" variant="outline" disabled={unavailable || busy || mutationHeld || lifecycle.isFetching || lifecycle.isError || current?.state !== "running" || Boolean(review)} onClick={() => void prepare()}>Review Stop Compose</Button> : <p>Project maintainer access is required to Stop or Start Compose.</p>}
     {review ? <section className="min-w-0 space-y-2 break-all" aria-label="Reviewed Compose stop">

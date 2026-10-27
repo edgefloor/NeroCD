@@ -10,12 +10,44 @@ const historyPath = (id: string) => `/api/v1/resources/${encodeURIComponent(id)}
 const detailPath = (id: string) => `/api/v1/hosting-builds/${encodeURIComponent(id)}`;
 // Keep the public DTO whitelist at the client cache boundary too. Runner plans,
 // policy/grant data and transport credentials never become UI build metadata.
+function publicArtifact(a: NonNullable<HostingBuild["artifact"]>) {
+  return { origin: a.origin, image_id: a.image_id, index_digest: a.index_digest, manifest_digest: a.manifest_digest, config_digest: a.config_digest, platform: a.platform };
+}
+export function composeServiceArtifact(result: NonNullable<HostingBuild["compose_result"]>, component: string) {
+  const service = result.definition.services.find(item => item.name === component);
+  const owners = service?.build ? [service] : result.definition.services.filter(item => item.build && item.image && item.image === service?.image);
+  if (owners.length !== 1) return undefined;
+  const built = result.services.find(item => item.component === owners[0]!.name);
+  return built ? { owner: built.component, artifact: built.artifact } : undefined;
+}
+function publicCompose(result: NonNullable<HostingBuild["compose_result"]>, settings: HostingBuild["snapshot"]["source"]["settings"]) {
+  const d = result.definition;
+  if (settings.strategy !== "compose" || !/^sha256:[a-f0-9]{64}$/.test(result.hash) ||
+      result.source.public_component !== settings.public_component || result.source.container_port !== settings.container_port ||
+      d.public_component !== result.source.public_component || d.container_port !== result.source.container_port ||
+      d.version !== "git-compose.v1" || !result.source.original || !Array.isArray(d.services) || !Array.isArray(result.services))
+    throw new Error("Prepared Compose result does not match its build source");
+  const owners = d.services.filter(service => service.build).map(service => service.name).sort();
+  if (owners.length !== result.services.length || result.services.some((service, index) => service.component !== owners[index]))
+    throw new Error("Prepared Compose build artifacts are incomplete");
+  return { hash: result.hash, source: { original: result.source.original, public_component: result.source.public_component, container_port: result.source.container_port },
+    definition: { version: d.version, original_hash: d.original_hash, public_component: d.public_component, container_port: d.container_port, volumes: [...d.volumes],
+      services: d.services.map(service => ({ name: service.name, image: service.image, command: service.command ? [...service.command] : service.command,
+        ...(service.build ? { build: { context: service.build.context, dockerfile: service.build.dockerfile, ...(service.build.target ? { target: service.build.target } : {}) } } : {}),
+        ...(service.environment ? { environment: { ...service.environment } } : {}),
+        ...(service.depends_on ? { depends_on: { ...service.depends_on } } : {}),
+        ...(service.mounts ? { mounts: service.mounts.map(mount => ({ volume: mount.volume, target: mount.target, ...(mount.read_only !== undefined ? { read_only: mount.read_only } : {}) })) } : {}),
+        ...(service.healthcheck ? { healthcheck: { test: [...service.healthcheck.test], retries: service.healthcheck.retries, interval: service.healthcheck.interval, timeout: service.healthcheck.timeout, start_period: service.healthcheck.start_period } } : {}),
+      })) }, services: result.services.map(service => ({ component: service.component, artifact: publicArtifact(service.artifact) })) };
+}
 function publicBuild(b: HostingBuild): HostingBuild {
+  if (b.artifact && b.compose_result) throw new Error("Build artifact and Compose result must be exclusive");
   const s = b.snapshot.source, settings = s.settings, t = b.snapshot.target;
   return { id: b.id, project_id: b.project_id, resource_id: b.resource_id, state: b.state, revision: b.revision, run_id: b.run_id, created_by: b.created_by, created_at: b.created_at, updated_at: b.updated_at, failure_code: b.failure_code,
-    snapshot: { resource_generation: b.snapshot.resource_generation, source: { source_id: s.source_id, generation: s.generation, repository_url: s.repository_url, requested_ref: s.requested_ref, credential_kind: s.credential_kind, settings: { strategy: settings.strategy, context_dir: settings.context_dir, dockerfile_path: settings.dockerfile_path, build_target: settings.build_target, publish_dir: settings.publish_dir, spa_fallback: settings.spa_fallback } }, target: { binding_id: t.binding_id, destination_id: t.destination_id, server_id: t.server_id, runner_id: t.runner_id } },
+    snapshot: { resource_generation: b.snapshot.resource_generation, source: { source_id: s.source_id, generation: s.generation, repository_url: s.repository_url, requested_ref: s.requested_ref, credential_kind: s.credential_kind, settings: { strategy: settings.strategy, context_dir: settings.context_dir, dockerfile_path: settings.dockerfile_path, build_target: settings.build_target, publish_dir: settings.publish_dir, spa_fallback: settings.spa_fallback, ...(settings.strategy === "compose" ? { compose_file: settings.compose_file, public_component: settings.public_component, container_port: settings.container_port } : {}) } }, target: { binding_id: t.binding_id, destination_id: t.destination_id, server_id: t.server_id, runner_id: t.runner_id } },
     ...(b.source_receipt ? { source_receipt: { commit: b.source_receipt.commit, tree_digest: b.source_receipt.tree_digest } } : {}),
-    ...(b.artifact ? { artifact: { origin: b.artifact.origin, image_id: b.artifact.image_id, index_digest: b.artifact.index_digest, manifest_digest: b.artifact.manifest_digest, config_digest: b.artifact.config_digest, platform: b.artifact.platform } } : {}) };
+    ...(b.artifact ? { artifact: publicArtifact(b.artifact) } : {}),
+    ...(b.compose_result ? { compose_result: publicCompose(b.compose_result, settings) } : {}) };
 }
 export async function requestHostingBuild(resourceID: string, input: HostingBuildInput, options?: Options & { credentialKind?: "public" | "https_basic" }): Promise<HostingBuild> {
   const body = { expected_resource_generation: input.expected_resource_generation, expected_source_generation: input.expected_source_generation, idempotency_key: input.idempotency_key, ...(options?.credentialKind === "https_basic" && input.grant_id ? { grant_id: input.grant_id } : {}) };

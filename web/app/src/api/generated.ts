@@ -6347,6 +6347,7 @@ export interface components {
             state: "succeeded" | "failed" | "canceled" | "cleanup_required";
             failure_code?: string;
             artifact?: components["schemas"]["HostingBuildArtifact"];
+            compose_result?: components["schemas"]["HostingBuildComposeResult"];
         };
         HostingBuildReceiptAcknowledgment: {
             authority: components["schemas"]["HostingBuildAuthority"];
@@ -6377,6 +6378,7 @@ export interface components {
             snapshot: components["schemas"]["HostingBuildRunnerSnapshot"];
             source_receipt?: components["schemas"]["HostingBuildSourceReceipt"];
             artifact?: components["schemas"]["HostingBuildArtifact"];
+            compose_result?: components["schemas"]["HostingBuildComposeResult"];
         };
         HostingBuildPhaseResponse: {
             build: components["schemas"]["HostingBuildRunnerDocument"];
@@ -6471,6 +6473,7 @@ export interface components {
             snapshot: components["schemas"]["PublicHostingBuildSnapshot"];
             source_receipt?: components["schemas"]["PublicHostingBuildSourceReceipt"];
             artifact?: components["schemas"]["PublicHostingBuildArtifact"];
+            compose_result?: components["schemas"]["PublicHostingBuildComposeResult"];
         };
         HostingBuildResponse: {
             build: components["schemas"]["PublicHostingBuild"];
@@ -7190,6 +7193,7 @@ export interface components {
             readiness: components["schemas"]["HostingReadiness"];
         };
         HostingBuildDeploymentInput: {
+            managed_stack?: components["schemas"]["HostingStackDeploymentInput"];
             /**
              * Format: int64
              * @description Saved runtime generation to admit. Omitted zero requires an untouched configuration; positive generations require hosting_runtime_env_v1 and image_release_ports_v1. This admission reference does not implement container environment delivery.
@@ -7381,6 +7385,7 @@ export interface components {
         };
         HostingSnapshot: {
             registry_credential?: components["schemas"]["HostingRegistryCredentialRef"];
+            git_compose?: components["schemas"]["HostingGitComposeRef"];
             stack_stopped_operation_id?: string;
             stack?: components["schemas"]["HostingStackRef"];
             application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
@@ -10413,7 +10418,39 @@ export interface components {
             start_period?: string;
             retries: number;
         };
+        HostingStackSource: components["schemas"]["ComposeResourceSource"]["compose"];
+        HostingStackBuild: {
+            context: string;
+            dockerfile: string;
+            target?: string;
+        };
+        HostingGitComposeRef: {
+            build_id: string;
+            /** Format: int64 */
+            source_generation: number;
+            result_hash: string;
+        };
+        HostingBuildComposeResult: {
+            source_receipt_hash: string;
+            source: components["schemas"]["HostingStackSource"];
+            definition: components["schemas"]["HostingStackDefinition"];
+            services: {
+                component: string;
+                artifact: components["schemas"]["HostingBuildArtifact"];
+            }[];
+            hash: string;
+        };
+        PublicHostingBuildComposeResult: {
+            source: components["schemas"]["HostingStackSource"];
+            definition: components["schemas"]["HostingStackDefinition"];
+            services: {
+                component: string;
+                artifact: components["schemas"]["PublicHostingBuildArtifact"];
+            }[];
+            hash: string;
+        };
         HostingStackService: {
+            build?: components["schemas"]["HostingStackBuild"];
             name: string;
             image: string;
             command?: string[] | null;
@@ -10428,7 +10465,7 @@ export interface components {
         };
         HostingStackDefinition: {
             /** @enum {string} */
-            version: "managed-compose.v1";
+            version: "managed-compose.v1" | "git-compose.v1";
             original_hash: string;
             public_component: string;
             container_port: number;

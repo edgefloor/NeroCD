@@ -900,3 +900,23 @@ test("late catalog metadata preserves captured Compose readiness and identical r
   expect(writes[0]![1].body).toBe(writes[1]![1].body);
   expect(JSON.parse(String(writes[0]![1].body)).readiness).toEqual({ path: "/", timeout_seconds: 30 });
 });
+
+test("Git draft Compose settings alone do not expose committed stack controls", async () => {
+  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80 } } } };
+  const fetch = backend(); setup("maintainer", [], false, git);
+  await screen.findByText("No deployment operations recorded.");
+  expect(screen.queryByRole("region", { name: "Compose lifecycle" })).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/stack-lifecycle"))).toBe(false);
+});
+
+test("committed Git Compose lifecycle remains available when later Git configuration/build changes", async () => {
+  const git: Resource = { ...resource, generation: 2, source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/example/app", requested_ref: "new-failed-build", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+  const deployed = { ...operation, state: "succeeded" as const, snapshot: { ...operation.snapshot, git_compose: { build_id: "prior-build", source_generation: 2, result_hash: `sha256:${"a".repeat(64)}` }, stack: { generation: 1, hash: `sha256:${"b".repeat(64)}` } } } as HostingOperation;
+  backend(url => url.includes("/deployments?") ? json(page([deployed])) : url.endsWith("/stack-lifecycle") ? json({ resource_id: "resource", resource_generation: 2, state: "running", deployed_operation_id: "hop_one" }) : undefined);
+  setup("maintainer", [], false, git);
+  const stop = await screen.findByRole<HTMLButtonElement>("button", { name: "Review Stop Compose" });
+  await waitFor(() => expect(stop.disabled).toBe(false));
+  expect(screen.getByRole("region", { name: "Compose lifecycle" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Saved Compose deployment review" })).toBeNull();
+});

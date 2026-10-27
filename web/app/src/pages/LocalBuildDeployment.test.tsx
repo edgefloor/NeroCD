@@ -157,3 +157,72 @@ test("local deployment response with another runtime generation cannot select an
   backend((url) => url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "r", project_id: "p", resource_generation: 2, runtime_generation: 3, entries: [] } }) : url.endsWith("/from-build") ? json({ ...operation, snapshot: { ...operation.snapshot, runtime_configuration: { generation: 4, hash: "wrong" } } }, 202) : undefined);
   await setup(); await submit(); await screen.findByText(/Deployment delivery is unconfirmed/); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
 });
+
+const composeSource = { ...source!, settings: { strategy: "compose" as const, context_dir: "app", compose_file: "compose.yaml", public_component: "web", container_port: 3000 } };
+const composeResource: Resource = { ...resource, source: { kind: "git", git: composeSource } };
+const composeBuild: HostingBuild = { ...build, artifact: undefined, snapshot: { ...build.snapshot, source: composeSource }, source_receipt: { commit: "resolved-commit", tree_digest: "tree" }, compose_result: {
+  source: { original: "services:\n  web:\n    build: .\n", public_component: "web", container_port: 3000 },
+  definition: { version: "git-compose.v1", original_hash: `sha256:${"a".repeat(64)}`, public_component: "web", container_port: 3000, volumes: ["data"], services: [
+    { name: "database", image: "postgres:17", command: null, mounts: [{ volume: "data", target: "/var/lib/postgresql/data" }] },
+    { name: "web", image: "local/web:built", build: { context: "app", dockerfile: "Dockerfile" }, command: null },
+    { name: "worker", image: "local/web:built", command: ["worker"] },
+  ] }, services: [{ component: "web", artifact: build.artifact! }], hash: `sha256:${"b".repeat(64)}`,
+} };
+const composeOperation = { ...operation, snapshot: { ...operation.snapshot, local_build: undefined, git_compose: { build_id: "b", source_generation: 3, result_hash: composeBuild.compose_result!.hash }, stack: { generation: 2, hash: `sha256:${"c".repeat(64)}` }, container_port: 3000 } };
+function composeBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
+  return backend((url, options) => handler?.(url, options) ?? (url.includes("/builds?") ? json({ items: [composeBuild], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build: composeBuild }) : url.endsWith("/from-build") ? json(composeOperation, 202) : undefined));
+}
+async function composeSubmit(button = "Deploy selected build") {
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: button }).disabled).toBe(false));
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+}
+test("prepared mixed Compose shows source and per-service image origin, then admits the selected build", async () => {
+  const fetch = composeBackend(); await setup(true, composeResource);
+  const summary = screen.getByRole("region", { name: "Prepared Compose result" });
+  expect(summary.textContent).toContain("app/compose.yaml");
+  expect(summary.textContent).toContain("web: Built from this Git commit");
+  expect(summary.textContent).toContain("worker: Uses the image built for web");
+  expect(summary.textContent).toContain("database: Public registry image");
+  expect(screen.getByText("resolved-commit")).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>("Build container port").value).toBe("3000");
+  expect(screen.getByLabelText<HTMLInputElement>("Build container port").disabled).toBe(true);
+  await composeSubmit(); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
+  expect(body).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3, container_port: 3000, managed_stack: { acknowledge_interruption: true } });
+  expect(body).not.toHaveProperty("registry_credential");
+});
+test("Compose response loss retains the exact reviewed build/result request and runtime generation", async () => {
+  let writes = 0, runtimeReads = 0;
+  const fetch = composeBackend((url) => url.endsWith("/from-build") && ++writes === 1 ? Promise.reject(new TypeError("lost")) : url.endsWith("/runtime-configuration") ? (runtimeReads++, json({ runtime_configuration: { resource_id: "r", project_id: "p", resource_generation: 2, runtime_generation: 4, entries: [] } })) : url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, runtime_configuration: { generation: 4, hash: "runtime" } } }, 202) : undefined);
+  await setup(true, composeResource); await composeSubmit(); await screen.findByText(/Deployment delivery is unconfirmed/);
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" })); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const requests = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"));
+  expect(requests).toHaveLength(2); expect(requests[1]![1].body).toBe(requests[0]![1].body); expect(runtimeReads).toBe(1);
+});
+test("substituted Compose result hash in deployment receipt cannot select an operation", async () => {
+  composeBackend(url => url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, git_compose: { ...composeOperation.snapshot.git_compose, result_hash: "other" } } }, 202) : undefined);
+  await setup(true, composeResource); await composeSubmit(); await screen.findByText(/Deployment delivery is unconfirmed/);
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+});
+test("starting a committed Git Compose build captures and retains the exact stopped operation", async () => {
+  let lifecycleReads = 0;
+  const deployed = { ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false };
+  const fetch = composeBackend(url => url.includes("/deployments?") ? json({ items: [deployed], limit: 20, offset: 0, count: 1, total: 1 }) : url.endsWith("/stack-lifecycle") ? (lifecycleReads++, json({ resource_id: "r", resource_generation: 2, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop" })) : url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, stack_stopped_operation_id: "stop" } }, 202) : undefined);
+  await setup(true, composeResource); await screen.findByText(/Start recreates this selected build/);
+  await composeSubmit("Start selected Compose build"); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
+  expect(body.managed_stack).toEqual({ acknowledge_interruption: true, expected_stopped_operation_id: "stop" });
+  expect(lifecycleReads).toBe(2);
+});
+
+test("stopped Git Compose with changed desired generations requires a new build and preserves the stop", async () => {
+  const deployed = { ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false };
+  const fetch = composeBackend(url => url.includes("/deployments?") ? json({ items: [deployed], limit: 20, offset: 0, count: 1, total: 1 }) : url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 3, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop-retained" }) : undefined);
+  const latest: Resource = { ...composeResource, generation: 3, source: { kind: "git", git: { ...composeSource, generation: 4 } } };
+  await setup(true, latest); await screen.findByText(/Start recreates this selected build/);
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Start selected Compose build" }).disabled).toBe(true);
+  expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});

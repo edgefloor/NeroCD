@@ -177,7 +177,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{sourceDescription(resource)}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
-      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; artifact deployment is separate</p> : null}
+      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; {resource.source.git.settings.strategy === "compose" ? "prepared Compose deployment" : "artifact deployment"} is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {/* Status verifies its own viewer authority and does not depend on legacy task reads. */}

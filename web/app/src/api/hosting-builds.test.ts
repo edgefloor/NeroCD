@@ -35,3 +35,32 @@ test("only explicitly private requests forward the frozen grant ID", async () =>
  await requestHostingBuild("resource", input, { credentialKind: "https_basic" }); await requestHostingBuild("resource", input, { credentialKind: "https_basic" }); await requestHostingBuild("resource", input, { credentialKind: "public" });
  expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toEqual(input); expect(fetch.mock.calls[0]![1].body).toBe(fetch.mock.calls[1]![1].body); expect(JSON.parse(fetch.mock.calls[2]![1].body as string)).not.toHaveProperty("grant_id");
 });
+
+const composeSettings = { strategy: "compose" as const, context_dir: "app", compose_file: "deploy/compose.yaml", public_component: "web", container_port: 3000 };
+const composeResult: NonNullable<HostingBuild["compose_result"]> = {
+  source: { original: "services:\n  web:\n    build: .\n", public_component: "web", container_port: 3000 },
+  definition: { version: "git-compose.v1", original_hash: `sha256:${"a".repeat(64)}`, public_component: "web", container_port: 3000, volumes: ["db"], services: [
+    { name: "db", image: "postgres:17", command: null, mounts: [{ volume: "db", target: "/var/lib/postgresql/data" }] },
+    { name: "web", image: "local/web:built", command: null, build: { context: "app", dockerfile: "Dockerfile" } },
+    { name: "worker", image: "local/web:built", command: ["worker"] },
+  ] }, services: [{ component: "web", artifact: { origin: "local_build", image_id: "sha256:built", index_digest: "index", manifest_digest: "manifest", config_digest: "config", platform: "linux/amd64" } }], hash: `sha256:${"b".repeat(64)}`,
+};
+const composeBuild: HostingBuild = { ...build, state: "succeeded", snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings: composeSettings } }, source_receipt: { commit: "resolved-commit", tree_digest: "source-tree" }, compose_result: composeResult };
+test("prepared Compose metadata retains its source, settings and component artifacts while stripping internal policy", async () => {
+  const raw = { ...composeBuild, compose_result: { ...composeResult, source_receipt_hash: "internal-receipt", services: [{ ...composeResult.services[0], artifact: { ...composeResult.services[0]!.artifact, request_fingerprint: "internal-fingerprint" } }] } };
+  vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
+  const decoded = await buildQuery("actor", "project", "resource", build.id).queryFn!({ signal: new AbortController().signal } as never);
+  expect(decoded.snapshot.source.settings).toMatchObject(composeSettings);
+  expect(decoded.compose_result).toMatchObject(composeResult);
+  expect(decoded.artifact).toBeUndefined();
+  expect(JSON.stringify(decoded)).not.toMatch(/internal-receipt|internal-fingerprint|request_fingerprint/);
+});
+test.each([
+  { ...composeBuild, artifact: composeResult.services[0]!.artifact },
+  { ...composeBuild, compose_result: { ...composeResult, services: [] } },
+  { ...composeBuild, compose_result: { ...composeResult, source: { ...composeResult.source, public_component: "db" } } },
+  { ...composeBuild, compose_result: { ...composeResult, hash: "substituted" } },
+])("invalid or substituted Compose result is rejected before display/deployment", async raw => {
+  vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
+  await expect(buildQuery("actor", "project", "resource", build.id).queryFn!({ signal: new AbortController().signal } as never)).rejects.toThrow();
+});

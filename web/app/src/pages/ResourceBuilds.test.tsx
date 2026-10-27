@@ -136,3 +136,15 @@ test.each(["503", "viewer"])("parent and child share verified grant access throu
 test("manual build maintainer access does not create push owner authority", async () => {
  const fetch = backend(); setup(true); await screen.findByRole("region", { name: "Build on push" }); await screen.findByText(/Maintainer build access does not grant policy management/); expect(screen.queryByRole("form", { name: "Configure GitHub build on push" })).toBeNull(); expect(fetch.mock.calls.some(([url]) => url.includes("/service-accounts?") || url.includes("/managed-secrets?"))).toBe(false);
 });
+
+test("failed Git Compose build shows its exact path/ref/commit without presenting a deployable result", async () => {
+  const failed: HostingBuild = { ...build, state: "failed", failure_code: "compose_parse_failed", snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings: { strategy: "compose", context_dir: "app", compose_file: "deploy/compose.yaml", public_component: "web", container_port: 3000 } } }, source_receipt: { commit: "failed-build-commit", tree_digest: "source-tree" } };
+  backend(url => url.includes("/hosting-builds/") ? json({ build: failed }) : undefined);
+  setup(); fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+  await screen.findByText("compose_parse_failed");
+  expect(screen.getByText("app/deploy/compose.yaml")).toBeTruthy();
+  expect(screen.getByText("failed-build-commit")).toBeTruthy();
+  expect(screen.getByText(/deployment history for the last recorded release/)).toBeTruthy();
+  expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Prepared Compose result" })).toBeNull();
+});
