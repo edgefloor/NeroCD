@@ -24,6 +24,7 @@ import (
 
 	"nerocd/internal/app"
 	"nerocd/internal/artifactfs"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 )
 
@@ -148,6 +149,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	b.set("app_create", resourceID)
 	taskID := b.await(t, "app_created")
 	logSession := composeRuntimeFollow(t, f, resourceID, first, "vikunja", false)
+	b.set("volume_schedule", resourceID)
+	volumeScheduleID := b.await(t, "volume_scheduled")
+	volumeSchedule := composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)
 	b.set("redeploy", resourceID)
 	second := f.await(b.await(t, "redeployed"), "succeeded")
 	if second.Plan == nil || second.Result == nil || second.Result.Stack == nil || second.Snapshot.HostPort != first.Snapshot.HostPort || second.Snapshot.RuntimeConfiguration != first.Snapshot.RuntimeConfiguration || !reflect.DeepEqual(second.Result.Stack.Volumes, first.Result.Stack.Volumes) || second.Result.Stack.NetworkID != first.Result.Stack.NetworkID {
@@ -160,6 +164,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	composeRuntimeFollow(t, f, resourceID, second, "postgresql", true)
 	composeRuntimeFollow(t, f, resourceID, second, "init", true)
 	verify(second)
+	if !reflect.DeepEqual(volumeSchedule, composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)) {
+		t.Fatal("redeploy changed saved named-volume schedule identity")
+	}
 	if composeRuntimeUploadOwnership(t, second) != uploadOwnership {
 		t.Fatal("redeploy changed retained upload directory ownership or mode")
 	}
@@ -205,6 +212,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("Start changed retained stack identity")
 	}
 	verify(started)
+	if !reflect.DeepEqual(volumeSchedule, composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)) {
+		t.Fatal("Start changed saved named-volume schedule identity")
+	}
 	if composeRuntimeUploadOwnership(t, started) != uploadOwnership {
 		t.Fatal("Start changed upload ownership")
 	}
@@ -215,7 +225,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if b.await(t, "app_start_checked") != taskID {
 		t.Fatal("fresh login after Start lost application data")
 	}
-	composeRuntimeVolumeArchive(t, f, resource, started, taskID)
+	composeRuntimeVolumeArchive(t, f, resource, started, taskID, volumeScheduleID)
 	// Provision a distinct already-deployed application through ordinary setup
 	// APIs. Backup and destructive import themselves are requested through UI.
 	target := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("d", 32), ProjectID: resource.ProjectID, ProjectEnvironmentID: resource.ProjectEnvironmentID, Name: "Compose database restore target", Kind: "application", Source: resource.Source}, 201)
@@ -416,9 +426,55 @@ func composeRuntimeFollow(t *testing.T, f *storageRuntimeFixture, resourceID str
 	return session
 }
 
+func TestComposeVolumeScheduleFixtureRequestContract(t *testing.T) {
+	server, original, owner, _, _ := archiveHTTPFixture(t)
+	original.resource.Kind = "application"
+	repo := &storageScheduleHTTPRepository{archiveHTTPRepository: original}
+	mem := repo.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	path := "/api/v1/resources/" + original.resource.ID + "/storage-backup-schedules"
+	body := `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_resource_generation":1,"expected_version":0,"frequency":"every_minute","timezone":"UTC","enabled":false,"volume":"vikunja-data","expected_deployed_operation_id":"hop_fixture","acknowledge_interruption":true}`
+	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 200)
+	if repo.input.Volume != "vikunja-data" || repo.input.ExpectedDeployedOperationID != "hop_fixture" || !repo.input.AcknowledgeInterruption || repo.input.Enabled || repo.input.ExpectedVersion != 0 {
+		t.Fatal("production schedule decoder lost fixture create contract")
+	}
+	update := strings.Replace(strings.Replace(body, `"expected_version":0`, `"expected_version":1`, 1), `"enabled":false`, `"enabled":true`, 1)
+	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, update, "application/json", 200)
+	if !repo.input.Enabled || repo.input.ExpectedVersion != 1 || repo.input.Volume != "vikunja-data" || !repo.input.AcknowledgeInterruption {
+		t.Fatal("production schedule decoder lost fixture enable contract")
+	}
+	disable := strings.Replace(strings.Replace(body, `"expected_version":0`, `"expected_version":2`, 1), `,"expected_deployed_operation_id":"hop_fixture","acknowledge_interruption":true`, "", 1)
+	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, disable, "application/json", 200)
+	if repo.input.Enabled || repo.input.ExpectedVersion != 2 || repo.input.Volume != "vikunja-data" {
+		t.Fatal("production schedule decoder lost fixture disable contract")
+	}
+	for _, invalid := range []string{
+		strings.Replace(body, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, `fixture-invalid-request`, 1),
+		strings.Replace(body, `"volume":"vikunja-data"`, `"volume":"../vikunja-data"`, 1),
+		strings.Replace(body, `"acknowledge_interruption":true`, `"acknowledge_interruption":null`, 1),
+	} {
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+	}
+}
+
+// A disabled schedule must survive replacement and Stop/Start unchanged. Its
+// occurrence resolves current deployment authority when the owner enables it.
+func composeRuntimeVolumeSchedule(t *testing.T, f *storageRuntimeFixture, resourceID, scheduleID string, enabled bool, revision int64) domain.HostingStorageBackupSchedule {
+	t.Helper()
+	schedules := storageRuntimeJSON[[]domain.HostingStorageBackupSchedule](f, "GET", "/api/v1/resources/"+resourceID+"/storage-backup-schedules", nil, 200)
+	if len(schedules) != 1 || schedules[0].ID != scheduleID || schedules[0].ResourceID != resourceID || schedules[0].Version != "managed-compose.local-volume-archive.schedule.v1" || schedules[0].Volume != "vikunja-data" || !schedules[0].AcknowledgeInterruption || schedules[0].Enabled != enabled || schedules[0].Revision != revision || schedules[0].RemoteTarget != nil {
+		t.Fatal("named-volume schedule lost immutable identity, consent, revision or local scope")
+	}
+	return schedules[0]
+}
+
 // Read the real local CAS after UI admission, then exercise helper failure on
 // the same selected volume without replacing the deployed stack.
-func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, deployed domain.HostingOperation, taskID string) {
+func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, deployed domain.HostingOperation, taskID, scheduleID string) {
 	t.Helper()
 	volume := ""
 	for _, v := range deployed.Result.Stack.Volumes {
@@ -470,8 +526,8 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 		}
 	}
 	since := time.Now().Format(time.RFC3339Nano)
-	f.catalogBrowser.set("volume_backup", resource.ID)
-	backupID := f.catalogBrowser.await(t, "volume_backed_up")
+	f.catalogBrowser.set("volume_schedule_run", scheduleID)
+	backupID := f.catalogBrowser.await(t, "volume_schedule_backed_up")
 	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
 	op := f.await(backup.OperationID, "succeeded")
 	if op.StorageArchive == nil || op.StorageArchive.Result == nil || op.StorageArchive.Result.ArchiveOutcome != "succeeded" || op.StorageArchive.Result.ResumeOutcome != "resumed" || op.StorageArchive.Result.Uncertain || op.MutationHold {
@@ -520,6 +576,12 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 	if !reflect.DeepEqual(before, actual) {
 		t.Fatal("local CAS archive differs from real upload bytes/UID/GID/modes")
 	}
+	t.Logf("Compose local archive backup=%s volume=vikunja-data CAS_bytes=%d members=%d exact writer resumed; PostgreSQL/init untouched", backupID, blob.Size, len(actual))
+	composeRuntimeVolumeSchedule(t, f, resource.ID, scheduleID, false, 3)
+	occurrences := storageRuntimeJSON[[]domain.HostingStorageBackupOccurrence](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules/"+scheduleID+"/occurrences", nil, 200)
+	if len(occurrences) != 1 || occurrences[0].BackupID != backupID || occurrences[0].ScheduleRevision != 2 || occurrences[0].Volume != "vikunja-data" || occurrences[0].OwnershipHeld {
+		t.Fatal("scheduled volume archive lost occurrence identity or retained ownership")
+	}
 	assertWriters(since)
 	// O_EXCL-equivalent creation rejects a preexisting fixture path. The codec
 	// rejects this FIFO via no-follow metadata before opening it.
@@ -557,7 +619,7 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 	if f.catalogBrowser.await(t, "volume_checked") != taskID {
 		t.Fatal("application task/upload/new writes lost after volume backup compensation")
 	}
-	t.Logf("Compose local archive backup=%s failed_backup=%s volume=vikunja-data CAS_bytes=%d members=%d exact writer resumed; PostgreSQL/init untouched", backupID, failedBackup.ID, blob.Size, len(actual))
+	t.Logf("Compose local archive scheduled_backup=%s failed_backup=%s stable named volume preserved after redeploy and Start", backupID, failedBackup.ID)
 }
 
 func composeRuntimeUploadSnapshot(t *testing.T, root string) map[string]string {
