@@ -107,8 +107,9 @@ source revisions; no implicit data deletion or stack volume cleanup is provided.
 ## Prepare and deploy Git Compose
 
 The `git-compose.v1` profile keeps the application as a Git resource with its
-repository, ref and immutable source history. Git Compose qualification and final
-reviews are pending; the completed pasted Compose evidence below is unchanged.
+repository, ref and immutable source history. The bounded private HTTPS mixed
+build/image workflow is [qualified](#git-compose-qualification); pasted Compose
+evidence below retains its separate scope.
 
 Enable the existing [build runtime](hosting-build-runtime.md) first. In the server
 policy file selected by `NEROCD_HOSTING_BUILD_POLICY_FILE`, set `git_compose` to
@@ -179,6 +180,30 @@ images, then start services. Its
 restores source settings on read failure. NeroCD retains that preparation-before-
 replacement order through its existing fenced build receipts and managed stack
 admission.
+
+
+### Git Compose qualification
+
+The existing `gate.sh --git-compose` qualification passed at
+`a5da2826a47854628c04449c23580a64eca71d25` on 2026-10-27. Private HTTPS Git
+prepared a mixed Dockerfile/registry stack with a shared-image alias, then deployed
+Vikunja/PostgreSQL over HTTPS. A changed commit redeployed with retained records
+and upload bytes. Whole-stack Stop/Start preserved those data and allowed new
+writes. Failed source/build/pull attempts preserved the prior workload; a failed
+readiness replacement retained its reconciliation hold and rejected competing work.
+
+Evidence, source hashes, independent review attribution, failed attempts, timing
+limits and retained check scope are indexed at
+`~/.local/share/nerocd/acceptance/runtime-hosting-git-compose-20261027/a5da2826a47854628c04449c23580a64eca71d25/evidence-index.json`.
+Exact owned-process/container/volume cleanup preserved the 41-container,
+236-volume baseline and running user instance. The index retains earlier
+aggregate check failures and the historic anonymous-volume ownership evidence gap.
+
+The unsupported fields and registry-selection limits above remain open; this does
+not complete A15/A16 or qualify standalone archive/database recovery again. An
+inherited limitation also remains: if a successful stack cannot enqueue its proxy
+successor, continuity stays unresolved. The existing recovery endpoint cannot
+recover stack plans; its fail-closed reservation must remain held.
 
 ## Component runtime logs
 
