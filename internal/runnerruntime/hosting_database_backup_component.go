@@ -164,12 +164,23 @@ func (e *databaseBackupEngine) componentPreflight(ctx context.Context, p domain.
 }
 
 func (e *databaseBackupEngine) componentImportQuiescent(ctx context.Context, id string) error {
-	raw, err := e.image.docker(ctx, "top", id, "-eo", "comm")
+	// Docker needs the PID column to restrict ps output to this container.
+	// Request only PID and comm so process arguments cannot expose guest values.
+	raw, err := e.image.docker(ctx, "top", id, "-eo", "pid,comm")
 	if err != nil {
 		return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
 	}
-	for _, command := range strings.Fields(string(raw)) {
-		if command == "pg_restore" {
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) < 2 || strings.Join(strings.Fields(lines[0]), " ") != "PID COMMAND" {
+		return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
+	}
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid < 1 || fields[1] == "pg_restore" {
 			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
 		}
 	}

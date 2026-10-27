@@ -217,10 +217,22 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 			}
 			return []byte("0"), nil
 		case "top":
-			if mode == "unresolved import" {
-				return []byte("COMMAND\npg_restore\n"), nil
+			if len(a) != 4 || a[2] != "-eo" || a[3] != "pid,comm" {
+				return nil, errors.New("Docker top requires the PID column")
 			}
-			return []byte("COMMAND\npostgres\n"), nil
+			if mode == "live import" {
+				return []byte("PID COMMAND\n12 postgres\n13 pg_restore\n"), nil
+			}
+			if mode == "malformed process output" {
+				return []byte("PID COMMAND\nmissing postgres\n"), nil
+			}
+			if mode == "missing PID column" {
+				return []byte("COMMAND\npostgres\n"), nil
+			}
+			if mode == "unexpected process header" {
+				return []byte("PID ARGS\n12 postgres\n"), nil
+			}
+			return []byte("PID COMMAND\n12 postgres\n"), nil
 		}
 		return nil, errors.New("unexpected component fixture command")
 	})
@@ -255,7 +267,7 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 }
 
 func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
-	for _, mode := range []string{"success", "wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume", "foreign SQL writer", "restore failure", "unresolved import", "late launch", "cancelled import", "corrupt archive", "tool timeout", "revoked authority", "already stopped writer"} {
+	for _, mode := range []string{"success", "wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume", "foreign SQL writer", "restore failure", "unresolved import", "late launch", "cancelled import", "live import", "malformed process output", "missing PID column", "unexpected process header", "corrupt archive", "tool timeout", "revoked authority", "already stopped writer"} {
 		t.Run(mode, func(t *testing.T) {
 			e, p, running, mutations := componentBackupEngineFixture(t, mode)
 			blob, err := e.run(t.Context(), p, func(context.Context) error { return nil })
@@ -327,14 +339,18 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 				return nil
 			})
 			if want, present := map[string]databaseBackupStage{
-				"corrupt archive":    databaseBackupStageArchiveList,
-				"foreign SQL writer": databaseBackupStageSQLClients,
-				"restore failure":    databaseBackupStageImportExit,
-				"tool timeout":       databaseBackupStageImportExit,
-				"unresolved import":  databaseBackupStageImportTransport,
-				"late launch":        databaseBackupStageImportTransport,
-				"cancelled import":   databaseBackupStageImportTransport,
-				"revoked authority":  databaseBackupStageAuthority,
+				"corrupt archive":           databaseBackupStageArchiveList,
+				"foreign SQL writer":        databaseBackupStageSQLClients,
+				"restore failure":           databaseBackupStageImportExit,
+				"tool timeout":              databaseBackupStageImportExit,
+				"unresolved import":         databaseBackupStageImportTransport,
+				"late launch":               databaseBackupStageImportTransport,
+				"cancelled import":          databaseBackupStageImportTransport,
+				"revoked authority":         databaseBackupStageAuthority,
+				"live import":               databaseBackupStageProcess,
+				"malformed process output":  databaseBackupStageProcess,
+				"missing PID column":        databaseBackupStageProcess,
+				"unexpected process header": databaseBackupStageProcess,
 			}[mode]; present {
 				var stage *databaseBackupStageError
 				if !errors.As(err, &stage) || stage.stage != want || !errors.Is(err, errDatabaseBackupHeld) {
@@ -351,7 +367,7 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 			if (err == nil) != wantSuccess {
 				t.Fatal("import outcome", err)
 			}
-			if mode == "unresolved import" || mode == "late launch" || mode == "cancelled import" || mode == "revoked authority" {
+			if slices.Contains([]string{"unresolved import", "late launch", "cancelled import", "revoked authority", "live import", "malformed process output", "missing PID column", "unexpected process header"}, mode) {
 				if e.writersResumed {
 					t.Fatal("uncertain authority resumed writers")
 				}
