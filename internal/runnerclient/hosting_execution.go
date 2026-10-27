@@ -76,3 +76,8 @@ func (c Client) HostingStatus(ctx context.Context, in domain.HostingStatusReques
 func (c Client) HostingReconciliation(ctx context.Context, in domain.HostingObservation) (domain.HostingOperation, error) {
 	return c.hostingPost(ctx, "reconciliation", in)
 }
+
+// HostingStackVolumes acknowledges nonsecret creation provenance before stack writers start.
+func (c Client) HostingStackVolumes(ctx context.Context, in domain.HostingStackVolumeRequest) (domain.HostingOperation, error) {
+	return c.hostingPost(ctx, "stack-volumes", in)
+}

@@ -217,6 +217,9 @@ func hostingOperation(ctx context.Context, q sqlcgen.DBTX, id string) (domain.Ho
 			}
 		}
 	}
+	if err = loadHostingStackSource(ctx, q, &op); err != nil {
+		return domain.HostingOperation{}, err
+	}
 	if err = loadDatabaseUpgrade(ctx, q, &op); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -361,11 +364,22 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	if err = json.Unmarshal(source, &desired); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if desired.Kind != "image" {
-		return domain.HostingOperation{}, ErrConflict
-	}
-	if _, err = domain.NormalizeHostingImage(desired.Image.Reference); err != nil {
-		return domain.HostingOperation{}, ErrConflict
+	if desired.Kind == "compose" {
+		if desired.Compose == nil || in.ManagedStack == nil || in.ContainerPort != desired.Compose.ContainerPort {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		version, readErr := sqlcgen.New(tx).GetHostingComposeSourceVersion(ctx, sqlcgen.GetHostingComposeSourceVersionParams{ResourceID: resourceID, Generation: snap.ResourceGeneration})
+		if readErr != nil {
+			return domain.HostingOperation{}, readErr
+		}
+		snap.Stack = domain.HostingStackRef{Generation: snap.ResourceGeneration, Hash: version.DefinitionHash}
+	} else {
+		if desired.Kind != "image" || in.ManagedStack != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		if _, err = domain.NormalizeHostingImage(desired.Image.Reference); err != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
 	}
 	snap.ResourceID = resourceID
 	snap.ImageReference = desired.Image.Reference
@@ -390,6 +404,12 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 		if snap.RuntimeConfiguration.Generation > 0 {
 			snap.PolicyVersion = domain.HostingOwnedStorageRuntimePolicyVersion
 		}
+	}
+	if snap.Stack != (domain.HostingStackRef{}) {
+		if snap.Storage != (domain.HostingStorageRef{}) {
+			return domain.HostingOperation{}, ErrConflict
+		}
+		snap.PolicyVersion = domain.HostingStackPolicyVersion
 	}
 	if err = requireHostingStorageAgent(ctx, tx, snap); err != nil {
 		return domain.HostingOperation{}, err
@@ -492,6 +512,9 @@ func hostingTargetGate(ctx context.Context, tx pgx.Tx, projectID string, snap do
 	return hostingTargetGateMode(ctx, tx, projectID, snap, allowMissingState, false)
 }
 func hostingTargetGateMode(ctx context.Context, tx pgx.Tx, projectID string, snap domain.HostingSnapshot, allowMissingState, observe bool) error {
+	if err := requireHostingStackAgent(ctx, tx, snap); err != nil {
+		return err
+	}
 	if err := requireHostingStorageAgent(ctx, tx, snap); err != nil {
 		return err
 	}
@@ -557,7 +580,7 @@ func hostingTargetGateMode(ctx context.Context, tx pgx.Tx, projectID string, sna
 	if err != nil {
 		return hostingError(err)
 	}
-	return nil
+	return requireHostingStackAgent(ctx, tx, snap)
 }
 
 // PrepareDeployment is the real River handler: one transaction dispatches one
@@ -913,7 +936,11 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		op.TaskMode = "deploy"
 		return op, nil
 	}
-	if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		if op.StackSource == nil || domain.ValidateHostingStackImages(*op.StackSource, in.Release.DaemonID, in.StackImages) != nil || in.Release.Stack.Hash != domain.HostingDocumentHash(in.StackImages) || domain.ValidateHostingSnapshotRelease(op.Snapshot, in.Release) != nil {
+			return domain.HostingOperation{}, ErrConflict
+		}
+	} else if op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) {
 		if domain.ValidateHostingDatabaseRelease(op.Snapshot, in.Release) != nil {
 			return domain.HostingOperation{}, ErrConflict
 		}
@@ -953,7 +980,9 @@ func (s *PostgresStore) HostingPrepared(ctx context.Context, runnerID string, in
 		}
 	}
 	var plan domain.HostingApplyPlan
-	if op.ApplicationDatabaseStorage != nil {
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		plan, err = compileHostingStackPlan(ctx, tx, op, in, previous)
+	} else if op.ApplicationDatabaseStorage != nil {
 		plan, err = compileHostingStoragePlan(ctx, tx, op, in.Release, previous, nil)
 	} else if op.ApplicationDatabase != nil {
 		input, inputErr := domain.HostingApplicationDatabaseExecutionPlanInput(*op.ApplicationDatabase)
@@ -1163,6 +1192,12 @@ func (s *PostgresStore) HostingApplyBegin(ctx context.Context, runnerID string, 
 	if err != nil {
 		return op, err
 	}
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		if err = admitHostingStackVolumes(ctx, tx, op); err != nil {
+			return domain.HostingOperation{}, err
+		}
+		op.StackCreatePermitted = true
+	}
 	if err = finalLocalHostingAuthority(ctx, tx, runnerID, a, op, false); err != nil {
 		return domain.HostingOperation{}, err
 	}
@@ -1254,6 +1289,9 @@ func (s *PostgresStore) HostingComplete(ctx context.Context, runnerID string, in
 	}
 	if err = hostingRequireMode(ctx, tx, in.HostingAuthority, "deploy"); err != nil {
 		return domain.HostingOperation{}, err
+	}
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		return s.completeHostingStack(ctx, tx, runnerID, in, op)
 	}
 	if op.Snapshot.Storage != (domain.HostingStorageRef{}) && op.MutationHold {
 		if in.Result.Outcome == "succeeded" || in.Result.Restored {
@@ -1685,7 +1723,7 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		if liveDeployment {
 			return domain.HostingOperation{}, ErrConflict
 		}
-		expected = &domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: op.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash}
+		expected = &domain.HostingHealthy{Snapshot: op.Snapshot, OperationID: op.ID, ContainerID: op.Result.ContainerID, Release: *op.Release, PlanHash: op.Plan.Hash, Stack: op.Result.Stack}
 		expected.Storage, err = hostingStorageHealthyEvidence(ctx, tx, op)
 		if err != nil {
 			return domain.HostingOperation{}, err
@@ -1712,11 +1750,11 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 		return domain.HostingOperation{}, ErrConflict
 	}
 	if expected == nil {
-		if op.MutationHold || !in.NoOwnedContainers || in.ContainerID != "" || in.ImageID != "" {
+		if op.MutationHold || !in.NoOwnedContainers || in.ContainerID != "" || in.ImageID != "" || in.Stack != nil {
 			return domain.HostingOperation{}, ErrConflict
 		}
 	} else {
-		if in.NoOwnedContainers || !in.Ready || in.ContainerID != expected.ContainerID || in.ImageID != expected.Release.ImageID || in.PlanHash != expected.PlanHash || in.ReleaseHash != expected.Release.Hash {
+		if in.NoOwnedContainers || !in.Ready || in.ContainerID != expected.ContainerID || in.ImageID != expected.Release.ImageID || in.PlanHash != expected.PlanHash || in.ReleaseHash != expected.Release.Hash || domain.HostingDocumentHash(in.Stack) != domain.HostingDocumentHash(expected.Stack) {
 			return domain.HostingOperation{}, ErrConflict
 		}
 	}
@@ -2235,6 +2273,21 @@ func requireHostingReleaseAgent(ctx context.Context, tx pgx.Tx, runnerID string)
 }
 func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx, snap *domain.HostingSnapshot, requested int) error {
 	q := sqlcgen.New(tx)
+	if snap.Stack != (domain.HostingStackRef{}) && requested == 0 {
+		raw, err := q.GetHostingHealthy(ctx, snap.BindingID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if len(raw) > 0 {
+			var healthy domain.HostingHealthy
+			if json.Unmarshal(raw, &healthy) != nil || domain.ValidateHostingStackHealthy(healthy) != nil {
+				return ErrConflict
+			}
+			requested = healthy.Snapshot.HostPort
+			snap.HostPort = requested
+		}
+	}
+
 	if requested == 0 {
 		// Destination admission serializes reclamation with requests, external
 		// admission, settlement and route references. Evidence rows remain intact.
@@ -2281,7 +2334,7 @@ func (s *PostgresStore) resolveHostingReleasePort(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return err
 	}
-	if len(rows) > 32 {
+	if len(rows) > 32 && snap.Stack == (domain.HostingStackRef{}) {
 		return ErrConflict
 	}
 	for _, row := range rows {

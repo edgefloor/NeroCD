@@ -144,6 +144,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if verifiedSwitchCapable != options.ProxyVerifiedSwitch || verifiedSwitchCapable && !proxyConfigured {
 		return "", errors.New("authenticated verified proxy switch capability does not match explicit local configuration")
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingStackCapability && !options.RuntimeEnvironment {
+			return "", errors.New("managed stack capability requires configured runtime environment")
+		}
+	}
 	environmentCap, imageCap, releaseCap := false, false, false
 	for _, capability := range result.Capabilities {
 		environmentCap = environmentCap || capability == domain.HostingRuntimeEnvironmentCapability

@@ -195,6 +195,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/prepared"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/apply-begin"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/stack-volumes"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-create-begin"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-materialized"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/complete"},
@@ -626,6 +627,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerHostingPlan
 	case "/api/v1/runners/hosting/prepared":
 		return s.runnerHostingPrepared
+	case "/api/v1/runners/hosting/stack-volumes":
+		return s.runnerHostingStackVolumes
 	case "/api/v1/runners/hosting/apply-begin":
 		return s.runnerHostingApplyBegin
 	case "/api/v1/runners/hosting/storage-create-begin":

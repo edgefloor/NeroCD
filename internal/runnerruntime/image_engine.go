@@ -34,8 +34,9 @@ type imageCommand interface {
 	RunEnvironment(context.Context, string, []string, string, []string) ([]byte, error)
 }
 type imageEngine struct {
-	endpoint, configDir string
-	command             imageCommand
+	endpoint, configDir                string
+	stackCommandReady, stackStandalone bool
+	command                            imageCommand
 }
 
 // newImageEngine pins every invocation to one explicitly configured local Unix
@@ -239,6 +240,14 @@ func verifyImagePlan(plan domain.HostingApplyPlan) error {
 		return errors.New("invalid immutable image apply plan")
 	}
 	switch plan.CompilerVersion {
+	case domain.HostingStackCompilerVersion:
+		if plan.Stack == nil {
+			return errors.New("stack plan is missing")
+		}
+		expected, err := domain.CompileHostingStackPlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, *plan.Stack)
+		if err != nil || expected.Hash != hash {
+			return errors.New("invalid immutable stack plan")
+		}
 	case domain.HostingOwnedStorageRuntimeCompilerVersion:
 		expected, err := domain.CompileHostingOwnedStorageRuntimePlan(plan.Snapshot, plan.Release, plan.PreviousHealthy, plan.RetainedReleases, *plan.Storage)
 		if err != nil || expected.Hash != hash {
@@ -583,6 +592,9 @@ func (e *imageEngine) readiness(ctx context.Context, plan domain.HostingApplyPla
 
 // Observe inspects only the persisted target and never changes workloads.
 func (e *imageEngine) Observe(ctx context.Context, operation domain.HostingOperation) (domain.HostingObservation, error) {
+	if operation.Snapshot.Stack != (domain.HostingStackRef{}) {
+		return e.observeStack(ctx, operation)
+	}
 	observation := domain.HostingObservation{BindingID: operation.BindingID}
 	daemon, err := e.daemonID(ctx)
 	if err != nil {

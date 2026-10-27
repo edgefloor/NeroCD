@@ -2407,6 +2407,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/stack-volumes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Seal owned Compose volume provenance
+         * @description Requires PostgreSQL and the migrated River consumer. Image workloads bind only loopback ports; this endpoint does not provide TLS or zero-downtime replacement. Only a current dedicated runner credential is accepted; the complete operation/run/lease/attempt/fence tuple is required. Observation task mode cannot prepare, admit apply, or publish deployment success.
+         */
+        post: operations["runnerHostingStackVolumes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/complete": {
         parameters: {
             query?: never;
@@ -6372,6 +6392,7 @@ export interface components {
             hash: string;
         };
         HostingStorageDeploymentOptions: {
+            stack_ref?: components["schemas"]["HostingStackRef"];
             application_database_storage: components["schemas"]["HostingApplicationDatabaseStorageReview"] | null;
             resource_id: components["schemas"]["HostingIdentifier"];
             /** Format: int64 */
@@ -6843,6 +6864,7 @@ export interface components {
             recovery_state?: "queued" | "running" | "succeeded" | "uncertain";
         }));
         HostingDeploymentInput: {
+            managed_stack?: components["schemas"]["HostingStackDeploymentInput"];
             application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorageInput"];
             application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuityInput"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
@@ -7050,6 +7072,7 @@ export interface components {
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
         };
         HostingSnapshot: {
+            stack?: components["schemas"]["HostingStackRef"];
             application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
             database?: components["schemas"]["HostingDatabaseExecutionRef"];
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityRef"];
@@ -7069,7 +7092,7 @@ export interface components {
             host_port: number;
             readiness: components["schemas"]["HostingReadiness"] | components["schemas"]["HostingDatabaseReadiness"];
             /** @enum {string} */
-            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "public-image.owned-storage.runtime-env.release-ports.v1" | "database.private.owned-storage.v1" | "public-image.runtime-env.database.release-ports.v1";
+            policy_version: "public-image.loopback.v1" | "public-image.release-ports.v1" | "local-build.release-ports.v1" | "public-image.runtime-env.release-ports.v1" | "local-build.runtime-env.release-ports.v1" | "public-image.owned-storage.release-ports.v1" | "public-image.owned-storage.runtime-env.release-ports.v1" | "managed-compose.interrupting.v1" | "database.private.owned-storage.v1" | "public-image.runtime-env.database.release-ports.v1";
         } & ({
             /** @enum {string} */
             policy_version?: "database.private.owned-storage.v1";
@@ -7086,19 +7109,27 @@ export interface components {
             /** @enum {string} */
             policy_version?: "public-image.runtime-env.database.release-ports.v1";
             readiness?: components["schemas"]["HostingReadiness"];
+        } | {
+            /** @enum {string} */
+            policy_version?: "managed-compose.interrupting.v1";
+            /** @enum {string} */
+            image_reference?: "";
+            readiness?: components["schemas"]["HostingReadiness"];
         });
         HostingRelease: {
+            stack?: components["schemas"]["HostingStackReleaseRef"];
             local_build?: components["schemas"]["HostingLocalBuildArtifact"];
             canonical_image: string;
             image_id: string;
             /** @enum {string} */
-            os: "linux";
+            os: "linux" | "";
             architecture: string;
             variant?: string;
             daemon_id: string;
             hash: string;
         };
         HostingHealthy: {
+            stack?: components["schemas"]["HostingStackState"];
             storage?: components["schemas"]["HostingHealthyStorage"];
             snapshot: components["schemas"]["HostingSnapshot"];
             operation_id: string;
@@ -7126,6 +7157,7 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            stack?: components["schemas"]["HostingStackPlan"];
             application_database?: components["schemas"]["HostingApplicationDatabasePlan"];
             database?: components["schemas"]["HostingDatabasePlan"];
             storage?: components["schemas"]["HostingStoragePlan"];
@@ -7135,7 +7167,7 @@ export interface components {
             release: components["schemas"]["HostingRelease"];
             previous_healthy?: components["schemas"]["HostingHealthy"];
             /** @enum {string} */
-            compiler_version: "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "image-hosting.owned-storage.runtime-env.v1" | "database-hosting.private.owned-storage.v1" | "database-hosting.private.membership.v2" | "image-hosting.runtime-env.database.v1";
+            compiler_version: "managed-compose.compiler.v1" | "image-hosting.v1" | "image-hosting.release-ports.v1" | "local-build-hosting.v1" | "image-hosting.runtime-env.v1" | "local-build-hosting.runtime-env.v1" | "image-hosting.owned-storage.v1" | "image-hosting.owned-storage.runtime-env.v1" | "database-hosting.private.owned-storage.v1" | "database-hosting.private.membership.v2" | "image-hosting.runtime-env.database.v1";
             hash: string;
         };
         HostingReceipt: {
@@ -7145,6 +7177,7 @@ export interface components {
             created_at: string;
         };
         HostingResult: {
+            stack?: components["schemas"]["HostingStackState"];
             /** @enum {string} */
             outcome: "succeeded" | "failed";
             container_id?: string;
@@ -7164,6 +7197,7 @@ export interface components {
             attempt: number;
         };
         HostingPreparedRequest: {
+            stack_images?: components["schemas"]["HostingStackImage"][];
             operation_id: string;
             run_id: string;
             lease_id: string;
@@ -7191,6 +7225,7 @@ export interface components {
             phase?: "" | "verifying" | "claim_observation";
         };
         HostingObservation: {
+            stack?: components["schemas"]["HostingStackState"];
             operation_id: string;
             run_id: string;
             lease_id: string;
@@ -7206,6 +7241,8 @@ export interface components {
             no_owned_containers: boolean;
         };
         HostingOperation: {
+            stack_source?: components["schemas"]["HostingStackDefinition"];
+            stack_create_permitted?: boolean;
             id: string;
             project_id: string;
             resource_id: string;
@@ -7686,6 +7723,16 @@ export interface components {
             kind: "image";
             image: components["schemas"]["ImageSource"];
         };
+        ComposeResourceSource: {
+            /** @enum {string} */
+            kind: "compose";
+            compose: {
+                /** @description Exact reference-bearing Compose source. Protected values belong in runtime configuration. */
+                original: string;
+                public_component: string;
+                container_port: number;
+            };
+        };
         HostingBuildSettings: {
             /** @enum {string} */
             strategy: "dockerfile" | "railpack" | "static";
@@ -7713,12 +7760,12 @@ export interface components {
             credential_kind: "public" | "https_basic" | "ssh_private_key";
             settings: components["schemas"]["HostingBuildSettings"];
         };
-        ResourceSourceInput: components["schemas"]["ImageResourceSource"] | {
+        ResourceSourceInput: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceInput"];
         };
-        ResourceSource: components["schemas"]["ImageResourceSource"] | {
+        ResourceSource: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceSource"];
@@ -7735,6 +7782,8 @@ export interface components {
             created_at: string;
         };
         ResourceInput: {
+            /** @description Required for Compose resources. Preserve across retries. */
+            request_id?: string;
             project_id: string;
             project_environment_id: string;
             name: string;
@@ -9865,6 +9914,94 @@ export interface components {
             expected_plan_hash: string;
             /** @default false */
             confirm_final_copy: boolean;
+        };
+        HostingStackDeploymentInput: {
+            /** @constant */
+            acknowledge_interruption: true;
+        };
+        HostingStackRef: {
+            /** Format: int64 */
+            generation: number;
+            hash: string;
+        };
+        HostingStackReleaseRef: {
+            hash: string;
+        };
+        HostingStackMount: {
+            volume: string;
+            target: string;
+            read_only?: boolean;
+        };
+        HostingStackHealthcheck: {
+            test: string[];
+            interval?: string;
+            timeout?: string;
+            start_period?: string;
+            retries: number;
+        };
+        HostingStackService: {
+            name: string;
+            image: string;
+            command?: string[] | null;
+            environment?: {
+                [key: string]: string;
+            };
+            mounts?: components["schemas"]["HostingStackMount"][];
+            depends_on?: {
+                [key: string]: "service_started" | "service_healthy" | "service_completed_successfully";
+            };
+            healthcheck?: components["schemas"]["HostingStackHealthcheck"];
+        };
+        HostingStackDefinition: {
+            /** @enum {string} */
+            version: "managed-compose.v1";
+            original_hash: string;
+            public_component: string;
+            container_port: number;
+            services: components["schemas"]["HostingStackService"][];
+            volumes: string[];
+        };
+        HostingStackImage: {
+            component: string;
+            release: components["schemas"]["HostingRelease"];
+        };
+        HostingStackVolume: {
+            name: string;
+            volume_name: string;
+            creation_operation_id: string;
+            creation_nonce: string;
+            created_at?: string;
+        };
+        HostingStackPlan: {
+            definition: components["schemas"]["HostingStackDefinition"];
+            images: components["schemas"]["HostingStackImage"][];
+            volumes: components["schemas"]["HostingStackVolume"][];
+            network_name: string;
+        };
+        HostingStackComponent: {
+            component: string;
+            container_id: string;
+            image_id: string;
+            operation_id: string;
+            running: boolean;
+            exit_code: number;
+            health: string;
+        };
+        HostingStackState: {
+            observation_complete: boolean;
+            public_component: string;
+            network_id: string;
+            components: components["schemas"]["HostingStackComponent"][];
+            volumes: components["schemas"]["HostingStackVolume"][];
+        };
+        HostingStackVolumeRequest: {
+            operation_id: string;
+            run_id: string;
+            lease_id: string;
+            fence: string;
+            attempt: number;
+            plan_hash: string;
+            volumes: components["schemas"]["HostingStackVolume"][];
         };
     };
     responses: {
@@ -14948,6 +15085,36 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Hosting operation state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    runnerHostingStackVolumes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStackVolumeRequest"];
             };
         };
         responses: {

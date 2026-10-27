@@ -52,6 +52,32 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 				return domain.Resource{}, err
 			}
 		}
+		if create && item.Source.Kind == "compose" {
+			if options.audit == nil || options.composeCreate == nil || !domain.ValidHostingRuntimeDeliveryID(options.composeCreate.RequestID) {
+				return domain.Resource{}, ErrConflict
+			}
+			request := options.composeCreate
+			count, err := q.ClaimHostingComposeCreate(ctx, sqlcgen.ClaimHostingComposeCreateParams{ProjectID: item.ProjectID, RequestID: request.RequestID, ResourceID: item.ID, RequestHash: request.RequestHash})
+			if err != nil {
+				return domain.Resource{}, err
+			}
+			if count == 0 {
+				receipt, err := q.GetHostingComposeCreate(ctx, sqlcgen.GetHostingComposeCreateParams{ProjectID: item.ProjectID, RequestID: request.RequestID})
+				if err != nil {
+					return domain.Resource{}, err
+				}
+				if receipt.RequestHash != request.RequestHash || receipt.ResourceID != item.ID {
+					return domain.Resource{}, ErrConflict
+				}
+				row, err := q.GetResource(ctx, item.ID)
+				if err != nil {
+					return domain.Resource{}, err
+				}
+				return resourceFromHostingSQL(row)
+			}
+		} else if options.composeCreate != nil {
+			return domain.Resource{}, ErrConflict
+		}
 		if !create {
 			row, err := q.LockResourceConfiguration(ctx, item.ID)
 			if err != nil {
@@ -132,6 +158,15 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 				err = ErrConflict
 			}
 			return domain.Resource{}, err
+		}
+		if item.Source.Kind == "compose" {
+			definition, parseErr := domain.ParseHostingStack(*item.Source.Compose)
+			if parseErr != nil {
+				return domain.Resource{}, ErrConflict
+			}
+			if err = q.AppendHostingComposeSourceVersion(ctx, sqlcgen.AppendHostingComposeSourceVersionParams{ResourceID: item.ID, Generation: row.Generation, Original: item.Source.Compose.Original, OriginalHash: definition.OriginalHash, Definition: buildJSON(definition), DefinitionHash: domain.HostingDocumentHash(definition)}); err != nil {
+				return domain.Resource{}, err
+			}
 		}
 		if src != nil {
 			if create {

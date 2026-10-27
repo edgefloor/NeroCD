@@ -456,7 +456,7 @@ func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string
 		return false
 	}
 	if !enabled {
-		if has(domain.HostingRuntimeEnvironmentCapability) || has(domain.HostingOwnedStorageRuntimeCapability) {
+		if has(domain.HostingRuntimeEnvironmentCapability) || has(domain.HostingOwnedStorageRuntimeCapability) || has(domain.HostingStackCapability) {
 			return nil, errors.New("hosting_runtime_env_v1 requires --hosting-runtime-env")
 		}
 		return capabilities, nil
@@ -484,6 +484,9 @@ func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string
 	}
 	if !has(domain.HostingRuntimeEnvironmentCapability) {
 		capabilities = append(capabilities, domain.HostingRuntimeEnvironmentCapability)
+	}
+	if !has(domain.HostingStackCapability) {
+		capabilities = append(capabilities, domain.HostingStackCapability)
 	}
 	if !has(domain.HostingOwnedStorageCapability) {
 		capabilities = append(capabilities, domain.HostingOwnedStorageCapability)

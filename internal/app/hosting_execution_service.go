@@ -27,7 +27,14 @@ func (s *Service) RequestHostingDeployment(ctx context.Context, resourceID strin
 	if resource.Kind != "application" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("database resources require a qualified engine operation"))
 	}
-	if resource.Source.Kind != "image" {
+	if resource.Source.Kind == "compose" {
+		if resource.Source.Compose == nil || in.ManagedStack == nil || in.ContainerPort != resource.Source.Compose.ContainerPort {
+			return domain.HostingOperation{}, InvalidInput(errors.New("managed stack deployment requires its selected component port and interruption acknowledgment"))
+		}
+	} else if in.ManagedStack != nil {
+		return domain.HostingOperation{}, InvalidInput(errors.New("managed_stack requires a Compose source"))
+	}
+	if resource.Source.Kind != "image" && resource.Source.Kind != "compose" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("git resources cannot use image deployment"))
 	}
 	if err = domain.ValidateHostingDeployment(in); err != nil {

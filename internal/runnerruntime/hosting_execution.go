@@ -88,7 +88,14 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	}
 	if op.Release == nil {
 		initialSnapshot := op.Snapshot
-		release, prepareErr := engine.Prepare(supervisor.Context(), op.Snapshot)
+		var release domain.HostingRelease
+		var images []domain.HostingStackImage
+		var prepareErr error
+		if op.StackSource != nil {
+			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource)
+		} else {
+			release, prepareErr = engine.Prepare(supervisor.Context(), op.Snapshot)
+		}
 		if prepareErr != nil {
 			if supervisor.Context().Err() != nil {
 				return prepareErr
@@ -98,7 +105,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 			}
 			return errors.New("image preparation failed; previous workload was not changed")
 		}
-		request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_prepared", a.LeaseID, a.Attempt, "release"), Release: release}
+		request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_prepared", a.LeaseID, a.Attempt, "release"), Release: release, StackImages: images}
 		entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "prepared", Prepared: &request, CreatedAt: time.Now().UTC()}
 		markHostingRuntimeEntry(&entry, initialSnapshot.RuntimeConfiguration)
 		entry.StorageRef = initialSnapshot.Storage
@@ -125,7 +132,15 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 	if op.Plan == nil || op.Release == nil || verifyImagePlan(*op.Plan) != nil {
 		return errors.New("committed image apply plan missing")
 	}
-	if err = engine.EnsurePreparedRelease(supervisor.Context(), *op.Release); err != nil {
+	if op.Plan.Stack != nil {
+		err = engine.prepareCompose(supervisor.Context())
+		if err == nil {
+			err = engine.ensureStackImages(supervisor.Context(), *op.Plan)
+		}
+	} else {
+		err = engine.EnsurePreparedRelease(supervisor.Context(), *op.Release)
+	}
+	if err != nil {
 		if supervisor.Context().Err() != nil {
 			return err
 		}
@@ -166,6 +181,44 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 			return err
 		}
 		defer environment.Close()
+		if op.Plan.Stack != nil {
+			metadata, metadataErr := environment.Metadata()
+			if metadataErr != nil || metadata.Authority != a || metadata.PlanHash != op.Plan.Hash || metadata.RuntimeConfiguration != op.Snapshot.RuntimeConfiguration {
+				return errors.New("stack protected environment target changed")
+			}
+			if metadata.UseUntil.Before(deliveryDeadline) {
+				deliveryDeadline = metadata.UseUntil
+			}
+		}
+	}
+	var stackBody []byte
+	if op.Plan.Stack != nil {
+		stackBody, err = renderStack(op.ID, *op.Plan, environment)
+		if err != nil {
+			if emitErr := reporter.Emit("system", "Compose preflight: "+err.Error(), 4); emitErr != nil {
+				return emitErr
+			}
+			if failure := failBeforeApply(); failure != nil {
+				return failure
+			}
+			if ack := journal.AckHosting(intentID); ack != nil {
+				return ack
+			}
+			return errors.New("stack variables are incomplete; previous workloads were not changed")
+		}
+		defer clear(stackBody)
+		preflight, stopPreflight := context.WithDeadline(supervisor.Context(), deliveryDeadline)
+		preflightErr := engine.stackCompose(preflight, *op.Plan, stackBody, "config", "--quiet")
+		stopPreflight()
+		if preflightErr != nil {
+			if failure := failBeforeApply(); failure != nil {
+				return failure
+			}
+			if ack := journal.AckHosting(intentID); ack != nil {
+				return ack
+			}
+			return errors.New("compose configuration preflight failed; prior workloads were not changed")
+		}
 	}
 	var admitted domain.HostingOperation
 	if err = retryAttemptRequest(supervisor, func(ctx context.Context) error {
@@ -185,7 +238,15 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		})
 	}
 	var result domain.HostingResult
-	if environment != nil {
+	if op.Plan.Stack != nil {
+		seal := func(volumes []domain.HostingStackVolume) error {
+			return retryAttemptRequest(supervisor, func(ctx context.Context) error {
+				_, sealErr := client.HostingStackVolumes(ctx, domain.HostingStackVolumeRequest{HostingAuthority: a, PlanHash: op.Plan.Hash, Volumes: volumes})
+				return sealErr
+			})
+		}
+		result = engine.applyStack(supervisor.Context(), op.ID, *op.Plan, stackBody, deliveryDeadline, admitted.StackCreatePermitted, seal, verifying)
+	} else if environment != nil {
 		result = engine.ApplyWithRuntimeEnvironment(supervisor.Context(), op.ID, *op.Plan, environment, deliveryDeadline, verifying)
 	} else {
 		result = engine.Apply(supervisor.Context(), op.ID, *op.Plan, verifying)

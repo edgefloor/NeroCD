@@ -155,3 +155,20 @@ func (s *Server) runnerHostingReconciliation(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, op)
 }
+
+func (s *Server) runnerHostingStackVolumes(w http.ResponseWriter, r *http.Request) {
+	var in domain.HostingStackVolumeRequest
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	r, ok := s.databaseConnectionRunnerRequest(w, r)
+	if !ok {
+		return
+	}
+	op, err := s.app.RunnerHostingStackVolumes(r.Context(), in)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, op)
+}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"nerocd/internal/domain"
+	"nerocd/internal/store"
 )
 
 func TestHostingAPI(t *testing.T) {
@@ -111,4 +112,38 @@ func TestGitResourceAPIStrictInputAndMemoryUnavailable(t *testing.T) {
 		request(fmt.Sprintf(`{"project_id":"proj_platform","project_environment_id":%q,"name":"git","kind":"application","source":%s}`, env.ID, source), 400)
 	}
 	request(fmt.Sprintf(`{"project_id":"proj_platform","project_environment_id":%q,"name":"git","kind":"application","source":{"kind":"git","git":{"repository_url":"https://github.com/acme/web","requested_ref":"main","credential_kind":"public","settings":{"strategy":"dockerfile"}}}}`, env.ID), 503)
+}
+
+func TestHostingComposePreflightReportsUnsupportedFieldWithoutSourceValues(t *testing.T) {
+	server, mem := newTestServer()
+	token := createTestSession(t, server)
+	call := func(path string, body any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", path, strings.NewReader(string(raw)))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, req)
+		return response
+	}
+	response := call("/api/v1/project-environments", map[string]string{"project_id": "proj_platform", "name": "compose"})
+	if response.Code != 201 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	var environment domain.ProjectEnvironment
+	if err := json.Unmarshal(response.Body.Bytes(), &environment); err != nil {
+		t.Fatal(err)
+	}
+	response = call("/api/v1/resources", map[string]any{"request_id": strings.Repeat("c", 32), "project_id": "proj_platform", "project_environment_id": environment.ID, "name": "unsupported", "kind": "application", "source": map[string]any{"kind": "compose", "compose": domain.HostingStackSource{Original: "services:\n  app:\n    image: nginx:alpine\n    privileged: true\n    environment:\n      PASSWORD: DO_NOT_LEAK\n", PublicComponent: "app", ContainerPort: 80}}})
+	if response.Code != 400 || !strings.Contains(response.Body.String(), "services.app.privileged") || strings.Contains(response.Body.String(), "DO_NOT_LEAK") {
+		t.Fatalf("unsafe preflight response: %d %s", response.Code, response.Body.String())
+	}
+	resources, err := mem.ListResources(t.Context(), "proj_platform", environment.ID, store.Page{})
+	if err != nil || resources.Total != 0 {
+		t.Fatalf("invalid source persisted: %+v %v", resources, err)
+	}
 }

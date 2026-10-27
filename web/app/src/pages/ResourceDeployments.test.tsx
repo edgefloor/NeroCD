@@ -13,11 +13,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const page = (items: HostingOperation[] = [], offset = 0, total = items.length) => ({ items, count: items.length, total, limit: 20, offset });
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
-function setup(role = "maintainer", globalRoles: string[] = [], automatic = false) {
+function setup(role = "maintainer", globalRoles: string[] = [], automatic = false, saved = resource) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.principal, { id: "user", name: "Operator", email: "operator@example.test", provider: "oidc", roles: globalRoles });
   client.setQueryData(queryKeys.allProjectMembers, role ? [{ id: "member", project_id: "project", user_id: "user", email: "operator@example.test", role, created_at: "" }] : []);
-  const view = render(<QueryClientProvider client={client}><ResourceDeployments resource={resource} writable={["owner", "maintainer"].includes(role) || globalRoles.includes("system_admin")} blocked={false} /></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><ResourceDeployments resource={saved} writable={["owner", "maintainer"].includes(role) || globalRoles.includes("system_admin")} blocked={false} /></QueryClientProvider>);
   const mode = screen.queryByLabelText("Host port allocation");
   if (mode && !automatic) fireEvent.change(mode, { target: { value: "fixed" } });
   return view;
@@ -609,4 +609,117 @@ test("stale runtime generation requires explicit separate review and fresh captu
 test("deployment response with another runtime generation cannot select an operation", async () => {
   backend((url, options) => url.endsWith("/runtime-configuration") ? json({ runtime_configuration: { resource_id: "resource", project_id: "project", resource_generation: 1, runtime_generation: 3, entries: [] } }) : url.endsWith("/deployments") && options.method === "POST" ? json({ ...operation, snapshot: { ...operation.snapshot, runtime_configuration: { generation: 4, hash: "wrong" } } }, 202) : undefined);
   setup(); acknowledge(); await request(); await screen.findByText(/The connection ended without a confirmed response/); expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull(); expect(screen.getByText(/resource\/runtime generations 1\/3/)).toBeTruthy();
+});
+
+const compose: Resource = { ...resource, source: { kind: "compose", compose: { original: "services:\n  web:\n    image: team/web:1\n    environment:\n      - TOKEN=${TOKEN:?required}\n", public_component: "web", container_port: 3000 } } };
+const stackRef = { generation: 1, hash: `sha256:${"a".repeat(64)}` };
+const stackOptions = { resource_id: "resource", resource_generation: 1, stack_ref: stackRef, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: true, reason: "initial_deployment", routes: [], storage_route_continuity: null };
+test("saving the first Compose destination loads current deployment options", async () => {
+  let bound = false;
+  backend((url) => {
+    if (url.endsWith("/binding")) return bound ? json(binding) : json({}, 404);
+    if (url.endsWith("/storage-deployment-options")) return json(bound ? stackOptions : { ...stackOptions, available: false, reason: "unbound" });
+    return undefined;
+  });
+  setup("maintainer", [], false, compose);
+  await screen.findByText("Save a desired destination before requesting deployment.");
+  bound = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: ["resourceBinding", "project", "resource"] }); });
+  await screen.findByLabelText("Readiness path");
+});
+function composeBackend(replacement = false, handler?: Parameters<typeof backend>[0]) {
+  const continuity = { expected_loaded_generation: 4, expected_loaded_proxy_operation_id: "proxy_old", routes: [{ route_id: "route", expected_version: 2, expected_selected_release_operation_id: "hop_old" }] };
+  const options = replacement ? { ...stackOptions, reason: "available", previous_healthy_operation_id: "hop_old", host_port: 8080, container_port: 3000, readiness: { path: "/ready", timeout_seconds: 20 }, routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 2, selected_release_operation_id: "hop_old" }], storage_route_continuity: continuity } : stackOptions;
+  return backend((url, init) => {
+    const custom = handler?.(url, init);
+    if (custom) return custom;
+    if (url.endsWith("/storage-deployment-options")) return json(options);
+    if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: "project", resource_generation: 1, runtime_generation: 3, entries: [{ name: "TOKEN", kind: "managed_secret", secret: { secret_id: "secret", version: 2 } }] } });
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      const input = JSON.parse(init.body as string);
+      return json({ ...operation, snapshot: { ...operation.snapshot, stack: stackRef, host_port: input.host_port ?? 9090, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" }, ...(input.storage_route_continuity ? { storage_route_continuity: { hash: "continuity" } } : {}) } }, 202);
+    }
+    return undefined;
+  });
+}
+async function reviewCompose() {
+  fireEvent.click(await screen.findByRole("button", { name: "Review current Compose deployment" }));
+  await screen.findByRole("region", { name: "Reviewed Compose deployment" });
+  fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
+}
+test.each([false, true])("saved Compose captures runtime references and exact %s replacement route authority", async (replacement) => {
+  const fetch = composeBackend(replacement); setup("maintainer", [], false, compose);
+  await reviewCompose();
+  expect(screen.getByText(/TOKEN \(managed secret reference\)/)).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
+  expect(writes).toHaveLength(1);
+  const input = JSON.parse(writes[0]![1].body as string);
+  expect(input).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, container_port: 3000, managed_stack: { acknowledge_interruption: true } });
+  if (replacement) expect(input).toMatchObject({ host_port: 8080, readiness: { path: "/ready", timeout_seconds: 20 }, storage_route_continuity: { expected_loaded_generation: 4, expected_loaded_proxy_operation_id: "proxy_old", routes: [{ route_id: "route", expected_version: 2, expected_selected_release_operation_id: "hop_old" }] } });
+  else { expect(input).not.toHaveProperty("host_port"); expect(input).not.toHaveProperty("storage_route_continuity"); }
+});
+test("Compose viewer has history without deployment or cleanup controls", async () => {
+  const fetch = composeBackend(); setup("viewer", [], false, compose);
+  await screen.findByText(/Project maintainer access is required to deploy saved Compose/);
+  expect(screen.queryByRole("button", { name: "Review current Compose deployment" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
+  expect(fetch.mock.calls.every(([, init]) => init.method === "GET")).toBe(true);
+});
+test("Compose server mutation hold blocks new deployment review", async () => {
+  composeBackend(false, (url, init) => url.includes("/deployments") && init.method !== "POST" ? json(page([{ ...operation, mutation_hold: true }])) : undefined);
+  setup("maintainer", [], false, compose);
+  await screen.findByText(/New deployment requests are paused/);
+  expect((await screen.findByRole<HTMLButtonElement>("button", { name: "Review current Compose deployment" })).disabled).toBe(true);
+});
+test("a retired Compose review response cannot enter a newer resource generation", async () => {
+  let calls = 0; let resolve!: (value: Response) => void;
+  const fetch = composeBackend(false, (url) => url.endsWith("/storage-deployment-options") && ++calls === 2 ? new Promise<Response>((done) => { resolve = done; }) : undefined);
+  const view = setup("maintainer", [], false, compose);
+  fireEvent.click(await screen.findByRole("button", { name: "Review current Compose deployment" }));
+  await waitFor(() => expect(resolve).toBeTypeOf("function"));
+  view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...compose, generation: 2 }} writable blocked={false} /></QueryClientProvider>);
+  await act(async () => { resolve(json(stackOptions)); });
+  expect(screen.queryByRole("region", { name: "Reviewed Compose deployment" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+});
+test("Compose recorded components distinguish successful init completion from stopped workloads", async () => {
+  const observed = { ...operation, state: "succeeded", stack_source: { version: "managed-compose.v1", original_hash: "hash", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:1", depends_on: { migrate: "service_completed_successfully" } }] }, result: { outcome: "ready", ready: true, restored: false, uncertain: false, stack: { observation_complete: true, public_component: "web", network_id: "network", volumes: [], components: [{ component: "migrate", container_id: "init-container", image_id: "init-image", operation_id: "hop_one", running: false, exit_code: 0, health: "none" }, { component: "web", container_id: "web-container", image_id: "web-image", operation_id: "hop_one", running: true, exit_code: 0, health: "healthy" }] } } };
+  composeBackend(false, (url, init) => url.includes("/hosting-operations/") ? json(observed) : url.includes("/deployments") && init.method !== "POST" ? json(page([operation])) : undefined);
+  setup("maintainer", [], false, compose);
+  fireEvent.click(await screen.findByRole("button", { name: "View operation hop_one" }));
+  await screen.findByText(/Initialization completed successfully/);
+  expect(screen.getByText(/Running · health healthy/)).toBeTruthy();
+  expect(screen.getByText(/Observation complete · public component web/)).toBeTruthy();
+});
+
+test("uncertain Compose delivery retains its exact request while the server holds competing mutations", async () => {
+  let submissions = 0; let held = false;
+  const fetch = composeBackend(false, (url, init) => {
+    if (url.endsWith("/deployments") && init.method === "POST" && ++submissions === 1) { held = true; throw new TypeError("response lost"); }
+    if (url.includes("/deployments") && init.method !== "POST" && held) return json(page([{ ...operation, state: "reconciliation_required", mutation_hold: true, result: { outcome: "failed", container_id: "", image_id: "", ready: false, restored: false, uncertain: true } }]));
+    return undefined;
+  });
+  setup("maintainer", [], false, compose); await reviewCompose();
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  await screen.findByText(/Delivery is unconfirmed/);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh deployment history" }));
+  await screen.findByText(/New deployment requests are paused/);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Review current Compose deployment" }).disabled).toBe(true);
+  const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical Compose deployment request" });
+  expect(retry.disabled).toBe(false); fireEvent.click(retry);
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const writes = fetch.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
+});
+test("Compose review permission denial clears deployment drafts", async () => {
+  let reads = 0;
+  const fetch = composeBackend(false, (url) => url.endsWith("/storage-deployment-options") && ++reads === 2 ? json({ error: "denied" }, 403) : undefined);
+  setup("maintainer", [], false, compose);
+  fireEvent.click(await screen.findByRole("button", { name: "Review current Compose deployment" }));
+  await screen.findByText(/Deployment permission is unavailable/);
+  expect(screen.queryByRole("region", { name: "Saved Compose deployment review" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
 });

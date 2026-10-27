@@ -18,7 +18,9 @@ remote=false
 retention=false
 deletion=false
 catalog=false
+managed_compose=false
 case ${1:-} in
+ --managed-compose) managed_compose=true; catalog=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
  --catalog) catalog=true; archive=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;
@@ -39,7 +41,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose]' >&2; exit 2;;
 esac
 browser_publication=false
 if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
@@ -342,7 +344,7 @@ git ls-files -s acceptance/runtime-hosting-catalog internal/api/hosting_catalog_
 fixture_tags=nerocd_proxy_fixture
 if [[ "$remote" == true ]]; then fixture_tags=nerocd_proxy_fixture,nerocd_storage_remote_contract; fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags "$fixture_tags" -c -o "$evidence/api.test" ./internal/api
-if [[ "$remote" == true ]]; then
+if [[ "$remote" == true || "$managed_compose" == true ]]; then
  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "$evidence/store.test" ./internal/store
 fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags nerocd_proxy_fixture -trimpath -o "$evidence/nerocd-proxy-fixture" ./cmd/nerocd
@@ -375,7 +377,8 @@ host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
 outer_run() {
- if [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
+ if [[ "$managed_compose" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 --publish 127.0.0.1:25443:443 "$@"
+ elif [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
  else host_docker run --pull=never "$@"; fi
 }
 returned_outer=$(outer_run --detach --privileged --cpus 4 --memory 6g --pids-limit 2048 --name "$name" --label "$label=$owner" --mount "type=volume,src=$volume,dst=/var/lib/docker" --env DOCKER_TLS_CERTDIR= "$dind" dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2)
@@ -391,7 +394,7 @@ inner_docker info --format '{{.ID}} {{.OSType}} {{.Architecture}} {{.Driver}} {{
 printf 'qualification_scope=classic-image-store-overlay2-only\ncontainerd_image_store=not_qualified\n' > "$evidence/image-store-scope"
 host_docker exec "$outer" mkdir -p /fixture /workspace/db/seeds /workspace/internal/api /workspace/internal/store /workspace/acceptance/runtime-proxy-control
 for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
-if [[ "$remote" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
+if [[ "$remote" == true || "$managed_compose" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
 # BASE_IMAGE_PRELOAD_BEGIN
@@ -453,6 +456,9 @@ for _ in $(seq 1 60); do
 done
 [[ "$ready" == true ]]
 postgres_capacity before-test
+if [[ "$managed_compose" == true ]]; then
+ host_docker exec --workdir /workspace/internal/store --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/store.test -test.v -test.run '^TestPostgresHostingStackAuthorityVolumesAndUncertainReplacement$' -test.timeout=3m > "$evidence/stack-store-tests.log" 2>&1
+fi
 deletion_mode=''
 if [[ "$deletion" == true ]]; then deletion_mode=disposable-dind; fi
 retention_mode=''
@@ -528,6 +534,22 @@ for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_a
  if b.get(k) is not True:raise SystemExit('connected browser manual deletion proof missing: '+k)
 CHECK_DELETION_MARKERS
  fi
+elif [[ "$managed_compose" == true ]]; then
+ browser_origin=$(cat "$evidence/browser-origin")
+ browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
+ host_docker exec --workdir /workspace/internal/api --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
+ test_pid=$!
+ NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/compose_browser.mjs > "$evidence/browser.log" 2>&1
+ wait "$test_pid"
+ test_pid=''
+ python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" <<'COMPOSE_BROWSER_PASS'
+import json,pathlib,sys
+text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
+if "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Compose runtime test did not pass without skips")
+if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Compose browser did not pass")
+for key in ["served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes"]:
+ if browser.get(key) is not True:raise SystemExit("connected Compose browser proof missing: "+key)
+COMPOSE_BROWSER_PASS
 elif [[ "$catalog" == true ]]; then
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')

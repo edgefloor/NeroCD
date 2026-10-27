@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"nerocd/internal/hostingjobs"
+	"strings"
 	"testing"
 
 	"nerocd/internal/auth"
@@ -201,5 +202,49 @@ func TestGitResourcePublicPolicyAndMemoryUnavailable(t *testing.T) {
 	input.Source.Git.CredentialKind = "ssh_private_key"
 	if _, err = service.CreateResource(ctx, input); err == nil || errors.Is(err, hostingjobs.ErrUnavailable) {
 		t.Fatal("unsupported SSH accepted", err)
+	}
+}
+
+func TestHostingComposeSourceSaveAndStaleUpdate(t *testing.T) {
+	service, mem := newServiceAccountTestService(t)
+	admin := auth.WithPrincipal(t.Context(), testPrincipalContext(t))
+	environment, err := service.CreateProjectEnvironment(admin, ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "compose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := "# preserve comment\nservices:\n  app:\n    image: nginx:alpine\n    environment:\n      - PASSWORD=${PASSWORD?required}\n"
+	source := domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: original, PublicComponent: "app", ContainerPort: 80}}
+	created, err := service.CreateResource(admin, ResourceInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj_platform", ProjectEnvironmentID: environment.ID, Name: "stack", Kind: "application", Source: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Source.Kind != "compose" || created.Source.Compose.Original != original {
+		t.Fatal("source changed")
+	}
+	created.Source.Compose.Original = "mutated caller buffer"
+	saved, err := mem.GetResource(t.Context(), created.ID)
+	if err != nil || saved.Source.Compose.Original != original {
+		t.Fatalf("caller could mutate stored source: %v", err)
+	}
+	source.Compose.Original = strings.Replace(original, "nginx:alpine", "nginx:1.27-alpine", 1)
+	updated, err := service.UpdateResource(admin, created.ID, ResourcePatch{ExpectedGeneration: 1, Source: &source})
+	if err != nil || updated.Generation != 2 {
+		t.Fatalf("update failed: %v", err)
+	}
+	if _, err = service.UpdateResource(admin, created.ID, ResourcePatch{ExpectedGeneration: 1, Source: &source}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale source update: %v", err)
+	}
+	replayInput := ResourceInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj_platform", ProjectEnvironmentID: environment.ID, Name: "stack", Kind: "application", Source: domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: original, PublicComponent: "app", ContainerPort: 80}}}
+	replay, err := service.CreateResource(admin, replayInput)
+	if err != nil || replay.ID != created.ID || replay.Generation != 2 {
+		t.Fatalf("retry changed resource identity or rewrote current state: %v", err)
+	}
+	replayInput.Name = "different request"
+	if _, err = service.CreateResource(admin, replayInput); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("request identity accepted changed body: %v", err)
+	}
+	image := domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: "nginx:alpine"}}
+	if _, err = service.UpdateResource(admin, created.ID, ResourcePatch{ExpectedGeneration: 2, Source: &image}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("source conversion accepted: %v", err)
 	}
 }

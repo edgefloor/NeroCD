@@ -55,6 +55,12 @@ func ValidateHostingStorageRouteContinuitySnapshot(s HostingSnapshot) error {
 	if s.StorageRouteContinuity == (HostingStorageRouteContinuityRef{}) {
 		return nil
 	}
+	if s.Stack != (HostingStackRef{}) {
+		if !imageSHA256.MatchString(s.StorageRouteContinuity.Hash) || s.PolicyVersion != HostingStackPolicyVersion || s.Storage != (HostingStorageRef{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
+			return errors.New("invalid stack route continuity snapshot")
+		}
+		return nil
+	}
 	if !imageSHA256.MatchString(s.StorageRouteContinuity.Hash) || s.Storage == (HostingStorageRef{}) || (s.PolicyVersion != HostingOwnedStoragePolicyVersion && s.PolicyVersion != HostingOwnedStorageRuntimePolicyVersion) || s.LocalBuild != (HostingLocalBuildSource{}) || ValidateHostingRuntimeConfigurationRef(s) != nil {
 		return errors.New("invalid storage route continuity snapshot")
 	}
@@ -70,7 +76,11 @@ func (c HostingStorageRouteContinuity) Validate(s HostingSnapshot) error {
 		return err
 	}
 	p := c.PreviousHealthy
-	if p.OperationID == "" || p.ContainerID == "" || p.Storage == nil || ValidateHostingHealthyStorage(p) != nil || p.Snapshot.Storage != s.Storage || p.Snapshot.BindingID != s.BindingID || p.Snapshot.DestinationID != s.DestinationID || p.Snapshot.ResourceID != s.ResourceID || p.Snapshot.ServerID != s.ServerID || p.Snapshot.RunnerID != s.RunnerID || p.Snapshot.HostPort != s.HostPort || p.Release.DaemonID != c.DaemonID || ValidateHostingSnapshotRelease(p.Snapshot, p.Release) != nil {
+	if s.Stack != (HostingStackRef{}) {
+		if ValidateHostingStackHealthy(p) != nil || p.Snapshot.BindingID != s.BindingID || p.Snapshot.DestinationID != s.DestinationID || p.Snapshot.ResourceID != s.ResourceID || p.Snapshot.ServerID != s.ServerID || p.Snapshot.RunnerID != s.RunnerID || p.Snapshot.HostPort != s.HostPort || p.Release.DaemonID != c.DaemonID {
+			return errors.New("stack continuity predecessor mismatch")
+		}
+	} else if p.OperationID == "" || p.ContainerID == "" || p.Storage == nil || ValidateHostingHealthyStorage(p) != nil || p.Snapshot.Storage != s.Storage || p.Snapshot.BindingID != s.BindingID || p.Snapshot.DestinationID != s.DestinationID || p.Snapshot.ResourceID != s.ResourceID || p.Snapshot.ServerID != s.ServerID || p.Snapshot.RunnerID != s.RunnerID || p.Snapshot.HostPort != s.HostPort || p.Release.DaemonID != c.DaemonID || ValidateHostingSnapshotRelease(p.Snapshot, p.Release) != nil {
 		return errors.New("storage route continuity predecessor mismatch")
 	}
 	for _, r := range c.Request.Routes {

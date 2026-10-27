@@ -289,6 +289,9 @@ func validateJournalHosting(entry JournalHosting) error {
 	if err := validateHostingJournalStorage(entry); err != nil {
 		return err
 	}
+	if err := validateHostingStackJournal(entry); err != nil {
+		return err
+	}
 	if err := validateHostingJournalRuntimeEnvironment(entry); err != nil {
 		return err
 	}
@@ -354,6 +357,9 @@ func validateJournalHosting(entry JournalHosting) error {
 	}
 	raw, err := json.Marshal(entry)
 	limit := journalMaxProvenanceBytes
+	if hostingJournalUsesStack(entry) {
+		limit = 512 << 10
+	}
 	if entry.DatabaseMaintenance != nil {
 		limit = domain.HostingApplicationDatabaseJournalJSONLimit
 	}

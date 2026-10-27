@@ -86,6 +86,7 @@ type JournalSnapshot struct {
 }
 
 type journalState struct {
+	StackBaseVersion         int                              `json:"stack_base_version,omitempty"`
 	StorageBackupRetentions  []JournalStorageBackupRetention  `json:"storage_backup_retentions,omitempty"`
 	DatabaseBackupRetentions []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
 	StorageBackupTransfers   []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
@@ -124,6 +125,16 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 		if err := json.Unmarshal(contents, &j.state); err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
+		}
+		if j.state.Version == 23 {
+			contents, err = decodeStackJournal(contents, &j.state)
+			if err != nil {
+				_ = store.Close()
+				return nil, err
+			}
+		} else if j.state.StackBaseVersion != 0 || journalStateUsesStack(j.state) {
+			_ = store.Close()
+			return nil, errors.New("managed stack journal requires version 23")
 		}
 		switch j.state.Version {
 		case 12, 13:
@@ -533,7 +544,12 @@ func (j *AttemptJournal) persistLocked() error {
 	if len(state.StorageBackupRetentions) > 0 {
 		state.Version = 22
 	}
-	contents, err := json.Marshal(state)
+	wire := state
+	if journalStateUsesStack(state) {
+		wire.StackBaseVersion = state.Version
+		wire.Version = 23
+	}
+	contents, err := json.Marshal(wire)
 	if err != nil {
 		return err
 	}

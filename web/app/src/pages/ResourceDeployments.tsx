@@ -11,6 +11,7 @@ import { canMaintainProject } from "@/lib/permissions";
 import { maximumPageOffset } from "@/router/search";
 import { boundedStorageRequest, getStorageDeploymentOptions, storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import { StorageContinuityDetail, StorageDeploymentReview } from "./StorageDeploymentReview";
+import { StackComponentStatus, StackDeploymentReview } from "./StackDeploymentReview";
 
 const terminalStates = new Set(["succeeded", "failed", "canceled"]);
 const stateText: Record<string, string> = {
@@ -43,6 +44,7 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
     return operation && (!terminalStates.has(operation.state) || operation.reconcile_requested || operation.mutation_hold) ? 5000 : false;
   } });
   const operation = detail.data;
+  const stackRef = operation && "stack" in operation.snapshot ? operation.snapshot.stack : undefined;
   async function control(kind: "cancel" | "reconcile") {
     if (busy || blocked || detail.isError || !operation || (kind === "cancel" ? !writable : !owner)) return;
     setBusy(true); setError(""); setNotice("");
@@ -64,17 +66,19 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
     <Button type="button" variant="outline" disabled={detail.isFetching || busy} onClick={() => void detail.refetch()}>Refresh operation</Button>
     {operation ? <>
       <h6 className="font-medium">{stateText[operation.state] ?? operation.state}</h6>
+      {stackRef ? <p className="break-all text-sm">Saved Compose generation {stackRef.generation} · {stackRef.hash}</p> : null}
+      <StackComponentStatus operation={operation} />
       {operation.snapshot.storage_route_continuity ? <StorageContinuityDetail scope={{ actor, project: projectID, resource: resourceID }} operation={operationID} /> : null}
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">
         <dt>Operation ID</dt><dd>{operation.id}</dd><dt>Recorded update</dt><dd>{operation.updated_at}</dd>
-        <dt>{operation.snapshot.local_build ? "Local build / source generation" : "Requested image"}</dt><dd>{operation.snapshot.local_build ? `${operation.snapshot.local_build.artifact.build_id} / ${operation.snapshot.local_build.source_generation}` : operation.snapshot.image_reference}</dd>{operation.snapshot.local_build ? <><dt>Recorded artifact image ID</dt><dd>{operation.snapshot.local_build.artifact.image_id}</dd><dt>Source ID / artifact hash</dt><dd>{operation.snapshot.local_build.artifact.source_id} / {operation.snapshot.local_build.artifact_hash}</dd><dt>Manifest / config digest</dt><dd>{operation.snapshot.local_build.artifact.manifest_digest} / {operation.snapshot.local_build.artifact.config_digest}</dd></> : null}<dt>Resource configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
+        <dt>{stackRef ? "Source" : operation.snapshot.local_build ? "Local build / source generation" : "Requested image"}</dt><dd>{stackRef ? "Saved Compose" : operation.snapshot.local_build ? `${operation.snapshot.local_build.artifact.build_id} / ${operation.snapshot.local_build.source_generation}` : operation.snapshot.image_reference}</dd>{operation.snapshot.local_build ? <><dt>Recorded artifact image ID</dt><dd>{operation.snapshot.local_build.artifact.image_id}</dd><dt>Source ID / artifact hash</dt><dd>{operation.snapshot.local_build.artifact.source_id} / {operation.snapshot.local_build.artifact_hash}</dd><dt>Manifest / config digest</dt><dd>{operation.snapshot.local_build.artifact.manifest_digest} / {operation.snapshot.local_build.artifact.config_digest}</dd></> : null}<dt>Resource configuration generation</dt><dd>{operation.snapshot.resource_generation}</dd>
         {operation.snapshot.runtime_configuration ? <><dt>Captured runtime configuration generation</dt><dd>{operation.snapshot.runtime_configuration.generation}</dd><dt>Runtime configuration reference hash</dt><dd>{operation.snapshot.runtime_configuration.hash}</dd></> : null}
         <dt>Exact binding</dt><dd>{operation.binding_id}</dd><dt>Destination</dt><dd>{operation.snapshot.destination_id}</dd>
         <dt>Runner</dt><dd>{operation.snapshot.runner_id}</dd><dt>Runtime namespace</dt><dd>{operation.snapshot.runtime_namespace}</dd>
         <dt>Runner-local endpoint</dt><dd>127.0.0.1:{operation.snapshot.host_port} → container {operation.snapshot.container_port}</dd>
         <dt>Readiness request</dt><dd>{operation.snapshot.readiness.path} · {operation.snapshot.readiness.timeout_seconds}s timeout</dd>
-        {operation.release ? <><dt>{operation.release.local_build ? "Released local build" : "Resolved image"}</dt><dd>{operation.release.local_build?.build_id ?? operation.release.canonical_image}</dd><dt>Image ID</dt><dd>{operation.release.image_id}</dd></> : null}
+        {operation.release?.stack ? <><dt>Released Compose hash</dt><dd>{operation.release.stack.hash}</dd></> : operation.release ? <><dt>{operation.release.local_build ? "Released local build" : "Resolved image"}</dt><dd>{operation.release.local_build?.build_id ?? operation.release.canonical_image}</dd><dt>Image ID</dt><dd>{operation.release.image_id}</dd></> : null}
         {operation.run_id ? <><dt>Deployment run</dt><dd>{operation.run_id}</dd></> : null}
         {operation.reconciliation_run_id ? <><dt>Observation run</dt><dd>{operation.reconciliation_run_id}</dd></> : null}
       </dl>
@@ -214,7 +218,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [acceptedRefreshError, setAcceptedRefreshError] = useState("");
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
-  const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" });
+  const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" || resource.source.kind === "compose" && Boolean(binding.data) });
   const stateless = !storageOptions.isError && storageOptions.data?.reason === "storage_unconfigured" && storageOptions.data.storage_ref === null;
   const base = reviewed ?? resource;
   const restoreHeld = restoreRejected || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
@@ -312,7 +316,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     setAttempt(undefined); setConflict(false); setCurrent(undefined); setAcknowledged(false); setDifferentIntent(false); setError("");
   }
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
-    <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : "Deployment history"}</h5>
+    <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : resource.source.kind === "compose" ? "Compose deployments" : "Deployment history"}</h5>
     {acceptedID ? <p role="status" className="break-all">Deployment request accepted: {acceptedID}. Acceptance does not confirm workload completion or public traffic.</p> : null}
     {acceptedRefreshError ? <p role="alert">{acceptedRefreshError}</p> : null}
     {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Git builds to request and review build operations. Select a successful build in Git builds to deploy its recorded local artifact. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
@@ -322,10 +326,17 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     {history.isPending ? <p role="status">Loading deployment history...</p> : null}
     <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => void history.refetch()}>Refresh deployment history</Button>
     {history.data?.items.length === 0 ? <p className="text-sm">No deployment operations recorded.</p> : null}
-    <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{operation.snapshot.local_build ? `Local build ${operation.snapshot.local_build.artifact.build_id} · ${operation.snapshot.local_build.artifact.image_id}` : operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
+    <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{"stack" in operation.snapshot && operation.snapshot.stack ? `Saved Compose ${operation.snapshot.stack.hash}` : operation.snapshot.local_build ? `Local build ${operation.snapshot.local_build.artifact.build_id} · ${operation.snapshot.local_build.artifact.image_id}` : operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
-    {binding.data ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
+    {binding.data && resource.source.kind !== "compose" ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
+    {resource.source.kind === "compose" ? <>
+      {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
+      {binding.data && storageOptions.isPending ? <p role="status">Loading Compose deployment options...</p> : null}
+      {storageOptions.isError ? <><p role="alert">Compose deployment authority is unavailable. Refresh before reviewing a deployment.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry Compose deployment options</Button></> : null}
+      {writable && storageOptions.data && !storageOptions.isError ? <StackDeploymentReview key={binding.data?.id ?? "unbound"} resource={resource} scope={{ actor, project: resource.project_id, resource: resource.id }} bindingID={binding.data?.id ?? ""} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}
+      {!writable ? <p className="text-xs text-muted-foreground">Project maintainer access is required to deploy saved Compose.</p> : null}
+    </> : null}
     {resource.source.kind === "image" && storageOptions.isPending ? <p role="status">Checking authoritative storage deployment options...</p> : null}
     {resource.source.kind === "image" && storageOptions.isError ? <><p role="alert">Storage deployment options are unavailable. Deployment is paused; refresh authority before reviewing.</p><Button type="button" variant="outline" disabled={storageOptions.isFetching} onClick={() => void storageOptions.refetch()}>Retry storage deployment options</Button></> : null}
     {writable && resource.source.kind === "image" && !storageOptions.isError && storageOptions.data && !stateless ? <StorageDeploymentReview key={binding.data?.id ?? "unbound"} bindingID={binding.data?.id ?? ""} scope={{ actor, project: resource.project_id, resource: resource.id }} resource={resource} options={storageOptions.data} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} /> : null}

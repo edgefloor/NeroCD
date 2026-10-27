@@ -83,3 +83,23 @@ No download or restore failure enters the backup notification stream.
 
 Run the gate only after authorization for its exact committed candidate.
 Compilation and local PostgreSQL checks do not establish physical qualification.
+
+## Managed Compose application
+
+`bash acceptance/runtime-hosting-storage/gate.sh --managed-compose` selects one
+Vikunja/PostgreSQL workflow, using `examples/compose/vikunja-postgresql.yaml` with
+an explicit one-shot upload initialization service. The unmodified Coolify source
+remains a byte-exact parser comparison. This mode
+requires explicit authorization for the committed candidate and distinct owner
+`nerocd-compose-vikunja-runtime-20261027`. It publishes only the ephemeral
+loopback administration port and `127.0.0.1:25443` to guest port 443. The owned
+Chromium process maps the fixture hostname locally; host DNS is unchanged.
+
+The candidate UI supplies source, public component, destination, variables and
+managed-secret references. The real application UI creates an account, task and
+uploaded file, then repeats fresh login, reads and new writes after a UI
+redeployment. Backend evidence checks TLS trust, unchanged volume/credential
+references, exact dollar-bearing credential delivery, no published PostgreSQL
+port, all component health, old-writer stop before new starts, and an explicitly
+held failed replacement. Ordinary artifacts exclude expanded managed values.
+This is the managed Compose profile; it does not qualify raw/Git/build parity.

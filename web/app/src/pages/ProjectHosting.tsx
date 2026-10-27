@@ -23,6 +23,7 @@ import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 import { ResourceStorage } from "./ResourceStorage";
 import { ResourceDatabase } from "./ResourceDatabase";
 import { HostingCatalog } from "./HostingCatalog";
+import { ComposeApplicationFields, emptyComposeDraft, type ComposeApplicationDraft } from "./ComposeApplicationFields";
 import { DatabaseCreateForm } from "./DatabaseCreateForm";
 
 const pageSize = 20;
@@ -32,6 +33,12 @@ const resourceKey = (projectID: string) => ["hostingResources", projectID] as co
 function errorText(error: unknown): string {
   if (error instanceof ApiError) return `${error.message}${error.requestID ? ` (request ${error.requestID})` : ""}`;
   return "The request could not be completed. Check your connection and try again.";
+}
+
+function sourceDescription(resource: Resource): string {
+  if (resource.source.kind === "image") return resource.source.image.reference;
+  if (resource.source.kind === "compose") return `Compose stack · public component ${resource.source.compose.public_component}`;
+  return `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`;
 }
 
 function ApplicationFields({ name, image, setName, setImage, disabled, showImage = true }: {
@@ -47,6 +54,7 @@ function ApplicationFields({ name, image, setName, setImage, disabled, showImage
 function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource: Resource; writable: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [base, setBase] = useState(resource);
   const [name, setName] = useState(resource.name);
+  const [compose, setCompose] = useState<ComposeApplicationDraft>(resource.source.kind === "compose" ? resource.source.compose : emptyComposeDraft());
   const [image, setImage] = useState(resource.source.kind === "image" ? resource.source.image.reference : "");
   const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: resource.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: resource.source.git.settings } : emptyGitDraft());
   const [busy, setBusy] = useState(false);
@@ -54,8 +62,8 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Resource>();
   const [refreshError, setRefreshError] = useState("");
-  const baseInput: ResourceSourceInput = base.source.kind === "image" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
-  const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : { kind: "git", git };
+  const baseInput: ResourceSourceInput = base.source.kind !== "git" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
+  const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : base.source.kind === "compose" ? {kind: "compose", compose} : { kind: "git", git };
   const sourceChanged = JSON.stringify(source) !== JSON.stringify(baseInput);
   const changed = name !== base.name || sourceChanged;
 
@@ -96,12 +104,13 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   return <form onSubmit={(event) => void save(event)} className="space-y-3 rounded-xl border p-3" aria-label={`Edit ${resource.name}`} aria-busy={busy}>
     <h4 className="font-medium">Edit application configuration</h4>
     <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy || !writable} showImage={base.source.kind === "image"} />
+    {base.source.kind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy || !writable} /> : null}
     {base.source.kind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy || !writable} /> : null}
     {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to save application. {error}</p> : null}
     {conflict ? <section className="space-y-2 rounded-lg border p-3" aria-label="Generation conflict">
       <p role="status">The saved configuration changed. Your draft is preserved. Review the current values before saving again.</p>
       {latest ? <>
-        <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current source</dt><dd>{latest.source.kind === "image" ? latest.source.image.reference : `${latest.source.git.repository_url} at ${latest.source.git.requested_ref} · source generation ${latest.source.git.generation}`}</dd></dl>
+        <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current source</dt><dd>{sourceDescription(latest)}</dd></dl>
         {latest.source.kind === "git" ? <section aria-label="Current Git configuration">
           <dl className="min-w-0 space-y-1 break-words text-sm [overflow-wrap:anywhere]">
             <dt>Current repository URL</dt><dd>{latest.source.git.repository_url}</dd>
@@ -132,7 +141,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const [offset, setOffset] = useState(0);
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
-  const [sourceKind, setSourceKind] = useState<"image" | "git">("image");
+  const [compose, setCompose] = useState<ComposeApplicationDraft>(emptyComposeDraft());
+  const [composeRequestID, setComposeRequestID] = useState(() => crypto.randomUUID().replaceAll("-", ""));
+  const [sourceKind, setSourceKind] = useState<"image" | "git" | "compose">("image");
   const [git, setGit] = useState<GitApplicationDraft>(emptyGitDraft());
   const sourceSelectID = useId();
   const [busy, setBusy] = useState(false);
@@ -147,8 +158,8 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     if (!canWrite || busy || editing) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await createResource({ project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : { kind: "git", git } });
-      setName(""); setImage(""); setGit(emptyGitDraft()); setNotice("Application configuration saved. Deployment is a separate request.");
+      await createResource({ ...(sourceKind === "compose" ? {request_id: composeRequestID} : {}), project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : sourceKind === "compose" ? { kind: "compose", compose } : { kind: "git", git } });
+      setName(""); setImage(""); setGit(emptyGitDraft()); setCompose(emptyComposeDraft()); setComposeRequestID(crypto.randomUUID().replaceAll("-", "")); setNotice("Application configuration saved. Deployment is a separate request.");
       setOffset(0);
       await refresh();
     } catch (cause) { setError(errorText(cause)); }
@@ -161,7 +172,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     {resources.data?.items.length === 0 ? <p className="text-sm text-muted-foreground">No saved applications in this environment.</p> : null}
     <div className="space-y-3">{resources.data?.items.map((resource) => resource.kind === "database" ? <article key={resource.id} className="min-w-0 rounded-xl border p-3" aria-label={resource.name}>{resource.project_id === projectID && resource.project_environment_id === environment.id ? <ResourceDatabase resource={resource} blocked={resources.isError || resources.isPending || resources.isFetching} /> : <p role="alert">Database resource scope mismatch.</p>}</article> : <article key={resource.id} className="min-w-0 space-y-3 rounded-xl border p-3" aria-label={resource.name}>
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
-      <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{resource.source.kind === "image" ? resource.source.image.reference : `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`}</p>
+      <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{sourceDescription(resource)}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
       {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; artifact deployment is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
@@ -179,8 +190,9 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     <PageNavigation label="applications" page={resources.data} loading={resources.isFetching || Boolean(editing) || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     {writable ? <form onSubmit={(event) => void create(event)} aria-label="Create application" aria-busy={busy} className="space-y-3 border-t pt-4">
       <h4 className="font-medium">Add application</h4>
-      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git")}><option value="image">Container image</option><option value="git">Git repository</option></select></div>
+      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git" | "compose")}><option value="image">Container image</option><option value="git">Git repository</option><option value="compose">Compose stack</option></select></div>
       <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} showImage={sourceKind === "image"} />
+      {sourceKind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy} /> : null}
       {sourceKind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy} /> : null}
       <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}

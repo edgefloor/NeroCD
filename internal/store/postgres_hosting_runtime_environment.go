@@ -104,6 +104,9 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if ref != op.Snapshot.RuntimeConfiguration {
 		return ErrConflict
 	}
+	if err = hostingFreshStackGate(ctx, tx, op); err != nil {
+		return err
+	}
 	if err = hostingFreshStorageGate(ctx, tx, op); err != nil {
 		return err
 	}
@@ -136,7 +139,7 @@ func runtimeHostingActorAuthority(ctx context.Context, tx pgx.Tx, op domain.Host
 	if connectionOperation(op) {
 		return authorizeBuildActor(ctx, tx, op.CreatedBy, op.ProjectID, domain.RoleOwner)
 	}
-	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 {
+	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 && op.Snapshot.Stack == (domain.HostingStackRef{}) {
 		return nil
 	}
 	err := authorizeBuildActor(ctx, tx, op.CreatedBy, op.ProjectID, "maintainer")
@@ -147,6 +150,16 @@ func runtimeHostingActorAuthority(ctx context.Context, tx pgx.Tx, op domain.Host
 }
 
 func finalHostingRuntimeAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation) error {
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		if err := requireHostingStackAgent(ctx, tx, op.Snapshot); err != nil {
+			return err
+		}
+		if err := runtimeHostingActorAuthority(ctx, tx, op); err != nil {
+			return err
+		}
+		return hostingAuthorityExists(ctx, tx, runner, a, true)
+	}
+
 	if connectionOperation(op) {
 		return finalDatabaseConnectionAuthority(ctx, tx, runner, a, op, false, false)
 	}
