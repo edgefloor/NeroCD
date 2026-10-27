@@ -169,10 +169,13 @@ const composeBuild: HostingBuild = { ...build, artifact: undefined, snapshot: { 
   ] }, services: [{ component: "web", artifact: build.artifact! }], hash: `sha256:${"b".repeat(64)}`,
 } };
 const composeOperation = { ...operation, snapshot: { ...operation.snapshot, binding_id: "binding", local_build: undefined, git_compose: { build_id: "b", source_generation: 3, result_hash: composeBuild.compose_result!.hash }, stack: { generation: 2, hash: `sha256:${"c".repeat(64)}` }, container_port: 3000 } };
+const initialComposeOptions = { resource_id: "r", resource_generation: 2, stack_ref: { generation: 2, hash: `sha256:${"c".repeat(64)}` }, storage_ref: null, previous_healthy_operation_id: null, host_port: null, container_port: null, readiness: null, available: true, reason: "initial_deployment", routes: [], storage_route_continuity: null };
+const replacementComposeOptions = { ...initialComposeOptions, reason: "available", previous_healthy_operation_id: "prior", host_port: 30000, container_port: 3000, readiness: { path: "/", timeout_seconds: 30 } };
 function composeBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
-  return backend((url, options) => handler?.(url, options) ?? (url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 2, state: "unavailable" }) : url === "/api/v1/hosting-operations/prior" ? json({ ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false }) : url.includes("/builds?") ? json({ items: [composeBuild], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build: composeBuild }) : url.endsWith("/from-build") ? json(composeOperation, 202) : undefined));
+  return backend((url, options) => handler?.(url, options) ?? (url.endsWith("/storage-deployment-options") ? json(initialComposeOptions) : url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 2, state: "unavailable" }) : url === "/api/v1/hosting-operations/prior" ? json({ ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false }) : url.includes("/builds?") ? json({ items: [composeBuild], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build: composeBuild }) : url.endsWith("/from-build") ? json(composeOperation, 202) : undefined));
 }
 async function composeSubmit(button = "Deploy selected build") {
+  await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).disabled).toBe(false));
   fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
   await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: button }).disabled).toBe(false));
   fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
@@ -191,6 +194,7 @@ test("prepared mixed Compose shows source and per-service image origin, then adm
   const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
   expect(body).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3, container_port: 3000, managed_stack: { acknowledge_interruption: true } });
   expect(body).not.toHaveProperty("registry_credential");
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/storage-deployment-options"))).toBe(false);
 });
 test("Compose response loss retains the exact reviewed build/result request and runtime generation", async () => {
   let writes = 0, runtimeReads = 0;
@@ -208,7 +212,7 @@ test("substituted Compose result hash in deployment receipt cannot select an ope
 test("starting a committed Git Compose build captures and retains the exact stopped operation", async () => {
   let lifecycleReads = 0;
   const deployed = { ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false };
-  const fetch = composeBackend(url => url.includes("/deployments?") ? json({ items: [deployed], limit: 20, offset: 0, count: 1, total: 1 }) : url.endsWith("/stack-lifecycle") ? (lifecycleReads++, json({ resource_id: "r", resource_generation: 2, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop" })) : url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, stack_stopped_operation_id: "stop" } }, 202) : undefined);
+  const fetch = composeBackend(url => url.includes("/deployments?") ? json({ items: [deployed], limit: 20, offset: 0, count: 1, total: 1 }) : url.endsWith("/storage-deployment-options") ? json({ ...replacementComposeOptions, stopped_operation_id: "stop" }) : url.endsWith("/stack-lifecycle") ? (lifecycleReads++, json({ resource_id: "r", resource_generation: 2, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop" })) : url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, stack_stopped_operation_id: "stop" } }, 202) : undefined);
   await setup(true, composeResource); await screen.findByText(/Start recreates this selected build/);
   await composeSubmit("Start selected Compose build"); await screen.findByRole("region", { name: "Deployment operation detail" });
   const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
@@ -225,4 +229,86 @@ test("stopped Git Compose with changed desired generations requires a new build 
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Start selected Compose build" }).disabled).toBe(true);
   expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+
+const routedComposeOptions = {
+  ...replacementComposeOptions,
+  routes: [{ id: "route", hostname: "app.example.test", path_prefix: "/", version: 2, selected_release_operation_id: "prior" }],
+  storage_route_continuity: { expected_loaded_generation: 4, expected_loaded_proxy_operation_id: "proxy_prior", routes: [{ route_id: "route", expected_version: 2, expected_selected_release_operation_id: "prior" }] },
+};
+function runningCompose(url: string) {
+  if (url.endsWith("/stack-lifecycle")) return json({ resource_id: "r", resource_generation: 2, state: "running", deployed_operation_id: "prior" });
+  if (url.endsWith("/storage-deployment-options")) return json(routedComposeOptions);
+}
+test.each(["replacement", "start"])("routed Git Compose %s freezes routes and stable port across response loss and refresh", async (mode) => {
+  let writes = 0, refreshed = false;
+  const fetch = composeBackend((url) => {
+    if (url.endsWith("/stack-lifecycle") && mode === "start") return json({ resource_id: "r", resource_generation: 2, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop" });
+    if (url.endsWith("/storage-deployment-options")) return json({ ...routedComposeOptions, ...(mode === "start" ? { stopped_operation_id: "stop" } : {}), ...(refreshed ? { routes: [{ ...routedComposeOptions.routes[0]!, version: 3 }], storage_route_continuity: { ...routedComposeOptions.storage_route_continuity, expected_loaded_generation: 9, routes: [{ ...routedComposeOptions.storage_route_continuity.routes[0]!, expected_version: 3 }] } } : {}) });
+    if (url.endsWith("/from-build")) {
+      if (++writes === 1) throw new TypeError("lost");
+      return json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, ...(mode === "start" ? { stack_stopped_operation_id: "stop" } : {}), storage_route_continuity: { hash: "continuity-hash" } } }, 202);
+    }
+    return runningCompose(url);
+  });
+  await setup(true, composeResource);
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  expect(screen.getByLabelText<HTMLSelectElement>("Build host port allocation").disabled).toBe(true);
+  await composeSubmit(mode === "start" ? "Start selected Compose build" : "Deploy selected build");
+  await screen.findByText(/Deployment delivery is unconfirmed/);
+  refreshed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh local deployment prerequisites" }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.endsWith("/storage-deployment-options")).length).toBeGreaterThan(2));
+  expect(screen.getByText("Keep HTTPS route app.example.test/ · version 2.")).toBeTruthy();
+  expect(screen.queryByText("Keep HTTPS route app.example.test/ · version 3.")).toBeNull();
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const requests = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"));
+  expect(requests).toHaveLength(2); expect(requests[1]![1].body).toBe(requests[0]![1].body);
+  expect(JSON.parse(String(requests[0]![1].body))).toMatchObject({ host_port: 30000, storage_route_continuity: routedComposeOptions.storage_route_continuity, managed_stack: { acknowledge_interruption: true, ...(mode === "start" ? { expected_stopped_operation_id: "stop" } : {}) } });
+});
+test("route changes during admission preparation require refreshed review before any deployment", async () => {
+  let reads = 0;
+  const fetch = composeBackend(url => url.endsWith("/storage-deployment-options") ? json({ ...routedComposeOptions, ...(++reads > 1 ? { storage_route_continuity: { ...routedComposeOptions.storage_route_continuity, expected_loaded_generation: 5 } } : {}) }) : runningCompose(url));
+  await setup(true, composeResource); await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  await composeSubmit(); await screen.findByText(/Unable to verify Compose deployment settings and routes/);
+  expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).checked).toBe(false);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test("route prerequisite permission denial clears the deployment intent", async () => {
+  const fetch = composeBackend(url => url.endsWith("/storage-deployment-options") ? json({}, 403) : runningCompose(url));
+  await setup(true, composeResource); await screen.findByText(/Local deployment access is pending or unavailable/);
+  expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test.each(["missing-continuity", "wrong-port", "wrong-readiness"])("routed replacement rejects %s receipt and retains exact request", async (mismatch) => {
+  const fetch = composeBackend(url => url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, ...(mismatch !== "missing-continuity" ? { storage_route_continuity: { hash: "continuity" } } : {}), ...(mismatch === "wrong-port" ? { host_port: 31000 } : {}), ...(mismatch === "wrong-readiness" ? { readiness: { path: "/other", timeout_seconds: 30 } } : {}) } }, 202) : runningCompose(url));
+  await setup(true, composeResource); await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  await composeSubmit(); await screen.findByText(/Deployment delivery is unconfirmed/);
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry identical local build deployment" }).disabled).toBe(false);
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
+});
+test("routed replacement retains an explicitly reviewed failing readiness path", async () => {
+  const fetch = composeBackend((url, init) => url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, readiness: JSON.parse(String(init.body)).readiness, storage_route_continuity: { hash: "continuity" } } }, 202) : runningCompose(url));
+  await setup(true, composeResource); await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  fireEvent.change(screen.getByLabelText("Build readiness path"), { target: { value: "/not-ready" } });
+  await composeSubmit(); await screen.findByRole("region", { name: "Deployment operation detail" });
+  const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
+  expect(body).toMatchObject({ readiness: { path: "/not-ready", timeout_seconds: 30 }, storage_route_continuity: routedComposeOptions.storage_route_continuity });
+});
+
+test("new Git Compose build keeps historical routed stack proof after desired source edits", async () => {
+  const nextSource = { ...composeSource, generation: 4 };
+  const latest: Resource = { ...composeResource, generation: 3, source: { kind: "git", git: nextSource } };
+  const nextBuild = { ...composeBuild, snapshot: { ...composeBuild.snapshot, resource_generation: 3, source: nextSource } };
+  const fetch = composeBackend(url => {
+    if (url.includes("/hosting-builds/")) return json({ build: nextBuild });
+    if (url.endsWith("/stack-lifecycle")) return json({ resource_id: "r", resource_generation: 3, state: "running", deployed_operation_id: "prior" });
+    if (url.endsWith("/storage-deployment-options")) return json({ ...routedComposeOptions, resource_generation: 3 });
+    if (url.endsWith("/from-build")) return json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, resource_generation: 3, stack: { ...composeOperation.snapshot.stack, generation: 3 }, git_compose: { ...composeOperation.snapshot.git_compose, source_generation: 4 }, storage_route_continuity: { hash: "continuity" } } }, 202);
+  });
+  await setup(true, latest); await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  await composeSubmit(); await screen.findByRole("region", { name: "Deployment operation detail" });
+  expect(JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body))).toMatchObject({ expected_generation: 3, expected_source_generation: 4, storage_route_continuity: routedComposeOptions.storage_route_continuity, host_port: 30000 });
 });

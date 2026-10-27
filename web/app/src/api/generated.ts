@@ -7193,6 +7193,8 @@ export interface components {
             readiness: components["schemas"]["HostingReadiness"];
         };
         HostingBuildDeploymentInput: {
+            /** @description Explicit current route and proxy selections for a Git Compose same-port replacement. Requires managed_stack and the exact current successful Compose build. */
+            storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             managed_stack?: components["schemas"]["HostingStackDeploymentInput"];
             /**
              * Format: int64

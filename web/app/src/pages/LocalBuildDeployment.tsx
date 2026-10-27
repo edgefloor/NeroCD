@@ -5,6 +5,7 @@ import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResource, type Resource } from "@/api/hosting";
 import { getHostingBuild, checkBuildScope, type HostingBuild } from "@/api/hosting-builds";
 import { HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, requestHostingBuildDeployment, type HostingBuildDeploymentInput } from "@/api/hosting-deployments";
+import { getStorageDeploymentOptions, storageDeploymentOptionsQuery, type StorageDeploymentOptions } from "@/api/hosting-storage-deployment";
 import { currentGitStackKey, currentGitStackQuery, getCurrentGitStack } from "@/api/hosting-stack-lifecycle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,7 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
   const [containerPort, setContainerPort] = useState(String(compose?.source.container_port ?? 80)), [hostPort, setHostPort] = useState("8080");
   const [mode, setMode] = useState("automatic"), [path, setPath] = useState("/"), [timeout, setTimeout] = useState("30");
   const [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false);
+  const [retainedOptions, setRetainedOptions] = useState<StorageDeploymentOptions>();
   const [attempt, setAttempt] = useState<HostingBuildDeploymentInput>();
   const [conflict, setConflict] = useState(false), [restoreHeld, setRestoreHeld] = useState(false), [denied, setDenied] = useState(false);
   const [error, setError] = useState(""), [selected, setSelected] = useState("");
@@ -47,11 +49,19 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
   const stackScope = { actor, project: resource.project_id, resource: resource.id };
   const currentStack = useQuery({ ...currentGitStackQuery(stackScope), enabled: Boolean(compose) && !blocked && !denied });
   const committedCompose = Boolean(compose && currentStack.isSuccess && !currentStack.isFetching && currentStack.data.operation);
+  const deploymentOptions = useQuery({ ...storageDeploymentOptionsQuery(stackScope), enabled: committedCompose && !blocked && !denied });
+  const options = deploymentOptions.data;
+  const optionsIdentity = JSON.stringify(options);
+  const shownOptions = attempt ? retainedOptions : committedCompose ? options : undefined;
+  useEffect(() => { if (!attempt) setConfirmed(false); }, [optionsIdentity]);
+  const optionsDenied = deploymentOptions.error instanceof ApiError && [401, 403, 404].includes(deploymentOptions.error.status);
+  useEffect(() => { if (optionsDenied) { setDenied(true); onDenied(); } }, [optionsDenied, onDenied]);
   const lifecycle = currentStack.data?.lifecycle;
   const changed = async () => { await Promise.all([
     client.invalidateQueries({ queryKey: hostingDeploymentKeys.history(resource.project_id, resource.id) }),
     client.invalidateQueries({ queryKey: hostingDeploymentKeys.retained(resource.project_id, resource.id) }),
     client.invalidateQueries({ queryKey: currentGitStackKey(stackScope) }),
+    client.invalidateQueries({ queryKey: storageDeploymentOptionsQuery(stackScope).queryKey }),
   ]); };
   const source = base.source.kind === "git" ? base.source.git : undefined;
   const currentSource = resource.source.kind === "git" ? resource.source.git : undefined;
@@ -61,7 +71,8 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
   const held = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
   const restored = restoreHeld || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));
   const paused = blocked || denied || binding.isError || binding.isPending || history.isError || history.isPending || restored || conflict || Boolean(compose) && (currentStack.isPending || currentStack.isFetching || currentStack.isError);
-  const disabled = paused || busy || !confirmed || !writable || (!attempt && (!exactBuild || changedSource || !placementMatches || held));
+  const composeUnavailable = committedCompose && !attempt && (deploymentOptions.isPending || deploymentOptions.isFetching || deploymentOptions.isError || !options?.available);
+  const disabled = paused || composeUnavailable || busy || !confirmed || !writable || (!attempt && (!exactBuild || changedSource || !placementMatches || held));
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (disabled || submitting.current || !source || !binding.data) return;
@@ -75,10 +86,19 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
         if (runtime.resource_id !== resource.id || runtime.project_id !== resource.project_id || !Number.isSafeInteger(runtime.runtime_generation) || runtime.runtime_generation < 0) throw new Error("Runtime configuration scope mismatch");
         const verifiedStack = compose ? await getCurrentGitStack(stackScope, controller.signal) : undefined;
         const currentLifecycle = verifiedStack?.lifecycle;
+        const currentOptions = verifiedStack?.operation ? await getStorageDeploymentOptions(stackScope, controller.signal) : undefined;
         if (!active.current || controller.signal.aborted) return;
         if (currentLifecycle?.state === "held") throw new Error("Compose lifecycle is held");
-        body = { ...(compose ? { managed_stack: { acknowledge_interruption: true, ...(currentLifecycle?.state === "stopped" ? { expected_stopped_operation_id: currentLifecycle.stop_operation_id } : {}) } } : {}), ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), build_id: build.id, expected_generation: base.generation, expected_source_generation: source.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(mode === "fixed" ? { host_port: Number(hostPort) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
+        if (Boolean(verifiedStack?.operation) !== committedCompose) throw new Error("Compose deployment changed. Refresh prerequisites and review it again.");
+        if (currentOptions && (!currentOptions.available || currentOptions.resource_generation !== base.generation || JSON.stringify(currentOptions) !== optionsIdentity ||
+          currentOptions.previous_healthy_operation_id !== (verifiedStack?.operation?.id ?? null) ||
+          currentOptions.stopped_operation_id !== (currentLifecycle?.state === "stopped" ? currentLifecycle.stop_operation_id : undefined))) {
+          setConfirmed(false);
+          throw new Error("Compose deployment settings or routes changed. Refresh prerequisites and review them again.");
+        }
+        body = { ...(compose ? { managed_stack: { acknowledge_interruption: true, ...(currentLifecycle?.state === "stopped" ? { expected_stopped_operation_id: currentLifecycle.stop_operation_id } : {}) } } : {}), ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}), build_id: build.id, expected_generation: base.generation, expected_source_generation: source.generation, idempotency_key: crypto.randomUUID(), container_port: Number(containerPort), ...(currentOptions?.host_port ? { host_port: currentOptions.host_port } : mode === "fixed" ? { host_port: Number(hostPort) } : {}), ...(currentOptions?.storage_route_continuity ? { storage_route_continuity: structuredClone(currentOptions.storage_route_continuity) } : {}), readiness: { path, timeout_seconds: Number(timeout) } };
         setAttempt(body);
+        setRetainedOptions(currentOptions ? structuredClone(currentOptions) : undefined);
       }
       const operation = await requestHostingBuildDeployment(resource.id, body, { signal: controller.signal });
       if (!active.current || controller.signal.aborted) return;
@@ -87,14 +107,17 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
       const wrongResult = compose
         ? !provenance || provenance.build_id !== body.build_id || provenance.source_generation !== body.expected_source_generation || provenance.result_hash !== compose.hash ||
           !stack || stack.generation !== body.expected_generation || operation.snapshot.stack_stopped_operation_id !== body.managed_stack?.expected_stopped_operation_id || operation.snapshot.local_build !== undefined || operation.snapshot.container_port !== compose.source.container_port ||
-          (operation.snapshot.runtime_configuration?.generation ?? 0) !== (body.expected_runtime_configuration_generation ?? 0)
+          (operation.snapshot.runtime_configuration?.generation ?? 0) !== (body.expected_runtime_configuration_generation ?? 0) ||
+          (body.host_port !== undefined && operation.snapshot.host_port !== body.host_port) ||
+          operation.snapshot.readiness.path !== body.readiness.path || operation.snapshot.readiness.timeout_seconds !== body.readiness.timeout_seconds ||
+          Boolean(operation.snapshot.storage_route_continuity) !== Boolean(body.storage_route_continuity)
         : operation.snapshot.local_build?.artifact.build_id !== body.build_id || operation.snapshot.local_build.artifact.image_id !== build.artifact?.image_id || operation.snapshot.local_build.source_generation !== body.expected_source_generation;
       if (operation.project_id !== resource.project_id || operation.resource_id !== resource.id || operation.binding_id !== build.snapshot.target.binding_id || wrongResult || operation.snapshot.resource_generation !== body.expected_generation || (body.expected_runtime_configuration_generation !== undefined && operation.snapshot.runtime_configuration?.generation !== body.expected_runtime_configuration_generation)) throw new Error("Deployment response does not match selected build");
-      setSelected(operation.id); setAttempt(undefined); setConfirmed(false); await changed();
+      setSelected(operation.id); setAttempt(undefined); setRetainedOptions(undefined); setConfirmed(false); await changed();
     } catch (cause) {
       if (!active.current || controller.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { setDenied(true); onDenied(); return; }
-      if (!body) { setError("Unable to verify saved runtime configuration. No new deployment request was sent. Refresh access and try again."); return; }
+      if (!body) { setError(compose ? "Unable to verify Compose deployment settings and routes. No new deployment request was sent. Refresh prerequisites and review them again." : "Unable to verify saved runtime configuration. No new deployment request was sent. Refresh access and try again."); return; }
       if (cause instanceof HostingDeploymentError && cause.code === "hosting_restore_held") { setRestoreHeld(true); setError(""); }
       else if (cause instanceof ApiError && cause.status === 409) { setConflict(true); setError("Deployment conflicts with current resource/source generations, exact artifact, placement, runner capability, or a retained request key. Refresh the resource and build history, review the exact successful build, and explicitly select it again. No generation, build, or request was changed automatically."); }
       else if (cause instanceof ApiError && cause.status === 400) { setConflict(true); setError("The server rejected these ports or readiness settings. Reopen this build to review a separate request."); }
@@ -115,7 +138,7 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
       }
       await binding.refetch(); await changed();
       if (!active.current) return;
-      setBase(latest); setAttempt(undefined); setConflict(false); setConfirmed(false); setError("");
+      setBase(latest); setAttempt(undefined); setRetainedOptions(undefined); setConflict(false); setConfirmed(false); setError("");
     } catch (cause) {
       if (!active.current) return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setDenied(true); onDenied(); setError("Deployment permission denied. Reload to refresh project access before another action."); }
@@ -133,19 +156,25 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
     {!binding.isPending && !placementMatches ? <p role="status">Restore the build's exact saved destination before deploying. A local artifact cannot move to another host.</p> : null}
     {held ? <p role="status">A recorded mutation hold pauses new deployment requests. A retained identical request can recover its existing operation.</p> : null}
     {compose && currentStack.isError ? <p role="alert">Compose lifecycle evidence is unavailable. Refresh prerequisites before deployment or Start.</p> : null}
+    {committedCompose && deploymentOptions.isError ? <p role="alert">Compose deployment settings and routes are unavailable. Refresh prerequisites before deployment or Start.</p> : null}
+    {committedCompose && options && !options.available && !attempt ? <p role="status">Compose deployment unavailable: {options.reason}. Refresh prerequisites after resolving this condition.</p> : null}
+    {compose && shownOptions?.available ? <div className="min-w-0 space-y-1 break-all text-sm" aria-label="Compose route continuity review">
+      {shownOptions.host_port ? <p>Replacement reuses runner-local port {shownOptions.host_port} and retains named volumes.</p> : null}
+      {shownOptions.routes.map((route) => <p key={route.id}>Keep HTTPS route {route.hostname}{route.path_prefix} · version {route.version}.</p>)}
+    </div> : null}
     {committedCompose && lifecycle?.state === "stopped" ? <p>Start recreates this selected build's stack containers and retains its named volumes. The exact stop operation is captured before admission.</p> : null}
     {binding.isError || history.isError ? <p role="alert">Unable to refresh deployment placement or history. Requests are paused and settings are preserved.</p> : null}
-    <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={busy} onClick={() => { void binding.refetch(); void history.refetch(); if (compose) void currentStack.refetch(); }}>Refresh local deployment prerequisites</Button>
+    <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={busy} onClick={() => { void binding.refetch(); void history.refetch(); if (compose) { if (!attempt) setConfirmed(false); void currentStack.refetch(); if (currentStack.data?.operation) void deploymentOptions.refetch(); } }}>Refresh local deployment prerequisites</Button>
     {writable ? <form className="min-w-0 space-y-3" aria-label="Deploy selected build" onSubmit={(event) => void submit(event)}>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label htmlFor={`${id}-container`}>Build container port<Input id={`${id}-container`} type="number" min={1} max={65535} required value={containerPort} disabled={busy || Boolean(attempt) || Boolean(compose)} onChange={(e) => { setContainerPort(e.target.value); setConfirmed(false); }} /></label>
-        <label htmlFor={`${id}-mode`}>Build host port allocation<select id={`${id}-mode`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm" value={mode} disabled={busy || Boolean(attempt)} onChange={(e) => { setMode(e.target.value); setConfirmed(false); }}><option value="automatic">{compose ? "Automatic stable stack port" : "Automatic per-release port"}</option><option value="fixed">Advanced: explicit fixed port</option></select></label>
-        {mode === "fixed" ? <label htmlFor={`${id}-host`}>Build runner-local host port<Input id={`${id}-host`} type="number" min={1024} max={65535} required value={hostPort} disabled={busy || Boolean(attempt)} onChange={(e) => { setHostPort(e.target.value); setConfirmed(false); }} /></label> : null}
+        <label htmlFor={`${id}-mode`}>Build host port allocation<select id={`${id}-mode`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm" value={mode} disabled={busy || Boolean(attempt) || Boolean(compose && options?.host_port)} onChange={(e) => { setMode(e.target.value); setConfirmed(false); }}><option value="automatic">{compose ? "Automatic stable stack port" : "Automatic per-release port"}</option><option value="fixed">Advanced: explicit fixed port</option></select></label>
+        {mode === "fixed" ? <label htmlFor={`${id}-host`}>Build runner-local host port<Input id={`${id}-host`} type="number" min={1024} max={65535} required value={hostPort} disabled={busy || Boolean(attempt) || Boolean(compose && options?.host_port)} onChange={(e) => { setHostPort(e.target.value); setConfirmed(false); }} /></label> : null}
         <label htmlFor={`${id}-path`}>Build readiness path<Input id={`${id}-path`} required pattern="/.*" maxLength={1024} value={path} disabled={busy || Boolean(attempt)} onChange={(e) => { setPath(e.target.value); setConfirmed(false); }} /></label>
         <label htmlFor={`${id}-timeout`}>Build readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} required value={timeout} disabled={busy || Boolean(attempt)} onChange={(e) => { setTimeout(e.target.value); setConfirmed(false); }} /></label>
       </div>
-      <p className="text-xs text-muted-foreground">{compose ? "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation reuses the current stack's port on replacement. Every Compose replacement interrupts all components while preserving named volumes. A failed replacement may require recovery before another deployment." : "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation retains earlier containers until explicit cleanup. A fixed port can interrupt the current release before readiness succeeds."} Deployment does not automatically switch traffic or configure HTTPS.</p>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || Boolean(attempt)} onChange={(e) => setConfirmed(e.target.checked)} /><span>{compose ? "I reviewed this exact successful Compose build, its service images, generations, ports and readiness. I acknowledge interruption of all stack writers during deployment and retention of named volumes." : "I reviewed this exact successful build and local artifact, generations, ports and readiness settings. I understand fixed-port replacement can interrupt service."}</span></label>
+      <p className="text-xs text-muted-foreground">{compose ? "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation reuses the current stack's port on replacement. Every Compose replacement interrupts all components while preserving named volumes. A failed replacement may require recovery before another deployment." : "Readiness uses ordinary HTTP at a relative path such as /health. Automatic allocation retains earlier containers until explicit cleanup. A fixed port can interrupt the current release before readiness succeeds."} {compose ? "Existing selected HTTPS routes follow the reviewed continuity plan. Configure HTTPS separately after the first deployment." : "Deployment does not automatically switch traffic or configure HTTPS."}</p>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || composeUnavailable || Boolean(attempt)} onChange={(e) => setConfirmed(e.target.checked)} /><span>{compose ? "I reviewed this exact successful Compose build, its service images, generations, ports, readiness and selected HTTPS routes. I acknowledge interruption of all stack writers during deployment and retention of named volumes." : "I reviewed this exact successful build and local artifact, generations, ports and readiness settings. I understand fixed-port replacement can interrupt service."}</span></label>
       <Button type="submit" className="h-auto max-w-full whitespace-normal" disabled={disabled}>{busy ? "Requesting local build deployment..." : attempt ? "Retry identical local build deployment" : committedCompose && lifecycle?.state === "stopped" ? "Start selected Compose build" : "Deploy selected build"}</Button>
       {attempt ? <p className="break-all text-xs">Retained request key {attempt.idempotency_key} · build {attempt.build_id} · resource/source/runtime generations {attempt.expected_generation}/{attempt.expected_source_generation}/{attempt.expected_runtime_configuration_generation ?? 0}. Inputs remain frozen for receipt recovery.</p> : null}
     </form> : <p>Project maintainer access is required to deploy this build.</p>}
