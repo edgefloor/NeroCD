@@ -287,6 +287,11 @@ try {
       let built;
       while(Date.now()<stopAt){const r=await context.request.get(`/api/v1/hosting-builds/${lastBuild}`);if(r.status()!==200)throw Error("build readback denied");built=(await r.json()).build;if(["succeeded","failed","canceled"].includes(built.state))break;await new Promise(r=>setTimeout(r,250));}
       step="git_compose_verify_build_receipt";
+      safe.git_build_state=["queued","sourcing","building","succeeded","failed","canceled","cleanup_required"].includes(built?.state)?built.state:"unrecognized";
+      safe.git_build_failure_code=["cancel_requested","source_failed","build_failed","deadline_exceeded","limits_exceeded","cleanup_unconfirmed","authority_lost","canceled"].includes(built?.failure_code)?built.failure_code:built?.failure_code?"unrecognized":"none";
+      safe.git_build_source_receipt_present=Boolean(built?.source_receipt?.commit);
+      safe.git_build_compose_result_present=Boolean(built?.compose_result?.hash);
+      safe.git_build_image_artifact_present=Boolean(built?.artifact);
       if(built?.state!=="succeeded"||!built.compose_result?.hash||!built.source_receipt?.commit||built.artifact)throw Error("Git Compose build did not produce immutable result");
       safe.browser_git_compose_build_receipt=true;
     }

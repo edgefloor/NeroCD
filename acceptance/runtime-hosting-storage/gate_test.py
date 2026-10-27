@@ -1195,6 +1195,19 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
 
 
 class GitComposeContractTests(unittest.TestCase):
+    def test_git_capacity_covers_engine_admission_without_changing_other_profiles(self):
+        source = GATE.read_text()
+        block = "minimum_kib=2097152\n" + source.split("minimum_kib=2097152\n", 1)[1].split("# GIT_INODE_PREREQUISITE_BEGIN", 1)[0]
+        # Engine admission reserves UsageBytes + UnpackedBytes + ReserveBytes.
+        required = ((3 << 30) + (1 << 30) + (256 << 20)) // 1024
+        for git, minimum in [(False, 2097152), (True, required)]:
+            for available in [minimum - 1, minimum]:
+                with self.subTest(git=git, available=available), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "guest-filesystem-before-test").write_text("Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 9999999 0 " + str(available) + " 0% /\n")
+                    result = subprocess.run(["bash", "-c", "set -e; " + block], env={**os.environ, "evidence": str(root), "git_compose": str(git).lower()}, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, available == minimum, result.stderr)
+
     def test_git_requests_are_checked_before_build_and_guest_setup(self):
         source = GATE.read_text()
         command = "go test -count=1 ./internal/api -run '^TestGitComposeFixtureSourceAndRequestContracts$'"

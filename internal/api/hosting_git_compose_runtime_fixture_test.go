@@ -124,7 +124,11 @@ func gitComposeRuntimeBuild(f *storageRuntimeFixture, resource domain.Resource, 
 			return result.Build
 		}
 		if result.Build.State == "failed" || result.Build.State == "succeeded" || result.Build.State == "canceled" {
-			f.t.Fatal("Git Compose build settled unexpectedly")
+			code := result.Build.FailureCode
+			if code != "" && !domain.ValidHostingBuildFailure(code) {
+				code = "unrecognized"
+			}
+			f.t.Fatalf("Git Compose build settled unexpectedly: state=%s failure_code=%s source_receipt=%t compose_result=%t image_artifact=%t", result.Build.State, code, result.Build.SourceReceipt != nil, result.Build.ComposeResult != nil, result.Build.Artifact != nil)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -273,4 +277,37 @@ func TestGitComposeFixtureCompiledRunnerStartup(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal("assembled Git CLI did not complete heartbeat/empty-claim polling")
+}
+
+// This isolates the real compiled runner's private source/build receipt without
+// the browser, deployment, routing, or application startup qualification.
+func TestGitComposeFixtureCompiledRunnerPrivateBuild(t *testing.T) {
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
+		t.Skip("requires exact approved Git Compose runtime profile")
+	}
+	raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := hostingStorageRemoteRuntimeRandom(t)
+	repository, _, _, commit := gitComposeRuntimeRepository(t, string(raw), gitComposeFixtureBase, password)
+	f := newStorageRuntimeFixture(t, true)
+	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{
+		ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, Name: "Git Compose build prerequisite", Kind: "application",
+		Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: repository, RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}}},
+	}, 201)
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destinationID}, 201)
+	credential, err := json.Marshal(map[string]string{"username": "fixture-user", "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Git Compose build prerequisite", Value: string(credential)}, 201)
+	grant := storageRuntimeJSON[struct {
+		Grant domain.PublicHostingSourceGrant `json:"grant"`
+	}](f, "POST", "/api/v1/resources/"+resource.ID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, SecretID: secret.ID, SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, 201)
+	built := gitComposeRuntimeBuild(f, resource, grant.Grant.ID, "git-compose-build-prerequisite", "succeeded")
+	if built.SourceReceipt == nil || built.SourceReceipt.Commit != commit || built.ComposeResult == nil || built.Artifact != nil {
+		t.Fatal("private mixed Compose build omitted exact immutable source/result")
+	}
+	t.Log("private mixed Compose source/build receipt succeeded without deploying or starting an application")
 }

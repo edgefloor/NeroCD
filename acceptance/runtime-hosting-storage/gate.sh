@@ -580,7 +580,7 @@ inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/in
 host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-before-test"
 host_docker exec "$outer" df -Pi / /var/lib/docker /tmp > "$evidence/guest-inodes-before-test"
 minimum_kib=2097152
-if [[ "$git_compose" == true ]]; then minimum_kib=3407872; fi
+if [[ "$git_compose" == true ]]; then minimum_kib=4456448; fi
 awk -v minimum="$minimum_kib" 'NR>1 && $4<minimum {exit 1}' "$evidence/guest-filesystem-before-test"
 # GIT_INODE_PREREQUISITE_BEGIN
 # Some guest filesystems expose no inode counters. Require the same reserve by
