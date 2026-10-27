@@ -1091,7 +1091,7 @@ func TestStorageArchiveEngineCapabilitySpellings(t *testing.T) {
 					// inspected spelling differs, as in the physical Docker receipt.
 					f.e.image.command = imageCommandFunc(func(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
 						raw, err := f.command(ctx, binary, args, dir, env)
-						if err == nil && len(args) > 5 && args[4] == "container" && args[5] == "inspect" {
+						if err == nil && len(args) > 6 && args[4] == "container" && args[5] == "inspect" && f.helpers[args[6]].ID != "" {
 							var h archiveHelperContainer
 							if json.Unmarshal(raw, &h) != nil {
 								t.Fatal("helper inspection fixture failed")

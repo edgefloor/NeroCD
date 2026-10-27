@@ -200,9 +200,13 @@ func TestApplicationDatabaseStorageStopsAttachedCandidateBeforeResumingPredecess
 	for _, engine := range []string{"postgresql", "redis"} {
 		t.Run(engine, func(t *testing.T) {
 			f, candidate, req, foreign := applicationDatabaseStorageResumeFixture(t, engine)
+			storageIdentity := domain.HostingDocumentHash(f.in.Plan.PreviousHealthy.Storage)
 			_, endpoint, err := f.e.ResumeStoragePredecessor(t.Context(), f.in, candidate, f.before)
 			if err != nil || endpoint == nil || !endpoint.Present || endpoint.Endpoint.EndpointID == f.in.Proof.Members[0].Receipt.Observation.Endpoint.EndpointID || !f.apps[f.in.Plan.PreviousHealthy.ContainerID].State.Running || f.apps[candidate.ContainerID].State.Running {
 				t.Fatalf("exact predecessor recovery failed: %v effects=%v", err, f.effects)
+			}
+			if domain.HostingDocumentHash(f.in.Plan.PreviousHealthy.Storage) != storageIdentity {
+				t.Fatal("readiness changed the immutable predecessor storage proof")
 			}
 			if len(req.KnownUsers) != 1 || req.KnownUsers[0].ContainerID != f.in.Plan.PreviousHealthy.ContainerID || req.KnownUsers[0].Storage == nil {
 				t.Fatal("next C must know only the original owned storage release")

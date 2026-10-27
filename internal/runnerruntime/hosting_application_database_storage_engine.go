@@ -167,7 +167,11 @@ func (e *applicationDatabaseEngine) ResumeStoragePredecessor(ctx context.Context
 		// The retained predecessor endpoint remains immutable in the input proof.
 		return e.network(ctx, in, &applicationDatabaseCandidate{ContainerID: c.ID}, c.ID)
 	}
-	if err = e.image.readiness(ctx, domain.HostingApplyPlan{Snapshot: in.Plan.PreviousHealthy.Snapshot, Release: in.Plan.PreviousHealthy.Release, Hash: in.Plan.PreviousHealthy.PlanHash}, in.Plan.PreviousHealthy.OperationID, c.ID, checkResumed); err != nil {
+	previousPlan := domain.HostingApplyPlan{Snapshot: in.Plan.PreviousHealthy.Snapshot, Release: in.Plan.PreviousHealthy.Release, Hash: in.Plan.PreviousHealthy.PlanHash}
+	if in.Plan.PreviousHealthy.Storage != nil {
+		previousPlan.Storage = &in.Plan.PreviousHealthy.Storage.Plan
+	}
+	if err = e.image.readiness(ctx, previousPlan, in.Plan.PreviousHealthy.OperationID, c.ID, checkResumed); err != nil {
 		return "", nil, errApplicationDatabaseEngine
 	}
 	endpoint := old.Endpoint
