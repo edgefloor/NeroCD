@@ -179,3 +179,25 @@ profiles were preserved. The browser receipt is copied separately from the legac
 safe tar allowlist. See [catalog qualification and evidence](../../docs/hosting-catalog.md#catalog-compose-qualification)
 for the index hash, checks, failure diagnosis, source dependencies and limits.
 Prior Linkding, Kuma and Actual physical evidence is retained, not rerun.
+
+## Catalog metadata and destination selection
+
+For selected-template requirements and destination eligibility, use the existing
+Playwright catalog test after exact-candidate approval:
+
+```sh
+cd web/app
+NEROCD_BROWSER_SMOKE_PORT=18182 bunx playwright test tests/browser/hosting-catalog.spec.ts --project=chromium --workers=1 --no-deps
+```
+
+This reuses `scripts/browser-server.sh` and its owned PostgreSQL, local bootstrap,
+private runtime directory and cleanup trap. It installs metadata through the real
+API, deliberately drops a committed response, retries the identical request and
+reads the receipt through its registered resource URL. It verifies the served
+manifest inside the live test and screenshots four viewport widths. It starts no
+application runner and does not repeat the accepted physical catalog workflows.
+
+The [accepted `985652b9` qualification](../../docs/hosting-catalog.md#destination-requirements-qualification)
+retains both failed fixture attempts, actual HTTP/PostgreSQL proof, source/build
+provenance, screenshot inspection and exact host/user preservation. Keep hardware
+and capacity claims unknown until independently qualified.

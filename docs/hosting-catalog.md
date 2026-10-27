@@ -92,9 +92,15 @@ The saved review prefills container port 3456 and readiness `/health`, 120 secon
    Clear search or Clear filters to recover an empty result, then select an application.
    Review its upstream category and architecture declaration, pinned image, data
    mount, generated variables, container port, readiness check and template source.
-   Enter a name and select a granted destination. For Vikunja with PostgreSQL,
+   Review Application requirements and the reasons beside each destination.
+   Only granted destinations with the required runtime and enabled runner features
+   can be selected. Refresh destination compatibility rechecks the list and clears
+   the selection without installing anything. Enter a name and select a destination.
+   For Vikunja with PostgreSQL,
    also enter Public URL. Project owner access is required.
-3. Install the application. The transaction saves resource placement, applicable storage,
+3. Install the application. The first-install transaction rechecks destination
+   eligibility before creating anything. A stale eligible preview can be rejected.
+   The transaction saves resource placement, applicable storage,
    any generated encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
    readiness settings are prefilled. Enter the runner-local host port and review
@@ -189,13 +195,26 @@ Linkding's upstream category is `RSS`, from
 
 The preview displays upstream `arm_only` and `amd_only` declarations as ARM only
 or AMD only. None of these entries declares a restriction, so each reads Not declared.
-These declarations do not verify compatibility with the selected destination.
-CPU, memory and disk requirements are also undeclared. Use the qualified runtime
-profile below when choosing a destination.
+The selected-template requirements show runtime, required server features,
+persistent mounts, Public URL needs and generated variables. The destination list
+checks granted placement, active enrolled runner authority and required features.
+Unavailable choices are disabled with a readable reason. This metadata does not
+verify destination architecture, CPU, memory or disk capacity. Upstream hardware
+minimums remain undeclared for these entries.
 
-Compatibility filters, a general template editor, catalog refresh and version
-upgrades remain unavailable. The Compose entry has an explicit Public URL input. The preview does not provide general required-variable,
-domain or component-role presentation. General Compose import is unsupported.
+The behavioral reference is pinned PHP `b12d1386`:
+[`Select.php`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/New/Select.php#L413-L459)
+filters eligible service hosts and selects their Docker destinations, while
+[`Server::canHostResources`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Server.php#L609-L612)
+checks the effective deployment role. NeroCD's grant, current credential and
+capability checks, atomic admission, and receipt replay adapt that workflow to
+Go authorization and persistence. Neither path is a hardware probe.
+
+An identical authorized retry returns the existing installation even if current
+feature eligibility changed. Current owner and destination grant checks still
+apply. A retry creates no new resource or secret. General template editing,
+catalog refresh, upgrades, component-role presentation and general Compose import
+remain unavailable.
 
 ## Back up and recover into a separate application
 
@@ -485,3 +504,40 @@ private initial-pull evidence remains at `c4b9ef45`; this run starts with public
 catalog source and qualifies later private replacement and Start. General templates,
 upgrades, other architectures, cross-host recovery and production ACME remain
 unqualified. The existing retired-version receipt coverage limitation remains.
+
+## Destination requirements qualification
+
+Product source `64ee1ed2e43c568412fbbcbc39b064cb9e1318e4` and final test source
+`985652b9728c3e0aaab4f9d3f12aeff9d68088c3` are accepted for the bounded
+catalog selection and installation workflow.
+
+- [x] Real HTTP/PostgreSQL tests check grant-scoped options, unavailable reasons,
+  pagination, current eligibility before first-install side effects and authorized replay.
+- [x] The Go-served browser checks readable requirements, disabled and valid
+  choices, no blocked install request, and exact committed-response-loss retry
+  with persisted resource readback at 320, 390, 430 and 1440 pixels.
+- [x] All 74 served payloads match the 75-file build manifest, excluding the
+  nonserved `.gitkeep`. The 320 and 1440 screenshots were visually inspected.
+- [x] Existing setup cleanup preserves all 41 containers, 236 volumes and the
+  user's process, content and health. No application deployment was rerun.
+
+The accepted browser command passed on 2026-10-27, 19:32:25–19:32:44 UTC,
+19 seconds wall time, with a 2.4-second test. Two earlier fixture runs each took
+17 seconds: one omitted the existing server-admission capability, and one used
+an unregistered receipt readback URL. The focused shared-fixture audit corrected
+both contracts and moved asset verification inside the live test. A separate
+mixed-reason UI decoder defect was repaired with focused response-shape tests.
+Full WebUI evidence is 134 files and 2,068 tests at the unchanged product source.
+All three exact final reviews passed.
+
+The audited [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-catalog-compatibility-20261027/985652b9728c3e0aaab4f9d3f12aeff9d68088c3/evidence-index.json)
+has SHA-256 `ce1e56e94aa2786b7dfa2437284f8824c0a548cbc791ebfbfb0e6fe3ec69a43c`
+and 26 safe files. It links both failed receipts and separates implementation,
+product repair, fixture repair, tests and review/waiting. Known windows overlap;
+exclusive implementation and review totals are missing.
+
+This test uses a real controller/PostgreSQL and enrolled runner records. It does
+not establish physical runner execution, architecture or available capacity.
+Accepted deployment/data evidence at `ff6b200c` retains its original scope because
+runner, engine, Compose and pinned template dependencies are unchanged. General
+templates, upgrades and broader application recovery remain outside this slice.
