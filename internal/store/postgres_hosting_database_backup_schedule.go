@@ -7,18 +7,28 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/store/sqlcgen"
 )
 
 func databaseBackupScheduleView(r sqlcgen.HostingDatabaseBackupSchedule) domain.HostingDatabaseBackupSchedule {
-	return domain.HostingDatabaseBackupSchedule{ID: r.ID, Version: domain.HostingDatabaseBackupScheduleVersion, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+	version := domain.HostingDatabaseBackupScheduleVersion
+	if r.Component != "" {
+		version = domain.HostingDatabaseBackupComponentScheduleVersion
+	}
+	return domain.HostingDatabaseBackupSchedule{Component: r.Component, ID: r.ID, Version: version, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+}
+
+type databaseBackupScheduleSource struct {
+	Resource domain.Resource
+	Binding  domain.ResourceBinding
 }
 
 // Placement admission precedes the schedule lock in both writers and controller
 // passes. Current actor checks do not inherit a former owner's privileges.
-func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (domain.HostingDatabase, error) {
-	var zero domain.HostingDatabase
+func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (databaseBackupScheduleSource, error) {
+	var zero databaseBackupScheduleSource
 	if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
 		return zero, err
 	}
@@ -30,8 +40,18 @@ func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 	if err = proxyAuthorize(ctx, tx, actor, target.ProjectID, role, false); err != nil {
 		return zero, err
 	}
+	var source domain.ResourceSource
+	if json.Unmarshal(target.Source, &source) != nil {
+		return zero, ErrConflict
+	}
 	if err = databaseBindingGrant(ctx, q, target.ProjectID, target.DestinationID); err != nil {
+		if errors.Is(err, ErrConflict) && source.Kind == "compose" {
+			return zero, auth.ErrForbidden
+		}
 		return zero, err
+	}
+	if source.Kind == "compose" {
+		return databaseBackupScheduleSource{Resource: domain.Resource{ID: resource, ProjectID: target.ProjectID, Generation: target.Generation, Source: source}, Binding: domain.ResourceBinding{ID: target.BindingID, DestinationID: target.DestinationID}}, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	value, err := hostingDatabaseLoad(ctx, q, resource)
 	if err != nil {
@@ -40,7 +60,7 @@ func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 	if value.Engine != "postgresql" || value.RecipeVersion != domain.HostingDatabasePostgresRecipe {
 		return zero, ErrConflict
 	}
-	return value, proxyCheckLegacyToken(ctx, tx, actor)
+	return databaseBackupScheduleSource{Resource: value.Resource, Binding: value.Binding}, proxyCheckLegacyToken(ctx, tx, actor)
 }
 
 // SaveDatabaseBackupSchedule creates or revises an authorized database backup schedule.
@@ -72,6 +92,18 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if value.Resource.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
+		if (value.Resource.Source.Kind == "compose") != (in.Component != "") {
+			return zero, ErrConflict
+		}
+		if in.Component != "" && (in.Enabled || existingID == "") {
+			h, _, _, e := databaseBackupComponentSource(ctx, tx, actor, resource, in.Component, domain.RoleOwner)
+			if e != nil {
+				return zero, e
+			}
+			if h.OperationID != in.ExpectedDeployedOperationID {
+				return zero, ErrConflict
+			}
+		}
 		if existingID == "" {
 			var count int64
 			count, err = sqlcgen.New(tx).CountDatabaseBackupSchedules(ctx, resource)
@@ -81,13 +113,13 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 			if count >= 100 {
 				return zero, ErrConflict
 			}
-			err = sqlcgen.New(tx).CreateDatabaseBackupSchedule(ctx, sqlcgen.CreateDatabaseBackupScheduleParams{ID: id, ProjectID: value.Resource.ProjectID, ResourceID: resource, BindingID: value.Binding.ID, DestinationID: value.Binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
+			err = sqlcgen.New(tx).CreateDatabaseBackupSchedule(ctx, sqlcgen.CreateDatabaseBackupScheduleParams{Component: in.Component, ID: id, ProjectID: value.Resource.ProjectID, ResourceID: resource, BindingID: value.Binding.ID, DestinationID: value.Binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		} else {
 			prior, e := q.LockDatabaseBackupSchedule(ctx, existingID)
 			if e != nil {
 				return zero, hostingError(e)
 			}
-			if prior.ResourceID != resource || prior.ProjectID != value.Resource.ProjectID || prior.Revision != in.ExpectedVersion || prior.BindingID != value.Binding.ID || prior.DestinationID != value.Binding.DestinationID {
+			if prior.Component != in.Component || prior.ResourceID != resource || prior.ProjectID != value.Resource.ProjectID || prior.Revision != in.ExpectedVersion || prior.BindingID != value.Binding.ID || prior.DestinationID != value.Binding.DestinationID {
 				return zero, ErrConflict
 			}
 			id = existingID
@@ -100,7 +132,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
-		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleVersion(ctx, sqlcgen.CreateDatabaseBackupScheduleVersionParams{ScheduleID: id, Revision: int64(saved.Revision), ActorID: actor, ExpectedResourceGeneration: int64(in.ExpectedResourceGeneration), Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
+		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleVersion(ctx, sqlcgen.CreateDatabaseBackupScheduleVersionParams{Component: in.Component, ScheduleID: id, Revision: int64(saved.Revision), ActorID: actor, ExpectedResourceGeneration: int64(in.ExpectedResourceGeneration), Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		if err != nil {
 			return zero, err
 		}
@@ -173,7 +205,7 @@ func (s *PostgresStore) ListDatabaseBackupOccurrences(ctx context.Context, actor
 		}
 		out := make([]domain.HostingDatabaseBackupOccurrence, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, domain.HostingDatabaseBackupOccurrence{ID: r.ID, ScheduleID: r.ScheduleID, ProjectID: r.ProjectID, ResourceID: r.ResourceID, ScheduleRevision: r.ScheduleRevision, ScheduledAt: r.ScheduledAt, Frequency: r.Frequency, Timezone: r.Timezone, OperationID: proxyString(r.OperationID), State: r.State, Reason: r.Reason, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt})
+			out = append(out, domain.HostingDatabaseBackupOccurrence{Component: r.Component, ID: r.ID, ScheduleID: r.ScheduleID, ProjectID: r.ProjectID, ResourceID: r.ResourceID, ScheduleRevision: r.ScheduleRevision, ScheduledAt: r.ScheduledAt, Frequency: r.Frequency, Timezone: r.Timezone, OperationID: proxyString(r.OperationID), State: r.State, Reason: r.Reason, OwnershipHeld: r.OwnershipHeld, CreatedAt: r.CreatedAt})
 		}
 		return out, proxyCheckLegacyToken(ctx, tx, actor)
 	})

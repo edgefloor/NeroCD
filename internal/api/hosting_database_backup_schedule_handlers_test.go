@@ -72,6 +72,30 @@ func TestDatabaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
 	if repo.input.ExpectedVersion != 1 || repo.input.Enabled || repo.schedule.ID != "schedule" {
 		t.Fatal("disable lost exact schedule CAS")
 	}
+	// Exercise the real decoder and application validation for additive Compose fields.
+	original.resource.Source = domain.ResourceSource{Kind: "compose"}
+	original.resource.Kind = "application"
+	componentBody := strings.TrimSuffix(body, "}") + `,"component":"postgresql","expected_deployed_operation_id":"hop_current"}`
+	archiveHTTPCall(t, server, "POST", path, owner, componentBody, "application/json", 200)
+	if repo.input.Component != "postgresql" || repo.input.ExpectedDeployedOperationID != "hop_current" {
+		t.Fatal("component authority lost in decoder")
+	}
+	disabledComponent := strings.TrimSuffix(update, "}") + `,"component":"postgresql"}`
+	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, disabledComponent, "application/json", 200)
+	beforeComponentInvalid := repo.calls
+	for _, invalid := range []string{
+		strings.TrimSuffix(body, "}") + `,"component":"postgresql"}`,
+		strings.TrimSuffix(body, "}") + `,"expected_deployed_operation_id":"hop_current"}`,
+		strings.Replace(componentBody, `"postgresql"`, `"bad.component"`, 1),
+		strings.Replace(componentBody, `"hop_current"`, `"invalid operation"`, 1),
+		strings.TrimSuffix(componentBody, "}") + `,"remote_target":{"target_id":"target","revision":1}}`,
+		strings.TrimSuffix(disabledComponent, "}") + `,"remote_target":{"target_id":"target","revision":1}}`,
+	} {
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+	}
+	if repo.calls != beforeComponentInvalid {
+		t.Fatal("invalid component schedule reached persistence")
+	}
 	before := repo.calls
 	for _, invalid := range []string{strings.Replace(body, `,"enabled":true`, "", 1), strings.Replace(body, `"enabled":true`, `"enabled":null`, 1), strings.Replace(body, `,"expected_version":0`, "", 1), strings.Replace(body, `"expected_version":0`, `"expected_version":null`, 1), strings.Replace(body, `"timezone":"UTC"`, `"timezone":"Local"`, 1), strings.Replace(body, `"frequency":"daily"`, `"frequency":"@every 1m"`, 1), strings.Replace(body, `"request_id":"schedule_request"`, `"request_id":"schedule_request","request_id":"other"`, 1), strings.TrimSuffix(body, "}") + `,"command":"canary_private"}`} {
 		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)

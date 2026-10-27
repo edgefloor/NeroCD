@@ -27,12 +27,14 @@ func (s *Server) saveDatabaseBackupSchedule(w http.ResponseWriter, r *http.Reque
 	// Explicit pointers distinguish disabling from an omitted/null boolean and
 	// creation's version zero from an omitted compare-and-swap precondition.
 	var in struct {
-		RequestID                  string `json:"request_id"`
-		ExpectedResourceGeneration int64  `json:"expected_resource_generation"`
-		ExpectedVersion            *int64 `json:"expected_version"`
-		Frequency                  string `json:"frequency"`
-		Timezone                   string `json:"timezone"`
-		Enabled                    *bool  `json:"enabled"`
+		Component                   string `json:"component,omitempty"`
+		ExpectedDeployedOperationID string `json:"expected_deployed_operation_id,omitempty"`
+		RequestID                   string `json:"request_id"`
+		ExpectedResourceGeneration  int64  `json:"expected_resource_generation"`
+		ExpectedVersion             *int64 `json:"expected_version"`
+		Frequency                   string `json:"frequency"`
+		Timezone                    string `json:"timezone"`
+		Enabled                     *bool  `json:"enabled"`
 	}
 	if !decodeDatabaseBackup(w, r, &in) {
 		return
@@ -41,7 +43,7 @@ func (s *Server) saveDatabaseBackupSchedule(w http.ResponseWriter, r *http.Reque
 		writeErrorEnvelope(w, 400, "invalid_request", "backup schedule preconditions required")
 		return
 	}
-	v, e := s.app.SaveDatabaseBackupSchedule(r.Context(), r.PathValue("id"), r.PathValue("schedule_id"), domain.HostingDatabaseBackupScheduleInput{RequestID: in.RequestID, ExpectedResourceGeneration: in.ExpectedResourceGeneration, ExpectedVersion: *in.ExpectedVersion, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: *in.Enabled})
+	v, e := s.app.SaveDatabaseBackupSchedule(r.Context(), r.PathValue("id"), r.PathValue("schedule_id"), domain.HostingDatabaseBackupScheduleInput{Component: in.Component, ExpectedDeployedOperationID: in.ExpectedDeployedOperationID, RequestID: in.RequestID, ExpectedResourceGeneration: in.ExpectedResourceGeneration, ExpectedVersion: *in.ExpectedVersion, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: *in.Enabled})
 	proxyResponse(w, 200, v, e)
 }
 func (s *Server) hostingDatabaseBackupOccurrences(w http.ResponseWriter, r *http.Request) {

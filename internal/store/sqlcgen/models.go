@@ -651,6 +651,7 @@ type HostingDatabaseBackupSchedule struct {
 	CheckedAt       time.Time  `json:"checked_at"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	Component       string     `json:"component"`
 }
 
 type HostingDatabaseBackupScheduleOccurrence struct {
@@ -699,6 +700,7 @@ type HostingDatabaseBackupScheduleVersion struct {
 	Frequency                  string `json:"frequency"`
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
+	Component                  string `json:"component"`
 }
 
 type HostingDatabaseBackupTarget struct {

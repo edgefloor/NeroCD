@@ -8,7 +8,7 @@ SELECT * FROM hosting_database_backup_schedules WHERE resource_id=$1 ORDER BY cr
 SELECT * FROM hosting_database_backup_schedule_requests WHERE resource_id=$1 AND request_id=$2;
 -- name: ListDatabaseBackupOccurrences :many
 SELECT o.id,o.schedule_id,o.schedule_revision,o.scheduled_at,o.operation_id,o.created_at,
- s.project_id,s.resource_id,v.frequency,v.timezone,
+ s.project_id,s.resource_id,v.frequency,v.timezone,v.component,
  (CASE WHEN o.state='admitted' THEN b.state ELSE o.state END)::text AS state,
  (CASE WHEN o.state='admitted' THEN coalesce(ret.reason,b.failure_code) ELSE o.reason END)::text AS reason,
  coalesce(b.ownership_held,false)::boolean AS ownership_held

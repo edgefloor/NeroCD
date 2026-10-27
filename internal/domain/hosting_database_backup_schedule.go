@@ -13,19 +13,24 @@ import (
 // HostingDatabaseBackupScheduleVersion identifies the database backup schedule document format.
 const HostingDatabaseBackupScheduleVersion = "postgresql.logical-local.schedule.v1"
 
+// HostingDatabaseBackupComponentScheduleVersion identifies a Compose component schedule.
+const HostingDatabaseBackupComponentScheduleVersion = "postgresql.compose-logical-local.schedule.v1"
+
 // ErrInvalidDatabaseBackupSchedule reports invalid database backup schedule input.
 var ErrInvalidDatabaseBackupSchedule = errors.New("invalid PostgreSQL backup schedule")
 
 // HostingDatabaseBackupScheduleInput uses a whole-document compare-and-swap.
 // Creation requires expected_version=0; updates retain the original schedule ID.
 type HostingDatabaseBackupScheduleInput struct {
-	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
-	RequestID                  string                 `json:"request_id"`
-	ExpectedResourceGeneration int64                  `json:"expected_resource_generation"`
-	ExpectedVersion            int64                  `json:"expected_version"`
-	Frequency                  string                 `json:"frequency"`
-	Timezone                   string                 `json:"timezone"`
-	Enabled                    bool                   `json:"enabled"`
+	Component                   string                 `json:"component,omitempty"`
+	ExpectedDeployedOperationID string                 `json:"expected_deployed_operation_id,omitempty"`
+	RemoteTarget                *BackupTargetSelection `json:"remote_target,omitempty"`
+	RequestID                   string                 `json:"request_id"`
+	ExpectedResourceGeneration  int64                  `json:"expected_resource_generation"`
+	ExpectedVersion             int64                  `json:"expected_version"`
+	Frequency                   string                 `json:"frequency"`
+	Timezone                    string                 `json:"timezone"`
+	Enabled                     bool                   `json:"enabled"`
 }
 
 var backupScheduleAliases = map[string]string{
@@ -62,6 +67,13 @@ func (in HostingDatabaseBackupScheduleInput) Validate() error {
 	if !validRuntimeReferenceID(in.RequestID) || in.ExpectedResourceGeneration < 1 || in.ExpectedVersion < 0 || in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackupSchedule
 	}
+	if in.Component == "" {
+		if in.ExpectedDeployedOperationID != "" {
+			return ErrInvalidDatabaseBackupSchedule
+		}
+	} else if !stackName.MatchString(in.Component) || in.RemoteTarget != nil || (in.ExpectedDeployedOperationID != "" && !hostingProxyID.MatchString(in.ExpectedDeployedOperationID)) || ((in.Enabled || in.ExpectedVersion == 0) && in.ExpectedDeployedOperationID == "") {
+		return ErrInvalidDatabaseBackupSchedule
+	}
 	_, _, _, err := backupSchedule(in.Frequency, in.Timezone)
 	return err
 }
@@ -94,6 +106,7 @@ func NewestHostingDatabaseBackupOccurrence(frequency, zone string, now time.Time
 
 // HostingDatabaseBackupSchedule contains only safe resource-scoped metadata.
 type HostingDatabaseBackupSchedule struct {
+	Component       string                 `json:"component,omitempty"`
 	RemoteTarget    *BackupTargetSelection `json:"remote_target,omitempty"`
 	ID              string                 `json:"id"`
 	Version         string                 `json:"version"`
@@ -111,6 +124,7 @@ type HostingDatabaseBackupSchedule struct {
 // HostingDatabaseBackupOccurrence retains the admitted configuration even after
 // edits or disablement. Operation state is projected from the linked operation.
 type HostingDatabaseBackupOccurrence struct {
+	Component        string    `json:"component,omitempty"`
 	ID               string    `json:"id"`
 	ScheduleID       string    `json:"schedule_id"`
 	ProjectID        string    `json:"project_id"`

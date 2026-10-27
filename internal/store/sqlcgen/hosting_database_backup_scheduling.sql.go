@@ -51,7 +51,7 @@ func (q *Queries) CountDatabaseBackupSchedules(ctx context.Context, resourceID s
 }
 
 const createDatabaseBackupSchedule = `-- name: CreateDatabaseBackupSchedule :exec
-INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9)
+INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10)
 `
 
 type CreateDatabaseBackupScheduleParams struct {
@@ -64,6 +64,7 @@ type CreateDatabaseBackupScheduleParams struct {
 	Frequency     string `json:"frequency"`
 	Timezone      string `json:"timezone"`
 	Enabled       bool   `json:"enabled"`
+	Component     string `json:"component"`
 }
 
 func (q *Queries) CreateDatabaseBackupSchedule(ctx context.Context, arg CreateDatabaseBackupScheduleParams) error {
@@ -77,6 +78,7 @@ func (q *Queries) CreateDatabaseBackupSchedule(ctx context.Context, arg CreateDa
 		arg.Frequency,
 		arg.Timezone,
 		arg.Enabled,
+		arg.Component,
 	)
 	return err
 }
@@ -157,7 +159,7 @@ func (q *Queries) CreateDatabaseBackupScheduleRequest(ctx context.Context, arg C
 }
 
 const createDatabaseBackupScheduleVersion = `-- name: CreateDatabaseBackupScheduleVersion :exec
-INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 `
 
 type CreateDatabaseBackupScheduleVersionParams struct {
@@ -168,6 +170,7 @@ type CreateDatabaseBackupScheduleVersionParams struct {
 	Frequency                  string `json:"frequency"`
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
+	Component                  string `json:"component"`
 }
 
 func (q *Queries) CreateDatabaseBackupScheduleVersion(ctx context.Context, arg CreateDatabaseBackupScheduleVersionParams) error {
@@ -179,6 +182,7 @@ func (q *Queries) CreateDatabaseBackupScheduleVersion(ctx context.Context, arg C
 		arg.Frequency,
 		arg.Timezone,
 		arg.Enabled,
+		arg.Component,
 	)
 	return err
 }
@@ -205,7 +209,7 @@ func (q *Queries) CreateEmptyDatabaseBackupScheduleRemoteSelection(ctx context.C
 }
 
 const databaseBackupScheduleSchemaPresent = `-- name: DatabaseBackupScheduleSchemaPresent :one
-SELECT (to_regclass(current_schema()||'.hosting_database_backup_schedules') IS NOT NULL)::boolean
+SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='hosting_database_backup_schedules' AND column_name='component')::boolean
 `
 
 func (q *Queries) DatabaseBackupScheduleSchemaPresent(ctx context.Context) (bool, error) {

@@ -10463,6 +10463,16 @@ components:
           "enabled"
         ],
         "properties": {
+          "expected_deployed_operation_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+            "description": "Required with component for new or enabled schedules. May be omitted when disabling. Forbidden without component. Component schedules cannot use remote_target."
+          },
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "description": "Immutable Compose PostgreSQL component. Omitted for standalone schedules."
+          },
           "request_id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
@@ -10514,13 +10524,18 @@ components:
           "updated_at"
         ],
         "properties": {
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "description": "Immutable Compose PostgreSQL component. Omitted for standalone schedules."
+          },
           "id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
           },
           "version": {
             "type": "string",
-            "const": "postgresql.logical-local.schedule.v1"
+            "enum": ["postgresql.logical-local.schedule.v1", "postgresql.compose-logical-local.schedule.v1"]
           },
           "project_id": {
             "type": "string",
@@ -10586,6 +10601,11 @@ components:
           "created_at"
         ],
         "properties": {
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "description": "Immutable Compose PostgreSQL component. Omitted for standalone schedules."
+          },
           "id": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"

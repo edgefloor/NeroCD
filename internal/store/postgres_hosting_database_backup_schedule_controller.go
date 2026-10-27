@@ -124,11 +124,17 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 						e = ErrConflict
 					}
 				}
+				deployed := ""
+				if e == nil && schedule.Component != "" {
+					var h domain.HostingHealthy
+					h, _, _, e = databaseBackupComponentSource(ctx, admission, schedule.ActorID, schedule.ResourceID, schedule.Component, domain.RoleOwner)
+					deployed = h.OperationID
+				}
 				if e == nil {
 					var remote *domain.BackupTargetSelection
 					remote, e = backupRemoteScheduleSelection(ctx, admission, schedule.ID, schedule.Revision)
 					if e == nil {
-						_, e = s.requestDatabaseBackupTx(ctx, admission, operation, schedule.ResourceID, schedule.ActorID, domain.HostingDatabaseBackupInput{RequestID: occurrence, ExpectedResourceGeneration: value.Resource.Generation, RemoteTarget: remote})
+						_, e = s.requestDatabaseBackupTx(ctx, admission, operation, schedule.ResourceID, schedule.ActorID, domain.HostingDatabaseBackupInput{Component: schedule.Component, ExpectedDeployedOperationID: deployed, RequestID: occurrence, ExpectedResourceGeneration: value.Resource.Generation, RemoteTarget: remote})
 					}
 				}
 				if e != nil {

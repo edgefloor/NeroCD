@@ -31,76 +31,16 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, server.RunnerID, caps); err != nil {
 		t.Fatal(err)
 	}
-	sourceText := "services:\n  app:\n    image: nginx:alpine\n  postgresql:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: nerocd_fixture\n      POSTGRES_DB: nerocd_fixture\n    volumes:\n      - db:/var/lib/postgresql/data\nvolumes:\n  db:\n"
 	deploy := func(name string) (domain.Resource, domain.HostingOperation) {
-		t.Helper()
-		r := base
-		r.ID = "res_component_" + name
-		r.Name = "Component " + name
-		r.Source = domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: sourceText, PublicComponent: "app", ContainerPort: 80}}
-		var err error
-		r, err = pg.CreateResource(ctx, r, store.WithHostingComposeCreate(strings.Repeat(name, 32), domain.HostingDocumentHash(r)), store.WithAudit(destinationEvent("component_create_"+name)))
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		_, err = pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_component_" + name, ResourceID: r.ID, DestinationID: destination.ID, CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}, destinationEvent("component_bind_"+name))
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		input := hostingDeploymentRequest()
-		input.IdempotencyKey = "component-deploy-" + name
-		if name == "b" {
-			input.HostPort++
-		}
-		input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
-		op, err := pg.RequestHostingDeployment(ctx, "hop_component_"+name, r.ID, "usr_bootstrap", input, destinationEvent("component_deploy_"+name))
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		op = awaitHostingDispatch(t, pg, op.ID)
-		claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
-		if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
-			t.Fatal("stack setup", err)
-		}
-		var images []domain.HostingStackImage
-		for i, component := range []string{"app", "postgresql"} {
-			repo := "docker.io/library/nginx"
-			if i == 1 {
-				repo = "docker.io/library/postgres"
-			}
-			release := domain.HostingRelease{CanonicalImage: repo + "@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat(fmt.Sprint(i+1), 64), OS: "linux", Architecture: "amd64", DaemonID: "daemon_component_backup"}
-			release.Hash = domain.HostingDocumentHash(release)
-			images = append(images, domain.HostingStackImage{Component: component, Release: release})
-		}
-		release := domain.HostingRelease{DaemonID: "daemon_component_backup", Stack: domain.HostingStackReleaseRef{Hash: domain.HostingDocumentHash(images)}}
-		release.Hash = domain.HostingDocumentHash(release)
-		prepared, err := pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "prepared_component_" + name, Release: release, StackImages: images})
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		volumes := append([]domain.HostingStackVolume(nil), prepared.Plan.Stack.Volumes...)
-		for i := range volumes {
-			volumes[i].CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		}
-		if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err != nil {
-			t.Fatal("stack setup", err)
-		}
-		if _, err = pg.HostingStackVolumes(ctx, server.RunnerID, domain.HostingStackVolumeRequest{HostingAuthority: a, PlanHash: prepared.Plan.Hash, Volumes: volumes}); err != nil {
-			t.Fatal("stack setup", err)
-		}
-		state := domain.HostingStackState{ObservationComplete: true, PublicComponent: "app", NetworkID: strings.Repeat(name, 64), Volumes: volumes, Components: []domain.HostingStackComponent{{Component: "app", ContainerID: strings.Repeat(name, 63) + "1", ImageID: images[0].Release.ImageID, OperationID: op.ID, Running: true}, {Component: "postgresql", ContainerID: strings.Repeat(name, 63) + "2", ImageID: images[1].Release.ImageID, OperationID: op.ID, Running: true}}}
-		op, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "complete_component_" + name, Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}})
-		if err != nil {
-			t.Fatal("stack setup", err)
-		}
-		return r, op
+		return deployBackupComponentStack(t, pg, base, server, destination, name)
 	}
 	source, sourceOp := deploy("a")
 	target, targetOp := deploy("b")
+	originalScheduleInput := domain.HostingDatabaseBackupScheduleInput{RequestID: "schedule_before_stop", ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID, Frequency: "every_minute", Timezone: "UTC", Enabled: false}
+	originalSchedule, err := pg.SaveDatabaseBackupSchedule(ctx, "dbs_before_stop", source.ID, "usr_bootstrap", "", originalScheduleInput)
+	if err != nil {
+		t.Fatal("component schedule before stop", err)
+	}
 	// Match the qualification's source after an explicit whole-stack Stop/Start.
 	stop, err := pg.RequestHostingStackStop(ctx, "hop_backup_source_stop", source.ID, "usr_bootstrap", domain.HostingStackStopInput{IdempotencyKey: "backup-source-stop", ExpectedDeployedOperationID: sourceOp.ID, ExpectedGeneration: source.Generation}, destinationEvent("backup_source_stop"))
 	if err != nil {
@@ -123,6 +63,30 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	stoppedState.Components = []domain.HostingStackComponent{}
 	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "backup_source_stopped", Result: domain.HostingResult{Outcome: "succeeded", StackStopped: true, DaemonID: sourceOp.Release.DaemonID, PlanHash: admitted.StackStopPlan.Hash, Stack: &stoppedState}}); err != nil {
 		t.Fatal(err)
+	}
+	if listed, e := pg.ListDatabaseBackupSchedules(ctx, "usr_bootstrap", source.ID); e != nil || len(listed) != 1 || listed[0].Component != "postgresql" {
+		t.Fatal("stopped schedule list", e)
+	}
+	if _, e := pg.ListDatabaseBackupOccurrences(ctx, "usr_bootstrap", source.ID, originalSchedule.ID); e != nil {
+		t.Fatal("stopped schedule history", e)
+	}
+	if replay, e := pg.SaveDatabaseBackupSchedule(ctx, "unused", source.ID, "usr_bootstrap", "", originalScheduleInput); e != nil || replay.ID != originalSchedule.ID {
+		t.Fatal("stopped schedule replay", e)
+	}
+	disableSchedule := originalScheduleInput
+	disableSchedule.RequestID = "disable_stopped"
+	disableSchedule.ExpectedVersion = 1
+	disableSchedule.ExpectedDeployedOperationID = ""
+	if disabled, e := pg.SaveDatabaseBackupSchedule(ctx, "unused", source.ID, "usr_bootstrap", originalSchedule.ID, disableSchedule); e != nil || disabled.Enabled || disabled.Revision != 2 {
+		t.Fatal("stopped schedule disable", e)
+	}
+	enabledSchedule := disableSchedule
+	enabledSchedule.RequestID = "enable_stopped"
+	enabledSchedule.ExpectedVersion = 2
+	enabledSchedule.Enabled = true
+	enabledSchedule.ExpectedDeployedOperationID = sourceOp.ID
+	if _, e := pg.SaveDatabaseBackupSchedule(ctx, "unused", source.ID, "usr_bootstrap", originalSchedule.ID, enabledSchedule); !errors.Is(e, store.ErrConflict) {
+		t.Fatal("stopped enabled schedule admitted", e)
 	}
 	startInput := hostingDeploymentRequest()
 	startInput.IdempotencyKey = "backup-source-start"
@@ -156,6 +120,13 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	sourceOp, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "backup_source_started", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: sourceOp.Release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &startedState}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if replay, e := pg.SaveDatabaseBackupSchedule(ctx, "unused", source.ID, "usr_bootstrap", "", originalScheduleInput); e != nil || replay.ID != originalSchedule.ID {
+		t.Fatal("schedule replay after redeploy", e)
+	}
+	enabledSchedule.RequestID = "enable_stale_deployment"
+	if _, e := pg.SaveDatabaseBackupSchedule(ctx, "unused", source.ID, "usr_bootstrap", originalSchedule.ID, enabledSchedule); !errors.Is(e, store.ErrConflict) {
+		t.Fatal("stale schedule deployment accepted", e)
 	}
 	service := proxyTokenApplication(t, pg)
 	session, err := service.CreateSession(ctx, "admin@example.local", "admin")
@@ -320,4 +291,76 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	if _, err = pg.RequestHostingDeployment(ctx, "hop_after_uncertain_import", target.ID, "usr_bootstrap", input, destinationEvent("after_uncertain_import")); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("uncertain import lost exclusive ownership", err)
 	}
+}
+
+// deployBackupComponentStack shares the existing settled stack fixture with schedule tests.
+func deployBackupComponentStack(t *testing.T, pg *store.PostgresStore, base domain.Resource, server domain.Server, destination domain.Destination, name string) (domain.Resource, domain.HostingOperation) {
+	ctx := t.Context()
+	sourceText := "services:\n  app:\n    image: nginx:alpine\n  postgresql:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: nerocd_fixture\n      POSTGRES_DB: nerocd_fixture\n    volumes:\n      - db:/var/lib/postgresql/data\nvolumes:\n  db:\n"
+
+	t.Helper()
+	r := base
+	r.ID = "res_component_" + name
+	r.Name = "Component " + name
+	r.Source = domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: sourceText, PublicComponent: "app", ContainerPort: 80}}
+	var err error
+	r, err = pg.CreateResource(ctx, r, store.WithHostingComposeCreate(strings.Repeat(name, 32), domain.HostingDocumentHash(r)), store.WithAudit(destinationEvent("component_create_"+name)))
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	_, err = pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_component_" + name, ResourceID: r.ID, DestinationID: destination.ID, CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}, destinationEvent("component_bind_"+name))
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	input := hostingDeploymentRequest()
+	input.IdempotencyKey = "component-deploy-" + name
+	if name == "b" {
+		input.HostPort++
+	}
+	input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_component_"+name, r.ID, "usr_bootstrap", input, destinationEvent("component_deploy_"+name))
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	op = awaitHostingDispatch(t, pg, op.ID)
+	claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	a := domain.HostingAuthority{OperationID: op.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
+		t.Fatal("stack setup", err)
+	}
+	var images []domain.HostingStackImage
+	for i, component := range []string{"app", "postgresql"} {
+		repo := "docker.io/library/nginx"
+		if i == 1 {
+			repo = "docker.io/library/postgres"
+		}
+		release := domain.HostingRelease{CanonicalImage: repo + "@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat(fmt.Sprint(i+1), 64), OS: "linux", Architecture: "amd64", DaemonID: "daemon_component_backup"}
+		release.Hash = domain.HostingDocumentHash(release)
+		images = append(images, domain.HostingStackImage{Component: component, Release: release})
+	}
+	release := domain.HostingRelease{DaemonID: "daemon_component_backup", Stack: domain.HostingStackReleaseRef{Hash: domain.HostingDocumentHash(images)}}
+	release.Hash = domain.HostingDocumentHash(release)
+	prepared, err := pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "prepared_component_" + name, Release: release, StackImages: images})
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	volumes := append([]domain.HostingStackVolume(nil), prepared.Plan.Stack.Volumes...)
+	for i := range volumes {
+		volumes[i].CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err != nil {
+		t.Fatal("stack setup", err)
+	}
+	if _, err = pg.HostingStackVolumes(ctx, server.RunnerID, domain.HostingStackVolumeRequest{HostingAuthority: a, PlanHash: prepared.Plan.Hash, Volumes: volumes}); err != nil {
+		t.Fatal("stack setup", err)
+	}
+	state := domain.HostingStackState{ObservationComplete: true, PublicComponent: "app", NetworkID: strings.Repeat(name, 64), Volumes: volumes, Components: []domain.HostingStackComponent{{Component: "app", ContainerID: strings.Repeat(name, 63) + "1", ImageID: images[0].Release.ImageID, OperationID: op.ID, Running: true}, {Component: "postgresql", ContainerID: strings.Repeat(name, 63) + "2", ImageID: images[1].Release.ImageID, OperationID: op.ID, Running: true}}}
+	op, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "complete_component_" + name, Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}})
+	if err != nil {
+		t.Fatal("stack setup", err)
+	}
+	return r, op
 }

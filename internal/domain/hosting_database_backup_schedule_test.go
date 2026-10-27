@@ -100,3 +100,40 @@ func TestDatabaseBackupScheduleCronSubset(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseBackupComponentScheduleInput(t *testing.T) {
+	base := HostingDatabaseBackupScheduleInput{RequestID: "component_schedule", ExpectedResourceGeneration: 1, Component: "postgresql", ExpectedDeployedOperationID: "hop_current", Frequency: "daily", Timezone: "UTC", Enabled: true}
+	for _, tc := range []struct {
+		name   string
+		change func(*HostingDatabaseBackupScheduleInput)
+		valid  bool
+	}{
+		{"enabled", func(*HostingDatabaseBackupScheduleInput) {}, true},
+		{"disabled_create", func(v *HostingDatabaseBackupScheduleInput) { v.Enabled = false }, true},
+		{"disable_without_deployment", func(v *HostingDatabaseBackupScheduleInput) {
+			v.Enabled = false
+			v.ExpectedVersion = 1
+			v.ExpectedDeployedOperationID = ""
+		}, true},
+		{"new_without_deployment", func(v *HostingDatabaseBackupScheduleInput) { v.Enabled = false; v.ExpectedDeployedOperationID = "" }, false},
+		{"enabled_without_deployment", func(v *HostingDatabaseBackupScheduleInput) { v.ExpectedDeployedOperationID = "" }, false},
+		{"standalone_deployment", func(v *HostingDatabaseBackupScheduleInput) { v.Component = "" }, false},
+		{"invalid_component", func(v *HostingDatabaseBackupScheduleInput) { v.Component = "wrong.component" }, false},
+		{"remote", func(v *HostingDatabaseBackupScheduleInput) {
+			v.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
+		}, false},
+		{"disabled_remote", func(v *HostingDatabaseBackupScheduleInput) {
+			v.Enabled = false
+			v.ExpectedVersion = 1
+			v.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := base
+			tc.change(&v)
+			if (v.Validate() == nil) != tc.valid {
+				t.Fatal("component schedule input validity", v.Validate())
+			}
+		})
+	}
+}

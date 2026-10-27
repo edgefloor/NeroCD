@@ -252,6 +252,14 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("component database operation deadline")
 		return domain.HostingDatabaseBackupOperation{}
 	}
+	schedules := storageRuntimeJSON[[]domain.HostingDatabaseBackupSchedule](f, "GET", "/api/v1/resources/"+resourceID+"/database-backup-schedules", nil, 200)
+	if len(schedules) != 1 || schedules[0].Enabled || schedules[0].Component != "postgresql" || schedules[0].Version != domain.HostingDatabaseBackupComponentScheduleVersion {
+		t.Fatal("browser component schedule not disabled with immutable identity")
+	}
+	occurrences := storageRuntimeJSON[[]domain.HostingDatabaseBackupOccurrence](f, "GET", "/api/v1/resources/"+resourceID+"/database-backup-schedules/"+schedules[0].ID+"/occurrences", nil, 200)
+	if len(occurrences) != 1 || occurrences[0].OperationID != backupID || occurrences[0].Component != "postgresql" || occurrences[0].ScheduleRevision != 1 {
+		t.Fatal("browser scheduled source dump lost historical identity")
+	}
 	backup := awaitBackup(backupID)
 	if backup.SourceComponent != "postgresql" || backup.SourceDeployedOperationID != started.ID || backup.Version != domain.HostingDatabaseBackupComponentVersion || backup.Blob == nil {
 		t.Fatal("wrong logical component backup")

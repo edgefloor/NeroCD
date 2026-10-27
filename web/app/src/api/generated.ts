@@ -5209,6 +5209,10 @@ export interface components {
             backup_id?: string;
         };
         HostingDatabaseBackupScheduleInput: {
+            /** @description Required with component for new or enabled schedules. May be omitted when disabling. Forbidden without component. Component schedules cannot use remote_target. */
+            expected_deployed_operation_id?: string;
+            /** @description Immutable Compose PostgreSQL component. Omitted for standalone schedules. */
+            component?: string;
             request_id: string;
             /** Format: int64 */
             expected_resource_generation: number;
@@ -5222,9 +5226,11 @@ export interface components {
             remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupSchedule: {
+            /** @description Immutable Compose PostgreSQL component. Omitted for standalone schedules. */
+            component?: string;
             id: string;
-            /** @constant */
-            version: "postgresql.logical-local.schedule.v1";
+            /** @enum {string} */
+            version: "postgresql.logical-local.schedule.v1" | "postgresql.compose-logical-local.schedule.v1";
             project_id: string;
             resource_id: string;
             /** Format: int64 */
@@ -5243,6 +5249,8 @@ export interface components {
             remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingDatabaseBackupOccurrence: {
+            /** @description Immutable Compose PostgreSQL component. Omitted for standalone schedules. */
+            component?: string;
             id: string;
             schedule_id: string;
             project_id: string;
