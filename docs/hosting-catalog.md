@@ -30,8 +30,12 @@ Arbitrary or pasted Compose imports remain incomplete and are rejected.
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
-2. Select Linkding in Install from catalog, enter a name, and select a granted
-   destination. Project owner access is required.
+2. In Install from catalog, search by application, version, image, data mount or
+   generated variable name. Search ignores case and requires every word to match.
+   Clear the search to recover an empty result, then select Linkding. Review its
+   pinned image, data mount, generated variables, container port, readiness check
+   and template source. Enter a name and select a granted destination. Project
+   owner access is required.
 3. Install the application. The transaction saves resource placement, storage,
    encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
@@ -81,6 +85,11 @@ request ID. A definitive HTTP 400 rejection permits correction and a new request
 An ambiguous response retains the original request and disables edits so a retry
 cannot silently create a second installation.
 
+Changing or clearing the search clears the selected application. Select an entry
+again before installing. Search is also locked while an installation is
+unconfirmed. If catalog or destination loading fails, Retry catalog loading
+fetches the failed list again without submitting an installation.
+
 After a combined owned-storage/runtime-environment deployment is prepared, a
 runner restart retains an explicit ownership barrier. It does not request a new
 secret delivery, create storage, or recreate a container. Owner-requested
@@ -101,10 +110,13 @@ template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
 changes do not rewrite that installed copy.
 
-Catalog search, filtering, a general template editor, catalog refresh and version
-upgrades are unavailable. The entry shows its data mount and credential names;
-it does not provide general required-variable, domain, architecture, resource-needs,
-or component-role presentation. General Compose import is unsupported.
+Catalog text search filters the available entries locally using the metadata
+listed above. Category and compatibility filters, a general template editor,
+catalog refresh and version upgrades remain unavailable. The installation preview
+shows the saved definition and source, but architecture compatibility and resource
+requirements are not declared by the entry. It does not provide general
+required-variable, domain or component-role presentation. General Compose import
+is unsupported.
 
 ## Back up and recover into a separate application
 

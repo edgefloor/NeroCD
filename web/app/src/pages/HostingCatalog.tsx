@@ -31,6 +31,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const [name, setName] = useState("Linkding");
     const [destination, setDestination] = useState("");
     const [template, setTemplate] = useState("");
+    const [search, setSearch] = useState("");
     const [attempt, setAttempt] = useState<CatalogInstallInput>();
     const [created, setCreated] = useState<CatalogInstallation>();
     const [busy, setBusy] = useState(false);
@@ -48,7 +49,13 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const catalog = useQuery({ queryKey: ["hostingCatalog", actor, projectID], queryFn: ({ signal }) => getCatalog(projectID, signal), retry: false, gcTime: 0 });
     const [offset, setOffset] = useState(0);
     const destinations = useQuery({ queryKey: ["catalogDestinations", actor, projectID, offset], queryFn: ({ signal }) => listDestinations({ project_id: projectID, limit: 20, offset }, { signal }), retry: false, gcTime: 0 });
-    const selected = catalog.data?.find(t => t.id === template);
+    const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = catalog.data?.filter(t => {
+        const text = [t.name, t.id, t.immutable_version, t.definition.image_reference,
+            t.definition.mount_path, ...t.definition.credential_names].join(" ").toLowerCase();
+        return terms.every(term => text.includes(term));
+    }) ?? [];
+    const selected = matches.find(t => t.id === template);
     const unavailable = blocked || busy || catalog.isError || catalog.isPending || destinations.isError || destinations.isPending;
     async function submit(event: FormEvent) {
         event.preventDefault();
@@ -125,18 +132,45 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
             </p>)}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
-        <label htmlFor={`${id}-template`}>Catalog application</label>
+        <label className="block" htmlFor={`${id}-search`}>Search catalog</label>
+        <Input id={`${id}-search`} type="search" value={search} disabled={unavailable || !!attempt}
+            aria-describedby={`${id}-search-help`} onChange={e => { setSearch(e.target.value); setTemplate(""); }}/>
+        <p id={`${id}-search-help`} className="text-sm text-muted-foreground">Search by application, version, image, data mount or generated variable name.</p>
+        {catalog.isSuccess ? <p role="status">Catalog matches: {matches.length} of {catalog.data.length}.</p> : null}
+        {catalog.isSuccess && matches.length === 0 ? <p>{catalog.data.length === 0 ? "No catalog applications are available." : "No applications match your search. Clear the search to see available applications."}</p> : null}
+        {search ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setSearch(""); setTemplate(""); }}>Clear search</Button> : null}
+        <label className="block" htmlFor={`${id}-template`}>Catalog application</label>
         <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => setTemplate(e.target.value)}>
-        <option value="">Select an application</option>{catalog.data?.map(t => <option key={t.id} value={t.id}>{t.name} · {t.immutable_version}</option>)}</select>
-        <label htmlFor={`${id}-name`}>Installation name</label>
+        <option value="">Select an application</option>{matches.map(t => <option key={t.id} value={t.id}>{t.name} · {t.immutable_version}</option>)}</select>
+        {selected ? <section aria-label="Catalog installation preview" className="min-w-0 space-y-2 rounded-lg border p-3 text-sm">
+            <h5 className="font-medium">{selected.name} installation preview</h5>
+            <dl className="space-y-1 break-all">
+                <dt>Template version</dt><dd>{selected.immutable_version}</dd>
+                <dt>Image</dt><dd>{selected.definition.image_reference}</dd>
+                <dt>Persistent data</dt><dd>{selected.definition.mount_path}</dd>
+                <dt>Generated variables</dt><dd>{selected.definition.credential_names.join(", ") || "None"}</dd>
+                <dt>Container port</dt><dd>{selected.definition.container_port}</dd>
+                <dt>Readiness check</dt><dd>{selected.definition.readiness.path}, timeout {selected.definition.readiness.timeout_seconds} seconds</dd>
+                <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
+            </dl>
+            <p>Credentials are generated once during installation and stored as managed secrets. Configure a domain and HTTPS route after deployment.</p>
+            <p>Architecture compatibility and CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
+        </section> : null}
+        <label className="block" htmlFor={`${id}-name`}>Installation name</label>
         <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => setName(e.target.value)}/>
-        <label htmlFor={`${id}-destination`}>Catalog destination</label>
+        <label className="block" htmlFor={`${id}-destination`}>Catalog destination</label>
         <select id={`${id}-destination`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" required value={destination} disabled={unavailable || !!attempt} onChange={e => setDestination(e.target.value)}>
         <option value="">Select a destination</option>{destinations.data?.items.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" disabled={unavailable || !!attempt || offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous destinations</Button>
         <Button type="button" variant="outline" disabled={unavailable || !!attempt || !destinations.data || offset + 20 >= destinations.data.total} onClick={() => setOffset(offset + 20)}>Next destinations</Button>
-        </div>{selected ? <p className="break-all text-sm">{selected.definition.image_reference}. Persistent data: {selected.definition.mount_path}.</p> : null}<Button disabled={unavailable || (!attempt && (!selected || !destination))} type="submit">{busy ? "Installing..." : attempt ? "Retry same installation" : "Install application"}</Button>{attempt ? <p className="break-all text-sm">Retained request: {attempt.request_id}</p> : null}</form>}
- {error ? <p role="alert">{error}</p> : null}{catalog.isError || destinations.isError ? <p role="alert">Catalog or destination access is unavailable.</p> : null}
+        </div><Button disabled={unavailable || (!attempt && (!selected || !destination))} type="submit">{busy ? "Installing..." : attempt ? "Retry same installation" : "Install application"}</Button>{attempt ? <p className="break-all text-sm">Retained request: {attempt.request_id}</p> : null}</form>}
+ {error ? <p role="alert">{error}</p> : null}{catalog.isError || destinations.isError ? <>
+    <p role="alert">Catalog or destination access is unavailable.</p>
+    <Button type="button" variant="outline" disabled={blocked || busy || catalog.isFetching || destinations.isFetching} onClick={() => {
+        if (catalog.isError) void catalog.refetch();
+        if (destinations.isError) void destinations.refetch();
+    }}>Retry catalog loading</Button>
+ </> : null}
  </section>;
 }

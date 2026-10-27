@@ -45,6 +45,7 @@ test("response loss retains exact install identity and reveal is explicit", asyn
     vi.mocked(api.installCatalog).mockRejectedValueOnce(new Error("response lost")).mockImplementationOnce(async (body) => ({ id: "res", request: body, template, resource: { id: "res", project_id: "project", project_environment_id: "env", name: "Linkding", kind: "application", source: { kind: "image", image: { reference: template.definition.image_reference } }, generation: 1, created_by: "actor", created_at: "", updated_at: "" }, binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" }, storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, runtime_configuration: { generation: 1, hash: "runtime" }, credentials: [{ name: "LD_SUPERUSER_PASSWORD", kind: "managed_secret", secret: { secret_id: "secret", version: 1 } }], created_by: "actor", created_at: "" }));
     fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
     await screen.findByRole("alert");
+    expect(screen.getByLabelText<HTMLInputElement>("Search catalog").disabled).toBe(true);
     const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
     expect(first.request_id).toMatch(/^[0-9a-f]{32}$/);
     fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
@@ -121,4 +122,43 @@ test("definitive validation rejection unlocks correction with a fresh request id
   const second = vi.mocked(api.installCatalog).mock.calls[1]![0];
   expect(second.name).toBe("Corrected");
   expect(second.request_id).not.toBe(first.request_id);
+});
+
+test("catalog search matches metadata and clears a hidden selection before install", async () => {
+  await selectCatalogDraft();
+  const search = screen.getByLabelText("Search catalog");
+  expect(screen.getByRole("region", { name: "Catalog installation preview" }).textContent).toContain("LD_SUPERUSER_PASSWORD");
+  fireEvent.change(search, { target: { value: "missing-application" } });
+  expect(screen.queryByRole("option", { name: /Linkding ·/ })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Catalog installation preview" })).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog application").value).toBe("");
+  expect(screen.getByRole("option", { name: /Linkding ·/ })).toBeTruthy();
+  for (const query of [" LINKDING  1.47.0 ", "sha256:digest", "LD_SUPERUSER_PASSWORD", "/etc/linkding/data"]) {
+    fireEvent.change(search, { target: { value: query } });
+    expect(screen.getByRole("option", { name: /Linkding ·/ })).toBeTruthy();
+  }
+  fireEvent.change(search, { target: { value: "linkding absent-term" } });
+  expect(screen.queryByRole("option", { name: /Linkding ·/ })).toBeNull();
+});
+
+test("failed catalog load can be retried without submitting an installation", async () => {
+  vi.mocked(api.getCatalog).mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce([template]);
+  setup();
+  await screen.findByText("Catalog or destination access is unavailable.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  expect(screen.queryByText("Catalog or destination access is unavailable.")).toBeNull();
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
+test("empty catalog is distinct from a search with no matches", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([]);
+  setup();
+  await screen.findByText("No catalog applications are available.");
+  expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(true);
 });
