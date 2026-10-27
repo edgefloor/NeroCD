@@ -17,6 +17,7 @@ import (
 
 	"nerocd/internal/api"
 	"nerocd/internal/domain"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/store"
 	"nerocd/web"
 )
@@ -30,7 +31,7 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, server.RunnerID, caps); err != nil {
 		t.Fatal(err)
 	}
-	sourceText := "services:\n  app:\n    image: nginx:alpine\n  postgresql:\n    image: postgres:16-alpine\n    volumes:\n      - db:/var/lib/postgresql/data\nvolumes:\n  db:\n"
+	sourceText := "services:\n  app:\n    image: nginx:alpine\n  postgresql:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: nerocd_fixture\n      POSTGRES_DB: nerocd_fixture\n    volumes:\n      - db:/var/lib/postgresql/data\nvolumes:\n  db:\n"
 	deploy := func(name string) (domain.Resource, domain.HostingOperation) {
 		t.Helper()
 		r := base
@@ -163,6 +164,10 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	}
 	const browserOrigin = "https://127.0.0.1:18190"
 	handler := api.NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), api.ServerConfig{PublicOrigin: browserOrigin})
+	runnerServer := httptest.NewServer(handler)
+	t.Cleanup(runnerServer.Close)
+	runnerClient := runnerclient.New(runnerServer.URL, "image-hosting-fixture-token")
+	runnerContext := runnerclient.WithDatabaseTransport(ctx, runnerclient.DatabaseTransport{TrustedLoopbackHTTP: true})
 	call := func(method, path string, body any, want int) []byte {
 		t.Helper()
 		raw, err := json.Marshal(body)
@@ -230,7 +235,7 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 			t.Fatal(err)
 		}
 		a := domain.HostingAuthority{OperationID: operation.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
-		p, err := pg.DatabaseBackupPlan(ctx, server.RunnerID, a)
+		p, err := runnerClient.HostingDatabaseBackupPlan(runnerContext, a)
 		if err != nil {
 			t.Fatal("plan", err)
 		}
@@ -253,7 +258,7 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 				}
 			}
 		}
-		if _, err = pg.DatabaseBackupMutation(ctx, server.RunnerID, mutation); err != nil {
+		if _, err = runnerClient.HostingDatabaseBackupMutation(runnerContext, mutation); err != nil {
 			t.Fatal("intent", err)
 		}
 		competing := hostingDeploymentRequest()
@@ -275,14 +280,14 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 			mutation.WritersResumed = false
 			mutation.FailureCode = "execution_failed"
 		}
-		result, err := pg.DatabaseBackupMutation(ctx, server.RunnerID, mutation)
+		result, err := runnerClient.HostingDatabaseBackupMutation(runnerContext, mutation)
 		if err != nil {
 			t.Fatal("settle", err)
 		}
 		if phase == "uncertain" && !result.OwnershipHeld {
 			t.Fatal("uncertain import released target")
 		}
-		if _, err = pg.DatabaseBackupMutation(ctx, server.RunnerID, mutation); err != nil {
+		if _, err = runnerClient.HostingDatabaseBackupMutation(runnerContext, mutation); err != nil {
 			t.Fatal("historical result replay", err)
 		}
 	}

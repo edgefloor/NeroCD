@@ -220,7 +220,7 @@ func ValidateDatabaseBackupTask(run TaskRun) error {
 // DecodeHostingDatabaseBackupJSON validates one bounded closed protocol document.
 func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 	trimmed := bytes.TrimSpace(raw)
-	if len(raw) > 1<<20 || len(trimmed) == 0 || trimmed[0] != '{' || !validRuntimeJSONUnicode(raw) || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {
+	if len(raw) > 1<<20 || len(trimmed) == 0 || trimmed[0] != '{' || !validRuntimeJSONUnicode(raw) || !databaseBackupUniqueJSON(json.NewDecoder(bytes.NewReader(raw)), false) {
 		return ErrInvalidDatabaseBackup
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -229,6 +229,45 @@ func DecodeHostingDatabaseBackupJSON(raw []byte, out any) error {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
+}
+
+// Environment is a case-sensitive string map in saved Compose definitions.
+// All other protocol keys retain the canonical lowercase rule. Typed decoding
+// below still rejects unknown fields and non-string environment values.
+func databaseBackupUniqueJSON(d *json.Decoder, environment bool) bool {
+	token, err := d.Token()
+	if err != nil {
+		return false
+	}
+	delim, compound := token.(json.Delim)
+	if !compound {
+		return true
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for d.More() {
+			token, err := d.Token()
+			key, ok := token.(string)
+			if err != nil || !ok || !environment && key != strings.ToLower(key) || seen[key] {
+				return false
+			}
+			seen[key] = true
+			if !databaseBackupUniqueJSON(d, !environment && key == "environment") {
+				return false
+			}
+		}
+	case '[':
+		for d.More() {
+			if !databaseBackupUniqueJSON(d, false) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	_, err = d.Token()
+	return err == nil
 }
 
 // Validate checks the database backup operation fields and invariants.

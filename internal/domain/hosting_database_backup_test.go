@@ -32,6 +32,29 @@ func TestDatabaseBackupClosedInputAndTaskAuthority(t *testing.T) {
 		t.Fatal("caller execution payload accepted")
 	}
 }
+
+func TestDatabaseBackupComposeEnvironmentWireKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		valid     bool
+	}{
+		{"case_sensitive_data", `{"environment":{"POSTGRES_USER":"upper","postgres_user":"lower"}}`, true},
+		{"duplicate_data", `{"environment":{"POSTGRES_USER":"one","POSTGRES_USER":"two"}}`, false},
+		{"protocol_case_alias", `{"Environment":{"POSTGRES_USER":"one"}}`, false},
+		{"unknown_protocol_field", `{"environment":{"POSTGRES_USER":"one"},"socket":"foreign"}`, false},
+		{"non_string_data", `{"environment":{"POSTGRES_USER":{"COMMAND":"foreign"}}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var service HostingStackService
+			if err := DecodeHostingDatabaseBackupJSON([]byte(tc.raw), &service); (err == nil) != tc.valid {
+				t.Fatalf("decode error=%v valid=%t", err, tc.valid)
+			}
+			if tc.valid && (service.Environment["POSTGRES_USER"] != "upper" || service.Environment["postgres_user"] != "lower") {
+				t.Fatal("case-sensitive environment keys changed")
+			}
+		})
+	}
+}
 func TestDatabaseBackupBlobAndMutationBounds(t *testing.T) {
 	blob := HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 5, Format: "postgresql_custom"}
 	if blob.Validate() != nil {
