@@ -104,6 +104,82 @@ with that hold; ordinary observation cannot silently authorize replay or volume
 creation. Named volumes are retained when components disappear from later
 source revisions; no implicit data deletion or stack volume cleanup is provided.
 
+## Prepare and deploy Git Compose
+
+The `git-compose.v1` profile keeps the application as a Git resource with its
+repository, ref and immutable source history. Git Compose qualification and final
+reviews are pending; the completed pasted Compose evidence below is unchanged.
+
+Enable the existing [build runtime](hosting-build-runtime.md) first. In the server
+policy file selected by `NEROCD_HOSTING_BUILD_POLICY_FILE`, set `git_compose` to
+`true`. In the runner file passed to `--build-config-file`, set top-level `compose`
+to `true` and set `policy.git_compose` to `true`. The runner's complete policy must
+match the server policy. These settings advertise `hosting_git_compose_build_v1`
+alongside `hosting_build_v1`. Deployment also needs the managed Compose
+capabilities and `--hosting-runtime-env` described above. Use the same bound runner
+and Docker daemon for preparation and deployment.
+
+1. In **Git repository**, enter the HTTPS repository and **Git branch, tag, or
+   commit**. Choose **Docker Compose** as the build strategy. Set the optional
+   context directory, Compose file, public service and container port. For example:
+
+   ```json
+   {
+     "strategy": "compose",
+     "context_dir": "apps/tasks",
+     "compose_file": "deploy/compose.yaml",
+     "public_component": "web",
+     "container_port": 8080
+   }
+   ```
+
+   The Compose file path is relative to the context directory. Each `build.context`
+   is relative to the Compose file's directory and must stay inside the checkout.
+   Its Dockerfile path is relative to that build context.
+2. Save referenced values in Runtime configuration. For private HTTPS Git, use the
+   existing [source grant and explicit secret version](hosting-git-resources.md#request-a-private-https-git-build).
+   Saving configuration does not fetch source or change a running stack.
+3. Request the existing public or private Git build. Wait for a succeeded build
+   with its resolved commit, tree digest and prepared Compose result. An identical
+   retry retains the frozen source receipt; a new build request may resolve a
+   moving branch again.
+4. Select that exact successful build ID. Review its stack, runtime generation,
+   ports and readiness, acknowledge interruption, then choose **Deploy selected
+   build**. The existing `/api/v1/resources/{id}/deployments/from-build` route
+   selects persisted evidence. Configure the managed route after deployment.
+5. To deploy changed Git source, prepare a new build and review its exact result.
+   A failed fetch, missing file or failed build leaves the serving stack and its
+   data untouched. Named volumes retain their identities across redeployment;
+   changing a volume name does not delete the old volume.
+
+A Compose file can mix registry images with local Dockerfile builds. Build
+accepts a context string or a mapping with `context`, `dockerfile` and `target`.
+An image-only service that names a built service's image uses that same local
+artifact. Multiple build owners for one declared image are rejected. Local images
+must remain on the recorded daemon; a missing artifact never falls back to a
+registry pull.
+
+Component logs, Stop and applicable backups use the deployed or stopped stack's
+recorded proof after a desired-source edit or failed newer build. Start and a new
+deployment require current resource and source generations. After changing the
+source, prepare a new eligible build before Start; a denied stale Start preserves
+the stopped receipt and volumes.
+
+This profile does not support build arguments, build secrets, SSH credential
+delivery, remote build contexts, repository file bind mounts, unrestricted raw
+Compose or cross-daemon artifact transfer. Other unsupported fields in the
+managed profile remain rejected. Private Git access uses source grants; it does
+not supply private service-image registry credentials through build deployment.
+
+The sequence follows pinned PHP
+[`ApplicationDeploymentJob::deploy_docker_compose_buildpack`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L751):
+clone the selected revision, load and validate the Compose file, prepare service
+images, then start services. Its
+[`Application::loadComposeFile`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L2250)
+restores source settings on read failure. NeroCD retains that preparation-before-
+replacement order through its existing fenced build receipts and managed stack
+admission.
+
 ## Component runtime logs
 
 For a settled healthy stack, select a Compose component in Runtime logs, then
