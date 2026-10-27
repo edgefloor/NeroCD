@@ -197,7 +197,7 @@ func (s *Service) RunnerHostingBuildComplete(ctx context.Context, in hostingbuil
 	if err != nil {
 		return hostingbuildprotocol.PhaseResponse{}, err
 	}
-	b, err := c.CompleteHostingBuild(ctx, p.RunnerID, in.Authority, in.ReceiptID, in.ExpectedRevision, store.HostingBuildCompletion{State: in.Completion.State, FailureCode: in.Completion.FailureCode, Artifact: in.Completion.Artifact})
+	b, err := c.CompleteHostingBuild(ctx, p.RunnerID, in.Authority, in.ReceiptID, in.ExpectedRevision, store.HostingBuildCompletion{State: in.Completion.State, FailureCode: in.Completion.FailureCode, Artifact: in.Completion.Artifact, ComposeResult: in.Completion.ComposeResult})
 	if err != nil {
 		return hostingbuildprotocol.PhaseResponse{}, err
 	}

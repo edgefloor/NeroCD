@@ -39,7 +39,7 @@ SELECT id,request_hash FROM hosting_builds WHERE resource_id=$1 AND idempotency_
 -- name: InsertHostingBuild :exec
 INSERT INTO hosting_builds(id,resource_id,project_id,source_id,source_generation,idempotency_key,request_hash,snapshot,snapshot_hash,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 -- name: GetHostingBuildDocument :one
-SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1;
+SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'compose_result',c.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id LEFT JOIN hosting_build_compose_results c ON c.build_id=b.id WHERE b.id=$1;
 -- name: LockHostingBuildState :one
 SELECT revision FROM hosting_builds WHERE id=$1 FOR UPDATE;
 -- name: SetHostingBuildState :execrows
@@ -96,3 +96,6 @@ WHERE id=sqlc.arg(lease_id) AND run_id=sqlc.arg(run_id) AND runner_id=sqlc.arg(r
 UPDATE task_runs AS r SET status='canceled',finished_at=clock_timestamp() WHERE r.id=$1 AND r.status='queued' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE run_id=$1);
 -- name: ExpireHostingBuildForRun :exec
 UPDATE hosting_builds SET state='cleanup_required',failure_code='authority_lost',revision=revision+1,updated_at=clock_timestamp() WHERE run_id=$1 AND state IN('queued','sourcing','building');
+
+-- name: InsertHostingBuildComposeResult :exec
+INSERT INTO hosting_build_compose_results(build_id,body,body_hash) VALUES($1,$2,$3);

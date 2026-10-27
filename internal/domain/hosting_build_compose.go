@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Git Compose versions gate prepared results and runner execution separately from pasted stacks.
 const (
 	HostingGitComposeBuildCapability = "hosting_git_compose_build_v1"
 	HostingGitComposeVersion         = "git-compose.v1"
@@ -48,7 +49,7 @@ func HostingComposeBuildID(parentBuildID, component string) string {
 // ParseHostingGitCompose permits builds only within this explicit source profile.
 func ParseHostingGitCompose(source HostingStackSource, settings HostingBuildSettings) (HostingStackDefinition, error) {
 	if settings.Strategy != "compose" || ValidateHostingBuildSettings(settings) != nil || source.PublicComponent != settings.PublicComponent || source.ContainerPort != settings.ContainerPort {
-		return HostingStackDefinition{}, errors.New("Git Compose settings changed")
+		return HostingStackDefinition{}, errors.New("git Compose settings changed")
 	}
 	definition, err := parseHostingStack(source, &settings)
 	if err != nil {
@@ -91,7 +92,7 @@ func parseHostingStackBuild(node *yaml.Node, settings HostingBuildSettings) (*Ho
 	}
 	resolved := path.Clean(path.Join(settings.ContextDir, path.Dir(settings.ComposeFile), context))
 	if resolved == ".." || strings.HasPrefix(resolved, "../") || resolved != "." && !fs.ValidPath(resolved) {
-		return nil, errors.New("Git Compose context escapes checkout")
+		return nil, errors.New("git Compose context escapes checkout")
 	}
 	if resolved == "." {
 		resolved = ""
@@ -147,11 +148,11 @@ func ValidateHostingBuildComposeResult(result HostingBuildComposeResult, build H
 	expected := result
 	expected.Hash = ""
 	if build.SourceReceipt == nil || result.SourceReceiptHash != HostingDocumentHash(build.SourceReceipt) || result.Hash != HostingDocumentHash(expected) {
-		return errors.New("Git Compose result binding changed")
+		return errors.New("git Compose result binding changed")
 	}
 	definition, err := ParseHostingGitCompose(result.Source, build.Snapshot.Source.Settings)
 	if err != nil || HostingDocumentHash(definition) != HostingDocumentHash(result.Definition) {
-		return errors.New("Git Compose definition changed")
+		return errors.New("git Compose definition changed")
 	}
 	count := 0
 	for _, service := range definition.Services {
@@ -159,17 +160,17 @@ func ValidateHostingBuildComposeResult(result HostingBuildComposeResult, build H
 			continue
 		}
 		if count >= len(result.Services) || result.Services[count].Component != service.Name {
-			return errors.New("Git Compose build coverage changed")
+			return errors.New("git Compose build coverage changed")
 		}
 		child := build
 		child.ID = HostingComposeBuildID(build.ID, service.Name)
 		if ValidateHostingBuildArtifact(result.Services[count].Artifact, child) != nil {
-			return errors.New("Git Compose artifact changed")
+			return errors.New("git Compose artifact changed")
 		}
 		count++
 	}
 	if count != len(result.Services) {
-		return errors.New("Git Compose artifact set changed")
+		return errors.New("git Compose artifact set changed")
 	}
 	return nil
 }

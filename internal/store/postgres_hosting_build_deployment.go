@@ -95,7 +95,7 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.HostingOperation{}, false, err
 	}
-	b, r, err := resolveCurrentHostingBuildArtifactTx(ctx, tx, actorID, resourceID, in.BuildID)
+	b, r, err := resolveCurrentHostingBuildResultTx(ctx, tx, actorID, resourceID, in.BuildID)
 	if err != nil {
 		return domain.HostingOperation{}, false, err
 	}
@@ -110,12 +110,29 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 	if storageRef != (domain.HostingStorageRef{}) {
 		return domain.HostingOperation{}, false, ErrConflict
 	}
-	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion, LocalBuild: domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}}
+	snap := domain.HostingSnapshot{ResourceID: resourceID, ResourceGeneration: r.Generation, BindingID: r.BindingID, DestinationID: r.DestinationID, RuntimeNamespace: r.RuntimeNamespace, ServerID: r.ServerID, RunnerID: r.RunnerID, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness, PolicyVersion: domain.HostingLocalBuildPolicyVersion}
+	if b.ComposeResult != nil {
+		if in.ManagedStack == nil || !in.ManagedStack.AcknowledgeInterruption || in.ContainerPort != b.ComposeResult.Source.ContainerPort {
+			return domain.HostingOperation{}, false, ErrConflict
+		}
+		snap.GitCompose = domain.HostingGitComposeRef{BuildID: b.ID, SourceGeneration: in.ExpectedSourceGeneration, ResultHash: b.ComposeResult.Hash}
+		snap.Stack = domain.HostingStackRef{Generation: r.Generation, Hash: domain.HostingDocumentHash(b.ComposeResult.Definition)}
+		snap.PolicyVersion = domain.HostingStackPolicyVersion
+		if _, err = stackStartReference(ctx, tx, snap.BindingID, in.ManagedStack.ExpectedStoppedOperationID); err != nil {
+			return domain.HostingOperation{}, false, err
+		}
+		snap.StackStoppedOperationID = in.ManagedStack.ExpectedStoppedOperationID
+	} else {
+		if in.ManagedStack != nil {
+			return domain.HostingOperation{}, false, ErrConflict
+		}
+		snap.LocalBuild = domain.HostingLocalBuildSource{SourceGeneration: in.ExpectedSourceGeneration, ArtifactHash: domain.HostingDocumentHash(*b.Artifact), Artifact: *b.Artifact}
+	}
 	snap.RuntimeConfiguration, err = lockHostingRuntimeConfiguration(ctx, tx, projectID, resourceID, in.ExpectedRuntimeConfigurationGeneration)
 	if err != nil {
 		return domain.HostingOperation{}, false, err
 	}
-	if snap.RuntimeConfiguration.Generation > 0 {
+	if snap.RuntimeConfiguration.Generation > 0 && snap.Stack == (domain.HostingStackRef{}) {
 		snap.PolicyVersion = domain.HostingLocalBuildRuntimePolicyVersion
 	}
 	if err = requireHostingRuntimeAgent(ctx, tx, snap); err != nil {
@@ -177,9 +194,12 @@ func (s *PostgresStore) requestHostingBuildDeploymentTx(ctx context.Context, tx 
 	if _, err = sqlcgen.New(tx).CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: contents, BodyHash: domain.HostingDocumentHash(snap)}); err != nil {
 		return domain.HostingOperation{}, false, err
 	}
-	if _, err = sqlcgen.New(tx).CreateHostingOperationBuildArtifact(ctx, sqlcgen.CreateHostingOperationBuildArtifactParams{OperationID: id, BuildID: b.ID, ArtifactHash: snap.LocalBuild.ArtifactHash}); err != nil {
-		return domain.HostingOperation{}, false, hostingError(err)
+	if b.Artifact != nil {
+		if _, err = sqlcgen.New(tx).CreateHostingOperationBuildArtifact(ctx, sqlcgen.CreateHostingOperationBuildArtifactParams{OperationID: id, BuildID: b.ID, ArtifactHash: snap.LocalBuild.ArtifactHash}); err != nil {
+			return domain.HostingOperation{}, false, hostingError(err)
+		}
 	}
+
 	audit.ActorID, audit.Action, audit.TargetID = actorID, "hosting.build_deployment_requested", id
 	audit.Metadata = map[string]any{"project_id": projectID, "resource_id": resourceID, "binding_id": snap.BindingID, "build_id": b.ID, "artifact_hash": snap.LocalBuild.ArtifactHash}
 	if err = createAuditWithQueries(ctx, s.queries.WithTx(tx), audit); err != nil {

@@ -222,7 +222,7 @@ func (q *Queries) ExpireHostingBuildForRun(ctx context.Context, runID *string) e
 }
 
 const getHostingBuildDocument = `-- name: GetHostingBuildDocument :one
-SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id WHERE b.id=$1
+SELECT jsonb_build_object('id',b.id,'project_id',b.project_id,'resource_id',b.resource_id,'state',b.state,'run_id',coalesce(b.run_id,''),'daemon_id',b.daemon_id,'revision',b.revision,'created_by',b.created_by,'created_at',b.created_at,'updated_at',b.updated_at,'snapshot',b.snapshot,'source_receipt',sr.body,'artifact',a.body,'compose_result',c.body,'failure_code',b.failure_code) FROM hosting_builds b LEFT JOIN hosting_build_receipts sr ON sr.build_id=b.id AND sr.phase='source' LEFT JOIN hosting_build_artifacts a ON a.build_id=b.id LEFT JOIN hosting_build_compose_results c ON c.build_id=b.id WHERE b.id=$1
 `
 
 func (q *Queries) GetHostingBuildDocument(ctx context.Context, id string) (json.RawMessage, error) {
@@ -439,6 +439,21 @@ type InsertHostingBuildArtifactParams struct {
 
 func (q *Queries) InsertHostingBuildArtifact(ctx context.Context, arg InsertHostingBuildArtifactParams) error {
 	_, err := q.db.Exec(ctx, insertHostingBuildArtifact, arg.BuildID, arg.Body, arg.BodyHash)
+	return err
+}
+
+const insertHostingBuildComposeResult = `-- name: InsertHostingBuildComposeResult :exec
+INSERT INTO hosting_build_compose_results(build_id,body,body_hash) VALUES($1,$2,$3)
+`
+
+type InsertHostingBuildComposeResultParams struct {
+	BuildID  string          `json:"build_id"`
+	Body     json.RawMessage `json:"body"`
+	BodyHash string          `json:"body_hash"`
+}
+
+func (q *Queries) InsertHostingBuildComposeResult(ctx context.Context, arg InsertHostingBuildComposeResultParams) error {
+	_, err := q.db.Exec(ctx, insertHostingBuildComposeResult, arg.BuildID, arg.Body, arg.BodyHash)
 	return err
 }
 

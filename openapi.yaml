@@ -12017,6 +12017,8 @@ components:
           "type": "string"
         "artifact":
           "$ref": "#/components/schemas/HostingBuildArtifact"
+        "compose_result":
+          "$ref": "#/components/schemas/HostingBuildComposeResult"
     "HostingBuildReceiptAcknowledgment":
       "type": "object"
       "additionalProperties": false
@@ -12071,6 +12073,8 @@ components:
           "$ref": "#/components/schemas/HostingBuildSourceReceipt"
         "artifact":
           "$ref": "#/components/schemas/HostingBuildArtifact"
+        "compose_result":
+          "$ref": "#/components/schemas/HostingBuildComposeResult"
     "HostingBuildPhaseResponse":
       "type": "object"
       "additionalProperties": false
@@ -12267,6 +12271,8 @@ components:
           "$ref": "#/components/schemas/PublicHostingBuildSourceReceipt"
         "artifact":
           "$ref": "#/components/schemas/PublicHostingBuildArtifact"
+        "compose_result":
+          "$ref": "#/components/schemas/PublicHostingBuildComposeResult"
     "HostingBuildResponse":
       "type": "object"
       "additionalProperties": false
@@ -13965,6 +13971,7 @@ components:
       additionalProperties: false
       required: [build_id, expected_source_generation, expected_generation, idempotency_key, container_port, readiness]
       properties:
+        managed_stack: {$ref: "#/components/schemas/HostingStackDeploymentInput"}
         expected_runtime_configuration_generation:
           type: integer
           format: int64
@@ -14700,6 +14707,7 @@ components:
         - policy_version
       properties:
         registry_credential: {$ref: "#/components/schemas/HostingRegistryCredentialRef"}
+        git_compose: {$ref: "#/components/schemas/HostingGitComposeRef"}
         stack_stopped_operation_id: {"type": "string"}
         stack: {$ref: "#/components/schemas/HostingStackRef"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabaseRef"}
@@ -21993,6 +22001,54 @@ components:
         }
       }
 
+    HostingStackSource: {$ref: "#/components/schemas/ComposeResourceSource/properties/compose"}
+    HostingStackBuild:
+      type: object
+      additionalProperties: false
+      required: [context, dockerfile]
+      properties:
+        context: {type: string}
+        dockerfile: {type: string}
+        target: {type: string}
+    HostingGitComposeRef:
+      type: object
+      additionalProperties: false
+      required: [build_id, source_generation, result_hash]
+      properties:
+        build_id: {type: string}
+        source_generation: {type: integer, format: int64}
+        result_hash: {type: string}
+    HostingBuildComposeResult:
+      type: object
+      required: [source_receipt_hash, source, definition, services, hash]
+      properties:
+        source_receipt_hash: {type: string}
+        source: {$ref: "#/components/schemas/HostingStackSource"}
+        definition: {$ref: "#/components/schemas/HostingStackDefinition"}
+        services:
+          type: array
+          items:
+            type: object
+            required: [component, artifact]
+            properties:
+              component: {type: string}
+              artifact: {$ref: "#/components/schemas/HostingBuildArtifact"}
+        hash: {type: string}
+    PublicHostingBuildComposeResult:
+      type: object
+      required: [source, definition, services, hash]
+      properties:
+        source: {$ref: "#/components/schemas/HostingStackSource"}
+        definition: {$ref: "#/components/schemas/HostingStackDefinition"}
+        services:
+          type: array
+          items:
+            type: object
+            required: [component, artifact]
+            properties:
+              component: {type: string}
+              artifact: {$ref: "#/components/schemas/PublicHostingBuildArtifact"}
+        hash: {type: string}
     HostingStackService:
       {
         "type": "object",
@@ -22002,6 +22058,7 @@ components:
           "image"
         ],
         "properties": {
+          "build": {"$ref": "#/components/schemas/HostingStackBuild"},
           "name": {
             "type": "string"
           },
@@ -22062,7 +22119,7 @@ components:
           "version": {
             "type": "string",
             "enum": [
-              "managed-compose.v1"
+              "managed-compose.v1", "git-compose.v1"
             ]
           },
           "original_hash": {

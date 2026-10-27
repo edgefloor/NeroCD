@@ -306,6 +306,12 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	if _, err = q.LockHostingBuildEnrollment(ctx, target.RunnerID); err != nil {
 		return target, "", ErrConflict
 	}
+	if src.Settings.Strategy == "compose" {
+		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingGitComposeBuildCapability})
+		if e != nil || !capable {
+			return target, "", ErrConflict
+		}
+	}
 	return target, daemon, nil
 }
 
@@ -406,6 +412,9 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		return domain.HostingBuild{}, err
 	}
 	if !exactBuildResourceSource(resource.Source, src) || resource.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration {
+		return domain.HostingBuild{}, ErrConflict
+	}
+	if src.Settings.Strategy == "compose" && !policy.GitCompose {
 		return domain.HostingBuild{}, ErrConflict
 	}
 	if src.Settings.Strategy == "railpack" && policy.Limits.MemoryBytes < 512<<20 {
@@ -633,6 +642,13 @@ func (s *PostgresStore) ResolveCurrentHostingBuildArtifact(ctx context.Context, 
 // resolveCurrentHostingBuildArtifactTx keeps artifact selection in the admission
 // transaction. Callers retain the destination/resource locks through commit.
 func resolveCurrentHostingBuildArtifactTx(ctx context.Context, tx pgx.Tx, actor, resourceID, id string) (domain.HostingBuild, sqlcgen.LockHostingResourceTargetRow, error) {
+	b, r, err := resolveCurrentHostingBuildResultTx(ctx, tx, actor, resourceID, id)
+	if err == nil && b.Artifact == nil {
+		return b, r, ErrConflict
+	}
+	return b, r, err
+}
+func resolveCurrentHostingBuildResultTx(ctx context.Context, tx pgx.Tx, actor, resourceID, id string) (domain.HostingBuild, sqlcgen.LockHostingResourceTargetRow, error) {
 	r, err := lockBuildResourceDestination(ctx, tx, resourceID)
 	if err != nil {
 		return domain.HostingBuild{}, r, err
@@ -654,13 +670,18 @@ func resolveCurrentHostingBuildArtifactTx(ctx context.Context, tx pgx.Tx, actor,
 	if err != nil {
 		return fail(err)
 	}
-	if b.ResourceID != resourceID || b.ProjectID != r.ProjectID || b.State != "succeeded" || b.Artifact == nil || b.Snapshot.ResourceGeneration != r.Generation || domain.HostingDocumentHash(src) != domain.HostingDocumentHash(b.Snapshot.Source) {
+	if b.ResourceID != resourceID || b.ProjectID != r.ProjectID || b.State != "succeeded" || (b.Artifact == nil) == (b.ComposeResult == nil) || b.Snapshot.ResourceGeneration != r.Generation || domain.HostingDocumentHash(src) != domain.HostingDocumentHash(b.Snapshot.Source) {
 		return fail(ErrConflict)
 	}
 	if err = checkBuildPlacement(ctx, tx, b, true); err != nil {
 		return fail(err)
 	}
-	if err = domain.ValidateHostingBuildArtifact(*b.Artifact, b); err != nil {
+	if b.ComposeResult != nil {
+		err = domain.ValidateHostingBuildComposeResult(*b.ComposeResult, b)
+	} else {
+		err = domain.ValidateHostingBuildArtifact(*b.Artifact, b)
+	}
+	if err != nil {
 		return fail(ErrConflict)
 	}
 	if err = authorizeBuildActor(ctx, tx, actor, r.ProjectID, "maintainer"); err != nil {

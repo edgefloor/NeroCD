@@ -145,7 +145,7 @@ func CompileHostingStackPlan(snapshot HostingSnapshot, release HostingRelease, p
 		return zero, errors.New("invalid stack image set")
 	}
 	if (stack.Definition.Version == HostingGitComposeVersion) != (snapshot.GitCompose != (HostingGitComposeRef{})) {
-		return zero, errors.New("Git stack result reference required")
+		return zero, errors.New("git stack result reference required")
 	}
 	if stack.NetworkName != HostingStackObjectID(snapshot.BindingID, "network", "private") || len(stack.Volumes) != len(stack.Definition.Volumes) || len(stack.Volumes) > 32 {
 		return zero, errors.New("stack ownership changed")

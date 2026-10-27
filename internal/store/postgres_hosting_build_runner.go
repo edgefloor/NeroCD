@@ -197,10 +197,10 @@ func (s *PostgresStore) CompleteHostingBuild(ctx context.Context, runner string,
 		return domain.HostingBuild{}, ErrConflict
 	}
 	if c.State == "succeeded" {
-		if c.Artifact == nil || c.FailureCode != "" {
+		if (c.Artifact == nil) == (c.ComposeResult == nil) || c.FailureCode != "" {
 			return domain.HostingBuild{}, ErrConflict
 		}
-	} else if c.Artifact != nil || !domain.ValidHostingBuildFailure(c.FailureCode) {
+	} else if c.Artifact != nil || c.ComposeResult != nil || !domain.ValidHostingBuildFailure(c.FailureCode) {
 		return domain.HostingBuild{}, ErrConflict
 	}
 	return s.buildRunnerTransaction(ctx, runner, a, c.State == "succeeded", func(tx pgx.Tx, b domain.HostingBuild) (domain.HostingBuild, error) {
@@ -216,14 +216,29 @@ func (s *PostgresStore) CompleteHostingBuild(ctx context.Context, runner string,
 		if b.Revision != revision || b.State == "succeeded" || b.State == "failed" || b.State == "canceled" {
 			return b, ErrConflict
 		}
-		if c.State == "succeeded" && (b.State != "building" || domain.ValidateHostingBuildArtifact(*c.Artifact, b) != nil) {
-			return b, ErrConflict
+		if c.State == "succeeded" {
+			if b.State != "building" {
+				return b, ErrConflict
+			}
+			if b.Snapshot.Source.Settings.Strategy == "compose" {
+				if !b.Snapshot.Policy.GitCompose || c.ComposeResult == nil || c.Artifact != nil || domain.ValidateHostingBuildComposeResult(*c.ComposeResult, b) != nil {
+					return b, ErrConflict
+				}
+			} else if c.Artifact == nil || c.ComposeResult != nil || domain.ValidateHostingBuildArtifact(*c.Artifact, b) != nil {
+				return b, ErrConflict
+			}
 		}
+
 		if err = freshBuildAuthority(ctx, tx, runner, a, b); err != nil {
 			return b, err
 		}
 		if c.Artifact != nil {
 			if err = q.InsertHostingBuildArtifact(ctx, sqlcgen.InsertHostingBuildArtifactParams{BuildID: b.ID, Body: buildJSON(c.Artifact), BodyHash: domain.HostingDocumentHash(c.Artifact)}); err != nil {
+				return b, err
+			}
+		}
+		if c.ComposeResult != nil {
+			if err = q.InsertHostingBuildComposeResult(ctx, sqlcgen.InsertHostingBuildComposeResultParams{BuildID: b.ID, Body: buildJSON(c.ComposeResult), BodyHash: c.ComposeResult.Hash}); err != nil {
 				return b, err
 			}
 		}

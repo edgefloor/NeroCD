@@ -353,6 +353,12 @@ type HostingBuildArtifact struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+type HostingBuildComposeResult struct {
+	BuildID  string          `json:"build_id"`
+	Body     json.RawMessage `json:"body"`
+	BodyHash string          `json:"body_hash"`
+}
+
 type HostingBuildLogReceipt struct {
 	BuildID           string          `json:"build_id"`
 	RunID             string          `json:"run_id"`

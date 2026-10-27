@@ -15,16 +15,41 @@ func loadHostingStackSource(ctx context.Context, db sqlcgen.DBTX, op *domain.Hos
 	if op.Snapshot.Stack == (domain.HostingStackRef{}) {
 		return nil
 	}
-	row, err := sqlcgen.New(db).GetHostingComposeSourceVersion(ctx, sqlcgen.GetHostingComposeSourceVersionParams{ResourceID: op.ResourceID, Generation: op.Snapshot.Stack.Generation})
+	definition, result, err := hostingSelectedStackDefinition(ctx, db, op.ResourceID, op.ProjectID, op.Snapshot)
 	if err != nil {
-		return hostingError(err)
+		return err
 	}
-	var source domain.HostingStackDefinition
-	if json.Unmarshal(row.Definition, &source) != nil || row.DefinitionHash != op.Snapshot.Stack.Hash || domain.HostingDocumentHash(source) != row.DefinitionHash {
-		return ErrConflict
-	}
-	op.StackSource = &source
+	op.StackSource = &definition
+	op.ComposeResult = result
 	return nil
+}
+
+// hostingSelectedStackDefinition verifies historical selected source proof. It is
+// not a grant to execute: callers must retain their current actor/lease/placement
+// gates. Git configuration is never converted into a pasted Compose resource.
+func hostingSelectedStackDefinition(ctx context.Context, db sqlcgen.DBTX, resource, project string, snapshot domain.HostingSnapshot) (domain.HostingStackDefinition, *domain.HostingBuildComposeResult, error) {
+	var definition domain.HostingStackDefinition
+	if snapshot.ResourceID != resource || snapshot.Stack == (domain.HostingStackRef{}) {
+		return definition, nil, ErrConflict
+	}
+	if snapshot.GitCompose != (domain.HostingGitComposeRef{}) {
+		b, err := readBuild(ctx, sqlcgen.New(db), snapshot.GitCompose.BuildID)
+		if err != nil {
+			return definition, nil, err
+		}
+		if b.State != "succeeded" || b.ResourceID != resource || b.ProjectID != project || b.ComposeResult == nil || domain.ValidateHostingBuildComposeResult(*b.ComposeResult, b) != nil || b.ComposeResult.Hash != snapshot.GitCompose.ResultHash || b.Snapshot.Source.Generation != snapshot.GitCompose.SourceGeneration || domain.HostingDocumentHash(b.ComposeResult.Definition) != snapshot.Stack.Hash || b.Snapshot.ResourceGeneration != snapshot.ResourceGeneration || b.Snapshot.RunnerID != snapshot.RunnerID || b.Snapshot.BindingID != snapshot.BindingID || b.Snapshot.DestinationID != snapshot.DestinationID || b.Snapshot.ServerID != snapshot.ServerID {
+			return definition, nil, ErrConflict
+		}
+		return b.ComposeResult.Definition, b.ComposeResult, nil
+	}
+	row, err := sqlcgen.New(db).GetHostingComposeSourceVersion(ctx, sqlcgen.GetHostingComposeSourceVersionParams{ResourceID: resource, Generation: snapshot.Stack.Generation})
+	if err != nil {
+		return definition, nil, hostingError(err)
+	}
+	if json.Unmarshal(row.Definition, &definition) != nil || row.DefinitionHash != snapshot.Stack.Hash || domain.HostingDocumentHash(definition) != row.DefinitionHash {
+		return definition, nil, ErrConflict
+	}
+	return definition, nil, nil
 }
 
 func requireHostingStackAgent(ctx context.Context, tx pgx.Tx, snapshot domain.HostingSnapshot) error {
@@ -36,7 +61,11 @@ func requireHostingStackAgent(ctx context.Context, tx pgx.Tx, snapshot domain.Ho
 			return err
 		}
 	}
-	for _, capability := range []string{domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability} {
+	capabilities := []string{domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability}
+	if snapshot.GitCompose != (domain.HostingGitComposeRef{}) {
+		capabilities = append(capabilities, domain.HostingGitComposeBuildCapability)
+	}
+	for _, capability := range capabilities {
 		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: snapshot.RunnerID, Capability: capability})
 		if err != nil {
 			return err
@@ -51,6 +80,16 @@ func requireHostingStackAgent(ctx context.Context, tx pgx.Tx, snapshot domain.Ho
 func hostingFreshStackGate(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
 	if op.Snapshot.Stack == (domain.HostingStackRef{}) {
 		return nil
+	}
+	if op.Snapshot.GitCompose != (domain.HostingGitComposeRef{}) {
+		b, r, err := resolveCurrentHostingBuildResultTx(ctx, tx, op.CreatedBy, op.ResourceID, op.Snapshot.GitCompose.BuildID)
+		if err != nil {
+			return err
+		}
+		if b.ComposeResult == nil || r.Generation != op.Snapshot.ResourceGeneration || b.ComposeResult.Hash != op.Snapshot.GitCompose.ResultHash || b.Snapshot.Source.Generation != op.Snapshot.GitCompose.SourceGeneration || domain.HostingDocumentHash(b.ComposeResult.Definition) != op.Snapshot.Stack.Hash {
+			return ErrConflict
+		}
+		return requireHostingStackAgent(ctx, tx, op.Snapshot)
 	}
 	row, err := sqlcgen.New(tx).LockHostingRuntimeResource(ctx, op.ResourceID)
 	if err != nil {
@@ -80,6 +119,19 @@ func stackVolumeFromSQL(row sqlcgen.HostingComposeVolume) domain.HostingStackVol
 func compileHostingStackPlan(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, in domain.HostingPreparedRequest, previous *domain.HostingHealthy) (domain.HostingApplyPlan, error) {
 	if op.StackSource == nil || domain.ValidateHostingStackImages(*op.StackSource, in.Release.DaemonID, in.StackImages) != nil || in.Release.Stack.Hash != domain.HostingDocumentHash(in.StackImages) {
 		return domain.HostingApplyPlan{}, ErrConflict
+	}
+	if op.ComposeResult != nil {
+		for _, image := range in.StackImages {
+			artifact, local := domain.HostingComposeBuildArtifact(*op.ComposeResult, image.Component)
+			if local {
+				expected, err := domain.NewHostingLocalBuildRelease(artifact)
+				if err != nil || image.Release != expected {
+					return domain.HostingApplyPlan{}, ErrConflict
+				}
+			} else if image.Release.LocalBuild != (domain.HostingBuildArtifact{}) {
+				return domain.HostingApplyPlan{}, ErrConflict
+			}
+		}
 	}
 	stack := domain.HostingStackPlan{Definition: *op.StackSource, Images: in.StackImages, NetworkName: domain.HostingStackObjectID(op.BindingID, "network", "private"), Volumes: []domain.HostingStackVolume{}}
 	for _, name := range op.StackSource.Volumes {
