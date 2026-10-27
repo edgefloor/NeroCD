@@ -408,7 +408,8 @@ try {
   if(volumeResult.volume!=="vikunja-data"||volumeResult.source_deployed_operation_id!==startedOperation||volumeBody?.expected_deployed_operation_id!==startedOperation||volumeBody?.acknowledge_interruption!==true||volumeBody?.remote_target)throw Error("volume backup identity changed");
   safe.browser_compose_volume_backup_admission=true;
   await report("volume_backed_up", volumeResult.id);
-  await state("volume_recheck");
+  const failedVolumeBackup = await state("volume_recheck");
+  if (!failedVolumeBackup.id || failedVolumeBackup.id === volumeResult.id) throw Error("failed volume backup identity missing");
   await checkApplication("compose-after-volume-backup");
   await volumeBackups.getByRole("button",{name:"Refresh Compose backup evidence and history",exact:true}).click();
   await volumeBackups.getByRole("button",{name:`View volume backup ${volumeResult.id}`,exact:true}).click();
@@ -417,6 +418,16 @@ try {
   await expect(volumeBackups).toContainText("Writer resumption: resumed");
   safe.browser_compose_volume_backup_persistence_new_writes=true;
   safe.browser_compose_volume_backup_history=true;
+  step = "inspect_failed_volume_backup_compensation";
+  await volumeBackups.getByRole("button", {name:`View volume backup ${failedVolumeBackup.id}`,exact:true}).click();
+  await expect(volumeBackups).toContainText("Backup state: failed");
+  await expect(volumeBackups).toContainText("Archive outcome: failed");
+  await expect(volumeBackups).toContainText("Writer resumption: resumed");
+  await expect(volumeBackups).toContainText("No local archive artifact is confirmed.");
+  await expect(volumeBackups).not.toContainText("Local artifact:");
+  safe.browser_compose_volume_backup_failed_archive_compensated=true;
+  await volumeBackups.getByRole("button", {name:`View volume backup ${volumeResult.id}`,exact:true}).click();
+  await expect(volumeBackups).toContainText("Backup state: succeeded");
   await report("volume_checked",String(taskID));
   const backupState = await state("database_backup");
   await hosting(page);
