@@ -398,6 +398,9 @@ try {
     await app.getByPlaceholder("Password", { exact: true }).fill(applicationPassword);
     await app.getByPlaceholder("Confirm password", { exact: true }).fill(applicationPassword);
     await app.getByRole("button", { name: "OK", exact: true }).click();
+    await expect(app.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+    await app.getByPlaceholder("Password", { exact: true }).fill(applicationPassword);
+    await app.getByRole("button", { name: "Sign in", exact: true }).click();
     await app.getByRole("button", { name: "Start budgeting", exact: true }).click();
     await app.getByRole("button", { name: "Close", exact: true }).click();
     await app.getByRole("button", { name: "My Finances", exact: true }).click();
