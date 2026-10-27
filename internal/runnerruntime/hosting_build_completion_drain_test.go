@@ -23,7 +23,7 @@ func TestBuildDispatchCompletionJoinsAuthorityWorkersBeforeACK(t *testing.T) {
 			e, client, a, _ := buildFixture(t)
 			claim := buildDispatchClaim(a)
 			claim.Lease.ExpiresAt = time.Now().Add(3 * time.Second)
-			entered, committed, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			entered, exited := make(chan struct{}), make(chan struct{})
 			var enterOnce, exitOnce sync.Once
 			var renewals atomic.Int32
 			var canceledRequest atomic.Bool
@@ -36,17 +36,24 @@ func TestBuildDispatchCompletionJoinsAuthorityWorkersBeforeACK(t *testing.T) {
 				}
 			})
 			e.client = completionFixture{buildFixtureClient: client, complete: func(ctx context.Context, in hostingbuildprotocol.CompleteRequest) (hostingbuildprotocol.PhaseResponse, error) {
-				if len(e.journal.Snapshot().Build) < 1 {
-					t.Error("completion preceded durable result")
+				snapshot := e.journal.Snapshot()
+				durable := false
+				for _, entry := range snapshot.Build {
+					durable = durable || entry.Phase == "result" && entry.Result != nil && domain.HostingDocumentHash(entry.Result) == domain.HostingDocumentHash(in)
+				}
+				if !durable || len(snapshot.BuildLogs) != 0 {
+					t.Error("completion preceded exact durable result or log settlement")
 				}
 				response, err := client.BuildComplete(ctx, in)
-				close(committed)
-				<-exited
-				if canceledRequest.Load() {
+				// HTTP request cancellation reaches the peer asynchronously after
+				// the local worker has joined. Do not race its observation against
+				// a second terminal signal; acknowledge only after peer cleanup.
+				select {
+				case <-exited:
 					return response, err
+				case <-ctx.Done():
+					return hostingbuildprotocol.PhaseResponse{}, ctx.Err()
 				}
-				<-ctx.Done()
-				return hostingbuildprotocol.PhaseResponse{}, ctx.Err()
 			}}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				lease := claim.Lease
@@ -76,14 +83,8 @@ func TestBuildDispatchCompletionJoinsAuthorityWorkersBeforeACK(t *testing.T) {
 				}
 				enterOnce.Do(func() { close(entered) })
 				defer exitOnce.Do(func() { close(exited) })
-				select {
-				case <-r.Context().Done():
-					canceledRequest.Store(true)
-					return
-				case <-committed:
-					lease.Status = domain.RunSucceeded
-					_ = json.NewEncoder(w).Encode(lease)
-				}
+				<-r.Context().Done()
+				canceledRequest.Store(true)
 			}))
 			defer server.Close()
 			poll := time.Hour
@@ -93,6 +94,9 @@ func TestBuildDispatchCompletionJoinsAuthorityWorkersBeforeACK(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 			defer cancel()
 			if err := executeBuildClaim(ctx, server.URL, "fixture", claim, "runner", poll, e, &runnerOperationalCounters{}); err != nil {
+				if len(e.journal.Snapshot().Build) == 0 {
+					t.Error("unacknowledged completion lost durable result")
+				}
 				t.Fatalf("committed build canceled its own acknowledgement: %v", err)
 			}
 			if !canceledRequest.Load() || len(e.journal.Snapshot().Build) != 0 {
