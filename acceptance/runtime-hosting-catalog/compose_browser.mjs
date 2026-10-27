@@ -300,8 +300,11 @@ try {
   const selector = logRegion.getByRole("combobox", { name: "Compose component", exact: true });
   for (const component of ["vikunja", "postgresql", "init"]) {
     await selector.selectOption(component);
+    const follow = logRegion.getByRole("button", { name: "Follow runtime logs", exact: true });
+    await follow.scrollIntoViewIfNeeded();
+    await expect(follow).toBeEnabled();
     const opened = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/runtime-log-sessions`);
-    await logRegion.getByRole("button", { name: "Follow runtime logs", exact: true }).click();
+    await follow.click();
     const session = await checkedResponse(opened, 200);
     if (session.target.component !== component || session.target.operation_id !== firstOperation || !session.target.container_name) throw Error("component target identity missing");
     await expect(logRegion).toContainText(session.id);
