@@ -63,7 +63,7 @@ func catalogRuntimeServer(t *testing.T, pg *store.PostgresStore) *Server {
 	if _, err := pg.UpsertProjectMember(t.Context(), domain.ProjectMember{ID: "member_catalog_viewer", ProjectID: "proj_platform", UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
 		t.Fatal("catalog viewer membership")
 	}
-	return NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin})
+	return NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), ServerConfig{PublicOrigin: origin, StorageBackupDownload: os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind"})
 }
 
 // catalogSession starts with an empty cookie jar and submits Linkding's real

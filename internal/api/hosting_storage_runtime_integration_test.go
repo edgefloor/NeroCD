@@ -261,7 +261,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		storageRuntimeConfigureArchive(t, f, pg)
 		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, "hosting_compose_storage_archive_v1", domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability, "hosting_compose_storage_remote_v1")
+			caps = append(caps, "hosting_storage_backup_download_v1", "hosting_compose_storage_archive_v1", domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability, "hosting_compose_storage_remote_v1")
 			raw, err := os.ReadFile(f.archiveConfig)
 			if err != nil {
 				t.Fatal("Compose remote archive configuration unavailable")
@@ -416,7 +416,7 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 		command.Args = append(command.Args, "--hosting-runtime-env")
 	}
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-		command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+		command.Args = append(command.Args, "--hosting-storage-backup-download", "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		command.Args = append(command.Args, "--hosting-registry-pull", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute", "--hosting-database", "--hosting-database-network-capture", "--hosting-database-network-upgrade", "--hosting-application-database", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))

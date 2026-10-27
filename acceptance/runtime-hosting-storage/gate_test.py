@@ -1175,7 +1175,7 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
         source = Path(__file__).with_name("gate.sh").read_text()
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n", 1)[1].split("\nCOMPOSE_BROWSER_PASS", 1)[0]
         required = [key for group in re.findall(r"for key in (\[.*?\]):", validator) for key in ast.literal_eval(group)]
-        for kind in ["valid", "browser_catalog_compose_install_identical_retry", "catalog_compose_original_source", "catalog_compose_generated_runtime_refs", "catalog_compose_readiness_prefill", "browser_initial_public_compose", "browser_compose_registry_selection", "false", "numeric", "summary", "runtime", "skip"]:
+        for kind in ["valid", "browser_compose_archive_download", "browser_catalog_compose_install_identical_retry", "catalog_compose_original_source", "catalog_compose_generated_runtime_refs", "catalog_compose_readiness_prefill", "browser_initial_public_compose", "browser_compose_registry_selection", "false", "numeric", "summary", "archive_summary", "runtime", "skip"]:
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 marker = {"status":"passed", "intercepted_requests":False, **dict.fromkeys(required,True)}
@@ -1183,9 +1183,10 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
                 if kind == "false": marker["browser_compose_registry_selection"] = False
                 if kind == "numeric": marker["browser_compose_registry_selection"] = 1
                 browser = root / "browser.json"; browser.write_text(json.dumps(marker))
-                text = "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS (1s)\ncatalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start"
+                text = "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS (1s)\ncatalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start\nCompose archive native download: exact selected blob; no new archive or writer lifecycle events"
                 if kind == "summary": text = text.split("\n")[0]
-                if kind == "runtime": text = "catalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start"
+                if kind == "archive_summary": text = "\n".join(text.split("\n")[:-1])
+                if kind == "runtime": text = "catalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start\nCompose archive native download: exact selected blob; no new archive or writer lifecycle events"
                 if kind == "skip": text += "\nSKIP"
                 runtime = root / "runtime.log"; runtime.write_text(text)
                 result = subprocess.run([sys.executable,"-c",validator,str(runtime),str(browser)],capture_output=True,text=True,timeout=5)

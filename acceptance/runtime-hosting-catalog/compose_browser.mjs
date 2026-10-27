@@ -2,7 +2,8 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 const require = createRequire(resolve("web/app/package.json"));
 const { chromium, expect, request } = require("@playwright/test");
 const origin = process.env.NEROCD_CATALOG_BROWSER_ORIGIN;
@@ -586,6 +587,29 @@ try {
   safe.browser_compose_volume_backup_failed_archive_compensated=true;
   await volumeBackups.getByRole("button", {name:`View volume backup ${volumeResult.id}`,exact:true}).click();
   await expect(volumeBackups).toContainText("Backup state: succeeded");
+  step = "inspect_local_archive_download_availability";
+  const selectedBackup = await checkedResponse(Promise.resolve(await page.request.get(`/api/v1/storage-backups/${volumeResult.id}`)), 200);
+  const optionsWait = page.waitForResponse(async r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/storage-backups/${volumeResult.id}/archive-options` && await r.finished() === null);
+  await volumeBackups.getByRole("button", { name: "Refresh download availability", exact: true }).click();
+  const downloadOptions = await checkedResponse(optionsWait, 200);
+  if (downloadOptions.available !== true || downloadOptions.backup_id !== selectedBackup.id || !selectedBackup.blob || !downloadOptions.blob || ["backup_id", "destination_id", "daemon_id", "sha256", "size_bytes", "format"].some(name => downloadOptions.blob[name] !== selectedBackup.blob[name])) throw Error("local archive download identity mismatch");
+  step = "download_local_compose_archive";
+  const downloadLink = volumeBackups.getByRole("link", { name: "Download archive", exact: true });
+  await expect(downloadLink).toHaveAttribute("href", `/api/v1/storage-backups/${volumeResult.id}/archive`);
+  const privateDownload = await mkdtemp(resolve(tmpdir(), "nerocd-compose-archive-download-"));
+  try {
+    const [download] = await Promise.all([page.waitForEvent("download"), downloadLink.click()]);
+    await download.saveAs(resolve(privateDownload, "archive.tar"));
+    if (await download.failure()) throw Error("native archive download failed");
+    const bytes = await readFile(resolve(privateDownload, "archive.tar"));
+    const sha256 = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (bytes.length !== selectedBackup.blob.size_bytes || sha256 !== selectedBackup.blob.sha256) throw Error("native archive bytes differ from selected blob");
+    safe.browser_compose_archive_download = true;
+    safe.compose_archive_download_bytes = bytes.length;
+    safe.compose_archive_download_sha256 = sha256;
+  } finally {
+    await rm(privateDownload, { recursive: true });
+  }
   await report("volume_checked",String(taskID));
   step = "await_compose_remote_backup_phase";
   const remoteState = await state("volume_remote_backup");

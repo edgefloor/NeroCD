@@ -863,10 +863,30 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 		t.Fatal(err)
 	}
 	assertWriters(since)
+	backupsBeforeDownload := storageRuntimeJSON[[]domain.HostingStorageBackup](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)
+	writersBeforeDownload := map[string][]byte{}
+	for _, component := range deployed.Result.Stack.Components {
+		writersBeforeDownload[component.ContainerID] = storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Id}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")
+	}
+	downloadSince := time.Now().Format(time.RFC3339Nano)
 	f.catalogBrowser.set("volume_recheck", failedBackup.ID)
 	if f.catalogBrowser.await(t, "volume_checked") != taskID {
 		t.Fatal("application task/upload/new writes lost after volume backup compensation")
 	}
+	if !reflect.DeepEqual(backupsBeforeDownload, storageRuntimeJSON[[]domain.HostingStorageBackup](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)) {
+		t.Fatal("archive download changed backup history or created another archive")
+	}
+	for id, beforeDownload := range writersBeforeDownload {
+		if !bytes.Equal(beforeDownload, storageRuntimeDocker(t, "inspect", id, "--format", "{{.Id}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")) {
+			t.Fatal("archive download changed writer identity or state")
+		}
+		for _, action := range []string{"start", "die", "stop"} {
+			if len(bytes.TrimSpace(storageRuntimeDocker(t, "events", "--since", downloadSince, "--until", time.Now().Format(time.RFC3339Nano), "--filter", "container="+id, "--filter", "event="+action, "--format", "{{.Action}}"))) != 0 {
+				t.Fatal("archive download interrupted a component")
+			}
+		}
+	}
+	t.Log("Compose archive native download: exact selected blob; no new archive or writer lifecycle events")
 	t.Logf("Compose local archive scheduled_backup=%s failed_backup=%s stable named volume preserved after redeploy and Start", backupID, failedBackup.ID)
 }
 
