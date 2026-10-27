@@ -416,7 +416,15 @@ try {
   await backups.getByRole("combobox",{name:"Database backup component",exact:true}).selectOption("postgresql");
   const backupPending=response(page,`/api/v1/resources/${resourceID}/database-backups`);
   await backups.getByRole("button",{name:"Create logical backup",exact:true}).click();
-  const logicalBackup=await checkedResponse(backupPending,202);
+  const backupResponse=await backupPending;
+  safe.database_backup_http_status=backupResponse.status();
+  const backupRequest=backupResponse.request().postDataJSON();
+  safe.database_backup_request_matches_started_operation=backupRequest.expected_deployed_operation_id===startedOperation;
+  const logicalBackup=await backupResponse.json();
+  if(typeof logicalBackup?.code==="string"&&/^[a-z_]{1,64}$/.test(logicalBackup.code))safe.database_backup_error_code=logicalBackup.code;
+  safe.database_backup_response_resource_matches=logicalBackup.source_resource_id===resourceID;
+  safe.database_backup_response_component_matches=logicalBackup.source_component==="postgresql";
+  if(backupResponse.status()!==202)throw Error("unexpected database backup response");
   if(logicalBackup.source_component!=="postgresql"||logicalBackup.source_resource_id!==resourceID)throw Error("backup component identity changed");
   await report("database_backed_up",logicalBackup.id);
   await state("database_mutate");

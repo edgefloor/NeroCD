@@ -26,7 +26,7 @@ import (
 func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	pg, db, base, server, destination := hostingExecutionFixture(t)
 	ctx := t.Context()
-	caps := []string{domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseBackupComponentCapability}
+	caps := []string{domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseBackupComponentCapability, domain.HostingStackLifecycleCapability}
 	if _, err := db.Exec(ctx, `UPDATE runners SET capabilities=capabilities||$2::text[] WHERE id=$1`, server.RunnerID, caps); err != nil {
 		t.Fatal(err)
 	}
@@ -100,12 +100,69 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 	}
 	source, sourceOp := deploy("a")
 	target, targetOp := deploy("b")
+	// Match the qualification's source after an explicit whole-stack Stop/Start.
+	stop, err := pg.RequestHostingStackStop(ctx, "hop_backup_source_stop", source.ID, "usr_bootstrap", domain.HostingStackStopInput{IdempotencyKey: "backup-source-stop", ExpectedDeployedOperationID: sourceOp.ID, ExpectedGeneration: source.Generation}, destinationEvent("backup_source_stop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop = awaitHostingDispatch(t, pg, stop.ID)
+	claim, err := pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := domain.HostingAuthority{OperationID: stop.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := pg.HostingApplyBegin(ctx, server.RunnerID, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stoppedState := *sourceOp.Result.Stack
+	stoppedState.Components = []domain.HostingStackComponent{}
+	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "backup_source_stopped", Result: domain.HostingResult{Outcome: "succeeded", StackStopped: true, DaemonID: sourceOp.Release.DaemonID, PlanHash: admitted.StackStopPlan.Hash, Stack: &stoppedState}}); err != nil {
+		t.Fatal(err)
+	}
+	startInput := hostingDeploymentRequest()
+	startInput.IdempotencyKey = "backup-source-start"
+	startInput.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true, ExpectedStoppedOperationID: stop.ID}
+	start, err := pg.RequestHostingDeployment(ctx, "hop_backup_source_start", source.ID, "usr_bootstrap", startInput, destinationEvent("backup_source_start"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start = awaitHostingDispatch(t, pg, start.ID)
+	claim, err = pg.ClaimRun(ctx, server.RunnerID, time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = domain.HostingAuthority{OperationID: start.ID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	if _, err = pg.HostingRunnerPlan(ctx, server.RunnerID, a); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "backup_source_start_prepared", Release: *sourceOp.Release, StackImages: sourceOp.Plan.Stack.Images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err != nil {
+		t.Fatal(err)
+	}
+	startedState := *sourceOp.Result.Stack
+	startedState.Components = append([]domain.HostingStackComponent(nil), startedState.Components...)
+	for i := range startedState.Components {
+		startedState.Components[i].OperationID = start.ID
+		startedState.Components[i].ContainerID = strings.Repeat("c", 63) + fmt.Sprint(i+1)
+	}
+	sourceOp, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "backup_source_started", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: sourceOp.Release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &startedState}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := proxyTokenApplication(t, pg)
 	session, err := service.CreateSession(ctx, "admin@example.local", "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := api.NewServer(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static())
+	const browserOrigin = "https://127.0.0.1:18190"
+	handler := api.NewServerWithConfig(service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), api.ServerConfig{PublicOrigin: browserOrigin})
 	call := func(method, path string, body any, want int) []byte {
 		t.Helper()
 		raw, err := json.Marshal(body)
@@ -116,7 +173,11 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 			raw = nil
 		}
 		request := httptest.NewRequest(method, path, bytes.NewReader(raw)).WithContext(ctx)
-		request.Header.Set("Authorization", "Bearer "+session.Token)
+		request.AddCookie(&http.Cookie{Name: "nerocd_session", Value: session.Token})
+		request.Header.Set("Origin", browserOrigin)
+		request.Header.Set("X-NeroCD-CSRF", "1")
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("X-Request-ID", strings.Repeat("a", 32))
 		request.Header.Set("Content-Type", "application/json")
 		out := httptest.NewRecorder()
 		handler.ServeHTTP(out, request)
@@ -126,7 +187,7 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 		return out.Body.Bytes()
 	}
 	path := "/api/v1/resources/" + source.ID + "/database-backups"
-	in := domain.HostingDatabaseBackupInput{RequestID: "component-backup", ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID}
+	in := domain.HostingDatabaseBackupInput{RequestID: strings.Repeat("a", 32), ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID}
 	call(http.MethodGet, "/api/v1/resources/"+source.ID+"/database-backup-components", nil, 200)
 	if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingDatabaseBackupComponentCapability); err != nil {
 		t.Fatal(err)
