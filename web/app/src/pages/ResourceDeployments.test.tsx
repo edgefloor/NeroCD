@@ -640,7 +640,7 @@ function composeBackend(replacement = false, handler?: Parameters<typeof backend
     if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: { resource_id: "resource", project_id: "project", resource_generation: 1, runtime_generation: 3, entries: [{ name: "TOKEN", kind: "managed_secret", secret: { secret_id: "secret", version: 2 } }] } });
     if (url.endsWith("/deployments") && init.method === "POST") {
       const input = JSON.parse(init.body as string);
-      return json({ ...operation, snapshot: { ...operation.snapshot, stack: stackRef, host_port: input.host_port ?? 9090, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" }, ...(input.storage_route_continuity ? { storage_route_continuity: { hash: "continuity" } } : {}) } }, 202);
+      return json({ ...operation, snapshot: { ...operation.snapshot, stack: stackRef, ...(input.registry_credential ? { registry_credential: input.registry_credential } : {}), host_port: input.host_port ?? 9090, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" }, ...(input.storage_route_continuity ? { storage_route_continuity: { hash: "continuity" } } : {}) } }, 202);
     }
     return undefined;
   });
@@ -661,6 +661,8 @@ test.each([false, true])("saved Compose captures runtime references and exact %s
   expect(writes).toHaveLength(1);
   const input = JSON.parse(writes[0]![1].body as string);
   expect(input).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, container_port: 3000, managed_stack: { acknowledge_interruption: true } });
+  expect(input).not.toHaveProperty("registry_credential");
+  expect(fetch.mock.calls.some(([url]) => url.includes("managed-secrets"))).toBe(false);
   if (replacement) expect(input).toMatchObject({ host_port: 8080, readiness: { path: "/ready", timeout_seconds: 20 }, storage_route_continuity: { expected_loaded_generation: 4, expected_loaded_proxy_operation_id: "proxy_old", routes: [{ route_id: "route", expected_version: 2, expected_selected_release_operation_id: "hop_old" }] } });
   else { expect(input).not.toHaveProperty("host_port"); expect(input).not.toHaveProperty("storage_route_continuity"); }
 });
@@ -772,4 +774,76 @@ test("private stateless image retry keeps the exact credential version and sends
   expect(calls[0]![1].body).toBe(calls[1]![1].body);
   expect(JSON.parse(calls[0]![1].body as string).registry_credential).toEqual({ secret_id: "credential", version: 1 });
   expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});
+
+function registryMetadata(url: string) {
+  if (!url.includes("managed-secrets")) return undefined;
+  return json({ items: url.includes("versions") ? [{ secret_id: "credential", version: 1 }, { secret_id: "credential", version: 2 }] : [{ id: "credential", name: "Private registry", project_id: "project", status: "active" }], limit: 20, offset: 0, count: 1, total: 1 });
+}
+async function chooseComposeRegistry() {
+  fireEvent.change(await screen.findByLabelText("Image access"), { target: { value: "private" } });
+  await screen.findByRole("option", { name: "Private registry · credential" });
+  fireEvent.change(screen.getByLabelText("Registry credential secret"), { target: { value: "credential" } });
+  await screen.findByRole("option", { name: "Version 1" });
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+}
+test.each(["initial", "replacement", "start"])("private Compose %s freezes the selected credential through uncertain retry", async (mode) => {
+  let writes = 0;
+  const fetch = composeBackend(mode !== "initial", (url, init) => {
+    const metadata = registryMetadata(url);
+    if (metadata) return metadata;
+    if (mode === "start" && url.endsWith("/stack-lifecycle")) return json({ resource_id: "resource", resource_generation: 1, state: "stopped", deployed_operation_id: "hop_old", stop_operation_id: "stop_one" });
+    if (mode === "start" && url.endsWith("/storage-deployment-options")) return json({ ...stackOptions, stopped_operation_id: "stop_one", reason: "available", previous_healthy_operation_id: "hop_old", host_port: 8080, container_port: 3000, readiness: { path: "/ready", timeout_seconds: 20 } });
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      if (++writes === 1) throw new TypeError("lost receipt");
+      if (mode === "start") {
+        const input = JSON.parse(String(init.body));
+        return json({ ...operation, snapshot: { ...operation.snapshot, stack: stackRef, registry_credential: input.registry_credential, stack_stopped_operation_id: "stop_one", host_port: input.host_port, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" } } }, 202);
+      }
+    }
+  });
+  setup("maintainer", [], false, compose);
+  await chooseComposeRegistry();
+  expect(screen.getByText(/Images from other registries are pulled anonymously/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: mode === "start" ? "Review current Compose start" : "Review current Compose deployment" }));
+  await screen.findByText(/Image access: Registry credential credential, version 1/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Registry credential version").disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
+  fireEvent.click(screen.getByRole("button", { name: mode === "start" ? "Start reviewed Compose" : "Deploy reviewed Compose" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const submissions = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0]![1].body).toBe(submissions[1]![1].body);
+  const input = JSON.parse(String(submissions[0]![1].body));
+  expect(input.registry_credential).toEqual({ secret_id: "credential", version: 1 });
+  if (mode === "start") expect(input.managed_stack.expected_stopped_operation_id).toBe("stop_one");
+  if (mode === "replacement") expect(input.storage_route_continuity.expected_loaded_generation).toBe(4);
+  expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});
+test("Compose private selection requires an explicit version before review", async () => {
+  const fetch = composeBackend(false, registryMetadata);
+  setup("maintainer", [], false, compose);
+  fireEvent.change(await screen.findByLabelText("Image access"), { target: { value: "private" } });
+  const review = screen.getByRole<HTMLButtonElement>("button", { name: "Review current Compose deployment" });
+  expect(review.disabled).toBe(true);
+  fireEvent.click(review);
+  expect(screen.queryByRole("region", { name: "Reviewed Compose deployment" })).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(0);
+});
+test.each([undefined, { secret_id: "credential", version: 2 }, { secret_id: "other", version: 1 }])("Compose rejects an accepted receipt with mismatched credential %j", async (credential) => {
+  const fetch = composeBackend(false, (url, init) => {
+    const metadata = registryMetadata(url);
+    if (metadata) return metadata;
+    if (url.endsWith("/deployments") && init.method === "POST") {
+      const input = JSON.parse(String(init.body));
+      return json({ ...operation, snapshot: { ...operation.snapshot, registry_credential: credential, stack: stackRef, host_port: 9090, container_port: input.container_port, readiness: input.readiness, runtime_configuration: { generation: 3, hash: "runtime" } } }, 202);
+    }
+  });
+  setup("maintainer", [], false, compose);
+  await chooseComposeRegistry(); await reviewCompose();
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  await screen.findByText(/Delivery is unconfirmed/);
+  expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });

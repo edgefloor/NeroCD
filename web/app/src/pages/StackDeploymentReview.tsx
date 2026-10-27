@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import type { Resource } from "@/api/hosting";
 import { ApiError } from "@/api/errors";
 import { HostingDeploymentError, requestHostingDeployment, type HostingDeploymentInput, type HostingOperation } from "@/api/hosting-deployments";
@@ -19,6 +20,7 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
   const [hostPort, setHostPort] = useState("");
   const [path, setPath] = useState("/");
   const [timeout, setTimeout] = useState("30");
+  const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
   const [review, setReview] = useState<Review>();
   const [confirmed, setConfirmed] = useState(false);
   const [sent, setSent] = useState(false);
@@ -35,7 +37,7 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
   const initial = shown.reason === "initial_deployment";
   const paused = blocked || restoreHeld;
   async function prepare() {
-    if (!source || request.current || paused || mutationHeld || !bindingID) return;
+    if (!source || request.current || paused || mutationHeld || !bindingID || !registrySelection.valid) return;
     const controller = new AbortController(); request.current = controller;
     setBusy(true); setError(""); setReview(undefined); setConfirmed(false); setSent(false); setConflict(false); setAccepted("");
     try {
@@ -52,6 +54,7 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
         throw new Error("Enter a valid readiness path, timeout, and optional host port between 1024 and 65535.");
       const input: HostingDeploymentInput = {
         expected_generation: current.resource_generation,
+        ...(registrySelection.credential ? { registry_credential: { ...registrySelection.credential } } : {}),
         ...(runtime.runtime_generation > 0 ? { expected_runtime_configuration_generation: runtime.runtime_generation } : {}),
         idempotency_key: crypto.randomUUID(),
         managed_stack: { acknowledge_interruption: true, ...(current.stopped_operation_id ? { expected_stopped_operation_id: current.stopped_operation_id } : {}) },
@@ -75,7 +78,10 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
       const operation = await boundedStorageRequest((signal) => requestHostingDeployment(resource.id, review.input, { signal }), controller.signal);
       if (!active.current || controller.signal.aborted) return;
       const stackRef = "stack" in operation.snapshot ? operation.snapshot.stack : undefined;
-      if (operation.snapshot.stack_stopped_operation_id !== review.input.managed_stack?.expected_stopped_operation_id ||
+      const registryCredential = "registry_credential" in operation.snapshot ? operation.snapshot.registry_credential : undefined;
+      if (registryCredential?.secret_id !== review.input.registry_credential?.secret_id ||
+        registryCredential?.version !== review.input.registry_credential?.version ||
+        operation.snapshot.stack_stopped_operation_id !== review.input.managed_stack?.expected_stopped_operation_id ||
         operation.plan && review.input.managed_stack?.expected_stopped_operation_id && operation.plan.previous_stopped?.stop_operation_id !== review.input.managed_stack.expected_stopped_operation_id ||
         !operation.id || operation.resource_id !== scope.resource || operation.project_id !== scope.project || operation.binding_id !== bindingID ||
         operation.snapshot.resource_generation !== review.input.expected_generation ||
@@ -113,10 +119,12 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
         <label htmlFor={`${id}-path`}>Readiness path<Input id={`${id}-path`} required value={path} disabled={busy || Boolean(review)} onChange={(e) => setPath(e.target.value)} /></label>
         <label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={busy || Boolean(review)} onChange={(e) => setTimeout(e.target.value)} /></label>
       </div></> : <p className="text-sm">Redeployment stops the previous stack before replacement readiness and reuses its port and retained volumes. Existing selected HTTPS routes are carried forward through the server's continuity plan. Data writes are not rolled back.</p>}
+    <ImageRegistryCredential actor={scope.actor} project={scope.project} image="" compose disabled={paused || busy || !!review} onChange={setRegistrySelection} onDenied={onDenied} />
     {!options.available ? <p role="status">Compose deployment unavailable: {options.reason}. Refresh deployment information after resolving this condition.</p> : null}
-    <Button type="button" variant="outline" disabled={busy || paused || mutationHeld || !bindingID || sent && !conflict} onClick={() => void prepare()}>{starting ? "Review current Compose start" : "Review current Compose deployment"}</Button>
+    <Button type="button" variant="outline" disabled={busy || paused || mutationHeld || !bindingID || !registrySelection.valid || sent && !conflict} onClick={() => void prepare()}>{starting ? "Review current Compose start" : "Review current Compose deployment"}</Button>
     {review ? <section className="min-w-0 space-y-2 break-all" aria-label="Reviewed Compose deployment">
       <p>Saved generation {review.input.expected_generation} · Compose generation {review.options.stack_ref?.generation} · runtime generation {review.input.expected_runtime_configuration_generation ?? 0}</p>
+      <p>Image access: {review.input.registry_credential ? `Registry credential ${review.input.registry_credential.secret_id}, version ${review.input.registry_credential.version}` : "Public images"}.</p>
       <p>Compose hash: {review.options.stack_ref?.hash}</p>
       <p>Runtime configuration: {review.runtimeNames.length ? review.runtimeNames.join(", ") : "No saved variables or managed secret references. Compose required values must be supplied before deployment."}</p>
       <p>Runner-local port {typeof review.input.host_port === "number" ? review.input.host_port : "automatically allocated"} → {review.input.container_port}, readiness {review.input.readiness.path}.</p>
