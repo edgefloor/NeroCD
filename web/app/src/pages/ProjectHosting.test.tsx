@@ -35,6 +35,10 @@ const page = <T,>(items: T[], offset = 0, total = items.length) => ({ items, lim
 let clients: QueryClient[] = [];
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(useDatabaseAccess).mockImplementation((project, environment) => ({
+    ready: false, refreshing: true, viewer: false, owner: false, maintainer: false,
+    scope: { actor: "", project, environment }, epoch: JSON.stringify(["pending", project, environment]), error: undefined,
+  }));
   vi.mocked(api.listProjectEnvironments).mockResolvedValue(page([environment]));
   vi.mocked(api.listResources).mockResolvedValue(page([resource]));
 });
