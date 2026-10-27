@@ -485,6 +485,15 @@ cross-host execution, public ACME, database/local-build credential selection, an
 full Coolify registry parity remain unqualified. Earlier qualification evidence
 above remains attributed to its original revisions.
 
+## Install the saved stack from the catalog
+
+The [Vikunja/PostgreSQL catalog entry](hosting-catalog.md#catalog-compose-qualification)
+now saves the accepted example and generated runtime references directly. Its
+qualified workflow deploys untouched public source first, then exercises private
+replacement, persistence and the existing recovery safeguards. This extends the
+catalog admission path; earlier Compose qualifications retain their own source
+revisions and limits.
+
 ## Pasteable Vikunja/PostgreSQL example
 
 Use `examples/compose/vikunja-postgresql.yaml` for the tested application workflow.

@@ -2,10 +2,12 @@
 
 # Install an application from the catalog
 
-The Linkding, Uptime Kuma and Actual Budget catalog entries translate Coolify templates at
-`b12d1386f3d458618b4c579babcd1e339c6c40b3` into an ordinary image application.
-The installed application uses the existing resource, destination, deployment,
-managed-secret and owned-storage APIs. These entries create no automation TaskTemplate.
+The catalog translates pinned Coolify templates at
+`b12d1386f3d458618b4c579babcd1e339c6c40b3` into Linkding, Uptime Kuma and Actual
+Budget image applications, or a saved Vikunja/PostgreSQL Compose application.
+Installation uses the existing resource, destination, deployment and managed-secret
+APIs. Image entries use owned storage; Compose uses its named volumes. These
+entries create no automation TaskTemplate.
 
 ## Pinned definition
 
@@ -65,6 +67,22 @@ NeroCD generates no Actual login password. The user sets the server password in
 Actual's UI, signs in, then creates a budget and account. The runtime literal
 selects the login method; it is not the user's password.
 
+## Vikunja with PostgreSQL pinned definition
+
+`vikunja-with-postgresql` uses immutable version
+`coolify-b12d1386.vikunja-2.7.1.v1` and the exact accepted
+[Vikunja/PostgreSQL example](../examples/compose/vikunja-postgresql.yaml).
+The installation retains the pinned upstream template separately. It saves the
+Compose source at resource generation one and allocates no image-family storage.
+The deployment uses the existing saved Compose review and named-volume lifecycle.
+
+Enter Public URL before installing. Runtime generation one contains that literal
+URL, fixed database user/name `vikunja`, and two generated managed-secret references
+for the PostgreSQL password and JWT secret. Installation metadata contains only
+references, and the UI offers no login-credential reveal. Register an account in
+Vikunja after deployment. Public URL creates neither a route nor a certificate.
+The saved review prefills container port 3456 and readiness `/health`, 120 seconds.
+
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
@@ -74,12 +92,14 @@ selects the login method; it is not the user's password.
    Clear search or Clear filters to recover an empty result, then select an application.
    Review its upstream category and architecture declaration, pinned image, data
    mount, generated variables, container port, readiness check and template source.
-   Enter a name and select a granted destination. Project owner access is required.
-3. Install the application. The transaction saves resource placement, storage,
+   Enter a name and select a granted destination. For Vikunja with PostgreSQL,
+   also enter Public URL. Project owner access is required.
+3. Install the application. The transaction saves resource placement, applicable storage,
    any generated encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
    readiness settings are prefilled. Enter the runner-local host port and review
-   the first storage deployment before submitting it.
+   the first storage deployment before submitting it. For the Compose entry, use
+   Review current Compose deployment and acknowledge the interruption.
 5. After the deployment succeeds, use the ordinary route controls for HTTPS
    access, or the runner-local endpoint on an explicitly authorized local target.
 6. For Linkding, use Reveal login credentials to retrieve the saved username and password.
@@ -153,7 +173,7 @@ ownership; the existing trusted recovery boundary still applies.
 ## Supported scope
 
 The catalog contains pinned Linkding 1.47.0, Uptime Kuma 2.5.8 and Actual Budget
-26.10.0 entries. Each
+26.10.0 image entries and Vikunja 2.7.1 with PostgreSQL as saved Compose. Each
 installation keeps its original
 template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
@@ -174,7 +194,7 @@ CPU, memory and disk requirements are also undeclared. Use the qualified runtime
 profile below when choosing a destination.
 
 Compatibility filters, a general template editor, catalog refresh and version
-upgrades remain unavailable. The preview does not provide general required-variable,
+upgrades remain unavailable. The Compose entry has an explicit Public URL input. The preview does not provide general required-variable,
 domain or component-role presentation. General Compose import is unsupported.
 
 ## Back up and recover into a separate application
@@ -210,13 +230,13 @@ The [catalog definition](../internal/domain/hosting_catalog.go),
 [installation store](../internal/store/postgres_hosting_catalog.go), and
 [catalog UI](../web/app/src/pages/HostingCatalog.tsx) define the current entries.
 The [catalog runtime guide](../acceptance/runtime-hosting-catalog/README.md)
-records the separate Linkding, Uptime Kuma and Actual Budget qualifications. Linkding includes
+records the separate Linkding, Uptime Kuma, Actual Budget and Compose qualifications. Linkding includes
 passing backup and restored-application checks. Uptime Kuma covers install,
 replacement and persistence as described below.
 The retained recovery profile is pinned Linkding 1.47.0, native Linux arm64, trusted rootful
 classic-store Docker/overlay2, one destination, and a private fixture CA.
 Other architectures, production ACME, arbitrary applications, catalog upgrades,
-Compose, cross-host recovery, and destination disk loss are unqualified.
+general Compose recovery, cross-host recovery, and destination disk loss are unqualified.
 
 <a id="catalog-filter-qualification"></a>
 
@@ -429,3 +449,39 @@ validation/schema waiting overlaps. Bootstrap probes took 31.149 seconds before
 repair, 1.299 seconds to confirm sign-in and 6.008 seconds after repair. Detailed
 command windows remain in the index. Exclusive repair and review/wait durations
 were not measured; no percentages are inferred.
+
+<a id="catalog-compose-qualification"></a>
+
+## Catalog Compose qualification
+
+The catalog-to-running-application workflow is accepted at
+`eeee82b6cf9350949e01121d59ec736e336dc734` on the existing native arm64,
+rootful classic Docker profile with trusted fixture-CA HTTPS.
+
+- [x] Installed through the catalog UI, retried an unconfirmed response with the
+  identical request, and deployed the untouched public source and five saved runtime entries.
+- [x] Verified catalog preview, Public URL and deployment controls at 1280, 320,
+  390 and 430 pixels, with the same 75 assets in the binary and served manifest.
+- [x] Routed the real app, created a task and upload, then retained both across
+  private-image replacement and Stop/Start with fresh-login reads and new writes.
+- [x] Preserved the existing wrong/revoked credential, log-follow, local/remote
+  archive retry, database-only import and controlled failed-replacement assertions.
+  All 41 baseline containers, 236 volumes and the user instance remained unchanged.
+
+The first gate failed after 167 seconds at a visibility-gated log-follow control.
+A focused test reproduced the offscreen actionability mechanism; the exact failed
+component was not retained. The driver now scrolls the actual button and waits for
+it to become enabled. The corrected gate passed in 246 seconds, including the
+159.53-second API test. The two gates total 413 seconds; API time is a subset.
+Earlier cheap checks also corrected source-version insertion and a late catalog
+readiness race before qualification. Detailed overlapping timings and provenance,
+including unavailable backend test timestamps and compilation snapshots, remain
+in the safe [evidence index](</Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-catalog-compose-20261027/eeee82b6cf9350949e01121d59ec736e336dc734/evidence-index.json>),
+SHA-256 `a906733fa2835ce745b79343173cf81f1205b54a95d77938dd2a3163105ddce1`.
+
+Full WebUI evidence is 1,976 passing tests plus the affected 74-test run, not a
+new full 1,979-test run. All three final independent reviews are clean. Prior
+private initial-pull evidence remains at `c4b9ef45`; this run starts with public
+catalog source and qualifies later private replacement and Start. General templates,
+upgrades, other architectures, cross-host recovery and production ACME remain
+unqualified. The existing retired-version receipt coverage limitation remains.

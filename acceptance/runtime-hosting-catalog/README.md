@@ -1,7 +1,8 @@
 # Test catalog application workflows
 
 The existing storage fixture installs pinned Linkding 1.47.0, Uptime Kuma 2.5.8 or Actual Budget 26.10.0
-through the public API and connected browser. These modes deploy with the compiled
+through the public API and connected browser. The existing `--managed-compose`
+profile also installs Vikunja with PostgreSQL from the catalog. These modes deploy with the compiled
 runner and verify real application data. Linkding uses `--catalog`; Uptime Kuma
 uses `--uptime-kuma`; Actual Budget uses `--actual-budget` on the same [storage gate](../runtime-hosting-storage/README.md).
 
@@ -162,3 +163,19 @@ Docker/overlay2 and private fixture HTTPS. Actual backup/restore, upgrades,
 cross-host recovery, other architectures and production ACME remain unqualified.
 [Actual Budget qualification](../../docs/hosting-catalog.md#actual-budget-qualification)
 records the evidence index/hash, failures, retained checks, review limits and timings.
+
+## Vikunja with PostgreSQL catalog profile
+
+Use `bash acceptance/runtime-hosting-storage/gate.sh --managed-compose` after
+exact-candidate review and target approval. It reuses the Compose browser, setup,
+phase handshake and preservation checks. Catalog install/retry saves untouched
+public source and generated runtime references; later source editing selects the
+protected replacement. No new gate mode or driver is introduced.
+
+The accepted source is `eeee82b6cf9350949e01121d59ec736e336dc734`. The failed
+167-second first run and corrected 246-second pass remain separate. The actual
+API test passed in 159.53 seconds; all 41 containers, 236 volumes and user-instance
+profiles were preserved. The browser receipt is copied separately from the legacy
+safe tar allowlist. See [catalog qualification and evidence](../../docs/hosting-catalog.md#catalog-compose-qualification)
+for the index hash, checks, failure diagnosis, source dependencies and limits.
+Prior Linkding, Kuma and Actual physical evidence is retained, not rerun.
