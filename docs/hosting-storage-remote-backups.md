@@ -3,8 +3,9 @@
 Owned-upload backups can copy a completed local archive to a project-owned
 S3-compatible backup target. A failed upload retains the local archive. Retrying
 that upload uses the same archive without stopping writers or running the archive
-helper again. A remote restore downloads and verifies the object before restoring
-it into a new resource and owned volume on the same destination.
+helper again. For image resources, remote restore downloads and verifies the
+object before restoring it into a new resource and owned volume on the same
+destination. Compose remote download and restore are unsupported.
 
 ## Enable storage remote transfers
 
@@ -53,7 +54,43 @@ same archive**. The UI retains an ambiguous request for explicit identical repla
 Do not substitute another transfer's retry body after a lost response. Local
 archive success and remote transfer failure remain separate recorded outcomes.
 
-## Restore and verify a new resource
+## Copy an immediate Compose volume backup remotely
+
+For a managed Compose application, select an eligible named volume and a validated
+project target revision in **Compose volume backups**. Review the exact volume,
+resource generation, deployment, and remote target. Acknowledge interruption and
+confirm the backup. The runner creates the local archive and resumes the recorded
+writers before the independent transfer uploads it.
+
+Inspect local completion and remote transfer history separately. A failed upload
+preserves the successful local archive. **Retry remote upload of the same archive**
+reuses its exact blob and performs no new stop or archive operation. An unconfirmed
+request retains its identity for explicit identical replay. Recovery of stopped
+writers does not require upload enablement. If transfer dispatch is unavailable,
+local completion still releases its hold and leaves the same transfer queued for
+the existing recovery loop.
+
+The existing `POST /api/v1/resources/{id}/storage-backups` request accepts
+`remote_target: {target_id, revision}` alongside the Compose volume, generation,
+deployment, interruption acknowledgement, and request identity. There is no
+separate export endpoint. Remote Compose plans use
+`managed-compose.remote-volume-archive.v1`. The capability
+`hosting_compose_storage_remote_v1` identifies plan understanding and can remain
+advertised with uploads disabled so recovery can resume writers. New uploads
+still require the existing transfer capabilities, configuration, target validation,
+and current authority.
+
+Compose schedules remain local-only. This workflow provides no Compose remote
+download, archive restore, or coordinated database and upload recovery point.
+The pinned behavioral reference is
+`app/Jobs/VolumeBackupJob.php` at Coolify revision
+`b12d1386f3d458618b4c579babcd1e339c6c40b3`, which archives the selected volume,
+resumes stopped users, and uploads the archive to S3. NeroCD retains its existing
+fenced archive, transfer, and recovery contracts.
+
+<a id="restore-and-verify-a-new-resource"></a>
+
+## Restore and verify a new image resource
 
 Select a backup with a successful upload transfer. In **Restore backup into a
 new resource**, select **Download and verify the remote archive before restoring**,
@@ -126,7 +163,78 @@ Docker/overlay2, one destination, pinned Silo through explicit loopback HTTP, an
 private fixture-CA HTTPS. Production S3 HTTPS, other providers, disk loss,
 cross-host recovery, in-place restore, and arbitrary mounts are unqualified.
 
-[Recurring upload backups](hosting-storage-backup-schedules.md) uses the same
-archive and transfer path. [Retention](hosting-storage-backup-retention.md) and
+[Recurring image upload backups](hosting-storage-backup-schedules.md) use the same
+archive and transfer path. Compose schedules remain local-only. [Retention](hosting-storage-backup-retention.md) and
 [individual copy deletion](hosting-storage-backup-deletion.md) have separate
 policies and destructive-operation opt-ins.
+
+<a id="compose-remote-copy-qualification-pending"></a>
+
+### Accepted Compose remote copy
+
+The bounded immediate Compose remote-copy workflow passed qualification on
+2026-10-27 at `f927e59d7470b2b6e0b86074f4ac411200aece02`:
+
+- [x] Selected a validated S3-compatible target revision with the immediate volume
+  backup, reviewed the exact request, and inspected failed-upload history after
+  reload. The denied upload retained successful local backup state and its blob.
+- [x] Retried the same archive and verified all 6,144 bytes and checksum against
+  the remote object. One archive helper ran. Retry caused zero component events,
+  and two transfer guard checks confirmed writers had resumed before upload.
+- [x] Application records and uploaded files survived redeployment and Stop/Start.
+  Local volume schedules and FIFO failure compensation, PostgreSQL schedules and
+  separate-target import, and failed replacement with its mutation hold passed.
+- [x] All 41 baseline container profiles and 236 volume profiles remained exact,
+  with identical inventories, no additions or leaks, and complete owned cleanup.
+  The user's instance retained its identity, content, and health.
+
+The aggregate gate passed in 279 seconds, from 11:59:15 to 12:03:54 UTC.
+`TestHostingComposeVikunjaCompiledRunnerHTTPS` passed in 160.01 seconds.
+Safe receipts and hashes are indexed at
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/f927e59d7470b2b6e0b86074f4ac411200aece02/evidence-index.json`.
+This qualifies the managed Compose profile with the pinned Silo fixture through
+explicit loopback HTTP. It does not qualify production S3 HTTPS or other
+providers, Compose remote restore, or coordinated database and upload recovery.
+
+The three earlier `--managed-compose` runs stopped before remote-copy phases.
+All three passed the same exact inventory, cleanup, and user-instance checks. The
+[accepted local schedule evidence](hosting-compose.md#accepted-local-named-volume-schedules)
+remains separate, including its earlier unresolved failed attempt.
+
+A focused check using the actual Project Hosting component reproduced a fixture
+flaw. A principal refresh retires the child after a 200 response header arrives,
+cancels that response's body, and remounts the UI with a working fetch. The
+fixture had selected the canceled response. At `f927e59`, its existing response
+predicates wait for a complete body. They emit no requests or retries, and still
+reject completed 503 responses and invalid JSON. The completed-schedule-response
+proof is included in the safe evidence.
+This reproduction does not conclusively attribute any historical failure.
+The first saved-schedule selection timeout remains unresolved.
+
+Source checks passed at `1b56db8cc1631ee87c40d69af5d43ab3bf0be7f4`:
+`make verify`, the full frontend suite with 1,928 tests in 129 files, the WebUI
+and embedded application build, and `make check-generated`. Subsequent changes
+affect only acceptance fixtures. Focused real-decoder, shared browser-phase, and
+response-completion checks passed. Product, schema, UI, and runner bytes are unchanged, so their source evidence is retained at `1b56db8`. Independent hygiene,
+specification, and security reviews reported no findings at `f927e59`.
+Full `make check` was not run.
+
+Recorded delivery times overlap and are not an additive elapsed-time partition.
+All times below are UTC on 2026-10-27. Receipt directories use the prefix
+`/tmp/nerocd-storage-runtime-20261024.`.
+
+| Category | Revision or receipt | Recorded time and limitation |
+| --- | --- | --- |
+| Implementation | Backend and UI | Backend has no separate measured total. UI work was approximately 10:58:51–11:09, including focused checks. |
+| Product-defect repair | Admission ordering | Corrected before runtime qualification. Repair time was not separately measured. |
+| Fixture repair | Invalid-target decoder case | Approximately 62 seconds, 11:16:02–11:17:04, including checks. |
+| Fixture repair | `f927e59` completed-body selection | Actual React reproduction passed from 11:58:16.560 to 11:58:18.531. Total repair and diagnosis time was not separately measured. |
+| Test execution | `1b56db8` source checks | `make verify` 218 seconds, frontend tests and build 45 seconds, generated checks 48 seconds. Commands started at 11:14:14. Final decoder and phase checks took four seconds. |
+| Failed qualification | `c12f079`, `ruIO8X` | 217 seconds, 11:20:23–11:24:00. Timed out at `volume_schedule_run` / `select_saved_compose_volume_schedule`, after disabled schedule save, redeployment, and Stop/Start passed. |
+| Failed qualification | `923952d`, `wDx8af` | 117 seconds, 11:39:47–11:41:44. Failed at `volume_schedule` / `read_initial_compose_volume_eligibility`. |
+| Failed qualification | `c5fe588`, `QMsshP` | 128 seconds, 11:48:03–11:50:11. Failed at the same initial eligibility step. |
+| Passed qualification | `f927e59`, `1kUdIW` | 279 seconds, 11:59:15–12:03:54. Physical runtime test 160.01 seconds. |
+| Review and waiting | Independent reviews | No separate measured total is available. |
+
+The evidence index retains source-check logs and command timestamps at their
+original revisions. Only acceptance fixtures changed after `1b56db8`.

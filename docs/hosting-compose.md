@@ -141,10 +141,17 @@ Schedule creation and enabling require fresh deployment review and consent for
 every due interruption. Reads, history, disable, and identical replay retain
 current authorization when runtime evidence is unavailable.
 
-Compose archive restore, remote copies, bind mounts, and coordinated database and
-upload snapshots are unsupported. Archive selection does not establish database
+Compose archive restore, bind mounts, and coordinated database and upload
+snapshots are unsupported. Archive selection does not establish database
 consistency. Use the separate PostgreSQL component backup
 workflow for database archives.
+
+For an immediate remote copy, select a validated project target revision before
+reviewing the backup. The [Compose remote workflow](hosting-storage-remote-backups.md#copy-an-immediate-compose-volume-backup-remotely)
+retains the local archive, resumes writers, and then uploads the exact blob.
+Failed upload retry does not stop writers or archive the volume again. The
+remote extension [passed qualification](hosting-storage-remote-backups.md#accepted-compose-remote-copy).
+Local schedules remain local-only.
 
 ## Qualification
 

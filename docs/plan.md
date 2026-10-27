@@ -67,8 +67,11 @@ Local PostgreSQL component schedules and immediate local named-volume backup are
 accepted for the bounded managed Compose profile. Local schedules for one managed
 Compose named volume are also accepted at `1df3c90`, including stable selection
 across redeployment, a real due archive, disable, and failure compensation.
-Remote transfer, download, and Compose archive restore remain gaps. Select the
-next bounded workflow from the remaining upstream hosting capabilities.
+Immediate Compose volume backup with an optional validated S3 target is
+[accepted at `f927e59`](hosting-storage-remote-backups.md#accepted-compose-remote-copy).
+It preserves local success through upload failure and retries the same blob
+without another archive or interruption. Remote schedules, download, and Compose
+archive restore remain gaps.
 `VolumeBackupRecoveryJob` resumes stopped containers and cleans partial remote
 uploads. Coordinated database and upload recovery is a separate
 NeroCD expansion and must not displace those upstream workflows.
@@ -79,7 +82,7 @@ NeroCD expansion and must not displace those upstream workflows.
 | PostgreSQL recovery | [Immediate backup/restore](hosting-database-backups.md), [schedules](hosting-database-backup-schedules.md), [remote copies](hosting-database-remote-backups.md), [retention](hosting-database-backup-retention.md), and [failure alerts](hosting-backup-notifications.md) | Production S3 HTTPS, additional engines, cross-destination and in-place recovery, broader cron grammar and notification events/channels |
 | Upload recovery | [Local archives](hosting-storage-archive.md), [remote copies](hosting-storage-remote-backups.md), [schedules/alerts](hosting-storage-backup-schedules.md), [retention](hosting-storage-backup-retention.md), and [selected-copy deletion](hosting-storage-backup-deletion.md) | Broader mount types, unknown-writer recovery, cross-host/in-place recovery and full A25–A27/A37 |
 | Catalog | [Search, definition preview and pinned Linkding install](hosting-catalog.md), then [separate-target recovery](hosting-catalog-recovery.md) | Category/compatibility filters and richer requirement presentation, more tested definitions, explicit upgrades and broader application-specific recovery |
-| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, local PostgreSQL component schedules, and immediate and scheduled local named-volume backup | Remote transfer and download; archive restore, bind mounts, raw Compose, Git Compose and mixed build/image stacks remain unsupported or unqualified |
+| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, local PostgreSQL component schedules, immediate and scheduled local named-volume backup, and immediate remote copy with same-archive retry | Remote schedules and download; archive restore, bind mounts, raw Compose, Git Compose and mixed build/image stacks remain unsupported or unqualified |
 | Practical hosting | [SSH onboarding](hosting-ssh-onboarding.md), [runtime logs](hosting-runtime-logs.md), [automatic deployment](hosting-auto-deploy.md) | Broader host/capability qualification, public ACME, protected plans under R17/R19, live provider setup and complete A01/A09/A29 |
 
 Keep the existing default-off flags and explicit capabilities. A successful

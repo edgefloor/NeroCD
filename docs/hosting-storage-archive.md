@@ -137,8 +137,9 @@ Docker identities and mounts.
 `POST /api/v1/resources/{id}/storage-backups` requires a 32-character lowercase
 hexadecimal `request_id`, `expected_resource_generation`, `volume`,
 `expected_deployed_operation_id`, and `acknowledge_interruption: true` for Compose.
-The three Compose selector fields must appear together. `remote_target` is
-rejected. Existing image backup requests keep their original contract.
+The three Compose selector fields must appear together. An immediate backup
+accepts optional `remote_target`; see the workflow below. Existing image
+backup requests keep their original contract.
 
 Backup list and detail records include `volume` and
 `source_deployed_operation_id`. Current authorization applies before identical
@@ -152,5 +153,11 @@ unresolved writer resumption with an exact plan hash and a fresh request identit
 [Local Compose named-volume schedules](hosting-storage-backup-schedules.md#schedule-a-compose-named-volume)
 reuse these archive plans and limits. A schedule fixes the selected volume's
 origin and resolves the current settled deployment at each due admission.
-Compose restore and remote copies remain rejected. A successful local archive
-does not establish a coordinated database and upload recovery point.
+Compose restore remains rejected. A successful local archive does not establish
+a coordinated database and upload recovery point.
+
+The [immediate Compose remote-copy workflow](hosting-storage-remote-backups.md#copy-an-immediate-compose-volume-backup-remotely)
+adds an optional validated `remote_target` to the existing backup request and uses
+`managed-compose.remote-volume-archive.v1` plans. It retains the same helper and
+limits. Writer recovery and local completion can finish while upload dispatch is
+unavailable, leaving the original transfer queued. Compose schedules stay local.
