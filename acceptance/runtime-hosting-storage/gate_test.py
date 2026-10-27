@@ -1125,7 +1125,7 @@ class CatalogModeContractTests(unittest.TestCase):
         source = Path(__file__).with_name("gate.sh").read_text()
         self.assertIn('if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi', source)
         self.assertIn('if [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190', source)
-        self.assertIn('"$owner" "$volume" "$browser_publication"', source)
+        self.assertIn('"$owner" "$volume" "$browser_publication" "$git_compose"', source)
         self.assertIn('node acceptance/runtime-hosting-catalog/browser.mjs', source)
         self.assertIn('wait "$test_pid"', source[source.index('elif [[ "$catalog" == true ]]; then'):])
 
@@ -1192,6 +1192,91 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
                 result = subprocess.run([sys.executable,"-c",validator,str(runtime),str(browser)],capture_output=True,text=True,timeout=5)
                 self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
 
+
+
+class GitComposeContractTests(unittest.TestCase):
+    def test_git_compose_requires_actual_build_failure_and_browser_proofs(self):
+        import ast
+        import re
+        source = GATE.read_text()
+        validator = source.split("<<'COMPOSE_BROWSER_PASS'\n", 1)[1].split("\nCOMPOSE_BROWSER_PASS", 1)[0]
+        branch = validator.split('raise SystemExit(0)', 1)[0]
+        required = ast.literal_eval(re.search(r"for key in (\[.*?\]):", branch).group(1))
+        self.assertIn("git_failures_preserved_records_uploads", required)
+        for missing in [None, *required, "skip", "runtime"]:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                marker = {"status": "passed", "intercepted_requests": False, **dict.fromkeys(required, True)}
+                if missing in required: del marker[missing]
+                (root / "browser").write_text(json.dumps(marker))
+                runtime = "Git Compose: private HTTPS source and exact receipt built;\n--- PASS: TestHostingGitComposeVikunjaCompiledRunnerHTTPS (1s)\n"
+                if missing == "skip": runtime += "SKIP"
+                if missing == "runtime": runtime = "PASS"
+                (root / "runtime").write_text(runtime)
+                result = subprocess.run([sys.executable, "-c", validator, str(root / "runtime"), str(root / "browser"), "true"], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, missing is None, result.stderr)
+
+    def test_failed_image_user_inventory_preserves_new_reference(self):
+        source = GATE.read_text().split('if [[ "$git_image_added" == true ]]; then', 1)[1].split('\n fi\n host_docker ps', 1)[0]
+        for inventory_status in [0, 23]:
+            with self.subTest(status=inventory_status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prelude = 'result=0; git_image=fixture; git_image_id=sha256:abc\nhost_docker() { case "$1" in image) if [[ "$2" == inspect ]]; then echo sha256:abc; else touch "' + str(root / 'removed') + '"; fi;; ps) return ' + str(inventory_status) + ';; esac; }\n'
+                run = subprocess.run(['bash', '-ec', prelude + source + '\nexit "$result"'], capture_output=True, text=True, timeout=5)
+                self.assertEqual((root / 'removed').exists(), inventory_status == 0, run.stderr)
+                self.assertEqual(run.returncode, 0 if inventory_status == 0 else 1, run.stderr)
+
+    def test_exact_outer_validator_rejects_namespace_drift_for_each_profile(self):
+        source = GATE.read_text().split('verify_outer() {', 1)[1]
+        validator = source.split("python3 -c '\n", 1)[1].split("\n' \"$evidence/", 1)[0]
+        namespace = dict(identity=OUTER, name=OWNER + "-dind", image="sha256:" + "d" * 64, reference="docker:fixture", label="io.nerocd.storage-runtime.owner", owner=OWNER, volume=VOLUME, scenario="valid")
+        body = FAKE_DOCKER.split('def outer_body():\n', 1)[1].split("\nif a[0]", 1)[0]
+        exec('def outer_body():\n' + body, namespace)
+        for git_profile in [False, True]:
+            for pid, cgroup in [("", "private"), ("host", "private"), ("host", "host")]:
+                with self.subTest(git=git_profile, pid=pid, cgroup=cgroup), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    container = namespace["outer_body"]()
+                    owner = "nerocd-git-compose-vikunja-runtime-20261027" if git_profile else OWNER
+                    container["Name"] = "/" + owner + "-dind"
+                    container["Config"]["Labels"] = {namespace["label"]: owner}
+                    container["HostConfig"].update(PidMode=pid, CgroupnsMode=cgroup)
+                    image = {"Id": namespace["image"], "Os": "linux", "Architecture": "arm64", "Config": {"Env": ["DOCKER_TLS_CERTDIR=/certs"], "Entrypoint": ["dockerd-entrypoint.sh"], "WorkingDir": "/", "User": "", "Labels": {}}}
+                    for name, value in [("outer", [container]), ("images", [image] * 3), ("volume", [{"Mountpoint": "/var/lib/docker/volumes/" + VOLUME + "/_data"}])]:
+                        (root / name).write_text(json.dumps(value))
+                    args = [str(root / name) for name in ["outer", "images", "volume"]] + [OUTER, owner + "-dind", namespace["reference"], namespace["label"], owner, VOLUME, "false", str(git_profile).lower()]
+                    result = subprocess.run([sys.executable, "-c", validator, *args], capture_output=True, text=True, timeout=5)
+                    expected = (pid, cgroup) == (("host", "host") if git_profile else ("", "private"))
+                    self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+    def test_host_pid_cleanup_signals_and_joins_only_same_mount_namespace(self):
+        source = GATE.read_text()
+        cleanup = source.split('if [[ "$running" == true ]] && ! host_docker exec "$outer" sh -ec \'', 1)[1].split("'; then", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc = root / "proc"
+            for identity, namespace in [("self", "owned"), ("123", "owned"), ("456", "foreign")]:
+                (proc / identity / "ns").mkdir(parents=True)
+                (proc / identity / "ns/mnt").symlink_to("mnt:[" + namespace + "]")
+                if identity != "self": (proc / identity / "exe").symlink_to("/fixture/api.test")
+            # The fake signal removes only the selected process, so the real
+            # launcher join loop must disregard the live foreign executable.
+            script = 'kill() { printf "%s\\n" "$2" >> "' + str(root / "signals") + '"; rm "' + str(proc) + '/$2/exe"; }\n'
+            result = subprocess.run(["sh", "-ec", script + cleanup.replace("/proc/", str(proc) + "/")], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((root / "signals").read_text().splitlines(), ["123"])
+            self.assertTrue((proc / "456/exe").is_symlink())
+            self.assertFalse((proc / "123/exe").is_symlink())
+
+    def test_git_namespaces_are_explicit_and_other_profiles_remain_private(self):
+        source = GATE.read_text()
+        self.assertIn('if [[ "$git_compose" == true ]]; then set -- --pid=host --cgroupns=host "$@"; fi', source)
+        self.assertIn('expected.update(PidMode="host",CgroupnsMode="host")', source)
+        self.assertIn('"PidMode":""', source)
+        self.assertIn('"CgroupnsMode":"private"', source)
+        prerequisite = source.split('# GIT_CGROUP_PREREQUISITE_BEGIN', 1)[1].split('# GIT_CGROUP_PREREQUISITE_END', 1)[0]
+        for contract in ['cgroup.type', 'cgroup.procs', 'cgroup.subtree_control', 'cpu.max', 'memory.max', 'memory.swap.max', 'pids.max', '/proc/$pid/cgroup', 'wait "$pid"', 'rmdir "$child"']:
+            self.assertIn(contract, prerequisite)
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ class ProfileTest(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): evidence.publication(wrong)
 
     def test_catalog_application_publication_requires_exact_owner_name_and_no_extra_ports(self):
-        for owner in ["nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"]:
+        for owner in ["nerocd-git-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"]:
             value = self.fixture()
             value["Name"] = "/" + owner + "-dind"
             value["Config"] = {"Labels": {"io.nerocd.storage-runtime.owner": owner}}

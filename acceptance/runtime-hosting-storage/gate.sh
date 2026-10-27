@@ -19,11 +19,13 @@ retention=false
 deletion=false
 catalog=false
 managed_compose=false
+git_compose=false
 uptime_kuma=false
 actual_budget=false
 private_registry=false
 case ${1:-} in
  --private-registry) private_registry=true; catalog=true; owner=nerocd-private-registry-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingPrivateRegistryCompiledRunnerHTTPS$';;
+ --git-compose) git_compose=true; managed_compose=true; catalog=true; archive=true; owner=nerocd-git-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingGitComposeVikunjaCompiledRunnerHTTPS$';;
  --managed-compose) managed_compose=true; catalog=true; archive=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
  --actual-budget) actual_budget=true; catalog=true; archive=true; owner=nerocd-catalog-actual-budget-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogActualBudgetCompiledRunnerHTTPS$';;
  --uptime-kuma) uptime_kuma=true; catalog=true; archive=true; owner=nerocd-catalog-uptime-kuma-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogUptimeKumaCompiledRunnerHTTPS$';;
@@ -47,7 +49,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose|--git-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
 esac
 browser_publication=false
 if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
@@ -57,6 +59,9 @@ volume_attempted=false
 outer_attempted=false
 returned_outer=''
 test_pid=''
+git_image_added=false
+git_image_id=''
+git_image='vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576'
 dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
 if [[ "$remote" == true ]]; then
  evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026"
@@ -198,7 +203,7 @@ import json,re,sys
 items=json.load(open(sys.argv[1]));images=json.load(open(sys.argv[2]));volumes=json.load(open(sys.argv[3]))
 if len(items)!=1 or len(images)!=3 or len(volumes)!=1:raise SystemExit("ambiguous outer dependencies")
 c=items[0];image=images[0];v=volumes[0];cfg=c.get("Config",{});h=c.get("HostConfig",{});state=c.get("State",{})
-identity,name,reference,label,owner,volume,remote=sys.argv[4:]
+identity,name,reference,label,owner,volume,remote,git_compose=sys.argv[4:]
 if not re.fullmatch("sha256:[a-f0-9]{64}",image.get("Id","")) or image.get("Os")!="linux" or image.get("Architecture")!="arm64":raise SystemExit("outer pinned image profile mismatch")
 if not re.fullmatch("[a-f0-9]{64}",identity) or c.get("Id")!=identity or c.get("Name")!="/"+name or c.get("Image")!=image.get("Id") or cfg.get("Image")!=reference:raise SystemExit("outer image/name identity mismatch")
 base=image.get("Config",{});labels=dict(base.get("Labels") or {});labels[label]=owner
@@ -213,6 +218,9 @@ def environment(values):
 env=environment(base.get("Env") or []);env["DOCKER_TLS_CERTDIR"]=""
 if environment(cfg.get("Env") or [])!=env:raise SystemExit("outer environment mismatch")
 expected={"Privileged":True,"Memory":6<<30,"MemorySwap":12<<30,"NanoCpus":4000000000,"PidsLimit":2048,"NetworkMode":"bridge","PidMode":"","IpcMode":"private","UsernsMode":"","UTSMode":"","CgroupnsMode":"private","PublishAllPorts":False,"AutoRemove":False,"ReadonlyRootfs":False,"RestartPolicy":{"Name":"no","MaximumRetryCount":0}}
+if git_compose=="true":
+ if owner!="nerocd-git-compose-vikunja-runtime-20261027":raise SystemExit("Git Compose owner mismatch")
+ expected.update(PidMode="host",CgroupnsMode="host")
 if any(h.get(k)!=value for k,value in expected.items()):raise SystemExit("outer resources/namespace profile mismatch")
 if any(h.get(k) for k in ["Binds","VolumesFrom","Devices","DeviceRequests","CapAdd","CapDrop","GroupAdd","ExtraHosts"]):raise SystemExit("outer has extra host access")
 if remote!="true" and h.get("PortBindings"):raise SystemExit("unexpected publication")
@@ -222,7 +230,7 @@ if len(mounts)!=1:raise SystemExit("outer actual mount count mismatch")
 m=mounts[0]
 if any(m.get(k)!=value for k,value in {"Type":"volume","Name":volume,"Driver":"local","Destination":"/var/lib/docker","Source":v["Mountpoint"],"RW":True}.items()):raise SystemExit("outer actual mount mismatch")
 if state.get("Paused") or state.get("Restarting") or state.get("Status") not in ["created","running","exited"] or state.get("Running")!=(state["Status"]=="running"):raise SystemExit("outer process state uncertain")
-' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$browser_publication"
+' "$evidence/outer-current-inspect" "$evidence/pinned-host-images" "$evidence/volume-current-inspect" "$1" "$name" "$dind" "$label" "$owner" "$volume" "$browser_publication" "$git_compose"
 }
 
 collect_runtime_evidence() {
@@ -257,13 +265,18 @@ cleanup() {
   # Stop only binaries copied into this owned guest, then join before deleting it.
   running=$(python3 -c 'import json,sys;print(str(json.load(open(sys.argv[1]))[0]["State"]["Running"]).lower())' "$evidence/outer-current-inspect")
   if [[ "$running" == true ]] && ! host_docker exec "$outer" sh -ec '
+   own_mount_namespace=$(readlink /proc/self/ns/mnt)
    for exe in /proc/[0-9]*/exe; do
+    pid=${exe#/proc/}; pid=${pid%/exe}
+    [ "$(readlink "/proc/$pid/ns/mnt" 2>/dev/null || true)" = "$own_mount_namespace" ] || continue
     case $(readlink "$exe" 2>/dev/null || true) in /fixture/api.test|/fixture/nerocd-proxy-fixture)
-     pid=${exe#/proc/}; pid=${pid%/exe}; kill -TERM "$pid";; esac
+     kill -TERM "$pid";; esac
    done
    for tick in $(seq 1 100); do
     live=false
     for exe in /proc/[0-9]*/exe; do
+     pid=${exe#/proc/}; pid=${pid%/exe}
+     [ "$(readlink "/proc/$pid/ns/mnt" 2>/dev/null || true)" = "$own_mount_namespace" ] || continue
      case $(readlink "$exe" 2>/dev/null || true) in /fixture/api.test|/fixture/nerocd-proxy-fixture) live=true;; esac
     done
     if [ "$live" = false ]; then exit 0; fi
@@ -274,6 +287,11 @@ cleanup() {
    exit 1
   fi
   echo 'owned API and runner processes absent' | tee "$evidence/process-absence"
+  if [[ "$running" == true && "$git_compose" == true ]]; then
+   if ! host_docker exec "$outer" sh -ec 'if [ -d "$1" ]; then rmdir "$1"; fi; test ! -e "$1"' sh "/sys/fs/cgroup/$owner"; then
+    echo 'owned build cgroup cleanup uncertain; preserving guest' >&2; exit 1
+   fi
+  fi
   if [[ "$running" == true && "$remote" == true ]]; then
    # Only the fixture's public archive and closed marker document are exported.
    collect_runtime_evidence || result=1
@@ -301,6 +319,16 @@ cleanup() {
    if [[ "$present" != absent ]]; then echo 'owned volume absence not proven' >&2; exit 1; fi
   fi
   echo "owned outer volume absent: $volume"
+ fi
+ if [[ "$git_image_added" == true ]]; then
+  observed_image=$(host_docker image inspect --format '{{.Id}}' "$git_image") || result=1
+  image_users=''
+  if [[ "$observed_image" == "$git_image_id" ]] && image_users=$(host_docker ps -aq --filter "ancestor=$git_image_id") && [[ -z "$image_users" ]]; then
+   host_docker image rm "$git_image" || result=1
+  else
+   echo 'new Git prerequisite image identity/users uncertain; preserving reference' >&2
+   result=1
+  fi
  fi
  host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-after" || result=1
  host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-after" || result=1
@@ -336,6 +364,13 @@ present=$(volume_inventory)
 [[ "$present" == absent ]] || { echo 'outer volume already exists' >&2; exit 1; }
 df -Pk "$evidence" > "$evidence/host-filesystem-before"
 df -Pi "$evidence" > "$evidence/host-inodes-before"
+if [[ "$git_compose" == true ]]; then
+ python3 - <<'GIT_PORT_PREREQUISITE'
+import socket
+with socket.socket() as listener:
+ listener.bind(("127.0.0.1",25443))
+GIT_PORT_PREREQUISITE
+fi
 host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-before"
 host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"
 host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-before"
@@ -367,6 +402,19 @@ if [[ "$archive" == true ]]; then
  sed -e "s/@SOURCE_COMMIT@/$head_before/g" -e "s/@EXECUTABLE_SHA256@/$helper_sha/g" Dockerfile.storage-archive > "$evidence/archive-helper/Dockerfile"
  printf 'source=%s\nexecutable_sha256=%s\n' "$head_before" "$helper_sha" > "$evidence/archive-helper-provenance"
 fi
+if [[ "$git_compose" == true ]]; then
+ # Reuse the local-build gate's exact ARM64 Buildx/Railpack/mise pins.
+ buildx_sha=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a
+ rail_sha=c24a064b586b8f4f8c2fab44dd5ef19253e4c6cc4e1df793b3ae19cd87f7a5d4
+ mise_sha=cf9a7c3e64688a7909fa69a4989d3b8daf6dd1b3e583fa0ab7c08139ae6d3dcd
+ curl --fail --silent --show-error --location https://github.com/docker/buildx/releases/download/v0.38.1/buildx-v0.38.1.linux-arm64 --output "$evidence/buildx"
+ curl --fail --silent --show-error --location https://github.com/railwayapp/railpack/releases/download/v0.40.1/railpack-v0.40.1-arm64-unknown-linux-musl.tar.gz --output "$evidence/railpack.tgz"
+ curl --fail --silent --show-error --location https://github.com/jdx/mise/releases/download/v2026.9.15/mise-v2026.9.15-linux-arm64-musl.tar.gz --output "$evidence/mise.tgz"
+ printf '%s  %s\n' "$buildx_sha" "$evidence/buildx" "$rail_sha" "$evidence/railpack.tgz" "$mise_sha" "$evidence/mise.tgz" | shasum -a 256 --check
+ tar -xzf "$evidence/railpack.tgz" -C "$evidence" railpack
+ tar -xzf "$evidence/mise.tgz" -C "$evidence" mise/bin/mise
+ chmod 0755 "$evidence/buildx" "$evidence/railpack"
+fi
 shasum -a 256 "$evidence/api.test" "$evidence/nerocd-proxy-fixture" "$evidence/a/app" "$evidence/b/app" | tee "$evidence/binary-sha256"
 postgres=postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
 registry=registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
@@ -378,11 +426,30 @@ if [[ "$remote" == true || "$managed_compose" == true ]]; then
  # Host cache supplies the exact content/config baseline, not guest digest lookup.
  host_docker image inspect "$traefik" "$pebble" "$silo" > "$evidence/pinned-remote-images"
 fi
+if [[ "$git_compose" == true ]]; then
+ # Acquire the exact application prerequisite before allocating the full guest.
+ if ! host_docker image inspect "$git_image" > "$evidence/git-host-image-before.json" 2>/dev/null; then
+  # A failed inspect alone cannot establish absence or authorize later removal.
+  host_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/git-host-images-before.jsonl"
+  python3 - "$evidence/git-host-images-before.jsonl" "$git_image" <<'GIT_IMAGE_ABSENCE'
+import json,sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+if any(not isinstance(row,dict) or not isinstance(row.get("Digest"),str) for row in rows):raise SystemExit("Git prerequisite image inventory uncertain")
+if any(row["Digest"]==sys.argv[2].split("@",1)[1] for row in rows):raise SystemExit("Git prerequisite inspect failed for inventoried digest; preserving reference")
+GIT_IMAGE_ABSENCE
+  host_docker pull --platform linux/arm64 "$git_image" > "$evidence/git-host-image-pull.log" 2>&1
+  git_image_added=true
+ fi
+ git_image_id=$(host_docker image inspect --format '{{.Id}}' "$git_image")
+ host_docker image inspect "$git_image" > "$evidence/git-host-image.json"
+ [[ "$git_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+fi
 volume_attempted=true
 host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
 outer_run() {
+ if [[ "$git_compose" == true ]]; then set -- --pid=host --cgroupns=host "$@"; fi
  if [[ "$managed_compose" == true || "$uptime_kuma" == true || "$actual_budget" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 --publish 127.0.0.1:25443:443 "$@"
  elif [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
  else host_docker run --pull=never "$@"; fi
@@ -404,6 +471,49 @@ if [[ "$remote" == true || "$managed_compose" == true ]]; then host_docker cp "$
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 if [[ "$managed_compose" == true ]]; then host_docker cp openapi.yaml "$outer:/workspace/openapi.yaml"; fi
 host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+if [[ "$git_compose" == true ]]; then
+ host_docker exec "$outer" apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0
+ for binary in buildx railpack; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
+ host_docker cp "$evidence/mise/bin/mise" "$outer:/fixture/mise-bin"
+ host_docker exec "$outer" sh -ec '/fixture/buildx version; /fixture/railpack --version; /fixture/mise-bin --version; git --version; test -x /usr/libexec/git-core/git-http-backend' > "$evidence/git-build-tools"
+ host_docker exec "$outer" sh -ec 'printf "127.0.0.1 example.com\n" >> /etc/hosts; mkdir /planner; cp /fixture/railpack /planner/railpack; cp /fixture/mise-bin /planner/mise; printf "FROM alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62\nCOPY railpack /usr/local/bin/railpack\nCOPY mise /usr/local/bin/mise\n" > /planner/Dockerfile; docker build -t nerocd-runtime-planner:fixture /planner'
+ inner_docker pull moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+ # GIT_CGROUP_PREREQUISITE_BEGIN
+ # Host PID and cgroup namespaces make daemon PIDs and cgroup paths agree.
+ # Check actual assignment and controller limits before any application build.
+ host_docker exec "$outer" sh -ec '
+ root=$1; child=$root/prerequisite; pid=
+ cleanup() { if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi; rmdir "$child" 2>/dev/null || true; }
+ trap cleanup EXIT
+ test ! -e "$root"
+ mkdir "$root"
+ printf "+cpu +memory +pids" > "$root/cgroup.subtree_control"
+ test "$(cat "$root/cgroup.type")" = domain
+ test -z "$(cat "$root/cgroup.procs")"
+ mkdir "$child"
+ printf "10000 100000" > "$child/cpu.max"
+ printf "33554432" > "$child/memory.max"
+ printf "0" > "$child/memory.swap.max"
+ printf "4" > "$child/pids.max"
+ sleep 30 & pid=$!
+ printf "%s" "$pid" > "$child/cgroup.procs"
+ grep -Fx "$pid" "$child/cgroup.procs"
+ grep -Fx "0::${child#/sys/fs/cgroup}" "/proc/$pid/cgroup"
+ test "$(cat "$child/cpu.max")" = "10000 100000"
+ test "$(cat "$child/memory.max")" = 33554432
+ test "$(cat "$child/memory.swap.max")" = 0
+ test "$(cat "$child/pids.max")" = 4
+ kill "$pid"; wait "$pid" 2>/dev/null || true; pid=
+ rmdir "$child"
+ cat "$root/cgroup.subtree_control"
+ echo git-build-cgroup-assignment-passed
+ ' sh "/sys/fs/cgroup/$owner" > "$evidence/git-build-cgroup"
+ # GIT_CGROUP_PREREQUISITE_END
+ planner_id=$(inner_docker image inspect --format '{{.Id}}' nerocd-runtime-planner:fixture)
+ host_docker exec "$outer" mkdir -p /workspace/examples/compose
+ host_docker cp examples/compose/vikunja-postgresql.yaml "$outer:/workspace/examples/compose/vikunja-postgresql.yaml"
+ printf 'buildx_sha256=sha256:%s\nplanner_id=%s\ncgroup_root=/sys/fs/cgroup/%s\n' "$buildx_sha" "$planner_id" "$owner" > "$evidence/git-build-prerequisites"
+fi
 # BASE_IMAGE_PRELOAD_BEGIN
 # Qualify digest lookup in the guest itself. Host OCI descriptor IDs are not
 # executable config IDs after transfer into the classic overlay2 image store.
@@ -466,7 +576,10 @@ fi
 inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/inner-images-before-test"
 host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-before-test"
 host_docker exec "$outer" df -Pi / /var/lib/docker /tmp > "$evidence/guest-inodes-before-test"
-awk 'NR>1 && $4<2097152 {exit 1}' "$evidence/guest-filesystem-before-test"
+minimum_kib=2097152
+if [[ "$git_compose" == true ]]; then minimum_kib=3407872; fi
+awk -v minimum="$minimum_kib" 'NR>1 && $4<minimum {exit 1}' "$evidence/guest-filesystem-before-test"
+if [[ "$git_compose" == true ]]; then awk 'NR>1 && $4<65536 {exit 1}' "$evidence/guest-inodes-before-test"; fi
 ready=false
 for _ in $(seq 1 60); do
  if [[ $(inner_docker exec --env PGPASSWORD=isolated_fixture_only "$pg" psql --host=127.0.0.1 --username=nerocd --dbname=nerocd_storage_runtime --no-psqlrc --tuples-only --no-align --command='SELECT current_database()' 2>/dev/null || true) == nerocd_storage_runtime ]]; then ready=true; break; fi
@@ -517,7 +630,7 @@ CHECK_DELETION_PG
 import sys
 expected={"TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"}
 if sys.argv[2]=="true":expected.remove("TestHostingStorageRemoteCompiledRunnerHTTPS");expected.add("TestHostingStorageBackupRetentionCompiledRunnerHTTPS")
-if sys.argv[3]=="true":expected.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");expected.add("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
+if len(sys.argv)>3 and sys.argv[3]=="true":expected.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");expected.add("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
 actual=set(open(sys.argv[1]).read().splitlines())
 if actual!=expected:raise SystemExit("required API test names missing or unexpected")
 CHECK_API_LIST
@@ -533,7 +646,7 @@ import sys
 text=open(sys.argv[1]).read()
 required=["TestStorageRuntimeRollback","TestStorageRuntimeDockerOutputSeparatesDiagnostics","TestStorageRuntimeDockerOutputProcess","TestStorageRuntimeDockerDirectStartsNeverPull","TestHostingStorageArchiveCompiledRunnerHTTPS","TestHostingStorageRemoteCompiledRunnerHTTPS","TestHostingStorageRemoteReceiptFaultContract","TestHostingStorageRemoteObservationFaultContract","TestHostingStorageRemoteProductionContract"]
 if sys.argv[2]=="true":required.remove("TestHostingStorageRemoteCompiledRunnerHTTPS");required.append("TestHostingStorageBackupRetentionCompiledRunnerHTTPS")
-if sys.argv[3]=="true":required.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");required.append("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
+if len(sys.argv)>3 and sys.argv[3]=="true":required.remove("TestHostingStorageBackupRetentionCompiledRunnerHTTPS");required.append("TestHostingStorageBackupDeletionCompiledRunnerHTTPS")
 for name in required:
  if "--- PASS: "+name+" " not in text:raise SystemExit("required API runtime PASS missing: "+name)
 if "SKIP" in text:raise SystemExit("required API runtime test skipped")
@@ -553,16 +666,23 @@ for k in ['manual_deletion_selection_and_exact_retry','manual_deletion_history_a
 CHECK_DELETION_MARKERS
  fi
 elif [[ "$managed_compose" == true ]]; then
+ git_compose_mode=''; if [[ "$git_compose" == true ]]; then git_compose_mode=disposable-dind; fi
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
- host_docker exec --workdir /workspace/internal/api --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
+ host_docker exec --workdir /workspace/internal/api --env "NEROCD_GIT_COMPOSE_RUNTIME=$git_compose_mode" --env "NEROCD_BUILDX_SHA256=sha256:${buildx_sha:-}" --env "NEROCD_PLANNER_IMAGE=${planner_id:-}" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
  test_pid=$!
  NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/compose_browser.mjs > "$evidence/browser.log" 2>&1
  wait "$test_pid"
  test_pid=''
- python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" <<'COMPOSE_BROWSER_PASS'
+ python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" "$git_compose" <<'COMPOSE_BROWSER_PASS'
 import json,pathlib,sys
 text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
+if len(sys.argv)>3 and sys.argv[3]=="true":
+ if "Git Compose: private HTTPS source and exact receipt built;" not in text or "--- PASS: TestHostingGitComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Git Compose runtime test did not pass")
+ if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Git Compose browser did not pass")
+ for key in ["browser_git_compose_create","browser_git_compose_build_receipt","browser_git_compose_from_build","git_failures_preserved_records_uploads","served_assets_match_manifest","saved_compose_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence"]:
+  if browser.get(key) is not True:raise SystemExit("connected Git Compose proof missing: "+key)
+ raise SystemExit(0)
 if "catalog Compose: original public source and generated runtime refs deployed; private Compose registry: protected replacement and uncached Start" not in text:raise SystemExit("private Compose registry assertions missing")
 if "Compose archive native download: exact selected blob; no new archive or writer lifecycle events" not in text:raise SystemExit("Compose archive download assertions missing")
 if "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Compose runtime test did not pass without skips")
