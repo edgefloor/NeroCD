@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { appendLogRows, closeRuntimeLogs, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, validateLogPage, validateLogSession, type LogPage, type LogRow, type LogSession } from "./hosting-runtime-logs";
+import { appendLogRows, closeRuntimeLogs, getRuntimeLogTargets, runtimeLogTargetsQuery, validateLogTargets, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, validateLogPage, validateLogSession, type LogPage, type LogRow, type LogSession } from "./hosting-runtime-logs";
 const time = "2026-10-23T00:00:00Z", digest = "sha256:" + "a".repeat(64), scope = { actor: "u", project: "p", resource: "r/one" };
 const session: LogSession = { id: "rls_" + "1".repeat(32), request_id: "a".repeat(32), resource_id: scope.resource, project_id: "p", actor_id: "u", target: { resource_id: scope.resource, binding_id: "b", destination_id: "d", server_id: "s", runner_id: "a", operation_id: "op", daemon_id: "daemon", container_id: "container", image_id: digest, release_hash: digest, plan_hash: digest, runtime_namespace: "test" }, state: "waiting", created_at: time, demand_expires_at: "2026-10-23T00:00:30Z", ended_at: null, purge_after: "2026-10-23T00:05:30Z", server_time: time, sensitive: true };
 const row = (sequence = 1, message = "literal <b>not HTML</b>\u001b[31m"): LogRow => ({ sequence, component: "application", stream: "stdout", message, received_at: time });
@@ -39,4 +39,38 @@ test("demand expires conservatively under request delay, wall rollback, suspensi
   vi.spyOn(performance, "now").mockReturnValue(100); vi.spyOn(Date, "now").mockReturnValue(1000);
   const lease = logLease(session, 4000); expect(lease.remaining).toBe(25998); expect(leaseRemaining(lease, 26100, -5000)).toBe(0); expect(leaseRemaining(lease, 100, 27000)).toBe(0); expect(leaseRemaining(lease, 99, 1000)).toBe(0);
   const newerClock = { ...session, server_time: "2026-10-22T23:59:59Z" }; expect(logLease(newerClock, 0, lease).remaining).toBe(lease.remaining);
+});
+
+test("component targets are paired, immutable and bound to every returned row", () => {
+  const component = { ...session, target: { ...session.target, component: "db", container_name: "ncd_" + "b".repeat(32) } };
+  expect(() => validateLogSession(component, scope)).not.toThrow();
+  for (const target of [{ ...component.target, component: undefined }, { ...component.target, container_name: undefined }, { ...component.target, component: "../db" }, { ...component.target, container_name: "foreign" }]) expect(() => validateLogSession({ ...component, target }, scope)).toThrow();
+  for (const target of [{ ...component.target, component: "app" }, { ...component.target, container_name: "ncd_" + "c".repeat(32) }, session.target]) expect(() => validateLogSession({ ...component, target }, scope, component)).toThrow();
+  expect(() => validateLogPage({ ...page(), session: component, items: [{ ...row(), component: "db" }] }, scope, component, 0)).not.toThrow();
+  expect(() => validateLogPage({ ...page(), session: component }, scope, component, 0)).toThrow();
+});
+test("component open freezes paired selection and rejects another operation or component", async () => {
+  const body = newLogOpen(Date.parse(time), { component: "db", expected_operation_id: "op" });
+  expect(body).toMatchObject({ component: "db", expected_operation_id: "op" });
+  for (const target of [{ ...session.target, component: "app", container_name: "ncd_" + "a".repeat(32) }, { ...session.target, component: "db", container_name: "ncd_" + "a".repeat(32), operation_id: "other" }]) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...session, request_id: body.request_id, target }))));
+    await expect(openRuntimeLogs(scope, body, new AbortController().signal)).rejects.toThrow();
+  }
+});
+
+const targets = { resource_id: scope.resource, operation_id: "hop_settled", components: [{ component: "init", running: false, exit_code: 0 }] };
+test("runtime targets use one scoped read-only no-store endpoint with no viewer demand", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify(targets))); vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal; expect(await getRuntimeLogTargets(scope, signal)).toEqual(targets);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0]).toMatchObject(["/api/v1/resources/r%2Fone/runtime-log-targets", { signal, cache: "no-store", method: "GET" }]);
+  expect(runtimeLogTargetsQuery(scope).queryKey).not.toEqual(runtimeLogTargetsQuery({ ...scope, actor: "other" }).queryKey);
+  expect(runtimeLogTargetsQuery(scope).queryKey).not.toEqual(runtimeLogTargetsQuery({ ...scope, project: "other" }).queryKey);
+});
+test.each([
+  { ...targets, resource_id: "foreign" }, { ...targets, operation_id: "" }, { ...targets, operation_id: "../foreign" }, { ...targets, extra: true },
+  { ...targets, components: [] }, { ...targets, components: Array(17).fill(targets.components[0]) }, { ...targets, components: [targets.components[0], targets.components[0]] },
+  ...[{ component: "../db" }, { component: "DB" }, { running: "false" }, { exit_code: 0.5 }, { exit_code: null }, { exit_code: 2147483648 }, { extra: true }].map((change) => ({ ...targets, components: [{ ...targets.components[0], ...change }] })),
+])("rejects foreign, malformed or unknown runtime target evidence %j", (value) => {
+  expect(() => validateLogTargets(value, scope)).toThrow();
 });

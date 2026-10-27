@@ -20,6 +20,7 @@ func TestRunnerRuntimeLogsOptIn(t *testing.T) {
 		{name: "once", enabled: true, execute: true, once: true},
 		{name: "complete", enabled: true, execute: true, complete: "succeeded"},
 		{name: "missing flag", execute: true, caps: []string{domain.HostingRuntimeLogsCapability}},
+		{name: "stack missing flag", execute: true, caps: []string{domain.HostingStackRuntimeLogsCapability}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			caps, err := runnerRuntimeLogsCapabilities(tc.enabled, tc.execute, tc.once, tc.complete, tc.specified, tc.caps)
@@ -27,10 +28,15 @@ func TestRunnerRuntimeLogsOptIn(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.ok {
+				found := false
 				for _, c := range caps {
+					found = found || c == domain.HostingStackRuntimeLogsCapability
 					if c == "shell" || c == domain.HostingBuildTaskType {
 						t.Fatal("observer inherited process capability")
 					}
+				}
+				if !found {
+					t.Fatal("configured collector did not advertise stack log support")
 				}
 			}
 		})

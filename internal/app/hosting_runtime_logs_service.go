@@ -125,3 +125,16 @@ func (s *Service) AppendRuntimeLogs(ctx context.Context, token string, in domain
 	}
 	return repo.AppendRuntimeLogs(ctx, runner, hash, token, in)
 }
+
+// RuntimeLogTargets authorizes current component discovery without collection demand.
+func (s *Service) RuntimeLogTargets(ctx context.Context, resource string) (domain.HostingRuntimeLogTargets, error) {
+	item, actor, err := s.resourceForDestinationRole(ctx, resource, domain.RoleViewer)
+	if err != nil {
+		return domain.HostingRuntimeLogTargets{}, err
+	}
+	repo, err := s.runtimeLogs()
+	if err != nil {
+		return domain.HostingRuntimeLogTargets{}, err
+	}
+	return repo.RuntimeLogTargets(ctx, actor.ID, item.ID)
+}

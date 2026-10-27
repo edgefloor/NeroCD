@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"io"
+	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/store"
 	"net/http"
@@ -124,6 +125,20 @@ func (s *Server) runtimeLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	token, _ := bearerToken(r.Header.Get("Authorization"))
 	result, err := s.app.AppendRuntimeLogs(r.Context(), token, in)
+	if err != nil {
+		writeRuntimeLogError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) runtimeLogTargets(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if len(r.URL.Query()) != 0 {
+		writeError(w, app.InvalidInput(errors.New("runtime log targets accept no selectors")))
+		return
+	}
+	result, err := s.app.RuntimeLogTargets(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeRuntimeLogError(w, err)
 		return

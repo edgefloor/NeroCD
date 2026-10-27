@@ -113,9 +113,13 @@ func unixRuntimeLogFixture(t *testing.T, handler http.Handler) (string, *http.Se
 	return "unix://" + socket, server
 }
 func TestRuntimeLogDockerNarrowUnixIdentityAndDrivers(t *testing.T) {
-	for _, mode := range []string{"json-file", "local", "tty", "unsupported", "daemon", "label", "container", "version", "oversize", "no-tty"} {
+	for _, mode := range []string{"json-file", "local", "tty", "unsupported", "daemon", "label", "container", "version", "oversize", "no-tty", "stack", "stack-component", "stack-name", "image"} {
 		t.Run(mode, func(t *testing.T) {
 			target := runtimeLogTargetFixture()
+			if strings.HasPrefix(mode, "stack") {
+				target.Component = "init"
+				target.ContainerName = domain.HostingStackObjectID(target.BindingID, "component", target.Component)
+			}
 			var logs atomic.Int32
 			endpoint, _ := unixRuntimeLogFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "GET" {
@@ -148,6 +152,21 @@ func TestRuntimeLogDockerNarrowUnixIdentityAndDrivers(t *testing.T) {
 						driver = "syslog"
 					}
 					labels := map[string]string{"io.nerocd.binding": target.BindingID, "io.nerocd.operation": target.OperationID, "io.nerocd.release": target.ReleaseHash, "io.nerocd.plan": target.PlanHash}
+					name := target.RuntimeNamespace + "_" + suffix
+					if target.Component != "" {
+						labels["io.nerocd.stack.component"] = target.Component
+						name = target.ContainerName
+					}
+					if mode == "stack-component" {
+						labels["io.nerocd.stack.component"] = "foreign"
+					}
+					if mode == "stack-name" {
+						name = "foreign"
+					}
+					image := target.ImageID
+					if mode == "image" {
+						image = "sha256:" + strings.Repeat("f", 64)
+					}
 					if mode == "label" {
 						labels["io.nerocd.binding"] = "foreign"
 					}
@@ -159,7 +178,7 @@ func TestRuntimeLogDockerNarrowUnixIdentityAndDrivers(t *testing.T) {
 					if mode == "no-tty" {
 						delete(config, "Tty")
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Name": "/" + target.RuntimeNamespace + "_" + suffix, "Image": target.ImageID, "Config": config, "HostConfig": map[string]any{"LogConfig": map[string]string{"Type": driver}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Name": "/" + name, "Image": image, "Config": config, "HostConfig": map[string]any{"LogConfig": map[string]string{"Type": driver}}})
 				case "/v1.54/containers/" + target.ContainerID + "/logs":
 					logs.Add(1)
 					if r.URL.RawQuery != "stdout=1&stderr=1&timestamps=1&tail=200&follow=1" {
@@ -177,7 +196,7 @@ func TestRuntimeLogDockerNarrowUnixIdentityAndDrivers(t *testing.T) {
 			}
 			defer source.Close()
 			identity, err := source.Verify(t.Context(), target)
-			good := mode == "json-file" || mode == "local" || mode == "tty"
+			good := mode == "json-file" || mode == "local" || mode == "tty" || mode == "stack"
 			if (err == nil) != good {
 				t.Fatal("identity or driver accepted incorrectly", err)
 			}

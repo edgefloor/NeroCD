@@ -120,6 +120,7 @@ func (s *dockerRuntimeLogs) Verify(ctx context.Context, t domain.HostingRuntimeL
 				Operation string `json:"io.nerocd.operation"`
 				Release   string `json:"io.nerocd.release"`
 				Plan      string `json:"io.nerocd.plan"`
+				Component string `json:"io.nerocd.stack.component"`
 			}
 		}
 		HostConfig struct{ LogConfig struct{ Type string } }
@@ -128,7 +129,11 @@ func (s *dockerRuntimeLogs) Verify(ctx context.Context, t domain.HostingRuntimeL
 		return identity, errRuntimeLogSource
 	}
 	suffix := strings.TrimPrefix(domain.HostingDocumentHash(t.OperationID), "sha256:")[:16]
-	if c.ID != t.ContainerID || c.Name != "/"+t.RuntimeNamespace+"_"+suffix || c.Image != t.ImageID || c.Config.TTY == nil || c.Config.Labels.Binding != t.BindingID || c.Config.Labels.Operation != t.OperationID || c.Config.Labels.Release != t.ReleaseHash || c.Config.Labels.Plan != t.PlanHash {
+	name := t.RuntimeNamespace + "_" + suffix
+	if t.Component != "" {
+		name = t.ContainerName
+	}
+	if c.ID != t.ContainerID || c.Name != "/"+name || c.Image != t.ImageID || c.Config.TTY == nil || c.Config.Labels.Binding != t.BindingID || c.Config.Labels.Operation != t.OperationID || c.Config.Labels.Release != t.ReleaseHash || c.Config.Labels.Plan != t.PlanHash || c.Config.Labels.Component != t.Component {
 		return identity, errRuntimeLogSource
 	}
 	identity = runtimeLogSourceIdentity{TTY: *c.Config.TTY, Driver: c.HostConfig.LogConfig.Type}

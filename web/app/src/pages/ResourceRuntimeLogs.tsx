@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, principalQuery } from "@/api";
 import type { Resource } from "@/api/hosting";
-import { appendLogRows, closeRuntimeLogs, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, type LogLease, type LogOpen, type LogPage, type LogRow, type LogScope, type LogSession } from "@/api/hosting-runtime-logs";
+import { appendLogRows, closeRuntimeLogs, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, runtimeLogTargetsQuery, type LogLease, type LogOpen, type LogPage, type LogRow, type LogScope, type LogSession } from "@/api/hosting-runtime-logs";
 import { Button } from "@/components/ui/button";
 
 type Kind = "open" | "read" | "renew" | "close";
@@ -13,17 +13,38 @@ const buttonClass = "h-auto max-w-full whitespace-normal";
 export function ResourceRuntimeLogs({ resource, blocked }: { resource: Resource; blocked: boolean }) {
   const identity = useQuery(principalQuery());
   if (blocked || identity.isPending || identity.isFetching || identity.isError || !identity.data) return <p role="status">Runtime log access is pending or unavailable. Output is cleared.</p>;
-  return <LogOutput key={JSON.stringify([identity.data.provider, identity.data.id, resource.project_id, resource.id])} scope={{ actor: identity.data.id, project: resource.project_id, resource: resource.id }} name={resource.name} />;
+  return <LogOutput key={JSON.stringify([identity.data.provider, identity.data.id, resource.project_id, resource.id])} scope={{ actor: identity.data.id, project: resource.project_id, resource: resource.id }} name={resource.name} compose={resource.source.kind === "compose"} />;
 }
-function LogOutput({ scope, name }: { scope: LogScope; name: string }) {
+function LogOutput({ scope, name, compose }: { scope: LogScope; name: string; compose: boolean }) {
   const [shown, setShown] = useState(true);
   return <section aria-label={`Runtime logs for ${name}`} className="min-w-0 space-y-3 border-t pt-3">
     <h5 className="font-medium">Runtime logs</h5>
     <p className="text-sm">Sensitive application output may contain secrets. Follow only when needed. Output stays in this mounted view and is cleared when hidden or access changes.</p>
-    {shown ? <LogReader scope={scope} hide={() => setShown(false)} /> : <><p>Runtime log output is hidden and cleared. Collection may remain admitted until its demand expires; hiding does not guarantee server closure.</p><Button className={buttonClass} variant="outline" onClick={() => setShown(true)}>Show runtime log controls</Button></>}
+    {shown ? compose ? <StackLogReader scope={scope} hide={() => setShown(false)} /> : <LogReader scope={scope} hide={() => setShown(false)} /> : <><p>Runtime log output is hidden and cleared. Collection may remain admitted until its demand expires; hiding does not guarantee server closure.</p><Button className={buttonClass} variant="outline" onClick={() => setShown(true)}>Show runtime log controls</Button></>}
   </section>;
 }
-function LogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
+type Selection = { component: string; expected_operation_id: string };
+function StackLogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
+  const targets = useQuery(runtimeLogTargetsQuery(scope));
+  const [selected, select] = useState("");
+  const ready = targets.isSuccess && !targets.isFetching;
+  const operationID = ready ? targets.data.operation_id : undefined;
+  const choices = ready ? targets.data.components : [];
+  const component = choices.find((item) => item.component === selected);
+  return <div className="min-w-0 space-y-3">
+    <label className="block space-y-1"><span>Compose component</span><select className="block max-w-full rounded border bg-background p-2" value={component?.component ?? ""} onChange={(event) => select(event.target.value)}>
+      <option value="">Select a component</option>
+      {choices.map((item) => <option key={item.component} value={item.component}>{item.component}{item.running ? " · running" : ` · stopped, exit ${item.exit_code}`}</option>)}
+    </select></label>
+    <Button className={buttonClass} variant="outline" disabled={targets.isFetching} onClick={() => { select(""); void targets.refetch(); }}>Refresh component targets</Button>
+    {component && operationID ? <LogReader key={JSON.stringify([operationID, component.component])} scope={scope} hide={hide} selection={{ component: component.component, expected_operation_id: operationID }} /> : <><p role="status">{ready ? "Select a component, then choose Follow runtime logs. Selection alone opens no demand." : "Settled Compose component evidence is pending or unavailable. Output is cleared."}</p><Button className={buttonClass} variant="outline" onClick={hide}>Hide output</Button></>}
+  </div>;
+}
+function closeDetached(scope: LogScope, session: LogSession) {
+  const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), 5000);
+  void closeRuntimeLogs(scope, session, controller.signal).catch(() => undefined).finally(() => window.clearTimeout(timer));
+}
+function LogReader({ scope, hide, selection }: { scope: LogScope; hide: () => void; selection?: Selection }) {
   const state = useRef<State>(empty()), active = useRef(false), node = useRef<HTMLDivElement>(null);
   const attempts = useRef<Partial<Record<Kind, { controller: AbortController; timer: number }>>>({});
   const visible = useRef(false), documentVisible = useRef(document.visibilityState !== "hidden"), viewport = useRef(typeof IntersectionObserver === "undefined");
@@ -56,7 +77,10 @@ function LogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
     update();
     try {
       const result = await work(attempt.controller.signal);
-      if (!active.current || attempts.current[kind] !== attempt || attempt.controller.signal.aborted) return;
+      if (!active.current || attempts.current[kind] !== attempt || attempt.controller.signal.aborted) {
+        if (!active.current && selection && kind === "open") closeDetached(scope, result as LogSession);
+        return;
+      }
       accept(result, Math.max(0, performance.now() - started));
     } catch (cause) {
       if (active.current && attempts.current[kind] === attempt && !attempt.controller.signal.aborted) pause(kind, cause);
@@ -83,7 +107,7 @@ function LogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
   };
   const open = (retry = false) => {
     abortAll();
-    if (!retry) { state.current = empty(); state.current.opening = newLogOpen(); lastRead.current = -Infinity; }
+    if (!retry) { state.current = empty(); state.current.opening = newLogOpen(Date.now(), selection); lastRead.current = -Infinity; }
     const body = state.current.opening; if (!body) return;
     state.current.error = undefined; state.current.conflict = false;
     void run("open", (signal) => openRuntimeLogs(scope, body, signal), (session, duration) => {
@@ -137,7 +161,7 @@ function LogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
       update(); timer = window.setTimeout(cycle, Math.max(1, Math.min(1000, remaining() || 1000)));
     };
     timer = window.setTimeout(cycle, 1000);
-    return () => { active.current = false; abortAll(); state.current = empty(); window.clearTimeout(timer); observer?.disconnect(); document.removeEventListener("visibilitychange", documentChanged); };
+    return () => { active.current = false; abortAll(); if (selection && state.current.session) closeDetached(scope, state.current.session); state.current = empty(); window.clearTimeout(timer); observer?.disconnect(); document.removeEventListener("visibilitychange", documentChanged); };
     // Controller lifetime is exactly the actor/project/resource keyed mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -164,7 +188,7 @@ function LogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
       {current.session.state === "disconnected" ? <p>Collector disconnected. Cached rows do not prove current collection.</p> : null}
       {current.session.state === "target_changed" ? <p>The target changed. This session remains attached to its old target; start a new Follow explicitly.</p> : null}
       {current.session.state === "unsupported_driver" ? <p>The collector reported an unsupported log driver. Retained history may still be read.</p> : null}
-      <dl className="break-all text-xs"><dt>Immutable session</dt><dd>{current.session.id}</dd><dt>Original operation / container</dt><dd>{current.session.target.operation_id} / {current.session.target.container_id}</dd><dt>Original runner / daemon / image</dt><dd>{current.session.target.runner_id} / {current.session.target.daemon_id} / {current.session.target.image_id}</dd></dl>
+      <dl className="break-all text-xs"><dt>Immutable session</dt><dd>{current.session.id}</dd><dt>Original component / container name</dt><dd>{current.session.target.component ?? "application"} / {current.session.target.container_name ?? "not recorded"}</dd><dt>Original operation / container</dt><dd>{current.session.target.operation_id} / {current.session.target.container_id}</dd><dt>Original runner / daemon / image</dt><dd>{current.session.target.runner_id} / {current.session.target.daemon_id} / {current.session.target.image_id}</dd></dl>
       {current.markers.includes("source_gap") ? <p>Source gap: collection coverage is incomplete, independently of retained server rows.</p> : null}
       {current.markers.includes("prefix_evicted") ? <p>Retention prefix removed: earlier server sequences are no longer available.</p> : null}
       {current.gap && !current.markers.includes("source_gap") ? <p>A server sequence gap was reported.</p> : null}

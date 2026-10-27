@@ -17,7 +17,7 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 	if _, err := batch.Canonical(); err != nil {
 		t.Fatal(err)
 	}
-	for _, change := range []func(*HostingRuntimeLogBatch){func(v *HostingRuntimeLogBatch) { v.Events = nil }, func(v *HostingRuntimeLogBatch) { v.State = "error: daemon failed" }, func(v *HostingRuntimeLogBatch) { v.Events[0].Stream = "system" }, func(v *HostingRuntimeLogBatch) { v.Events[0].Component = "build" }, func(v *HostingRuntimeLogBatch) {
+	for _, change := range []func(*HostingRuntimeLogBatch){func(v *HostingRuntimeLogBatch) { v.Events = nil }, func(v *HostingRuntimeLogBatch) { v.State = "error: daemon failed" }, func(v *HostingRuntimeLogBatch) { v.Events[0].Stream = "system" }, func(v *HostingRuntimeLogBatch) { v.Events[0].Component = "bad/name" }, func(v *HostingRuntimeLogBatch) {
 		v.Events[0].Message = strings.Repeat("x", HostingRuntimeLogMessageLimit+1)
 	}, func(v *HostingRuntimeLogBatch) { v.ExpectedSequence = -1 }, func(v *HostingRuntimeLogBatch) { v.InstanceID = "not-random" }} {
 		copy := batch
@@ -53,6 +53,26 @@ func TestHostingRuntimeLogClosedBoundedInput(t *testing.T) {
 	}
 	if DecodeHostingRuntimeLogsJSON([]byte(bad), &decoded) == nil {
 		t.Fatal("duplicate nested key accepted")
+	}
+}
+
+func TestHostingRuntimeLogComponentSelection(t *testing.T) {
+	base := HostingRuntimeLogOpen{RequestID: strings.Repeat("a", 32), RequestExpiresAt: time.Now()}
+	for _, tc := range []struct {
+		component, operation string
+		valid                bool
+	}{
+		{valid: true}, {component: "app", operation: "hop_settled", valid: true},
+		{component: "init", operation: "hop_settled", valid: true},
+		{component: "app"}, {operation: "hop_settled"},
+		{component: "../foreign", operation: "hop_settled"},
+	} {
+		input := base
+		input.Component, input.ExpectedOperationID = tc.component, tc.operation
+		_, err := input.Canonical()
+		if (err == nil) != tc.valid {
+			t.Fatalf("component %q operation %q: %v", tc.component, tc.operation, err)
+		}
 	}
 }
 

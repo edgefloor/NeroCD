@@ -1,10 +1,11 @@
+import { queryOptions } from "@tanstack/react-query";
 import type { components } from "./generated";
 import { request } from "./client";
 
-export type LogSession = components["schemas"]["HostingRuntimeLogSession"];
+export type LogSession = components["schemas"]["HostingRuntimeLogSession"] & { target: { component?: string; container_name?: string } };
 export type LogPage = components["schemas"]["HostingRuntimeLogPage"];
 export type LogRow = components["schemas"]["HostingRuntimeLogItem"];
-export type LogOpen = components["schemas"]["HostingRuntimeLogOpen"];
+export type LogOpen = components["schemas"]["HostingRuntimeLogOpen"] & { component?: string; expected_operation_id?: string };
 export type LogScope = { actor: string; project: string; resource: string };
 export type LogLease = { remaining: number; monotonic: number; wall: number };
 const encoder = new TextEncoder();
@@ -16,6 +17,26 @@ function keys(value: unknown, required: string[], optional: string[] = []): asse
 const id = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 256 && /^[\x21-\x7e]+$/.test(value);
 const random = (value: unknown) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const integer = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 2147483647;
+export type LogTargets = { resource_id: string; operation_id: string; components: { component: string; running: boolean; exit_code: number }[] };
+export function validateLogTargets(value: unknown, scope: LogScope): asserts value is LogTargets {
+  keys(value, ["resource_id", "operation_id", "components"]);
+  if (value.resource_id !== scope.resource || typeof value.operation_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.operation_id) || !Array.isArray(value.components) || value.components.length < 1 || value.components.length > 16) fail();
+  const seen = new Set<string>();
+  for (const item of value.components) {
+    keys(item, ["component", "running", "exit_code"]);
+    if (typeof item.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(item.component) || seen.has(item.component) || typeof item.running !== "boolean" || !Number.isInteger(item.exit_code) || Number(item.exit_code) < -2147483648 || Number(item.exit_code) > 2147483647) fail();
+    seen.add(item.component);
+  }
+}
+export async function getRuntimeLogTargets(scope: LogScope, signal?: AbortSignal): Promise<LogTargets> {
+  const value: unknown = await request(`/api/v1/resources/${encodeURIComponent(scope.resource)}/runtime-log-targets`, { signal, cache: "no-store" });
+  validateLogTargets(value, scope); return value;
+}
+export const runtimeLogTargetsQuery = (scope: LogScope) => queryOptions({
+  queryKey: ["runtimeLogTargets", scope.actor, scope.project, scope.resource],
+  queryFn: ({ signal }) => getRuntimeLogTargets(scope, signal), retry: false, gcTime: 0,
+  refetchOnWindowFocus: false, refetchOnReconnect: false,
+});
 export function logTime(value: unknown): number {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
   const year = Number(value.slice(0, 4)), month = Number(value.slice(5, 7)), day = Number(value.slice(8, 10));
@@ -25,15 +46,16 @@ export function logTime(value: unknown): number {
 const targetKeys = ["resource_id", "binding_id", "destination_id", "server_id", "runner_id", "operation_id", "daemon_id", "container_id", "image_id", "release_hash", "plan_hash", "runtime_namespace"];
 const sessionKeys = ["id", "request_id", "resource_id", "project_id", "actor_id", "target", "state", "created_at", "demand_expires_at", "ended_at", "purge_after", "server_time", "sensitive"];
 export function validateLogSession(value: unknown, scope: LogScope, original?: LogSession, requestID?: string): asserts value is LogSession {
-  keys(value, sessionKeys); keys(value.target, targetKeys); const target = value.target;
+  keys(value, sessionKeys); keys(value.target, targetKeys, ["component", "container_name"]); const target = value.target;
   if (!/^rls_[0-9a-f]{32}$/.test(String(value.id)) || !random(value.request_id) || value.actor_id !== scope.actor || value.project_id !== scope.project || value.resource_id !== scope.resource || value.target.resource_id !== scope.resource || value.sensitive !== true || !["waiting", "following", "disconnected", "ended", "target_changed", "authority_unavailable", "unsupported_driver"].includes(String(value.state))) fail();
+  if ((target.component === undefined) !== (target.container_name === undefined) || target.component !== undefined && (!/^[a-z][a-z0-9_-]{0,62}$/.test(String(target.component)) || !/^ncd_[a-f0-9]{32}$/.test(String(target.container_name)))) fail();
   for (const key of targetKeys) if (!id(value.target[key])) fail();
   for (const key of ["image_id", "release_hash", "plan_hash"]) if (!/^sha256:[0-9a-f]{64}$/.test(String(value.target[key]))) fail();
   for (const key of ["created_at", "demand_expires_at", "purge_after", "server_time"]) if (!Number.isFinite(logTime(value[key]))) fail();
   if (value.ended_at !== null && !Number.isFinite(logTime(value.ended_at))) fail();
   if (logTime(value.demand_expires_at) - logTime(value.server_time) > 30_002 || logTime(value.purge_after) < logTime(value.created_at) || logTime(value.demand_expires_at) < logTime(value.created_at)) fail();
   if (requestID && value.request_id !== requestID) fail();
-  if (original && (value.id !== original.id || value.request_id !== original.request_id || value.created_at !== original.created_at || targetKeys.some((key) => target[key] !== original.target[key as keyof LogSession["target"]]))) fail();
+  if (original && (value.id !== original.id || value.request_id !== original.request_id || value.created_at !== original.created_at || [...targetKeys, "component", "container_name"].some((key) => target[key] !== original.target[key as keyof LogSession["target"]]))) fail();
 }
 function validText(value: unknown): value is string {
   if (typeof value !== "string" || encoder.encode(value).length > 16384 || value.includes("\0")) return false;
@@ -48,20 +70,20 @@ export function validateLogPage(value: unknown, scope: LogScope, original: LogSe
   let previous = after;
   for (const row of value.items) {
     keys(row, ["sequence", "component", "stream", "message", "received_at"], ["source_timestamp", "message_truncated"]);
-    if (!integer(row.sequence) || row.sequence <= previous || row.sequence <= value.deleted_through_sequence || row.component !== "application" || !["stdout", "stderr", "combined"].includes(String(row.stream)) || !validText(row.message) || !Number.isFinite(logTime(row.received_at)) || row.source_timestamp !== undefined && !Number.isFinite(logTime(row.source_timestamp)) || row.message_truncated !== undefined && typeof row.message_truncated !== "boolean") fail();
+    if (!integer(row.sequence) || row.sequence <= previous || row.sequence <= value.deleted_through_sequence || row.component !== (original.target.component ?? "application") || !["stdout", "stderr", "combined"].includes(String(row.stream)) || !validText(row.message) || !Number.isFinite(logTime(row.received_at)) || row.source_timestamp !== undefined && !Number.isFinite(logTime(row.source_timestamp)) || row.message_truncated !== undefined && typeof row.message_truncated !== "boolean") fail();
     if (row.sequence !== previous + 1 && !(previous < value.deleted_through_sequence && row.sequence === value.deleted_through_sequence + 1)) fail();
     previous = row.sequence;
   }
   const expected = value.items.length ? previous : Math.max(after, value.deleted_through_sequence);
   if (value.next_sequence !== expected || value.items.length && value.earliest_available_sequence === 0 || encoder.encode(JSON.stringify(value)).length > 262144) fail();
 }
-export function newLogOpen(now = Date.now()): LogOpen {
+export function newLogOpen(now = Date.now(), selection?: { component: string; expected_operation_id: string }): LogOpen {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Object.freeze({ request_id: Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""), request_expires_at: new Date(now + 25_000).toISOString() });
+  return Object.freeze({ ...selection, request_id: Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""), request_expires_at: new Date(now + 25_000).toISOString() });
 }
 const sessionPath = (id: string) => `/api/v1/runtime-log-sessions/${encodeURIComponent(id)}`;
 export async function openRuntimeLogs(scope: LogScope, body: LogOpen, signal: AbortSignal) {
-  const value: unknown = await request(`/api/v1/resources/${encodeURIComponent(scope.resource)}/runtime-log-sessions`, { method: "POST", body, signal, cache: "no-store" }); validateLogSession(value, scope, undefined, body.request_id); return value;
+  const value: unknown = await request(`/api/v1/resources/${encodeURIComponent(scope.resource)}/runtime-log-sessions`, { method: "POST", body, signal, cache: "no-store" }); validateLogSession(value, scope, undefined, body.request_id); if (body.component !== undefined && (value.target.component !== body.component || value.target.operation_id !== body.expected_operation_id) || body.component === undefined && value.target.component !== undefined) fail(); return value;
 }
 export async function renewRuntimeLogs(scope: LogScope, session: LogSession, signal: AbortSignal) {
   const value: unknown = await request(sessionPath(session.id) + "/renew", { method: "POST", body: {}, signal, cache: "no-store" }); validateLogSession(value, scope, session); return value;
