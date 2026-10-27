@@ -533,8 +533,10 @@ try {
     const completed=await checkedResponse(await context.request.get(`/api/v1/hosting-operations/${secondOperation}`),200);
     if(completed.id!==secondOperation||completed.state!=="succeeded"||completed.mutation_hold||!completed.result?.ready||completed.result?.uncertain||!completed.complete_receipt||!completed.snapshot?.storage_route_continuity?.hash)throw Error("route recovery changed successful deployment evidence");
     const detail=application.getByRole("region",{name:"Deployment operation detail",exact:true});
+    step="git_compose_refresh_completed_operation";
     await detail.getByRole("button",{name:"Refresh operation",exact:true}).click();
     const continuity=detail.getByRole("region",{name:"Storage route continuity",exact:true});
+    step="git_compose_refresh_continuity_evidence";
     await continuity.getByRole("button",{name:"Refresh continuity evidence",exact:true}).click();
     const recovery=continuity.getByRole("region",{name:"Proxy continuity recovery",exact:true});
     step="git_compose_review_proxy_recovery";
