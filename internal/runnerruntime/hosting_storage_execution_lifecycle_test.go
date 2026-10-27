@@ -494,6 +494,9 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 		}
 	}
 	err := executeImageClaim(s, j, reporter, drain, server.URL, "token", claim, "unix:///nonexistent-storage-fixture.sock", false, nil)
+	if errors.Is(err, errSettledImagePreparationFailure) != (phase == "prepare" && outcome == "ack") {
+		t.Fatalf("preparation failure marker escaped exact acknowledged completion: %v", err)
+	}
 	if outcome == "canceled_drain" || outcome == "expired_drain" {
 		if err == nil || c.completeCalls != 0 || !c.hasPhase("result") || c.createCalls != 0 || c.materializedCalls != 0 || c.applyCalls != 0 || f.created {
 			t.Fatal("revoked authority published fresh completion, mutated storage or lost durable failure")

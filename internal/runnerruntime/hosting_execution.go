@@ -12,6 +12,9 @@ import (
 	"nerocd/internal/runnerclient"
 )
 
+// errSettledImagePreparationFailure is issued only after an exact, durable failed completion.
+var errSettledImagePreparationFailure = errors.New("image preparation failed; previous workload was not changed")
+
 func hostingAuthority(runID, operationID string, lease domain.RunLease) domain.HostingAuthority {
 	return domain.HostingAuthority{OperationID: operationID, RunID: runID, LeaseID: lease.ID, Attempt: lease.Attempt, Fence: lease.Fence}
 }
@@ -86,7 +89,20 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		if op.Snapshot.Storage != (domain.HostingStorageRef{}) {
 			drain = storageDrain
 		}
-		_, err := journalHostingResultWithRuntimeEnvironment(supervisor, journal, client, a, claim.Lease, domain.HostingResult{Outcome: "failed"}, drain, local, op.Snapshot.RuntimeConfiguration, op.Snapshot.Storage)
+		result := domain.HostingResult{Outcome: "failed"}
+		validate := func(finished domain.HostingOperation) error {
+			if supervisor.Context().Err() != nil {
+				return errLeaseAuthorityLost
+			}
+			if finished.ID != a.OperationID || finished.RunID != a.RunID || finished.BindingID != op.BindingID || finished.Snapshot != op.Snapshot || finished.State != "failed" || finished.Result == nil || *finished.Result != result || finished.MutationHold || finished.RestoreOwnershipHeld {
+				return errors.New("image preparation failure acknowledgement changed")
+			}
+			return nil
+		}
+		_, err := journalHostingResultValidated(supervisor, journal, client, a, claim.Lease, result, drain, local, op.Snapshot.RuntimeConfiguration, validate, op.Snapshot.Storage)
+		if err == nil && supervisor.Context().Err() != nil {
+			return errLeaseAuthorityLost
+		}
 		return err
 	}
 	if op.Release == nil {
@@ -124,7 +140,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 			if err = failBeforeApply(); err != nil {
 				return err
 			}
-			return errors.New("image preparation failed; previous workload was not changed")
+			return errSettledImagePreparationFailure
 		}
 		request := domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: attemptMutationKey("hosting_prepared", a.LeaseID, a.Attempt, "release"), Release: release, StackImages: images}
 		entry := runner.JournalHosting{ID: request.ReceiptID, Attempt: journalAttemptIdentity(a.RunID, claim.Lease, supervisor), OperationID: a.OperationID, Phase: "prepared", Prepared: &request, CreatedAt: time.Now().UTC()}
@@ -293,6 +309,11 @@ func journalHostingResult(supervisor *attemptSupervisor, journal *runner.Attempt
 }
 
 func journalHostingResultWithRuntimeEnvironment(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild bool, ref domain.HostingRuntimeConfigurationRef, storage ...domain.HostingStorageRef) (domain.HostingOperation, error) {
+	return journalHostingResultValidated(supervisor, journal, client, a, lease, result, drain, localBuild, ref, nil, storage...)
+}
+
+// journalHostingResultValidated checks optional caller proof before discarding durable completion evidence.
+func journalHostingResultValidated(supervisor *attemptSupervisor, journal *runner.AttemptJournal, client runnerclient.Client, a domain.HostingAuthority, lease domain.RunLease, result domain.HostingResult, drain func(context.Context) error, localBuild bool, ref domain.HostingRuntimeConfigurationRef, validate func(domain.HostingOperation) error, storage ...domain.HostingStorageRef) (domain.HostingOperation, error) {
 	if len(storage) > 1 {
 		return domain.HostingOperation{}, errors.New("invalid storage result reference")
 	}
@@ -328,6 +349,11 @@ func journalHostingResultWithRuntimeEnvironment(supervisor *attemptSupervisor, j
 	}
 	if op.CompleteReceipt == nil || op.CompleteReceipt.ID != request.ReceiptID || op.CompleteReceipt.BodyHash != domain.HostingDocumentHash(result) {
 		return domain.HostingOperation{}, errors.New("hosting result acknowledgement changed")
+	}
+	if validate != nil {
+		if err := validate(op); err != nil {
+			return domain.HostingOperation{}, err
+		}
 	}
 	if err := journal.AckHosting(entry.ID); err != nil {
 		return domain.HostingOperation{}, err

@@ -423,7 +423,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{storageArchive: config.StorageArchive, database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, registryPull: config.RegistryPull, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{storageArchive: config.StorageArchive, database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, registryPull: config.RegistryPull, runtimeEnvironment: config.RuntimeEnvironment}); err != nil && !settledImagePreparationMayContinue(ctx, config.Once, err) {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -1109,6 +1109,11 @@ func attemptMutationKey(kind, leaseID string, attempt int, discriminator string)
 // fatal. Once mode keeps its command failure and cancellation always stops.
 func settledBuildMayContinue(ctx context.Context, once bool, err error) bool {
 	return !once && ctx.Err() == nil && errors.Is(err, errSettledBuildFailure)
+}
+
+// Only an acknowledged pre-apply failure may leave the worker available for another claim.
+func settledImagePreparationMayContinue(ctx context.Context, once bool, err error) bool {
+	return !once && ctx.Err() == nil && errors.Is(err, errSettledImagePreparationFailure)
 }
 
 // Capture evidence must pass its dedicated mixed-chain validator before another
