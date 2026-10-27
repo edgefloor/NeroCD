@@ -32,13 +32,69 @@ current mounted status becomes blocked. Log collection keeps its own capability
 and authorization checks.
 
 Upgrade the controller before granting the new capability to an updated observer.
-For an existing enrolled runner, refresh the persisted capabilities through the
-authorized runner enrollment and capability configuration workflow. Restarting
-with new flags or replacing the binary does not update an enrolled runner's
-persisted capabilities. Until refreshed, the updated observer can continue
-stateless collection with its v1-only identity. An updated runner connected to an
-older controller retains the exact mount checks: a target without storage
-accepts no mounts and cannot produce verified mounted evidence.
+There is no API or CLI to update an existing runner's persisted capabilities.
+Re-enrollment, token rotation, heartbeat, and replacing the binary do not perform
+that update. Until the owner performs the maintenance below, an updated observer
+can continue stateless collection with its v1-only identity. An updated runner
+connected to an older controller retains the exact mount checks: a target without
+storage accepts no mounts and cannot produce verified mounted evidence.
+
+### Existing enrolled runner maintenance
+
+This is an explicit database-owner maintenance operation, not a public capability
+update API. It grants additional authority to the existing runner credential.
+Only perform it after verifying that the runner uses the updated binary.
+
+1. Back up the control-plane database using the [PostgreSQL operations guide](postgres-operations.md).
+   Drain active work, then stop the affected runner and all controller processes
+   during the maintenance window. Do not interrupt active deployments.
+2. Upgrade the controller and affected runner binaries. Retain the runner ID,
+   credential file, journal, runtime configuration, and hosting placements.
+3. Connect `psql` to the control-plane database as its owner using your private
+   libpq service/passfile configuration. Save the following as `grant-storage-observation.sql`
+   and run `psql -X --set=runner_id=YOUR_RUNNER_ID --file=grant-storage-observation.sql`.
+   Supply the exact existing runner ID; do not put a password in the command line.
+
+```sql
+\set ON_ERROR_STOP on
+BEGIN;
+WITH updated AS (
+    UPDATE runners
+       SET capabilities = CASE
+           WHEN 'hosting_storage_observation_v1' = ANY(capabilities) THEN capabilities
+           ELSE array_append(capabilities, 'hosting_storage_observation_v1')
+       END
+     WHERE id = :'runner_id'
+       AND status = 'active' AND token_hash <> ''
+       AND 'hosting_observation_v1' = ANY(capabilities)
+       AND NOT ('shell' = ANY(capabilities))
+    RETURNING id
+)
+SELECT count(*) = 1 AS updated_one FROM updated \gset
+\if :updated_one
+COMMIT;
+\else
+ROLLBACK;
+DO $$ BEGIN
+    RAISE EXCEPTION 'No eligible runner matched; no capability was granted.';
+END $$;
+\endif
+```
+
+4. Record the runner ID, binary versions, time, and authorization in your operator
+   maintenance record. Direct SQL does not create an application audit event.
+   Start the updated controller, then the runner with `--hosting-observation --execute`
+   and its existing configuration. Confirm stateless and mounted runtime observations
+   become fresh. If the SQL exits unsuccessfully, investigate the identity and
+   enrollment state rather than removing its eligibility checks.
+
+The transaction changes only the runner capability array. It preserves server and
+destination associations, credentials, enrollment records, leases, and placements;
+no hosted resource redeployment is required. Do not grant this capability to an old
+binary. Before rolling the runner back, stop it and remove only
+`hosting_storage_observation_v1` from its capability array under the same owner
+maintenance controls. Mounted observation will then be blocked while stateless
+observation remains available. Keep the upgraded controller in place.
 
 ## Collection bounds and freshness
 
