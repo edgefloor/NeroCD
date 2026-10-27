@@ -30,12 +30,15 @@ const HostingBuildProtocol = "local-build.v1"
 // HostingBuildSettings mirrors the accepted local engine's non-secret settings.
 // Static assets must already be prepared; no build arguments or credentials exist here.
 type HostingBuildSettings struct {
-	Strategy       string `json:"strategy"`
-	ContextDir     string `json:"context_dir,omitempty"`
-	DockerfilePath string `json:"dockerfile_path,omitempty"`
-	BuildTarget    string `json:"build_target,omitempty"`
-	PublishDir     string `json:"publish_dir,omitempty"`
-	SPAFallback    bool   `json:"spa_fallback,omitempty"`
+	Strategy        string `json:"strategy"`
+	ContextDir      string `json:"context_dir,omitempty"`
+	DockerfilePath  string `json:"dockerfile_path,omitempty"`
+	BuildTarget     string `json:"build_target,omitempty"`
+	PublishDir      string `json:"publish_dir,omitempty"`
+	SPAFallback     bool   `json:"spa_fallback,omitempty"`
+	ComposeFile     string `json:"compose_file,omitempty"`
+	PublicComponent string `json:"public_component,omitempty"`
+	ContainerPort   int    `json:"container_port,omitempty"`
 }
 
 // HostingGitSource is an immutable trusted source version referenced by a Git resource.
@@ -200,10 +203,10 @@ var buildCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ValidateHostingBuildSettings checks canonical settings before any database mutation.
 func ValidateHostingBuildSettings(s HostingBuildSettings) error {
-	if s.Strategy != "dockerfile" && s.Strategy != "railpack" && s.Strategy != "static" {
+	if s.Strategy != "dockerfile" && s.Strategy != "railpack" && s.Strategy != "static" && s.Strategy != "compose" {
 		return errors.New("unsupported build strategy")
 	}
-	for _, p := range []string{s.ContextDir, s.DockerfilePath, s.PublishDir} {
+	for _, p := range []string{s.ContextDir, s.DockerfilePath, s.PublishDir, s.ComposeFile} {
 		if p == "" {
 			continue
 		}
@@ -221,6 +224,13 @@ func ValidateHostingBuildSettings(s HostingBuildSettings) error {
 				return errors.New("credential path denied")
 			}
 		}
+	}
+	if s.Strategy == "compose" {
+		if s.ComposeFile == "" || !stackName.MatchString(s.PublicComponent) || s.ContainerPort < 1 || s.ContainerPort > 65535 {
+			return errors.New("compose file, public component and container port are required")
+		}
+	} else if s.ComposeFile != "" || s.PublicComponent != "" || s.ContainerPort != 0 {
+		return errors.New("compose settings require compose strategy")
 	}
 	if s.BuildTarget != "" && !buildSettingTarget.MatchString(s.BuildTarget) {
 		return errors.New("invalid build target")

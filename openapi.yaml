@@ -16832,12 +16832,15 @@ components:
       additionalProperties: false
       required: [strategy]
       properties:
-        strategy: {type: string, enum: [dockerfile, railpack, static]}
+        strategy: {type: string, enum: [dockerfile, railpack, static, compose]}
         context_dir: {type: string, maxLength: 512}
         dockerfile_path: {type: string, maxLength: 512}
         build_target: {type: string, maxLength: 128}
         publish_dir: {type: string, maxLength: 512}
         spa_fallback: {type: boolean}
+        compose_file: {type: string, minLength: 1, maxLength: 512, description: Required only for Compose strategy. Canonical repository-relative file path beneath context_dir.}
+        public_component: {type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: Required only for Compose strategy. Service exposed by the managed stack.}
+        container_port: {type: integer, minimum: 1, maximum: 65535, description: Required only for Compose strategy. Port of the public component.}
     GitResourceInput:
       type: object
       additionalProperties: false
