@@ -52,21 +52,34 @@ func TestHostingObservationClientUsesBoundedClosedProtocol(t *testing.T) {
 }
 
 func TestHostingObservationIdentityParity(t *testing.T) {
-	for _, capabilities := range [][]string{{domain.HostingObservationCapability}, {domain.HostingObservationCapability, "shell"}, {"image_deploy"}} {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_observer", "capabilities": capabilities})
-		}))
-		client := New(server.URL, "token")
-		_, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Observation: true})
-		if (err == nil) != (len(capabilities) == 1 && capabilities[0] == domain.HostingObservationCapability) {
-			t.Fatal("observer capability did not match explicit mode")
-		}
-		if capabilities[0] == domain.HostingObservationCapability {
-			if _, err = client.RuntimeExecutionIdentity(t.Context(), false, false, false); err == nil {
-				t.Fatal("disabled observation accepted persisted capability")
+	for _, tc := range []struct {
+		name         string
+		capabilities []string
+		valid        bool
+	}{
+		{"legacy controller", []string{domain.HostingObservationCapability}, true},
+		{"storage observer", []string{domain.HostingObservationCapability, domain.HostingStorageObservationCapability}, true},
+		{"storage without base", []string{domain.HostingStorageObservationCapability}, false},
+		{"shell observer", []string{domain.HostingObservationCapability, "shell"}, false},
+		{"shell storage observer", []string{domain.HostingObservationCapability, domain.HostingStorageObservationCapability, "shell"}, false},
+		{"image only", []string{domain.RunTypeImageDeploy}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner_observer", "capabilities": tc.capabilities})
+			}))
+			defer server.Close()
+			client := New(server.URL, "token")
+			_, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Observation: true})
+			if (err == nil) != tc.valid {
+				t.Fatal("observer capability did not match explicit mode", err)
 			}
-		}
-		server.Close()
+			if tc.capabilities[0] == domain.HostingObservationCapability || tc.capabilities[0] == domain.HostingStorageObservationCapability {
+				if _, err = client.RuntimeExecutionIdentity(t.Context(), false, false, false); err == nil {
+					t.Fatal("disabled observation accepted persisted capability")
+				}
+			}
+		})
 	}
 }
 func TestHostingObservationClientStrictResponseAndTransport(t *testing.T) {

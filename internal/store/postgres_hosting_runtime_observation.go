@@ -22,13 +22,20 @@ type observationPlacement struct {
 	identity                                                           string
 	authorityIdentity, credential                                      string
 	target                                                             domain.HostingObservationTarget
+	storageObservation                                                 bool
 }
 
 // lockObservationPlacement shares the deployment destination serialization point.
 // Destination row SHARE precedes grant UPDATE to avoid inversion with revocation.
 // No operation or task locks may be acquired after this helper's binding lock.
 func lockObservationPlacement(ctx context.Context, tx pgx.Tx, resource, runner, credential string) (observationPlacement, error) {
-	return lockHostingSettledPlacement(ctx, tx, resource, runner, credential, domain.HostingObservationCapability)
+	p, err := lockHostingSettledPlacement(ctx, tx, resource, runner, credential, domain.HostingObservationCapability)
+	// Check current capability before reusing pending challenges or accepted reports.
+	// The shared placement helper also authorizes logs, which do not need this capability.
+	if err == nil && p.healthy != nil && p.healthy.Storage != nil && !p.storageObservation {
+		err = ErrConflict
+	}
+	return p, err
 }
 
 // lockHostingSettledPlacement admits only current enrolled authority for the requested capability.
@@ -100,6 +107,7 @@ func lockHostingSettledPlacement(ctx context.Context, tx pgx.Tx, resource, runne
 		return p, err
 	}
 	p.heartbeat = &current.LastHeartbeatAt
+	p.storageObservation = slices.Contains(current.Capabilities, domain.HostingStorageObservationCapability)
 	if current.Status != "active" || current.TokenHash == "" || credential != "" && current.TokenHash != credential || !slices.Contains(current.Capabilities, capability) || slices.Contains(current.Capabilities, "shell") {
 		gateErr = ErrConflict
 	}

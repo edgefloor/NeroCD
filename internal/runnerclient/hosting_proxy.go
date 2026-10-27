@@ -170,6 +170,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if observationCap != options.Observation || observationCap && shellCapable {
 		return "", errors.New("authenticated observation capability does not match explicit configuration")
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingStorageObservationCapability && (!options.Observation || !observationCap || shellCapable) {
+			return "", errors.New("authenticated storage observation capability requires configured hosting observation")
+		}
+	}
 	logCap := false
 	for _, capability := range result.Capabilities {
 		logCap = logCap || capability == domain.HostingRuntimeLogsCapability

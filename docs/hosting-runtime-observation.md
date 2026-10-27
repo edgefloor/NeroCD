@@ -2,9 +2,10 @@
 
 The runner can collect read-only evidence about its current hosting containers
 independently of deployment execution. Enable it with `--hosting-observation
---execute` on a runner enrolled with `hosting_observation_v1`. The configured and
-persisted capability sets must agree. Observation does not require a build
-configuration. It rejects `--once`, `--complete-status`, and an explicit `shell`
+--execute`. Updated runners advertise `hosting_observation_v1` and
+`hosting_storage_observation_v1` when observation is enabled. The persisted
+capabilities must authorize the configured observer. Observation does not require
+a build configuration. It rejects `--once`, `--complete-status`, and an explicit `shell`
 capability; the CLI removes its implicit default shell capability when enabling
 observation.
 
@@ -13,6 +14,31 @@ HTTP through the programmatic configuration. There is no insecure HTTP CLI flag.
 The transport rejects redirects and insecure TLS verification. The collector
 checks runner identity before replay and starts only after all replay succeeds.
 Shutdown cancels and joins it before closing the runtime engines and journal.
+
+## Upgrade compatibility
+
+`hosting_observation_v1` continues to authorize stateless observations. Mounted
+observations also require `hosting_storage_observation_v1` in the runner's current
+persisted capabilities. The controller skips mounted targets for v1-only runners
+and advances the page cursor over them, so stateless targets later in the sweep
+remain available. Stateless targets retain their original closed JSON fields.
+The controller never sends a mounted target with its storage field omitted.
+
+The controller checks the current capabilities before reusing a pending challenge,
+accepting a report, or acknowledging a repeated report. Removing the storage
+observation capability blocks mounted evidence immediately, even for a previously
+issued challenge or accepted sample. Saved observations remain historical and
+current mounted status becomes blocked. Log collection keeps its own capability
+and authorization checks.
+
+Upgrade the controller before granting the new capability to an updated observer.
+For an existing enrolled runner, refresh the persisted capabilities through the
+authorized runner enrollment and capability configuration workflow. Restarting
+with new flags or replacing the binary does not update an enrolled runner's
+persisted capabilities. Until refreshed, the updated observer can continue
+stateless collection with its v1-only identity. An updated runner connected to an
+older controller retains the exact mount checks: a target without storage
+accepts no mounts and cannot produce verified mounted evidence.
 
 ## Collection bounds and freshness
 

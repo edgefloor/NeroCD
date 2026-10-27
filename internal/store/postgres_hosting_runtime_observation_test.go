@@ -551,7 +551,7 @@ func TestPostgresHostingObservationSerializesGrantRevocation(t *testing.T) {
 }
 
 func TestPostgresHostingObservationTargetsPinImmutableStorage(t *testing.T) {
-	for _, mode := range []string{"managed", "missing-evidence", "foreign-volume", "wrong-daemon", "invalid-origin"} {
+	for _, mode := range []string{"managed", "missing-capability", "missing-evidence", "foreign-volume", "wrong-daemon", "invalid-origin"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newStorageMaterializationFixture(t)
 			ack, err := f.pg.HostingStorageCreateBegin(t.Context(), f.runner, f.request())
@@ -565,10 +565,12 @@ func TestPostgresHostingObservationTargetsPinImmutableStorage(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.complete(t, "succeeded", false)
-			if _, err = f.db.Exec(t.Context(), `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingObservationCapability); err != nil {
+			if _, err = f.db.Exec(t.Context(), `UPDATE runners SET capabilities=capabilities || $2::text[] WHERE id=$1`, f.runner, []string{domain.HostingObservationCapability, domain.HostingStorageObservationCapability}); err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
+			case "missing-capability":
+				_, err = f.db.Exec(t.Context(), `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingStorageObservationCapability)
 			case "missing-evidence":
 				_, err = f.db.Exec(t.Context(), `UPDATE hosting_binding_state SET healthy=healthy-'storage'`)
 			case "foreign-volume":

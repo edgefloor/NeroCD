@@ -10,11 +10,12 @@ import (
 
 // Observation protocol constants bound collection and freshness independently.
 const (
-	HostingObservationCapability      = "hosting_observation_v1"
-	HostingObservationJSONLimit       = 8 << 10
-	HostingObservationStaleSeconds    = 30
-	HostingObservationIntervalSeconds = 10
-	HostingObservationTimeoutSeconds  = 5
+	HostingObservationCapability        = "hosting_observation_v1"
+	HostingStorageObservationCapability = "hosting_storage_observation_v1"
+	HostingObservationJSONLimit         = 8 << 10
+	HostingObservationStaleSeconds      = 30
+	HostingObservationIntervalSeconds   = 10
+	HostingObservationTimeoutSeconds    = 5
 )
 
 // HostingObservationTargetsInput selects a bounded server-derived sweep.

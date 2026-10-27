@@ -3,11 +3,12 @@ package main
 import (
 	"errors"
 	"nerocd/internal/domain"
+	"slices"
 )
 
 func runnerObservationCapabilities(enabled, execute, once bool, complete string, specified bool, capabilities []string) ([]string, error) {
 	hasObservation := false
-	result := make([]string, 0, len(capabilities)+1)
+	result := make([]string, 0, len(capabilities)+2)
 	for _, capability := range capabilities {
 		if capability == domain.HostingObservationCapability {
 			hasObservation = true
@@ -24,6 +25,9 @@ func runnerObservationCapabilities(enabled, execute, once bool, complete string,
 		if hasObservation {
 			return nil, errors.New("hosting_observation_v1 requires --hosting-observation")
 		}
+		if slices.Contains(capabilities, domain.HostingStorageObservationCapability) {
+			return nil, errors.New("hosting_storage_observation_v1 requires --hosting-observation")
+		}
 		return capabilities, nil
 	}
 	if !execute || once || complete != "" {
@@ -31,6 +35,9 @@ func runnerObservationCapabilities(enabled, execute, once bool, complete string,
 	}
 	if !hasObservation {
 		result = append(result, domain.HostingObservationCapability)
+	}
+	if !slices.Contains(result, domain.HostingStorageObservationCapability) {
+		result = append(result, domain.HostingStorageObservationCapability)
 	}
 	return result, nil
 }
