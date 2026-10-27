@@ -145,9 +145,13 @@ and Docker daemon for preparation and deployment.
    retry retains the frozen source receipt; a new build request may resolve a
    moving branch again.
 4. Select that exact successful build ID. Review its stack, runtime generation,
-   ports and readiness, acknowledge interruption, then choose **Deploy selected
-   build**. The existing `/api/v1/resources/{id}/deployments/from-build` route
-   selects persisted evidence. Configure the managed route after deployment.
+   ports and readiness. For private service images, set **Image access** to
+   **Private**, then select the **Registry credential secret** and explicit
+   **Registry credential version**. Review the credential and route readback,
+   acknowledge interruption, then choose **Deploy selected build**. Repeat the
+   explicit selection for **Start selected Compose build**. The existing
+   `/api/v1/resources/{id}/deployments/from-build` route selects persisted evidence.
+   Configure the managed route after initial deployment.
 5. To deploy changed Git source, prepare a new build and review its exact result.
    A failed fetch, missing file or failed build leaves the serving stack and its
    data untouched. Named volumes retain their identities across redeployment;
@@ -169,8 +173,12 @@ the stopped receipt and volumes.
 This profile does not support build arguments, build secrets, SSH credential
 delivery, remote build contexts, repository file bind mounts, unrestricted raw
 Compose or cross-daemon artifact transfer. Other unsupported fields in the
-managed profile remain rejected. Private Git access uses source grants; it does
-not supply private service-image registry credentials through build deployment.
+managed profile remain rejected. Private Git access uses source grants separately
+from service-image registry selection. One selected registry credential authorizes
+only matching registry-only service pulls. Built services and shared-image aliases
+retain their exact local artifacts; other registries remain anonymous. This does
+not provide Dockerfile base-image authentication, registry push, inventory,
+login/logout or multiple selected private registries.
 
 The sequence follows pinned PHP
 [`ApplicationDeploymentJob::deploy_docker_compose_buildpack`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L751):
@@ -180,7 +188,6 @@ images, then start services. Its
 restores source settings on read failure. NeroCD retains that preparation-before-
 replacement order through its existing fenced build receipts and managed stack
 admission.
-
 
 ### Git Compose qualification
 
@@ -199,11 +206,26 @@ Exact owned-process/container/volume cleanup preserved the 41-container,
 236-volume baseline and running user instance. The index retains earlier
 aggregate check failures and the historic anonymous-volume ownership evidence gap.
 
-The unsupported fields and registry-selection limits above remain open; this does
+The unsupported fields and broader registry limits above remain open; this does
 not complete A15/A16 or qualify standalone archive/database recovery again. An
 inherited limitation also remains: if a successful stack cannot enqueue its proxy
 successor, continuity stays unresolved. The existing recovery endpoint cannot
 recover stack plans; its fail-closed reservation must remain held.
+
+### Git Compose private registry qualification
+
+The same Git Compose gate passed at
+`db58c6abc3b41948a66b3bc7bcf93b9748a6cc35` on 2026-10-27 with PostgreSQL in
+one protected registry and Vikunja plus its alias kept as local build artifacts.
+Wrong and revoked credentials preserved the serving containers, HTTPS routes,
+records and uploads. Valid UI selection then deployed the changed commit and
+started it again after removing the PostgreSQL image, retaining data and allowing
+new writes. The existing failed-readiness hold and cleanup checks also passed.
+
+The bounded evidence index records source hashes, checks, reviews, timing limits
+and the retained prerequisite failures without replacing earlier Git evidence:
+`~/.local/share/nerocd/acceptance/runtime-hosting-git-compose-registry-20261027/db58c6abc3b41948a66b3bc7bcf93b9748a6cc35/evidence-index.json`.
+The broader profile and unresolved stack route-recovery limits above still apply.
 
 ## Component runtime logs
 
@@ -586,8 +608,8 @@ timing categories are indexed at
 (SHA-256 `cd8feaec05929ed9252024441ea9aa27e52c5ebc4c250007788be9bbb63acb1d`).
 This qualifies one selected registry on the existing native arm64, rootful classic
 Docker profile with private fixture-CA HTTPS. Other architectures, rootless or
-cross-host execution, public ACME, database/local-build credential selection, and
-full Coolify registry parity remain unqualified. Earlier qualification evidence
+cross-host execution, public ACME, standalone database or single-artifact local-build
+credential selection, and full Coolify registry parity remain unqualified. Earlier qualification evidence
 above remains attributed to its original revisions.
 
 ## Install the saved stack from the catalog
