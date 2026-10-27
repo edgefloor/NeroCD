@@ -170,8 +170,8 @@ try {
   await signIn(page, "admin@example.local", "admin");
   const h = await hosting(page);
   step = "save_original_compose";
-  const source = await readFile(resolve("internal/domain/testdata/vikunja-with-postgresql.yaml"), "utf8");
-  if (createHash("sha256").update(source).digest("hex") !== "4ae479af1c9ee76836315b952db8d177fb1b1426316ead2f0f5c09bfa4acdb54") throw Error("vendored upstream source changed");
+  const source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
+  if (createHash("sha256").update(source).digest("hex") !== "2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767") throw Error("shipped Compose example changed");
   const create = h.getByRole("form", { name: "Create application", exact: true });
   await create.getByLabel("Application source", { exact: true }).selectOption("compose");
   await create.getByLabel("Application name", { exact: true }).fill(applicationName);
@@ -252,6 +252,7 @@ try {
   const components = deployments.getByRole("region", { name: "Recorded Compose components", exact: true });
   await expect(components).toContainText("Observation complete", { timeout: 30000 });
   for (const name of ["vikunja", "postgresql"]) await expect(components.getByRole("article", { name: `Component ${name}`, exact: true })).toContainText("Running");
+  await expect(components.getByRole("article", { name: "Component init", exact: true })).toContainText("Initialization completed successfully");
   for (const width of [1280, 320, 390, 430]) {
     await page.setViewportSize({ width, height: 900 });
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw Error("responsive overflow");

@@ -23,7 +23,7 @@ func TestHostingComposeFixtureRequestPreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := os.ReadFile("../domain/testdata/vikunja-with-postgresql.yaml")
+	original, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

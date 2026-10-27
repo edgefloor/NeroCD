@@ -101,13 +101,38 @@ against the explicitly authorized committed candidate and owned target profile.
 It uses the distinct `nerocd-compose-vikunja-runtime-20261027` DinD owner, its
 Docker-data volume, an ephemeral loopback administration port, and loopback
 `25443` forwarded to the guest managed HTTPS port. The connected browser pastes
-the exact upstream Vikunja/PostgreSQL source, saves variables and secret refs,
+the shipped Vikunja/PostgreSQL example, saves variables and secret refs,
 deploys, configures the managed route, creates an application account/task/file,
 redeploys, then checks fresh login, retained data and new writes. The Go fixture
 checks exact secret bytes, private PostgreSQL, component health, volume origins,
 writer stop/start events, HTTPS trust and a controlled failed replacement hold.
 Physical qualification and independent reviews remain required for acceptance;
 source and build checks alone do not establish a working application.
+
+## Pasteable Vikunja/PostgreSQL example
+
+Use `examples/compose/vikunja-postgresql.yaml` for the tested application workflow.
+It pins Vikunja 2.7.1, PostgreSQL 16 and BusyBox 1.37.0 by immutable image digest.
+Supply the public HTTPS URL and exact managed PostgreSQL and JWT secret references
+through runtime configuration; the username and database default to `vikunja`.
+
+The unmodified Coolify PostgreSQL template is retained byte-for-byte in
+`internal/domain/testdata/vikunja-with-postgresql.yaml` as a parser comparison.
+Its whole-directory `/app/vikunja/` volume is incompatible with the qualified
+Vikunja 2.7.1 image: the application runs as UID 1000 but Docker copies that
+directory as root, so creating uploaded files fails. A bounded ordinary Compose
+comparison reproduced the same ownership for both Compose-created and precreated
+external volumes. This is an upstream template/image issue.
+
+The shipped example adapts the BusyBox initialization pattern from Coolify's
+SQLite sibling template at revision
+`b12d1386f3d458618b4c579babcd1e339c6c40b3`. It mounts only Vikunja's upload files,
+so application binaries stay in the selected image. A one-shot initialization
+service sets UID/GID 1000 and mode 0755 only on empty upload storage. It leaves an
+already-correct directory unchanged, and fails on incompatible nonempty storage.
+It performs no recursive ownership changes. The application waits for successful
+initialization and healthy PostgreSQL through ordinary Compose dependencies.
+These are explicit example instructions, not implicit platform permission changes.
 
 ## Upstream reference
 

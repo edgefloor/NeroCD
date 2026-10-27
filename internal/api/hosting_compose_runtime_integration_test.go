@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("browser did not save Compose source")
 	}
 	definition, err := domain.ParseHostingStack(*resource.Source.Compose)
-	if err != nil || definition.OriginalHash != "sha256:4ae479af1c9ee76836315b952db8d177fb1b1426316ead2f0f5c09bfa4acdb54" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
+	if err != nil || definition.OriginalHash != "sha256:2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
 		t.Fatal("original reference-bearing source or public component changed")
 	}
 	runtime := storageRuntimeJSON[struct {
@@ -53,7 +54,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	b.set("deploy", resourceID)
 	first := f.await(b.await(t, "deployed"), "succeeded")
-	if first.Plan == nil || first.Plan.Stack == nil || first.Result == nil || first.Result.Stack == nil || first.Release == nil || first.Plan.CompilerVersion != domain.HostingStackCompilerVersion || len(first.Result.Stack.Components) != 2 || len(first.Result.Stack.Volumes) != 2 || first.Result.Uncertain || first.MutationHold {
+	if first.Plan == nil || first.Plan.Stack == nil || first.Result == nil || first.Result.Stack == nil || first.Release == nil || first.Plan.CompilerVersion != domain.HostingStackCompilerVersion || len(first.Result.Stack.Components) != 3 || len(first.Result.Stack.Volumes) != 2 || first.Result.Uncertain || first.MutationHold {
 		t.Fatal("whole-stack initial success missing")
 	}
 	verify := func(op domain.HostingOperation) {
@@ -65,6 +66,12 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 			}
 			if component.Component == "postgresql" && len(ports) != 0 {
 				t.Fatal("PostgreSQL published a host port")
+			}
+			if component.Component == "init" {
+				if component.Running || component.ExitCode != 0 || len(ports) != 0 {
+					t.Fatal("upload initialization did not complete privately")
+				}
+				continue
 			}
 			if !component.Running || component.Health != "healthy" {
 				t.Fatal("required component is not healthy")
@@ -92,6 +99,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		}
 	}
 	verify(first)
+	uploadOwnership := composeRuntimeUploadOwnership(t, first)
 	b.set("healthy", resourceID)
 	b.await(t, "healthy")
 	// Existing managed route/TLS authority, including its certificate trust root.
@@ -139,6 +147,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("redeploy changed port, runtime references, volume origins or private network")
 	}
 	verify(second)
+	if composeRuntimeUploadOwnership(t, second) != uploadOwnership {
+		t.Fatal("redeploy changed retained upload directory ownership or mode")
+	}
 	f.awaitContinuity(resourceID, second.ID)
 	verifyHTTPS()
 	composeRuntimeWriterBarrier(t, first, second)
@@ -156,7 +167,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
 	failed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)
 	held := f.await(failed.ID, "reconciliation_required")
-	if !held.MutationHold || held.Result == nil || !held.Result.Uncertain || held.Result.Ready || held.Result.Stack == nil || !held.Result.Stack.ObservationComplete || len(held.Result.Stack.Components) != 2 {
+	if !held.MutationHold || held.Result == nil || !held.Result.Uncertain || held.Result.Ready || held.Result.Stack == nil || !held.Result.Stack.ObservationComplete || len(held.Result.Stack.Components) != 3 {
 		t.Fatal("failed replacement omitted actual component state or released uncertainty")
 	}
 	bad.IdempotencyKey = "compose-forbidden-competing"
@@ -174,9 +185,29 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	clear(journal)
 	clear(ordinary)
-	t.Log("real Vikunja/PostgreSQL: original source, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes, private DB, no overlapping writers, controlled failed replacement held")
+	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, controlled failed replacement held")
 	b.set("complete", resourceID)
 	b.await(t, "done")
+}
+
+func composeRuntimeUploadOwnership(t *testing.T, operation domain.HostingOperation) string {
+	t.Helper()
+	for _, volume := range operation.Result.Stack.Volumes {
+		if volume.Name != "vikunja-data" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join("/var/lib/docker/volumes", volume.VolumeName, "_data"))
+		if err != nil {
+			t.Fatal("upload directory ownership unavailable")
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != 1000 || owner.Gid != 1000 || info.Mode().Perm() != 0755 {
+			t.Fatal("upload directory ownership or mode changed")
+		}
+		return volume.VolumeName + ":1000:1000:755"
+	}
+	t.Fatal("owned upload volume missing")
+	return ""
 }
 
 func composeRuntimeWriterBarrier(t *testing.T, previous, current domain.HostingOperation) {

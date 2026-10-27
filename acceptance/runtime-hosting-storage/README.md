@@ -87,7 +87,9 @@ Compilation and local PostgreSQL checks do not establish physical qualification.
 ## Managed Compose application
 
 `bash acceptance/runtime-hosting-storage/gate.sh --managed-compose` selects one
-Vikunja/PostgreSQL workflow, using the exact vendored Coolify source. This mode
+Vikunja/PostgreSQL workflow, using `examples/compose/vikunja-postgresql.yaml` with
+an explicit one-shot upload initialization service. The unmodified Coolify source
+remains a byte-exact parser comparison. This mode
 requires explicit authorization for the committed candidate and distinct owner
 `nerocd-compose-vikunja-runtime-20261027`. It publishes only the ephemeral
 loopback administration port and `127.0.0.1:25443` to guest port 443. The owned

@@ -31,6 +31,23 @@ func TestHostingStackReferenceAndIdentity(t *testing.T) {
 	}
 }
 
+func TestHostingStackShippedVikunjaExample(t *testing.T) {
+	original, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack, err := ParseHostingStack(HostingStackSource{Original: string(original), PublicComponent: "vikunja", ContainerPort: 3456})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stack.Services) != 3 || stack.OriginalHash != "sha256:2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767" || stack.Services[2].DependsOn["init"] != "service_completed_successfully" {
+		t.Fatal("shipped initialization example changed")
+	}
+	if _, err := ExpandHostingStackValue(stack.Services[0].Command[2], map[string]string{}, true); err != nil {
+		t.Fatal("initialization shell expressions were treated as required configuration")
+	}
+}
+
 func TestHostingStackPreflightRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 	valid := "services:\n  app:\n    image: nginx:alpine\n"
 	for name, definition := range map[string]string{
