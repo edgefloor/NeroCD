@@ -213,6 +213,7 @@ async function privateRegistryDeploy(initial) {
     if (!stored) await form.getByLabel("Host port allocation", { exact: true }).selectOption("fixed");
     await form.getByLabel("Runner-local host port", { exact: true }).fill(port);
     await form.getByLabel("Readiness path", { exact: true }).fill("/");
+    await form.getByLabel("Readiness timeout in seconds", { exact: true }).fill("3");
     if (stored) await form.getByRole("button", { name: "Review current storage deployment", exact: true }).click();
     restoredDeploymentStep = "acknowledge_deployment";
     await form.getByRole("checkbox").check();
