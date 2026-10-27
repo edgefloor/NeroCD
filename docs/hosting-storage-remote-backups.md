@@ -167,7 +167,8 @@ private fixture-CA HTTPS. Production S3 HTTPS, other providers, disk loss,
 cross-host recovery, in-place restore, and arbitrary mounts are unqualified.
 
 [Recurring image upload backups](hosting-storage-backup-schedules.md) use the same
-archive and transfer path. Compose schedules remain local-only. [Retention](hosting-storage-backup-retention.md) and
+archive and transfer path. [Scheduled Compose remote copies](#compose-remote-schedule-qualification)
+have separate qualification evidence. [Retention](hosting-storage-backup-retention.md) and
 [individual copy deletion](hosting-storage-backup-deletion.md) have separate
 policies and destructive-operation opt-ins.
 
