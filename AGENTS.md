@@ -1,151 +1,53 @@
-# NeroCD native orchestration
+# Working on NeroCD
 
-Use the message-based native protocol for every fresh task. The legacy v1 record protocol remains
-in [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) for tasks that already loaded its
-instructions. Do not migrate a running v1 or native task, restart it wholesale, or combine both
-protocols in one task.
+## Discover the source
 
-To use v1 for an explicit fallback, start a fresh named checkout and a fresh session at commit
-`39d62767da97c2849d36409dc6024e4b819474a9`. That checkout loads the v1 `AGENTS.md` and role
-instructions from that commit. Use an unused branch and an unused path. For example:
+Use `colgrep` first when the relevant files are unknown. Search source, documentation,
+tests, and configuration. Use exact searches for known names or strings.
+If `.codegraph/` exists, use CodeGraph to trace discovered symbols and call paths.
+Treat documentation as intended behavior and verify it against current source.
+Load applicable Go skills from `.agents/skills/`. `.claude/skills/` links to that inventory.
 
-```sh
-git worktree add -b codex/v1-fallback-YYYYMMDD /absolute/unused/v1-fallback-YYYYMMDD \
-  39d62767da97c2849d36409dc6024e4b819474a9
-```
+## Make focused changes
 
-The primary agent is a read-only Leader. The Leader owns the user brief, routing, interface
-freeze, delegation, review gates, integration approval, and final acceptance. The Leader may
-inspect and run harmless diagnostics, but it must not edit, commit, or implement.
+Verify the workspace, branch, base revision, and Git status before editing. Preserve
+unrelated work. Do not reset, clean, overwrite, or delete another contributor's changes.
+Use explicit working directories. Keep ownership clear when several agents work in parallel.
+The host manages delegation and threads. Use separate worktrees for concurrent writers.
+Do not create repository coordination records or a custom delegation protocol.
 
-## Write the seven-part brief
+Keep changes within the requested scope. External actions need an authorized target.
+Do not push, publish, or rewrite history without authorization.
 
-Every delegated message states:
+## Validate the affected behavior
 
-1. The user-visible goal.
-2. The absolute workspace, named branch, and full base SHA.
-3. Read and write ownership.
-4. Frozen interfaces and dependencies.
-5. Constraints and existing authorization, including an exact external target when needed.
-6. Required checks and independent review lenses.
-7. The required handoff evidence and completion stage.
+Run commands from the repository root:
 
-Use `ORCHESTRATOR` for read-only discovery, `WORKER` for bounded implementation, `REVIEWER`
-for one exact candidate SHA, and `INTEGRATOR` for serial integration. Brief text, task names,
-and message history are coordination data. They are not immutable records or transactional
-gates.
+- `make fmt-check`, `make vet`, and `make test` check Go formatting, analysis, and tests.
+- `make lint` uses the pinned linter. `make lint-new LINT_BASE_REV=<commit>` checks new findings.
+- `make shell-check` checks shell scripts. `make verify` combines the standard Go and shell checks.
+- `make skill-tools-test` checks skill tools and inventory.
+- `make web-test` and `make build` test and build the WebUI and embedded application.
+- `make check` runs broader integration checks and requires Docker and browser dependencies.
 
-Agents must not create coordination files in any format. Native hook test fixtures and
-observer-only benchmark metrics are permitted because they test or measure the protocol. They
-must not control task state.
+Choose checks from the changed behavior and its dependencies. Use focused checks during
+implementation and broader checks at integration boundaries. Report each required check as
+passed, failed, or not run, with its revision and any limitation. Never infer a missing pass.
 
-## Operate within the brief
+For runner changes, use `nerocd-runner-lifecycle` and preserve lease fencing, cancellation,
+durable journaling, replay, and shutdown invariants. For UI changes, use
+`nerocd-ui-artifact-verification` to verify source, responsive behavior, generated `web/dist`,
+and Go embedding. Do not commit generated artifacts unless the project tracks them.
 
-- Keep at most three child threads open. The Leader is not a child. A child must not spawn
-  another child.
-- Start with a read-only explorer when the affected code or interface is unclear.
-- Before substantive work on every initial or resumed child turn, the child verifies identity
-  and checkout, sends `HOLD`, and remains active. The Leader verifies the current turn using the
-  retrieval procedure in `docs/AGENT-ORCHESTRATION-NATIVE.md` and sends native `GO` only when it
-  matches the frozen route. Missing or mismatched evidence blocks work. If the holding turn ends,
-  repeat the gate on the next turn. Static TOML and historical records do not prove the launched
-  route. Full access to the workspace does not provide OS isolation.
-- Use `fork_turns=none` for a fresh selected-role dispatch.
-- Run `scripts/orchestration/native_check.py start` against the exact worktree. The check
-  requires the named branch at the base SHA with no tracked or untracked changes.
-- Give parallel writers separate named worktrees, disjoint write ownership, and frozen
-  interfaces. A worktree provides isolation but does not enforce write scope.
-- Use an explicit workdir for each command and absolute paths for patches. Preserve unrelated
-  work. Never reset, clean, overwrite, or delete it.
-- Use `colgrep` first. Load applicable Go skills from `.agents/skills/`.
-- Carry existing user authorization forward. An external action needs an explicit authorized
-  target. Native mode can report an external-only action without a fake repository receipt.
-  This removes a v1 record-format limit. It does not expand authority.
-- Run meaningful checks at task boundaries. Do not run the full suite on every Stop event.
+Review code hygiene and specification fit independently for substantive changes at the same
+candidate revision. Add security or cryptographic review when the changed boundaries warrant
+it, including authentication, credentials, process execution, persistence, and lifecycle.
+A repair requires review of the new revision and rerunning affected checks.
 
-## Commit messages
+## Commit and hand off
 
-NeroCD uses concise conventional, lower-case subjects: `type(scope): imperative
-behavior`. Use a real component as the optional scope. A `fix` includes its
-regression test; use `test` only when production behavior is unchanged, `docs`
-for instructions, and `perf` only with measurement evidence. Keep each commit
-to one coherent outcome. Add a body when the reason is not clear from the
-subject, state actual validation limits, and do not copy merge-generated titles
-or claim a proposed runtime change is implemented. For example:
-`docs(skills): sharpen Go failure checks and commit guidance`. Do not rewrite
-history or push without authorization.
-
-Prefer one narrow, independently reviewable behavior or decision per commit.
-Plan commit boundaries before editing, and split independent fixes, refactors,
-and cleanup even when they touch the same subsystem. Keep required regression
-tests, supporting documentation, dependency or generated-file updates, and
-skill-lock changes with the owning change. Each commit should leave a coherent,
-buildable code state; that does not require running the full application build
-for every commit. Judge commit size by review burden:
-there is no hard line or file cap, and tests should not be separated merely to
-make a diff smaller. Choose the smallest complete change that preserves context.
-
-## Validate and review the candidate
-
-Choose validation from the affected behavior and dependencies, not from commit
-creation or line count. During implementation, use the cheapest existing check
-that provides meaningful evidence. Run broader builds or suites when accumulated
-changes, affected interface or integration boundaries, failures, or established
-final-check requirements justify them. Required CI, integration, and release
-checks still run at their defined boundary. Retain evidence for unaffected checks
-with its original revision and record why that evidence remains valid; rerun
-checks affected by subsequent changes, and report unrun checks accurately.
-
-After committing, run `scripts/orchestration/native_check.py candidate` with the full base and
-candidate SHAs and one `--allow` argument per owned file or directory prefix. The command
-checks ancestry, branch, clean state, and all Git changes. Rename sources, rename destinations,
-and deletions must all fit the allowlist.
-
-The worker returns the full candidate SHA, exact changed paths, each check as `passed`,
-`failed`, or `not_run`, bounded evidence locations, assumptions, and remaining risks. A
-completed worker handoff is not acceptance.
-
-Review code hygiene and specification fit independently at the same candidate SHA. Add a
-critical security or cryptographic correctness review only when the changed scope warrants
-it. A repair creates a new SHA, invalidates reviews of the old SHA, and requires affected
-checks again. Keep retained evidence labeled with the original SHA and the reason it remains
-relevant.
-
-The only required review lens names are `code_hygiene`, `specification`, `critical_security`,
-and `cryptographic_correctness`. Advisory review never substitutes for a required lens. A
-required check marked `failed` or `not_run` forbids acceptance. Successful reviews cannot
-waive a failed or missing required check.
-
-On restart or resume, recheck Git state and the native message history. Rerun missing evidence
-or hold acceptance. Never infer a pass. The integration steward combines only
-Leader-approved candidates in serial and runs combined checks. The Leader alone accepts the
-result.
-
-An interruption can leave task-owned subprocesses running. After the fresh runtime gate and
-before resuming execution or retrying a command, identify the outstanding process or session
-identities that belong to the task. Reconcile their results, or stop only verified task-owned
-processes. Missing required results remain missing and require a rerun. Native mode has no
-process supervisor, new tool, or file bus.
-
-## Route roles
-
-All configured subagents use `gpt-6.1-sol`. Use `read_only_explorer` at medium effort for
-discovery, `mechanical_worker` at low effort for a small mechanical edit, `bounded_worker` at
-medium effort for ordinary work, and `complex_worker` at medium effort for multi-step work.
-Use `critical_worker` at high effort only for explicitly approved critical work.
-`integration_steward` and routine reviewers use medium effort. Critical security and
-cryptographic correctness reviewers use high effort.
-
-Advisory reviewers return Leader-rubric findings. They do not replace the required code
-hygiene or specification reviews and cannot accept work. `escalation_resolver` acts only on a
-named blocker with bounded ownership.
-
-Critical areas are authentication, identity, authorization, permissions, credentials or
-secrets, cryptography and key material, network and protocol trust boundaries, process
-execution or sandboxing, persistence and migrations, concurrency and lifecycle or shutdown,
-and security-sensitive logging or telemetry. Add the relevant specialist review when a diff
-touches one of these areas.
-
-Use only lifecycle controls available in the current host. Native mode has no scheduler,
-automatic hook bus, parser for prose state, OS sandbox, model launcher, or automatic pstack
-integration.
+Use concise conventional, lower-case subjects: `type(scope): imperative behavior`.
+Keep one coherent outcome per commit, with its regression tests and required generated updates.
+Use `fix` for behavior fixes, `test` when production behavior is unchanged, `docs` for
+instructions, and `perf` only with measurement evidence. Explain non-obvious reasons and
+validation limits in the body. Return commit SHAs, changed paths, checks, and remaining risks.

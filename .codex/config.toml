@@ -1,4 +1,4 @@
-# Project-scoped Codex orchestration. AGENTS.md keeps the primary Leader read-only.
+# Project-scoped roles. The host manages delegation and threads.
 # Inherit the primary session sandbox from the user configuration.
 
 [agents]

@@ -14,13 +14,7 @@ on:
       - ".github/workflows/agent-policy.yml"
       - "agent/**"
       - "docs/agent/**"
-      - "docs/AGENT-ORCHESTRATION.md"
-      - "docs/AGENT-ORCHESTRATION-NATIVE.md"
-      - "docs/NATIVE-ROLLOUT.md"
-      - "docs/ORCHESTRATION-BENCHMARK.md"
       - "docs/SKILL-AUDIT.md"
-      - "orchestration/**"
-      - "scripts/orchestration/**"
       - "scripts/skills/**"
       - "skills-lock.json"
       - "Makefile"
@@ -37,13 +31,7 @@ on:
       - ".github/workflows/agent-policy.yml"
       - "agent/**"
       - "docs/agent/**"
-      - "docs/AGENT-ORCHESTRATION.md"
-      - "docs/AGENT-ORCHESTRATION-NATIVE.md"
-      - "docs/NATIVE-ROLLOUT.md"
-      - "docs/ORCHESTRATION-BENCHMARK.md"
       - "docs/SKILL-AUDIT.md"
-      - "orchestration/**"
-      - "scripts/orchestration/**"
       - "scripts/skills/**"
       - "skills-lock.json"
       - "Makefile"
@@ -65,19 +53,6 @@ jobs:
 
       - name: Require Python 3.11 or newer
         run: python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
-
-      - name: Validate orchestration protocol
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          python3 -m unittest discover -s orchestration -p 'test_*.py'
-          python3 scripts/orchestration/validate.py --repo-root . config
-          python3 scripts/orchestration/validate.py packet orchestration/examples/worker-packet.json
-
-      - name: Validate native orchestration checks
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: python3 -m unittest scripts/orchestration/test_native_check.py
 
       - name: Set up Go for skill analyzers
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
