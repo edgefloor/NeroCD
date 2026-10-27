@@ -1,10 +1,13 @@
-# Enterprise OIDC sign-in
+# OIDC sign-in
 
-NeroCD supports one explicitly configured OpenID Connect provider for browser sign-in. Local password sign-in stays available as an operator recovery path. OIDC users use the existing 12-hour revocable NeroCD sessions and the existing local role and project membership model.
+NeroCD supports one explicitly configured OpenID Connect provider for browser sign-in.
+Local password sign-in stays available as an operator recovery path. OIDC users use the
+existing 12-hour revocable NeroCD sessions and the existing local role and project
+membership model.
 
 ## Provider configuration
 
-Set all of these values or none of them:
+Configure one provider by setting all of these values. Leave all unset to disable OIDC:
 
 ```sh
 NEROCD_OIDC_ISSUER_URL=https://idp.example/realms/operations
@@ -13,17 +16,27 @@ NEROCD_OIDC_CLIENT_SECRET_FILE=/run/secrets/nerocd-oidc-client-secret
 NEROCD_PUBLIC_ORIGIN=https://nerocd.example.com
 ```
 
-The client secret file must be a regular owner-only file. NeroCD derives the only allowed callback URL from the public origin:
+The client secret file must be a regular owner-only file. NeroCD derives the only
+allowed callback URL from the public origin:
 
 ```text
 https://nerocd.example.com/api/v1/oidc/callback
 ```
 
-Register that exact callback with the provider and use the authorization-code flow. NeroCD always sends an S256 PKCE challenge and verifies the signed ID token's issuer, audience, expiry, and nonce. Production requires HTTPS for the issuer, discovered endpoints, and callback. Development permits HTTP only on loopback addresses.
+Register that exact callback with the provider and use the authorization-code flow.
+NeroCD always sends an S256 PKCE challenge and verifies the signed ID token's issuer,
+audience, expiry, and nonce. Production requires HTTPS for the issuer, discovered
+endpoints, and callback. Development permits HTTP only on loopback addresses.
 
-The issuer is an exact protocol identifier. Copy the provider's discovery issuer exactly, including a trailing slash when it has one. Provider authorization, token, and JWKS endpoints may use different HTTPS hosts. NeroCD rejects endpoint user information, fragments, insecure production endpoints, and HTTPS redirects that downgrade to HTTP.
+The issuer is an exact protocol identifier. Copy the provider's discovery issuer
+exactly, including a trailing slash when it has one. Provider authorization, token, and
+JWKS endpoints may use different HTTPS hosts. NeroCD rejects endpoint user information,
+fragments, insecure production endpoints, and HTTPS redirects that downgrade to HTTP.
 
-Configuration shape is validated at startup, but network discovery is lazy and timeout-bounded. A transient provider or discovery outage makes OIDC login fail with a generic error while local recovery sign-in continues to work. `nerocd doctor` validates local configuration without contacting the provider.
+Configuration shape is validated at startup, but network discovery is lazy and
+timeout-bounded. A transient provider or discovery outage makes OIDC login fail with a
+generic error while local recovery sign-in continues to work. `nerocd doctor` validates
+local configuration without contacting the provider.
 
 ### Keycloak example
 
@@ -33,11 +46,16 @@ For a Keycloak realm named `operations`, use its realm issuer, commonly:
 https://keycloak.example.com/realms/operations
 ```
 
-Create a confidential OpenID Connect client, enable the standard authorization-code flow, disable direct access grants, and register only the exact NeroCD callback URL. Put the generated client secret in the owner-only file. Keycloak's optional `session_state` and RFC 9207 `iss` callback parameters are accepted; the issuer parameter is checked exactly when present.
+Create a confidential OpenID Connect client, enable the standard authorization-code
+flow, disable direct access grants, and register only the exact NeroCD callback URL. Put
+the generated client secret in the owner-only file. Keycloak's optional `session_state`
+and RFC 9207 `iss` callback parameters are accepted; the issuer parameter is checked
+exactly when present.
 
 ## Explicit identity provisioning
 
-NeroCD never creates or links users from ID-token email, name, group, or role claims. Provision the provider-owned `sub` value before the user signs in:
+NeroCD never creates or links users from ID-token email, name, group, or role claims.
+Provision the provider-owned `sub` value before the user signs in:
 
 ```sh
 NEROCD_DATABASE_URL='postgres://...' nerocd oidc-provision \
@@ -47,7 +65,10 @@ NEROCD_DATABASE_URL='postgres://...' nerocd oidc-provision \
   --name 'Operations User'
 ```
 
-This creates an active nonprivileged local user with the `user` global role and an atomic audited binding. Assign project membership through NeroCD's existing authorization controls. To bind a provider subject to an existing local user without changing its name, email, password, or roles:
+This creates an active nonprivileged local user with the `user` global role and an
+atomic audited binding. Assign project membership through NeroCD's existing
+authorization controls. To bind a provider subject to an existing local user without
+changing its name, email, password, or roles:
 
 ```sh
 NEROCD_DATABASE_URL='postgres://...' nerocd oidc-provision \
@@ -56,12 +77,33 @@ NEROCD_DATABASE_URL='postgres://...' nerocd oidc-provision \
   --user-id 'usr_existing'
 ```
 
-Issuer and subject are exact identifiers. Surrounding whitespace in a subject is rejected instead of normalized. Identity, user, or email collisions fail; NeroCD does not rebind them.
+Issuer and subject are exact identifiers. Surrounding whitespace in a subject is
+rejected instead of normalized. Identity, user, or email collisions fail; NeroCD does
+not rebind them.
 
 ## Security and operating limits
 
-Login state, nonce, and PKCE verifier hashes are stored in a five-minute single-use database transaction. The plaintext verifier exists only in a short-lived host-only, HttpOnly, SameSite=Lax browser cookie scoped to `/api/v1/oidc`. The database does not store the verifier or any access, refresh, or ID token. Callback errors and audit reason codes are bounded and do not contain provider descriptions, token values, authorization codes, raw subjects, nonces, or client secrets.
+Login state, nonce, and PKCE verifier hashes are stored in a five-minute single-use
+database transaction. The plaintext verifier exists only in a short-lived host-only,
+HttpOnly, SameSite=Lax browser cookie scoped to `/api/v1/oidc`. The database does not
+store the verifier or any access, refresh, or ID token. Callback errors and audit reason
+codes are bounded and do not contain provider descriptions, token values, authorization
+codes, raw subjects, nonces, or client secrets.
 
-Unknown or disabled identities cannot create sessions. State, browser binding, nonce, token verification, expiry, and replay failures fail closed. Provider logout, identity removal, SCIM, SAML, LDAP, automatic signup, claim-driven role or group mapping, multiple issuers, and provider administration UI are outside this first release.
+Unknown or disabled identities cannot create sessions. State, browser binding, nonce,
+token verification, expiry and replay failures fail closed.
 
-A system administrator can offboard a local user from Settings. The operation disables local and OIDC sign-in, revokes every existing session and active legacy API token issued by that user, and revokes every managed service account they own in one database transaction. The user record, OIDC binding, project memberships, service accounts, and historical references remain for auditability. Offboarding is idempotent, cannot disable the last active system administrator, and never automatically reactivates a user. Disable the provider-side account as well when ending access to the wider identity provider.
+Provider logout, identity removal, SCIM, SAML, LDAP, automatic signup, claim-driven
+role/group mapping, multiple issuers and provider administration UI are outside current
+support.
+
+## Offboard a user
+
+A system administrator can offboard a local user from Settings. The operation disables
+local and OIDC sign-in, revokes every existing session and active legacy API token
+issued by that user, and revokes every managed service account they own in one database
+transaction. The user record, OIDC binding, project memberships, service accounts, and
+historical references remain for auditability. Offboarding is idempotent, cannot disable
+the last active system administrator, and never automatically reactivates a user.
+Disable the provider-side account as well when ending access to the wider identity
+provider.

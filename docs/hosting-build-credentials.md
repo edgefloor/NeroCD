@@ -1,10 +1,11 @@
-# Private Git credential delivery component
+# Private Git credential delivery
 
-This component authorizes and decrypts private Git source credentials for a live
-build's sourcing phase. The component is now connected to the protected credential
-endpoint/client, compiled private runner and reference-only grant UI at accepted
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. Use the
-[current private setup](hosting-build-runtime.md#enable-private-https-git) and
+<a id="private-git-credential-delivery-component"></a>
+
+The protected credential endpoint authorizes and decrypts private Git credentials
+for a live build during source acquisition. The compiled runner passes them to
+the checkout adapter. The UI selects secret-version references. See
+[private setup](hosting-build-runtime.md#enable-private-https-git) and the
 [secret payload contract](secrets.md#private-https-git-source-credentials).
 
 ## Authorization contract
@@ -78,9 +79,6 @@ The returned delivery, material, and repository authorization redact JSON and
 formatted output. `Take` transfers ownership once; `Close` clears untransferred
 or transferred byte storage. Callers must close the material and must not log,
 serialize, or retain field copies. Go cannot guarantee erasure of strings or
-runtime copies. The accepted client/runtime wiring transfers owned bytes into
-the existing
-checkout adapter and clears transport material before engine use. The application
-layer does not depend on the runtime package. Historical component-only evidence
-does not establish the full hosting workflow; current bounds are in the
-[compatibility ledger](compatibility.md#accepted-foundations-and-evidence).
+runtime copies. The client transfers owned bytes into the checkout adapter and clears transport
+material before engine use. The application layer does not depend on the runtime
+package.

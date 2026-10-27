@@ -1,91 +1,9 @@
 # Connect an image application to PostgreSQL or Redis
 
-The connected image-application workflow with PostgreSQL or Redis and one owned
-upload volume is physically qualified at
-`09a432407c41671517fa342d28c07e9c79978aea`, tree
-`8f52ef4b6d8696b5fb184773e73f4170b32cf1e5`, through migration 0074 and
-journal format 17. First Connect deploys without application storage or routes.
-After it settles, attach one platform-managed named volume and explicitly approve
-replacement with interruption. Later routed replacements retain database records
-and uploads while enforcing one running volume writer.
-
-The full gate passed in 683.423 seconds on 2026-10-25. All seven Go groups and
-14 named subtests passed with zero Go skips or failures. Six serialized Chromium
-phases passed, with 30 passing tests and six explicit opposite-profile skips.
-The required readiness, proxy-failure recovery, later deployment C, HTTPS,
-capacity and cleanup markers all passed for both database engines. PostgreSQL
-resume and Redis forward completion also passed through the live owner recovery
-form, with viewer denial and keyboard review at the tested viewport sizes.
-
-The full receipt is
-`/tmp/nerocd-operation-status-retry-integrated-full-handoff.json`.
-Its exact profile is
-`/tmp/nerocd-operation-status-retry-integrated-physical-profile.json`.
-Named events and sanitized runtime output are retained in
-`/tmp/nerocd-operation-status-retry-integrated-full-group-events.json` and
-`/tmp/nerocd-operation-status-retry-integrated-full-runtime-redacted.log`.
-The receipt binds source objects, compiled binary hashes, the generated and
-served UI manifest, image identities, joined processes, and exact owned cleanup.
-The unrelated 35 containers and 209 volumes, root graph, generated UI bytes and
-independent user UI were preserved.
-
-Qualification covers one same-host native Linux arm64 trusted Docker classic-store
-fixture, PostgreSQL 17.11, Redis 8.2.10, and private fixture-CA HTTPS. The storage
-image runs as root to initialize the fresh volume. The fixture verifies bounded
-file UID/GID and modes. This does not qualify arbitrary nonroot image initialization
-or production ACME. Recovery preserves candidate-written database records and
-uploads. Resume does not undo those writes or establish compatibility with the
-previous app version. Backup/restore, disk loss, migration, cross-host or external
-storage, source builds, credential rotation, in-flight request draining and
-control-plane restart remain outside this qualification. Full R/A/matrix gates
-remain incomplete.
-
-The proxy-failure case deliberately pauses the exact owned proxy, interrupting
-unrelated fixture routes too. Their restoration is verified after unpause and
-recovery. Ordinary route preservation is checked separately without that fault.
-The earlier failed full run remains failed in
-`/tmp/nerocd-operation-snapshot-integrated-full-handoff.json`.
-
-## Historical storage-less qualification
-
-The connected public-image workflow is physically qualified at
-`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
-`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
-journal format 16. An owner can connect one PostgreSQL or Redis database on the
-same destination, then redeploy the application through UI or API while continuing
-all reviewed existing HTTPS routes. Data and credential references survive app
-replacement and database maintenance. The candidate starts and passes readiness
-while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
-finalize lease that retires the exact predecessor.
-
-The full gate passed in 333.592 seconds with five runtime groups and zero skips.
-Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
-capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
-seconds. Four Chromium tests passed per engine, including the owner workflow in
-38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
-failures preserve the old HTTPS app and database reads/writes for both engines.
-Lost yield, proxy Complete and final Complete acknowledgments replay the original
-retained attempt without repeating effects or credential delivery.
-
-The physical receipt is
-`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
-Source and binary identities are retained in
-`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
-output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
-Owned processes and resources were removed. The unrelated 35 containers and 209
-volumes retained identical inventories; root graph and 75 generated UI files were
-unchanged, and the independent user UI remained ready.
-
-Qualification covers the pinned native Linux arm64 trusted Docker classic-store
-fixture and verified private CA. Initial Connect cannot include routes. Source
-builds, application storage, cross-server binding presentation, rotation,
-database-native backup/restore, disk loss and public ACME remain unqualified.
-There is no in-flight request draining or control-plane restart proof. Full R42,
-A17 and all full requirement, acceptance and matrix gates remain incomplete.
-
-The earlier `9a69228f9a2a8324e25b1c366ee4eba913b8dba2` pass remains a
-separate historical checkpoint. Six subsequent failed physical attempts retain
-their original outcomes; see the [acceptance record](../acceptance/runtime-hosting-database-runner/README.md#qualified-route-continuation).
+Connect one public-image application to a healthy PostgreSQL or Redis database
+in the same project and destination. First Connect deploys without application
+storage or routes. After it settles, you can attach one owned upload volume or
+continue reviewed HTTPS routes during later replacements.
 
 ## Prepare the resources
 
@@ -283,7 +201,7 @@ Observation recovery grants no new effects. An interrupted retirement intent
 without a detached receipt cannot automatically repeat retirement.
 
 Existing requests without this option keep their no-route admission rules.
-The physical gate above covers both engines, existing HTTPS routes, retained
+The [physical gate](../acceptance/runtime-hosting-database-runner/README.md) covers both engines, existing HTTPS routes, retained
 database reads/writes, failed readiness, verified cutover rollback and exact
 acknowledgment replay. An uncertain or held operation still needs explicit review.
 
@@ -332,45 +250,16 @@ a separate capability. Retaining a Docker volume is not a database-native backup
 
 ## Implementation and upstream mapping
 
-The comparison target is Coolify
-`b12d1386f3d458618b4c579babcd1e339c6c40b3`. These are behavior mappings, not
-unchanged-client compatibility claims.
-
-| Pinned Coolify implementation | NeroCD replacement |
-| --- | --- |
-| [`StartPostgresql::handle` and `generate_environment_variables`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartPostgresql.php#L33), destination network and persistent storage | [Connection controller](../internal/store/postgres_hosting_database_connection.go), retained network-origin proof and native Go database engine |
-| [`StartRedis::handle` and password configuration](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartRedis.php#L33) | Exact managed-secret references and protected runner credential delivery |
-| [`ApplicationDeploymentJob`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L1726), runtime environment and destination networking | [Owner service](../internal/app/hosting_database_connection_service.go), transactional River work, fenced Go-agent execution and durable journal |
-| [`ApplicationDeploymentJob::rolling_update`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2658), rolling update and constrained interruption | Storage-less ready yield and strict proxy/finalize; owned-volume replacement stops the exact predecessor before starting the sole candidate writer |
-| [`ApplicationDeploymentJob::generate_local_persistent_volumes`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4347), named-volume generation | Immutable owned-volume metadata and materialization, exact physical labels and mount identity |
-| [`Application::persistentStorages`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L702) and [`destination`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L1189) | Exact resource/binding/destination references in storage admission and compiled plans |
-| [`LocalPersistentVolume`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/LocalPersistentVolume.php#L12) and [`Storages/All`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Shared/Storages/All.php#L18) | Public storage review and owner-authorized connected replacement; fresh fenced recovery receipts replace SSH mechanics |
-| [`generateLabelsApplication`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L1212), application hostname, port and HTTPS routing | Existing typed Traefik file snapshot and strict HTTP, HTTPS and certificate proof, with the complete unrelated route scope retained |
-| [`StandalonePostgresql`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandalonePostgresql.php#L322) and [`StandaloneRedis`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/StandaloneRedis.php#L308), internal connection details | Private deterministic alias, exact credential references and [connection UI](../web/app/src/pages/ResourceDatabaseConnections.tsx) without password disclosure |
-
-The same pinned `ApplicationDeploymentJob.php` separates
-[`health_check`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L2709),
-[`generate_compose_file`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4090),
-and [`stop_running_container`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L4930).
-The routing helper has separate
-[`fqdnLabelsForTraefik`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L932)
-and [`fqdnLabelsForCaddy`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/bootstrap/helpers/docker.php#L777).
-These references identify upstream behavior. NeroCD's current continuation uses
-its typed Traefik snapshot, PostgreSQL transactions, fenced Go runner and durable
-journal; it does not implement a PHP, SSH or Caddy execution port.
-
-NeroCD uses a native enrolled Go agent, current effect authorization, retained
-membership evidence and same-attempt journal replay. Coolify's PHP/SSH execution
-model is not copied as an API or process contract. The parity audit assesses each
-full mandatory outcome separately; source presence alone earns no verified credit.
-
+The [connection controller](../internal/store/postgres_hosting_database_connection.go),
+[owner service](../internal/app/hosting_database_connection_service.go), and
+[connection UI](../web/app/src/pages/ResourceDatabaseConnections.tsx) implement
+the workflow. Public input selects resources and reviewed settings. The controller
+owns private network proof, credential references, and queued operations; the
+runner executes under current leases and records durable receipts.
 
 ## Redeploy with one connected upload volume
 
-Migration 0074 and journal format 17 add the separately versioned
-`application-database.storage.v1` contract. The current `09a4324` physical qualification
-above covers its combined UI, API and runner workflow. The `5277ab2` qualification
-remains a separate historical storage-less pass.
+The connected upload-volume protocol is `application-database.storage.v1`.
 
 First connect and deploy the application without storage. Attach one
 platform-managed local volume to that resource after its initial deployment
@@ -465,8 +354,7 @@ both the original deployment owner's current authority and the requesting
 owner's current authority. A different owner cannot override revocation of the
 original actor. Offers are suppressed after original-owner revocation. Changing the original actor's authority is a separate deliberate administrative
 decision. Recovery never restores it automatically. Recovery from a permanently
-orphaned original owner is unsupported in this slice.
-
+orphaned original owner is unsupported.
 
 This policy covers one owned local named volume, one public-image application and
 one PostgreSQL or Redis database on the same authorized destination. It does not
@@ -476,3 +364,21 @@ owned-volume protocol, a trusted daemon administrator who replaces a volume and
 copies all ownership metadata cannot be distinguished from the original volume.
 Coolify's named-volume metadata and deployment review inform this workflow; the
 exclusive writer interruption and fresh recovery receipts are Go runner behavior.
+
+<a id="historical-storage-less-qualification"></a>
+
+## Tests and supported environments
+
+The [runtime guide](../acceptance/runtime-hosting-database-runner/README.md#current-connected-storage-qualification)
+describes the fixture. It covers both engines, application and database
+replacement, one-writer upload continuity, strict HTTPS cutover, response-loss
+replay, and owner recovery. PostgreSQL resume and Redis forward completion also
+use the live owner recovery form with viewer denial and keyboard review.
+
+The profile is native Linux arm64, PostgreSQL 17.11, Redis 8.2.10, trusted rootful
+classic-store Docker, one destination, and private fixture-CA HTTPS. The storage
+fixture runs as root to initialize its volume. It does not qualify arbitrary
+nonroot image initialization, production ACME, source builds, credential rotation,
+in-flight request draining, control-plane restart, cross-host storage, or disk loss.
+Backup and archive recovery have separate contracts. Resuming a predecessor keeps
+candidate-written data and cannot establish compatibility with the older app.

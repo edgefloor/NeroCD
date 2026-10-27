@@ -30,7 +30,7 @@ If delivery is uncertain, retry the identical local deployment request. The UI r
 A restore hold blocks admission until trusted recovery evidence exists. Refresh, reconciliation and a new request key cannot clear that hold. Permission denial pauses mutations. Reload after project access is restored. Actor, resource and permission changes discard pending UI state and ignore late mutation responses. Viewers can inspect build artifacts and deployment evidence but cannot deploy or change routes.
 
 The opt-in real backend browser check is `NEROCD_LOCAL_BUILD_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`, run from the repository root after the frontend build. It uses a disposable Docker daemon, actual CLI build and local deployment, real authenticated browser sessions and the existing test-only managed proxy CA. It checks keyboard submission, identical receipt recovery, viewer denial and layouts at 320, 390, 430 and 1440 pixels. It does not seed a successful build. The default public runtime gate remains unchanged. The separate private browser
-mode and its accepted limits are below.
+mode is described below.
 
 ## Deploy a private Git artifact
 
@@ -39,15 +39,12 @@ and the [operator private-execution setup](hosting-build-runtime.md#enable-priva
 A successful private build uses the same exact-artifact deployment controls and
 route review described above. It does not pass a credential to the application,
 change the selected destination, rebuild at deployment time or select a route
-automatically. Runtime variables and application-secret injection remain planned.
+automatically. Configure application variables and secret references separately
+in the application's **Runtime configuration** section.
 
-`NEROCD_PRIVATE_GIT_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
-qualifies the Dockerfile WebUI workflow at accepted integration
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. The
-[private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts)
-creates an owner grant, recovers an identical retry, verifies its ID in the build
-request, reads actual typed output and deploys the recorded artifact through
-trusted-test-CA HTTPS. Keyboard operation, four viewport widths and viewer 403
-are included. This is Dockerfile evidence; private Railpack is qualified by the
-CLI runtime fixture, not this browser scenario. Complete A03 and public ACME
-remain separate qualification work.
+Run `NEROCD_PRIVATE_GIT_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
+for the Dockerfile browser workflow. Add `NEROCD_PRIVATE_GIT_STRATEGY=railpack`
+for the Railpack variant. The [fixture guide](../acceptance/runtime-hosting-local-build/README.md)
+covers the compiled Vite SPA variant, exact grant retry, typed output, artifact
+deployment, keyboard controls, responsive layouts, and viewer denial. HTTPS
+checks use a local test CA. Production ACME is outside this fixture.

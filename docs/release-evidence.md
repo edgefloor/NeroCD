@@ -15,7 +15,7 @@ published or described as evidence for a repository revision. It is prohibited
 when the checkout contains `.delta`; do not create a local synthetic archive in
 that case.
 
-The gate runs its accepted local inventory and fails when required Buildx,
+The gate runs the required local checks and fails when Buildx,
 emulation, browser, or executable dependencies are missing. It also compares
 repeat outputs and detects a tampered binary/checksum mismatch.
 

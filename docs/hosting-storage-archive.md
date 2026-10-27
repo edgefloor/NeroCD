@@ -1,25 +1,8 @@
 # Configure the owned-upload archive controller
 
-Controller, startup configuration, public API and default-off runner code are
-accepted through `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, with migration 0068.
-Helper packaging is accepted at `b796ce483e99d0dec29bb3e769982dc30da64668`.
-The [API tests](../internal/api/hosting_storage_archive_handlers_test.go) and
-[runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go)
-provide contract/lifecycle evidence. Actual PostgreSQL/River/controller tests use
-a fake engine; later bounded physical uploaded-file recovery is accepted below.
-Archive UI code/browser acceptance is recorded below. Bounded native Linux arm64,
-classic-store owned-upload application backup/new-target restore is physically
-accepted; broader recovery and full A26/A37 remain unfinished.
-
-Earlier runner and UI acceptance referred to receipts under `/tmp`. Those
-files are no longer present and are historical references, not current pass
-artifacts. The accepted remote workflow at
-`58716fea31420f1f10258385de25e2c712e12770` reruns the local archive group and
-retains durable evidence in the [remote backup guide](hosting-storage-remote-backups.md#accepted-qualification-and-evidence).
-Application binding is separately qualified at
-`09a432407c41671517fa342d28c07e9c79978aea` for the bounded PostgreSQL/Redis
-profile in [database connections](hosting-database-connections.md). Broader R42
-profiles remain open.
+Owned-upload backups stop the exact running writers, archive an owned local volume,
+and resume those writers. Restore extracts into a separate resource and volume.
+Configure the controller and matching runner helper before admitting this work.
 
 The server's archive controller is disabled by default. Set
 `NEROCD_HOSTING_STORAGE_ARCHIVE_POLICY_FILE` to an operator-provisioned JSON file
@@ -36,46 +19,19 @@ existing operations or retained archives.
 
 ## UI acceptance and image-store boundary
 
-Archive UI source `d98e88c64f84924bd36fb2d4c7c29ad723e80ced` is accepted at
-`a99a75517c018caa9aa9965cf451f9f826e7b3d6`. Retained evidence records 1,426
-frontend tests, TypeScript, generated API, Go/frontend builds, a 75-file embedded
-manifest and 74 matching served assets. Browser responses are intercepted and
-qualify UI behavior, not physical archive backup/restore. Historical receipt paths were
-`/tmp/nerocd-archive-ui-integrated-handoff.json` and
-`/tmp/nerocd-main-archive-ui-promotion.json`; those files are no longer present. The new built artifact remains in the
-integration checkout; root ignored assets were untouched.
+The helper is pinned by its local Docker image configuration ID. Qualification
+uses a classic Docker image store with overlay2. A Docker 29 containerd image-store
+attempt could not inspect the BuildKit helper by that ID; no fallback is implemented.
+Do not infer support from the Docker major version alone.
 
-The current helper identity path uses a Docker image configuration ID. A Docker
-29 containerd image-store attempt could not inspect the BuildKit image by that
-configuration ID; the failed attempt remains at
-`/tmp/nerocd-storage-runtime-20261024.2LlLIL`. Current qualification targets an
-explicit classic Docker image store. No runtime fallback is implemented, no
-universal Docker 29 support is established, and no future physical test pass is
-claimed. The bounded physical uploaded-file slice is accepted below; full A26/A37 remains incomplete.
-
-Bounded physical uploaded-file recovery is accepted at
-`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, with exact source/tree equality to
-`2ba8041359576a32d616d7f83e0c7eafe4ee4d91`. The historical 25.38-second pass was recorded in
-`/tmp/nerocd-storage-runtime-20261024.iWwXss/gate.log`, with
-`/tmp/nerocd-archive-physical-integrated-handoff.json`,
-`/tmp/nerocd-archive-physical-integrated-physical-retention.json` and
-`/tmp/nerocd-archive-physical-integrated-main-promotion.json`. Those temporary receipts are no longer present. Current local and remote
-physical evidence is linked in the remote backup guide. The historical fixture
-retains 65,537 uploaded bytes through redeploy. Committed backup and restore ACK
-loss each recover with one helper start. A new resource/volume reads restored
-application data and accepts a new write; the source remains unchanged with
-UID 12345/GID 12346, files 0640 and directories 0750. Oversized backup failure
-resumes only originally running workloads; failed-readiness rollback and
-missing-volume hold also pass. Owned objects/processes are absent after cleanup
-and host inventories are unchanged. The tested helper image was removed and is
-not an installed reusable pin. Earlier failures remain historical.
-
-This is native Linux arm64, rootful same-host owned uploads on the classic Docker
-image store/overlay2 with trusted fixture CA and local CAS. That historical run does not qualify
-database backup, S3, host disk loss, in-place restore, containerd image store,
-production TLS, browser-to-real-archive flow, full A26/A37 or full parity.
-The later bounded PostgreSQL/Redis application-binding acceptance is recorded in
-[database connections](hosting-database-connections.md).
+The [remote backup evidence](hosting-storage-remote-backups.md#accepted-qualification-and-evidence)
+includes a rerun of local archive backup and new-volume restore. The profile is
+native Linux arm64, trusted rootful Docker, one destination, and private fixture-CA
+HTTPS. It verifies uploaded bytes and numeric owners/modes after restore, writer
+recovery, lost completion replay, and restored application reads and writes.
+Production ACME, containerd image stores, arbitrary mounts, disk loss, in-place
+restore, and cross-host recovery are unqualified. Earlier temporary local receipts
+are no longer available; use the retained remote-workflow evidence.
 
 ## Provision an exact helper identity
 
@@ -157,7 +113,5 @@ nerocd server
 Archives use the versioned uncompressed `nerocd-storage-v1` format. The local
 controller concerns owned upload volumes and restore into a new volume.
 [Remote backups](hosting-storage-remote-backups.md) add independent S3 transfer
-and verified download before new-volume extraction. Database backups and
-application database bindings have separate contracts. Full A26/A37 and broader
-recovery profiles remain open even though bounded local and remote application
-read/write workflows have physical acceptance.
+and verified download before new-volume extraction. [Database backups](hosting-database-backups.md) and
+[application database connections](hosting-database-connections.md) have separate contracts.

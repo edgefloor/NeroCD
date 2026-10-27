@@ -1,6 +1,6 @@
 # Nonsecret build-agent HTTP client
 
-`runnerclient.Client` exposes five typed methods for the accepted
+`runnerclient.Client` exposes five typed methods for the
 `hostingbuildprotocol` messages. These methods reuse the authenticated client
 transport and forward the caller's context. They do not install a server endpoint,
 register a capability, claim work, fetch source or invoke a build engine.
@@ -74,16 +74,13 @@ configured build/local execution cannot share shell capability. These reads do
 not change an enrolled runner's persisted capabilities. Follow the
 [operator enrollment/restart review](hosting-build-runtime.md#enable-private-https-git).
 
-## Limits and remaining integration
+<a id="limits-and-remaining-integration"></a>
 
-This guide describes the nonsecret phase client and its original component
-boundary. The accepted compiled runtime now uses these methods with journal
-replay and exact completion. Private credentials use the separate strict
-`BuildSourceCredential` codec/client, never these nonsecret DTOs. Current private
-execution and the bounded Dockerfile WebUI are accepted at
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. Use the
-[private operator setup](hosting-build-runtime.md#enable-private-https-git) and
-[accepted evidence](compatibility.md#accepted-foundations-and-evidence).
+## Runtime integration and tests
+
+The compiled runtime uses these methods with journal replay and exact completion.
+Private credentials use the separate strict `BuildSourceCredential` codec and
+client. Follow [private operator setup](hosting-build-runtime.md#enable-private-https-git).
 
 Loopback HTTP tests cover authentication, exact messages, structural admission,
 response bounds and strict decoding, mismatched acknowledgments and status,

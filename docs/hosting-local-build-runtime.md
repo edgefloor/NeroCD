@@ -10,13 +10,19 @@ For deploy, observation and retained cleanup, canonical internal task constructi
 
 Preparation derives the release from the exact admitted artifact and checks its daemon, ImageID and platform. The preparation acknowledgment must preserve the source, artifact, placement and release and contain a valid recompiled plan. Only the existing server-side resolution of an initially unallocated port is allowed. A fixed port cannot change. The agent inspects and creates the workload using the exact ImageID, with `--pull=never`. Missing or mismatched images fail before workload mutation. There is no pull, rebuild, import, tag lookup or fabricated RepoDigest fallback. Registry image deployments retain their existing digest acquisition behavior.
 
-Local artifact evidence establishes journal format floor **6**. The floor applies to preparation, apply intent, result-only markers, cleanup targets, previous healthy releases and retained releases, including local evidence nested beneath a registry release. Older journal formats cannot contain local evidence. The result-only marker identifies the required format/capability; it grants no authority. Replay still uses the full attempt tuple, exact operation, retained body and server receipt. Existing versions 1–5 and registry JSON/hash bytes remain compatible when local fields are absent. Mixed build/proxy/image appends never lower the floor.
+Local artifact evidence establishes journal format floor **6**. The floor applies to preparation, apply intent, result-only markers, cleanup targets, previous healthy releases and retained releases, including local evidence nested beneath a registry release. Journal formats below 6 cannot contain local evidence. Other record families can require a later format. The result-only marker identifies the required format/capability; it grants no authority. Replay still uses the full attempt tuple, exact operation, retained body and server receipt. Existing versions 1–5 and registry JSON/hash bytes remain compatible when local fields are absent. Mixed build/proxy/image appends never lower the floor.
 
 Unresolved effects, lease loss, cancellation and restored ownership holds retain their journal evidence. Startup reconciliation precedes normal runner traffic. Missing local configuration blocks local replay. A retained local workload can be cleaned up after its image cache disappears, using the exact container ID, daemon, labels, image identity and port proof plus current server route guards. Cleanup never deletes images. Route-protected releases cannot be removed, and a healthy new release does not silently switch an existing route.
 
 `acceptance/runtime-hosting-local-build/gate.sh` uses an owned disposable Linux Docker daemon, real PostgreSQL/River and production HTTP APIs. Its default mode compiles the normal CLI for public HTTPS Git builds and local deployments, verifies ordinary HTTP, then uses the production proxy runtime with the existing test-only Pebble trust factory for managed Traefik HTTPS. The fixture does not establish public-CA issuance or test the entire proxy CLI. It uses the existing TCP/database readiness and verified PostgreSQL cache helpers, publishes no outer host ports in its default mode, and verifies owned cleanup. Its opt-in browser mode publishes only the disposable authenticated API and UI on an ephemeral host loopback port. See [the resource UI and browser check](hosting-build-deployments.md#deploy-through-the-resource-ui).
 
-This slice provides explicit build-artifact deployment and route selection on one host. The resource UI can select a successful build, request local artifact deployment, inspect the operation and select the settled healthy release for an existing managed proxy route. See [the UI workflow](hosting-build-deployments.md#deploy-through-the-resource-ui). Private HTTPS Basic/PAT delivery is accepted with [explicit build configuration](hosting-build-runtime.md#enable-private-https-git). Automatic deployment after a build, image transfer, runtime application logs and broader M1 completion remain separate work. Typed build output is available through its bounded opt-in viewer. Rootful BuildKit remains a trusted host boundary; its delegated cgroup and monitored disk prerequisites are unchanged.
+The resource UI can deploy a successful build artifact and select its settled
+healthy release for a managed proxy route. See the [UI workflow](hosting-build-deployments.md#deploy-through-the-resource-ui).
+Private HTTPS Basic/PAT checkout requires [explicit configuration](hosting-build-runtime.md#enable-private-https-git).
+[Automatic deployment](hosting-auto-deploy.md) requires a reviewed baseline.
+[Runtime logs](hosting-runtime-logs.md) and typed build output use separate viewers.
+Images remain on the build daemon; cross-host transfer is unsupported. Rootful
+BuildKit, delegated cgroups, and monitored disk limits require a trusted host.
 
 ## Private runtime and browser qualification
 
@@ -26,9 +32,6 @@ Dockerfile and Railpack through the compiled CLI, exact local artifact deploymen
 and managed HTTPS with the fixture CA. The private server rejects anonymous and
 wrong authentication. The fixture checks credential-response-loss retry, fresh
 registration capability composition, secret absence and transport cleanup.
-At source `4642dc413cc21be955fd9639d12fdf0606735cfc`, the public regression passed
-in 51.44 seconds and private cases in 76.59 seconds. These remain revision-specific
-reports, not a new execution by this documentation change.
 
 After building the frontend, use
 `NEROCD_PRIVATE_GIT_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
@@ -39,7 +42,7 @@ contains references only. This opt-in mode publishes the disposable authenticate
 UI/API on host loopback; production must use the protected controller transport
 above. Public browser mode remains `NEROCD_LOCAL_BUILD_BROWSER=1`.
 
-Accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e` records private
-browser 25.0 seconds/Go fixture 34.03 seconds and public browser regression
-22.2 seconds/Go fixture 30.63 seconds. All HTTPS evidence here uses a trusted test
-CA and isolated DNS. Production ACME and complete A03 remain unqualified.
+For the Railpack browser variant, also set `NEROCD_PRIVATE_GIT_STRATEGY=railpack`.
+The [fixture guide](../acceptance/runtime-hosting-local-build/README.md) describes
+prepared-static and compiled Vite cases. HTTPS probes use a local test CA and
+isolated DNS. Production ACME is outside this fixture.

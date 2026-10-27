@@ -10,7 +10,7 @@ Both public and authenticated HTTPS checkout pass the expected commit to the exi
 
 Existing receipt replay retains its current identity, placement, creator, and grant checks. Removing only the new capability prevents fresh execution without discarding identical historical acknowledgments. Replay does not repeat checkout or build work.
 
-This is a prerequisite for a future trusted deploy-on-push controller. It does not install a webhook, authenticate provider events, select commits from untrusted payloads, or order concurrent pushes. The trusted caller remains responsible for selecting and authorizing the intended revision.
+The [GitHub push controller](hosting-github-push.md) uses this contract after it verifies the provider event and current branch head. Other trusted callers remain responsible for selecting and authorizing the intended revision.
 
 ## Qualification
 

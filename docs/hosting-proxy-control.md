@@ -121,9 +121,9 @@ with pending ACME remains distinct from trusted HTTPS readiness. Default, self-s
 expired or untrusted certificates cannot establish HTTPS readiness.
 
 The agent appends a typed mode-0600 journal preparation before sending it, an intent
-before requesting admission, and a result before sending completion. Journal v4
-preserves older image cleanup records. Older binaries that do not support v4 must not
-open this journal. Startup replays proxy evidence before heartbeat and claim. It never
+before requesting admission, and a result before sending completion. Proxy records require journal format v4 or later and preserve older image
+cleanup records. Other record families can require a later format. Older binaries
+that cannot read the retained format must not open the journal. Startup replays proxy evidence before heartbeat and claim. It never
 retries an admitted engine effect or clears uncertain or restored ownership.
 
 If a committed completion response is lost and the lease watcher cancels execution,
@@ -140,7 +140,9 @@ that route HTTP-ready and TLS-pending while existing trusted routes continue ser
 
 Database restore inserts a permanent restore hold for every configured proxy, including
 idle and disabled proxies without operations, in the same transaction that revokes
-sessions and expires leases. There is no automatic recovery proof or hold-clearing API.
+sessions and expires leases. Restored ownership has no automatic recovery proof or hold-clearing API.
+[Completed metadata conflicts](hosting-proxy-recovery.md) have a separate reviewed
+repair workflow that cannot clear a restore hold or resolve uncertain engine effects.
 
 ## Validation boundary
 

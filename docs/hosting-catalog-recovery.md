@@ -1,4 +1,4 @@
-# Catalog backup and recovery contract
+# Back up and recover a catalog application
 
 The Linkding installation uses ordinary image deployment with platform-owned
 storage and managed runtime secret references. Its storage archive follows the
@@ -45,26 +45,17 @@ creation or extraction and cannot start an originally stopped writer. A runner
 must advertise the existing combined storage/runtime capabilities as well as the
 archive family before it can receive a combined archive plan.
 
-## Upstream behavior and deliberate difference
+<a id="catalog-backup-and-recovery-contract"></a>
+<a id="upstream-behavior-and-deliberate-difference"></a>
 
-The read-only Coolify reference at
-`b12d1386f3d458618b4c579babcd1e339c6c40b3` supplies the comparison:
+## Source and recovery rules
 
-- `app/Jobs/VolumeBackupJob.php:294` builds a tar archive. Its
-  `containersUsingVolume` at line 307 finds running containers using the volume,
-  and `archiveWithStoppedContainers` at line 325 records and stops them before
-  archiving. Its cleanup trap restarts recorded writers and retains failure.
-- `app/Jobs/VolumeBackupRecoveryJob.php:252` retries retained writer recovery.
-  Existing inspect/start failures keep the remaining list for another attempt.
-- `app/Http/Controllers/Api/VolumeBackupsController.php:139` admits backup
-  configuration through `upsert`.
-- `app/Livewire/Project/Shared/Storages/VolumeBackups.php:313` exposes
-  `retryRecovery` for unresolved stopped writers.
-
-NeroCD uses the Go agent's existing fenced journal, exact ownership checks, and
-resume obligations in place of remote SSH shell traps. A volume-archive restore
-UI was not located in those upstream paths. New-target restore is a deliberate
-NeroCD improvement, not a claim of an equivalent upstream workflow.
+The [restore transaction](../internal/store/postgres_hosting_storage_archive_restore.go)
+and [runtime document handling](../internal/store/postgres_hosting_storage_archive_runtime.go)
+validate the pinned configuration and current secret references.
+The archive runner uses exact writer identities and durable resume obligations.
+If a writer fails to restart, follow owner recovery and preserve the source.
+Recovery does not recreate the application or rerun extraction.
 
 ## Qualification boundary
 
@@ -82,9 +73,9 @@ completion replay without duplicate helper execution or materialization, and an
 exact-container start failure followed by owner recovery. Browser assertions
 include desktop and 320, 390, and 430 pixel widths for the restore controls.
 
-Unit and source-build checks do not qualify that physical workflow. The exact
-candidate requires the Leader's independent `code_hygiene`, `specification`, and
-`critical_security` reviews, authorized PostgreSQL regression execution, and the
-authorized disposable Docker/browser fixture. Until those checks pass, physical
-backup/restore and complete UI workflow qualification remain unverified. Local
-archives also remain subject to the existing destination-disk retention limits.
+The [catalog runtime guide](../acceptance/runtime-hosting-catalog/README.md#final-physical-qualification)
+describes the application checks and tested environment. The profile is Linkding
+1.47.0 on native Linux arm64, trusted rootful classic-store Docker/overlay2, the
+same destination, and private fixture-CA HTTPS. Production ACME, generic Compose,
+catalog version upgrades, cross-host recovery, in-place restore, and destination
+disk loss are unqualified. Local archives depend on the destination's retained disk.

@@ -23,6 +23,8 @@ on the validated commit. An unpublished candidate tag may be replaced using an
 explicit Git push lease; a concurrent tag change causes failure. Repository-wide
 release concurrency serializes workflow attempts across versions.
 
+## Version immutability
+
 A version becomes immutable when any of these exists:
 
 - A published GitHub Release, including a prerelease.
@@ -40,6 +42,8 @@ stops publication; it never means the version is unused.
 Versions must be `vMAJOR.MINOR.PATCH`, optionally followed by a SemVer prerelease
 suffix. Build metadata (`+...`) is excluded because the version is also an OCI
 tag. Numeric identifiers must not have leading zeroes.
+
+## Signing and repository controls
 
 CI publishes Linux amd64/arm64 images, binds the registry digest to evidence,
 signs the digest and trust manifest with GitHub OIDC, produces GitHub provenance,
@@ -70,6 +74,8 @@ such a version or delete its publication records.
 
 Do not run external/manual publishers concurrently with this workflow: GitHub
 and GHCR do not provide a shared publication transaction.
+
+## Verify the release policy
 
 Run the local checks before requesting release approval:
 

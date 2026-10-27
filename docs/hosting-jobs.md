@@ -97,8 +97,7 @@ evidence is rejected; the adapter never invents hashes for previously applied
 SQL. Migration and validation use the application's current schema, including
 non-public schemas.
 
-This table is migration evidence owned by the package adapter. It is not a
-second runtime migration service or an orchestration coordination file.
+The package adapter owns this migration evidence table.
 
 ## Backup compatibility
 
@@ -119,7 +118,7 @@ including bindings whose backup contains no operation or state row. Restored
 jobs cannot dispatch or apply through this hold. Read-only target observation
 cannot clear it: the backup can predate a later Docker command still running on
 an agent. Trusted local journal and process recovery proof is not implemented in
-this slice, so restored hosting ownership cannot yet resume. There is no unlock
+this recovery path, so restored hosting ownership cannot resume. There is no unlock
 API. This conservative hold is distinct from an operation's mutation hold and
 from a completed restore-resumption workflow.
 

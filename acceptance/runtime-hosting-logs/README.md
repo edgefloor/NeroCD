@@ -47,11 +47,9 @@ redaction. It is absent from controlled collector logs and API cached messages.
 This does not establish universal application secret redaction or absence from
 the deliberately configured fixture credential file and source probe binary.
 
-The standalone adapter fixture reads API pages with `limit=100`, which is valid
-on its frozen base. The combined browser gate qualifies the accepted 200-item runtime log page. This fixture does not
-change API routes, generated contracts, schema, or browser behavior. It does not
-qualify production ACME, remote/untrusted daemons, other logging drivers, or
-exactly-once source capture. A restart can duplicate a bounded tail and has a
+The standalone adapter fixture reads API pages with `limit=100`. The combined
+browser gate uses 200-item pages. Production ACME, remote or untrusted daemons,
+other logging drivers, and exactly-once source capture are outside these tests. A restart can duplicate a bounded tail and has a
 visible source gap. Preserve full failed and passing logs with the source SHA,
 binary identities, owned resource IDs, and cleanup evidence.
 
@@ -65,8 +63,8 @@ NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER=1 bash acceptance/runtime-hosting-logs/gate.s
 
 This path builds the unchanged UI before compiling Go, writes the canonical asset
 manifest to `/tmp/nerocd-runtime-logs-actual-manifest.json`, prints binary hashes,
-and runs the compiled Linux CLI's 173-route OpenAPI contract. The browser checks
-all 73 served assets against the 74-entry manifest. The unserved `.gitkeep` is
+and runs the compiled Linux CLI's OpenAPI contract. The browser checks
+all served assets against the manifest. The unserved `.gitkeep` is
 an embedding placeholder. Set `NEROCD_RUNTIME_LOGS_ACTUAL_MANIFEST` to retain a
 manifest at another explicit location.
 

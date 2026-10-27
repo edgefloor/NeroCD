@@ -1,8 +1,9 @@
 # Production deployment
 
-`compose.production.yaml` is separate from development. It uses a digest-pinned
-image, has no application/database/metrics host ports, and expects TLS through
-an external reverse-proxy network.
+Use `compose.production.yaml` to deploy the control plane behind an external
+TLS proxy. It pins the application image by digest and publishes no host ports
+for the application, database or metrics. Application-host qualification remains
+limited to the profiles in [compatibility](compatibility.md).
 
 ## Prepare inputs
 
@@ -28,17 +29,20 @@ docker compose --env-file /secure/nerocd-production.env -f compose.production.ya
 `doctor` checks local configuration without connecting to PostgreSQL or printing
 secrets. The profile migrates, provisions the app role, then starts the server.
 
-## Proxy, bootstrap, and OIDC
+<a id="proxy-bootstrap-and-oidc"></a>
+## Configure the proxy and sign-in
 
 Expose the server only through the TLS proxy on `NEROCD_PROXY_NETWORK`. Set
 `NEROCD_TRUSTED_PROXY_CIDRS` only for immediate proxy ranges. Never publish
 `/metrics`; it requires an authenticated `system_admin` credential.
 
-The base Compose file does **not** forward OIDC variables or mount an OIDC
-secret. To enable OIDC, an operator-reviewed Compose override for `server` must
-supply issuer, client ID, and client-secret file, and mount a read-only 0400
-secret reachable by UID 10001. Adding values to the env file alone does nothing.
-Keep the HTTPS public origin exact. See [OIDC](oidc.md).
+To enable OIDC, create a reviewed Compose override for `server`. Supply the
+issuer, client ID and client-secret file setting, and mount the secret read-only
+with mode 0400 and ownership readable by UID 10001. The base Compose file does
+not forward OIDC variables or mount that secret, so env-file values alone do not
+enable it. Keep the HTTPS public origin exact. See [OIDC](oidc.md).
+
+## Bootstrap the administrator
 
 Bootstrap the first administrator exactly once. `database-tools` runs as UID
 10001, so it cannot safely read an operator-owned `0400` host file through a

@@ -1,6 +1,6 @@
 # Configure managed proxy routing in the WebUI
 
-This UI uses the accepted proxy control API. Saving configuration queues proxy work;
+The WebUI uses the proxy control API. Saving configuration queues proxy work;
 it does not enable proxy execution on agents. A queued operation does not prove
 that routing is loaded, DNS resolves, or trusted HTTPS is ready.
 
@@ -113,9 +113,9 @@ or retry action that could authorize a new runtime mutation.
 The browser fixture uses disposable PostgreSQL/River and supported human account
 flows. An ordinary image-only runner verifies the configuration prerequisite
 refusal. A separately configured Linux proxy-capable agent consumes real UI
-enrollment and executes the accepted durable runner loop against an isolated
+enrollment and executes the durable runner loop against an isolated
 Docker daemon. Its temporary build-tagged harness uses the same local Pebble CA
-factory as the accepted combined runtime fixture. Production trust configuration
+factory as the combined runtime fixture. Production trust configuration
 and runner capability presets are unchanged.
 
 The positive journey creates configuration, grants hostname authority, deploys an

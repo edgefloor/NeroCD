@@ -50,6 +50,6 @@ build tag selects the owned Pebble CA; production TLS behavior is unchanged.
 The Dockerfile strategy uses the pinned Buildx/BuildKit path. The otherwise
 required planner identity is pinned Alpine and is never invoked as Railpack.
 This fixture does not claim Railpack, browser HTTPS, UI completion, public ACME,
-untrusted-source isolation, or complete A04/hosting parity. Real PostgreSQL
+untrusted-source isolation, or complete host provisioning. Real PostgreSQL
 regressions separately cover supersession, manual epochs, authority/capability
 loss before first mutation, transactional rollback, expiry, and lost-job recovery.

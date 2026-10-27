@@ -9,9 +9,8 @@ nested build authority fields. A client must use the typed endpoint for build
 output; generic event acknowledgments cannot settle a build log journal.
 
 Public and granted private HTTPS Git builds use this typed output contract.
-Accepted private runtime/UI integration
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e` covers compiled CLI Dockerfile and
-Railpack builds and a Dockerfile browser workflow. Credential fetching uses a
+The [private runtime fixture](../acceptance/runtime-hosting-local-build/README.md)
+covers Dockerfile and Railpack through the CLI and browser. Credential fetching uses a
 separate protected endpoint, not the build-log transport. See the
 [delivery contract](hosting-build-log-delivery.md).
 

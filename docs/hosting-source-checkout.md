@@ -1,6 +1,6 @@
 # Hosting source checkout reference
 
-`runnerruntime.WithSourceCheckout` acquires one immutable Git checkout and lends it to a callback. It supports public HTTPS, HTTPS basic credentials, and SSH private keys with operator-configured host fingerprints. The adapter is available on Unix hosts. It has no server route, database operation, managed-secret provider, or build invocation. A later controller can pass its checkout to the [local build engine](hosting-build-engine.md).
+`runnerruntime.WithSourceCheckout` acquires one immutable Git checkout and lends it to a callback. It supports public HTTPS, HTTPS basic credentials, and SSH private keys with operator-configured host fingerprints. The adapter is available on Unix hosts. The [build executor](hosting-build-executor.md) supplies authorization and credential callbacks, commits its source receipt, and passes the checkout to the [local build engine](hosting-build-engine.md). SSH support in this adapter does not enable SSH sources in resource configuration.
 
 ## Request and caller contract
 
@@ -59,4 +59,4 @@ Ordinary package tests run real local HTTPS Git servers with isolated test CAs. 
 
 The SSH transport test requires an explicitly selected disposable fixture image. Build the existing `acceptance/runtime-provenance/GitDockerfile` and set `NEROCD_SOURCE_SSH_IMAGE` when running `TestSourceCheckoutSSHTransport`. It starts a labelled container with a temporary SSH server, binds an ephemeral port on loopback, mounts only its disposable fixture directory read-only, verifies exact fetched content, rejects a changed fingerprint, and removes the exact container. It mounts no Docker socket or production credential. The fixture image uses Alpine 3.22.2 at `sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412`; package versions come from that existing fixture's APK installation.
 
-These tests establish an acquisition component. They do not establish managed-secret delivery, an end-to-end hosting deployment, Git-to-HTTPS service, or production build wiring.
+These package tests cover acquisition. The [combined runtime fixture](../acceptance/runtime-hosting-local-build/README.md) separately covers managed credentials, builds, deployment, and fixture-CA HTTPS.

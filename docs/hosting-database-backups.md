@@ -58,7 +58,7 @@ the existing content-addressed artifact store. Publication checks digest, size,
 owner, file type and link count and does not overwrite an existing artifact.
 A completed staging dump is retained if publication fails. The public history
 records `publication_failed`; this is a local publication failure, not an S3
-error. There is no automatic deletion or remote retention policy in this slice.
+error. Configure copy cleanup separately through the [retention policy](hosting-database-backup-retention.md).
 Operators must preserve the runner's protected state and storage; a local backup
 is not protection against loss of that destination.
 
@@ -91,96 +91,31 @@ crash. Such an execution remains visibly unresolved and held; it is never inferr
 successful or blindly imported again. This version does not offer a general
 administrative resolution for that crash window.
 
-## Deliberate limits and upstream reference
+## Related workflows and limits
 
-[PostgreSQL schedules](hosting-database-backup-schedules.md) have subsequent
-physical qualification within their documented cron subset.
-[Remote S3 publication and recovery](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
-have subsequent acceptance within an explicitly trusted loopback HTTP fixture.
-Production S3 HTTPS, retention automation, other database engines, arbitrary SQL uploads or URLs,
-in-place replacement, cross-destination restore, and backup of
-PostgreSQL roles are deferred. These gaps must remain visible when assessing full
-hosting parity. No full A25 qualification is implied.
+Use [schedules](hosting-database-backup-schedules.md) for recurring dumps,
+[remote backups](hosting-database-remote-backups.md) for recorded S3 copies,
+[retention](hosting-database-backup-retention.md) for copy cleanup, and
+[notifications](hosting-backup-notifications.md) for failure alerts.
 
-The pinned Coolify reference (`b12d1386f3d458618b4c579babcd1e339c6c40b3`)
-uses `app/Jobs/DatabaseBackupJob.php` for PostgreSQL custom dumps and separate
-local/S3 publication, the scheduled-backup models for history, and
-`app/Support/DatabaseImport/DatabaseImportCommandBuilder.php` for transactional
-PostgreSQL import. NeroCD reuses those format and tool semantics and the useful
-history/import workflow. Persisted Go-agent fencing, exact creation provenance,
-protected local artifacts, and a fresh independent target replace SSH commands
-and cache locks. This is a narrower recovery product than the upstream import
-surface.
+Only the pinned PostgreSQL recipe is supported here. Restore creates a new database
+on the same destination. It does not accept arbitrary SQL uploads or URLs, import
+source roles, replace a live database, or move data across destinations.
 
-## Accepted qualification and evidence
+<a id="accepted-qualification-and-evidence"></a>
+<a id="deliberate-limits-and-upstream-reference"></a>
 
-The bounded workflow is accepted on main at
-`56cce329e620472e3c82e9ed7ef0ae0618f124e4`, with migration 0075 and runner
-journal format 18. The final physical gate ran at source
-`c1f7b153a963609336851f94a16b2eac96f86e91`. Integration retained that evidence
-by checking all 141 recorded source blobs and modes. Its runtime, tests, gates,
-SQL, UI, module and configuration inputs are unchanged. Fresh integration
-binaries carry different Git metadata; no binary-equality claim is made.
+## Tests and supported environments
 
-The physical profile uses native Linux arm64, trusted rootful Docker with the
-classic image store, PostgreSQL 17.11, a same-destination public-image client
-application and fixture-CA HTTPS. A real cookie-authenticated Chromium session
-requests the backup and new-database restore through the embedded UI. The Go
-fixture checks the resulting application data. Accounts, environment and
-destination are fixture setup; this is not a complete onboarding qualification.
+The [runtime tests](../internal/api/hosting_database_backup_runtime_integration_test.go)
+and [live browser scenario](../web/app/tests/browser/database-backups-live.spec.ts)
+cover immediate backup, new-database application reads and writes, response-loss
+replay after runner restart, corrupt and truncated archives, revoked authority,
+and guest `pg_restore` timeout. The [schedule workflow](hosting-database-backup-schedules.md)
+also tests actual `pg_dump` timeout. History layouts are checked at 320, 390, 430,
+and 1440 pixels.
 
-The accepted outcomes are:
-
-- An owner requests an immediate backup and reads its completed local history.
-  The live browser checks the completed operation at 320, 390, 430 and 1440 pixels.
-- Backup and restore completion acknowledgements are lost after commit. The
-  compiled runner restarts and replays each durable result without repeating
-  the database tool.
-- Restore succeeds while the original source container is stopped. The target
-  has a distinct resource, binding, volume and generated credential identity.
-  A distinct application reads the pre-backup record and writes and reads new
-  data. A restored application-owned sequence remains usable under `ncd_app`.
-- The source restarts with its original and post-snapshot records intact and
-  accepts another write. This source restart is fixture cleanup, not a restore
-  requirement or an automatic source-management feature.
-- Corrupt and truncated artifacts and revoked authorization fail. The real
-  `pg_restore` guest timeout is exercised. Failed or uncertain effects preserve the
-  appropriate hold, rather than fabricating a successful restore.
-
-The behavior assertions live in
-[`TestHostingDatabaseBackupCompiledRunner`](../internal/api/hosting_database_backup_runtime_integration_test.go),
-`TestHostingDatabaseBackupFailuresCompiledRunner` in that same file, and the
-[live browser scenario](../web/app/tests/browser/database-backups-live.spec.ts).
-The [dedicated gate](../acceptance/runtime-hosting-postgresql-backup-runner/gate.sh)
-runs these against the compiled runner and embedded UI.
-
-Durable receipts are under
-`/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-20261025/`:
-
-| Receipt | Observed result and boundary |
-| --- | --- |
-| `thirteenth-runtime/driver.json` and `runtime-summary.json` | Final source `c1f7b153a963609336851f94a16b2eac96f86e91`, exit 0, `full_workflow_pass=1`, 130.140 seconds. Browser, application restore, restore guest timeout and corrupt/truncated/revoked markers passed. |
-| `thirteenth-runtime/independent-cleanup.json` | Owned outer container and volume absent. Existing container inventory and full volume profiles preserved. Health-log and mount-order differences are explicitly reconciled. |
-| `integration/handoff.json`, `sourceproof.json` and `retention.json` | Accepted source correspondence, 157 focused named passes with zero skips, vet, API generation, frontend and product builds, native/Linux binaries and embedded artifact checks passed. Physical and PostgreSQL results retain their original revisions. |
-| `integration/main-promotion.json` | Fast-forward to accepted `56cce329e620472e3c82e9ed7ef0ae0618f124e4` succeeded. The existing user UI process and its database were not restarted or migrated. |
-
-Earlier failed attempts, including `qualification-handoff.json`, remain failed
-historical evidence. They do not replace the final thirteenth pass. Selected
-measured durations are 56.94 seconds for the main runtime test, 41.05 seconds
-for its separate failure group, and 22.543 seconds for the integrated focused
-race checks. These overlap or cover different scopes and must not be summed
-as total delivery time. Receipts do not establish total elapsed effort, a total
-review-round count, token use or monetary cost.
-
-At documentation snapshot `dcef270b692d368b1e110975cb4f6b5d9c8dcb31`, the
-[machine-readable checklist](parity-checklist.json) records ten later
-bounded outcome assessments under `supplemental_assessments`. Nine are validated
-at that snapshot. R46-C06 remains partial in that assessment. Shared timeout
-handling is implemented, but its physical fixture proves only `pg_restore`
-timeout. A forced `pg_dump` backup timeout remains unverified there. The historical
-`09a432407c41671517fa342d28c07e9c79978aea` audit and 933 eligible outcomes remain
-unchanged. The later assessments add no historical score or full requirement,
-acceptance or matrix gate. Scheduled PostgreSQL backup, S3 and retention remain
-open at that snapshot, as do in-place restore, cross-destination recovery and
-other engines. The subsequent [schedule and dump-timeout qualification](hosting-database-backup-schedules.md#physical-qualification-and-retained-evidence)
-adds two separate assessments without rewriting this historical evidence.
+The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful Docker
+with the classic image store, one destination, and private fixture-CA HTTPS.
+Other engines, architectures, production ACME, cross-host recovery, and destination
+disk loss are unqualified.

@@ -2,6 +2,7 @@
 __MACOSX/
 .cache/
 .cachebro/
+/.codegraph/
 .tools/
 .delta/
 artifacts/*.json

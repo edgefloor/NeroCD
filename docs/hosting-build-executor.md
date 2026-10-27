@@ -1,16 +1,13 @@
-# Git build executor component
+# Git build executor
 
-`runnerruntime.BuildExecutor` is now connected to the compiled runner claim
-path, typed output and durable replay. Accepted integration
-`4ba9fcac1b484244cb2c662e53f588c2dce6b71e` includes explicitly configured private
-HTTPS Basic/PAT checkout. Use the [current operator setup](hosting-build-runtime.md#enable-private-https-git)
-and [accepted evidence](compatibility.md#accepted-foundations-and-evidence).
-Same-host deployment and routing remain separately enabled operations.
+<a id="git-build-executor-component"></a>
 
-The sections below retain the original public-only component's calling and test
-boundaries. Its version-5 journal description and original integration limits
-are historical. Current typed output requires journal format 7; no private
-credential or plaintext is persisted in that journal.
+`runnerruntime.BuildExecutor` connects the compiled runner claim path to source
+checkout, local image builds, typed output, and durable replay. Public HTTPS
+works with build configuration. Private HTTPS Basic/PAT checkout requires the
+[private opt-in](hosting-build-runtime.md#enable-private-https-git) and an exact
+source grant. Same-host deployment and routing use separate operations.
+Typed output requires journal format 7 or later and stores no private credentials.
 
 ## Operator configuration and calling contract
 
@@ -50,11 +47,9 @@ initial lease interval. It does not stop a renewed same-tuple lease. Fresh
 authenticated `MayExecute` and the joined status watcher govern permission;
 renewal never extends the operation deadline.
 
-The original component supported only public HTTPS Git without a grant. The
-current private path requires the explicit configuration and exact matching
-source grant described above. A fixture
-may explicitly allow its loopback CIDR and isolated TLS CA through a trusted test
-Git wrapper. Production has no request-controlled CA or TLS bypass.
+Private checkout requires the explicit configuration and source grant described
+above. A fixture may allow its loopback CIDR and isolated TLS CA through a
+trusted test Git wrapper. Production has no request-controlled CA or TLS bypass.
 
 ## Effects and receipts
 
@@ -72,7 +67,7 @@ policy before retaining intent. It then:
    explicit Unix socket, minimal environment, bounded output and a cancellable
    process group. `BuildPrepare` atomically pins that observed daemon at the
    current revision before engine effects.
-5. Calls the accepted engine with the snapshot's settings and limits. Only a
+5. Calls the engine with the snapshot's settings and limits. Only a
    result with a nil error can become an artifact. Source cleanup must also
    finish successfully before any success completion is retained or sent.
 6. Appends the exact completion, including its revision, before POST. The
@@ -90,7 +85,9 @@ A known engine failure with confirmed cleanup sends only fixed `build_failed`
 metadata and no artifact. Raw source/build diagnostics never enter completion
 metadata or executor errors.
 
-## Replay and deliberate uncertainty
+<a id="replay-and-deliberate-uncertainty"></a>
+
+## Replay and unresolved work
 
 Call `Reconcile` before normal claims. It resends only exact retained source or
 completion requests and preserves their IDs, bodies, tuples and revisions.
@@ -109,16 +106,14 @@ An intent without an exact retained completion is deliberately unresolved,
 including a crash after an engine receipt was written but before the runtime
 journal append. Reconcile does not adopt that receipt or rebuild. A lost source
 response can settle the exact source request, but cannot reconstruct the missing
-engine execution boundary. This first component therefore also refuses automatic
-public post-source execution after restart. Private refetch and credential
+engine execution boundary. The executor refuses automatic post-source execution after restart. Private refetch and credential
 redelivery are unsupported. A crash between acknowledging a result record and
 its intent can conservatively retain intent for operator reconciliation.
 
 `cleanup_required` is never success or execution permission. Lease loss and
 source/transport uncertainty retain intent. Later controller cleanup must use
 current fenced authority and independently verified exact owned cleanup. No
-expired dispatched build may be generically requeued. Until that reviewed path
-exists, unresolved records block normal startup rather than hide uncertainty.
+expired dispatched build may be generically requeued. Unresolved records block normal startup.
 
 ## Validation and limits
 
@@ -136,12 +131,12 @@ Unit/race tests cover snapshot and target rejection, journal append ordering,
 exact replay, mismatched proof, no result adoption, nil-error success, cleanup
 failure, operation deadlines and same-tuple renewal beyond initial expiry.
 Linux tests also exercise source flock/symlink denial and observer cancellation.
-The unchanged engine's separate runtime gate remains the evidence for actual
+The engine's separate runtime gate checks
 aggregate CPU throttling, descendant memory enforcement, bounded OCI output and
-its broader strategy/path cases. This new gate does not replace those tests.
+its broader strategy/path cases. Run the engine gate separately for those cases.
 
 Disk acquisition and build usage are monitored with explicit byte/count/depth
 budgets, free-space reserves and cancellation. Sampling can overshoot; these are
-not filesystem quotas. The accepted engine's cgroup CPU, memory and swap checks
-remain unchanged. No shared server, claim admission, dispatcher, capability
-advertisement or full application build/deploy claim follows from this component.
+not filesystem quotas. The engine separately enforces cgroup CPU, memory, and swap limits. Server
+admission and runtime configuration are described in [build control](hosting-build-control.md)
+and [agent setup](hosting-build-runtime.md).

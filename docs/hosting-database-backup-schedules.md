@@ -9,8 +9,9 @@ as [immediate PostgreSQL backups](hosting-database-backups.md).
 The supported source is the pinned PostgreSQL 17.11 recipe on its authorized
 stable destination. [Remote backup targets](hosting-database-remote-backups.md)
 can now be selected explicitly by target ID and revision for immediate and
-scheduled backups. A target edit does not redirect an existing schedule. Redis,
-retention, notifications and user-supplied commands remain outside this path.
+scheduled backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure
+[retention](hosting-database-backup-retention.md) and
+[failure alerts](hosting-backup-notifications.md) separately.
 A local archive remains dependent on that destination. Remote acceptance uses
 a loopback fixture and does not qualify off-host disaster recovery.
 
@@ -31,8 +32,7 @@ month and weekday names, lists, ranges, steps and wildcards are accepted; `?`
 also acts as a wildcard in this parser. Use `0` or `SUN` for Sunday: weekday `7`,
 `L`, `W` and `#` calendar expressions are rejected. For example, `0 0 * * SUN`
 is supported, while `0 0 * * 7`, `0 0 L * *`, `0 0 15W * *` and
-`0 0 * * MON#2` are not. This is an explicit compatibility limit, rather than
-full upstream cron-expression parity. The pinned upstream
+`0 0 * * MON#2` are not. These calendar forms are outside the supported grammar. The pinned upstream
 [weekday parser](https://github.com/dragonmantank/cron-expression/blob/d61a8a9604ec1f8c3d150d09db6ce98b32675013/src/Cron/DayOfWeekField.php)
 and [month-day parser](https://github.com/dragonmantank/cron-expression/blob/d61a8a9604ec1f8c3d150d09db6ce98b32675013/src/Cron/DayOfMonthField.php)
 define those additional calendar forms.
@@ -128,86 +128,28 @@ restore replay limits documented in the linked guide.
 
 ## Implementation and qualification boundary
 
-The scheduler adapts Coolify commit
-`b12d1386f3d458618b4c579babcd1e339c6c40b3`:
+The [schedule domain](../internal/domain/hosting_database_backup_schedule.go)
+defines the accepted input. The hosting controller runs discovery under
+`StartHostingExecution`; River jobs carry operation IDs. PostgreSQL transactions,
+immutable revisions, and runner leases replace process-local scheduling authority.
+The controller does not run arbitrary commands.
 
-- `app/Jobs/ScheduledJobManager.php` newest-due selection, timezone and overlap checks;
-- `app/Services/ScheduledJobDeliveryService.php` durable occurrence identity and conservative
-  stale-enqueue recovery;
-- `app/Livewire/Project/Database/CreateScheduledBackup.php`,
-  `app/Livewire/Project/Database/BackupEdit.php` and
-  `app/Http/Controllers/Api/DatabasesController.php` owner configuration and history;
-- `app/Jobs/DatabaseBackupJob.php`, `app/Console/Kernel.php` and
-  `bootstrap/helpers/constants.php`
-  logical-tool behavior and frequency aliases.
+<a id="physical-qualification-and-retained-evidence"></a>
 
-Go replaces upstream SSH/cache coordination with PostgreSQL transactions,
-immutable occurrence/configuration records and the existing runner's
-lease/attempt/fence and append-before-send journal. The controller runs under
-`StartHostingExecution`; it does not add a general scheduler service or execute
-arbitrary backup commands.
+## Tests and supported environments
 
-The opt-in compiled-runner fixture selects both the existing immediate workflow
-and the schedule workflow. It requires real embedded-UI create/lost-response
-replay/edit/disable, an actual controller stop/join/restart, one admitted dump,
-new-target restore and distinct application reads/writes. Viewer denial and
-320/390/430/1440-pixel layouts are separate assertions. A source-table DDL lock
-exercises an actual guest `pg_dump` timeout, verifies the guest tool stops and
-retains uncertain source ownership. Its `DATABASE_BACKUP_GUEST_DUMP_TIMEOUT_PASS`
-marker is distinct from the existing `pg_restore` timeout marker. Fixture code
-and unit tests alone do not qualify these runtime claims; exact-candidate
-physical execution and independent review are required.
+The [compiled-runner gate](../acceptance/runtime-hosting-postgresql-backup-runner/gate.sh)
+checks UI create, identical retry after response loss, edit, disable, occurrence
+history, controller stop/join/restart, one admitted dump, and new-target restore
+with application reads and writes. It also checks viewer denial and widths 320,
+390, 430, and 1440 pixels.
 
-## Physical qualification and retained evidence
+For dump timeout, the fixture holds a source-table DDL lock and tracks the exact
+guest Docker ExecID until exit 124. The guest process and PostgreSQL session must
+be absent while the lock remains held, before fixture shutdown. Runner restart
+keeps the uncertain source operation held.
 
-Source `c76019739ffbde0bcf7eb357c9740ddd35bf9a57` passed the full physical gate
-on 2026-10-25. Accepted combined revision
-`60b86e47504533280170028cbc0b9b632c7b67db` retains all 38 feature blobs and
-modes exactly. Its only differences from that source are the six accepted
-immediate-backup documentation files. All 13 combined integration checks passed,
-and the Leader accepted this bounded feature. Acceptance does not upgrade the
-existing user UI process.
-
-The live embedded UI creates a schedule, retries its lost committed response,
-edits it, disables it, reads occurrence history and restores the resulting
-archive. The running hosting controller discovers the due occurrence. A real
-controller stop, join and restart plus runner replay preserve one admitted dump
-and its exact operation identity. A distinct application reads restored data
-and writes new data to a distinct database resource, binding, volume and
-credential identity. The original source retains its records and accepts new
-writes. Viewer denial and 320, 390, 430 and 1440-pixel layouts are checked.
-
-The dump-timeout proof is separate. A positively observed source-table DDL lock
-blocks the guest `pg_dump`. The fixture tracks that same Docker ExecID until
-it terminates with exit 124, with the guest process and PostgreSQL session absent
-while the blocking lock remains held. Those assertions run before `f.stop`, so
-fixture shutdown cannot satisfy the deadline proof. Restart leaves the uncertain
-source operation held. This closes the earlier bounded backup-timeout evidence
-gap without changing the historical restore-only timeout assessment.
-
-Receipts are under
-`/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-schedules-20261025/`:
-
-| Receipt | Result and retained boundary |
-| --- | --- |
-| `first-runtime/driver.json` and `runtime-summary.json` | Exit 0, full workflow pass in 157.868 seconds. Three top-level Go groups and three failure subtests passed without skips; both live UI scenarios and all nine required markers passed. |
-| `first-runtime/independent-cleanup.json` and `full-profile-preservation.json` | Existing 35-container inventory and 209-volume profile preserved. Owned outer containers and volumes absent. |
-| `integration/sourceproof.json` and `checks.json` | Accepted combined revision retains all 38 source blobs/modes from `c76019739ffbde0bcf7eb357c9740ddd35bf9a57`; changes outside those paths match the prior accepted documentation snapshot. All 13 integration checks passed, including focused race checks, vet, API generation, frontend/product builds and embedded artifact checks. |
-| `transaction-pg/round7-captured-tick.json` | Earlier focused PostgreSQL/store and domain race checks passed in 25.113 seconds. This remains labeled earlier evidence, rather than a new full physical run. |
-
-The physical schedule group took 43.31 seconds. The live immediate and scheduled
-browser scenarios took 17.4 and 17.0 seconds within the full gate. These nested
-measurements do not establish total delivery time, total review rounds, token
-usage or monetary cost. The existing user UI on port 18081 still runs its older
-`09a432407c41671517fa342d28c07e9c79978aea` binary. Qualification of the embedded
-fixture does not deploy this feature to that process.
-
-The [checklist](parity-checklist.json) appends two subsequent bounded assessments:
-R46-C02 gains supported scheduled-backup qualification, and R46-C06 gains actual
-`pg_dump` timeout qualification. The prior documentation snapshot, its nine
-validated outcomes and one partial timeout outcome remain historical. The
-933-outcome audit and all parent gates remain unchanged. The unsupported cron
-forms above, retention, notifications, other engines and full R46/R62 or
-Coolify parity remain open. Subsequent [remote acceptance](hosting-database-remote-backups.md#accepted-qualification-and-durable-evidence)
-adds bounded S3 targets and recovery; it does not change this historical
-schedule receipt or add another R46-C02 credit.
+The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful
+classic-store Docker, one destination, and private fixture-CA HTTPS. Broader cron
+grammar, other engines, production ACME, cross-host recovery, and disk loss are
+unqualified.

@@ -1,18 +1,16 @@
-# NeroCD product specification: hosting replacement and future shared workspaces
+# NeroCD product specification
 
-Revision: 3, with hosting-first delivery amendment
-Status: Adopted target specification; implementation status is recorded separately
-Date: 22 October 2026
-Supplied revision 3 baseline: edgefloor/NeroCD at `09d65d4ddcbfdf27e97158a9c08beb02a721818c`, a historical ancestor.
+This is the full product target, including hosting and later shared workspaces.
+Requirements R01–R102 and acceptance scenarios A01–A66 describe required
+outcomes, not current support. Hosting R01–R68 and A01–A37 take priority.
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Historical accepted application/source assessment: `5ff5b7e114fc922e3c3f2a6e93670c133d205923`, reviewed on 2026-10-24, through migration 0071.
-Current bounded connected-application/owned-volume qualification: physical source `09a432407c41671517fa342d28c07e9c79978aea`, verified on 2026-10-25, documentation accepted at `3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
-This qualification does not establish full hosting acceptance or parity. Unaccepted Task checkpoints are not current product support.
-Product reference: coollabsio/coolify at b12d1386f3d458618b4c579babcd1e339c6c40b3, with the hosting baseline reviewed for revision 2 and workspace implementation references reviewed for revision 3
-Repository path: `docs/product-spec.md`
-
-The [workspace capability ledger](workspace-capabilities.md), [hosting compatibility ledger](compatibility.md), [implementation plan](plan.md), and [domain glossary](../CONTEXT.md) separate the complete target from accepted support.
+The hosting reference is Coolify
+[`b12d1386f3d458618b4c579babcd1e339c6c40b3`](https://github.com/coollabsio/coolify/tree/b12d1386f3d458618b4c579babcd1e339c6c40b3).
+This is revision 3, dated 22 October 2026, with the hosting-first delivery
+amendment. Current support and tested profiles are in
+[compatibility](compatibility.md), delivery order is in the [plan](plan.md), and
+shared-workspace gaps are in [workspace capabilities](workspace-capabilities.md).
+Use the [glossary](../CONTEXT.md) for domain terms.
 
 ## 1. Product objective
 
@@ -33,8 +31,6 @@ Revision 3's broader direction is retained in full as a subsequent track:
 a shared workspace where remote teams and AI agents build, test, review and
 deploy software using machines the team controls, also supporting a personal
 cloud operated by one person.
-
-> Give your team and AI agents a place to work that stays running when you go offline, powered by machines you control.
 
 In that future collaboration experience, a Task carries its goal, source
 revision and changes, human and agent activity, checkpoints, preview,
@@ -151,7 +147,9 @@ Functional parity is measured against the pinned reference and its recorded capa
 
 ## 3. Starting codebase: reuse, extend and replace
 
-The current baseline is accepted NeroCD `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`. Static inspection and retained revision-specific runtime reports support the bounded status below. They do not validate the proposed workspace product. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains historical context.
+Extend the existing Go application, PostgreSQL authority and runner protocol.
+The table records design choices; [compatibility](compatibility.md) records
+which workflows have implementation evidence.
 
 |Existing area                                    |Decision              |Work required                                                                                                                 |
 |-------------------------------------------------|----------------------|------------------------------------------------------------------------------------------------------------------------------|
@@ -173,24 +171,29 @@ Sources: architecture N1, domain model N2, deployment service N3, runtime N4, se
 
 ### 3.1 Historical assumptions and accepted changes
 
-The legacy service/Compose contract remains supported. Its restrictions do not describe every accepted hosting path.
+Legacy services retain their service-specific Environment and repository/Compose
+contracts. New hosting uses ProjectEnvironment and typed Resource records,
+registry-image input, versioned HTTPS Git configuration, ordinary HTTP readiness
+and explicit destination bindings. Preserve both contracts during migration.
 
-- **Environment cardinality.** Legacy `Environment` belongs to a service. Accepted `ProjectEnvironment` and typed `Resource` records provide shared project grouping. Remaining work includes the broader resource kinds, legacy mappings and complete concurrency acceptance. N2, N14
-- **Source requirements.** Legacy services retain repository/Compose requirements. Accepted hosting supports registry-image input without a fake repository and versioned public/private HTTPS Git configuration. Private source grants, protected credential transport, compiled CLI Dockerfile/Railpack checkout and the Dockerfile WebUI journey are accepted within their stated limits. Private Railpack static-provider UI qualification is accepted within its fixture limits; arbitrary language/provider coverage remains incomplete. Stored Dockerfiles, pasted Compose and catalog inputs remain planned. N3, N14
-- **Build and deployment input.** The legacy provenance resolver still rejects unsupported Compose builds and mounts. Separately enabled public Git builds execute Dockerfile, pinned Railpack and prepared-static paths. Same-host local artifact deployment is accepted and applies the exact recorded ImageID without rebuilding or pulling. Remote registry publication and shared-cache/reuse guarantees remain planned. N4, N15
-- **Health.** The legacy Compose check uses `X-NeroCD-Revision`; accepted image/local-artifact hosting uses ordinary HTTP readiness. The opt-in independent collector now reads narrow Docker status and loopback readiness. Broader component/TCP/database health and runtime metrics remain targets. N8, N15
-- **Mutation ownership.** Accepted hosting uses resource-binding holds, exact destinations, leases and fenced receipts. Unresolved effects and restored ownership holds remain blocked. A shared environment does not authorize relocation or clearing a hold. N9, N14
-- **Secrets and logs.** Project-managed encrypted secret versions and authorized reveal are accepted. Typed build output has durable receipt/cursor storage, runner delivery, redaction and an opt-in bounded WebUI. Private Git credential delivery and runtime consumption are accepted with live authority, expiry checks and attempt-local redaction; the UI selects grants by metadata without reveal. Desired runtime-configuration API/storage is accepted through migration 0052 with explicit public nonsecret literals and exact managed-secret references, current owner writes/viewer reads, generation compare-and-swap and idempotency. Migration 0053 admission and protected runner delivery are accepted, with metadata audit before decryption and journal format 8 containing only nonsecret references and delivery identity. Opt-in CLI/API execution now applies literals and exact managed-secret versions through protected Docker stdin. Bounded challenge/report and viewer freshness controls are accepted through migration 0054. The configuration UI and opt-in independent collector are accepted within the limits below. The bounded runtime-status dashboard is accepted. Runtime-log control through migration 0055 and bounded live collector/viewer are accepted. Broader managed-secret execution delivery, terminals and broader runtime metrics remain pending. Build logs are not runtime logs. N6, N16
-
-These accepted features preserve the direct hosting journey. They do not supply the Task, Workspace, reservation, task-grant, checkpoint or VM contracts introduced below.
+Managed secrets, private Git delivery, runtime configuration and logs have bounded
+implementations. Their [current qualification](compatibility.md#accepted-foundations-and-evidence)
+does not satisfy the entire source, secret, runtime or recovery requirement.
+Same-host artifact deployment applies the recorded ImageID; it does not provide
+remote registry publication or shared-cache reuse.
 
 ### 3.2 Workspace gaps in the accepted implementation
 
-At the accepted baseline, `TaskRun` describes an execution instance and there is no durable user Task or Workspace entity. Add a separate long-lived Task for the user goal, collaborators, several attempts, review and environment links. Existing enrollment, leases and fences are useful execution foundations, but tags and primitive capabilities do not establish resource reservations, isolation suitability or data-location authorization. N12, N13
+`TaskRun` is an execution instance. It does not supply a durable collaborative
+Task or Workspace. Add those lifecycles without reinterpreting old run records.
+Runner leases and capabilities do not establish reservations, qualified isolation
+or data-location authority. Managed service-account project roles do not provide
+narrow task grants. The local content-addressed artifact helper leaves
+authorization to consumers and is not a shared artifact service.
 
-Existing managed service accounts have project roles and lifecycle controls. They are not already narrowly scoped task credentials. The local content-addressed artifact helper explicitly leaves authorization to its consumers. Complete access control, transport, retention and remote publication before calling it a shared artifact service. N5, N7
-
-A database lease alone cannot stop an old process from writing a workspace or making an external request. Carry authority generations into the host/guest helper and credential broker, and reconcile uncertain effects before handing mutable work to another writer. This is an implementation requirement derived from the proposed handoff and recovery behavior.
+A database lease cannot stop an old process from writing or making external
+requests. Host/guest helpers and credential brokers must enforce writer
+generations. Reconcile uncertain effects before another writer takes over.
 
 ## 4. Target architecture
 
@@ -877,647 +880,60 @@ No delivery dates, staffing estimates or performance improvements are asserted. 
 
 ## 11. Documentation changes
 
-Adopt this as the proposed revision of the product specification. Repository documentation should distinguish implemented behavior, planned workspace capabilities and the hosting compatibility target.
+Documentation must distinguish current support from the complete hosting target
+and the later workspace product. Keep the following references current:
 
-- README.md: lead with direct hosting and the repository/image-to-HTTPS-to-operation/recovery journey, while retaining the future workspace vision and explicit current support.
-- docs/plan.md: order hosting H1–H4 first, preserve deferred D0–D3 and broader tracks, and require the hosting-dependency test before workspace work.
-- docs/architecture.md: document task/run/workspace/environment lifecycles, stable machine identity, reservations, grants, build/artifact/verification/release/plan separation and independent workload traffic.
-- Task and agent guides: describe submission, checkpoints, cancellation, budgets, human takeover, review, adapter resume limits and production authority.
-- Machine guides: publish backend/OS/architecture qualification, trust profiles, model roles, availability policy, private ingress and cloud data-placement rules.
-- Build and source guides: document all source/build paths, shared layer cache versus local cache mounts, whole-artifact reuse, verification reuse and explicit refresh controls.
-- Hosting and operations guides: retain domains, certificates, variables, databases, storage, templates, logs, terminals, schedules, notifications, backups, restores and migration.
-- Application support matrix: describe supported version transitions, recovery, migration and restore-test procedures per application/engine.
-- Compatibility and capability ledgers: identify pinned references, tested versions, acceptance fixtures, partial support and deliberate differences.
+| Document | Required content |
+| --- | --- |
+| README and getting started | Direct repository/image hosting, setup and current limits |
+| Implementation plan | H1–H4 delivery order, deferred D0–D3 and the hosting-dependency test |
+| Architecture and glossary | Independent Task/Run/Workspace/environment lifecycles, machine identity, reservations, grants, build/artifact/verification/release/plan identities and workload traffic |
+| Task and agent guides | Submission, checkpoints, cancellation, budgets, takeover, review, adapter continuation limits and production authority |
+| Machine guides | Qualified backend/OS/architecture, trust, model roles, availability, ingress and cloud data-placement rules |
+| Build and source guides | Source/build paths, shared layers versus local cache mounts, artifact/check reuse and refresh controls |
+| Hosting and operations guides | Domains, certificates, variables, databases, storage, catalog, logs, terminals, schedules, notifications, backup, restore and migration |
+| Application support matrix | Tested version transitions, recovery, migration and restore procedures for each application/engine |
+| Compatibility and capability references | Pinned upstream references, tested versions, fixtures, partial support and deliberate differences |
 
-The earlier revision 3 instruction to make Task collaboration and D0–D3 the first public demonstration is superseded by this delivery amendment. Direct hosting remains primary until core hosting replacement is complete. The richer durable Task stays future scope alongside all R69–R102/A38–A66 requirements. The earlier narrow prebuilt-only scope remains superseded.
+Direct hosting remains primary until core hosting replacement is complete.
+The durable Task experience and all R69–R102/A38–A66 remain future scope. The
+hosting target includes the full declared source/build paths and operations,
+rather than only prebuilt image deployment.
 
 ## 12. Evidence and review limits
 
-This status update starts from hosting-first documentation `65311f30470f34d0d26165d1cd13325fbd05fca0` and accepted application integration `a92d100c6ba654e6797432e7ef7a6cfd55527272`, including private runtime source `4642dc413cc21be955fd9639d12fdf0606735cfc` and UI source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`. The supplied historical `09d65d4ddcbfdf27e97158a9c08beb02a721818c` remains an ancestor, not the current assessment. The accepted native migration inventory extends through 0071, including GitHub push admission, server-readiness diagnostics and verified route switching. The current accepted application assessment is `5ff5b7e114fc922e3c3f2a6e93670c133d205923`. Protected delivery, journal format 8 and opt-in runtime application are accepted within the limits below. Earlier planning inspection at `a763a90b3896257b784c9498d01650ccdad2427a` and revision 2 hosting evidence remain historical, revision-specific records.
+Use the [compatibility reference](compatibility.md#accepted-foundations-and-evidence)
+for tested workflows, fixture links and remaining limits. The
+specification defines the target independently of those results.
 
-The implementation campaign changed application code and exercised real infrastructure before this documentation adoption. Retained accepted evidence includes:
+A passing component test, intercepted UI scenario or local demo does not prove a
+complete user journey. Each supported profile needs its actual schema, API,
+permissions, audit, UI and runtime checks, including failure and recovery. Retain
+the tested revision, tool versions, architecture and fixture. Native execution,
+emulation and compilation are different evidence.
 
-| Accepted work | Revision and evidence | What it establishes |
-| --- | --- | --- |
-| Same-host build artifact runtime | `61b77e75f2d95f3f015b0275a15ce2e376d82330`; [runtime guide](hosting-local-build-runtime.md), [real controller/local-deploy fixture](../internal/runnerruntime/local_build_deployment_integration_test.go) | Explicit local deployment capability, exact artifact/daemon/platform checks, ordinary HTTP and separately selected managed routing; no cross-host transfer |
-| Artifact deployment WebUI | `08b9ff21f8def396d13f9464a197469e4d59adba`; [workflow and real browser gate](hosting-build-deployments.md#deploy-through-the-resource-ui) | Real API/PostgreSQL/River/compiled CLI build and deployment with authenticated UI, retries, viewer denial and responsive layouts |
-| Typed output persistence and API | `28fc384bdb8fb641558cd6d20224d207c7095f77`; earlier migration replay check `1938a2fb5b41223d5b01303b88807d09b8933e4e`; [log contract](hosting-build-logs.md) | Full-authority receipts, canonical hashes, ordered allocation, retention watermarks and explicit old-history gaps |
-| Log pagination boundary | `3ea2f815f844ff60008ecf22891bec5b370fb07f`; [API boundary tests](../internal/api/hosting_build_log_pagination_test.go) | Typed build log limit 200 reaches the endpoint while legacy pagination limits remain intact |
-| Runner output delivery | Candidate `65dc15c1462485d84c9d6d524577f26a20048677`, accepted integration `5c0a1329c89f4a784a254aac6679591db3d6b0b0`; [delivery contract](hosting-build-log-delivery.md), [real controller gate](../acceptance/runtime-hosting-build-controller/gate.sh) | Actual Dockerfile/Railpack/static output, response-loss recovery, log delivery before completion, lease renewal, retention cursor, SIGTERM/cancellation and owned cleanup; journal format 7 |
-| Build output WebUI | Candidate `07ce38d8230a84d5d1ef469bc8f604c5230afde4`, accepted `852f8e6b8d5624a95865c276dcea4a239d1f8fea`; [bounded viewer contract](hosting-build-logs.md#resource-build-output-viewer), [browser scenario](../web/app/tests/browser/local-build-deployments.spec.ts) | Opt-in typed build output reads with sequence/gap/retention handling, bounded local plaintext, access revalidation and responsive behavior |
-| Private HTTPS Git control plane | Source `f89e019da9a2641da9dc36592fd54908e896b003`, accepted `edf8f14c8262c896e4c886088f8058878d77e965`; [grant/API integration tests](../internal/store/postgres_hosting_source_grant_test.go), [capability tests](../internal/store/postgres_hosting_private_capability_test.go), [credential client tests](../internal/runnerclient/hosting_source_credential_test.go) | Private HTTPS configuration, owner grant lifecycle, gated admission/dispatch and strict credential endpoint/client; at that checkpoint runtime/UI were absent; the accepted additions below supersede that limit; complete A03 remains partial |
-| Private HTTPS Git runtime | Source `4642dc413cc21be955fd9639d12fdf0606735cfc`, accepted with UI at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private runtime fixture](../internal/runnerruntime/private_git_runtime_integration_test.go), [operator setup](hosting-build-runtime.md#enable-private-https-git) | Explicit private capability/configuration; real CLI Dockerfile and Railpack, exact credential-response retry, redaction/cleanup, same-host artifact deployment and test-CA HTTPS; public regression 51.44s, private cases 76.59s |
-| Private HTTPS Git WebUI | Source `513fe8d71b0f8297cceb3a26ab4e077c8eb49088`, accepted `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; [private browser test](../web/app/tests/browser/private-git-build-deployments.spec.ts), [workflow](hosting-git-resources.md#request-a-private-https-git-build) | Owner creates a new reference grant, recovers an identical retry, selects its ID, builds Dockerfile, reads typed output, deploys exact artifact and verifies test-CA HTTPS; keyboard, 320/390/430/1440px, viewer 403 and no reveal; browser 25.0s/Go 34.03s. Public browser regression 22.2s/Go 30.63s; automatic-builder private UI was absent at that checkpoint and bounded Railpack qualification is accepted below; complete A03 remains partial |
-| Private Railpack static-provider UI qualification | Accepted `a92d100c6ba654e6797432e7ef7a6cfd55527272`; [runtime limits](hosting-build-runtime.md#enable-private-https-git), [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Existing UI creation/editing, exact-version grant and lost-response retry, compiled CLI build, exact artifact deployment, test-CA HTTPS, genuine failed rebuild preserving old HTTPS bytes, viewer denial and 320/390/430/1440px layouts; qualification changes tests/docs only; no arbitrary language matrix, Nixpacks, compiled frontend, public production ACME, complete A03 or parity |
-| Desired runtime configuration | Source `5b435d4e8e35562ab6c9a7116a6b0b5f16e85751`, accepted `bdd5e0168655edd31df48a7818a560a49876147e`; [service](../internal/app/hosting_runtime_config_service.go), [API tests](../internal/api/hosting_runtime_config_handlers_test.go) | Migration 0052; `GET`/`PUT /api/v1/resources/{id}/runtime-configuration` for application image/Git resources; generation compare-and-swap and idempotency; explicit public nonsecret literals and exact managed-secret version references; current owner writes/viewer reads; no decryption, injection or UI at that checkpoint; accepted execution/UI are below |
-| Runtime-configuration admission | Source `7c51350083f6fa448e8043e32158ecf9427be6d6`, accepted `1ddfb1f43416ff8109c31a852963942448035583`; [admission persistence](../internal/store/postgres_hosting_runtime_environment.go) | Migration 0053; prepares exact configuration authority for deployment; does not apply values to containers |
-| Protected runtime-environment delivery and journal | Delivery source `c7d3a0d5a4fdb00bf9b2ab5e6bd0cdfd05e6b30e`, journal source `804d4f460c6f106993c0a223f36eb42831f6a7f2`, accepted `66b58845dab1fdee6f8b12809f0434a2a94326ac`; [delivery service](../internal/app/hosting_runtime_environment_delivery.go), [endpoint tests](../internal/api/hosting_runtime_environment_handlers_test.go) | `POST /api/v1/runners/hosting/runtime-environment` checks exact prepared authority and current actor/configuration/secret versions, commits metadata audit before decryption and preserves the original bounded window; journal format 8 persists only nonsecret references and delivery ID; older formats remain legacy; runtime consumption was absent at that checkpoint; accepted execution is below |
-| Protected runtime execution | Runtime source `420300352ba14f40f082c519f6a75d04f82129c1` and credential repair `b9836b8a626fc12c5a6e4dde44ebc40e80b870a2`, accepted `0a50debdfa5ab14191e52025cd1bb62684e86cd6`; [qualification guide](../acceptance/runtime-hosting-environment/README.md), [gate](../acceptance/runtime-hosting-environment/gate.sh) | Explicit CLI/API opt-in; literals and exact managed-secret versions reach Docker through protected stdin; fixed delivery/replay windows and deadlines; after authorization commits and before returning environment bytes, the endpoint rechecks the original credential and rejects delivery if it detects rotation; it cannot recall bytes already sent or values already delivered to a runner or container; Docker administrators can inspect environment values |
-| Bounded runtime status control | Source `56baaa7ec5f155ca490fa7cc989833ed92de9189`, accepted `b55bbcf7b2313e32391a4390dcbb8562de2617b5`; [store](../internal/store/postgres_hosting_runtime_observation.go) | Migration 0054; bounded challenge/report and viewer freshness controls; collector was absent at that checkpoint and is accepted below; status UI was absent at that checkpoint and is accepted below; no disk/CPU metrics |
-| Runtime configuration WebUI | Source `558d365571630e2a701aef3f60c2e9710771ba54`, accepted `46ceb43f77085e9d11c5c6375b79d6cbfc8e1485`; [browser scenario](../web/app/tests/browser/runtime-environment-deployments.spec.ts) | Public literals, exact managed-secret references, generation compare-and-swap, idempotent retry and fresh deployment generation; authenticated cookie API plus compiled runner/Docker; failed-readiness preservation, viewer authorization and 320/390/430/1440px layouts; seeded accounts/resource/placement and trusted persisted Git artifact; no fresh Git build, onboarding or public ACME qualification |
-| Independent runtime collector | Source `bd9638c227db67e10d1ee9647b40c60c5676f0a5`, accepted `132012237ee484e9cd6fce2fba656966567a1cc8`; [operator contract](hosting-runtime-observation.md), [real gate](../acceptance/runtime-hosting-observation/gate.sh) | Opt-in `--hosting-observation` with matching persisted `hosting_observation_v1` capability; read-only narrow Docker status and loopback readiness; fair selection of four targets per 10-second cycle, not a 10-second per-resource guarantee; no metrics; status UI was absent at that checkpoint and is accepted below |
-| Runtime-status dashboard | Source `e5bc0b6aa85bae5ef409ebf3e8e6758fe30f45f6`, accepted `24c363fd22ac8237a09c12040386a442b0a3ff53`; [status UI](../web/app/src/pages/ResourceRuntimeStatus.tsx), [read contract](hosting-runtime-observation.md#resource-status-in-the-webui) | Bounded read-only current/stale/historical target evidence under current viewer authorization; timeout and retry handling; real compiled collector/browser proof uses seeded accounts/resources/deployment; no general metrics, complete onboarding, public ACME or complete A28 |
-| Enrollment command capability repair | Accepted `1c4e7076cde2c79d2aa3d46eb4de2133d72e8a3e`; [command helper](../web/app/src/lib/runner-enrollment-command.ts) | Command uses exact persisted capabilities and exposes configuration prerequisites; does not qualify SSH-assisted enrollment or complete host readiness |
-| Runtime-log control | Decoder repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff`, accepted `aa88f62e76a4ef964900db17bf81515e141da03b`; [API](../internal/api/hosting_runtime_logs_handlers.go), [PostgreSQL tests](../internal/store/postgres_hosting_runtime_logs_test.go) | Migration 0055 and 173-route contract; actor sessions/renewal/stop/bounded retained reads; exact runner claims/events, counters, replay gaps and purge; live collector/viewer were absent at that checkpoint and are accepted below |
-| Live runtime logs and embedded viewer | Accepted `3a2b524ca622a7ebfba761c590803d110192cb9f`; [collector contract](hosting-runtime-logs.md), [viewer contract](hosting-runtime-log-viewer.md), [real gate](../acceptance/runtime-hosting-logs/gate.sh) | Bounded R59/A29 evidence: registered settled deployment, fresh Docker stdout/stderr, compiled collector, API and embedded viewer; explicit Follow/30-second demand, retention/source gaps and revocation; `--hosting-runtime-logs` must match persisted `hosting_runtime_logs_v1`; trusted Unix Docker with json-file/local drivers; additional TTY proof has synthetic provenance; raw application output can be sensitive, known bearer redaction is bounded and delivery is not exactly once |
-| Exact trigger-revision prerequisite | Source `21349d3e2492dca8b8b3ca3d99132085889360e8`, accepted `0a9422194e8bff7485e7fb20c02f74418ea2ce51`; [contract and qualification](hosting-build-trigger-revision.md) | Trusted internal caller freezes commit before checkout; runner revision capability enforced; revision-bound idempotency; public/private HTTPS checkout preserves selected commit after branch movement and rejects unavailable commits without fallback; provider authentication/controller were absent at this checkpoint; the accepted GitHub integration below supersedes that absence; webhook registration remains manual |
-| Server-readiness diagnostic backend | Accepted `3cb62858e3d1e263d89d5e3c6aecd0a30792e938`; [diagnostic contract](server-readiness.md), [PostgreSQL tests](../internal/store/postgres_server_readiness_test.go) | Migration 0057; bounded runner challenge/report and administrator freshness/authority reads for `basic_image_hosting.v1`; diagnostic API only, no deployment admission or complete A01; agent and UI were absent at this backend checkpoint; accepted manual enrollment qualification is recorded below |
-| Manual enrollment and readiness | Accepted `0771f1b56befcd30b195c45121dba4d3efeec974`; [qualification contract](server-readiness.md#runtime-verification-fixture), [real gate](../scripts/ci/server-readiness-runtime-gate.sh) | UI enrollment and generated command consumed by compiled native Linux arm64 agent over fixture-CA-verified HTTPS; ready/blocked/stale recovery, viewer denial, administrator role loss and persisted-credential restart; CLI metadata only, Docker API 1.54 and 1 GiB per work/journal root; amd64 compile-only, no runtime qualification; no SSH, production TLS, application deployment or complete A01 |
-| Direct hosting navigation | Source `32ab3bcd259781c565e2a052dfbba320acd9206e`, accepted `43e9c305f71a267b1d201f7849c12a31f8c532d6`; [navigation metadata](../web/app/src/router/metadata.ts), [Home guidance](../web/app/src/pages/HomeView.tsx), [browser scenarios](../web/app/tests/browser/hosting-navigation.spec.ts) | Home, Projects and Servers and runners lead the Hosting group; advanced workflows remain available; direct image/Git application guidance requires no Task; saving configuration, heartbeat and a saved route do not establish deployment, readiness or HTTPS |
-| Verified existing-route switch engine | Accepted `99250c2634109cdd2008c56dae1b1740d377c0a1`; [engine contract](hosting-route-switch.md), [runtime fixture](../internal/hostingproxy/runtime_test.go) | Opt-in existing-route port switches verify old/new HTTP and trusted TLS, preserve unrelated routes and verify rollback; cancellation or unverified rollback stays `Uncertain`; controller/API admission and agent capability negotiation were absent at this engine checkpoint; accepted controller evidence is below; automatic deployment was absent at this engine checkpoint; accepted bounded automation is recorded below; no production ACME or complete A11/A20 |
-| Guarded verified-route controller | Accepted `5687b88465839b8e341181ba8b47f54dc17f006c`; [request, authority and recovery contract](hosting-route-switch.md), [compiled runner fixture](../internal/api/hosting_route_switch_runtime_integration_test.go) | Migration 0058; resource POST selects exact healthy or retained-running releases for existing routes; explicit agent capability/opt-in, verified HTTP/trusted TLS, prior-generation rollback, lost-response idempotency and cancellation/replay holds; current authority, expiry and revocation checks; metadata conflicts remained held without reconciliation at this controller checkpoint; bounded R21/R25/R28 and A11/A20 evidence, not full R21, draining or automatic data rollback |
-| Route-switch reads and operator UI | Read API accepted `fa93d16fa09d5a7929581d5acb206029be9752d0`; UI source `1a555c514a23241bca34224380008dc42edcce49`, accepted `1c6ddb414d984372bb1f081fb6ff23db8bd81f88`; [operator contract](hosting-route-switch.md) | Resource-scoped authoritative options, explicit review, frozen retry intent, pending-operation recovery and visible holds; compiled controller 33.98 seconds/browser 19.6 seconds plus 111 normal browser cases; native Linux arm64 and local test CA; unresolved metadata conflicts remain held |
-| Completed metadata-conflict recovery API | Source `93305f8c528b8a3990ec79178584f4e170bada02`, accepted `e097ffa706325f55cab7a7b0416a235a0e9ad151`; [administrator recovery contract](hosting-proxy-recovery.md) | Migration 0059; current server administrator/control-project owner reviews eligible completed rolled-back/refused conflicts; 30-second plans and idempotent apply preserve original receipts, disabled/revoked state and release protection, settle only the matching hold and queue authorized convergence; concurrent retries return one resolution; uncertain/unfinished outcomes and generic unlock remain unsupported; administrator UI was absent at this API checkpoint and is accepted below |
-| Completed metadata-recovery administrator UI | Source `0e84be388bf0132e58bd9ef67b8e083a354626cb`, accepted `d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`; [UI contract and local qualification](hosting-proxy-recovery.md#local-ui-qualification), [browser fixture](../web/app/scripts/hosting-proxy-recovery-fixture.sh) | Explicit immutable 30-second plan review and confirmation, exact retry, new review after 409, current authorization, scoped operation locator, new current GET and denial masking; recorded settlement and queued convergence remain distinct from convergence completion; no general unlock, grant restoration or data restore |
-| Trusted automatic GitHub deployment | Accepted `86825ab17f2e2bb0b2b0a26e6e65e2e2769d8fa3`; [policy and recovery contract](hosting-auto-deploy.md), [real gate](../acceptance/runtime-hosting-auto-deploy/README.md) | Optional `automatic_unprotected` after an initial healthy manual release and existing routes; verified signed fixed-branch push builds the exact source, deploys on a fresh port and switches existing trusted HTTPS routes; duplicate/delayed/superseded work, failed build/readiness preservation, unrelated routes, response loss and restart covered; live GitHub, public ACME, protected approval, remote builders and previews remain unsupported |
-| SSH prerequisite installer and durable control | Installer `b6cd8962aba3894d6ee86cf0ec34530d9b319ccd`; control source `342fb8beb4da5a711bd25716888627e4dfb587f2`, integrated `5bf42af0174caf27a6c0d758242a0e3cf48b4851`; [installer contract](hosting-ssh-bootstrap.md), [durable control contract](hosting-ssh-onboarding.md) | Native arm64 Debian 12/systemd, Docker API 1.54 and Compose 5.1.1 fixture; baseline probe/installer exposes only four capabilities, not build/proxy/log capabilities; full SSH API/UI was absent at this installer checkpoint; bounded workflow acceptance is recorded below; no complete A01 |
-| SSH onboarding API and UI | Source `57093e14d6b65e12305fd44aa61a3dd7b689545b`, accepted `b4951282aefb3ad63d525c9d10037d7120f1d4ba`; [workflow and authority contract](hosting-ssh-onboarding.md), [prepared-host installer limits](hosting-ssh-bootstrap.md) | Real API/River/SSH and browser workflow on prepared Debian 12 native arm64/systemd, Docker API 1.54, Compose 5.1.1 and 1 GiB minimum; operator artifact metadata and pinned SSH identity; response-loss recovery retains installation identity and uses owned inspection; four-capability image-hosting profile only, including `hosting_image_v1`, with no source-build/proxy/log/storage preset; not public ACME, live-host breadth, full OS qualification or complete A01 |
-| Owned-storage foundations | Metadata `13f8e6f952003dc1c36ba467ac4e19817ded6f0c`; private helper `753a027dabc1fb26176bceb9e91579b649ece8a2`; materialization controller `8e00631aac26e0787a43398332e31a35980f067d`; [metadata service](../internal/app/hosting_storage_service.go), [private volume helper](../internal/runnerruntime/hosting_owned_volume.go), [durable admission tests](../internal/store/postgres_hosting_storage_materialization_test.go) | Migrations 0062–0063; accepted desired metadata, private owned-volume helper and durable materialization admission only; storage HTTP, coordinator/capability and mounted-upload workflow were absent at this foundation checkpoint; accepted runtime and recovery evidence is below; storage metadata API/UI is accepted separately below; deployment-review/recovery UI was absent at this foundation checkpoint; bounded UI acceptance is recorded below; PostgreSQL/Redis, complete A19/A26 and parity remain planned |
-| Storage metadata API and UI | Accepted `2f8beb9b555e651bcccb47d3c0dbc7ccfdb268db`; [metadata HTTP tests](../internal/api/hosting_storage_handlers_test.go), [metadata UI](../web/app/src/pages/ResourceStorage.tsx), [browser scenarios](../web/app/tests/browser/hosting-storage.spec.ts) | Authorized metadata creation/selection and saved mount intent; saving metadata does not materialize a volume, mount an application or prove persistence; storage deployment-review/recovery UI was absent at this metadata checkpoint and is accepted below |
-| Uploaded-file storage runtime | Source `b33466c81899e2a7278b2e551fb2532ae17b46bc`; [physical qualification contract](../acceptance/runtime-hosting-storage/README.md), [API/compiled-runner fixture](../internal/api/hosting_storage_runtime_integration_test.go) | Accepted through current assessment; migration 0064 continuity, public deployment options/status, typed materialization acknowledgment and explicit `hosting_owned_storage_v1` opt-in; uploaded bytes survive A-to-B replacement, lost ACK/restart and failed-readiness restoration with the same volume, single writer and unrelated HTTPS route preserved; this runtime fixture does not qualify deployment-review/recovery UI, backups/restore, unknown-writer recovery, public ACME or complete A19/A26 |
-| Bounded storage-continuity recovery API | Accepted `284f45cf1659a559d55d54342a902d0eeb112685`; [public handler](../internal/api/hosting_storage_route_recovery_handlers.go), [PostgreSQL recovery tests](../internal/store/postgres_hosting_storage_route_recovery_test.go) | Recovery only for eligible unqueued continuity; current authorization, immutable identity, drift rejection and duplicate/concurrent replay checked; queues authorized continuity work without claiming proxy convergence or generic unlock; no actual proxy-recovery fixture; later UI evidence does not add physical proxy-recovery proof |
-| Connected storage deployment-review/recovery UI | Accepted `77be63a03c9caf3e95239a751045f0fe7b5918cf`; [deployment review](../web/app/src/pages/StorageDeploymentReview.tsx), [deployment page](../web/app/src/pages/ResourceDeployments.tsx), [browser scenarios](../web/app/tests/browser/hosting-storage-deployment.spec.ts) | Authoritative options and connected review/retry/continuity controls accepted; browser uses real authentication/resource setup with intercepted deployment/options/status responses, so it proves UX rather than a new mounted workflow or physical proxy recovery; earlier physical upload proof retains its original revision |
-| Private database foundations | Creation/domain `d2dd99af9a88f64b68a9ad25c42a23a7826d20db`; metadata UI `bed700ed0bb8f006c10cd355b98eab1df9c8b5e0`, source `e143e45dde772a881ec75e0602985c84df06a92e`; controller `b93eef4a5b633f7639adc2bee78b7c39bbf8af83`; engine helpers `ca818c6ec94c0bdea661373566e28f46cf5ef229`; protected delivery `33a7506f8b5f92f88f455e3cc4029629dfb6c7a9`; [metadata UI](../web/app/src/pages/ResourceDatabase.tsx), [engine tests](../internal/runnerruntime/hosting_database_engine_test.go), [delivery API tests](../internal/api/hosting_database_delivery_handlers_test.go) | Migrations 0065–0066 and 211-route contract; accepted metadata/creation, private controller/helpers and protected credential API/protocol/client only; engine and delivery were not runner-wired at this checkpoint; later direct-engine qualification and default-off coordinator are recorded below; no database deployment button, application binding, combined API/runner physical pass or complete A17 |
-| Direct private database engine qualification | Accepted `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`; [physical fixture contract](../acceptance/runtime-hosting-database/README.md) | Six native Linux arm64 engine cases, PostgreSQL 17.11/Redis 8.2.10, passed in 30.52 seconds; A/B/C data continuity on the same volume/private bridge, changed credentials and revoked exact replay denied, lost retirement ACK recovered, missing/foreign-volume negatives; direct engine only, not API/runner workflow, archive restore, AMD64 or full A17 |
-| Default-off database runner coordinator | Source `9040572132e60787186fd59ffddc57d765d6c752`, accepted `f4a54506f388339ffe8acdd6b8ec4133690188fa`; [typed coordinator](../internal/runnerruntime/hosting_database_execution.go), [replay tests](../internal/runnerruntime/hosting_database_replay_test.go), [CLI configuration tests](../cmd/nerocd/runner_database_config_test.go) | Journal v11, protected delivery before ApplyBegin, current-authority callback, native Linux arm64 and verified HTTPS for database runner-to-control-plane requests; capability disabled by default; accepted code and race/build evidence, API/runner physical workflow and direct deployment UI were not qualified at this coordinator checkpoint; later accepted evidence is below |
-| Private database API/runner workflow and direct UI | Accepted `c731f708e62e2376d174041957b8654fe83d5bcf`; [compiled-runner fixture contract](../acceptance/runtime-hosting-database-runner/README.md), [actual API/runtime fixture](../internal/api/hosting_database_runtime_integration_test.go), [UI browser scenarios](../web/app/tests/browser/database-deployments.spec.ts) | Authenticated API/River/compiled runner physically qualified for private PostgreSQL and Redis on native Linux arm64: A write, B redeploy/read, C restart and committed Complete-ACK loss/read retain volume/network/credential references and the same operation receipt, without repeated Apply or secret delivery; direct UI accepted separately with intercepted four-width browser evidence; default-off opt-in and metadata `adapter_unqualified` remain; evidence stays at this revision because the shared database engine later changed; later combined qualification is recorded below; no application binding, database restore or full A17 |
-| Internal application/database binding controller | Accepted through `15fe8877d2e7ee22602d8cc20fb8db29fc83de0c`; [binding service](../internal/app/hosting_database_binding_service.go), [PostgreSQL controller tests](../internal/store/postgres_hosting_database_binding_test.go) | Migration 0069; pending binding, runtime-version and request-receipt persistence only; actual endpoint ledger remains pending; no connected R42 API/UI or runner workflow |
-| Database network retirement proof | Accepted `a87bb68373016509d24724aba6d127738012638c`; [retirement proof](../internal/domain/hosting_database_network_retirement.go), [proof tests](../internal/domain/hosting_database_network_retirement_test.go) | Validates retained endpoint attachment, retirement intent and observed absence across replacements; historical proof grants no new live authority |
-| Private application/database engine adapter | Accepted `621af78038f7231b43f7d7a7a899b17bde5c06e4`; [adapter](../internal/runnerruntime/hosting_application_database_engine.go), [adapter tests](../internal/runnerruntime/hosting_application_database_engine_test.go) | Private, unregistered adapter for application container/network effects and protected environment delivery; no advertised capability or physical Docker qualification |
-| Internal database network origin capture controller | Accepted `584cb6c7f4a62821308acad4a5e67192e3608e11`; [capture service](../internal/app/hosting_database_network_capture_service.go), [PostgreSQL capture tests](../internal/store/postgres_hosting_database_network_capture_test.go) | Migration 0070; internal read-only capture contract/controller with actual PostgreSQL tests; origin creation, network and initialization fields remain runner attestations; observer/API/dispatch were absent at this controller checkpoint; accepted observer and dedicated transport are recorded below; generic dispatch was inactive at this checkpoint |
-| Private empty-v2 database alias upgrade engine | Accepted `c52c03102d94a8bbc5beaaf91bbf3a54b6c4d923`; [upgrade engine](../internal/runnerruntime/hosting_database_network_upgrade.go), [upgrade tests](../internal/runnerruntime/hosting_database_network_upgrade_test.go) | Existing-only empty-member network upgrade with the full previous plan and retained origin; legacy v1 guards remain strict; physical alias qualification was absent at this engine checkpoint; later accepted proof is below; upgrade controller and capability activation were absent at this checkpoint; later accepted implementation is below |
-| Read-only database network origin observer | Accepted `b0847ffcbf68a54a2eab9acbbfd08afceebd1717`; [observer](../internal/runnerruntime/hosting_database_network_capture.go), [observer tests](../internal/runnerruntime/hosting_database_network_capture_test.go) | Inspects the retained initialized origin and exact database/network ownership without mutation; later direct-engine physical proof is below |
-| Authenticated capture API and typed client | Accepted through `2968bfbb709b475be0de3adaf499774650bba3b3`; [API tests](../internal/api/hosting_database_network_capture_handlers_test.go), [typed client](../internal/runnerclient/hosting_database_network_capture.go) | Dedicated authenticated capture transport and client accepted; connected physical qualification was absent at this transport checkpoint; later proof is below; no R42 application-binding UI |
-| Durable capture journal and private coordinator | Journal `12a58d5d241630b74ac6dd01da4d06e8a920e747`, coordinator `b0255e4c5458e483e3746a2878a0d14c1061c477`; [journal tests](../internal/runner/journal_database_network_capture_test.go), [coordinator](../internal/runnerruntime/hosting_database_network_capture_execution.go), [replay tests](../internal/runnerruntime/hosting_database_network_capture_replay_test.go) | Journal format 13 and exact-ID capture execution/replay accepted; private coordinator was unwired at this checkpoint; later exact-ID CLI activation is below; generic dispatch was inactive at this checkpoint |
-| Direct origin capture and empty-v2 alias upgrade qualification | Accepted `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`; [fixture contract](../acceptance/runtime-hosting-database-origin-upgrade/README.md), [physical assertions](../internal/runnerruntime/hosting_database_origin_upgrade_runtime_integration_test.go) | Native Linux arm64 direct private-engine PostgreSQL 17.11 and Redis 8.2.10 A→B→C persistence, private DNS, retained origin and UID 999 ownership; includes owned pre-start endpoint repair; fixture-local materialization, no controller provenance, API/River activation or full R42 |
-| Compiled database capture/replay and recovery | Accepted `b7771468edf95f531c13d69b361ed901d9efbbc8`; [compiled-runner contract](../acceptance/runtime-hosting-database-runner/README.md), [capture/replay assertions](../internal/api/hosting_database_capture_runtime_integration_test.go), [normal database assertions](../internal/api/hosting_database_runtime_integration_test.go) | Exact-ID capture CLI is wired; real API/River/compiled runner passed capture/replay in 22.00 seconds and normal database recovery in 23.40 seconds, both PostgreSQL and Redis without skips; actual controller/materialization provenance and historical ACK replay checked; no application binding, upgrade controller, membership ledger or full R42 at this checkpoint |
-| Private empty-v2 upgrade controller and compiled execution | Accepted through `79b50e245a756022b2fc0b8ac98428bb1acfcc3b`; [upgrade service](../internal/app/hosting_database_upgrade_service.go), [controller tests](../internal/store/postgres_hosting_database_upgrade_test.go), [compiled execution](../internal/runnerruntime/hosting_database_upgrade_execution.go), [migration 0071](../db/migrations/0071_hosting_database_network_upgrades.sql) | Owner-scoped retained capture/origin proof, initial empty-v2 upgrade and maintenance, durable idempotency and historical ACK replay; explicit runner opt-in/capability; actual PostgreSQL control tests passed without skips, store 104.040 seconds/API 15.104 seconds with exact cleanup; physical qualification is recorded separately below; no public binding or connected application workflow |
-| Compiled empty-network upgrade qualification | Accepted `563fb88f707b75563d03f0408df0267e3af473e9`; [compiled-runner fixture](../acceptance/runtime-hosting-database-runner/README.md) | All three fixtures passed without skips: capture/replay 38.22 seconds, normal recovery 23.40 seconds, upgrade 26.36 seconds; PostgreSQL and Redis initial upgrade/maintenance, retained origin, alias reads/writes, exact Complete-ACK loss replay and single writer; verified owned cleanup and outer inventories; native Linux arm64 disposable private fixture only, no connected R42/public application binding or full A17 |
-| Database completion and persisted capture identity repairs | Accepted through `b7771468edf95f531c13d69b361ed901d9efbbc8`; [completion lifecycle regression](../internal/runnerruntime/hosting_database_completion_lifecycle_test.go), [UTC JSON identity regression](../internal/store/postgres_hosting_database_network_capture_identity_test.go) | Authority workers join before database completion; capture documents compare by persisted JSON identity across UTC round trips; actual PostgreSQL regression evidence retained, without broadening capture or application-binding authority |
-| Internal upload archive helper | Accepted `3b34b3920378cc41613bc87ca69eea2d35d2f175`; [format and ownership contract](../internal/storagearchive/README.md), [CLI tests](../cmd/nerocd-storage-archive/main_test.go) | Standalone fixed-root Linux helper using strict USTAR `nerocd-storage-v1`; package filesystem and CLI/vector evidence only; controller/API/configuration/runner and packaging were absent at this helper checkpoint; accepted later code/UI evidence is below; physical recovery was absent at this helper checkpoint; the later bounded pass is below; full A26/A37 remain incomplete |
-| Owned-upload archive controller/API/runner | Controller `1a721b270306c9816f3b91788407c8a937e51756`; config `5d6badc6cfb3aea3c51256167ebe5d9f9858d5bc`; API `1f7a26eee611fc45d685f45f88587f2e55e7b9c2`; runner `88887e92c0cf7b93b828d3696ec3a5af16547ea7`, source `f0a618218c09e14eba5aad252e31f29941275fb0`; [operator contract](hosting-storage-archive.md), [API tests](../internal/api/hosting_storage_archive_handlers_test.go), [runner tests](../internal/runnerruntime/hosting_storage_archive_controller_test.go) | Migration 0068; accepted fenced controller, startup configuration, public API and default-off runner code; actual PostgreSQL/River/controller tests use a fake engine, so physical qualification was absent at this code checkpoint; the later bounded uploaded-file pass is below; full A26/A37 remain incomplete; archive UI is accepted separately below with intercepted-browser evidence |
-| Archive helper packaging | Accepted `b796ce483e99d0dec29bb3e769982dc30da64668`; [packaging contract](../internal/storagearchive/README.md) | Fixed helper-image packaging and local image qualification accepted; qualification image was removed and is not an installed pin; operator must build/install and verify the exact intended identity; current config-ID qualification targets classic image store, with containerd-store lookup failure and no runtime fallback |
-| Owned-upload archive UI | Source `d98e88c64f84924bd36fb2d4c7c29ad723e80ced`, accepted `a99a75517c018caa9aa9965cf451f9f826e7b3d6`; [operator scope and limits](hosting-storage-archive.md) | Accepted UI code and intercepted-browser behavior; 1,426 frontend tests, TypeScript/generated API/build checks, 75-file embedded manifest and 74 matching served assets; artifacts retained in integration checkout, root assets unchanged; no physical application A26/A37 pass |
-| Physical owned-upload archive recovery | Accepted `45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, exact source `2ba8041359576a32d616d7f83e0c7eafe4ee4d91`; [physical fixture](../internal/api/hosting_storage_archive_runtime_integration_test.go), [operator limits](hosting-storage-archive.md) | Native Linux arm64/rootful same-host owned uploads, classic Docker image store/overlay2, trusted fixture CA and local CAS; backup/restore committed-ACK recovery starts each helper once, restores into a new resource/volume with application old-read/new-write proof, preserves source and metadata, compensates oversized failure, failed readiness and missing volume; no database backup, S3, host-disk-loss, in-place/containerd/production TLS or browser-to-real-archive qualification; not full A26/A37 |
-| Compiled Vite SPA qualification | Source `9b49eb6dac7e3d22b9db81d984ce2da592d27c66`, accepted `d29edb3bc8cde064108891f70713423bb57776a3`; [fixture contract](../acceptance/runtime-hosting-local-build/README.md) | Exact pinned source compiles with Node 22.22.0, Bun 1.3.6, Vite 8.2.2 and Caddy 2.10.2; runtime 141.87 seconds/default regression 42.72 seconds; genuine parser failure preserves the prior serving application; HTTP browser bridge and independent TLS probe are separate evidence; earlier unexplained failures remain a reliability limit; not complete A04 or production ACME |
+Most current physical hosting evidence uses trusted native Linux arm64, rootful
+classic-store Docker and a private test CA. It does not qualify public ACME,
+untrusted workloads, broader host/backend support, full Coolify compatibility or
+the deferred workspace product. Remote cache, artifact transfer, agent adapters,
+VM isolation, private previews and target-specific human production approval
+need their own execution evidence.
 
-Private Railpack qualification is now accepted at
-`a92d100c6ba654e6797432e7ef7a6cfd55527272`, tree
-`279db979551419a4f77bf1bad4973c76ab20d2bc`. The retained browser pass at
-`893d3b92ade54359a397e6c585584afe6f56cbeb` took 82.04 seconds; its inputs are
-unchanged. Fresh default combined checks at the accepted revision passed public
-44.63 seconds, private Dockerfile 14.51 seconds and private Railpack 56.45 seconds,
-plus fixture policy checks. Isolated private checks also passed in 74.87 seconds.
-The earlier three-case combined failures at `893d3b92ade54359a397e6c585584afe6f56cbeb`
-remain historical failures of unknown cause. Later passes do not waive or relabel
-them. This qualifies the existing Railpack static provider on trusted Linux/Docker
-with seeded accounts, existing secret metadata and a local test CA. It adds no
-production UI and does not establish arbitrary language providers, Nixpacks,
-compiled frontend builds, public production ACME, complete A03 or hosting parity.
-Archive stack status is accepted through UI integration
-`a99a75517c018caa9aa9965cf451f9f826e7b3d6`, with runner
-`88887e92c0cf7b93b828d3696ec3a5af16547ea7`, controller
-`1a721b270306c9816f3b91788407c8a937e51756`, startup configuration
-`5d6badc6cfb3aea3c51256167ebe5d9f9858d5bc` and API
-`1f7a26eee611fc45d685f45f88587f2e55e7b9c2`. See the
-[operator contract and qualification boundaries](hosting-storage-archive.md).
-Actual PostgreSQL/River/controller tests use a fake engine and UI browser tests
-intercept responses; neither establishes physical application A26/A37. The
-helper configuration-ID path currently targets the classic Docker image store;
-Docker 29 containerd-store lookup failed and has no runtime fallback. The strict
-helper-environment repair is accepted at `33702968ce7544cd3797d8ec8a19df96e9ac1ee4`,
-with canonical capability spelling at `11d38a347938dbe53e53e3d0474f857a2294fb47`;
-the later bounded physical pass is recorded below.
-Bounded native Linux arm64, classic-store owned-upload application backup/new-target
-restore is physically accepted. R42 application binding, broader recovery, full
-A26/A37 and full parity remain unfinished. Root assets remain historical; qualified UI artifacts are
-retained in their integration checkout.
+<a id="r42-remains-an-unfinished-hosting-workflow"></a>
+### Application database connection limits
 
-### R42 remains an unfinished hosting workflow
+The [bounded connection workflow](hosting-database-connections.md) does not
+complete R42/A17. Broader inputs, credential rotation and cross-server behavior
+remain separate work. Engine-version upgrades and application data recovery
+cannot be inferred from private network/alias maintenance.
 
-The accepted internal prerequisites above passed integration checks and independent
-code hygiene, specification and critical security reviews. They do not establish
-application-to-database connectivity through the product. No connected R42 API/UI
-workflow is accepted. Direct-engine alias qualification is bounded below.
+<a id="retained-physical-and-ui-evidence"></a>
+### Runtime and UI evidence
 
-The read-only origin observer, authenticated capture API/typed client, format 13
-journal and private exact-ID capture coordinator are now accepted. Direct
-private-engine origin capture and empty-v2 alias upgrades are physically
-qualified at `d3849bb572ce5b7df40ef7324ef6bc71e8e08c92`.
-
-The 27.89-second native Linux arm64 pass covers PostgreSQL 17.11 in 16.97 seconds
-and Redis 8.2.10 in 10.92 seconds. A→B→C keeps the original volume, private
-network and credential references. Separate authenticated clients resolve the
-private hostname and read/write application records through replacements.
-Reopened-engine observation checks host PID/UID 999 ownership and retained
-origin bytes; a wrong actual alias is rejected. The
-[fixture contract](../acceptance/runtime-hosting-database-origin-upgrade/README.md)
-and [physical assertions](../internal/runnerruntime/hosting_database_origin_upgrade_runtime_integration_test.go)
-define this bounded proof. Combined runtime/runner/client race checks, vet,
-changed-code lint, Linux arm64 compilation and Go build also passed at that
-revision. Local run evidence remains in
-`/tmp/nerocd-database-origin-upgrade-20261024.ljtb01w9`.
-
-Compiled capture/replay and normal database recovery are accepted at
-`b7771468edf95f531c13d69b361ed901d9efbbc8`. The
-[compiled-runner contract](../acceptance/runtime-hosting-database-runner/README.md)
-and [capture/replay assertions](../internal/api/hosting_database_capture_runtime_integration_test.go)
-cover real API/River source deployment, controller/materialization provenance
-and the opt-in `--database-network-capture-id` path. Both PostgreSQL and Redis
-passed without skips: capture/replay took 22.00 seconds and normal recovery
-23.40 seconds. Evidence remains in
-`/tmp/nerocd-database-runner-20261024.askzxzjj/runtime-test`.
-
-Lost origin ACK retains the format 13 claim/plan/origin chain. Ordinary mode
-holds; exact-ID historical replay succeeds with the owned socket absent and no
-repeated claim, plan load, observation, credential delivery or Complete. Request
-and historical ACK bytes, receipt identity and durable acknowledgment retirement
-are preserved. Source, volume, network, credentials and protected state remain
-unchanged. Normal A/B/C recovery preserves data and the exact completion receipt
-after runner restart and lost completion ACK, without repeated writer admission.
-The [completion regression](../internal/runnerruntime/hosting_database_completion_lifecycle_test.go)
-checks authority-worker joining; the [UTC identity regression](../internal/store/postgres_hosting_database_network_capture_identity_test.go)
-checks persisted JSON identity, with actual PostgreSQL source proof in 5.682 seconds.
-
-This qualifies native Linux arm64/trusted Docker with a verified test CA.
-Production ACME, untrusted workload isolation and broader host profiles remain
-unqualified. The earlier direct alias-upgrade fixture retains its local
-materialization limit and original revision.
-
-Private upgrade control and compiled execution are accepted through
-`79b50e245a756022b2fc0b8ac98428bb1acfcc3b`. Migration 0071 persists immutable
-upgrade proof. The owner-scoped controller derives that proof from retained
-capture/origin records and the current healthy predecessor, admits initial
-empty-v2 upgrades and empty-v2 maintenance, and atomically records the operation,
-audit and River job. Durable idempotency retains the original proof on replay.
-The compiled runner requires explicit upgrade opt-in and matching capability,
-uses the existing materialized volume, and retains historical ACK replay.
-This is a private network/alias upgrade, not a database engine-version upgrade.
-
-Selected real PostgreSQL control tests at that revision passed without skips:
-store took 104.040 seconds and API 15.104 seconds. The final catalog and profile
-matched the initial inventory, with no task schemas or remaining clients.
-Bounded local evidence is in
-`/tmp/nerocd-database-upgrade-controller-integrated-handoff.json`,
-`/tmp/nerocd-database-upgrade-controller-integrated-pg-check.json` and
-`/tmp/nerocd-database-upgrade-controller-integrated-pg-receipt.json`.
-The compiled three-fixture gate is physically qualified at
-`563fb88f707b75563d03f0408df0267e3af473e9`, tree
-`58177f1fe7e0d0b57b196f9d089aae7275896790`. Capture/replay passed in 38.22
-seconds, normal database recovery in 23.40 seconds, and empty-network upgrade in
-26.36 seconds, all without skips. Both PostgreSQL and Redis passed initial
-upgrade and maintenance, retained origin, alias reads/writes, exact committed
-Complete-ACK loss replay and single-writer checks. The
-[compiled-runner fixture](../acceptance/runtime-hosting-database-runner/README.md)
-records the scenario. Local evidence remains in
-`/tmp/nerocd-database-upgrade-log-contract-integrated-physical-handoff.json` and
-`/tmp/nerocd-database-runner-20261024.4vwcof0i/runtime-test`.
-Owned resources were removed and outer container/volume identities and canonical
-recorded fields matched the initial inventories. Root assets and index were
-preserved. This qualifies only the native Linux arm64 disposable private fixture,
-with trusted Docker and a verified test CA. It does not qualify production TLS,
-untrusted workloads, other host profiles or database engine-version upgrades.
-
-Earlier failed runs remain failed historical evidence at
-`/tmp/nerocd-database-runner-20261024.fay75smx`,
-`/tmp/nerocd-database-runner-20261024._zlle73z` and
-`/tmp/nerocd-database-runner-20261024.2sn80_4i`. The later passing revision does
-not relabel those runs. Automatic capture qualification is recorded below.
-
-Automatic database capture is accepted at
-`5ff5b7e114fc922e3c3f2a6e93670c133d205923`, tree
-`5b5a819b2c06442487012619fe52ac7c2a804dc9`. The default-off
-`--hosting-database-network-capture` flag uses bounded claim-next selection under
-current authority and reuses the original claim after a lost response. Retained
-origin ACK replay and journal retirement precede Docker observation. Actual
-PostgreSQL controller evidence remains attributed to
-`013386a353612350e731cc4615ea89f63299aac2`, with 19 selected tests and no skips.
-
-The physical three-fixture gate at the new cutoff passed without skips.
-Capture took 32.92 seconds, with exact-ID mode in 19.46 seconds and automatic
-mode in 13.46 seconds. Normal database recovery took 23.71 seconds and upgrade
-28.23 seconds. Both PostgreSQL and Redis passed both capture modes, including
-same-claim recovery after response loss. With the Docker socket absent, the
-automatic replay phase proved the retained origin ACK and journal retirement
-before cancellation. This does not assert successful exit of the whole continuous
-runtime. Normal recovery and empty-network upgrade/maintenance retained their
-data, alias reads/writes, exact Complete replay and single-writer assertions.
-
-Evidence remains in
-`/tmp/nerocd-automatic-capture-fixture-integrated-physical-handoff.json` and
-`/tmp/nerocd-database-runner-20261024.ahaf28ci/runtime-test`. Owned cleanup passed;
-outer container/volume identities and canonical recorded fields matched the
-initial inventories. Root assets and index were preserved. Qualification remains
-bounded to the native Linux arm64 disposable private fixture. Earlier `563fb88`
-qualification and failed-run evidence above retain their original revisions.
-
-The durable application membership ledger/controller/runner, public binding
-API/UI and connected R42 workflow remain unfinished.
-Database-native backup/restore, credential rotation, full A17/A26/A37 and complete
-hosting parity remain open.
-
-The standalone PostgreSQL/Redis physical pass remains evidence for
-`c731f708e62e2376d174041957b8654fe83d5bcf`. Later changes to the shared database
-engine mean that pass does not qualify the current combined tree. The stable
-[API/compiled-runner fixture](../acceptance/runtime-hosting-database-runner/README.md)
-records the bounded standalone scenario, without application binding.
-
-### Retained physical and UI evidence
-
-Bounded physical uploaded-file recovery is accepted at
-`45298ea4bbd85c91ee4b0d4d64cd72d9346e1faa`, with exact source/tree equality to
-`2ba8041359576a32d616d7f83e0c7eafe4ee4d91`. The 25.38-second pass is retained in
-`/tmp/nerocd-storage-runtime-20261024.iWwXss/gate.log`, with
-`/tmp/nerocd-archive-physical-integrated-handoff.json`,
-`/tmp/nerocd-archive-physical-integrated-physical-retention.json` and
-`/tmp/nerocd-archive-physical-integrated-main-promotion.json`. The application
-retains 65,537 uploaded bytes through redeploy. Committed backup and restore ACK
-loss each recover with one helper start. A new resource/volume reads restored
-application data and accepts a new write; the source remains unchanged with
-UID 12345/GID 12346, files 0640 and directories 0750. Oversized backup failure
-resumes only originally running workloads; failed-readiness rollback and
-missing-volume hold also pass. Owned objects/processes are absent after cleanup
-and host inventories are unchanged. The tested helper image was removed and is
-not an installed reusable pin. Earlier failures remain historical.
-
-This is native Linux arm64, rootful same-host owned uploads on the classic Docker
-image store/overlay2 with trusted fixture CA and local CAS. It does not qualify
-database backup, S3, host disk loss, in-place restore, containerd image store,
-production TLS, browser-to-real-archive flow, full A26/A37 or full parity. R42
-PostgreSQL/Redis application binding is under implementation and unaccepted.
-
-Archive-helper integration evidence is recorded in
-`/tmp/nerocd-main-upload-archive-promotion.json` and
-`/tmp/nerocd-upload-archive-integrated-handoff.json`. Linux filesystem package
-qualification retains 11 cases at its original source revision; native Linux CLI
-qualification retains 14 cases without skips, plus the corrected standalone
-vector check, in `/tmp/nerocd-upload-archive-streams-physical/final-handoff.json`
-and `/tmp/nerocd-upload-archive-vector-physical/final-handoff.json`. The initial
-read-only-transfer failure and invalid-vector failure remain separate historical
-failures; later passes do not relabel them. Owned commands joined and cleanup
-preserved host state. Integration retained the six root graph files and 75 UI
-files; no new installed artifact or UI qualification is claimed. This accepted
-helper is a prerequisite, not completed application backup/recovery.
-
-Historical standalone API/runner physical qualification at `c731f708e62e2376d174041957b8654fe83d5bcf` passed in
-29.75 seconds, with both clients and owned outer cleanup passing. Source evidence
-is `/tmp/nerocd-database-client-environment-physical-handoff.json` and
-`/tmp/nerocd-main-database-qualified-promotion.json`; the stable fixture links above
-identify executable assertions. Earlier failed attempts remain historical failures.
-The typed-claim 409 was repaired at `664bc50e487f757a5f371c72659425c53b2a47e9`;
-that repair's unit/PG evidence is distinct from the later exact physical pass.
-
-Direct database UI evidence retains 1,380 frontend tests and four-width intercepted
-keyboard-browser checks at `00ec9b461c625eba7b8fa9a1bc37cae71f987e95`, with unchanged UI inputs
-recorded in `/tmp/nerocd-database-ui-claim-handoff.json`. These UI checks do not
-replace physical API/runtime proof. The workflow remains default-off and opt-in;
-metadata stays `adapter_unqualified`. The connected R42 workflow is unfinished,
-so complete A17 is not claimed. Database-native backup/restore, public ACME and
-full parity remain unfinished. Bounded owned-upload recovery is accepted above;
-its physical evidence does not qualify database recovery or full A26/A37.
-
-Direct-engine evidence in `/tmp/nerocd-database-qualified-physical-handoff.json`
-belongs to `b9c4c93ef55d946ca67384599d4c6d6290e36d0e`: six cases passed in
-30.52 seconds on native Linux arm64. The coordinator handoff
-`/tmp/nerocd-database-runner-integration-handoff.json` records full combined
-runner/client/runtime/CLI race checks in 81.189 seconds, compile, vet and Linux
-arm64 build at `f4a54506f388339ffe8acdd6b8ec4133690188fa`. Eight engine files
-remain identical to the qualified engine revision, but the shared volume helper
-changed; the earlier physical pass is not qualification of the final combined
-tree. The later exact combined workflow pass is recorded below. Application
-binding, archive backup/restore, major upgrade, public database, AMD64
-qualification, complete A17 and full parity remain unfinished.
-
-Current storage UI evidence at `77be63a03c9caf3e95239a751045f0fe7b5918cf`
-records 179 frontend tests, responsive/keyboard browser checks, compiled Go and
-207-route contract/74-served-asset checks in
-`/tmp/nerocd-storage-complete-ui-handoff.json` and
-`/tmp/nerocd-main-storage-complete-ui-promotion.json`. Intercepted operation
-responses qualify review/retry UX only. Continuity recovery at
-`284f45cf1659a559d55d54342a902d0eeb112685` retains its bounded metadata/API proof;
-there is no physical proxy-recovery case.
-
-Protected database delivery integration
-`33a7506f8b5f92f88f455e3cc4029629dfb6c7a9` records actual PostgreSQL delivery/
-controller/storage race checks, focused races, vet, SQL placement, Go compile,
-211-route contract, generated-client parity and 74 served assets in
-`/tmp/nerocd-database-delivery-integration-handoff.json` and
-`/tmp/nerocd-main-database-delivery-promotion.json`. Engine helpers and delivery
-were unwired at this credential-delivery checkpoint. Later direct-engine and
-default-off coordinator evidence is recorded below. Database UI was metadata
-only at that checkpoint; later direct deployment UI and combined workflow evidence
-are below. Application binding, complete A17, backup/archive restore and production
-ACME remain unqualified.
-
-Physical storage evidence at `b33466c81899e2a7278b2e551fb2532ae17b46bc`
-passed in 17.06 seconds. The retained summary
-`/tmp/nerocd-storage-runtime-20261024.xH772x/qualification-summary.json` records
-65,537 uploaded bytes with SHA256
-`7d0f6225a3b0afb197160548a0de3516364c175b3ce66942f0f322e7e3899e49`.
-Authenticated API/River and the compiled runner preserve those bytes through
-replacement, committed acknowledgment loss/restart and failed-readiness recovery.
-It checks exact volume identity, a single running writer and an unrelated trusted
-HTTPS route under local Pebble CA trust. This is physical API/runtime proof;
-later accepted deployment-review/recovery UI uses intercepted operation responses
-and proves UX separately; it adds no new physical runtime proof.
-
-Recovery integration `284f45cf1659a559d55d54342a902d0eeb112685` retains unchanged
-production source from `ec9b6e0e584b6c4c7b6348ddc17ded427be2956d` and test-only
-repair `2848822ac9c944face898760076b06d028f6f0ac`, with all three reviews passing.
-Source PostgreSQL recovery checks passed in 4.377 seconds; fresh combined
-domain/application/API checks passed with a maximum package time of 8.014 seconds.
-These are contract/database tests, not an actual proxy-recovery runtime fixture.
-Storage deployment-review/recovery UI is accepted with UX-only limits below.
-Direct database engine qualification and default-off runner coordination are
-accepted below; the later exact API/runner workflow and direct UI are accepted below; metadata
-remains `adapter_unqualified`; application binding was unfinished at this checkpoint. Backups,
-restore, unknown-writer handling, production ACME, complete A19/A26 and full
-hosting parity remain unfinished.
-
-Storage foundation evidence retains its original boundaries. Metadata promotion
-`13f8e6f952003dc1c36ba467ac4e19817ded6f0c` is recorded in
-`/tmp/nerocd-main-storage-repaired-promotion.json`. Private helper promotion
-`753a027dabc1fb26176bceb9e91579b649ece8a2` retains helper race 65.888 seconds and
-Docker fixture 0.80 seconds in `/tmp/nerocd-main-volume-helper-promotion.json`;
-the helper is not a mounted application workflow. Materialization integration
-`8e00631aac26e0787a43398332e31a35980f067d` records actual PostgreSQL race
-19.772 seconds, domain race 1.507 seconds, focused runtime race 1.373 seconds,
-vet, SQL placement, generated SQLc identity and Go compile in
-`/tmp/nerocd-materialization-integration-handoff.json` and
-`/tmp/nerocd-main-materialization-promotion.json`. Its runtime race skipped Docker;
-helper Docker evidence remains retained at the helper revision. No new mounted
-runtime, UI or application data-persistence qualification is inferred.
-
-SSH onboarding source `57093e14d6b65e12305fd44aa61a3dd7b689545b` is accepted
-at `b4951282aefb3ad63d525c9d10037d7120f1d4ba`. Actual API/River/SSH evidence at
-`10f830f71e88df544864b56ffcd8be9bdb222fa5` passed in 67.94 seconds with browser
-5.3 seconds, retained under
-`/Users/bubble/Documents/Dev/NeroCD-hosting-ssh-onboarding-runtime-20261023/.cache/nerocd-server-bootstrap.ojx62tze`.
-This includes response loss, retained installation identity and inspection recovery.
-Fresh accepted integration checks record 1,144 frontend tests in 90 files,
-200-route contract and 74 served assets matching the 75-file manifest
-`c3e352055c383ab544dd9b15ed2770d42709f3e758580d42ee004e004a9faf69`.
-Exact source retention and limits are recorded in
-`/tmp/nerocd-ssh-final-integration-handoff.json` and
-`/tmp/nerocd-main-ssh-final-promotion.json`. These do not claim a new runtime run
-at main. The qualified current artifact was built and served in the integration
-checkout; root ignored assets remain historical. Storage metadata, the private helper and durable admission are accepted below;
-the bounded API/compiled-runner mounted workflow is accepted below; accepted storage deployment-review/recovery UI is separate UX evidence; database
-direct engine qualification and default-off coordination are accepted below;
-the later exact API/runner workflow and direct UI are accepted below; metadata
-remains `adapter_unqualified`; application binding was unfinished at this checkpoint.
-
-Automatic deployment evidence is source-bound: runtime
-`3510437292cb7195a7cda9760b7eb7bf468d7877` passed in 66.85 seconds at
-`/tmp/nerocd-auto-deploy-runtime.4Yekz5`; browser source
-`b9e34d7cd0e4aa6a7531b3150ad75eba6caf4282` passed in 22.5 seconds with Go runtime
-41.61 seconds at `/tmp/nerocd-auto-deploy-browser.Iwkcfa/gate.log`. The later HTTP
-constant and test-only repairs were reviewed with unchanged qualification inputs.
-Fresh accepted-main evidence records 1,123 frontend tests in 88 files, supply-chain policy
-passed for 29 components, full Go build, 189-route contract and 74 served assets matched byte-for-byte. Exact revision,
-tree and retained evidence are in `/tmp/nerocd-auto-ssh-integration-repaired-handoff.json`
-and `/tmp/nerocd-main-auto-ssh-promotion.json`. The qualified current binary and
-dist remain in the integration checkout; root ignored dist is historical and is
-not a newly installed automatic-deployment artifact.
-
-SSH installer runtime evidence is the owned fixture
-`.cache/nerocd-server-bootstrap.pbeehlaf` at the installer revision above. The
-installer and durable control evidence is distinct from the later accepted SSH
-API/UI workflow below. After bounded automatic deployment and SSH onboarding,
-H2 stateful hosting remains active; its accepted parts and remaining gaps are recorded above.
-Protected plans, production TLS and remaining hosting/migration compatibility
-retain their separate unfinished requirements. Workspace scope stays deferred.
-
-Recovery UI source `0e84be388bf0132e58bd9ef67b8e083a354626cb` passed all three
-independent reviews before accepted integration
-`d238d23e63ea2ae7f1bb0f7ed843f7b71863660f`. Retained combined evidence in
-`/tmp/nerocd-recovery-ui-combined-*` records 1,072 frontend tests in 87 files,
-72 focused tests, actual controller 26.25 seconds and nine browser cases with
-Go runtime 92.73 seconds. The separate 110-case operator run used `--no-deps`
-and omitted OIDC setup; it does not qualify OIDC. Fresh combined and accepted-main
-checks record the 189-route Go contract and 74 served assets, including
-`/tmp/nerocd-main-recovery-ui-contract.log` and
-`/tmp/nerocd-main-recovery-ui-served.log`. Runtime qualification is native Linux
-arm64 with local fixture CA trust, not production TLS or convergence completion.
-
-React Doctor 0.9.18 evidence at `baf2c3a3326dea01ce7ad9142c36daaab81102d8`
-records 122 diagnostics reduced to 107: 118 warnings and four errors became
-103 warnings and the same four retained errors. The remaining findings include
-23 selected-rule diagnostics and 84 others. This revision-specific result does
-not remove all selected findings; the newer recovery integration tree was not scanned.
-The [secret-state change and tests](../web/app/src/pages/ProjectSecrets.test.tsx)
-and `/tmp/nerocd-doctor-top-three-evidence/dispositions.json` identify the source
-and retained dispositions. These Doctor counts remain historical, not a scan of
-current accepted main. Bounded automatic deployment and SSH installer evidence
-are recorded below; bounded SSH API/UI acceptance is recorded separately.
-
-Bounded completed metadata-conflict recovery is accepted at
-`e097ffa706325f55cab7a7b0416a235a0e9ad151`, including migration 0059. Source
-`93305f8c528b8a3990ec79178584f4e170bada02` passed all three independent reviews.
-The earlier concurrent-replay specification failure remains historical; the
-accepted repair returns the same durable resolution after serialization retries.
-Actual compiled-runner recovery passed in 24.89 seconds in
-`/tmp/nerocd-metadata-replay-final-runtime.log`; PostgreSQL recovery race checks
-passed in 45.390 seconds in `/tmp/nerocd-metadata-replay-final-race.log`.
-The historical SQL-policy failure at `fa93d16fa09d5a7929581d5acb206029be9752d0`
-was repaired through SQLc query extraction. Combined and accepted-main SQL
-architecture checks passed in `/tmp/nerocd-recovery-combined-sql-policy.log` and
-`/tmp/nerocd-main-recovery-sql-policy.log`. Main's 189-route contract and 74 served
-assets passed in `/tmp/nerocd-main-recovery-contract.log` and
-`/tmp/nerocd-main-recovery-served.log`. No fresh whole-suite or production TLS
-result is claimed. Bounded R17 automatic deployment is recorded below; protected
-plans, broader SSH/host qualification, production TLS, stateful hosting and remaining parity stay open.
-
-Controller qualification at `b1e42f53d06af36c086d5a8160dba4c17bced8c9`
-has tree `f0d646b8f85f32e82646189d59dc81fe1ac0b61f`, identical to accepted
-`5687b88465839b8e341181ba8b47f54dc17f006c`. Retained route runtime passed in
-23.92 seconds in `/tmp/nerocd-route-integration-route-runtime.log`; readiness
-native 61.19 seconds and browser 70.66 seconds passed in
-`/tmp/nerocd-route-integration-readiness-browser-runtime.log`, with owned cleanup
-verified. The first Bash 3.2 empty-array invocation failed; the corrected run
-passed. Whole-repository lint retained three unchanged errors; the required lint
-delta was zero and passed. These results do not claim a clean whole lint gate.
-Main's 184-route contract and 74-served-asset checks passed in
-`/tmp/nerocd-main-route-control-contract.log` and
-`/tmp/nerocd-main-route-control-served.log`, retaining manifest
-`0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`.
-The bounded route-switch read API and operator UI are now accepted below. R17 automatic/protected
-plans, SSH, production ACME and stateful hosting remain incomplete.
-
-Navigation evidence at source `32ab3bcd259781c565e2a052dfbba320acd9206e`
-records 965 Vitest tests and 120 compiled-Go browser cases in 6.3 minutes in
-`/tmp/nerocd-hosting-navigation-browser-final-20261023.log`, with three independent
-reviews passing. Accepted main `43e9c305f71a267b1d201f7849c12a31f8c532d6`
-passed fresh 183-route contract and 74-served-asset checks, with manifest
-`0e81691a8d4fcb7f1b59facf37ce1d9dc84cf601e87b42f24532778e827b6cd6`
-and binary `c3c95c79862e0ca396ee0875ca2fb5d5152ad7490b36df5ea74087e2bf4a6e3a`.
-Synthetic fault and actor cases prove client behavior only; real OIDC denial
-evidence remains separate. These retained results do not qualify complete route-switch recovery, automatic deployment, protected plans, SSH,
-production ACME or complete hosting parity.
-
-Manual enrollment qualification at `68c403aa6d319dd9a391d6f6eb577336943e355b`
-passed the native agent case in 61.24 seconds and the actual enrollment/browser
-case in 69.64 seconds, with exit 0 in
-`/tmp/nerocd-readiness-qualification-final.log`. Accepted integration
-`0771f1b56befcd30b195c45121dba4d3efeec974` preserves 31 reviewed blobs and records
-106 focused frontend tests, the 183-route contract and a 75-file manifest with
-74 served assets. These are retained acceptance results, not fresh application
-checks for this documentation candidate. The profile checks safe CLI metadata;
-it does not execute the CLI or prove deployment. Runtime evidence is native
-Linux arm64; amd64 has compile evidence only. SSH, production TLS, application
-deployment and complete A01 remain open.
-
-GitHub build-on-push is accepted at
-`be85bf4c4d42c0b2ddb9e9935f2fa74332656bde`. The [operator contract](hosting-github-push.md),
-[real gate](../acceptance/runtime-hosting-github-push/gate.sh) and
-[browser scenario](../web/app/tests/browser/hosting-github-push-builds.spec.ts)
-cover signed GitHub.com pushes for one saved branch, independent current-head
-verification, durable commit deduplication, ignored delayed older deliveries,
-owner policy/recovery and viewer history. Deployment is manual in the default build-only policy. A genuine
-failed build preserves the previously serving artifact, checked by HTTP bytes.
-
-The exact-candidate local gate passed with browser 23.7 seconds and compiled
-runner/API runtime 25.21 seconds. It uses a simulated GitHub TLS provider with
-registered API routes, PostgreSQL/River, real checkout and compiled Go CLI Docker
-builds. Evidence is `/tmp/nerocd-push-bootstrap-v3-full-browser.log` and
-`/tmp/nerocd-push-bootstrap-v3-cleanup.log`. Earlier failed gate attempts remain
-historical failures; the final candidate passed. No fresh full application suite
-is claimed on this candidate.
-
-This qualifies bounded R09/R10/R13/R57 and A09 behavior. It does not qualify live
-GitHub webhook configuration, optional automatic deployment, PR previews, other providers,
-remote image transfer, production ACME, complete A09 or full hosting parity.
-
-The desired-configuration foundation passed actual PostgreSQL and focused race
-checks, 718 frontend tests, the 163-route contract, generated-output checks and
-build checks at accepted integration `bdd5e0168655edd31df48a7818a560a49876147e`.
-These retained results do not establish all-feature test coverage.
-The Docker protected-environment helper source
-`8f33c86126f3eb52492490b3e7e3a11962a27e65`, integrated at
-`8e6c9c28a91f6c76981b683f444886d9ed7a193b`, was unwired at that checkpoint.
-The accepted runtime integration now wires it.
-Migration 0053 admission and protected delivery are accepted at the revisions above.
-The accepted runtime integration applies desired values through explicit CLI/API
-opt-in. The combined fixture used a trusted producer's persisted Git artifact and
-a registry image with test-CA TLS. It verified readiness-failure preservation of
-the original container, pinned version 1 after rotation, denial after revocation
-or new configuration, and no apply on startup. It did not qualify a new Git build,
-complete A03/A28, production ACME or full hosting parity. Log scans covered only
-controlled output; Docker administrators can inspect environment values.
-The configuration UI and independent collector are now accepted at the revisions
-above. The bounded runtime-status dashboard and enrollment command repair are now
-accepted at the revisions above. Runtime-log control and migration 0055 are now
-accepted at `aa88f62e76a4ef964900db17bf81515e141da03b`. The live collector,
-embedded viewer and manual enrollment log profile are now accepted at
-`3a2b524ca622a7ebfba761c590803d110192cb9f`. Independent runtime status remains
-accepted. The new path provides bounded R59/A29 coverage, not full Coolify parity.
-Exact trigger-revision source `21349d3e2492dca8b8b3ca3d99132085889360e8` is now
-accepted at `0a9422194e8bff7485e7fb20c02f74418ea2ce51`. This is a trusted internal
-build prerequisite. Provider event authentication and push ordering are supplied
-by the accepted GitHub integration above; webhook registration remains manual.
-
-Accepted roll-forward evidence records the real 86.96-second combined log gate
-at `3a2b524ca622a7ebfba761c590803d110192cb9f`, including registered settled
-deployment, fresh Docker stdout/stderr, compiled collector, API and embedded
-viewer. The fixture uses seeded accounts, placement and image setup, verified
-test-CA TLS and a trusted Unix Docker daemon with json-file/local drivers.
-Additional TTY evidence uses synthetic provenance. Follow admits 30-second demand;
-retention, source gaps and revocation remain explicit. Known bearer redaction is
-bounded; application stdout may contain sensitive values and delivery is not
-exactly once. Manual enrollment emits the exact log flag/capability agreement;
-SSH automation and full A01 remain unqualified.
-
-Introduced lint reported zero issues, the contract has 173 routes, and the full
-Go build passed. Retained 864 frontend tests and focused race evidence remain
-at `ac598e53466fbe6827e0f4d79723f51df5695a85`; production paths were unchanged
-by the fixture-close repair. Twenty enrollment tests remain attributed to
-`2f15c86f8e6b713eb1a72943fd4646a1b86e2543`.
-At accepted roll-forward, 73 primary HTTP-served assets matched embedded files
-and the 74-file manifest
-`002c9dc9ff0567a822e17c1c4c1cf3f79b0290fd34ffaa29dfdb2134121e3432`.
-The main binary hash at that log checkpoint was
-`cf022655b79acdd6ce86f3efd2cb3e83add878db73cf6347d4d6bbcad6a503c1`.
-That binary and manifest describe the accepted log roll-forward checkpoint.
-The later accepted trigger integration `0a9422194e8bff7485e7fb20c02f74418ea2ce51`
-passed five PostgreSQL tests and a 12.58-second compiled CLI gate: commit A was
-admitted, the branch moved to B, and the runner built/served A. Controlled public
-and private TLS checkout verified exact revision handling and no unavailable-commit
-fallback. These fixtures use trusted routing, seeded initial setup and a test CA;
-they do not qualify provider authentication, production ACME or a complete
-acceptance scenario. Trigger-affected PostgreSQL evidence of 108.392/8.019 seconds
-remains attributed to source `21349d3e2492dca8b8b3ca3d99132085889360e8`.
-Fresh main contract checks passed 173 routes, and 73 HTTP-served assets matched
-embedded files and the 74-file manifest
-`f95e4d116c52dfeadc3ccf3686cf6484e4e654c13255c34bfa84c2e4d2b623a3`.
-Earlier evidence retains its original revision and does not describe the current
-static artifact or imply a rerun.
-
-The earlier integration `3af3fbb3153d0450bf600e62df40a14faf583b72` failed combined
-client decoding checks. Repair `0b450dd55351aa5884b9fe83eb7bb3c0e96084ff` resolves
-that blocker and passed three independent required reviews before acceptance.
-Fresh accepted evidence includes the 1.38-second API/PostgreSQL log round trip,
-2.756-second API check, 51.261-second relevant PostgreSQL checks and 1.842-second
-full runner-client check. Retained full-store 346.320-second and 811-frontend-test
-evidence remains attributed to `3af3fbb3153d0450bf600e62df40a14faf583b72`; the
-repair did not change the store or frontend paths supporting that evidence.
-The main binary hash at that control checkpoint was
-`586e4a754378f9882a447d088f986ef31f389bb92cd4ec90563fd760277d71a6`.
-The asset manifest at that control checkpoint was
-`7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
-At that runtime-log control checkpoint, the contract had 173 routes and accepted
-migrations extended through 0055.
-Those earlier results establish control prerequisites; accepted live collection
-and viewer evidence is recorded above.
-
-At accepted dashboard integration `24c363fd22ac8237a09c12040386a442b0a3ff53`,
-combined evidence records 811 frontend tests in 73 files and a 75.63-second real
-compiled-collector/browser fixture. HTTP-served assets matched embedded files and
-manifest `7e8208110b92416f7ed20984141a0f63690bdd138fab331e028b1c8773ba607a`.
-The qualified main binary hash was
-`30a6768c8e2cec2162bbb853b084f448a2654d8ce72b1d2f2dd14bc16820ec85`.
-The fixture used seeded accounts, resources and deployment. It does not establish
-public ACME, general metrics or complete onboarding. At that dashboard checkpoint, the contract had 167 routes and accepted
-migrations extended through 0054. Earlier evidence below retains its
-original revision and was not rerun by this documentation change.
-
-Accepted UI evidence records a 19.2-second browser run and 26.20-second Go fixture,
-748 frontend tests in 70 files, and a 74-asset web manifest
-`6057d72030cc23ca03fd951f340c007f60fc405a0c9500c10e6d3a1192519378`.
-The accepted collector's 43.00-second compiled CLI/test-CA/Docker gate verified
-healthy status, stopped/exited state, SIGTERM join, stale/unknown after 30.2
-seconds, resumed collection and rejection of an old report after replacement.
-At that collector checkpoint, the contract had 167 routes and accepted migrations
-extended through 0054.
-Full-package lint failed on three existing errcheck findings in unchanged tests;
-lint of introduced changes against the accepted base passed with zero issues.
-These results do not claim whole-package lint is clean.
-
-Retained runtime evidence includes the 11.34-second combined gate and 20.691-second
-PostgreSQL race check at runtime integration `0a50debdfa5ab14191e52025cd1bb62684e86cd6`.
-Status integration `b55bbcf7b2313e32391a4390dcbb8562de2617b5` retains store/API
-race checks of 59.679/2.931 seconds and full PostgreSQL store checks of 287.732
-seconds. Its contract has 167 routes; sqlc generation compared 36 generated files. The
-web artifact manifest at that checkpoint was
-`2031889de69af8ec37d3999505414fa99e375b9a0e6b72a74c7d014e5d50200e`.
-Those earlier checks establish their named boundaries. The later UI and collector
-qualification is recorded above.
-
-Retained combined checks at `66b58845dab1fdee6f8b12809f0434a2a94326ac` passed
-focused race checks, 29 PostgreSQL race tests in 35.812 seconds, vet, the 164-route
-contract, lint, Go build, generated API types and route-generation checks. These foundation checks
-do not establish end-to-end environment application, production ACME or full parity.
-
-These are retained reports and source fixtures for their exact revisions. This documentation change does not rerun those application/runtime gates or turn their separate results into a complete current release assertion. Test-only isolated DNS and a trusted CA do not establish public DNS or production ACME.
-
-The reviewed control-plane source passed unit/race, PostgreSQL authority/expiry/replay/capability, transport, contract and generated-output checks. Integration separately passed focused race/vet/contract and frontend/embed checks plus a 43.35-second public CLI build-to-HTTPS fixture, including failed-build/missing-image preservation, lost receipts and protected cleanup. That earlier fixture uses a trusted test CA and did not execute private checkout. The later private runtime/UI rows add that bounded coverage, without establishing complete A03.
-
-Revision 3 targets remain unimplemented unless the ledgers identify narrower accepted behavior. In particular, no durable Task/Workspace product, qualified KVM/Firecracker backend, Mac/Windows/NAS/GPU adapter, reservation/budget system, remote shared cache, whole-artifact/check reuse, task preview, agent adapter or handoff is claimed. D0–D3 and A38–A66 require future implementation and combined qualification. Partial hosting evidence does not establish all of A01–A37 or complete Coolify parity.
-
-The pinned Coolify reference stays `b12d1386f3d458618b4c579babcd1e339c6c40b3`; its revision 2 evidence is retained. W1–W13 were reviewed against primary documentation on 2026-10-22. They describe dependency behavior, not NeroCD integration qualification. Docker's overview still labels S3 cache unreleased, while its S3 page labels it experimental. Adoption must pin and test the chosen driver/backend combination.
-
-The unaccepted Task backend checkpoint `6a3d04bc28e950d569cbc7705a5d1dbf8df8c5f5` and Task UI checkpoint `560ef12499cd361c7c2eae5a8a7d310c33ce34a7` are preserved and deferred. Neither is merged into the accepted baseline. The UI uses temporary DTO wiring; its Go/browser validation was not run. These checkpoints are not support claims or justification for integration.
-
-Only documentation changes in this status candidate. No new hosting feature or workspace runtime, schema, API, configuration or migration is implemented here. Earlier accepted application/runtime work remains recorded above.
+The [qualification table](compatibility.md#accepted-foundations-and-evidence)
+distinguishes real runtime/browser workflows from component and intercepted UI
+checks. Older passes retain their original revision and cannot qualify a changed
+shared engine. Failed historical attempts remain failed.
 
 ## 13. Sources
 
@@ -1591,66 +1007,13 @@ Reviewed on 2026-10-22. These primary sources qualify design assumptions only; N
 
 ## Current connected stateful qualification
 
-Current connected application and owned-upload-volume qualification uses physical
-source `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
-`3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
-One image application connects to PostgreSQL or Redis without storage first, then
-attaches one owned named volume through acknowledged interruption. The qualified
-UI/API/runner workflow covers routed replacement, failure recovery and a later
-fresh deployment retaining database records and uploads. See the
-[connection guide](hosting-database-connections.md) for the exact profile,
-683.423-second full pass, historical evidence and limits. Qualification uses a
-trusted native Linux arm64/root-image fixture and private-CA HTTPS. It does not
-qualify production ACME, arbitrary nonroot initialization, database-native
-backup/restore, disk loss, cross-host/external storage or full R/A/matrix parity.
-
-The [atomic audit](parity-audit.md) retains 30 verified outcomes out of 933
-eligible outcomes, with 934 definitions. Presence is 66 implemented, 283 partial
-and 584 missing. No aggregate gate gains acceptance.
+See [current connected stateful support](compatibility.md#current-connected-stateful-qualification)
+for the image-application, PostgreSQL/Redis and owned-volume workflow. Its
+single-writer and recovery constraints remain part of the hosting contract.
 
 ## Connected application route continuation qualification
 
-This section retains the historical storage-less qualification and its original
-limits. The current connected storage workflow is summarized above.
-
-The connected public-image workflow is physically qualified at
-`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
-`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
-journal format 16. An owner can connect one PostgreSQL or Redis database on the
-same destination, then redeploy the application through UI or API while continuing
-all reviewed existing HTTPS routes. Data and credential references survive app
-replacement and database maintenance. The candidate starts and passes readiness
-while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
-finalize lease that retires the exact predecessor.
-
-The full gate passed in 333.592 seconds with five runtime groups and zero skips.
-Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
-capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
-seconds. Four Chromium tests passed per engine, including the owner workflow in
-38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
-failures preserve the old HTTPS app and database reads/writes for both engines.
-Lost yield, proxy Complete and final Complete acknowledgments replay the original
-retained attempt without repeating effects or credential delivery.
-
-The physical receipt is
-`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
-Source and binary identities are retained in
-`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
-output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
-Owned processes and resources were removed. The unrelated 35 containers and 209
-volumes retained identical inventories; root graph and 75 generated UI files were
-unchanged, and the independent user UI remained ready.
-
-Qualification covers the pinned native Linux arm64 trusted Docker classic-store
-fixture and verified private CA. Initial Connect cannot include routes. Source
-builds, application storage, cross-server binding presentation, rotation,
-database-native backup/restore, disk loss and public ACME remain unqualified.
-There is no in-flight request draining or control-plane restart proof. Full R42,
-A17 and all full requirement, acceptance and matrix gates remain incomplete.
-
-At this historical checkpoint, the parity audit retained 20 verified atomic outcomes out of 933 eligible
-outcomes, with 934 definitions. Presence is 65 implemented, 284 partial and 584
-missing. This is an evidence lower bound, not a completion percentage. The
-previous 17-outcome snapshot and original 4-outcome baseline remain in audit
-history. R21-C04, R21-C05 and R28-C02 gain current proof; no full gate gains a pass.
-The proposed workspace product remains deferred behind useful hosting.
+The [storage-less route profile](compatibility.md#connected-application-route-continuation-qualification)
+keeps the old application healthy until candidate readiness and a verified proxy
+switch. It does not establish the interruption behavior of a writable volume,
+in-flight request draining or control-plane restart proof.

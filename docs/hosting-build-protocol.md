@@ -26,8 +26,7 @@ caller-selected runner field. `source-commit` deliberately has no revision.
 The shared HTTP decoder enforces body-size limits, unknown-field rejection,
 and a single complete JSON document without trailing content. The DTOs and
 validation helpers do not implement those decoder checks or authenticate requests.
-No plaintext credential response belongs in this package. Credential material's
-HTTP boundary needs its own review.
+Plaintext credentials use a [separate protected transport](hosting-build-credentials.md).
 
 ## Completion and receipt hashing
 
@@ -107,18 +106,19 @@ Agents must not follow it with generic run completion. Cleanup uncertainty keeps
 only the existing bounded lease for explicit cleanup reporting; it never grants
 another engine execution or automatic lease extension.
 
-The `source-credential` HTTP endpoint is deliberately absent. Its existing domain
-request alias and separately reviewed delivery component do not establish a
-plaintext transport contract.
+`POST /api/v1/runners/builds/source-credential` uses a separate strict credential
+codec and protected transport. See [private credential delivery](hosting-build-credentials.md).
 
 ## Public build requests and history
 
 `POST /api/v1/resources/{id}/builds` accepts only
 `expected_resource_generation`, `expected_source_generation` and
-`idempotency_key`. The response is `202 {"build": ...}`. Exact request replay
+`idempotency_key`, plus optional `grant_id` for private HTTPS. The response is
+`202 {"build": ...}`. Exact request replay
 returns the retained build and its original snapshot, without a second task.
-Policy, grant, credential and placement fields are rejected. Only configured
-public HTTPS Git resources are admitted.
+Policy, credential values, and placement fields are rejected. Public HTTPS
+sources require no grant. Private HTTPS sources require the selected exact
+source grant.
 
 `GET /api/v1/resources/{id}/builds` returns retained history under current resource
 project viewer authority, ordered by created_at and ID descending. It uses the

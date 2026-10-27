@@ -21,8 +21,7 @@ or current roles.
 Managed service-account credentials authenticate as the stable account ID and
 retain their existing project scope, role, and active-owner requirements. They
 do not enter the legacy-token branch. Runner credentials cannot use the legacy
-administrator path either. This change does not expand either credential type's
-authority or change their authentication contracts.
+administrator path either. Each credential type retains its own authentication and authority checks.
 
 The legacy token row is locked for the authorizing transaction. Revocation and
 role changes therefore serialize with the mutation: a change committed first

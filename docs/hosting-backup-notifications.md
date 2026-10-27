@@ -2,8 +2,6 @@
 
 Project notification channels deliver accepted backup and remote upload failures for PostgreSQL and owned-upload storage. Channels use SMTP email or a generic HTTPS webhook. An upload failure leaves the successful backup and its local-copy records intact. Notification delivery runs after the source transaction commits.
 
-This guide covers project setup, failure history, and explicit recovery for the two supported failure event selectors for PostgreSQL and owned-upload storage. The contract and qualification limits follow the workflow.
-
 ## Configure project alerts
 
 Before configuring a channel, ask the operator to enable managed secrets and the notification sender and set `NEROCD_PUBLIC_ORIGIN` to the absolute HTTPS origin users open. A missing origin produces a setup instruction instead of admitting a channel or sending a message. For private receivers, the operator must configure the exact origin and CIDR grant described under [Outbound policy](#outbound-policy). Certificates must validate against the system roots or the operator's additional CA file.
@@ -103,86 +101,41 @@ Protected operator configuration can grant a private target only by exact origin
 
 External URLs require the validated absolute HTTPS `NEROCD_PUBLIC_ORIGIN`. Request Host headers never supply the origin. Missing or invalid notification origin makes channel admission, explicit tests, and sends unavailable. The API returns HTTP 503 with `backup_notifications_unavailable` and a safe configuration instruction. Other hosting work remains available. Recovery links contain the project, environment, resource, and backup IDs, plus the transfer ID for an upload. They contain no authority. The destination UI must validate current authorization before selection or recovery actions.
 
-## Upstream mapping
-
-The reference checkout is Coolify commit `b12d1386f3d458618b4c579babcd1e339c6c40b3`. Its [DatabaseBackupJob](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/DatabaseBackupJob.php#L466-L544) catches dump failure separately, records local success even when upload fails, and catches notification exceptions without rewriting that success. [BackupFailed](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Notifications/Database/BackupFailed.php) and [BackupSuccessWithS3Warning](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Notifications/Database/BackupSuccessWithS3Warning.php) both select `backup_failure`. The latter's webhook reports local success and an upload warning.
-
-NeroCD replaces Laravel notification jobs with [transactional source events](../internal/store/postgres_hosting_backup_notification_events.go), [durable claims and settlement](../internal/store/postgres_hosting_backup_notification_worker.go), and the [River delivery-ID job](../internal/hostingjobs/backup_notifications.go). It preserves source receipt authority and selects channel generations in PostgreSQL before sending. The [transport](../internal/notificationtransport/transport.go) sends safe message fields and uses NeroCD recovery locators. PHP classes, serialized jobs, payload schemas, and configuration are not reused as a compatibility format.
-
-| Reference behavior | NeroCD behavior |
-| --- | --- |
-| `DatabaseBackupJob` distinguishes dump failure from successful local dump followed by failed S3 upload. Notification exceptions do not rewrite a completed backup. | Accepted source outcomes and notification delivery commit independently. Upload alerts retain the successful backup and expose safe local-copy availability. |
-| `BackupFailed` and `BackupSuccessWithS3Warning` both select `backup_failure` in `HasNotificationSettings`. | Selecting both explicit failure events provides the equivalent coverage. Uncertain outcomes have explicit text and state. |
-| [EmailChannel](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Notifications/Channels/EmailChannel.php) resolves `Team.getRecipients` and validates team membership for real notifications. | Selected recipient user IDs resolve to current active project members before each message. Tests keep this restriction too. |
-| [NotificationPolicy](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Policies/NotificationPolicy.php) permits member reads and administrator updates and tests. The Email and Webhook Livewire settings persist channel options. | Viewers read safe metadata. Project owners configure, disable, and test. Configuration remains write-only for every role. |
-| [CustomEmailNotification](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Notifications/CustomEmailNotification.php) and [SendWebhookJob](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/SendWebhookJob.php) bound queue attempts at five. Webhook jobs are encrypted and validate safe URLs at send time. | Durable attempt history and budgets survive River retries. Jobs contain only opaque IDs. Each actual dial uses the protected address policy. |
-| [HandlesNotificationResponse](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Traits/HandlesNotificationResponse.php) retries rate limits and server failures, counts configuration failures, and does not count payload failures. | Safe permanent and transient classifications retain those distinctions without storing raw receiver bodies or errors. |
-| [TracksDeliveryFailures](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Traits/TracksDeliveryFailures.php) disables after three configuration failures, resets on success or settings changes, and escalates through other channels. | Disable and reset behavior is implemented. Escalation remains an explicit gap. |
-| [Test](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Notifications/Test.php) bypasses event selectors and does not count real delivery failures. | An explicit durable test event bypasses selectors and leaves real-event counters unchanged. |
-
-The implementation uses no new cryptographic algorithm. Configuration replay compares decrypted documents inside the existing encryption boundary, rather than persisting a secret-derived public hash. Source receipts and event selection use NeroCD transactions and existing fenced runner authority.
-
 ## Verification boundary
 
-Focused local tests cover strict documents, project permissions, encryption binding, read redaction, HTTPS identity, DNS rebinding, private-address policy, redirect rejection, certificate validation, SMTP TLS, stable identifiers, and safe errors. Race tests cover the transport, hosting jobs, API boundary, and persistence cases.
+The [transactional event adapters](../internal/store/postgres_hosting_backup_notification_events.go),
+[delivery worker](../internal/store/postgres_hosting_backup_notification_worker.go),
+[transport](../internal/notificationtransport/transport.go), and
+[PostgreSQL tests](../internal/store/postgres_hosting_backup_notifications_test.go)
+define source association, current authority, retry budgets, encryption binding,
+recipient resolution, and safe failures. Local transport tests cover certificate
+validation, DNS rebinding, private-address policy, redirect rejection, SMTP TLS,
+and redaction. These checks are separate from actual backup-failure delivery.
 
-The retained backend persistence run used a task-owned pinned PostgreSQL 17.6 container, loopback publication, bounded resources, and no host mounts. The real tests cover atomic source and audit rollback, receipt replay, channel generation drift, serial sends, actor revocation, current SMTP recipients, expired claims, original retry budgets, configuration failure counters, accepted controller transitions, and River recovery. The persistence suite contains nine top-level `TestPostgresBackupNotification*` tests, including two direct-controller subcases. The last two tests cover transient SMTP TLS failures and a current member changing email address. At backend `d19b6095f8b639af2f76c856996b2abad65a09e7`, the retained race receipt `/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/retained-backend/nerocd-backup-notifications-core-repair-round1-pg.log` records all nine passing tests and `ok nerocd/internal/store 25.097s`. Its SHA-256 is `5e0e59a3efdc3b3bfb2d3f7542e14d2ebb835c7e881afb2be80200c6e4942b19`. The separate fixture owns physical dump and upload proof.
+<a id="accepted-qualification-and-durable-evidence"></a>
+<a id="accepted-scheduled-storage-alerts"></a>
+<a id="upstream-mapping"></a>
+<a id="measured-delivery-cost"></a>
 
-The broader store SQL-placement test still fails on the same thirteen files as the base commit. The notification files add no violations. This existing failure is reported rather than repaired by this feature.
+## Tests and supported environments
 
-## Accepted qualification and durable evidence
+The [runtime scenario](../internal/api/hosting_backup_notifications_runtime_integration_test.go)
+checks SMTP and HTTPS webhook configuration, explicit tests, and delivery of real
+backup and upload failures. Receipt replay and controller restart preserve
+notification identity. Opening a delivered recovery link starts no operation;
+an owner explicitly restores into a fresh database, and a distinct application
+reads the snapshot and makes new writes.
 
-The Leader accepted production `1eb2d01c9262c6bad5a03579545226189f88f1be`, tree `efd94f19a4cb615056d5ef2273f1990367533088`. The full compiled-runner gate passed with ten groups, 33 markers, six browser profiles, and no failed or skipped tests. The notification group `TestHostingBackupNotificationsCompiledRunner` passed in 178.45 seconds. The full observed interval was 675.524 seconds, measured from evidence-directory birth to terminal result modification time. It is not a precise command-start measurement.
+The physical dump-failure scenario settles as `uncertain`. Messages and browser
+history retain that state. It does not prove both definite and uncertain dump
+failure. Explicit test events separately exercise retry exhaustion, channel
+disablement, generation changes, and removed-recipient suppression.
+[Storage schedules](hosting-storage-backup-schedules.md) test actual archive and
+upload failures that settle as `failed`; uncertain storage receipts and held
+ownership have separate PostgreSQL test coverage.
 
-The notification browser configures SMTP and HTTPS webhook channels and sends distinct explicit tests. The real runner then produces a successful local dump followed by failed upload. Both transports receive that actual event with stable identities and scoped recovery links. Receipt replay and controller restart preserve delivery identity. The retained archive digest remains unchanged. Opening the link starts no operation. An owner explicitly restores into a fresh private database. A separate application reads the snapshot, writes and reads a new record, and confirms that the source remains readable.
-
-The physical dump failure uses the matching current source container and verifies a nonzero `pg_dump` daemon event. This run settles as `uncertain`, so both messages and final browser history must retain that exact source state. The contract also models definite failure, but this physical dump scenario does not prove both terminal states. The fixture separately proves retry exhaustion through an explicit webhook test, channel disablement and generation-change suppression, removed-recipient suppression, and current project authority. These explicit tests do not substitute for the two actual source events.
-
-Qualification covers native Linux arm64, PostgreSQL 17.11, trusted rootful Docker with the classic image store, and pinned Silo on one destination at explicitly trusted loopback HTTP. Notification receivers use a disposable private CA and explicit fixture TLS origins. This does not qualify production public-CA deployment or production S3 HTTPS. Other engines, architectures, providers, notification channels, deployment/resource/reachability/disk-pressure events, cross-channel escalation, in-place restore, and cross-host or disk-loss recovery remain open. No full R63, A25, or notification matrix acceptance is claimed.
-
-Durable receipts live under `/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/`.
-
-| Receipt | SHA-256 | Purpose |
-| --- | --- | --- |
-| [runtime-test](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/runtime-test) | `30b9b6da3b40ac5416f8d0281059abf96702ac618ba66447c65eadc6396e8c2a` | Named tests and actual event/browser markers |
-| [verification-summary.json](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/verification-summary.json) | `6e927682afbce3ee840444d53ca2d048575ad251cd36cc459217db536afea18c` | Accepted profile, prior-check retention, review provenance, and failed-attempt timings |
-| [integration-verification.json](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-verification.json) | `6601eda76117e515464a55a147b1cf0dd24f75c7de9a5c32474c4547b5fa9451` | Terminal pass, browser profiles, timing boundary, and preservation checks |
-| [integration-source-manifest.json](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/integration-source-manifest.json) | `59a94d39fd10986ed7c42c83666874a1959f60e0aa5eb6eac9977d4d10afff1f` | Exact production source blob and SHA-256 identities |
-| [evidence-sha256.json](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/evidence-sha256.json) | `a28d163c67819063ba6bd944a6565ebdb9d2e0b61bd62e9057653ddd6c75a7eb` | Hashes for 51 archived receipts |
-
-[Original receipt mapping](/Users/bubble/.local/share/nerocd/acceptance/postgresql-backup-notifications-20261026/accepted-runtime/original-receipt-mapping.json) preserves the original paths, revisions, and hashes for `retained-backend/`, `combined-1b01/`, and `final-integration/`. Backend race evidence remains labeled `d19b6095f8b639af2f76c856996b2abad65a09e7`. Its 31 approved backend paths, modules, migrations, store, and transport remain byte-identical. Combined checks remain labeled `1b01fa49fc9b149681832668ea2cb6d538ebe23f`, whose relevant production and dependency inputs are unchanged. Later fixture changes have focused reruns, and the final gate rebuilds the actual binaries. The earlier default-concurrency frontend timing failure remains a limit; the bounded full frontend run with `--maxWorkers=2` passed.
-
-The preservation receipt reports no actual changes to the baseline 35 containers and 210 volumes. The recorded user UI identity, image, configuration, host configuration, mounts, state, and network settings are unchanged, and task-owned resources are absent after cleanup. Documentation checks do not rerun these runtime operations.
-
-## Measured delivery cost
-
-Six earlier full candidate attempts failed while repairing the acceptance fixture. These timings are an observed subset of the work, not total feature labor. Each directory is under `/tmp/nerocd-database-runner-20261024.` and retains its gate output.
-
-| Candidate | Directory suffix | Seconds | Observed failure |
-| --- | --- | ---: | --- |
-| `1b01fa49fc9b149681832668ea2cb6d538ebe23f` | `wo28gynn` | 50.286 | TLS fixture |
-| `a0a101f8038b6fc9499fb9edd94274bcaa90ca66` | `z3i6p6mu` | 649.826 | Label selector |
-| `0f4d319d19ace21056370ca5fc84cafd87cbcb3f` | `ofjjy9xr` | 48.424 | Test actor permission |
-| `5b8023c0dc88b1ab764e4a0d9424c89b47df6d66` | `nim41rwt` | 94.185 | Recovery query order |
-| `5360e17130dfb434c20c9807a022cc0771210eb5` | `vg756gnf` | 198.310 | Stale fixture container |
-| `5b08349d6cc5286656522f44075cb7ade327f06e` | `bnzw0315` | 210.574 | Wrong history outcome assertion |
-
-Fixture reviews at `1a8b4d1b13972fef2a4665b535ed0ae6ae4bd9bc` took 52, 50, and 60 seconds concurrently. Adding those durations does not measure elapsed review time. Backend and UI work each had one earlier review repair. Token and dollar allocation is unavailable, and these measurements do not identify a model or infrastructure bottleneck.
-
-Recurring owned-upload archives use the same qualified storage runner and project
-notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
-for scheduling, safe retry, history, and source-specific failure evidence.
-
-## Accepted scheduled storage alerts
-
-The Leader accepted storage scheduling and its two failure adapters at
-`733cde407427ef745d57fbb726e001bdb1555d47` after exact-candidate code hygiene,
-specification, and critical security reviews. The
-[schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
-retains the 123.399-second gate, tree, receipt hashes, actual SMTP/HTTPS receipt
-URLs opened without mutation, and explicit application-verified new-volume
-recovery. Both physical storage failures settle as `failed`; retained local PG
-tests also cover uncertain receipts and held ownership. This extends the earlier
-PostgreSQL qualification with storage sources under the same bounded fixture
-profile. Broader events/channels, escalation, production public-CA/S3 HTTPS, and
-aggregate gates remain open. The existing user UI remains unchanged.
+The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful
+classic-store Docker, and same-destination Silo through loopback HTTP. SMTP and
+webhook receivers use a private CA and explicit fixture TLS origins. Production
+public-CA deployment, production S3 HTTPS, other engines, architectures, providers,
+events, channels, and cross-channel escalation are unqualified.

@@ -62,8 +62,7 @@ requested. Traces and automatic screenshots are disabled; explicit screenshots
 capture only nonsecret runtime configuration and secret reference metadata.
 
 The gate compares allocated PostgreSQL schema, public-table and existing-session
-inventories before and after execution. It preserves the existing 28 schemas
-and public schema, creates and drops only its test schema, and removes only its
+inventories before and after execution. It preserves pre-existing schemas, creates and drops only its test schema, and removes only its
 identity-verified disposable daemon, cgroup and image.
 
 For the failure cleanup check, also set

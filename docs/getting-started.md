@@ -1,8 +1,8 @@
 # Getting started
 
-Use one of these development-only setups from a fresh checkout. Run every
-relative command in this guide from the repository root. For a deployed
-service, use the [production guide](production.md).
+Start a local NeroCD control plane with Docker Compose, an existing PostgreSQL
+database, or a disposable memory store. Run commands from the repository root.
+Use the [production guide](production.md) for a deployed service.
 
 ## Start with Docker Compose
 
@@ -30,7 +30,14 @@ docker compose up --build -d
 
 Early readiness attempts can fail while migrations and seed loading run. The
 final successful attempt prints `{"status":"ready"}`. Open
-<http://localhost:8080> after it succeeds.
+<http://localhost:8080> after it succeeds. Sign in with the development fixture:
+email `admin@example.local`, password `admin`. These public credentials are for
+local development only.
+
+Compose starts the control plane. To deploy applications, also
+[enroll a runner and configure a destination](hosting-destinations.md), then
+[deploy an image](hosting-image-deployments.md) or
+[configure a Git application](hosting-git-resources.md).
 
 To stop the stack and retain the database, run:
 
@@ -54,7 +61,8 @@ make build
 bin/nerocd migrate --seed=false
 ```
 
-Choose one way to create local data. To create the first administrator, keep
+Choose either a new administrator or the development fixture. To create the
+first administrator, keep
 the password in an owner-only file outside the checkout. Create the file
 without putting the password in shell history, then run:
 

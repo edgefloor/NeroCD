@@ -1,25 +1,103 @@
-# Native private database runtime qualification
+<a id="native-private-database-runtime-qualification"></a>
 
-This fixture tests the production database engine directly. It does not exercise public API admission, a runner journal, credential delivery, capability advertisement, or backup restore. Physical execution requires review of the exact fixture candidate and the final engine cancellation repair, followed by explicit execution authorization. Authoring against engine base `5312afadad963869321aca5668d7e8b0bc3a21e8` is not physical qualification of that base.
+# Test native private database execution
 
-After those gates, run `bash acceptance/runtime-hosting-database/gate.sh` from the clean committed candidate checkout. It targets only Docker Desktop daemon `e37dd219-b13f-47dd-99ed-21d79442ed0c` at `unix:///var/run/docker.sock`, Linux aarch64. The compiled test binary is Linux arm64, and the guest daemon must independently report native Linux arm64/aarch64. Record that matched profile only; this fixture provides no AMD64 or emulation qualification.
+This fixture tests the production database engine directly. It does not exercise public
+API admission, a runner journal, credential delivery, capability advertisement, or
+backup restore. Run only after review and approval for the exact committed candidate and
+disposable target.
 
-The gate creates outer container `nerocd-database-runtime-20261024-db7319-dind` and local volume `nerocd-database-runtime-20261024-db7319-docker-data`, both labelled `io.nerocd.database-runtime.owner=nerocd-database-runtime-20261024-db7319`. Existing names cause an abort. The privileged rootful DinD container has one named mount at `/var/lib/docker`, with no host socket, host bind mount, host PID namespace, or published host port. It uses `docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`.
+Run `bash acceptance/runtime-hosting-database/gate.sh` from the clean committed
+candidate checkout. It targets only Docker Desktop daemon
+`e37dd219-b13f-47dd-99ed-21d79442ed0c` at `unix:///var/run/docker.sock`, Linux aarch64.
+The compiled test binary is Linux arm64, and the guest daemon must independently report
+native Linux arm64/aarch64. Record that matched profile only; this fixture provides no
+AMD64 or emulation qualification.
 
-Inside that guest, the real `NewDatabaseEngineConfig`, `PrepareDatabase`, `ApplyDatabase`, `ObserveDatabase`, and owned-volume helper run without host-check, readiness, command, or CLI replacements. Persistent roots under `/var/lib/nerocd-database-runtime-20261024-db7319` use root ownership and mode 0700. The production profile checks native privilege, UID/GID maps, the daemon-host mount namespace, socket ownership, and daemon identity. Root administrators and a forwarded or replaced Docker socket remain trusted; these checks are not cryptographic host identity.
+## Docker target
 
-The domain recipes are PostgreSQL 17.11 bookworm and Redis 8.2.10 bookworm. Their pinned indexes are `sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27` and `sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0`. Production preparation resolves the exact native arm64 child manifests `sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e` and `sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03`, then verifies the separate Docker config IDs. No other guest image is required, and no registry push occurs.
+The gate creates outer container `nerocd-database-runtime-20261024-db7319-dind` and
+local volume `nerocd-database-runtime-20261024-db7319-docker-data`, both labelled
+`io.nerocd.database-runtime.owner=nerocd-database-runtime-20261024-db7319`. Existing
+names cause an abort. The privileged rootful DinD container has one named mount at
+`/var/lib/docker`, with no host socket, host bind mount, host PID namespace, or
+published host port. It uses `docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`.
 
-Each database writes deliberately non-secret application rows or keys through a real authenticated client, then replaces A with B and C on one retained volume and one internal network. Exact image hashes, volume labels/creation time, network origin, credential references, UID/GID, mounts, absence of published ports, one current writer, and retired predecessor absence are inspected. Protected credential bytes and file contents are compared privately in memory. Ordinary output contains only continuity booleans and reference versions, never credential bytes, derived credential hashes, request headers, or bodies. Dataset checksums may be recorded.
+## Runtime assertions
 
-For B, a root-owned mode-0600 guest Unix HTTP forwarding socket suppresses exactly one successful Docker DELETE response for the verified full predecessor ID. All requests otherwise reach the real daemon through the production CLI. B must remain uncertain, and observation must refuse to settle incomplete retirement. Reopening the engine and replaying exact B must recover the same writer with exactly one actual predecessor removal and no further container create or start. C then proves another replacement. Reopened read-only observation must leave persistent engine and credential files unchanged. Missing and foreign replacement volumes, revoked mutation authority, and changed credential bytes must fail closed while the serving database remains intact.
+Inside that guest, the real `NewDatabaseEngineConfig`, `PrepareDatabase`,
+`ApplyDatabase`, `ObserveDatabase`, and owned-volume helper run without host-check,
+readiness, command, or CLI replacements. Persistent roots under `/var/lib/nerocd-database-runtime-20261024-db7319` use root ownership and mode 0700. The production
+profile checks native privilege, UID/GID maps, the daemon-host mount namespace, socket
+ownership, and daemon identity. Root administrators and a forwarded or replaced Docker
+socket remain trusted; these checks are not cryptographic host identity.
 
-Redis uses AOF with `appendfsync everysec`. Graceful replacement does not prove zero crash loss; a crash can lose roughly the most recent second of writes. The fixture does not establish backup/restore, API/runner wiring, arbitrary-host capability support, full A17, unknown-writer recovery, or workspace database behavior.
+The domain recipes are PostgreSQL 17.11 bookworm and Redis 8.2.10 bookworm. Their pinned
+indexes are `sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27`
+and `sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0`.
+Production preparation resolves the exact native arm64 child manifests
+`sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e` and
+`sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03`, then verifies
+the separate Docker config IDs. No other guest image is required, and no registry push
+occurs.
 
-The gate records commit/tree/source blobs, compiled binary identity and architecture, actual daemon profile, non-secret runtime assertions, and container/volume/image inventories. Successful complete container and volume inventories must establish absence before creation. A transport or inspect failure never establishes absence. After volume creation, the gate verifies its exact closed owner label, local driver and scope, empty options, creation metadata, and absence of other users. It pins that metadata for later checks. Container creation and start are separate operations. Before start, the gate verifies the exact full container ID, pinned image ID, labels, privilege settings, lack of host ports and namespaces, sole named mount, and the unchanged volume.
+Each database writes deliberately non-secret application rows or keys through a real
+authenticated client, then replaces A with B and C on one retained volume and one
+internal network. Exact image hashes, volume labels/creation time, network origin,
+credential references, UID/GID, mounts, absence of published ports, one current writer,
+and retired predecessor absence are inspected. Protected credential bytes and file
+contents are compared privately in memory. Ordinary output contains only continuity
+booleans and reference versions, never credential bytes, derived credential hashes,
+request headers, or bodies. Dataset checksums may be recorded.
 
-Creation attempts are recorded before their commands run. If a create response is lost or malformed, cleanup inventories the exact name and verifies the object before removing it. If an ambiguous container creation has no visible object, cleanup retains the volume because the daemon request might still finish. Successful reconciliation preserves the original failure status. Unknown or mismatched objects remain intact and cleanup fails. Matching labels and creation metadata do not prove identity against a trusted daemon administrator who can copy them.
+For B, a root-owned mode-0600 guest Unix HTTP forwarding socket suppresses exactly one
+successful Docker DELETE response for the verified full predecessor ID. All requests
+otherwise reach the real daemon through the production CLI. B must remain uncertain, and
+observation must refuse to settle incomplete retirement. Reopening the engine and
+replaying exact B must recover the same writer with exactly one actual predecessor
+removal and no further container create or start. C then proves another replacement.
+Reopened read-only observation must leave persistent engine and credential files
+unchanged. Missing and foreign replacement volumes, revoked mutation authority, and
+changed credential bytes must fail closed while the serving database remains intact.
 
-The launcher starts each command in its own process group. Cancellation and deadlines send TERM, then use bounded waits, KILL when needed, and explicit joins. The evidence records joined group IDs. Cleanup also joins the exact guest test and Docker CLI processes before removing the verified outer container and unused owned data volume. If guest joining or a later ownership check fails, a positively identified running outer is stopped and preserved for inspection. No pruning or unrelated cleanup is permitted.
+Redis uses AOF with `appendfsync everysec`. Graceful replacement does not prove zero
+crash loss; a crash can lose roughly the most recent second of writes. The fixture does
+not establish backup/restore, API/runner wiring, arbitrary-host capability support, unknown-writer recovery, or workspace database behavior.
 
-`python3 -B acceptance/runtime-hosting-database/gate_test.py` checks inventory errors, preexisting and raced foreign storage, stopped foreign users, creation and start response loss, malformed responses, metadata mismatch, and cleanup failure. SIGINT, SIGTERM, and deadline cases leave the fake compiler or create command and its child genuinely blocked until the launcher cancels and joins them. No test releases a blocked child. These tests use harmless executable stubs and never access Docker. Set `DATABASE_GATE_KEEP_EVIDENCE=1` to retain their per-case launcher evidence directories and print process IDs with exit receipts.
+## Evidence and cleanup
+
+The gate records commit/tree/source blobs, compiled binary identity and architecture,
+actual daemon profile, non-secret runtime assertions, and container/volume/image
+inventories. Successful complete container and volume inventories must establish absence
+before creation. A transport or inspect failure never establishes absence. After volume
+creation, the gate verifies its exact closed owner label, local driver and scope, empty
+options, creation metadata, and absence of other users. It pins that metadata for later
+checks. Container creation and start are separate operations. Before start, the gate
+verifies the exact full container ID, pinned image ID, labels, privilege settings, lack
+of host ports and namespaces, sole named mount, and the unchanged volume.
+
+Creation attempts are recorded before their commands run. If a create response is lost
+or malformed, cleanup inventories the exact name and verifies the object before removing
+it. If an ambiguous container creation has no visible object, cleanup retains the volume
+because the daemon request might still finish. Successful reconciliation preserves the
+original failure status. Unknown or mismatched objects remain intact and cleanup fails.
+Matching labels and creation metadata do not prove identity against a trusted daemon
+administrator who can copy them.
+
+The launcher starts each command in its own process group. Cancellation and deadlines
+send TERM, then use bounded waits, KILL when needed, and explicit joins. The evidence
+records joined group IDs. Cleanup also joins the exact guest test and Docker CLI
+processes before removing the verified outer container and unused owned data volume. If
+guest joining or a later ownership check fails, a positively identified running outer is
+stopped and preserved for inspection. No pruning or unrelated cleanup is permitted.
+
+## Local checks
+
+`python3 -B acceptance/runtime-hosting-database/gate_test.py` checks inventory errors,
+preexisting and raced foreign storage, stopped foreign users, creation and start
+response loss, malformed responses, metadata mismatch, and cleanup failure. SIGINT,
+SIGTERM, and deadline cases leave the fake compiler or create command and its child
+genuinely blocked until the launcher cancels and joins them. No test releases a blocked
+child. These tests use harmless executable stubs and never access Docker. Set
+`DATABASE_GATE_KEEP_EVIDENCE=1` to retain their per-case launcher evidence directories
+and print process IDs with exit receipts.

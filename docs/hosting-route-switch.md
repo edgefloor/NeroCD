@@ -2,13 +2,10 @@
 
 `hostingproxy.PrepareVerifiedSwitch(identity, settings, generation, previous,
 routes, requiredRouteIDs)` prepares an opt-in engine plan for switching existing
-routes to new loopback host ports. This is a reusable engine mechanism for the
-hosting R21/R25/R28 and A11/A20 requirements. The controller exposes a bounded
-route-switch operation and admits only explicitly configured agents. R17 automatic
-HTTPS deployment orchestration remains separate work. The connected application continuation is physically qualified at
-`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb` for PostgreSQL and Redis, including
-readiness rejection and strict cutover rollback with the old HTTPS app preserved.
-Its default-off options, UI/API workflow and limits are documented in
+routes to new loopback host ports. The controller exposes this operation only to
+explicitly configured agents. [Automatic HTTPS deployment](hosting-auto-deploy.md)
+uses the same verified switch mechanism. Connected PostgreSQL and Redis
+applications can preserve existing routes during redeployment; see
 [database connections](hosting-database-connections.md#preserve-existing-https-routes-during-connected-redeployment).
 
 The caller must hold the existing fenced proxy lease, authorize the settled
@@ -86,8 +83,8 @@ without that opt-in cannot admit or execute a strict operation. The optional
 version 1 `verified_switch` descriptor binds the exact loaded predecessor and
 selected prior targets into the ordinary immutable snapshot and compiler hash.
 Absent that descriptor, legacy serialization and behavior remain unchanged.
-Strict journal entries require format 9; legacy entries retain their existing
-format. Restart replay sends durable receipts and never repeats Apply.
+Strict journal entries require at least format 9; legacy entries retain their
+existing compatibility floor. Restart replay sends durable receipts and never repeats Apply.
 
 Admission locks destination ownership, the proxy, and all route resources in
 sorted order. It checks current actor authority, grants, target eligibility,
@@ -237,7 +234,7 @@ Traefik/Pebble inside a task-owned Linux DinD daemon. Its constructor selects
 `NewFixture` only in that build and with the explicit disposable-fixture marker.
 The ordinary binary has no fixture constructor or environment CA override. This
 fixture is local test-CA evidence; it does not establish public production ACME
-issuance or R17 automatic deployment orchestration.
+issuance. Automatic deployment has a [separate runtime gate](../acceptance/runtime-hosting-auto-deploy/README.md).
 
 The operator gate is `bash web/app/scripts/hosting-route-switch-fixture.sh` from
 this worktree root, after `bun run --cwd web/app build`. It first reruns the

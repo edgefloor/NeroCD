@@ -1,14 +1,15 @@
 # Durable build-agent journal records
 
-The runner journal can retain build intent and exact phase requests in additive
-format v5. This change provides durable storage only. It does not add a build
-executor, credential transport, server client, capability, or replay controller.
+Build intent and exact phase requests require journal format v5 or later.
+The [executor](hosting-build-executor.md) uses these records for crash recovery.
+[Typed output delivery](hosting-build-log-delivery.md) requires at least v7
+when log records are present. Other record families can require a later format.
 
 Existing v1–v4 journals remain readable with their prior entry semantics. Fresh
 journals still use v1; existing non-build appends retain their prior version
-rules. Appending a build record advances the format to v5, and later proxy or
-image appends cannot lower it. Removing all build records leaves v5 in place so
-older binaries do not silently reinterpret its history.
+rules. Appending a build record raises the format to at least v5. Later proxy or
+image appends cannot lower it. Removing build records also preserves that floor
+so older binaries do not silently reinterpret its history.
 
 ## Records and immutable intent
 
@@ -57,6 +58,5 @@ response, or ordinary event completion. `AckBuild` explicitly removes one record
 only after the caller verifies the exact committed receipt or establishes settled
 intent and cleanup. It does not automatically acknowledge related records.
 
-A future reviewed build replay path must reconcile these records and current
-server authority before enabling normal build execution. This storage slice
-performs no network calls and does not claim that private Git builds execute.
+The executor reconciles these records and current server authority before
+normal execution. The journal itself performs no network calls.

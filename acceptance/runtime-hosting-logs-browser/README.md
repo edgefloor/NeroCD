@@ -17,8 +17,8 @@ tests before the browser fixture. It does not use PostgreSQL 32918, 32961, or
 The browser uses actual registered API responses and the Go-embedded UI over an
 ephemeral host-loopback HTTP port. A simulated authorized producer uses runner
 claims and events through a verified test-CA TLS transport. Seeded accounts,
-resource placement, and settled deployment receipts are fixture setup. The gate
-does not qualify actual Docker output, A29, public TLS, or complete onboarding.
+resource placement, and settled deployment receipts are fixture setup. The gate does not collect actual Docker output or qualify public TLS or
+complete onboarding.
 
 The fixture-only stage and completion endpoints require the exact seeded owner
 session and Origin. They accept only fixed action names for the fixture resource.

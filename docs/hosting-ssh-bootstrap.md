@@ -1,6 +1,6 @@
 # SSH prerequisite probe and owned installer
 
-`internal/serverbootstrap.Probe` observes a prepared Linux host before a future reviewed installation.
+`internal/serverbootstrap.Probe` checks a prepared Linux host before installation.
 It returns individual prerequisites, not an enrolled runner identity, production TLS evidence, or aggregate server readiness.
 `Probe` remains read-only. Separate typed installer methods manage only a new, exactly owned NeroCD agent.
 The package exposes no arbitrary remote command method.
@@ -154,5 +154,6 @@ Unknown commands and other requests are rejected before execution. No production
 This same-host fixture TLS topology does not qualify production network reachability or production TLS.
 The SSH transport remains the bounded Docker-exec TCP relay described in the fixture contract.
 
-Application API authorization, bootstrap secret grants, reviewed installation approval, durable controller retry,
-and UI controls remain outside this package. This adapter is a hosting prerequisite, not complete SSH onboarding.
+The [SSH onboarding controller](hosting-ssh-onboarding.md) supplies API authorization,
+secret grants, installation review, durable retry, and UI controls. This package
+performs only the fixed remote probe and owned installation actions.

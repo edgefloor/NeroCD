@@ -30,7 +30,7 @@ conversion between image and Git remains unsupported.
    `queued`, `sourcing`, and `building` describe build work. `cleanup_required`
    does not prove cleanup completed. A succeeded artifact is not a running
    deployment. Select **Show build output** to read persisted typed build output.
-   General application runtime logs remain separate work.
+   For running applications, use the separate [runtime log viewer](hosting-runtime-log-viewer.md).
 
 An unconfirmed request preserves the same generations and idempotency key for an
 explicit identical retry. Changed source or placement can make that replay
@@ -105,9 +105,9 @@ redirect at execution time. Configuration writes do not perform network IO.
 
 The configuration API accepts `credential_kind: public` or `https_basic`. Private
 credentials are never part of resource configuration. An owner-created source
-grant selects a managed-secret version separately. SSH, provider installation
-integrations, webhooks and internal-LAN repository configuration remain outside
-this workflow. The operator allowlist applies to both public and private sources.
+grant selects a managed-secret version separately. SSH, provider installation integrations, and internal-LAN repository
+configuration are unsupported here. Configure [GitHub push webhooks](hosting-github-push.md)
+separately. The operator allowlist applies to both public and private sources.
 
 ## API and persistence
 
@@ -157,26 +157,18 @@ Git resource or its audit. PostgreSQL is required for this configuration workflo
 
 ## Verification boundary
 
-The earlier [configuration/admission browser tests](../web/app/tests/browser/hosting-git-resources.spec.ts)
-and [build-admission tests](../web/app/tests/browser/hosting-builds.spec.ts) retain
-their original boundaries. They do not execute that admission fixture's runner
-or seed successful artifacts. PostgreSQL tests separately cover CAS, immutable
-versions, rollback, authorization, schema guards and dump/restore.
+[Configuration tests](../web/app/tests/browser/hosting-git-resources.spec.ts) and
+[build-admission tests](../web/app/tests/browser/hosting-builds.spec.ts) check saved
+configuration and admission. PostgreSQL tests cover CAS, immutable versions,
+rollback, authorization, schema guards, and dump/restore.
 
-Accepted `4ba9fcac1b484244cb2c662e53f588c2dce6b71e` adds the real
-[private browser workflow](../web/app/tests/browser/private-git-build-deployments.spec.ts).
-It creates a new owner grant, retries the identical lost response, asserts the
-returned grant ID is used by the build, executes Dockerfile through the compiled
-CLI, reads typed output and deploys the exact artifact through test-CA HTTPS.
-It checks keyboard operation, 320/390/430/1440-pixel layouts, viewer denial with a
-real 403, and no secret reveal. The typed-output observation window records no
-legacy log reads. The private browser
-case passed in 25.0 seconds and its Go fixture in 34.03 seconds. The separate
-public browser regression passed in 22.2 seconds/30.63 seconds.
+The [private browser workflow](../web/app/tests/browser/private-git-build-deployments.spec.ts)
+creates an owner grant, retries an identical lost response, checks the grant ID
+used by the build, reads typed output, and deploys the exact artifact through
+fixture-CA HTTPS. It checks keyboard controls, 320/390/430/1440-pixel layouts,
+viewer denial with a real 403, and absence of secret reveal or legacy log reads.
 
-The private CLI [runtime fixture](../internal/runnerruntime/private_git_runtime_integration_test.go)
-qualifies Dockerfile and Railpack. The private browser fixture qualifies
-Dockerfile only. A03 remains partial until its automatic-builder UI scenario and
-declared provider breadth are qualified. These tests use isolated DNS and a
-trusted test CA, not public production ACME. They establish neither complete
-hosting parity nor workspace execution.
+The [local build fixture](../acceptance/runtime-hosting-local-build/README.md)
+covers Dockerfile and Railpack in CLI and browser modes, including a compiled
+Vite SPA variant. These tests use isolated DNS and a trusted test CA. They do not
+qualify arbitrary Railpack language providers, production ACME, or workspace execution.

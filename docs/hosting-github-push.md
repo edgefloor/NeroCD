@@ -1,10 +1,10 @@
 # Build on GitHub push
 
-Build on push admits a build for a verified GitHub commit. Deployment remains manual. After a successful build, review its commit and artifact, then use the existing deployment action. A failed build does not replace the application that is already serving.
+Build on push admits a build for a verified GitHub commit. By default, deployment is manual. Review the successful build's commit and artifact before deploying it. Owners can opt into [automatic deployment](hosting-auto-deploy.md) for an application with a reviewed healthy baseline and existing HTTPS routes. A failed build preserves the serving application.
 
-This initial implementation supports GitHub.com HTTPS repositories and one exact saved branch. Public repositories can use unauthenticated provider reads. Private repositories require an explicitly selected provider-read credential and the existing source grant. GitHub Enterprise, custom provider URLs, tags, deleted refs, forced pushes, pull requests, fork-origin events, path filters and automatic webhook registration are unsupported. Repositories that are themselves forks are also excluded in this initial slice. Excluding an owner-controlled fork repository is an initial product limitation, distinct from rejecting a fork-origin event.
+Build on push supports GitHub.com HTTPS repositories and one exact saved branch. Public repositories can use unauthenticated provider reads. Private repositories require an explicitly selected provider-read credential and the existing source grant. GitHub Enterprise, custom provider URLs, tags, deleted refs, forced pushes, pull requests, fork-origin events, path filters and automatic webhook registration are unsupported. Repositories that are themselves forks are also unsupported, including owner-controlled forks.
 
-The comparison proof supports at most 100 commits between the saved desired commit and current branch head. Larger advances block with `comparison_limit`. Full trigger parity remains a later requirement.
+The comparison proof supports at most 100 commits between the saved desired commit and current branch head. Larger advances block with `comparison_limit`.
 
 ## Prepare the runner and credentials
 

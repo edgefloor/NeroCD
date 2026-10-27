@@ -1,6 +1,8 @@
-# Dependency Exceptions
+# Dependency exceptions
 
-This file is the review register for top-level dependencies. New top-level Go or frontend dependencies must be added here with a narrow justification before `make check` should pass.
+This register records approved top-level Go and frontend dependencies. Before
+adding a dependency, document its scope, license and specific product need here.
+`make check` enforces the dependency policy.
 
 ## Go
 
@@ -26,7 +28,9 @@ This file is the review register for top-level dependencies. New top-level Go or
 
 ## Frontend
 
-The WebUI allows a narrow reviewed runtime surface for React and local shadcn/ui-style primitives. Components are copied into the repository and styled through NeroCD-owned design tokens; CDN imports and large pre-styled UI frameworks remain blocked.
+The WebUI uses React and reviewed local shadcn/ui-style components. Component
+source lives in the repository and uses NeroCD design tokens. CDN imports and
+large pre-styled UI frameworks are blocked.
 
 | Dependency | Scope | License | Justification |
 | --- | --- | --- | --- |

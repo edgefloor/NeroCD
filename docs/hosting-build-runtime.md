@@ -2,7 +2,7 @@
 
 The normal `nerocd runner` can execute public and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
 
-Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
+Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode-0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
 
 The shape below illustrates the fields; replace identifiers, digests, paths and policy with the actual trusted operator configuration. The entire policy must equal the server's frozen policy, including architecture, limits and toolchain identity. Computing a local toolchain identity does not configure the server policy.
 
@@ -129,7 +129,7 @@ trusted Linux/Docker placement and a local test CA. It does not establish arbitr
 Railpack language providers, Nixpacks, hostile-input isolation, SSH/provider
 adapters, complete onboarding, universal redaction, or production ACME. See the
 [fixture instructions](../acceptance/runtime-hosting-local-build/README.md) and
-[accepted evidence and limits](compatibility.md#accepted-foundations-and-evidence).
+[support limits](compatibility.md).
 
 ## Placement, lifecycle and replay
 

@@ -1,9 +1,11 @@
-# Source and build persistence checkpoint
+# Hosting build control
 
-This checkpoint adds an internal PostgreSQL contract for Git source configuration,
-purpose-specific credential grants, build requests, fenced receipts, and local
-image artifacts. It does not provide a usable Git deployment flow. Existing
-image resources keep their existing source and generation behavior.
+<a id="source-and-build-persistence-checkpoint"></a>
+
+PostgreSQL stores Git source versions, purpose-specific credential grants, build
+requests, fenced receipts, and local image artifacts. The server dispatches builds
+to an explicitly configured runner through River. See [agent setup](hosting-build-runtime.md)
+and [Git application configuration](hosting-git-resources.md) for the complete workflow.
 
 ## Configuration and authority
 
@@ -12,7 +14,7 @@ image resources keep their existing source and generation behavior.
 resource configuration and source history. The standalone sidecar writer is
 retired. Each version records an
 exact resource/project, repository URL, requested ref, explicit repository policy,
-credential kind, and accepted engine settings. Settings cover Dockerfile,
+credential kind, and engine settings. Settings cover Dockerfile,
 Railpack, and already prepared static files, including bounded relative context,
 Dockerfile, target, publish directory, and optional SPA fallback. Paths are
 validated semantically here; the checkout adapter and engine must still verify
@@ -36,8 +38,8 @@ secret version. It contains no credential value or encryption envelope. Public
 sources require no grant and reject an attached grant. A new secret version does
 not revoke an older selected version while the managed secret remains active.
 Secret metadata revocation revokes all versions. Grant rotation uses a new grant
-ID; grants cannot be retargeted. The separate managed credential delivery seam
-now connects to the protected credential endpoint and configured private runner.
+ID; grants cannot be retargeted. The protected credential endpoint delivers
+credentials to an explicitly configured private runner.
 Resource configuration admits public HTTPS or `https_basic`; it never accepts a
 credential value or caller-supplied policy.
 No credential recall is promised after transport delivery.
@@ -113,7 +115,7 @@ tree digest against build/source/input identity. A literal full-commit requested
 ref must match. The runner adapter bridge must durably acknowledge this receipt
 before checkout use, destroy credential/transport material before engine use,
 and replay using the committed frozen commit rather than resolving a moving
-branch. Runner execution remains a separately reviewed component.
+branch. The [build executor](hosting-build-executor.md) enforces this order.
 
 Artifact success atomically commits its receipt, artifact, state and audit. It
 stores origin `local_build`, source/input/source-receipt identity, context/request
@@ -132,22 +134,16 @@ metadata remains available under current viewer authorization.
 
 Fresh cleanup reports require the current creator, source/resource, target,
 enrollment, source authorization and live lease gates. Revoked runner, target or
-actor recovery therefore needs a future trusted
-controller recovery contract; this slice does not bypass those checks or erase
-cleanup-required history.
+actor recovery is unsupported. Cleanup-required history remains retained.
 
-## Remaining integration and evidence
+<a id="remaining-integration-and-evidence"></a>
 
-The original controller/component tests below retain their revision-specific
-boundaries. Current accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`
-adds compiled public/private execution, typed build output, same-host artifact
-deployment and a bounded Dockerfile private UI journey to test-CA HTTPS. Those
-additions do not follow from controller wiring alone. Generic public and nested
-RunSpec admission still denies internal build tasks. Startup/readiness requires
-the accepted predicates through migration 0051; the unaccepted 0052 candidate is
-not part of this accepted inventory.
-See the [accepted ledger](compatibility.md#accepted-foundations-and-evidence) and
-[current private operator setup](hosting-build-runtime.md#enable-private-https-git).
+## Verification
+
+Compiled runners support public and granted private HTTPS execution, typed build
+output, and same-host artifact deployment. Generic public and nested RunSpec
+admission denies internal build tasks. Startup and readiness validate the current
+embedded schema predicates. See [private operator setup](hosting-build-runtime.md#enable-private-https-git).
 
 The isolated PostgreSQL tests apply all embedded migrations and exercise CAS,
 request replay, DB-only callback rollback, project authorization and cross-project
@@ -156,8 +152,8 @@ and artifact receipts, daemon pinning, stale attempts, terminal replay, old sour
 generation rejection, atomic audit failure, and lease expiry across an observed
 row-lock wait. The controller tests additionally use the real River worker and
 all five authenticated HTTP phases. Test-only callback fixtures retain their
-existing rollback/security coverage. Source/engine execution and end-to-end
-Git builds still require separate combined agent acceptance.
+existing rollback/security coverage. The [compiled controller gate](../acceptance/runtime-hosting-build-controller/README.md)
+checks source and engine execution together.
 
 ## Function schema binding
 
@@ -205,7 +201,7 @@ never defaults to the control-plane host architecture.
 
 Durations use integer nanoseconds, matching Go JSON encoding of `time.Duration`.
 For example, 60 seconds is `60000000000` and one second is `1000000000`. A bounded
-example follows. Replace the two hashes with the operator's actual accepted
+example follows. Replace the two hashes with the operator's actual
 policy and toolchain identities rather than treating these sample hashes as
 verified toolchain evidence.
 

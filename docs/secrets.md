@@ -1,14 +1,15 @@
-# Secret backends
+# Secrets
 
-NeroCD stores project-managed secret values as encrypted, immutable versions.
-The managed-secret API supports metadata, creation, rotation, owner reveal, and
-irreversible revocation. Generic `RunSpec` bindings support local `runner_file`
-and development-only `env` providers; `database` binding resolution remains
-planned. Separately, the private HTTPS Git build path now delivers one authorized
-managed-secret version only for source transport. It is not application runtime
-or general build-secret injection.
+NeroCD stores project-managed values as encrypted immutable versions. The API supports
+metadata, creation, rotation, explicit owner reveal and irreversible revocation. Hosting
+uses exact versions for private HTTPS Git credentials and opt-in application runtime
+environments.
 
-## Binding Contract
+Generic `RunSpec` bindings have a separate contract. They support local `runner_file`
+and development-only `env`; generic `database` and `vault` resolution remain planned. A
+managed-secret ID cannot be used directly as a generic runner binding.
+
+## Binding contract
 
 `RunSpec.secrets` entries are references, never inline values:
 
@@ -20,14 +21,13 @@ or general build-secret injection.
   `secrets:` configuration; the runner supplies only its generated `file:`
   descriptor at deployment time.
 
-Secret values never appear in normal metadata responses, run specs, audit
-metadata, artifact records or runner primitive plans. Runtime output redacts
-known secret patterns and supported encodings; it cannot guarantee removal of
-unknown secrets or arbitrary transformations. The explicit owner reveal operation
-returns plaintext to an authorized owner.
-The separate lease-bound Git credential endpoint returns scoped material only
-to its authenticated private-capable runner. Source-grant UI controls never call
-reveal or cache a value.
+Secret values never appear in normal metadata responses, run specs, audit metadata,
+artifact records or runner primitive plans. Runtime output redacts known secret patterns
+and supported encodings; it cannot guarantee removal of unknown secrets or arbitrary
+transformations. The explicit owner reveal operation returns plaintext to an authorized
+owner. The separate lease-bound Git credential endpoint returns scoped material only to
+its authenticated private-capable runner. Source-grant UI controls never call reveal or
+cache a value.
 
 ## Providers
 
@@ -60,20 +60,20 @@ reveal or cache a value.
 
 ## Project-managed secrets
 
-Migration `0041_project_managed_secrets.sql` adds project-owned metadata and
-immutable encrypted version rows. Each project retains a unique secret name,
-even after revocation. Metadata includes the current version, active or revoked
-status, creator, and timestamps. Version metadata excludes encryption details.
+Migration `0041_project_managed_secrets.sql` adds project-owned metadata and immutable
+encrypted version rows. Each project retains a unique secret name, even after
+revocation. Metadata includes the current version, active or revoked status, creator,
+and timestamps. Version metadata excludes encryption details.
 
-Values contain 1 to 65536 UTF-8 bytes. Whitespace is preserved exactly. Each
-version uses AES-256-GCM authenticated encryption from `internal/secretcrypto`,
-bound to its project, secret ID, and version. The database stores ciphertext,
-its envelope format version, and its key ID. Normal responses and audits contain
-no value, value hash, value length, key ID, or ciphertext.
+Values contain 1 to 65536 UTF-8 bytes. Whitespace is preserved exactly. Each version
+uses AES-256-GCM authenticated encryption from `internal/secretcrypto`, bound to its
+project, secret ID, and version. The database stores ciphertext, its envelope format
+version, and its key ID. Normal responses and audits contain no value, value hash, value
+length, key ID, or ciphertext.
 
-The API requires persisted project membership or a project-scoped service
-account role. The existing system administrator override also applies. Every
-operation requires an existing, active project.
+The API requires persisted project membership or a project-scoped service account role.
+The existing system administrator override also applies. Every operation requires an
+existing, active project.
 
 | Method and path | Required role | Result |
 | --- | --- | --- |
@@ -85,18 +85,18 @@ operation requires an existing, active project.
 | `POST /api/v1/managed-secrets/{id}/revoke` | owner | Revoke at `expected_version` |
 | `POST /api/v1/managed-secrets/{id}/reveal` | owner | Return `{secret_id, version, value}` for explicit `version` |
 
-List operations accept the standard `limit` and `offset` parameters. Creation
-and rotation return HTTP 201. Other successful operations return HTTP 200.
-Stale writes and operations on revoked values return HTTP 409. Metadata and
-version history remain readable after revocation. Every managed-secret response,
-including errors, has `Cache-Control: no-store`.
+List operations accept the standard `limit` and `offset` parameters. Creation and
+rotation return HTTP 201. Other successful operations return HTTP 200. Stale writes and
+operations on revoked values return HTTP 409. Metadata and version history remain
+readable after revocation. Every managed-secret response, including errors, has
+`Cache-Control: no-store`.
 
-Creation, rotation, and revocation commit their audit with the state change.
-Each successful reveal requires a new `managed_secret.revealed` audit. Reveal
-decrypts internally, then locks the secret row, rechecks active state and the
-selected version, and commits the audit before returning plaintext. Audit or
-commit failure returns no plaintext. Reveal and revoke use the same row lock.
-Historical versions can be revealed only while the secret remains active.
+Creation, rotation, and revocation commit their audit with the state change. Each
+successful reveal requires a new `managed_secret.revealed` audit. Reveal decrypts
+internally, then locks the secret row, rechecks active state and the selected version,
+and commits the audit before returning plaintext. Audit or commit failure returns no
+plaintext. Reveal and revoke use the same row lock. Historical versions can be revealed
+only while the secret remains active.
 
 ## Private HTTPS Git source credentials
 
@@ -109,51 +109,74 @@ In **Project secrets**, create or rotate an existing secret with this JSON shape
 }
 ```
 
-Both fields are nonempty UTF-8 strings. No other fields, duplicates, trailing JSON
-or control characters are accepted. Username is at most 256 bytes and contains
-no colon. The connected Basic transport limits `username:password` to 4096 bytes.
-Keep the PAT scoped to the repository and required Git operation. Secret storage's
-65,536-byte limit does not expand this transport bound. SSH keys are not accepted
-by the connected private HTTPS workflow.
+Both fields are nonempty UTF-8 strings. No other fields, duplicates, trailing JSON or
+control characters are accepted. Username is at most 256 bytes and contains no colon.
+The connected Basic transport limits `username:password` to 4096 bytes. Keep the PAT
+scoped to the repository and required Git operation. Secret storage's 65,536-byte limit
+does not expand this transport bound. SSH keys are not accepted by the connected private
+HTTPS workflow.
 
 The server requires its configured secret keyring to decrypt the selected immutable
-version. A project owner creates a source grant for the exact saved source and
-resource generations, secret ID and explicit version. A maintainer can select an
-eligible grant for a build. Rotation does not silently change a grant's version.
-The UI reads only secret/version metadata and submits references; it does not
-reveal a value. See the [source-grant workflow](hosting-git-resources.md#request-a-private-https-git-build).
+version. A project owner creates a source grant for the exact saved source and resource
+generations, secret ID and explicit version. A maintainer can select an eligible grant
+for a build. Rotation does not silently change a grant's version. The UI reads only
+secret/version metadata and submits references; it does not reveal a value. See the
+[source-grant workflow](hosting-git-resources.md#request-a-private-https-git-build).
 
 An explicitly enabled private-capable runner requests material through protected
 controller transport under its full live build/run/lease/attempt/fence authority.
-Current source, creator, grant, secret version, runner capability and expiry are
-checked before delivery. A retry reuses the durable delivery identity and original
-window. Grant/secret revocation denies further authorized delivery, but cannot
-recall bytes already delivered or revoke a PAT at its Git provider.
+Current source, creator, grant, secret version, runner capability and expiry are checked
+before delivery. A retry reuses the durable delivery identity and original window.
+Grant/secret revocation denies further authorized delivery, but cannot recall bytes
+already delivered or revoke a PAT at its Git provider.
 
-Credential use is confined to Git source transport. The runtime/client own the
-bytes, and the checkout adapter clears them and removes transport files before
-engine use. No credential is injected into the build engine or application. Attempt-local redaction covers the password,
-Basic payload and supported encodings before durable output. Plaintext never
-belongs in a resource, RunSpec, journal, public build/grant response or audit.
-A canceled/uncertain private build retains its evidence for reconciliation;
-it must not manufacture an ordinary completion while cleanup or delivery is
-unresolved. See [private runtime configuration](hosting-build-runtime.md#enable-private-https-git).
+Credential use is confined to Git source transport. The runtime/client own the bytes,
+and the checkout adapter clears them and removes transport files before engine use. No
+credential is injected into the build engine or application. Attempt-local redaction
+covers the password, Basic payload and supported encodings before durable output.
+Plaintext never belongs in a resource, RunSpec, journal, public build/grant response or
+audit. A canceled/uncertain private build retains its evidence for reconciliation; it
+must not manufacture an ordinary completion while cleanup or delivery is unresolved. See
+[private runtime configuration](hosting-build-runtime.md#enable-private-https-git).
 
-This purpose-specific path does not implement `database` RunSpec bindings,
-container environment injection, shared variable inheritance, registry/DNS
-credentials or application runtime-secret rotation. Those remain H1 work.
+Private Git grants do not implement generic `database` RunSpec bindings, shared variable
+inheritance, registry/DNS credentials or application credential rotation. Application
+environment delivery has its own contract below.
+
+## Application runtime environments
+
+Hosting runtime configuration stores explicit public literals or exact managed-secret
+ID/version references. Owner writes and viewer reads use resource generations and
+idempotency. Saving configuration does not decrypt or inject a value. Deployment
+admission freezes the selected configuration authority.
+
+An explicitly enabled runner requests values through the protected `POST
+/api/v1/runners/hosting/runtime-environment` endpoint. Delivery checks the prepared
+authority, current actor, configuration, secret versions and original credential.
+Metadata audit commits before decryption. A retry retains its original bounded window;
+the journal stores only nonsecret references and the delivery ID. After authorization
+commits, the endpoint rechecks the original credential before returning bytes and
+rejects detected rotation.
+
+The runtime sends values to Docker through protected stdin. Revocation can deny further
+delivery but cannot recall bytes already sent to a runner or container. Docker
+administrators can inspect container environment values. Broader shared scopes and
+application credential rotation remain separate work. See the [runtime environment
+setup](hosting-destinations.md) and [runtime-environment
+fixture](../acceptance/runtime-hosting-environment/README.md).
 
 ## Encryption configuration
 
-`NEROCD_SECRET_KEYRING_FILE` optionally names an absolute path to a keyring JSON
-file. An absent setting permits startup. Create, rotate, reveal and private Git
-credential delivery then return HTTP 503. Metadata and revocation remain available. An invalid configured file
-fails startup with a safe error that excludes its path and contents.
+`NEROCD_SECRET_KEYRING_FILE` optionally names an absolute path to a keyring JSON file.
+An absent setting permits startup. Operations that require decryption or encryption,
+including create, rotate, reveal and private Git credential delivery, then return HTTP
+503. Metadata and revocation remain available. An invalid configured file fails startup
+with a safe error that excludes its path and contents.
 
-The file must be a regular file owned by the server's effective user, with mode
-0400 or 0600. Its final path component cannot be a symlink. Ancestor directories
-must be trusted. Unsupported platforms fail closed. The file is at most 8192
-bytes and has exactly these fields:
+The file must be a regular file owned by the server's effective user, with mode 0400 or
+0600. Its final path component cannot be a symlink. Ancestor directories must be
+trusted. Unsupported platforms fail closed. The file is at most 8192 bytes and has
+exactly these fields:
 
 ```json
 {
@@ -164,18 +187,18 @@ bytes and has exactly these fields:
 }
 ```
 
-A keyring contains at most 32 unique key IDs. The server loads an immutable copy
-at startup. New versions use `active_key_id`. Historical versions require their
-original keys. To change the active key, retain required historical keys in the
-file and restart the server. Replacing the active key does not re-encrypt stored
-versions. Losing a historical key prevents its values from being revealed.
+A keyring contains at most 32 unique key IDs. The server loads an immutable copy at
+startup. New versions use `active_key_id`. Historical versions require their original
+keys. To change the active key, retain required historical keys in the file and restart
+the server. Replacing the active key does not re-encrypt stored versions. Losing a
+historical key prevents its values from being revealed.
 
-Operators supply cryptographically random keys and rotate each key before
-2^32 total encryptions across all server processes. Key files and database
-backups require separate protection. Go does not guarantee erasure of plaintext
-or key material from process memory.
+Operators supply cryptographically random keys and rotate each key before 2^32 total
+encryptions across all server processes. Key files and database backups require separate
+protection. Go does not guarantee erasure of plaintext or key material from process
+memory.
 
-## Operational Rules
+## Operational rules
 
 - A runner may resolve a secret only for the currently leased run.
 - Managed-secret reveal audit must commit before returning a value. Runner

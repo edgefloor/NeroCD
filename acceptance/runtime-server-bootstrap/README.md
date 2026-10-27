@@ -1,7 +1,7 @@
 # SSH and systemd target fixture
 
-This fixture qualifies a native Linux target for later SSH-assisted hosting onboarding tests.
-It also exercises the bounded owned installer adapter. It does not test complete product onboarding or qualify a production network.
+This fixture tests the SSH probe and owned installer on a prepared native Linux target.
+Optional API and browser modes exercise prepared-host onboarding. All modes use a local fixture network.
 
 The target runs real systemd as PID 1, OpenSSH, and its own Docker 29.4 daemon with API 1.54.
 The host generates ephemeral Ed25519 host and client keys outside the image.
@@ -34,7 +34,7 @@ The caller has a ten-second deadline and cancels after a separate fixed fixture 
 Inspection and exact retry must recover the same operation and invocation ID. Wrapper process IDs receive explicit absence checks.
 The wrapper's process group is bounded to 132 seconds plus a one-second kill grace; its children are reaped before cleanup.
 The fixture compares unrelated sentinels after installation and cleanup as well as after the read-only probe.
-Source and agent/test binary hashes bind the evidence to the candidate; this remains a bounded adapter fixture, not complete onboarding.
+Source and binary hashes identify the exact adapter run. The optional modes below test API and browser onboarding.
 
 ## Run the fixture
 
@@ -81,7 +81,7 @@ Shutdown closes the listener, cancels connections, and reaps its own Docker-exec
 
 ## Pins and evidence interpretation
 
-The final base is the official Debian `bookworm-20261020-slim` image at index digest
+The base is the official Debian `bookworm-20261020-slim` image at index digest
 `sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8`.
 The Docker binary donor and preloaded sentinel use official Docker `29.4.0-dind` at index digest
 `sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`.
@@ -202,5 +202,7 @@ The guard tests inject inspect failures, identity changes, deletion failures, an
 Create-response-loss tests exercise exact-name and owner recovery without assuming a failed inspect proves absence.
 
 The tested architecture is the Docker host's native architecture only.
-Passing this fixture qualifies the bounded adapter on that native prepared target.
-It does not qualify complete NeroCD SSH onboarding, production installation or networking, fresh TLS, data rollback, or production hosting parity.
+The default mode covers the probe and installer adapter. Optional modes cover
+the API and browser onboarding flow on that prepared target. None qualifies
+production networking, public certificate issuance, arbitrary host provisioning,
+or application data rollback.

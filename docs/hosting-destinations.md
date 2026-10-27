@@ -6,8 +6,8 @@ use an active, credentialed runner with a consumed, nonrevoked enrollment,
 `compose-deploy` capability, and no `shell` capability. Admission also accepts
 the historical `compose_deploy` spelling. Migration 0044 adds canonical
 capability support to databases that already applied migration 0042.
-Apply migration 0044 before starting NeroCD. Startup and readiness reject the
-old admission function.
+Run `nerocd migrate` before starting NeroCD to apply the full migration set.
+Startup and readiness reject the old admission function.
 
 A runner can belong to one server. These records do not reserve capacity or
 change legacy scheduling.

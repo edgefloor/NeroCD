@@ -11,13 +11,12 @@ The runtime copies its authenticated token into memory and redacts its raw,
 base64, base64url, and hexadecimal forms. The token is bounded to 4096 bytes.
 The adapter accepts at most 16 known materials, each at most 4096 bytes, and
 keeps separate streaming state for the nine component and stream combinations.
-Typed output transport does not fetch credentials. The accepted private HTTPS
-runtime fetches attempt-scoped Basic/PAT credentials through a separate protected
+Typed output transport does not fetch credentials. The private HTTPS runtime fetches attempt-scoped Basic/PAT credentials through a separate protected
 endpoint and registers them for redaction before checkout. See
 [private HTTPS setup](hosting-build-runtime.md#enable-private-https-git).
-Accepted integration `4ba9fcac1b484244cb2c662e53f588c2dce6b71e` covers compiled
-CLI Dockerfile and Railpack builds; its browser workflow covers Dockerfile only.
-Provider credential integrations remain separate work.
+The [private runtime fixture](../acceptance/runtime-hosting-local-build/README.md)
+covers Dockerfile and Railpack builds through the CLI and browser. Other provider
+credential integrations are unsupported.
 Unknown secrets printed by source code or tools can appear in output.
 
 Each framer retains at most three redacted UTF-8 tail bytes between callbacks.
@@ -27,14 +26,14 @@ the engine supplies no source clock. Only normal completion with an active
 context flushes redactor and framer tails. Cancellation never starts a detached
 flush.
 
-Journal format 7 adds `build_logs` and `build_log_cursors`. Each log record
+`build_logs` and `build_log_cursors` require journal format 7 or later. Each log record
 contains one canonical typed event, its full attempt identity, and a journal
 creation time. Allocation of the event key, requested sequence, cursor, and
 append occurs under one journal mutex and one atomic persistence operation.
 A persistence failure restores the previous in-memory state. The journal
 retains its existing secure storage, 8192-entry and 8 MiB limits. Cursors count
 toward the entry bound. Versions 1 through 6 remain readable, but a journal with
-log evidence requires version 7 so earlier readers reject it.
+log evidence requires at least version 7 so earlier readers reject it.
 
 The adapter sends one retained event per request. This stays below the
 64-event and 256 KiB canonical JSON limits, including escaping. Each request

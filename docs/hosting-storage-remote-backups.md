@@ -103,74 +103,30 @@ authorize another mutation. The immutable object key is
 full-body response-loss reconciliation prevent an ACK replay from overwriting or
 uploading the archive again.
 
-## Upstream behavior and native implementation
+<a id="accepted-qualification-and-evidence"></a>
+<a id="later-scheduled-workflow-qualification"></a>
+<a id="upstream-behavior-and-native-implementation"></a>
 
-The reference is Coolify commit
-`b12d1386f3d458618b4c579babcd1e339c6c40b3` in the pinned `coolify-reference` checkout.
+## Tests and supported environments
 
-| Reference file and symbol | Behavior retained or deliberately changed |
-| --- | --- |
-| `app/Jobs/VolumeBackupJob.php::handle`, lines 148–185 | Upload follows writer recovery; failed S3 upload leaves a successful local archive and a warning |
-| `VolumeBackupJob::archiveWithStoppedContainers`, line 325 | Records running containers and resumes them through shell traps; NeroCD uses owned identities, fenced Go agents, and durable journal/recovery evidence |
-| `VolumeBackupJob::uploadToS3`, line 363 | SSH-driven helper and `mc` upload; NeroCD uses its grant-bound Go S3 client and independent transfer operation |
-| `app/Models/ScheduledVolumeBackup.php` | Saves local/S3 settings and execution history; this slice does not implement its schedules or retention |
-| `app/Jobs/VolumeBackupRecoveryJob.php::recover` | Resumes stopped writers and cleans incomplete S3 uploads. It is not an application-data restore implementation |
-| `app/Http/Controllers/Api/VolumeBackupsController.php::upsert/run` | Authorized volume backup configuration and immediate execution |
-| `app/Livewire/Project/Shared/Storages/VolumeBackups.php::save/backupNow/retryRecovery` | User configuration, immediate backup, and writer-recovery controls |
+The [storage runtime gate](../acceptance/runtime-hosting-storage/gate.sh) in
+`--remote` mode checks target creation and validation, local backup, failed-upload
+history after reload, same-archive retry, remote restore, and history reads.
+Viewer history and absent mutation controls are checked separately. Owner layouts
+use widths 320, 390, 430, and 1280 pixels.
 
-Verified download and application-checked restore into a new owned volume are
-NeroCD improvements. They are not claims of upstream dashboard restore parity.
+The runtime verifies upload after writer resumption, retry without a new archive
+helper, committed receipt replay, and corrupt/truncated download rejection before
+extraction. A restored application reads archived uploads and makes new writes in
+a distinct volume while source bytes and metadata stay unchanged. Numeric owners
+and ordinary permission modes survive restore.
 
-## Accepted qualification and evidence
+The tested profile is native Linux arm64, trusted rootful classic-store
+Docker/overlay2, one destination, pinned Silo through explicit loopback HTTP, and
+private fixture-CA HTTPS. Production S3 HTTPS, other providers, disk loss,
+cross-host recovery, in-place restore, and arbitrary mounts are unqualified.
 
-The Leader accepted source `58716fea31420f1f10258385de25e2c712e12770`, tree
-`e1f2ceaa49af387da72ac71a977f8b44bc206802`. Durable evidence is under
-`/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-storage-remote-20261026/58716fea31420f1f10258385de25e2c712e12770.Fmbuan`.
-`attempt-verification-summary.json` has SHA-256
-`25d5ffc6701efc999bd9493ea686196889fee086b5f4f631d9e7af609d4814bd`.
-
-The 87.774-second gate passed three real PostgreSQL storage-transfer groups,
-including four receipt-replay revocation cases, the local archive group in
-23.30 seconds, and the remote group in 23.88 seconds. No selected Go tests failed
-or skipped. The live browser created and validated the target, backed up,
-reloaded the failed-upload warning, retried, restored, and read history. The owner
-panel passed responsive checks at widths 320, 390, 430, and 1280. A separate
-viewer context verified history visibility and absent mutation controls. Served
-assets matched the candidate manifest without request interception.
-
-`runtime/remote-markers.json` records five GETs, one PUT, one archive helper
-start, committed receipt replay, and no upload-before-resume violation. Corrupt
-and truncated downloads never reached extraction. A distinct restored volume
-retained UID 12345/GID 12346 and file/directory modes 0640/0750. The restored
-application read the archived upload and accepted new writes while the source
-bytes and metadata stayed unchanged. Exact owned resources and processes were
-absent after cleanup. The 35 pre-existing containers, 210 volumes, and independent
-user UI identity were preserved. The existing user UI binary was not upgraded.
-
-Qualification covers native Linux arm64, trusted rootful Docker with a classic
-image store and overlay2, one same-destination runner, and pinned Silo through an
-explicit trusted loopback HTTP endpoint. Production S3 HTTPS, provider breadth,
-host disk loss, cross-host or in-place recovery, storage schedules, retention,
-and storage notification events are outside this acceptance. A25, A26, and A37 gain
-only the tested elements described here. A27 control-plane restart/restore is
-not qualified by this run. No complete requirement, acceptance,
-or matrix gate or new parity percentage is declared. Earlier failed attempts
-remain failed. The optional broader runtime race diagnostic that timed out is
-not a full CI pass. Feature-specific cost and token usage are unavailable.
-
-Recurring owned-upload archives use the same qualified storage runner and project
-notification channels. See [Recurring upload backups](hosting-storage-backup-schedules.md)
-for scheduling, safe retry, history, and source-specific failure evidence.
-
-## Later scheduled workflow qualification
-
-The direct remote-backup checkpoint above retains its original scope. Scheduled
-owned-upload backups and storage failure alerts are accepted at
-`733cde407427ef745d57fbb726e001bdb1555d47`. The
-[schedule qualification](hosting-storage-backup-schedules.md#accepted-qualification-and-evidence)
-records the 123.399-second gate, actual delivered alert links, same-archive retry,
-and application-verified new-volume restore. It retains the private-CA/native
-Linux arm64/rootful classic Docker/same-destination Silo loopback HTTP profile.
-Retention, production S3 HTTPS, arbitrary mounts, in-place or cross-host recovery,
-broader cron/events/channels and aggregate gates remain open. The existing user
-UI binary is preserved.
+[Recurring upload backups](hosting-storage-backup-schedules.md) uses the same
+archive and transfer path. [Retention](hosting-storage-backup-retention.md) and
+[individual copy deletion](hosting-storage-backup-deletion.md) have separate
+policies and destructive-operation opt-ins.

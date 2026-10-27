@@ -3,7 +3,7 @@
 `basic_image_hosting.v1` reports prerequisites for an enrolled trusted image host.
 The diagnostic does not authorize deployment, reserve capacity, or provision machines.
 It does not inspect workspaces, machine pools, VMs, or SSH targets.
-The agent collector is explicitly enabled with `--hosting-readiness`. UI presentation has a separate implementation and verification boundary.
+Enable the agent collector with `--hosting-readiness`. The **Runners** view shows its current diagnostic result.
 
 ## Agent collection
 
@@ -144,4 +144,4 @@ Checks include keyboard refresh and widths 320, 390, 430 and 1440. The existing
 synthetic browser case remains rendering evidence only. The gate owns ports 32965
 and 32966 while active and removes its exact labelled fixtures. This qualifies the
 bounded manual enrollment prerequisite; it does not configure SSH, verify production
-TLS, deploy an application, or complete the full A01 workflow.
+TLS, deploy an application, or qualify complete host provisioning.

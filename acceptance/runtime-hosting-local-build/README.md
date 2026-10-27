@@ -55,7 +55,8 @@ control. An independent HTTPS probe after failure must still return the original
 runner credentials, and the fixture API token are scanned in persisted logs and
 audits, journal files, typed output, and captured CLI output. Both build checkouts
 must be removed. The Git transport trace separately checks argv and environment.
-These checks establish absence of those known values, not universal redaction.
+These scans cover the named fixture credentials. Unknown application secrets
+can still appear in output.
 
 The infrastructure is one new owned Docker-in-Docker container with PID/cgroup
 support and an inner owned PostgreSQL. No host database port is used. Browser
@@ -85,9 +86,10 @@ source input. A viewer can read builds but cannot create a grant, request a buil
 deploy, or invoke fixture stages. Repository credentials are seeded into an
 existing managed secret; their plaintext never enters browser metadata.
 
-This qualifies the existing private Railpack static provider on a trusted Linux
-build host, not arbitrary language providers, Nixpacks, hostile-code isolation,
-complete account/secret onboarding, external GitHub, or production ACME. Managed
+This fixture covers the private Railpack static provider on a trusted Linux
+build host. Arbitrary language providers, Nixpacks, hostile-code isolation,
+complete account and secret onboarding, external GitHub, and production ACME
+are outside its scope. Managed
 HTTPS uses the local Pebble CA. Runner control uses trusted fixture loopback HTTP
 with the explicit source-credential fixture option; Git transport uses verified
 test-CA HTTPS. This is not a production control-transport qualification. Preserve failed attempts separately from passes,
@@ -154,7 +156,7 @@ unexpected CLI failure and captures bounded owned cgroup/container counters. It
 may run one separate direct-engine diagnostic with the same public source, pins
 and limits. That diagnostic is not CLI qualification. Only diagnostic mode extends
 the first browser wait to 420 seconds; normal qualification retains 180 seconds.
-Earlier development attempts failed without an identified cause, including one
-after OCI export and one during dependency installation. A later unchanged run
-passed. These unexplained failures remain a reliability limit; the fixture does
-not attribute them to a particular resource limit or dependency.
+Intermittent failures have occurred after OCI export and during dependency
+installation without an identified cause. Retain failing output and cleanup
+evidence even when a later run passes. Diagnostic success does not qualify the
+compiled CLI path.

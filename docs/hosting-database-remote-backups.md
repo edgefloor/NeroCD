@@ -152,107 +152,29 @@ or blindly imported again. Local archives remain the default recovery source.
 Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
 Remote object browsing and additional engines remain outside this workflow.
 
-## Upstream behavior and Go adaptation
+## Implementation
 
-The upstream comparison uses Coolify
-`b12d1386f3d458618b4c579babcd1e339c6c40b3` in
-`/Users/bubble/Documents/Dev/coolify-reference`. The relevant contracts are:
-
-| Upstream source | Behavior carried into this bounded workflow |
-| --- | --- |
-| [S3Storage](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/S3Storage.php), [Create](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Storage/Create.php), [Form](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Storage/Form.php) and [S3StoragesController](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Http/Controllers/Api/S3StoragesController.php) | Scoped destination configuration, hidden encrypted keys and explicit connection validation. NeroCD saves immutable project target revisions and validates from the selected runner. |
-| [DatabaseBackupJob](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/DatabaseBackupJob.php) and [BackupEdit](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Database/BackupEdit.php) | PostgreSQL custom dumps, explicit S3 selection and separate local/upload outcomes. Failed upload preserves useful local recovery. Retention and local deletion are accepted separately in the retention guide; notifications remain pending. |
-| [ImportForm](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/Database/ImportForm.php) and [StartDatabaseImport](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Actions/Database/StartDatabaseImport.php) | Select a saved S3 source and import database data. NeroCD restricts selection to a successful recorded transfer and restores into a fresh private database. Arbitrary keys, upload formats and replacement options are outside this workflow. |
-
-Upstream transfer/import uses SSH-managed Docker helpers and `mc`. NeroCD uses
-the Go AWS SDK through the protected network policy, purpose-bound credential
-delivery and durable lease/attempt/fence receipts. The
-[transfer executor](../internal/runnerruntime/hosting_database_backup_remote_execution.go),
+The [transfer executor](../internal/runnerruntime/hosting_database_backup_remote_execution.go),
 [S3 client](../internal/runnerruntime/hosting_database_backup_remote_s3.go),
-[credential service](../internal/app/hosting_database_backup_remote_credentials.go)
+[credential service](../internal/app/hosting_database_backup_remote_credentials.go),
 and [transactional admission](../internal/store/postgres_hosting_database_backup_remote_admission.go)
-implement this adaptation. It does not claim Coolify API or migration compatibility.
+implement transfer, credential renewal, and replay. Failure alerts use the separate
+[notification workflow](hosting-backup-notifications.md).
 
-## Accepted qualification and durable evidence
+<a id="accepted-qualification-and-durable-evidence"></a>
+<a id="upstream-behavior-and-go-adaptation"></a>
 
-The bounded remote workflow is accepted on main at
-`6621204964e96039558c0f267dbac50475a7ad98`, tree
-`c2dba0c2a9ff32a7e6b433283a750da82836f9fe`. The reviewed source
-`ba63eeefcb98eda32fb18184f10c794357bb114b` has that exact tree. Migration
-0077 adds versioned targets, transfers and protected credential deliveries.
-Acceptance covers native Linux arm64, PostgreSQL 17.11, trusted rootful Docker
-with its classic image store, and the pinned Silo image on one declared
-same-destination runner. Silo uses an explicitly trusted loopback HTTP origin.
-This does not qualify production S3 HTTPS, certificate deployment, cross-host
-recovery or loss of the destination's disk.
+## Tests and supported environments
 
-The [compiled-runner scenario](../internal/api/hosting_database_backup_remote_runtime_integration_test.go)
-`TestHostingDatabaseBackupRemoteCompiledRunner` and
-[live browser scenario](../web/app/tests/browser/database-remote-backups-live.spec.ts)
-prove the following sequence:
+The [runtime scenario](../internal/api/hosting_database_backup_remote_runtime_integration_test.go)
+and [browser scenario](../web/app/tests/browser/database-remote-backups-live.spec.ts)
+cover denied upload with local success, restart and reload history, same-archive
+retry without another dump, lost completion acknowledgement, actual GET after
+the local copy is withheld, and independent restored application reads and writes.
+They do not establish exactly one PUT. Target creation and validation use API
+setup. Browser history checks cover 320, 390, 430, and 1440 pixels.
 
-1. The fixture creates a versioned encrypted target and validates real
-   `ListObjectsV2` access through the API. Target creation and validation are API
-   setup, not a live-browser configuration proof.
-2. The owner selects that target and requests a backup through the embedded UI.
-   Silo allows listing but denies `PutObject`. Local success and failed remote
-   transfer remain distinct across controller restart, runner restart and browser
-   reload. The browser displays the warning and preserved local snapshot.
-3. The fixture grants upload permission without changing the target revision or
-   credentials. The owner retries through the browser. The retry keeps the same
-   archive, digest and object key, and the fixture proves no second dump was
-   admitted or planned. A lost committed upload acknowledgment replays the same
-   request and response after runner restart. This is not an exactly-one-PUT claim.
-4. The fixture verifies and withholds only its exact local content-addressed
-   archive. The browser selects the saved remote object and requests a new
-   database. A real authenticated GET republishes the archive with the same
-   SHA-256 before import. This isolates remote recovery from a local CAS cache hit.
-5. The restored database has a distinct resource, binding, volume and encrypted
-   credential identity. A distinct application reads the snapshot record and
-   writes and reads new data. The original application retains its post-snapshot
-   record and remains usable. The fixture checks completed history at 320, 390,
-   430 and 1440 pixels.
-
-Stable evidence is under
-`/Users/bubble/.local/share/nerocd/acceptance/postgresql-remote-backups-20261025/accepted-runtime/`:
-
-| Receipt | Observed result |
-| --- | --- |
-| `verification.json` and `result` | Candidate/tree above, gate exit 0, full workflow pass, four top-level groups with zero failures or skips, all 13 required markers exactly once. Verification receipt SHA-256 is `1fbb779075c7a2ef1ea4fab5911d42226c1d76db1ca693871f1f4b7854b66abc`. |
-| `runtime-results-redacted.log` | Remote group 37.46 seconds, local group 45.52, schedule group 43.27 and failures group 31.49. Corrupt, truncated and revoked subtests pass. These are group durations, not total delivery time. |
-| `backup_remote-browser-last-run.json`, `backup-browser-last-run.json`, `backup_schedule-browser-last-run.json` | All three browser profiles passed with no failed tests. The scheduled workflow is regression coverage; its earlier accepted R46-C02 credit is retained separately. |
-| `backup-preservation-reconciled.json`, `process-absence` and `verification.json` | Owned resources removed, no canonical baseline changes to 35 containers and 210 volumes, and the selected existing user UI profile unchanged. |
-| `main-integration-verification.json`, binary build-info/digest files and `evidence-sha256.json` | Fast-forward to accepted main, exact approved tree identity and durable evidence digests. Integration did not rerun the full tests because the exact accepted tree was already qualified. |
-
-The original physical files remain at
-`/tmp/nerocd-database-runner-20261024.35r17try/`. Earlier full attempts
-`/tmp/nerocd-database-runner-20261024.x0c98tlo/` and
-`/tmp/nerocd-database-runner-20261024.zkx52pev/` remain failed evidence, at
-109.88 and 21.04 seconds respectively. They do not become passes after repair.
-The reviewed repair compares credential grant deadlines with `time.Time.Equal`
-in [credential revalidation](../internal/store/postgres_hosting_database_backup_remote_credentials.go).
-Structural comparison distinguished equal instants with different UTC location
-representations. The retained credential-repair checks include real PostgreSQL
-and TLS/race coverage. Under the sibling `credential-repair/transaction-pg/`
-directory, `credential-utc-green2.json` records UTC exit 0 in 9.716 seconds and
-`credential-http-final.json` records UTC exit 0 in 7.318 seconds. Their matching
-logs retain the named checks. The final physical pass above qualifies the
-repaired tree.
-
-The [checklist](parity-checklist.json) records eight bounded validated remote
-assessments, R46-C03/C14/C16, R47-C01/C02 and R48-C01/C08/C09. The latter three
-extend the earlier local-restore evidence to this remote source without adding
-duplicate historical credit. R29-C12 remains partial for the broader managed
-credential contract. The historical audit remains 30 verified outcomes out of
-933 eligible outcomes. No complete R46/R47/R48, A25/A26/A37, database matrix,
-migration or unchanged-client gate gains acceptance.
-
-Target configuration edits preserve saved locations and historical references.
-Explicit key replacement revokes old references, so an older remote-only backup
-can become unrecoverable with those references. Local archives remain available
-under their existing authority. Independent local/S3 retention and deletion are subsequently accepted at
-`5003e16c0c0fc48d31c29f444f47a97b94e10339` within the
-[retention profile](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
-Notifications, other engines, in-place restore, broader cron grammar and
-production HTTPS qualification remain next hosting gaps. The user's existing UI still runs its
-older source; fixture qualification does not upgrade that process.
+The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful
+classic-store Docker, and pinned Silo on the same destination through explicit
+loopback HTTP. Production S3 HTTPS, certificate installation, other providers,
+cross-host recovery, and destination disk loss are unqualified.

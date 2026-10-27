@@ -1,56 +1,14 @@
-# Compiled database and connected HTTP app acceptance
+<a id="compiled-database-and-connected-http-app-acceptance"></a>
 
-## Current connected storage qualification
+# Test compiled database and connected application execution
 
-The connected image-application workflow with PostgreSQL or Redis and one owned
-upload volume is physically qualified at
-`09a432407c41671517fa342d28c07e9c79978aea`, tree
-`8f52ef4b6d8696b5fb184773e73f4170b32cf1e5`, through migration 0074 and
-journal format 17. First Connect deploys without application storage or routes.
-After it settles, attach one platform-managed named volume and explicitly approve
-replacement with interruption. Later routed replacements retain database records
-and uploads while enforcing one running volume writer.
-
-The full gate passed in 683.423 seconds on 2026-10-25. All seven Go groups and
-14 named subtests passed with zero Go skips or failures. Six serialized Chromium
-phases passed, with 30 passing tests and six explicit opposite-profile skips.
-The required readiness, proxy-failure recovery, later deployment C, HTTPS,
-capacity and cleanup markers all passed for both database engines. PostgreSQL
-resume and Redis forward completion also passed through the live owner recovery
-form, with viewer denial and keyboard review at the tested viewport sizes.
-
-The full receipt is
-`/tmp/nerocd-operation-status-retry-integrated-full-handoff.json`.
-Its exact profile is
-`/tmp/nerocd-operation-status-retry-integrated-physical-profile.json`.
-Named events and sanitized runtime output are retained in
-`/tmp/nerocd-operation-status-retry-integrated-full-group-events.json` and
-`/tmp/nerocd-operation-status-retry-integrated-full-runtime-redacted.log`.
-The receipt binds source objects, compiled binary hashes, the generated and
-served UI manifest, image identities, joined processes, and exact owned cleanup.
-The unrelated 35 containers and 209 volumes, root graph, generated UI bytes and
-independent user UI were preserved.
-
-Qualification covers one same-host native Linux arm64 trusted Docker classic-store
-fixture, PostgreSQL 17.11, Redis 8.2.10, and private fixture-CA HTTPS. The storage
-image runs as root to initialize the fresh volume. The fixture verifies bounded
-file UID/GID and modes. This does not qualify arbitrary nonroot image initialization
-or production ACME. Recovery preserves candidate-written database records and
-uploads. Resume does not undo those writes or establish compatibility with the
-previous app version. Backup/restore, disk loss, migration, cross-host or external
-storage, source builds, credential rotation, in-flight request draining and
-control-plane restart remain outside this qualification. Full R/A/matrix gates
-remain incomplete.
-
-The proxy-failure case deliberately pauses the exact owned proxy, interrupting
-unrelated fixture routes too. Their restoration is verified after unpause and
-recovery. Ordinary route preservation is checked separately without that fault.
-The earlier failed full run remains failed in
-`/tmp/nerocd-operation-snapshot-integrated-full-handoff.json`.
+This fixture runs the public API, River, compiled runner, protected secret delivery,
+and native PostgreSQL and Redis adapters. Optional profiles add a connected browser,
+existing HTTPS route continuation, and one owned upload volume.
 
 ## Run the fixture
 
-This fixture runs the authenticated public API, River, the compiled production runner, protected secret delivery, and the native PostgreSQL and Redis adapters. Source implementation and local stub tests do not qualify these behaviors. Run the physical gate only after the Leader approves the exact combined controller, runner, bridge, and fixture revision.
+This fixture runs the authenticated public API, River, the compiled production runner, protected secret delivery, and the native PostgreSQL and Redis adapters. Run the physical gate only after the Leader approves the exact combined controller, runner, bridge, and fixture revision.
 
 The launcher selects `^TestHosting(Database(CompiledRunner|CaptureCompiledRunner|UpgradeCompiledRunner)|ApplicationDatabaseCompiledRunner)$`. Every named test must pass without a skip:
 
@@ -87,7 +45,7 @@ The original three scenarios remain in the same gate. They check ordinary databa
 
 The reference behavior follows the pinned Coolify source at `b12d1386f3d458618b4c579babcd1e339c6c40b3`: PostgreSQL and Redis starts retain named mounts and destination networks; private URLs use the database identity; application deployment supplies environment and destination-network configuration. NeroCD carries these effects through its compiled Go agent, lease and fence, durable journal, and exact acknowledgments instead of SSH execution and activity status.
 
-The base profile covers one app and one database on one host, an ordinary registry image, no app storage or routes, and same-attempt lost-ACK recovery. The route profile below adds continuation of existing HTTPS routes. It does not qualify expired-authority mutation recovery, host or disk loss, native backup, archive restore, or initial routed Connect. Database metadata remains `adapter_unqualified` until a separate qualification decision. Combined live UI qualification is recorded below.
+The base profile covers one app and one database on one host, an ordinary registry image, no app storage or routes, and same-attempt lost-ACK recovery. The route profile below adds continuation of existing HTTPS routes. It does not qualify expired-authority mutation recovery, host or disk loss, native backup, archive restore, or initial routed Connect. Database metadata can remain `adapter_unqualified`; fixture results do not advertise support on arbitrary agents.
 
 Harmless local checks never contact Docker:
 
@@ -140,54 +98,10 @@ replay across runner restarts, and exact predecessor retirement after switch.
 The UI reviews all enabled application routes and renews approval when choices
 change. This is existing-route continuation, with no initial routed Connect.
 
-The connected public-image workflow is physically qualified at
-`5277ab2ff5258ae6a4aee2fb642ed925d9a827cb`, tree
-`a197801c8a7a66dd493f9eef7acd940070d845a2`, through migration 0073 and
-journal format 16. An owner can connect one PostgreSQL or Redis database on the
-same destination, then redeploy the application through UI or API while continuing
-all reviewed existing HTTPS routes. Data and credential references survive app
-replacement and database maintenance. The candidate starts and passes readiness
-while the old app remains healthy. A strict HTTPS proxy switch precedes a fresh
-finalize lease that retires the exact predecessor.
-
-The full gate passed in 333.592 seconds with five runtime groups and zero skips.
-Route failure checks took 136.17 seconds, the connected app group 89.70 seconds,
-capture 25.11 seconds, normal database recovery 24.91 seconds, and upgrade 24.64
-seconds. Four Chromium tests passed per engine, including the owner workflow in
-38.4 seconds for PostgreSQL and 37.3 seconds for Redis. Readiness and cutover
-failures preserve the old HTTPS app and database reads/writes for both engines.
-Lost yield, proxy Complete and final Complete acknowledgments replay the original
-retained attempt without repeating effects or credential delivery.
-
-The physical receipt is
-`/tmp/nerocd-connected-route-authority-integrated-physical-handoff.json`.
-Source and binary identities are retained in
-`/tmp/nerocd-connected-route-authority-integrated-sourceproof.json`, with sanitized
-output in `/tmp/nerocd-connected-route-authority-integrated-runtime-redacted.log`.
-Owned processes and resources were removed. The unrelated 35 containers and 209
-volumes retained identical inventories; root graph and 75 generated UI files were
-unchanged, and the independent user UI remained ready.
-
-Qualification covers the pinned native Linux arm64 trusted Docker classic-store
-fixture and verified private CA. Initial Connect cannot include routes. Source
-builds, application storage, cross-server binding presentation, rotation,
-database-native backup/restore, disk loss and public ACME remain unqualified.
-There is no in-flight request draining or control-plane restart proof. Full R42,
-A17 and all full requirement, acceptance and matrix gates remain incomplete.
-
-The six prior route gate failures remain failures at their original revisions:
-
-- `/tmp/nerocd-database-runner-20261024.sz62wpzi`
-- `/tmp/nerocd-database-runner-20261024.7_uzg26w`
-- `/tmp/nerocd-database-runner-20261024.er27jnw5`
-- `/tmp/nerocd-database-runner-20261024.sk6wo1zu`
-- `/tmp/nerocd-database-runner-20261024.8xkvabak`
-- `/tmp/nerocd-database-runner-20261024.r6t4_4ux`
-
-The earlier successful four-group `9a69228` checkpoint and its 174.487-second
-receipt remain historical evidence. Neither it nor the six failed route attempts
-is relabeled by the final pass. Six physical failure/repair rounds preceded the
-333.592-second pass. Those observed durations provide no cost or ETA estimate.
+The route profile checks readiness rejection, strict HTTPS cutover rollback,
+receipt replay, and exact predecessor retirement for both engines. The healthy
+predecessor keeps serving during storage-less candidate preparation. This profile
+does not qualify initial routed Connect.
 
 ## Qualified connected application uploads profile
 
@@ -196,9 +110,8 @@ The separate `NEROCD_DATABASE_CONNECTION_STORAGE=1` profile requires both
 It retains all five original runtime groups and adds the connected storage
 success and recovery groups. Every PostgreSQL and Redis result, cleanup capacity
 marker, and six serialized browser results must appear exactly once. Local unit
-and launcher tests do not qualify this profile. The current `09a4324` full receipt above
-qualifies the exact reviewed fixture. A new physical run still requires approval
-of its exact revision and complete disposable profile.
+and launcher tests do not qualify this profile. A new physical run requires approval for its exact revision and complete
+disposable target profile.
 
 The qualified full command is:
 
@@ -271,33 +184,21 @@ Acceptance of a POST or a stopped phase alone is insufficient. Resume does not
 undo candidate database writes or uploaded files and cannot promise data
 compatibility with the previous application version.
 
-The accepted storage-less `5277ab2` evidence remains labeled with its original
-revision and dependencies. It does not prove these new mounts or recovery paths.
-Database-native backup/archive, disk loss, arbitrary image initialization,
-production ACME and full parity remain outside this profile's claims.
+## Current connected storage qualification
 
-The current full run contains these observed named-group durations. They are
-measurements of this fixture, not cost or completion-time estimates.
+The full profile has passed on native Linux arm64, PostgreSQL 17.11, Redis 8.2.10,
+trusted rootful classic-store Docker, one destination, and private fixture-CA HTTPS.
+The [connection guide](../../docs/hosting-database-connections.md) documents public
+requests and recovery rules. Its [runtime tests](../../internal/api/hosting_application_database_storage_runtime_integration_test.go)
+are supplemented by the compiled API tests selected by this gate.
 
-| Named group | Seconds | Result |
-| --- | ---: | --- |
-| `TestHostingApplicationDatabaseRouteFailuresCompiledRunner` | 144.59 | passed |
-| `TestHostingApplicationDatabaseCompiledRunner` | 91.41 | passed |
-| `TestHostingApplicationDatabaseStorageCompiledRunner` | 122.01 | passed |
-| `TestHostingApplicationDatabaseStorageFailuresCompiledRunner` | 219.18 | passed |
-| `TestHostingDatabaseCaptureCompiledRunner` | 25.21 | passed |
-| `TestHostingDatabaseCompiledRunner` | 23.99 | passed |
-| `TestHostingDatabaseUpgradeCompiledRunner` | 25.98 | passed |
+The gate records source and binary identities, served UI hashes, runtime results,
+joined processes, and owned cleanup. Existing host resources and the independent
+user UI must remain intact. Missing cleanup or required test evidence fails the run.
+Compilation alone does not establish a runtime pass.
 
-The total gate includes build and setup time. It ran from
-2026-10-25T11:22:24.626169Z to 2026-10-25T11:33:48.049611Z. All 32 required
-markers occurred exactly once. The six browser skips select the opposite profile,
-with four recovery tests skipped in ordinary phases and two ordinary owner tests
-skipped in recovery phases. No required Go case skipped.
-
-The pinned PHP storage correspondence is recorded in the
-[connection guide](../../docs/hosting-database-connections.md#implementation-and-upstream-mapping).
-Its volume metadata and deployment review inform the behavior. NeroCD's Go
-runner uses immutable plans, one-writer interruption, lease/fence authority and
-durable recovery receipts instead of SSH execution. These receipts do not
-qualify upstream backup, external storage or ownership-transfer features.
+The storage image runs as root to initialize the fresh volume. Arbitrary nonroot
+initialization, production ACME, source builds, credential rotation, in-flight
+request draining, control-plane restart, external or cross-host storage, and disk
+loss are unqualified. Backup and archive restore use separate fixtures. Recovery
+preserves candidate-written data; it cannot prove compatibility with an older app.

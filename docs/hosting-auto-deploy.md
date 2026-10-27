@@ -86,13 +86,17 @@ Cleanup never releases an admitted mutation hold. It cannot overwrite newer manu
 
 Rollback, failed readiness, or uncertain proxy state cannot produce automatic HTTPS success. Existing reconciliation remains responsible for admitted effects and immutable receipts, including after demand expiry or supersession.
 
-## Qualification limits
+<a id="qualification-limits"></a>
+
+## Tests and supported environments
 
 Database fixtures exercise authorization, transactions, replay, expiry after lock waits, supersession, and recovery. Their receipt metadata does not prove real Docker execution or TLS issuance.
 
-Usable automatic hosting additionally requires the compiled Linux agent, registered API, and UI journey to agree on the same reviewed configuration. Local fixture-CA HTTPS does not qualify production ACME, public DNS, or a live GitHub installation. This policy adds no workspace infrastructure or SSH onboarding.
+Automatic hosting requires the compiled Linux agent, registered API, and UI to use the same reviewed configuration. Local fixture-CA HTTPS does not qualify production ACME, public DNS, or a live GitHub installation. This policy adds no workspace infrastructure or SSH onboarding.
 
-## Settled build failure and runtime qualification
+<a id="settled-build-failure-and-runtime-qualification"></a>
+
+## Failed builds and runtime verification
 
 A continuous runner continues after a failed build only when the exact server
 completion acknowledgment has been validated and its local journal completion
@@ -110,8 +114,7 @@ source-owned build failure, D's readiness failure, committed response loss,
 agent restart, and desired supersession before the first host mutation. The
 fixture uses a fixed test-only Git CONNECT bridge while retaining original
 origin and TLS verification. These are local trusted fixtures, not live-provider,
-browser HTTPS, public ACME, or complete hosting-parity evidence. The gate must
-pass at the final candidate before these cases are considered qualified.
+browser HTTPS or public ACME evidence.
 
 The policy GET uses a read-only repeatable-read snapshot for source, policy,
 automatic status, and owner review options. It takes no quota, placement, proxy,

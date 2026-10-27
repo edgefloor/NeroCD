@@ -1,9 +1,9 @@
 # Managed Linux proxy engine
 
 `internal/hostingproxy` manages a single Traefik instance on an enrolled Linux
-host. It is a standalone component. Public route APIs, database authorization,
-runner commands, fenced proxy holds, deployment binding selection, and WebUI
-integration are separate work. Calling this package does not authorize a route.
+host. The [controller](hosting-proxy-control.md) supplies route authorization,
+fenced proxy holds, and settled deployment targets. The [WebUI](hosting-proxy-ui.md)
+uses that controller. Calling this package alone does not authorize a route.
 The caller must first hold the controller's fenced proxy lease and derive each
 upstream from a settled healthy binding.
 

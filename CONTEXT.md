@@ -1,9 +1,11 @@
-# NeroCD
+# NeroCD domain glossary
 
-NeroCD connects durable collaborative work with applications and environments
-on machines their owners control. These terms distinguish the product concepts.
+These terms distinguish hosting resources from the later workspace and agent
+product. A definition describes the domain model, not a claim that every concept
+is implemented. See [current support](docs/compatibility.md) and the
+[full target](docs/product-spec.md).
 
-## Language
+## Terms
 
 **Task**:
 A durable user goal with collaborators, source lineage, activity, review decisions

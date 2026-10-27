@@ -1,15 +1,9 @@
-# Workspace capability ledger
+# Workspace capabilities
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
-2026-10-22. This ledger covers revision 3's workspace product. The
-[hosting ledger](compatibility.md) retains full Coolify scope at
-`b12d1386f3d458618b4c579babcd1e339c6c40b3`.
-The [specification](product-spec.md) preserves R01–R102 and A01–A66.
-The [plan](plan.md) prioritizes hosting R01–R68/A01–A37 and declared matrices.
-D0–D3 and the broader workspace/agent vision remain deferred; R69–R102/A38–A66
-are preserved future scope. Direct hosting is primary navigation/onboarding and
-requires no Task, coding agent, Workspace or operational template.
+Shared workspaces, durable collaborative Tasks, coding agents, machine pools and
+model services are deferred product scope. Ordinary hosting requires none of
+these. The [specification](product-spec.md) retains all R01–R102 and A01–A66;
+the [plan](plan.md) prioritizes hosting R01–R68 and A01–A37 first.
 
 `planned` means a target has no accepted product implementation. `partial`
 identifies specific reusable accepted foundations, not completion of a
@@ -28,9 +22,9 @@ its declared isolation requirements are met.
 
 ## Deferred product capability matrix
 
-| Capability | Status at the accepted baseline | Required target and acceptance | Track and dependency |
+| Capability | Current implementation | Required target and acceptance | Track and dependency |
 | --- | --- | --- | --- |
-| Durable Task and activity | deferred product; unaccepted backend/UI checkpoints preserved, not merged; existing `TaskRun` and operational templates are execution records | Goal/collaborators/source lineage, human/integration/agent activity, multiple runs/candidates/reviews; R69–R70, R74; A38–A39, A66 | Deferred partial R69/R74 checkpoint; no active hosting dependency established |
+| Durable Task and activity | deferred; existing `TaskRun` and operational templates are execution records | Goal/collaborators/source lineage, human/integration/agent activity, multiple runs/candidates/reviews; R69–R70, R74; A38–A39, A66 | Deferred partial R69/R74 checkpoint; no active hosting dependency established |
 | Workspace and checkpoint | planned; controlled hosting checkout is a bounded component | Owned mutable checkout, one writer, immutable portable checkpoint, excluded secrets and declared resume/restart/evidence-only limits; R71–R73; A40–A41 | D0–D1; host/guest fencing and grants |
 | Source handoff | partial foundations only; Git source receipts and immutable versions exist | Authorized patch/commit/review-branch operations, actual provider/broker ref enforcement and stable lineage; R75; A45 | D1; task grants and provider adapter |
 | Machine pool and reservations | partial hosting Server/destination/grant identity; no general Machine reservation product | Typed native/emulated capabilities, trust/location/capacity filters, atomic reservations and local enforcement; R03–R07, R76–R77; A42–A44 | D0, then P |
@@ -75,39 +69,26 @@ hosts, distributed GPU inference nor universal process/live-data migration.
 
 ## Deferred gates and preserved checkpoints
 
-D0 retains machine/authority foundations, D1 retained work and shared builds,
-D2 a useful independent environment and handoff, and D3 reviewed deployment.
-All four are deferred workspace gates, not the first public demonstration or
-prerequisites for trusted-host hosting. Their later combined acceptance still
-uses applicable hosting cases A01–A37 plus workspace A38–A66; no scope is removed.
+D0 covers machine/authority foundations, D1 retained work and shared builds,
+D2 an independent preview and handoff, and D3 reviewed deployment. All four are
+future workspace gates. Their combined acceptance still includes applicable
+hosting A01–A37 and workspace A38–A66.
 
-Preserve backend checkpoint `6a3d04bc28e950d569cbc7705a5d1dbf8df8c5f5`
-and UI checkpoint `560ef12499cd361c7c2eae5a8a7d310c33ce34a7`.
-Both are unaccepted, deferred and outside main. The UI has temporary DTO/backend
-wiring, no accepted main-navigation change, and Go/browser checks were not run.
-Do not integrate these checkpoints merely because effort has already been spent.
-No deletion, reversion or history rewriting is required.
-
-Only a bounded part that passes the [hosting-dependency test](plan.md#hosting-dependency-test)
-can restart. The active [next hosting slice](plan.md#next-hosting-slice) concerns
-runtime variables and managed-secret delivery, then runtime logs and continuous
-status. Private HTTPS checkout/build and the bounded Dockerfile UI journey are
-accepted at `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`; automatic-builder UI
-qualification, provider breadth and complete A03 remain incomplete. These hosting
-contracts add no collaboration Task, Workspace or general grant system. See the
-[hosting evidence](compatibility.md#accepted-foundations-and-evidence).
+The [plan](plan.md#preserved-deferred-checkpoints) identifies recoverable backend
+and UI experiments. They are unaccepted and outside main. Temporary DTO wiring
+and unrun Go/browser checks do not establish a Task product. Sunk effort does not
+justify integration.
 
 ## Retained accepted foundations
 
-Current reusable hosting and control-plane evidence is documented in
-[the hosting ledger](compatibility.md#accepted-foundations-and-evidence) and
-[specification section 12](product-spec.md#12-evidence-and-review-limits).
-It includes real public/private HTTPS Git CLI builds, the bounded Dockerfile
-private UI, same-host artifact deployment, controlled Traefik routing, durable
-typed build logs and the bounded output viewer. The
-Go application, PostgreSQL/River queue, authorization, audit, leases and journals
-remain the implementation foundation. No parallel job queue is proposed.
+The Go application, PostgreSQL/River, authorization, audit, leases and journals
+provide reusable implementation. [Hosting support](compatibility.md#accepted-foundations-and-evidence)
+includes public/private HTTPS Git builds, same-host artifact deployment, managed
+routing, build output, runtime configuration/status/logs and selected stateful
+recovery. These bounded paths do not establish workspace, VM, task-grant, remote
+cache, artifact-service or preview contracts.
 
-General application-runtime logs, terminals, managed database lifecycle,
-persistent data recovery, provider events and complete Coolify compatibility
-remain planned hosting dependencies. Direct hosting stays usable without a Task.
+Any workspace change must first pass the
+[hosting-dependency test](plan.md#hosting-dependency-test). Build delivery,
+permissions, checks, approval or observation work can satisfy a specific hosting
+need without creating the broader workspace platform.

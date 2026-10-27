@@ -66,9 +66,8 @@ The browser gate in `acceptance/runtime-hosting-logs-browser/` uses the real
 registered API, PostgreSQL, cookie sessions, and embedded built UI. Its producer
 simulates an authorized runner through verified test-CA TLS claim/event calls.
 Accounts, resources, and settled deployment receipts are fixture setup. This
-qualifies the viewer/API workflow, not account onboarding, real Docker log
-collection, production TLS, or A29. Combined actual-collector qualification is a
-separate acceptance gate.
+covers the viewer and API. The combined gate below covers real Docker
+collection. Neither gate qualifies account onboarding or production TLS.
 
 The optional actual-collector browser path is
 `NEROCD_RUNTIME_LOGS_ACTUAL_BROWSER=1 bash acceptance/runtime-hosting-logs/gate.sh`.

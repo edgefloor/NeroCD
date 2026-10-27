@@ -1,17 +1,45 @@
 # Operational metrics
 
-`GET /metrics` is available only to a `system_admin` bearer session. In production it remains on the server's private proxy network; the production Compose profile does not publish a metrics port.
+`GET /metrics` requires a `system_admin` bearer session. Keep it on the private
+proxy network in production. The production Compose profile publishes no metrics
+host port.
 
-The endpoint exposes a fixed, low-cardinality vocabulary: HTTP method/route/status classes, PostgreSQL pool state, queue age/depth, leases, runner heartbeat age, terminal run duration/status, deployment/health/rollback aggregates, bounded runner journal/retry telemetry, and the latest backup outcome. It never labels metrics with an ID, name, path, URL, token, project, service, environment, run, lease, runner, request body, or database error.
+## Metric contents
 
-Runner `retry_count` and `renew_failures` are monotonically increasing process-lifetime counters, saturated at `100000` before each authenticated latest-state report. A retry is counted only when a transient journal/provenance/log/event/terminal/renewal/heartbeat request has passed its bounded backoff and will actually be attempted again; initial successes, ordinary polling, and no-work claims do not change it. A renewal failure is counted for every failed `/renew` attempt, including a transient failure that later recovers and an authority denial that stops the attempt. Counter values contain no failure detail; runner restart deliberately resets them to zero.
+Metrics use a fixed set of labels for HTTP method, route and status classes.
+They include PostgreSQL pool state, queue age/depth, leases, runner heartbeat
+age, terminal run duration/status, deployment/health/rollback aggregates,
+bounded runner journal/retry telemetry and the latest backup outcome.
 
-Suggested alerts and first actions:
+Labels never contain IDs, names, paths, URLs, tokens, projects, services,
+environments, runs, leases, runners, request bodies or database errors.
 
-- Queue age above the deployment SLO or queue depth steadily rising: inspect authenticated runs and runner heartbeats; add/repair runners before retrying work.
-- Active leases with growing expired leases or renew failures: inspect runner connectivity and clock/network health; let fenced reaper recovery complete before manual intervention.
-- Oldest runner heartbeat beyond two lease TTLs: verify runner enrollment/credential and host health; do not rotate a credential until the old runner is stopped.
-- Deployment health failures or rollback failures: inspect the deployment/audit history through the authenticated API. A rollback failure is operator-visible and requires target reconciliation, not a blind retry.
-- Backup age above policy or last result `failure`: inspect the bounded command outcome in the invoking supervisor logs. Failures before a database URL can be admitted cannot be persisted safely; they must be retained by that supervisor. Verify the private archive root and owner database connectivity before retrying.
+Runner `retry_count` and `renew_failures` increase over the process lifetime and
+saturate at `100000` before each authenticated latest-state report. Restarting
+the runner resets them to zero. Neither counter contains failure details.
 
-Run `make observability-gate` for the renderer/store/API contract plus real Compose runner lifecycle and production-shaped backup metrics scrapes. It verifies anonymous denial, fixed-label redaction, durable lifecycle aggregates, and backup observation in isolated disposable topologies.
+A retry counts only after a transient journal, provenance, log, event, terminal,
+renewal or heartbeat request has passed bounded backoff and is about to be tried
+again. Initial successes, ordinary polling and no-work claims do not count.
+Every failed `/renew` attempt increments `renew_failures`, including a transient
+failure that recovers and an authority denial that stops the attempt.
+
+## Alerts and first actions
+
+| Observation | First action |
+| --- | --- |
+| Queue age exceeds the deployment SLO or depth keeps rising | Inspect authenticated runs and runner heartbeats. Repair or add runners before retrying work. |
+| Active leases accompany rising expired leases or renewal failures | Check connectivity, clocks and network health. Allow fenced reaper recovery before manual intervention. |
+| Oldest runner heartbeat exceeds two lease TTLs | Check enrollment, credentials and host health. Stop the old runner before rotating its credential. |
+| Deployment health or rollback fails | Read deployment and audit history through the authenticated API. A rollback failure requires target reconciliation before retry. |
+| Backup age exceeds policy or last result is failure | Read the invoking supervisor's bounded command outcome. Verify the private archive root and owner database connectivity before retry. |
+
+Failures before database URL admission cannot be persisted safely. The invoking
+supervisor must retain them in its own logs.
+
+## Verify metrics
+
+Run `make observability-gate` for renderer/store/API checks and real Compose
+runner-lifecycle and production-shaped backup scrapes. The gate checks anonymous
+denial, fixed-label redaction, durable lifecycle aggregates and backup observation
+in isolated disposable topologies.

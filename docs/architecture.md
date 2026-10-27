@@ -1,20 +1,18 @@
 # Architecture
 
-Hosting-first documentation baseline: `65311f30470f34d0d26165d1cd13325fbd05fca0`.
-Historical accepted application/source assessment: `4ba9fcac1b484244cb2c662e53f588c2dce6b71e`,
-2026-10-22. The supplied `09d65d4ddcbfdf27e97158a9c08beb02a721818c`
-and earlier `a763a90b3896257b784c9498d01650ccdad2427a` are historical.
-The [specification](product-spec.md) retains both targets. Hosting parity is the
-active priority: R01–R68/A01–A37 and declared matrices first. Direct hosting
-remains primary navigation/onboarding; Task/Workspace work is deferred.
-The [plan](plan.md), [workspace ledger](workspace-capabilities.md) and
-[hosting ledger](compatibility.md) distinguish accepted behavior from proposed design.
-The [glossary](../CONTEXT.md) fixes Task, Run, Workspace and Environment terminology.
+NeroCD has a Go control plane, PostgreSQL persistence, enrolled Go runners and an
+embedded React/TypeScript UI. The control plane records desired state and
+authority. Runners execute work on the selected application host.
+
+Hosting is the current delivery priority. The [product specification](product-spec.md)
+defines the full target, [compatibility](compatibility.md) describes tested
+support, and the [plan](plan.md) orders remaining work. The
+[glossary](../CONTEXT.md) defines Task, Run, Workspace and project environment.
 
 ## Current implementation
 
 NeroCD records automation intent and authorization, leases work to enrolled
-runners, and retains operational evidence. Accepted hosting extends those execution foundations.
+runners, and retains operational evidence.
 
 | Component | Responsibility |
 | --- | --- |
@@ -32,26 +30,19 @@ runners, and retains operational evidence. Accepted hosting extends those execut
 
 ## Connected stateful hosting
 
-Current connected application and owned-upload-volume qualification uses physical
-source `09a432407c41671517fa342d28c07e9c79978aea`, with documentation accepted at
-`3b192e4f9602d606f9f51c921adbce8870401588`, through migration 0074 and journal 17.
-One image application connects to PostgreSQL or Redis without storage first, then
-attaches one owned named volume through acknowledged interruption. The qualified
-UI/API/runner workflow covers routed replacement, failure recovery and a later
-fresh deployment retaining database records and uploads. See the
-[connection guide](hosting-database-connections.md) for the exact profile,
-683.423-second full pass, historical evidence and limits. Qualification uses a
-trusted native Linux arm64/root-image fixture and private-CA HTTPS. It does not
-qualify production ACME, arbitrary nonroot initialization, database-native
-backup/restore, disk loss, cross-host/external storage or full R/A/matrix parity.
+The [connected application workflow](hosting-database-connections.md) combines
+one image application, PostgreSQL or Redis, and one owned named upload volume on
+the same destination. It is qualified on a trusted native Linux arm64 profile.
+Public ACME, arbitrary nonroot initialization, cross-host storage and disk-loss
+recovery remain outside that qualification.
 
 The controller freezes resource, binding, storage and route inputs in immutable
-plans. The enrolled Go runner stops the exact predecessor before starting the
-replacement as the sole volume writer. Ready yield, strict proxy application and
-fresh finalization settle separate durable receipts. Offered recovery actions
-require fresh reviewed authority and preserve candidate-written records/uploads;
-resume does not undo data writes. The earlier storage-less replacement retains
-its distinct candidate-before-retirement contract.
+plans. For an owned writable volume, the runner stops the exact predecessor
+before admitting the replacement as sole writer. Ready yield, proxy application
+and finalization settle separate receipts. Recovery needs fresh reviewed
+authority and preserves candidate-written records and uploads. It does not undo
+data writes. Storage-less replacement has a different candidate-before-retirement
+contract.
 
 ## Flow
 
@@ -95,94 +86,37 @@ passwords remain the recovery path.
 
 ## Current limits
 
-NeroCD does not claim SAML, LDAP, SCIM, group mapping, automatic provisioning,
-multi-provider OIDC, general scheduling or parallel workflows. Project-managed
-encrypted secret storage and purpose-specific private Git delivery are available.
-Application runtime-secret injection and external providers remain incomplete.
+Hosting capabilities require explicit server policy, runner configuration and
+matching persisted capabilities. A saved resource or enrolled runner does not
+establish host readiness. Build and shell execution cannot be combined.
 
-The accepted image API/UI runs anonymous public images with ordinary HTTP
-readiness on loopback ports. Automatic per-release port allocation retains
-earlier containers; explicit same-port replacement can interrupt service.
-Selected retained cleanup uses exact authority and preserves protected routes,
-unresolved effects and ownership holds. Allocating a new port does not switch
-public traffic. See [image execution](hosting-execution.md) and
-[deployment UI](hosting-image-deployments.md).
+The current supported paths and their limits are in
+[compatibility](compatibility.md). Key distinctions are:
 
-The [controlled checkout](hosting-source-checkout.md) and
-[local build engine](hosting-build-engine.md) are usable components with separate
-contracts. Internal [source/build persistence](hosting-build-control.md) stores
-source generations, credential grants, immutable requests, fenced receipts and
-local OCI artifact identities. The accepted [Git configuration API/UI](hosting-git-resources.md)
-admits public HTTPS under an operator allowlist and stores atomic source/version
-references through migration 0049. Reads resolve the exact immutable version;
-CAS review exposes all current settings. PostgreSQL is required, and configuration
-performs no network fetch. The private HTTPS control plane now accepts
-`https_basic` configuration, owner-created/revoked source grants and gated build
-requests. Its typed credential endpoint/client enforce live authority, bounded
-expiry and protected transport; private capability is rechecked at admission,
-replay, dispatch, claim and delivery. Explicit private configuration and matching
-persisted capability now enable compiled CLI checkout/build. The WebUI selects
-owner grants without revealing values. Dockerfile UI and CLI Dockerfile/Railpack
-qualification are bounded parts of A03. See the
-[accepted control-plane evidence](compatibility.md#accepted-foundations-and-evidence).
-Separate [build UI/API operations](hosting-git-resources.md) now request,
-inspect and cancel builds through the production controller and River handler.
-The [normal agent runtime](hosting-build-runtime.md) connects source checkout,
-source receipts, local engine and artifact completion. The separately enabled
-[same-host local deployment runtime](hosting-local-build-runtime.md) applies
-that exact artifact through the hosting lifecycle. Its [UI](hosting-build-deployments.md)
-requires current source/resource generations and explicit review; it does not
-rebuild, transfer an image or select a route automatically.
+- Image readiness uses ordinary HTTP on loopback. A new port does not switch
+  public traffic. Fixed-port replacement can interrupt service.
+- Public and granted private HTTPS Git builds produce immutable local artifacts.
+  Same-host deployment applies the exact recorded image without rebuilding or
+  transferring it. Remote builders, registry publication and shared cache remain
+  separate work.
+- Private Git credentials are confined to source transport. Checkout confirms
+  credential-file removal and byte clearing before build use. A build can then
+  outlast credential expiry, but remains subject to its deadline and cancellation.
+- Runtime environment delivery pins configuration and secret versions. It audits
+  metadata before decryption and cannot recall bytes already delivered. Docker
+  administrators can inspect container environments.
+- Build output, runtime logs and status observations have separate retention and
+  authorization contracts. Status can become stale or unknown. Redaction covers
+  known material and does not guarantee arbitrary output is secret-free.
+- Managed Traefik routing has private-CA HTTP/HTTPS fixture coverage. Public ACME,
+  DNS-01, wildcard/custom certificates and Caddy still need qualification.
+- Restoring the control plane invalidates stale execution authority and records
+  binding/proxy holds. Read-only observation cannot prove that an old process
+  stopped or clear a hold.
 
-[Typed build output](hosting-build-log-delivery.md) is redacted before durable
-append, acknowledged with exact full-authority/content receipts and drained
-before build completion. Journal format 7 retains requested-sequence cursors.
-Historical exact log receipts do not authorize new output or execution. The
-[opt-in viewer](hosting-build-logs.md#resource-build-output-viewer) bounds local
-plaintext and revalidates project access. This is separate from application-runtime
-logs, terminals and continuous health, which remain planned.
-The [private Git credential component](hosting-build-credentials.md) authorizes
-and decrypts the exact immutable secret version for a live sourcing attempt.
-Its audit-backed window and byte ownership now underpin the accepted typed
-credential endpoint/client and explicit private runtime. Its attempt-local
-redactor includes the password, Basic payload and supported encodings before
-journal output. Source-grant UI uses only secret metadata and explicit versions. The [source checkout contract](hosting-source-checkout.md) keeps the
-credential window through fetch, tree validation, committed receipt and confirmed
-transport-file removal/byte clearing. Those credentials are cleared before the
-use/build callback; final checkout cleanup follows use. Once transport cleanup
-is confirmed, a build may outlast credential expiry, while the parent operation
-deadline, cancellation and budgets still govern use.
-The [optional River BuildID adapter](hosting-build-jobs.md) requires a
-real supplied handler, now provided by the configured production controller.
-Build admission stays disabled until the server has an explicit trusted policy.
-The agent separately requires a strict owned mode-0600 build configuration,
-matching enrolled `hosting_build_v1`, exact placement and matching frozen policy.
-Shell and build execution cannot be combined.
-
-The [proxy backend](hosting-proxy-control.md) authorizes hostname grants and
-whole-proxy generations, derives settled binding targets, and dispatches typed
-work through River. It rechecks [persisted mutation authority](hosting-proxy-auth.md).
-The explicitly enrolled Linux agent now executes through the Traefik engine,
-journaling preparation, intent and result before reporting. Exact committed
-receipts replay without repeating admitted effects. Real combined fixtures cover
-lost responses, retained holds, control-plane outage and autonomous TLS renewal.
-Image-only enrollment presets remain unchanged.
-
-The [managed routing UI](hosting-proxy-ui.md) configures proxies, hostname grants
-and routes against settled healthy image releases. Real browser coverage reaches
-HTTP and certificate-verified HTTPS with isolated fixture DNS and a trusted local
-CA. It also covers revocation, withdrawal, disable, role denial and conflict
-recovery. This is bounded image-to-routing evidence, not public DNS or production
-ACME verification. Desired and loaded state, HTTP readiness and trusted HTTPS
-observations stay separate and are not continuous monitoring. DNS-01, wildcard
-certificates, custom certificates and Caddy remain absent.
-
-Restore records independent holds for bindings and configured proxies. Read-only
-observation cannot prove that a pre-backup command stopped and cannot clear
-those holds. Trusted journal/process recovery and safe resumption remain
-required. No complete Coolify parity or D0–D3 workspace milestone is claimed. R65 now
-retains a later durable Task collaboration view alongside direct hosting;
-that future view does not lead the current hosting navigation or delivery order.
+OIDC supports one pre-provisioned issuer. SAML, LDAP, SCIM, group mapping and
+automatic provisioning are outside current support. General schedules, terminals,
+external secret providers and the broader workspace product remain incomplete.
 
 ## Active target hosting architecture
 
@@ -284,57 +218,31 @@ separate claims, each requiring its own evidence.
 ## Hosting job infrastructure
 
 `internal/hostingjobs` wraps River OSS v0.44.1 with its pgx v5 driver. It owns the
-`hosting_control` queue and typed `hosting.prepare_deployment.v1` arguments,
-which contain only `operation_id`. Transactional insertion shares the caller's
-application database transaction. River does not replace the existing fenced
-runner execution protocol.
+`hosting_control` queue. Typed deployment jobs carry `operation_id`, and build
+jobs carry BuildID. Transactional insertion shares the application's database
+transaction, so intent, audit and queued work commit together.
 
-The PostgreSQL server starts real image and proxy dispatch consumers after
-schema validation. Consumers resolve immutable snapshots and exact destinations
-into work for the existing fenced runner protocol. They do not execute Docker
-in the control-plane job worker. Queue completion is distinct from workload or
-proxy completion. The BuildID worker registers when the supplied handler
-implements its build interface. The accepted production controller supplies
-that handler, and the explicitly enabled compiled agent executes public builds.
-Private HTTPS credential delivery, configured runtime checkout and owner-grant UI
-are now accepted within the [private runtime limits](hosting-build-runtime.md#enable-private-https-git). Same-host artifact
-deployment is accepted through the existing operation queue and an explicitly
-enabled agent; it creates no second queue.
+After schema validation, the server starts dispatch consumers. They resolve
+immutable snapshots and exact destinations into fenced runner tasks. Docker
+execution stays on the runner. Queue completion is distinct from workload or
+proxy completion. The configured production controller supplies the build handler;
+public/private builds and same-host artifact deployment use the existing queue.
 
-The accepted nonsecret [phase protocol](hosting-build-protocol.md),
-[build phase journal](hosting-build-journal.md) and
-[HTTP client](hosting-build-client.md) provide exact messages, immutable local
-intent and acknowledgment validation. Historical receipts do not authorize new
-effects. The client does not retry automatically, and status proof must match
-retained intent before local acknowledgment. The accepted controller installs
-nonsecret phase endpoints, and the compiled
-agent uses them and the journal around source-to-engine execution. No default
-build capability is advertised without validated local configuration. Live
-completion atomically settles build/task/lease evidence; uncertain intent and
-cleanup records fail closed rather than silently rebuilding.
+The [phase protocol](hosting-build-protocol.md), [journal](hosting-build-journal.md)
+and [HTTP client](hosting-build-client.md) retain immutable intent and validate
+acknowledgments. Historical receipts authorize replay of the recorded result,
+not new execution. Uncertain intent or cleanup blocks completion and rebuilding.
 
-The owner migration CLI applies River's pinned migration bundle under the same
-advisory lock as native migrations. Each River version and its adapter checksum
-commit together. Startup never applies migrations. The wrapper validates the
-complete pinned set before its explicit `Start`. Native migration 0048
-additively binds build functions to their owning schema without changing 0047
-or earlier checksums. Accepted PostgreSQL integration includes nondefault-schema,
-shadow-object and real dump/restore regression coverage at `836a3a92`.
-That persistence checkpoint alone did not install build execution. Current
-accepted controller/runtime evidence is recorded in the [ledger](compatibility.md#accepted-foundations-and-evidence).
-It now includes public builds, explicit same-host artifact deployment and durable
-build output and private HTTPS control/runtime/UI contracts. Runtime variables,
-broader managed-secret injection, runtime logs/status and the complete hosting
-and workspace journeys remain planned.
-
-See [Hosting job infrastructure](hosting-jobs.md) for lifecycle, compatibility,
-and integration contracts.
+The migration CLI applies River's pinned bundle under the native migration
+advisory lock. Schema versions and adapter checksums commit together. Startup
+requires compatible native and River schemas. Backup manifests retain both
+identities; restore invalidates active authority and preserves ownership holds.
+See [hosting job infrastructure](hosting-jobs.md) for the protocol details.
 
 ## Deferred target workspace architecture
 
-This section preserves later revision 3 scope. It does not lead delivery or
-make Task, Workspace, agent, reservations or VM execution prerequisites for
-supported hosting. Any bounded part must first pass the [hosting-dependency test](plan.md#hosting-dependency-test):
+The workspace architecture is future scope. Supported hosting does not require
+a Task, Workspace, agent, reservation system or VM backend. Any bounded part must first pass the [hosting-dependency test](plan.md#hosting-dependency-test):
 name the hosting requirement, need now, minimum scope and acceptance test.
 General future usefulness and sunk effort are insufficient. Existing hosting
 Server, resource, lease and operation records are reusable foundations, not

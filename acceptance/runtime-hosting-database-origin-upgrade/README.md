@@ -1,8 +1,10 @@
-# Private database origin and hostname upgrade fixture
+<a id="private-database-origin-and-hostname-upgrade-fixture"></a>
 
-This fixture exercises the accepted private engine directly on native Linux arm64.
+# Test private database origin and hostname upgrades
+
+This fixture exercises the private database engine directly on native Linux arm64.
 It does not qualify the API, River task, runner admission, credential transport, or
-R42 application binding workflow. Its materialization receipt is local test
+the application/database connection workflow. Its materialization receipt is local test
 context derived from actual Docker volume evidence, not controller provenance.
 
 For PostgreSQL 17.11 and Redis 8.2.10, it creates a real v1 writer and writes A as
@@ -51,8 +53,7 @@ database test. These checks do not contact Docker or install packages.
 
 ## Separately authorized physical run
 
-After exact-SHA code hygiene, specification and critical security reviews, obtain
-Leader authorization for this exact external fixture, then run:
+After review and approval for the exact committed candidate and Docker target, run:
 
 ```sh
 bash acceptance/runtime-hosting-database-origin-upgrade/gate.sh
@@ -70,7 +71,7 @@ filesystem mounts and no published ports. It mounts only the exact newly owned
 Docker data volume. Database images are pulled by production digest-pinned
 preparation inside the nested daemon. The launcher builds only the static runtime
 test binary, copies it into the outer container, and selects exactly
-`^TestHostingDatabaseOriginUpgradeNativeRuntime$`. It never touches PG32967.
+`^TestHostingDatabaseOriginUpgradeNativeRuntime$`. It does not use the existing host PostgreSQL service.
 
 The daemon host must support `ps -eo pid,uid` with numeric PID and UID columns.
 The pinned Alpine image's BusyBox `ps` rejects `uid`, so the launcher provisions
@@ -79,6 +80,8 @@ inside its disposable daemon before any database test. Production process
 ownership still requires every observed UID to equal 999, the inspected host PID
 to occur in the list, and container identity to remain stable across inspection.
 The preflight checks tool support, while the database test checks actual ownership.
+
+## Guest package requirements
 
 The complete package closure is fixed in `gate.sh`, including archive SHA-256
 identities. Its versions are:
@@ -118,6 +121,8 @@ not establish support for other Docker hosts or Alpine versions. Package fetchin
 is part of the separately reviewed and authorized physical run, and never installs
 anything on the outer host. The outer image, mount, network and port policy remain
 the fixed profile described above.
+
+## Evidence and cleanup
 
 Evidence is bounded under a new `/tmp/nerocd-database-origin-upgrade-20261024.*`
 directory: candidate/tree/source blobs, binary hash/build info, daemon profiles,

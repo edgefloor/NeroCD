@@ -1,7 +1,7 @@
 # Public image deployment
 
-Image deployment requires PostgreSQL, the native schema through migration 0046,
-the River schema, and the server's live hosting worker. Memory mode returns
+Image deployment requires PostgreSQL, the current native and River migrations,
+and the server's live hosting worker. Run `nerocd migrate` before server startup. Memory mode returns
 `503 hosting_unavailable` before accepting a deployment. River dispatch creates
 one typed `image_deploy` task for the resource's bound runner. A River job finishing
 does not mean the deployment succeeded; read the hosting operation for its outcome.
@@ -12,8 +12,7 @@ uses a local Unix Docker endpoint, defaulting to `unix:///var/run/docker.sock`.
 Set `--image-docker-endpoint` to another local Unix socket when required. The
 same explicit endpoint is used for daemon probing, pulling, inspection and apply.
 Each engine instance has an empty, owner-only registry configuration; ambient
-registry credentials and Docker contexts are not inherited. Only anonymous
-public image pulls are supported in this slice.
+registry credentials and Docker contexts are not inherited. Only anonymous public image pulls are supported.
 
 ## Request and inspect a deployment
 
@@ -123,18 +122,19 @@ conflicting deployment merely because the lease expired. A previously committed
 exact completion receipt remains replayable; expiry does not recreate cleanup work.
 
 
-**Restore recovery remains blocked in this slice.** A restored binding reports
+Restore recovery is blocked. A restored binding reports
 `restore_ownership_held: true`. A database backup can predate an admission while
 an old Docker command still runs. An absent admission row, an empty new journal,
 or a point-in-time empty Docker listing cannot prove that command has stopped.
 Read-only reconciliation therefore cannot clear restored ownership. Trusted local
 journal and process recovery proof is not yet implemented; there is no admin
 bypass. Preserve the runner's journal and keep the binding blocked pending that
-recovery workflow. This limitation prevents claiming restore recovery or the full
-hosting milestone is complete.
+recovery workflow.
 
-The current slice does not provide TLS, public routing, private registry
-credentials, variables or zero-downtime replacement.
+Configure public routing and TLS through the [managed proxy](hosting-proxy-ui.md).
+Runtime variables are saved separately in the application's **Runtime configuration**
+section and require a new deployment. Private registry credentials and
+zero-downtime same-port replacement are unsupported.
 
 ## Disposable Docker verification
 
