@@ -324,7 +324,7 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 				w.WriteHeader(400)
 				return true
 			}
-			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "redeploy": "redeployed", "app_recheck": "app_checked"}[phase]
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked"}[phase]
 			if v.Action != expected {
 				w.WriteHeader(409)
 				return true

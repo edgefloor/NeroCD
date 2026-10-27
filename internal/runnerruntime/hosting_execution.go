@@ -19,7 +19,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 	if op.ApplicationDatabase != nil || op.DatabaseMaintenance != nil || op.Snapshot.ApplicationDatabase != (domain.HostingApplicationDatabaseRef{}) || op.StorageArchive != nil || runner.HostingJournalUsesDatabase(runner.JournalHosting{Plan: op.Plan, CleanupPlan: op.CleanupPlan}) || op.Snapshot.Database != (domain.HostingDatabaseExecutionRef{}) || op.ID != a.OperationID || op.Snapshot.RunnerID != runnerID || op.Snapshot.BindingID != op.BindingID || op.TaskMode != mode {
 		return errors.New("hosting response does not match the exact task target")
 	}
-	if (mode == "deploy" || mode == "cleanup") && op.RunID != a.RunID {
+	if (mode == "deploy" || mode == "cleanup" || mode == domain.HostingStackStopMode) && op.RunID != a.RunID {
 		return errors.New("hosting deployment run changed")
 	}
 	if mode == "observe" && op.ReconciliationRunID != a.RunID {
@@ -38,7 +38,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 
 func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, storageDrain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig) error {
 	mode := claim.Run.RunSpec.HostingMode
-	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup") || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
+	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup" && mode != domain.HostingStackStopMode) || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
 	}
 	a := hostingAuthority(claim.Run.ID, claim.Run.RunSpec.HostingOperationID, claim.Lease)
@@ -65,6 +65,9 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		return err
 	}
 	defer func() { _ = engine.Close() }()
+	if mode == domain.HostingStackStopMode {
+		return executeHostingStackStop(supervisor, journal, reporter, client, engine, a, claim.Lease, op)
+	}
 	if mode == "cleanup" {
 		return executeHostingCleanup(supervisor, journal, reporter, client, engine, a, claim.Lease, op)
 	}
@@ -425,6 +428,32 @@ func reconcileHostingJournalWithLocalBuild(server, token string, journal *runner
 	}
 	for _, entry := range journal.Snapshot().Hosting {
 		if runner.HostingJournalUsesDatabase(entry) || hostingEntryArchiveConflict(journal, entry) {
+			continue
+		}
+		if entry.Phase == "stack_stop_intent" {
+			a := domain.HostingAuthority{OperationID: entry.OperationID, RunID: entry.Attempt.RunID, LeaseID: entry.Attempt.LeaseID, Attempt: entry.Attempt.Attempt, Fence: entry.Attempt.Fence}
+			ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+			op, err := client.HostingStatus(ctx, domain.HostingStatusRequest{HostingAuthority: a})
+			cancel()
+			if err != nil {
+				return err
+			}
+			if op.StackStopPlan == nil || entry.StackStopPlan == nil || op.StackStopPlan.Hash != entry.StackStopPlan.Hash || op.RestoreOwnershipHeld {
+				return errors.New("stack stop intent retains unresolved ownership")
+			}
+			if op.MutationHold {
+				if !op.ReconcileRequested {
+					return errors.New("stack stop intent awaits owner-requested observation")
+				}
+				if err = reconcileStackStopIntent(parent, client, server, token, endpoint, a); err != nil {
+					return err
+				}
+			} else if op.State != "succeeded" && (op.State != "canceled" || op.CompleteReceipt != nil) {
+				return errors.New("stack stop intent has no terminal proof")
+			}
+			if err = journal.AckHosting(entry.ID); err != nil {
+				return err
+			}
 			continue
 		}
 		if entry.Phase != "cleanup_intent" {

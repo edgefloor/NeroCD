@@ -407,7 +407,11 @@ func (e *imageEngine) stopStackPredecessor(ctx context.Context, plan domain.Host
 		return err
 	}
 	known := map[string]domain.HostingStackComponent{}
-	if previous := plan.PreviousHealthy; previous != nil {
+	if plan.PreviousStopped != nil {
+		if plan.PreviousStopped.Validate() != nil || plan.PreviousHealthy == nil || domain.HostingDocumentHash(plan.PreviousStopped.Target) != domain.HostingDocumentHash(plan.PreviousHealthy) || plan.Snapshot.StackStoppedOperationID != plan.PreviousStopped.StopOperationID {
+			return errors.New("confirmed stopped predecessor changed")
+		}
+	} else if previous := plan.PreviousHealthy; previous != nil {
 		for _, component := range previous.Stack.Components {
 			known[component.ContainerID] = component
 		}

@@ -16,6 +16,7 @@ func TestRunnerRuntimeEnvironmentCapabilities(t *testing.T) {
 		{name: "default image only", enabled: true, execute: true, caps: []string{"shell"}, ok: true},
 		{name: "explicit image", enabled: true, execute: true, specified: true, caps: []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability}, ok: true},
 		{name: "local artifact", enabled: true, execute: true, specified: true, caps: []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeLocalBuildDeploy}, ok: true},
+		{name: "lifecycle without opt in", execute: true, caps: []string{domain.HostingStackLifecycleCapability}},
 		{name: "no opt in", execute: true, caps: []string{domain.HostingRuntimeEnvironmentCapability}},
 		{name: "shell", enabled: true, execute: true, specified: true, caps: []string{"shell", domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability}},
 		{name: "missing release", enabled: true, execute: true, specified: true, caps: []string{domain.RunTypeImageDeploy}},
@@ -32,7 +33,7 @@ func TestRunnerRuntimeEnvironmentCapabilities(t *testing.T) {
 				for _, c := range caps {
 					seen[c] = true
 				}
-				if !seen[domain.HostingRuntimeEnvironmentCapability] || !seen[domain.RunTypeImageDeploy] || !seen[domain.HostingReleasePortsCapability] || seen["shell"] {
+				if !seen[domain.HostingStackLifecycleCapability] || !seen[domain.HostingRuntimeEnvironmentCapability] || !seen[domain.RunTypeImageDeploy] || !seen[domain.HostingReleasePortsCapability] || seen["shell"] {
 					t.Fatal("wrong capability contract")
 				}
 			}

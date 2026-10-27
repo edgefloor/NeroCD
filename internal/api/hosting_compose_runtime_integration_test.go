@@ -121,7 +121,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	storageRuntimeJSON[domain.HostingHostnameGrant](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: "catalog-runtime.example.test"}, 201)
 	b.set("route", resourceID)
 	f.proxyAwait(b.await(t, "routed"))
-	verifyHTTPS := func() {
+	verifyHTTPS := func(available ...bool) {
 		t.Helper()
 		transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: f.roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:443")
@@ -134,7 +134,8 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		}
 		defer response.Body.Close()
 		_, err = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-		if err != nil || response.StatusCode != 200 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
+		wantHealthy := len(available) == 0 || available[0]
+		if err != nil || wantHealthy && response.StatusCode != 200 || !wantHealthy && (response.StatusCode < 500 || response.StatusCode > 599) || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 {
 			t.Fatal("application HTTPS trust/readiness missing")
 		}
 	}
@@ -170,6 +171,45 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if !reflect.DeepEqual(runtime.Configuration, runtimeAgain.Configuration) {
 		t.Fatal("saved credential references changed on redeploy")
 	}
+	stopFollow := composeRuntimeFollow(t, f, resourceID, second, "vikunja", false)
+	b.set("stop", resourceID)
+	stopped := f.await(b.await(t, "stopped"), "succeeded")
+	if stopped.StackStopPlan == nil || stopped.Result == nil || !stopped.Result.StackStopped || stopped.MutationHold || stopped.Result.Uncertain || stopped.StackStopPlan.Target.OperationID != second.ID {
+		t.Fatal("UI stop did not confirm exact whole-stack removal")
+	}
+	for _, component := range second.Result.Stack.Components {
+		if len(bytes.TrimSpace(storageRuntimeDocker(t, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "id="+component.ContainerID))) != 0 {
+			t.Fatal("stopped writer remains present")
+		}
+	}
+	if len(bytes.TrimSpace(storageRuntimeDocker(t, "container", "ls", "--all", "--quiet", "--filter", "label=com.docker.compose.project="+second.Snapshot.RuntimeNamespace))) != 0 {
+		t.Fatal("stopped Compose project retains containers")
+	}
+	verifyHTTPS(false)
+	stoppedLogs := storageRuntimeJSON[domain.HostingRuntimeLogPage](f, "GET", "/api/v1/runtime-log-sessions/"+stopFollow.ID+"/logs", nil, 200)
+	if stoppedLogs.Session.State != "target_changed" || stoppedLogs.Session.Target != stopFollow.Target {
+		t.Fatal("Stop did not end exact old log target")
+	}
+	lifecycle := storageRuntimeJSON[domain.HostingStackLifecycle](f, "GET", "/api/v1/resources/"+resourceID+"/stack-lifecycle", nil, 200)
+	if lifecycle.State != "stopped" || lifecycle.StopOperationID != stopped.ID {
+		t.Fatal("missing explicit stopped state")
+	}
+	b.set("start", resourceID)
+	started := f.await(b.await(t, "started"), "succeeded")
+	if started.Plan == nil || started.Plan.PreviousStopped == nil || started.Plan.PreviousStopped.StopOperationID != stopped.ID || started.Snapshot.StackStoppedOperationID != stopped.ID || started.Result == nil || started.Result.Stack == nil || !reflect.DeepEqual(started.Result.Stack.Volumes, second.Result.Stack.Volumes) || started.Result.Stack.NetworkID != second.Result.Stack.NetworkID || started.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration {
+		t.Fatal("Start changed retained stack identity")
+	}
+	verify(started)
+	if composeRuntimeUploadOwnership(t, started) != uploadOwnership {
+		t.Fatal("Start changed upload ownership")
+	}
+	f.awaitContinuity(resourceID, started.ID)
+	verifyHTTPS()
+	composeRuntimeWriterBarrier(t, second, started)
+	b.set("app_start_recheck", resourceID)
+	if b.await(t, "app_start_checked") != taskID {
+		t.Fatal("fresh login after Start lost application data")
+	}
 	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
 	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
 	failed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)
@@ -184,7 +224,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, _ := json.Marshal([]any{resource, runtime, first, second, held})
+	ordinary, _ := json.Marshal([]any{resource, runtime, first, second, stopped, started, held})
 	for _, value := range []string{password, jwt} {
 		if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
 			t.Fatal("managed credential entered ordinary operation/journal/log output")
@@ -192,7 +232,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	clear(journal)
 	clear(ordinary)
-	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, controlled failed replacement held")
+	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, UI Stop removes all writers, UI Start retains records/uploads/credentials/HTTPS, controlled failed replacement held")
 	b.set("complete", resourceID)
 	b.await(t, "done")
 }

@@ -420,6 +420,9 @@ func storageDeploymentRouteOptions(ctx context.Context, tx pgx.Tx, resource, pro
 	current := make([]domain.HostingProxyRouteTarget, 0, len(rows))
 	for _, row := range rows {
 		target, reason, readErr := switchReadRouteTarget(ctx, tx, p, row)
+		if readErr != nil && row.ResourceID == resource && view.StoppedOperationID != nil {
+			target, readErr = stoppedStackRouteTarget(ctx, tx, p, row)
+		}
 		if readErr != nil {
 			if errors.Is(readErr, ErrConflict) || errors.Is(readErr, ErrNotFound) || errors.Is(readErr, ErrHostingRestoreHold) {
 				if row.ResourceID != resource && (reason == "busy" || reason == "restore_hold") {

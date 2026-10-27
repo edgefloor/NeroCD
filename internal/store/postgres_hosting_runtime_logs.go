@@ -174,6 +174,11 @@ func lockRuntimeLogOriginalAuthority(ctx context.Context, tx pgx.Tx, before sqlc
 	if len(state.Healthy) == 0 || json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingSnapshotRelease(healthy.Snapshot, healthy.Release) != nil {
 		changed = true
 	} else if target.Component != "" {
+		stopped, err := readStackStopped(ctx, tx, target.BindingID)
+		if err != nil {
+			return before, false, err
+		}
+		changed = changed || stopped != nil
 		selected, selectErr := runtimeLogStackTarget(healthy, target.Component)
 		changed = changed || state.HoldOperationID != nil || selectErr != nil || selected != target
 	} else if runtimeLogTarget(healthy) != target {

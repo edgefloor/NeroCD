@@ -15,6 +15,7 @@ import (
 // JournalHosting is nonsecret immutable prepare, apply-intent, or result
 // evidence. Apply intent is never discarded merely because its lease is stale.
 type JournalHosting struct {
+	StackStopPlan              *domain.HostingStackStopPlan                           `json:"stack_stop_plan,omitempty"`
 	ApplicationStorage         *domain.HostingApplicationDatabaseStorage              `json:"application_storage,omitempty"`
 	ApplicationStorageWriter   *domain.HostingApplicationDatabaseStorageWriterRequest `json:"application_storage_writer,omitempty"`
 	ApplicationStorageRecovery *domain.HostingApplicationDatabaseStorageRecoveryPlan  `json:"application_storage_recovery,omitempty"`
@@ -323,7 +324,14 @@ func validateJournalHosting(entry JournalHosting) error {
 	if entry.CleanupPlan != nil && entry.Phase != "cleanup_intent" {
 		return errors.New("cleanup journal document in wrong phase")
 	}
+	if entry.StackStopPlan != nil && entry.Phase != "stack_stop_intent" {
+		return errors.New("stack stop journal plan in wrong phase")
+	}
 	switch entry.Phase {
+	case "stack_stop_intent":
+		if entry.StackStopPlan == nil || entry.StackStopPlan.Validate() != nil || entry.Plan != nil || entry.CleanupPlan != nil || entry.Prepared != nil || entry.Result != nil {
+			return errors.New("invalid stack stop intent")
+		}
 	case "storage_create_intent", "storage_materialized":
 		// The storage validator checks the complete typed document and plan.
 	case "cleanup_intent":

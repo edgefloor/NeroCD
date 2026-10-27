@@ -222,7 +222,7 @@ try {
   safe.browser_runtime_configuration = true;
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
-  async function deploy(replacement) {
+  async function deploy(replacement, stoppedOperation) {
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
       step = "configure_compose_readiness";
@@ -230,15 +230,16 @@ try {
       await review.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
     }
     step = "review_compose_options";
-    await review.getByRole("button", { name: "Review current Compose deployment", exact: true }).click();
+    await review.getByRole("button", { name: stoppedOperation ? "Review current Compose start" : "Review current Compose deployment", exact: true }).click();
     step = "acknowledge_compose_interruption";
     await review.getByRole("checkbox").check();
     const pending = response(page, `/api/v1/resources/${resourceID}/deployments`);
     step = "submit_compose_deployment";
-    await review.getByRole("button", { name: "Deploy reviewed Compose", exact: true }).click();
+    await review.getByRole("button", { name: stoppedOperation ? "Start reviewed Compose" : "Deploy reviewed Compose", exact: true }).click();
     const result = await pending;
     if (result.status() !== 202) throw Error("Compose deployment rejected");
     const input = result.request().postDataJSON();
+    if (input.managed_stack?.expected_stopped_operation_id !== stoppedOperation) throw Error("Start stopped authority missing");
     if (input.managed_stack?.acknowledge_interruption !== true || !input.expected_runtime_configuration_generation || Boolean(input.storage_route_continuity) !== replacement) throw Error("Compose admission authority missing");
     return (await result.json()).id;
   }
@@ -333,6 +334,8 @@ try {
   safe.browser_redeployment = true;
   await report("redeployed", secondOperation);
   await state("app_recheck");
+  async function checkApplication(suffix) {
+    if (freshAppContext) await freshAppContext.close();
   step = "fresh_login_vikunja";
   freshAppContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, acceptDownloads: true, locale: "en-US" });
   const fresh = await freshAppContext.newPage();
@@ -349,13 +352,35 @@ try {
   await expect(fresh.getByRole("heading", { name: "Title", exact: true })).toHaveText(taskTitle);
   await download(fresh, filename, payload);
   const newPayload = Buffer.from("New attachment after saved Compose redeployment\n");
-  await upload(fresh, "compose-after-redeploy.txt", newPayload);
-  await download(fresh, "compose-after-redeploy.txt", newPayload);
+  await upload(fresh, `${suffix}.txt`, newPayload);
+  await download(fresh, `${suffix}.txt`, newPayload);
   await fresh.goto(`/projects/${projectID}`);
-  const newTask = await addTask(fresh, "New task after Compose redeployment");
+  const newTask = await addTask(fresh, `New task after ${suffix}`);
   if (newTask === taskID) throw Error("new task identity reused");
   safe.app_fresh_login_persistence_new_writes = true;
+
+  }
+  await checkApplication("compose-after-redeploy");
   await report("app_checked", String(taskID));
+  await state("stop");
+  await hosting(page);
+  const lifecycle = application.getByRole("region", { name: "Compose lifecycle", exact: true });
+  await lifecycle.getByRole("button", { name: "Refresh Compose lifecycle", exact: true }).click();
+  await lifecycle.getByRole("button", { name: "Review Stop Compose", exact: true }).click();
+  const stopping = response(page, `/api/v1/resources/${resourceID}/stack-stop`);
+  await lifecycle.getByRole("button", { name: "Confirm Stop Compose", exact: true }).click();
+  const stopped = await checkedResponse(stopping, 202);
+  if (stopped.stack_stop_plan?.target?.operation_id !== secondOperation) throw Error("Stop target changed");
+  await report("stopped", stopped.id);
+  await state("start");
+  await hosting(page);
+  const startedOperation = await deploy(true, stopped.id);
+  if ([firstOperation, secondOperation].includes(startedOperation)) throw Error("Start reused deployment identity");
+  await report("started", startedOperation);
+  await state("app_start_recheck");
+  await checkApplication("compose-after-start");
+  safe.browser_stack_stop_start_persistence = true;
+  await report("app_start_checked", String(taskID));
   await state("complete");
   await report("done", resourceID);
   safe.status = "passed";

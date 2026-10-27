@@ -88,12 +88,12 @@ WITH updated_operations AS (
  WHEN EXISTS(SELECT 1 FROM hosting_binding_state bs WHERE bs.hold_operation_id=o.id) THEN 'reconciliation_required'
  WHEN EXISTS(SELECT 1 FROM hosting_releases rel WHERE rel.operation_id=o.id) THEN 'prepared' ELSE 'dispatched' END,
  updated_at=clock_timestamp()
- FROM hosting_task_targets target WHERE target.operation_id=o.id AND target.run_id=$1 AND target.mode IN('deploy','cleanup')
+ FROM hosting_task_targets target WHERE target.operation_id=o.id AND target.run_id=$1 AND target.mode IN('deploy','cleanup','stack_stop')
  RETURNING o.id
 )
 UPDATE task_runs SET status=CASE
  WHEN EXISTS(SELECT 1 FROM hosting_build_tasks bt WHERE bt.run_id=$1) OR run_spec->>'type'='hosting_build_v1' OR coalesce(run_spec->>'hosting_build_id','')<>'' THEN 'failed'
- WHEN EXISTS(SELECT 1 FROM hosting_task_targets target JOIN hosting_binding_state bs ON bs.hold_operation_id=target.operation_id WHERE target.run_id=$1 AND target.mode IN('deploy','cleanup')) THEN 'failed' ELSE 'queued' END,
+ WHEN EXISTS(SELECT 1 FROM hosting_task_targets target JOIN hosting_binding_state bs ON bs.hold_operation_id=target.operation_id WHERE target.run_id=$1 AND target.mode IN('deploy','cleanup','stack_stop')) THEN 'failed' ELSE 'queued' END,
  runner_id=NULL,finished_at=CASE WHEN EXISTS(SELECT 1 FROM hosting_build_tasks bt WHERE bt.run_id=$1) OR run_spec->>'type'='hosting_build_v1' OR coalesce(run_spec->>'hosting_build_id','')<>'' THEN clock_timestamp() ELSE NULL END,claim_order_at=clock_timestamp()
 WHERE id=$1 AND status='running';
 

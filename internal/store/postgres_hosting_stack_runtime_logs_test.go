@@ -12,7 +12,8 @@ import (
 	"nerocd/internal/store"
 )
 
-func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
+func settledStackFixture(t *testing.T) (runtimeLogFixture, domain.HostingOperation, domain.HostingDeploymentInput, domain.HostingStackState) {
+	t.Helper()
 	pg, db, resource, server, destination := hostingExecutionFixture(t)
 	ctx := t.Context()
 	bearer := "image-hosting-fixture-token"
@@ -29,7 +30,7 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 	if _, err = pg.BindResourceDestination(ctx, store.ResourceBindingInput{ID: "binding_stack_logs", ResourceID: resource.ID, DestinationID: destination.ID, CreatedBy: "usr_bootstrap", CreatedAt: time.Now().UTC()}, destinationEvent("stack_log_bind")); err != nil {
 		t.Fatal(err)
 	}
-	f.exec(t, `UPDATE runners SET capabilities=capabilities || ARRAY[$2,$3,$4,$5,$6]::text[] WHERE id=$1`, server.RunnerID, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
+	f.exec(t, `UPDATE runners SET capabilities=capabilities || ARRAY[$2,$3,$4,$5,$6,$7]::text[] WHERE id=$1`, server.RunnerID, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingStackLifecycleCapability)
 	input := hostingDeploymentRequest()
 	input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
 	input.IdempotencyKey = "stack-log-first"
@@ -66,9 +67,17 @@ func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := domain.HostingStackState{ObservationComplete: true, PublicComponent: "app", NetworkID: strings.Repeat("c", 64), Components: []domain.HostingStackComponent{{Component: "app", ContainerID: strings.Repeat("d", 64), ImageID: images[0].Release.ImageID, OperationID: op.ID, Running: true}, {Component: "init", ContainerID: strings.Repeat("e", 64), ImageID: images[1].Release.ImageID, OperationID: op.ID, ExitCode: 0}}, Volumes: []domain.HostingStackVolume{}}
-	if _, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "stack_log_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}}); err != nil {
+	if op, err = pg.HostingComplete(ctx, server.RunnerID, domain.HostingCompleteRequest{HostingAuthority: a, ReceiptID: "stack_log_complete", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, DaemonID: release.DaemonID, PlanHash: prepared.Plan.Hash, Stack: &state}}); err != nil {
 		t.Fatal(err)
 	}
+	return f, op, input, state
+}
+
+func TestPostgresHostingStackRuntimeLogTargetAndReplacement(t *testing.T) {
+	f, op, input, state := settledStackFixture(t)
+	pg, db, resource, server := f.pg, f.db, f.resource, f.server
+	ctx, bearer := t.Context(), f.bearer
+	release, images := *op.Release, op.Plan.Stack.Images
 	targets, err := pg.RuntimeLogTargets(ctx, "usr_bootstrap", resource.ID)
 	if err != nil || targets.ResourceID != resource.ID || targets.OperationID != op.ID || len(targets.Components) != 2 {
 		t.Fatal("current targets missing", err)

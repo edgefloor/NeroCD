@@ -31,6 +31,11 @@ func requireHostingStackAgent(ctx context.Context, tx pgx.Tx, snapshot domain.Ho
 	if snapshot.Stack == (domain.HostingStackRef{}) {
 		return nil
 	}
+	if snapshot.StackStoppedOperationID != "" {
+		if err := requireStackLifecycleAgent(ctx, tx, snapshot.RunnerID); err != nil {
+			return err
+		}
+	}
 	for _, capability := range []string{domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability} {
 		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: snapshot.RunnerID, Capability: capability})
 		if err != nil {
@@ -62,6 +67,9 @@ func hostingFreshStackGate(ctx context.Context, tx pgx.Tx, op domain.HostingOper
 	if err != nil || domain.HostingDocumentHash(definition) != op.Snapshot.Stack.Hash {
 		return ErrConflict
 	}
+	if _, err := stackStartReference(ctx, tx, op.BindingID, op.Snapshot.StackStoppedOperationID); err != nil {
+		return err
+	}
 	return requireHostingStackAgent(ctx, tx, op.Snapshot)
 }
 
@@ -88,7 +96,11 @@ func compileHostingStackPlan(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 		}
 		stack.Volumes = append(stack.Volumes, stackVolumeFromSQL(row))
 	}
-	return domain.CompileHostingStackPlan(op.Snapshot, in.Release, previous, stack)
+	stopped, err := readStackStopped(ctx, tx, op.BindingID)
+	if err != nil {
+		return domain.HostingApplyPlan{}, err
+	}
+	return domain.CompileHostingStackPlan(op.Snapshot, in.Release, previous, stack, stopped)
 }
 
 func admitHostingStackVolumes(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
@@ -273,6 +285,15 @@ func (s *PostgresStore) completeHostingStack(ctx context.Context, tx pgx.Tx, run
 		if _, err := q.SetHostingHealthy(ctx, sqlcgen.SetHostingHealthyParams{BindingID: op.BindingID, Healthy: raw, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
 			return domain.HostingOperation{}, err
 		}
+		if op.Plan.PreviousStopped != nil {
+			n, err := q.ClearHostingStackStopped(ctx, sqlcgen.ClearHostingStackStoppedParams{BindingID: op.BindingID, Stopped: []byte(op.Plan.PreviousStopped.StopOperationID)})
+			if err != nil {
+				return op, err
+			}
+			if n != 1 {
+				return op, ErrConflict
+			}
+		}
 		if _, err := q.ClearHostingMutationHold(ctx, sqlcgen.ClearHostingMutationHoldParams{BindingID: op.BindingID, HoldOperationID: hostingStringPointer(op.ID)}); err != nil {
 			return domain.HostingOperation{}, err
 		}
@@ -370,6 +391,16 @@ func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project st
 	if json.Unmarshal(state.Healthy, &healthy) != nil || domain.ValidateHostingStackHealthy(healthy) != nil || healthy.Snapshot.ResourceID != resource || healthy.Snapshot.BindingID != placement.BindingID || healthy.Snapshot.DestinationID != placement.DestinationID || healthy.Snapshot.ServerID != placement.ServerID || healthy.Snapshot.RunnerID != placement.RunnerID || healthy.Snapshot.ContainerPort != definition.ContainerPort || state.DaemonID == nil || *state.DaemonID != healthy.Release.DaemonID {
 		return finish("stale_storage")
 	}
+	stopped, err := readStackStopped(ctx, tx, placement.BindingID)
+	if err != nil {
+		return *view, err
+	}
+	if stopped != nil {
+		if domain.HostingDocumentHash(stopped.Target) != domain.HostingDocumentHash(healthy) {
+			return finish("stale_storage")
+		}
+		view.StoppedOperationID = &stopped.StopOperationID
+	}
 	ledger, err := q.ProxyReleaseTarget(ctx, healthy.OperationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return finish("stale_storage")
@@ -378,7 +409,7 @@ func stackDeploymentOptions(ctx context.Context, tx pgx.Tx, resource, project st
 		return *view, err
 	}
 	var recorded domain.HostingHealthy
-	if ledger.State != "healthy" || !ledger.RetainedRunning || json.Unmarshal(ledger.Body, &recorded) != nil || domain.HostingDocumentHash(recorded) != domain.HostingDocumentHash(healthy) {
+	if ledger.State != "healthy" || !ledger.RetainedRunning && stopped == nil || ledger.RetainedRunning && stopped != nil || json.Unmarshal(ledger.Body, &recorded) != nil || domain.HostingDocumentHash(recorded) != domain.HostingDocumentHash(healthy) {
 		return finish("stale_storage")
 	}
 	settings := domain.HostingDeploymentInput{ExpectedGeneration: view.ResourceGeneration, IdempotencyKey: "read-only-options", HostPort: healthy.Snapshot.HostPort, ContainerPort: healthy.Snapshot.ContainerPort, Readiness: healthy.Snapshot.Readiness}

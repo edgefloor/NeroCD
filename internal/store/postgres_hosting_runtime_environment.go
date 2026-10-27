@@ -77,6 +77,9 @@ func requireHostingRuntimeAgent(ctx context.Context, tx pgx.Tx, snap domain.Host
 // Fresh admission checks are intentionally separate from historical completion,
 // observation and receipt replay. Those paths must retain their immutable evidence.
 func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOperation) error {
+	if op.StackStopPlan != nil {
+		return stackStopAuthority(ctx, tx, op, false)
+	}
 	if op.CleanupPlan != nil {
 		return nil
 	}

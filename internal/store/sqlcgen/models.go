@@ -1397,6 +1397,18 @@ type HostingSourceGrant struct {
 	RevokedAt     *time.Time `json:"revoked_at"`
 }
 
+type HostingStackLifecycle struct {
+	BindingID string `json:"binding_id"`
+	Stopped   []byte `json:"stopped"`
+}
+
+type HostingStackStopPlan struct {
+	OperationID       string          `json:"operation_id"`
+	TargetOperationID string          `json:"target_operation_id"`
+	Plan              json.RawMessage `json:"plan"`
+	PlanHash          string          `json:"plan_hash"`
+}
+
 type HostingStorage struct {
 	ID            string    `json:"id"`
 	ProjectID     string    `json:"project_id"`

@@ -140,6 +140,9 @@ func storageContinuityLoadedScope(ctx context.Context, tx pgx.Tx, p domain.Hosti
 			}
 		}
 		target, targetErr := proxyHealthyTarget(ctx, tx, p, row)
+		if targetErr != nil && row.ResourceID == c.ResourceID {
+			target, targetErr = stoppedStackRouteTarget(ctx, tx, p, row)
+		}
 		if targetErr != nil {
 			return targetErr
 		}

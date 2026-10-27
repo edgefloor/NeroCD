@@ -129,6 +129,8 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/github-push-policy/deliveries"},
 	{Method: http.MethodPost, Path: "/api/v1/hosting/github-push/{id}"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/runtime-log-targets"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/stack-lifecycle"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/stack-stop"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/runtime-log-sessions"},
 	{Method: http.MethodPost, Path: "/api/v1/runtime-log-sessions/{id}/renew"},
 	{Method: http.MethodDelete, Path: "/api/v1/runtime-log-sessions/{id}"},
@@ -560,6 +562,10 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingSourceGrantRevoke
 	case "/api/v1/resources/{id}/runtime-log-targets":
 		return s.runtimeLogTargets
+	case "/api/v1/resources/{id}/stack-lifecycle":
+		return s.hostingStackLifecycle
+	case "/api/v1/resources/{id}/stack-stop":
+		return s.hostingStackStop
 	case "/api/v1/resources/{id}/runtime-log-sessions":
 		return s.runtimeLogOpen
 	case "/api/v1/runtime-log-sessions/{id}/renew":

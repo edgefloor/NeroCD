@@ -4841,6 +4841,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/stack-lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** getHostingStackLifecycle */
+        get: operations["getHostingStackLifecycle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{id}/stack-stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** stopHostingStack */
+        post: operations["stopHostingStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6427,6 +6461,7 @@ export interface components {
             hash: string;
         };
         HostingStorageDeploymentOptions: {
+            stopped_operation_id?: string;
             stack_ref?: components["schemas"]["HostingStackRef"];
             application_database_storage: components["schemas"]["HostingApplicationDatabaseStorageReview"] | null;
             resource_id: components["schemas"]["HostingIdentifier"];
@@ -7107,6 +7142,7 @@ export interface components {
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
         };
         HostingSnapshot: {
+            stack_stopped_operation_id?: string;
             stack?: components["schemas"]["HostingStackRef"];
             application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
             database?: components["schemas"]["HostingDatabaseExecutionRef"];
@@ -7192,6 +7228,7 @@ export interface components {
             cleanup_operation_id?: string;
         };
         HostingApplyPlan: {
+            previous_stopped?: components["schemas"]["HostingStackStopped"];
             stack?: components["schemas"]["HostingStackPlan"];
             application_database?: components["schemas"]["HostingApplicationDatabasePlan"];
             database?: components["schemas"]["HostingDatabasePlan"];
@@ -7212,6 +7249,7 @@ export interface components {
             created_at: string;
         };
         HostingResult: {
+            stack_stopped?: boolean;
             stack?: components["schemas"]["HostingStackState"];
             /** @enum {string} */
             outcome: "succeeded" | "failed";
@@ -7260,6 +7298,7 @@ export interface components {
             phase?: "" | "verifying" | "claim_observation";
         };
         HostingObservation: {
+            stack_stopped?: boolean;
             stack?: components["schemas"]["HostingStackState"];
             operation_id: string;
             run_id: string;
@@ -7306,7 +7345,7 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize" | "storage_recover";
+            task_mode?: "deploy" | "observe" | "cleanup" | "backup" | "restore" | "recover" | "finalize" | "storage_recover" | "stack_stop";
             observation_lease?: components["schemas"]["RunLease"];
             reconciliation_healthy?: components["schemas"]["HostingHealthy"];
             storage_archive?: components["schemas"]["HostingStorageArchive"];
@@ -7314,10 +7353,11 @@ export interface components {
             application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorage"];
             application_database_storage_state?: components["schemas"]["HostingApplicationDatabaseStorageState"];
             application_database_yield?: components["schemas"]["HostingApplicationDatabaseYieldReceipt"];
+            stack_stop_plan?: components["schemas"]["HostingStackStopPlan"];
         } & ({
             snapshot?: components["schemas"]["HostingSnapshot"];
             /** @enum {string} */
-            task_mode?: "deploy" | "observe" | "cleanup" | "finalize" | "storage_recover";
+            task_mode?: "deploy" | "observe" | "cleanup" | "finalize" | "storage_recover" | "stack_stop";
         } | {
             snapshot?: components["schemas"]["HostingStorageArchiveZeroSnapshot"];
             /** @enum {string} */
@@ -9953,6 +9993,7 @@ export interface components {
         HostingStackDeploymentInput: {
             /** @constant */
             acknowledge_interruption: true;
+            expected_stopped_operation_id?: string;
         };
         HostingStackRef: {
             /** Format: int64 */
@@ -10037,6 +10078,32 @@ export interface components {
             attempt: number;
             plan_hash: string;
             volumes: components["schemas"]["HostingStackVolume"][];
+        };
+        HostingStackLifecycle: {
+            resource_id: string;
+            /** Format: int64 */
+            resource_generation: number;
+            /** @enum {string} */
+            state: "running" | "stopped" | "held" | "unavailable";
+            deployed_operation_id?: string;
+            stop_operation_id?: string;
+        };
+        HostingStackStopInput: {
+            idempotency_key: string;
+            expected_deployed_operation_id: string;
+            /** Format: int64 */
+            expected_generation: number;
+        };
+        HostingStackStopped: {
+            stop_operation_id: string;
+            target: components["schemas"]["HostingHealthy"];
+        };
+        HostingStackStopPlan: {
+            target: components["schemas"]["HostingHealthy"];
+            target_plan: components["schemas"]["HostingApplyPlan"];
+            /** @enum {string} */
+            compiler_version: "managed-compose.stop.v1";
+            hash: string;
         };
     };
     responses: {
@@ -20499,6 +20566,68 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    getHostingStackLifecycle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled lifecycle evidence; Cache-Control: no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStackLifecycle"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    stopHostingStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingStackStopInput"];
+            };
+        };
+        responses: {
+            /** @description Settled lifecycle evidence; Cache-Control: no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingOperation"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
 }
