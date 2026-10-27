@@ -19,7 +19,7 @@ func (s *Service) HostingCatalog(ctx context.Context, project string) ([]domain.
 	return domain.HostingCatalogTemplates(), nil
 }
 
-// InstallHostingCatalog installs a catalog template with managed credentials.
+// InstallHostingCatalog installs a catalog template and its declared managed credentials.
 func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCatalogInstallInput) (domain.HostingCatalogInstallation, error) {
 	var zero domain.HostingCatalogInstallation
 	actor, err := s.authorizeHostingProject(ctx, in.ProjectID, domain.RoleOwner)
@@ -36,13 +36,14 @@ func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCa
 	if !ok {
 		return zero, store.ErrConflict
 	}
-	if s.secretKeyring == nil {
+	template, _ := domain.LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
+	if len(template.Definition.CredentialNames) > 0 && s.secretKeyring == nil {
 		return zero, ErrManagedSecretsUnavailable
 	}
 	resource := domain.HostingCatalogResourceID(in.ProjectID, in.RequestID)
 	now := s.clock().UTC()
-	records := make([]store.HostingCatalogCredentialRecord, 0, 2)
-	for _, name := range domain.HostingCatalogTemplates()[0].Definition.CredentialNames {
+	records := make([]store.HostingCatalogCredentialRecord, 0, len(template.Definition.CredentialNames))
+	for _, name := range template.Definition.CredentialNames {
 		var entropy [32]byte
 		if _, err = rand.Read(entropy[:]); err != nil {
 			return zero, errors.New("catalog credential generation failed")

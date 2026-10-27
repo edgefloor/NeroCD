@@ -302,3 +302,51 @@ func TestHostingCatalogPostgresReadUTCBindingIdentity(t *testing.T) {
 		t.Fatalf("revoked destination read accepted: %v", err)
 	}
 }
+
+func TestHostingCatalogPostgresUptimeKumaEmptyCredentialsAndReplay(t *testing.T) {
+	pg, database, _, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	// An application that generates no secrets must not need an encryption keyring.
+	s, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("9", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Monitoring", TemplateID: "uptime-kuma", ImmutableVersion: domain.HostingCatalogUptimeKumaVersion}
+	var wg sync.WaitGroup
+	views := make([]domain.HostingCatalogInstallation, 4)
+	errs := make([]error, 4)
+	for i := range views {
+		wg.Go(func() { views[i], errs[i] = s.InstallHostingCatalog(ctx, in) })
+	}
+	wg.Wait()
+	for i, e := range errs {
+		if e != nil || domain.HostingDocumentHash(views[i]) != domain.HostingDocumentHash(views[0]) {
+			t.Fatal("concurrent Kuma install replay differs", e)
+		}
+	}
+	v := views[0]
+	if v.Template.ID != "uptime-kuma" || v.Resource.Source.Image.Reference != domain.HostingCatalogUptimeKumaImage || v.Credentials == nil || len(v.Credentials) != 0 || v.RuntimeConfiguration.Generation != 1 {
+		t.Fatal("empty-credential installation disconnected")
+	}
+	var secrets, receipts int
+	var runtime []byte
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM project_managed_secret_versions),(SELECT count(*) FROM hosting_catalog_installations),(SELECT body FROM hosting_runtime_configuration_versions WHERE resource_id=$1 AND generation=1)`, v.Resource.ID).Scan(&secrets, &receipts, &runtime); err != nil || secrets != 0 || receipts != 1 || string(runtime) != `{"entries": []}` {
+		t.Fatal("Kuma invented secrets or lost empty runtime", secrets, receipts, string(runtime), err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$1,$2,$3,$4]::text[]`, domain.HostingOwnedStorageRuntimeCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	deploy := hostingDeploymentRequest()
+	deploy.ExpectedRuntimeConfigurationGeneration = 1
+	deploy.ContainerPort = 3001
+	deploy.Readiness = v.Template.Definition.Readiness
+	op, err := pg.RequestHostingDeployment(ctx, "hop_kuma_catalog", v.Resource.ID, "usr_bootstrap", deploy, destinationEvent("kuma_deploy"))
+	if err != nil || op.Snapshot.RuntimeConfiguration != v.RuntimeConfiguration || op.Snapshot.Storage != v.StorageRef || op.Snapshot.PolicyVersion != domain.HostingOwnedStorageRuntimePolicyVersion {
+		t.Fatal("Kuma ordinary deployment lost references", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1`, in.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.InstallHostingCatalog(ctx, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked Kuma replay admitted", err)
+	}
+}

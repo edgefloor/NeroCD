@@ -88,10 +88,10 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return zero, err
 	}
-	if in.Validate() != nil {
+	template, available := domain.LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
+	if !available {
 		return zero, ErrConflict
 	}
-	template := domain.HostingCatalogTemplates()[0]
 	resource := domain.HostingCatalogResourceID(in.ProjectID, in.RequestID)
 	binding := "binding_catalog_" + resource[len("res_catalog_"):]
 	now := time.Now().UTC()

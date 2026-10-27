@@ -101,3 +101,33 @@ func TestHostingOwnedStorageRuntimePlanPinsBothFamilies(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingCatalogUptimeKumaDefinitionAndLookup(t *testing.T) {
+	linkding, ok := LookupHostingCatalogTemplate("linkding", HostingCatalogLinkdingVersion)
+	if !ok || HostingDocumentHash(linkding) != "sha256:7db2c1bf04209cdaab977f3f09d33d893cfb15e7879404dbe04c7e928a845be3" {
+		t.Fatal("accepted Linkding catalog bytes changed")
+	}
+	kuma, ok := LookupHostingCatalogTemplate("uptime-kuma", HostingCatalogUptimeKumaVersion)
+	if !ok || kuma.Definition.ImageReference != HostingCatalogUptimeKumaImage || kuma.Definition.ContainerPort != 3001 || kuma.Definition.MountPath != "/app/data" || kuma.Definition.Readiness.Path != "/" || kuma.Definition.Readiness.TimeoutSeconds != 120 || kuma.Definition.CredentialNames == nil || len(kuma.Definition.CredentialNames) != 0 || kuma.Category != "monitoring" {
+		t.Fatal("Kuma translation differs from pinned template")
+	}
+	doc, refs, err := CanonicalHostingRuntimeDocument([]HostingRuntimeEntry{})
+	if err != nil || doc.Entries == nil || len(doc.Entries) != 0 || len(refs) != 0 {
+		t.Fatal("empty runtime document rejected", err)
+	}
+	for _, pair := range [][2]string{{"uptime-kuma", HostingCatalogLinkdingVersion}, {"linkding", HostingCatalogUptimeKumaVersion}, {"uptime-kuma", "retired-version"}} {
+		if _, found := LookupHostingCatalogTemplate(pair[0], pair[1]); found {
+			t.Fatal("mismatched template/version accepted")
+		}
+	}
+	in := HostingCatalogInstallInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj", ProjectEnvironmentID: "env", DestinationID: "dest", Name: "Monitoring", TemplateID: "uptime-kuma", ImmutableVersion: HostingCatalogUptimeKumaVersion}
+	raw, _ := json.Marshal(in)
+	var decoded HostingCatalogInstallInput
+	if json.Unmarshal(raw, &decoded) != nil || decoded.Validate() != nil {
+		t.Fatal("Kuma install decoder rejected")
+	}
+	in.ImmutableVersion = "retired-version"
+	if in.ValidateShape() != nil || in.Validate() == nil {
+		t.Fatal("historical request shape depends on live catalog")
+	}
+}

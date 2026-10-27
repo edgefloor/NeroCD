@@ -8060,9 +8060,9 @@ export interface components {
             destination_id: string;
             name: string;
             /** @enum {string} */
-            template_id: "linkding";
+            template_id: "linkding" | "uptime-kuma";
             /** @enum {string} */
-            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1";
+            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1";
         };
         HostingCatalogDefinition: {
             image_reference: string;

@@ -17,6 +17,15 @@ const HostingCatalogLinkdingVersion = "coolify-b12d1386.linkding-1.47.0.v1"
 // HostingCatalogLinkdingImage pins the Linkding catalog image by digest.
 const HostingCatalogLinkdingImage = "docker.io/sissbruecker/linkding@sha256:e35cb50e0581178f245125ffaa909c565416c94c9f22ace305a7d234a4345522"
 
+// HostingCatalogUptimeKumaVersion identifies the pinned Uptime Kuma catalog translation.
+const HostingCatalogUptimeKumaVersion = "coolify-b12d1386.uptime-kuma-2.5.8.v1"
+
+// HostingCatalogUptimeKumaImage pins the upstream v2 image index by digest.
+const HostingCatalogUptimeKumaImage = "docker.io/louislam/uptime-kuma@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67"
+
+//go:embed hosting_catalog_uptime_kuma.yaml
+var hostingCatalogUptimeKumaOriginal string
+
 //go:embed hosting_catalog_linkding.yaml
 var hostingCatalogLinkdingOriginal string
 
@@ -53,7 +62,21 @@ type HostingCatalogTemplate struct {
 func HostingCatalogTemplates() []HostingCatalogTemplate {
 	d := HostingCatalogDefinition{ImageReference: HostingCatalogLinkdingImage, ContainerPort: 9090, MountPath: "/etc/linkding/data", Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{"LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD"}}
 	sum := sha256.Sum256([]byte(hostingCatalogLinkdingOriginal))
-	return []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", Category: "RSS", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
+	templates := []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", Category: "RSS", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
+	kuma := HostingCatalogDefinition{ImageReference: HostingCatalogUptimeKumaImage, ContainerPort: 3001, MountPath: "/app/data", Readiness: HostingReadiness{Path: "/", TimeoutSeconds: 120}, CredentialNames: []string{}}
+	kumaSum := sha256.Sum256([]byte(hostingCatalogUptimeKumaOriginal))
+	return append(templates, HostingCatalogTemplate{ID: "uptime-kuma", Version: HostingCatalogUptimeKumaVersion, Name: "Uptime Kuma", Category: "monitoring", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/uptime-kuma.yaml", Original: hostingCatalogUptimeKumaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(kumaSum[:]), Definition: kuma, DefinitionHash: HostingDocumentHash(kuma)})
+}
+
+// LookupHostingCatalogTemplate selects one exact current template version.
+// Historical install replay uses its saved copy rather than this live catalog.
+func LookupHostingCatalogTemplate(id, version string) (HostingCatalogTemplate, bool) {
+	for _, template := range HostingCatalogTemplates() {
+		if template.ID == id && template.Version == version {
+			return template, true
+		}
+	}
+	return HostingCatalogTemplate{}, false
 }
 
 // HostingCatalogInstallInput describes the requested catalog install.
@@ -81,7 +104,7 @@ func (in HostingCatalogInstallInput) Validate() error {
 	if err := in.ValidateShape(); err != nil {
 		return err
 	}
-	if in.TemplateID != "linkding" || in.ImmutableVersion != HostingCatalogLinkdingVersion {
+	if _, ok := LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion); !ok {
 		return errors.New("catalog template is unavailable; arbitrary Compose import is incomplete")
 	}
 	return nil
