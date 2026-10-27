@@ -2,10 +2,10 @@
 
 # Install an application from the catalog
 
-The Linkding and Uptime Kuma catalog entries translate Coolify templates at
+The Linkding, Uptime Kuma and Actual Budget catalog entries translate Coolify templates at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3` into an ordinary image application.
 The installed application uses the existing resource, destination, deployment,
-managed-secret and owned-storage APIs. Neither entry creates an automation TaskTemplate.
+managed-secret and owned-storage APIs. These entries create no automation TaskTemplate.
 
 ## Pinned definition
 
@@ -48,13 +48,30 @@ accepts any HTTP status and has a 180-second start period; that period is not th
 NeroCD deployment timeout. This entry does not inject database bootstrap variables
 or account credentials.
 
+## Actual Budget pinned definition
+
+Actual Budget uses immutable version `coolify-b12d1386.actualbudget-26.10.0.v1`,
+image `docker.io/actualbudget/actual-server@sha256:24645e971da6bb1a1f953d6859e307a0b29be1e8b4130a35b3220c209b5b860c`,
+container port 5006 and retained data mount `/data`. Readiness requests `/health`
+with a 120-second timeout. The original
+[Coolify Actual Budget template](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/compose/actualbudget.yaml)
+is retained unchanged in the installation.
+
+The additive `definition.runtime_environment` contains the curated public literal
+`ACTUAL_LOGIN_METHOD=password`. Installation saves that literal in canonical
+runtime generation one and keeps credential arrays empty. Earlier Linkding and
+Kuma definition hashes remain unchanged because absent defaults are omitted.
+NeroCD generates no Actual login password. The user sets the server password in
+Actual's UI, signs in, then creates a budget and account. The runtime literal
+selects the login method; it is not the user's password.
+
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
 2. In Install from catalog, choose a Catalog category and search by application,
    version, image, data mount or generated variable name. Search ignores case and
    requires every word to match. Both filters apply together. Use All categories,
-   Clear search or Clear filters to recover an empty result, then select Linkding or Uptime Kuma.
+   Clear search or Clear filters to recover an empty result, then select an application.
    Review its upstream category and architecture declaration, pinned image, data
    mount, generated variables, container port, readiness check and template source.
    Enter a name and select a granted destination. Project owner access is required.
@@ -71,6 +88,10 @@ or account credentials.
 7. For Uptime Kuma, open the deployed application, select SQLite and create its
    administrator account. NeroCD displays first-run guidance without reveal or
    hide controls because this entry has no generated login credentials.
+8. For Actual Budget, set its server password, then sign in with that password.
+   Select Start budgeting and create the budget and account in Actual. Complete
+   server sync before relying on server-side persistence. A local browser copy
+   alone does not prove that the server retains the budget.
 
 The request identity survives an unconfirmed response. Retry uses the same
 project, environment, destination, name, template and immutable version. Current
@@ -131,7 +152,8 @@ ownership; the existing trusted recovery boundary still applies.
 
 ## Supported scope
 
-The catalog contains pinned Linkding 1.47.0 and Uptime Kuma 2.5.8 entries. Each
+The catalog contains pinned Linkding 1.47.0, Uptime Kuma 2.5.8 and Actual Budget
+26.10.0 entries. Each
 installation keeps its original
 template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
@@ -146,7 +168,7 @@ Linkding's upstream category is `RSS`, from
 [the pinned service metadata](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/service-templates.json).
 
 The preview displays upstream `arm_only` and `amd_only` declarations as ARM only
-or AMD only. Neither current entry declares a restriction, so each reads Not declared.
+or AMD only. None of these entries declares a restriction, so each reads Not declared.
 These declarations do not verify compatibility with the selected destination.
 CPU, memory and disk requirements are also undeclared. Use the qualified runtime
 profile below when choosing a destination.
@@ -188,7 +210,7 @@ The [catalog definition](../internal/domain/hosting_catalog.go),
 [installation store](../internal/store/postgres_hosting_catalog.go), and
 [catalog UI](../web/app/src/pages/HostingCatalog.tsx) define the current entries.
 The [catalog runtime guide](../acceptance/runtime-hosting-catalog/README.md)
-records the separate Linkding and Uptime Kuma qualifications. Linkding includes
+records the separate Linkding, Uptime Kuma and Actual Budget qualifications. Linkding includes
 passing backup and restored-application checks. Uptime Kuma covers install,
 replacement and persistence as described below.
 The retained recovery profile is pinned Linkding 1.47.0, native Linux arm64, trusted rootful
@@ -345,3 +367,65 @@ are retained where applicable.
 Backend command starts at 13:03:34 UTC for the core PostgreSQL check and 13:05:51 UTC
 for the focused HTTP retry are worker reports. The retained summary logs contain
 package durations, not those wall timestamps.
+
+<a id="actual-budget-qualification"></a>
+
+## Actual Budget qualification
+
+Actual Budget is accepted at `ca3b8dcdd430129b8bc2c3f56aa7bf1c3c3d04f4`. The
+connected catalog workflow installs, retries and deploys the pinned app, verifies
+exact literal runtime generation one, empty credentials and trusted HTTPS, then
+sets the server password and signs in through Actual's UI. It creates a budget,
+account and transaction and waits for completed server sync. After redeploy, a
+completely new browser context downloads the server budget, reads the transaction
+and creates another write. Another fresh context reads both writes after a
+controlled failed replacement restores the previous writer without uncertain
+ownership. The account UUID and volume/runtime references remain unchanged.
+IndexedDB or a reused context cannot supply these persistence results.
+
+The qualified profile is Actual Budget 26.10.0, one trusted rootful classic-store
+Docker/overlay2 destination, native Linux arm64 and private fixture HTTPS.
+Browser cross-origin isolation and SharedArrayBuffer checks pass; Go independently
+verifies the trusted certificate chain. Unauthenticated protected `/sync/...`
+returns 401 for controlled failed readiness; missing UI paths return the SPA with
+200. Actual backup/restore, upgrades, cross-host recovery, other architectures and
+production ACME remain outside this supported profile. Prior Linkding and Kuma
+evidence keeps its original source and limits; neither physical suite was repeated.
+
+Independent hygiene, specification and security reviews cover product `179cacbd`,
+fixture `8d9f3a53` and exact three-line repair `ca3b8dcd`. Retired-version receipt
+replay retains source-order/shape-test coverage rather than an end-to-end fixture.
+At `8d9f3a53`, formatting, vet across `./cmd/...` and `./internal/...`, focused
+catalog/runtime domain/API/store tests, pinned lint, shell/generated checks,
+Linux fixture compilation, UUID phase and publication checks passed. The app
+package had no matching named tests; real API/PG checks exercise the service.
+WebUI passed 129 files/1,942 tests in 10.62 seconds, followed by a fresh UI-to-Go
+build and manifest. Those checks remain valid: the repair changes only three
+browser lines. Backend `8578646f` and UI `ffca6abc` blobs match the integration.
+The original backend command remains failed due to a test-only undefined constant,
+while domain and PostgreSQL checks passed; corrected actual HTTP checks then passed.
+No product-defect repair was required.
+
+The first gate at `8d9f3a53` failed after 100 seconds in `app_create`; its receipt
+lacks the exact action. The complete initial source sequence reproduced a timeout
+waiting for Start budgeting: password bootstrap returns to Sign in. The fixture
+repair performs that sign-in, then the complete prefix and two fresh-context sync
+reads passed in 6.008 seconds before qualification. The corrected gate passed
+14:13:37–14:14:56 UTC, 79 seconds overall and 31.81 seconds in the runtime test.
+Both gates preserve all 41 containers/236 volumes exactly, leave no additions or
+owned resources, and preserve user-instance identity, content and health.
+
+The durable [evidence index](</Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-catalog-actual-budget-20261027/ca3b8dcdd430129b8bc2c3f56aa7bf1c3c3d04f4/evidence-index.json>)
+has SHA-256 `22d0a9c62624dff5204fd7e9ea3ff25af5ff7f7c73b8851af64104f0532fe20b`
+and 55 audited safe files. It separates the backend compile failure, failed gate,
+complete before/after probes and passing run. Private snapshots, raw interactive
+output, full sessions, credentials and temporary keys are excluded.
+
+The index records implementation, tiny-fixture development, fixture repair,
+tests and review/waiting separately. Integration development/probes span
+13:48:07–13:59:59 UTC, 712 seconds, with no exclusive split. Backend implementation
+13:47:22–13:48:27 and roughly one minute of UI implementation are worker estimates;
+validation/schema waiting overlaps. Bootstrap probes took 31.149 seconds before
+repair, 1.299 seconds to confirm sign-in and 6.008 seconds after repair. Detailed
+command windows remain in the index. Exclusive repair and review/wait durations
+were not measured; no percentages are inferred.

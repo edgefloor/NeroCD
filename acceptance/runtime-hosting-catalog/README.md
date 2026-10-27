@@ -1,9 +1,9 @@
 # Test catalog application workflows
 
-The existing storage fixture installs pinned Linkding 1.47.0 or Uptime Kuma 2.5.8
-through the public API and connected browser. Both modes deploy with the compiled
+The existing storage fixture installs pinned Linkding 1.47.0, Uptime Kuma 2.5.8 or Actual Budget 26.10.0
+through the public API and connected browser. These modes deploy with the compiled
 runner and verify real application data. Linkding uses `--catalog`; Uptime Kuma
-uses `--uptime-kuma` on the same [storage gate](../runtime-hosting-storage/README.md).
+uses `--uptime-kuma`; Actual Budget uses `--actual-budget` on the same [storage gate](../runtime-hosting-storage/README.md).
 
 ## Run the gate
 
@@ -33,7 +33,8 @@ run the completed Linkding workflow.
 The outer target is `unix:///var/run/docker.sock`, daemon
 `e37dd219-b13f-47dd-99ed-21d79442ed0c`, Linux aarch64. The Linkding owner is
 `nerocd-catalog-linkding-runtime-20261026`; Uptime Kuma uses
-`nerocd-catalog-uptime-kuma-runtime-20261027`. Each container ends in `-dind` and its
+`nerocd-catalog-uptime-kuma-runtime-20261027`; Actual Budget uses
+`nerocd-catalog-actual-budget-runtime-20261027`. Each container ends in `-dind` and its
 sole data volume ends in `-docker-data`. The owner label is
 `io.nerocd.storage-runtime.owner`.
 
@@ -42,8 +43,8 @@ The gate uses
 with four CPUs, 6 GiB memory, and 2048 PIDs. The privileged guest has no host bind
 or Docker socket mount. API port 18190 is published to a dynamic host
 `127.0.0.1` port for the browser. The gate verifies the requested and assigned
-binding before use and cleanup. Linkding publishes no host application port. The Uptime Kuma profile additionally
-publishes guest HTTPS port 443 at `127.0.0.1:25443`; exact owner, container name
+binding before use and cleanup. Linkding publishes no host application port. The Uptime Kuma and Actual Budget profiles additionally
+publish guest HTTPS port 443 at `127.0.0.1:25443`; exact owner, container name
 and bindings are checked, including rejection of foreign owners or extra ports.
 
 PostgreSQL, registry, Traefik, Pebble, and the prepared archive helper are
@@ -134,3 +135,30 @@ unqualified. The Linkding recovery checks above do not supply Kuma recovery proo
 records the durable evidence index and hash, retained source/check dependencies,
 the original full WebUI timeout and isolated pass, review limits and delivery
 timings. Private snapshots, sessions and credentials are excluded from safe evidence.
+
+## Actual Budget assertions and accepted profile
+
+After exact-candidate approval, use the same gate:
+
+```sh
+bash acceptance/runtime-hosting-storage/gate.sh --actual-budget
+```
+
+The [Actual runtime test](../../internal/api/hosting_catalog_actual_budget_runtime_integration_test.go)
+reuses the shared catalog lifecycle and browser. It verifies exact
+`ACTUAL_LOGIN_METHOD=password`, empty credentials, trusted HTTPS and stable
+volume/runtime identity. Actual's UI sets the server password, signs in, creates
+a budget/account/transaction and completes server sync. New contexts download the
+server budget after redeploy and failed replacement, read old data and make new
+writes. IndexedDB is not carried across those reads.
+
+Source `ca3b8dcdd430129b8bc2c3f56aa7bf1c3c3d04f4` passed in 79 seconds, including
+31.81 seconds in the runtime test. The original 100-second gate remains failed;
+a complete initial-flow probe exposed the missing post-bootstrap sign-in.
+Both gates preserve 41 containers/236 volumes exactly and leave the user instance
+unchanged. The qualified profile is pinned 26.10.0, `/data`, port 5006,
+`/health` with timeout 120 seconds, native arm64, trusted rootful classic-store
+Docker/overlay2 and private fixture HTTPS. Actual backup/restore, upgrades,
+cross-host recovery, other architectures and production ACME remain unqualified.
+[Actual Budget qualification](../../docs/hosting-catalog.md#actual-budget-qualification)
+records the evidence index/hash, failures, retained checks, review limits and timings.
