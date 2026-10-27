@@ -371,6 +371,9 @@ with socket.socket() as listener:
  listener.bind(("127.0.0.1",25443))
 GIT_PORT_PREREQUISITE
 fi
+if [[ "$git_compose" == true ]]; then
+ go test -count=1 ./internal/api -run '^TestGitComposeFixtureSourceAndRequestContracts$' > "$evidence/git-compose-request-contracts.log" 2>&1
+fi
 host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-before"
 host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"
 host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-before"

@@ -41,6 +41,16 @@ type gitComposeFixtureCreateRequest struct {
 }
 
 func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
+	// Match resourcesHandler's request-only source decoder. It intentionally
+	// does not marshal a persisted Git source identity back into a request.
+	type createDecoded struct {
+		RequestID            string                     `json:"request_id,omitempty"`
+		ProjectID            string                     `json:"project_id"`
+		ProjectEnvironmentID string                     `json:"project_environment_id"`
+		Name                 string                     `json:"name"`
+		Kind                 string                     `json:"kind"`
+		Source               domain.ResourceSourceInput `json:"source"`
+	}
 	raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +80,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		name    string
 		in, out any
 	}{
-		{"create", gitComposeFixtureCreateRequest{ProjectID: "proj_platform", ProjectEnvironmentID: "penv_fixture", Name: "Compose Vikunja acceptance", Kind: "application", Source: source}, new(gitComposeFixtureCreateRequest)},
+		{"create", gitComposeFixtureCreateRequest{ProjectID: "proj_platform", ProjectEnvironmentID: "penv_fixture", Name: "Compose Vikunja acceptance", Kind: "application", Source: source}, new(createDecoded)},
 		{"binding", app.ResourceBindingInput{DestinationID: "dst_fixture"}, new(app.ResourceBindingInput)},
 		{"source_secret", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Git Compose HTTPS source", Value: `{"username":"fixture-user","password":"fixture-value"}`}, new(app.ManagedSecretInput)},
 		{"grant", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: "secret_fixture", SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, new(domain.HostingSourceGrantRequest)},
@@ -88,6 +98,14 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			w := httptest.NewRecorder()
 			if !decodeBody(w, r, tc.out) {
 				t.Fatal("fixture request rejected by production decoder", w.Body.String())
+			}
+			if tc.name == "create" {
+				decoded := tc.out.(*createDecoded)
+				input := tc.in.(gitComposeFixtureCreateRequest)
+				if decoded.RequestID != "" || decoded.ProjectID != input.ProjectID || decoded.ProjectEnvironmentID != input.ProjectEnvironmentID || decoded.Name != input.Name || decoded.Kind != input.Kind || decoded.Source.Kind != input.Source.Kind || decoded.Source.Git == nil || *decoded.Source.Git != *input.Source.Git {
+					t.Fatal("production resource source decoder changed Git configuration")
+				}
+				return
 			}
 			again, _ := json.Marshal(tc.out)
 			if string(raw) != string(again) {

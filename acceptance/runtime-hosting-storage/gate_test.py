@@ -1195,6 +1195,15 @@ class PrivateRegistryModeContractTests(unittest.TestCase):
 
 
 class GitComposeContractTests(unittest.TestCase):
+    def test_git_requests_are_checked_before_build_and_guest_setup(self):
+        source = GATE.read_text()
+        command = "go test -count=1 ./internal/api -run '^TestGitComposeFixtureSourceAndRequestContracts$'"
+        self.assertIn('if [[ "$git_compose" == true ]]; then\n ' + command, source)
+        position = source.index(command)
+        for later in ['bun run --cwd web/app build', 'GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test', 'curl --fail', 'returned_outer=$(outer_run']:
+            self.assertLess(position, source.index(later))
+        self.assertIn('> "$evidence/git-compose-request-contracts.log" 2>&1', source)
+
     def test_git_compose_requires_actual_build_failure_and_browser_proofs(self):
         import ast
         import re
