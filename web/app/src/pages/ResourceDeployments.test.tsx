@@ -903,20 +903,50 @@ test("late catalog metadata preserves captured Compose readiness and identical r
 
 test("Git draft Compose settings alone do not expose committed stack controls", async () => {
   const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80 } } } };
-  const fetch = backend(); setup("maintainer", [], false, git);
+  const fetch = backend(url => url.endsWith("/stack-lifecycle") ? json({ resource_id: "resource", resource_generation: 1, state: "unavailable" }) : undefined); setup("maintainer", [], false, git);
   await screen.findByText("No deployment operations recorded.");
   expect(screen.queryByRole("region", { name: "Compose lifecycle" })).toBeNull();
-  expect(fetch.mock.calls.some(([url]) => url.endsWith("/stack-lifecycle"))).toBe(false);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/stack-lifecycle"))).toBe(true);
 });
 
 test("committed Git Compose lifecycle remains available when later Git configuration/build changes", async () => {
   const git: Resource = { ...resource, generation: 2, source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/example/app", requested_ref: "new-failed-build", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
   const deployed = { ...operation, state: "succeeded" as const, snapshot: { ...operation.snapshot, git_compose: { build_id: "prior-build", source_generation: 2, result_hash: `sha256:${"a".repeat(64)}` }, stack: { generation: 1, hash: `sha256:${"b".repeat(64)}` } } } as HostingOperation;
-  backend(url => url.includes("/deployments?") ? json(page([deployed])) : url.endsWith("/stack-lifecycle") ? json({ resource_id: "resource", resource_generation: 2, state: "running", deployed_operation_id: "hop_one" }) : undefined);
+  backend(url => url.includes("/deployments?") ? json(page()) : url.endsWith("/stack-lifecycle") ? json({ resource_id: "resource", resource_generation: 2, state: "running", deployed_operation_id: "hop_one" }) : url === "/api/v1/hosting-operations/hop_one" ? json(deployed) : undefined);
   setup("maintainer", [], false, git);
   const stop = await screen.findByRole<HTMLButtonElement>("button", { name: "Review Stop Compose" });
   await waitFor(() => expect(stop.disabled).toBe(false));
   expect(screen.getByRole("region", { name: "Compose lifecycle" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Saved Compose deployment review" })).toBeNull();
+});
+
+
+test("current Git stack controls and volume backups survive more than twenty later failed operations and paging", async () => {
+  const git: Resource = { ...resource, generation: 2, source: { kind: "git", git: { source_id: "source", generation: 3, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+  const prior = { ...operation, id: "prior", state: "succeeded", snapshot: { ...operation.snapshot, git_compose: { build_id: "prior-build", source_generation: 2, result_hash: `sha256:${"a".repeat(64)}` }, stack: { generation: 1, hash: `sha256:${"b".repeat(64)}` } } };
+  const fetch = backend(url => {
+    if (url.includes("/deployments?")) { const offset=Number(new URL(url,"http://local").searchParams.get("offset")); return json(page(Array.from({length:20},(_,i)=>({...operation,id:`failed_${offset+i}`,state:"failed" as const})),offset,40)); }
+    if (url.endsWith("/stack-lifecycle")) return json({ resource_id: "resource", resource_generation: 2, state: "running", deployed_operation_id: "prior" });
+    if (url === "/api/v1/hosting-operations/prior") return json(prior);
+    if (url.endsWith("/storage-backup-volumes")) return json({resource_id:"resource",resource_generation:2,operation_id:"prior",available:true,volumes:[]});
+    if (url.includes("storage-backups?")) return json({items:[],limit:20,offset:0,count:0,total:0});
+    if (url.includes("database-backup-targets")||url.includes("storage-backup-schedules")) return json([]);
+  });
+  setup("maintainer", [], false, git);
+  await screen.findByRole("region",{name:"Compose lifecycle"});
+  expect(screen.getByRole("region",{name:"Compose volume backups"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Next deployments for Web"}));
+  await waitFor(()=>expect(fetch.mock.calls.some(([url])=>url.includes("offset=20"))).toBe(true));
+  expect(screen.getByRole("region",{name:"Compose lifecycle"})).toBeTruthy();
+  expect(screen.getByRole("region",{name:"Compose volume backups"})).toBeTruthy();
+});
+
+test("historical Git Compose cannot expose stack controls over a newer single-image release", async () => {
+  const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
+  const old = { ...operation, state: "succeeded", snapshot: { ...operation.snapshot, git_compose: { build_id: "old", source_generation: 1, result_hash: `sha256:${"a".repeat(64)}` }, stack: {generation:1,hash:`sha256:${"b".repeat(64)}`} } } as HostingOperation;
+  backend(url=>url.includes("/deployments?")?json(page([old])):url.endsWith("/stack-lifecycle")?json({resource_id:"resource",resource_generation:1,state:"unavailable"}):undefined);
+  setup("maintainer",[],false,git); await screen.findByRole("button",{name:"View operation hop_one"});
+  expect(screen.queryByRole("region",{name:"Compose lifecycle"})).toBeNull();
+  expect(screen.queryByRole("region",{name:"Compose volume backups"})).toBeNull();
 });

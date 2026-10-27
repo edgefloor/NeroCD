@@ -1,4 +1,4 @@
-import { committedGitCompose, hostingDeploymentsQuery } from "@/api/hosting-deployments";
+import { currentGitStackQuery } from "@/api/hosting-stack-lifecycle";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, principalQuery } from "@/api";
@@ -21,26 +21,26 @@ export function ResourceRuntimeLogs({ resource, blocked }: { resource: Resource;
     : <LogOutput key={key} scope={scope} name={resource.name} compose={resource.source.kind === "compose"} />;
 }
 function GitLogOutput({ scope, name, actor }: { scope: LogScope; name: string; actor: string }) {
-  const history = useQuery(hostingDeploymentsQuery(scope.project, scope.resource, 0, actor));
-  if (history.isPending || history.isError) return <section aria-label={`Runtime logs for ${name}`} className="min-w-0 space-y-2 border-t pt-3">
-    <p role={history.isError ? "alert" : "status"}>Recorded deployment provenance is pending or unavailable. Runtime log output is cleared.</p>
-    <Button variant="outline" disabled={history.isFetching} onClick={() => void history.refetch()}>Refresh runtime log deployment evidence</Button>
+  const current = useQuery(currentGitStackQuery({ ...scope, actor }));
+  if (current.isPending || current.isFetching || current.isError) return <section aria-label={`Runtime logs for ${name}`} className="min-w-0 space-y-2 border-t pt-3">
+    <p role={current.isError ? "alert" : "status"}>Recorded deployment provenance is pending or unavailable. Runtime log output is cleared.</p>
+    <Button variant="outline" disabled={current.isFetching} onClick={() => void current.refetch()}>Refresh runtime log deployment evidence</Button>
   </section>;
-  return <LogOutput key={String(history.data.items.some(committedGitCompose))} scope={scope} name={name} compose={history.data.items.some(committedGitCompose)} />;
+  return <div className="space-y-2"><Button variant="outline" disabled={current.isFetching} onClick={() => void current.refetch()}>Refresh runtime log deployment evidence</Button><LogOutput key={current.data.operation?.id ?? "single-image"} scope={scope} name={name} compose={Boolean(current.data.operation)} expectedOperationID={current.data.operation?.id} /></div>;
 }
-function LogOutput({ scope, name, compose }: { scope: LogScope; name: string; compose: boolean }) {
+function LogOutput({ scope, name, compose, expectedOperationID }: { scope: LogScope; name: string; compose: boolean; expectedOperationID?: string }) {
   const [shown, setShown] = useState(true);
   return <section aria-label={`Runtime logs for ${name}`} className="min-w-0 space-y-3 border-t pt-3">
     <h5 className="font-medium">Runtime logs</h5>
     <p className="text-sm">Sensitive application output may contain secrets. Follow only when needed. Output stays in this mounted view and is cleared when hidden or access changes.</p>
-    {shown ? compose ? <StackLogReader scope={scope} hide={() => setShown(false)} /> : <LogReader scope={scope} hide={() => setShown(false)} /> : <><p>Runtime log output is hidden and cleared. Collection may remain admitted until its demand expires; hiding does not guarantee server closure.</p><Button className={buttonClass} variant="outline" onClick={() => setShown(true)}>Show runtime log controls</Button></>}
+    {shown ? compose ? <StackLogReader scope={scope} hide={() => setShown(false)} expectedOperationID={expectedOperationID} /> : <LogReader scope={scope} hide={() => setShown(false)} /> : <><p>Runtime log output is hidden and cleared. Collection may remain admitted until its demand expires; hiding does not guarantee server closure.</p><Button className={buttonClass} variant="outline" onClick={() => setShown(true)}>Show runtime log controls</Button></>}
   </section>;
 }
 type Selection = { component: string; expected_operation_id: string };
-function StackLogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
+function StackLogReader({ scope, hide, expectedOperationID }: { scope: LogScope; hide: () => void; expectedOperationID?: string }) {
   const targets = useQuery(runtimeLogTargetsQuery(scope));
   const [selected, select] = useState("");
-  const ready = targets.isSuccess && !targets.isFetching;
+  const ready = targets.isSuccess && !targets.isFetching && (!expectedOperationID || targets.data.operation_id === expectedOperationID);
   const operationID = ready ? targets.data.operation_id : undefined;
   const choices = ready ? targets.data.components : [];
   const component = choices.find((item) => item.component === selected);

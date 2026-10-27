@@ -197,22 +197,35 @@ test.each(["app", "db", "init"])("Compose %s requires the selected reader to ent
 });
 
 test("Git component logs follow committed stack provenance despite changed draft strategy", async () => {
-  const fetch = backend(url => url.includes("/deployments?") ? json({ items: [{ id: "op", project_id: "p", resource_id: "r", state: "succeeded", snapshot: { git_compose: { build_id: "prior", source_generation: 1, result_hash: digest }, stack: { generation: 1, hash: digest } } }], total: 1, count: 1, limit: 20, offset: 0 }) : undefined);
+  const fetch = backend(url => url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 1, state: "running", deployed_operation_id: "op" }) : url === "/api/v1/hosting-operations/op" ? json({ id: "op", project_id: "p", resource_id: "r", binding_id: "b", state: "succeeded", snapshot: { resource_id: "r", binding_id: "b", git_compose: { build_id: "prior", source_generation: 1, result_hash: digest }, stack: { generation: 1, hash: digest } } }) : undefined);
   const view = setup(true);
   const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 2, repository_url: "https://github.com/example/app", requested_ref: "failed-new-build", credential_kind: "public", settings: { strategy: "dockerfile" } } } };
   await act(async () => { view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={git} blocked={false} /></QueryClientProvider>); });
   await advance(1);
   expect(screen.getByLabelText("Compose component")).toBeTruthy();
-  expect(fetch.mock.calls.some(([url]) => url.includes("/deployments?"))).toBe(true);
+  expect(fetch.mock.calls.some(([url]) => url === "/api/v1/hosting-operations/op")).toBe(true);
+  expect(fetch.mock.calls.some(([url]) => url.includes("/deployments?"))).toBe(false);
   expect(fetch.mock.calls.some(([, options]) => options.method === "POST")).toBe(false);
 });
 
 test("Git Compose draft without a committed deployment does not choose component logs", async () => {
-  backend(url => url.includes("/deployments?") ? json({ items: [], total: 0, count: 0, limit: 20, offset: 0 }) : undefined);
+  backend(url => url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 1, state: "unavailable" }) : undefined);
   const view = setup();
   const git: Resource = { ...resource, source: { kind: "git", git: { source_id: "source", generation: 1, repository_url: "https://github.com/example/app", requested_ref: "main", credential_kind: "public", settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80 } } } };
   await act(async () => { view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={git} blocked={false} /></QueryClientProvider>); });
   await advance(1);
   expect(screen.queryByLabelText("Compose component")).toBeNull();
   expect(screen.getByRole("button", { name: "Follow runtime logs" })).toBeTruthy();
+});
+
+test("Git component targets from another deployment cannot open a log demand", async () => {
+  const fetch = backend(url => url.endsWith("/stack-lifecycle") ? json({resource_id:"r",resource_generation:1,state:"running",deployed_operation_id:"op"}) : url === "/api/v1/hosting-operations/op" ? json({id:"op",project_id:"p",resource_id:"r",binding_id:"b",state:"succeeded",snapshot:{resource_id:"r",binding_id:"b",git_compose:{build_id:"built",source_generation:1,result_hash:digest},stack:{generation:1,hash:digest}}}) : undefined);
+  const view=setup(true);
+  client.setQueryData(runtimeLogTargetsQuery({actor:"u",project:"p",resource:"r"}).queryKey,{resource_id:"r",operation_id:"other",components:[{component:"app",running:true,exit_code:0}]});
+  const git:Resource={...resource,source:{kind:"git",git:{source_id:"source",generation:1,repository_url:"https://github.com/example/app",requested_ref:"main",credential_kind:"public",settings:{strategy:"dockerfile"}}}};
+  await act(async()=>{view.rerender(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={git} blocked={false}/></QueryClientProvider>)});
+  await advance(1);
+  expect(screen.getByLabelText("Compose component").querySelectorAll("option")).toHaveLength(1);
+  expect(screen.queryByRole("button",{name:"Follow runtime logs"})).toBeNull();
+  expect(fetch.mock.calls.some(([,options])=>options.method==="POST")).toBe(false);
 });

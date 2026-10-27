@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import { getResource, type Resource } from "@/api/hosting";
-import { committedGitCompose, cancelHostingOperation, HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
+import { cancelHostingOperation, HostingDeploymentError, hostingBindingQuery, hostingDeploymentKeys, hostingDeploymentsQuery, hostingOperationQuery, hostingRetainedQuery, reconcileHostingOperation, requestHostingDeployment, requestHostingReleaseCleanup, type HostingCleanupInput, type HostingRetainedRelease, type HostingOperation, type HostingDeploymentInput } from "@/api/hosting-deployments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageNavigation } from "@/components/common/PageNavigation";
@@ -14,7 +14,7 @@ import { maximumPageOffset } from "@/router/search";
 import { boundedStorageRequest, getStorageDeploymentOptions, storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import { StorageContinuityDetail, StorageDeploymentReview } from "./StorageDeploymentReview";
 import { StackLifecycle } from "./StackLifecycle";
-import { stackLifecycleKey } from "@/api/hosting-stack-lifecycle";
+import { currentGitStackQuery, stackLifecycleKey } from "@/api/hosting-stack-lifecycle";
 import { StackComponentStatus, StackDeploymentReview } from "./StackDeploymentReview";
 
 const terminalStates = new Set(["succeeded", "failed", "canceled"]);
@@ -226,6 +226,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
   const [acceptedRefreshError, setAcceptedRefreshError] = useState("");
   const binding = useQuery(hostingBindingQuery(resource.project_id, resource.id, actor));
   const history = useQuery(hostingDeploymentsQuery(resource.project_id, resource.id, offset, actor));
+  const currentGitStack = useQuery({ ...currentGitStackQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "git" });
   const storageOptions = useQuery({ ...storageDeploymentOptionsQuery({ actor, project: resource.project_id, resource: resource.id }), enabled: resource.source.kind === "image" || resource.source.kind === "compose" && Boolean(binding.data) });
   const stateless = !storageOptions.isError && storageOptions.data?.reason === "storage_unconfigured" && storageOptions.data.storage_ref === null;
   const base = reviewed ?? resource;
@@ -323,23 +324,27 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     if (next) setReviewed(next);
     setAttempt(undefined); setConflict(false); setCurrent(undefined); setAcknowledged(false); setDifferentIntent(false); setError("");
   }
-  const deployedGitCompose = resource.source.kind === "git" && Boolean(history.data?.items.some(committedGitCompose));
+  const gitStackChecked = resource.source.kind !== "git" || currentGitStack.isSuccess && !currentGitStack.isFetching;
+  const deployedGitCompose = resource.source.kind === "git" && gitStackChecked && Boolean(currentGitStack.data?.operation);
   return <section className="min-w-0 space-y-3 border-t pt-3" aria-label={`Image deployments for ${resource.name}`}>
     <h5 className="font-medium">{resource.source.kind === "image" ? "Image deployments" : resource.source.kind === "compose" || deployedGitCompose ? "Compose deployments" : "Deployment history"}</h5>
     {acceptedID ? <p role="status" className="break-all">Deployment request accepted: {acceptedID}. Acceptance does not confirm workload completion or public traffic.</p> : null}
     {acceptedRefreshError ? <p role="alert">{acceptedRefreshError}</p> : null}
     {resource.source.kind === "git" ? <p role="status">Git source generation {resource.source.git.generation} is saved. Use Git builds to prepare the source and select a successful image or Compose result for deployment. Review the resulting operation here, then configure the existing HTTPS route after the release settles healthy.</p> : null}
-    {deployedGitCompose ? <StackLifecycle key={binding.data?.id ?? "unbound"} scope={{ actor, project: resource.project_id, resource: resource.id }} generation={resource.generation} writable={writable} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} gitBuilds /> : null}
+    {resource.source.kind === "git" && (currentGitStack.isPending || currentGitStack.isError) ? <p role={currentGitStack.isError ? "alert" : "status"}>Current stack evidence is pending or unavailable. Stack controls are paused.</p> : null}
+    {resource.source.kind === "git" ? <Button variant="outline" disabled={currentGitStack.isFetching} onClick={() => void currentGitStack.refetch()}>Refresh current stack evidence</Button> : null}
+    {deployedGitCompose && binding.data ? <ComposeStorageBackups key={JSON.stringify([actor, resource.id, binding.data.id, currentGitStack.data?.operation?.id, owner])} scope={{ actor, project: resource.project_id, resource: resource.id, binding: binding.data.id, destination: binding.data.destination_id }} generation={resource.generation} owner={owner} blocked={unavailable || restoreHeld} onDenied={onDenied} /> : null}
+    {deployedGitCompose ? <StackLifecycle key={currentGitStack.data?.operation?.id ?? "unavailable"} scope={{ actor, project: resource.project_id, resource: resource.id }} generation={resource.generation} writable={writable} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={async signal => { await refreshHistory(signal); await currentGitStack.refetch(); }} gitBuilds /> : null}
     {restoreHeld ? <p role="alert">Deployment admission blocked after platform restore. Recovery proof is pending; refreshing configuration, retrying, or requesting reconciliation cannot release restored ownership. Your settings are preserved.</p> : null}
     {mutationHeld ? <p role="status">New deployment requests are paused while a recorded mutation hold is retained. An exact retained request can still recover its existing operation. Refresh history to review settlement; cancellation alone does not release the hold.</p> : null}
     {failed ? <div className="space-y-2"><p role="alert">Unable to refresh deployment information. Draft settings are preserved; actions are paused.</p><Button type="button" variant="outline" onClick={() => { void binding.refetch(); void history.refetch(); if (principal.isError) void principal.refetch(); if (members.isError) void members.refetch(); }}>Retry deployment information</Button></div> : null}
     {history.isPending ? <p role="status">Loading deployment history...</p> : null}
-    <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => void history.refetch()}>Refresh deployment history</Button>
+    <Button type="button" variant="outline" disabled={history.isFetching || busy} onClick={() => { void history.refetch(); if (resource.source.kind === "git") void currentGitStack.refetch(); }}>Refresh deployment history</Button>
     {history.data?.items.length === 0 ? <p className="text-sm">No deployment operations recorded.</p> : null}
     <ol className="space-y-2" aria-label="Deployment history">{history.data?.items.map((operation) => <li key={operation.id} className="min-w-0 rounded-lg border p-2"><p className="break-all text-sm">{stateText[operation.state] ?? operation.state} · {operation.created_at}</p><p className="break-all text-xs">{"stack" in operation.snapshot && operation.snapshot.stack ? `Saved Compose ${operation.snapshot.stack.hash}` : operation.snapshot.local_build ? `Local build ${operation.snapshot.local_build.artifact.build_id} · ${operation.snapshot.local_build.artifact.image_id}` : operation.snapshot.image_reference} · generation {operation.snapshot.resource_generation}</p><Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal break-all" onClick={() => setSelected(operation.id)}>View operation {operation.id}</Button></li>)}</ol>
     <PageNavigation label={`deployments for ${resource.name}`} page={history.data} loading={history.isFetching || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))} />
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
-    {binding.data && resource.source.kind !== "compose" && !deployedGitCompose ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
+    {binding.data && resource.source.kind !== "compose" && gitStackChecked && !deployedGitCompose ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {resource.source.kind === "compose" ? <>
       {binding.data ? <ComposeStorageBackups key={JSON.stringify([actor, resource.project_id, resource.id, binding.data.id, owner])} scope={{ actor, project: resource.project_id, resource: resource.id, binding: binding.data.id, destination: binding.data.destination_id }} generation={resource.generation} owner={owner} blocked={unavailable || restoreHeld} onDenied={onDenied} /> : null}
       <StackLifecycle key={binding.data?.id ?? "unbound"} scope={{ actor, project: resource.project_id, resource: resource.id }} generation={resource.generation} writable={writable} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} />

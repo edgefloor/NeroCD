@@ -168,9 +168,9 @@ const composeBuild: HostingBuild = { ...build, artifact: undefined, snapshot: { 
     { name: "worker", image: "local/web:built", command: ["worker"] },
   ] }, services: [{ component: "web", artifact: build.artifact! }], hash: `sha256:${"b".repeat(64)}`,
 } };
-const composeOperation = { ...operation, snapshot: { ...operation.snapshot, local_build: undefined, git_compose: { build_id: "b", source_generation: 3, result_hash: composeBuild.compose_result!.hash }, stack: { generation: 2, hash: `sha256:${"c".repeat(64)}` }, container_port: 3000 } };
+const composeOperation = { ...operation, snapshot: { ...operation.snapshot, binding_id: "binding", local_build: undefined, git_compose: { build_id: "b", source_generation: 3, result_hash: composeBuild.compose_result!.hash }, stack: { generation: 2, hash: `sha256:${"c".repeat(64)}` }, container_port: 3000 } };
 function composeBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response> | undefined) {
-  return backend((url, options) => handler?.(url, options) ?? (url.includes("/builds?") ? json({ items: [composeBuild], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build: composeBuild }) : url.endsWith("/from-build") ? json(composeOperation, 202) : undefined));
+  return backend((url, options) => handler?.(url, options) ?? (url.endsWith("/stack-lifecycle") ? json({ resource_id: "r", resource_generation: 2, state: "unavailable" }) : url === "/api/v1/hosting-operations/prior" ? json({ ...composeOperation, id: "prior", state: "succeeded", mutation_hold: false }) : url.includes("/builds?") ? json({ items: [composeBuild], limit: 20, offset: 0, count: 1, total: 1 }) : url.includes("/hosting-builds/") ? json({ build: composeBuild }) : url.endsWith("/from-build") ? json(composeOperation, 202) : undefined));
 }
 async function composeSubmit(button = "Deploy selected build") {
   fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
@@ -213,7 +213,7 @@ test("starting a committed Git Compose build captures and retains the exact stop
   await composeSubmit("Start selected Compose build"); await screen.findByRole("region", { name: "Deployment operation detail" });
   const body = JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body));
   expect(body.managed_stack).toEqual({ acknowledge_interruption: true, expected_stopped_operation_id: "stop" });
-  expect(lifecycleReads).toBe(2);
+  expect(lifecycleReads).toBe(3); // Initial proof, fresh admission proof, then post-admission revalidation.
 });
 
 test("stopped Git Compose with changed desired generations requires a new build and preserves the stop", async () => {

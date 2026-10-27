@@ -1,3 +1,4 @@
+import { currentGitStackQuery } from "../api/hosting-stack-lifecycle";
 import { listResources, type Resource } from "../api/hosting";
 import { useDatabaseAccess } from "./ResourceDatabase";
 import type { BackupRecoveryLocator } from "../api/hosting-backup-notifications";
@@ -683,9 +684,16 @@ function BackupUploadStatus({
 // represented as fabricated standalone database resources.
 export function ResourceComposeDatabaseBackups({resource,blocked}: {resource: Resource; blocked: boolean}) {
  const access = useDatabaseAccess(resource.project_id,resource.project_environment_id);
- if (resource.source.kind !== "compose") return null;
+ if (resource.source.kind !== "compose" && resource.source.kind !== "git") return null;
  if (blocked || !access.ready || access.refreshing || !access.viewer) return <p role="status">Component database backup access is pending or unavailable.</p>;
- return <ComposeDatabaseBackups key={JSON.stringify([access.scope,resource.id,resource.generation])} resource={resource} scope={access.scope} owner={access.owner} />;
+ return resource.source.kind === "git"
+  ? <GitComposeDatabaseBackups key={JSON.stringify([access.scope,resource.id])} resource={resource} scope={access.scope} owner={access.owner} />
+  : <ComposeDatabaseBackups key={JSON.stringify([access.scope,resource.id,resource.generation])} resource={resource} scope={access.scope} owner={access.owner} />;
+}
+function GitComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:DatabaseScope;owner:boolean}) {
+ const current=useQuery(currentGitStackQuery({actor:scope.actor,project:scope.project,resource:resource.id}));
+ if(current.isPending||current.isFetching||current.isError)return <div><p role={current.isError?"alert":"status"}>Current stack evidence is pending or unavailable. Component database backups are paused.</p><Button disabled={current.isFetching} onClick={()=>void current.refetch()}>Refresh database stack evidence</Button></div>;
+ return current.data.operation?<ComposeDatabaseBackups key={current.data.operation.id} resource={resource} scope={scope} owner={owner}/>:null;
 }
 function ComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:DatabaseScope;owner:boolean}) {
  const client=useQueryClient();
@@ -704,7 +712,7 @@ function ComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:
  const targets=useQuery({queryKey:["database-backup-components",scope,resource.id],queryFn:({signal})=>getDatabaseBackupComponents(scope,resource.id,signal),retry:false,enabled:!denied});
  const history=useQuery({queryKey:databaseBackupsKey(scope,resource.id),queryFn:({signal})=>listDatabaseBackups(scope,context,signal),retry:false,enabled:!denied,refetchInterval:q=>q.state.data?.some(v=>v.ownership_held && !["uncertain","failed"].includes(v.state))?3000:false});
  const applications=useQuery({queryKey:["database-import-applications",scope],queryFn:({signal})=>listResources({project_id:scope.project,limit:100,offset:0},{signal}),retry:false,enabled:!denied});
- const chosen=applications.data?.items.find(r=>r.id===target && r.id!==resource.id && r.source.kind==="compose" && r.project_id===scope.project);
+ const chosen=applications.data?.items.find(r=>r.id===target && r.id!==resource.id && (r.source.kind==="compose"||r.source.kind==="git") && r.project_id===scope.project);
  const targetEvidence=useQuery({queryKey:["database-backup-components",scope,chosen?.id],queryFn:({signal})=>getDatabaseBackupComponents(scope,chosen!.id,signal),retry:false,enabled:Boolean(chosen)&&!denied});
  const revoked=databaseDenied(error)||databaseDenied(targets.error)||databaseDenied(history.error)||databaseDenied(applications.error)||databaseDenied(targetEvidence.error);
  useEffect(()=>{if(revoked){setDenied(true);lifetime.current?.abort();setAttempt(undefined);client.removeQueries({queryKey:databaseBackupsKey(scope,resource.id)});}},[revoked]);
@@ -732,8 +740,8 @@ function ComposeDatabaseBackups({resource,scope,owner}:{resource:Resource;scope:
   <Button variant="outline" disabled={locked||targets.isFetching} onClick={()=>{if(!locked){setComponent("");void targets.refetch();}}}>Refresh database components</Button>
   {!source?<p role="status">A settled supported database component is unavailable. Refresh after deployment settles.</p>:null}
   <label className="block">Backup to restore<select value={backup} disabled={locked} onChange={e=>{if(!locked)setBackup(e.target.value)}}><option value="">Select a completed backup</option>{history.data?.filter(v=>v.mode==="backup"&&v.state==="succeeded"&&v.blob&&v.version==="postgresql.compose-logical-local.v1").map(v=><option key={v.id} value={v.id}>{v.source_component} · {v.id}</option>)}</select></label>
-  <label className="block">Restore target application<select value={target} disabled={locked} onChange={e=>{if(!locked){setTarget(e.target.value);setTargetComponent("")}}}><option value="">Select a distinct deployed Compose application</option>{applications.data?.items.filter(r=>r.id!==resource.id&&r.source.kind==="compose"&&r.project_id===scope.project).map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
-  <p>Targets are drawn from the first 100 project applications. The server requires the same authorized destination. Existing target tables are replaced; target credentials and uploaded files remain unchanged.</p>
+  <label className="block">Restore target application<select value={target} disabled={locked} onChange={e=>{if(!locked){setTarget(e.target.value);setTargetComponent("")}}}><option value="">Select a distinct deployed Compose application</option>{applications.data?.items.filter(r=>r.id!==resource.id&&(r.source.kind==="compose"||r.source.kind==="git")&&r.project_id===scope.project).map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+  <p>Targets are drawn from the first 100 project applications. Git candidates must have a committed Compose database, verified after selection. The server requires the same authorized destination. Existing target tables are replaced; target credentials and uploaded files remain unchanged.</p>
   <label className="block">Restore target database component<select value={targetComponent} disabled={locked} onChange={e=>{if(!locked)setTargetComponent(e.target.value)}}><option value="">Select a target database component</option>{destination?.components.filter(c=>c.eligible).map(c=><option key={c.component} value={c.component}>{c.component}</option>)}</select></label>
   <label className="block"><input type="checkbox" checked={ack} disabled={locked} onChange={e=>{if(!locked)setAck(e.target.checked)}}/>Replace target database and interrupt its writers</label>
   <p>Only target components that were running are stopped and resumed. Failed or uncertain import/resume keeps a mutation hold; do not repeat an uncertain import. Ambiguous launch, lease loss or unconfirmed writer resume requires operator reconciliation; this view cannot release that hold or resume writers manually.</p>

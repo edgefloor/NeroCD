@@ -477,13 +477,14 @@ test("backup workflow includes the retention policy and history panel", async ()
 });
 
 
-function mountComposeBackupPanel(){
+function mountComposeBackupPanel(sourceKind: "compose"|"git"="compose",targetKind: "compose"|"git"="compose"){
+ const source=(kind:"compose"|"git")=>kind==="compose"?{kind}:{kind,git:{source_id:"source",generation:2,repository_url:"https://github.com/example/app",requested_ref:"changed-desired-ref",credential_kind:"public",settings:{strategy:"dockerfile"}}};
  const componentBackup={...completed,version:"postgresql.compose-logical-local.v1" as const,source_component:"postgresql",source_deployed_operation_id:"hop_source"};
  vi.mocked(api.listDatabaseBackups).mockResolvedValue([componentBackup]);
  vi.mocked(api.getDatabaseBackupComponents).mockImplementation(async(_scope,id)=>({resource_id:id,resource_generation:id==="db"?2:3,operation_id:id==="db"?"hop_source":"hop_target",available:true,reason:"available",components:[{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]}));
- vi.mocked(hosting.listResources).mockResolvedValue({items:[{...database.resource,id:"target",name:"Distinct target",source:{kind:"compose"}}],total:1,limit:100,offset:0} as Awaited<ReturnType<typeof hosting.listResources>>);
+ vi.mocked(hosting.listResources).mockResolvedValue({items:[{...database.resource,id:"target",name:"Distinct target",source:source(targetKind)}],total:1,limit:100,offset:0} as Awaited<ReturnType<typeof hosting.listResources>>);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- render(<QueryClientProvider client={client}><ResourceComposeDatabaseBackups resource={{...database.resource,source:{kind:"compose"}} as hosting.Resource} blocked={false}/></QueryClientProvider>);
+ render(<QueryClientProvider client={client}><ResourceComposeDatabaseBackups resource={{...database.resource,source:source(sourceKind)} as hosting.Resource} blocked={false}/></QueryClientProvider>);
 }
 
 test("Compose selection creates no demand and import carries exact distinct settled target",async()=>{
@@ -528,4 +529,30 @@ test("Compose lost response freezes selection and preserves identical retry auth
  await waitFor(()=>expect(api.requestDatabaseBackup).toHaveBeenCalledTimes(2));
  expect(vi.mocked(api.requestDatabaseBackup).mock.calls[1]?.[2]).toBe(first);
  await waitFor(()=>expect(screen.queryByRole("button",{name:"Retry exact database request"})).toBeNull());
+});
+
+
+test("committed Git Compose exposes logical backups and verifies Git restore target through component evidence",async()=>{
+ const hash=`sha256:${"a".repeat(64)}`;
+ const fetch=vi.fn(async(url:string)=>new Response(JSON.stringify(url.endsWith("/stack-lifecycle")?{resource_id:"db",resource_generation:2,state:"running",deployed_operation_id:"current"}:{id:"current",project_id:"project",resource_id:"db",binding_id:"binding",state:"succeeded",snapshot:{resource_id:"db",binding_id:"binding",stack:{generation:1,hash},git_compose:{build_id:"built",source_generation:1,result_hash:hash}}})));
+ vi.stubGlobal("fetch",fetch);
+ mountComposeBackupPanel("git","git");
+ const components=await screen.findByRole("combobox",{name:"Database backup component"});
+ await waitFor(()=>expect(components.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(screen.getByRole("combobox",{name:"Restore target application"}),{target:{value:"target"}});
+ await waitFor(()=>expect(vi.mocked(api.getDatabaseBackupComponents).mock.calls.some(([,id])=>id==="target")).toBe(true));
+ expect(fetch.mock.calls.map(([url])=>url)).toEqual(["/api/v1/resources/db/stack-lifecycle","/api/v1/hosting-operations/current"]);
+ expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});
+
+test.each([200,403])("Git database controls fail closed without current stack proof HTTP%s",async status=>{
+ const fetch=vi.fn(async()=>new Response(JSON.stringify(status===200?{resource_id:"db",resource_generation:2,state:"unavailable"}:{}),{status}));
+ vi.stubGlobal("fetch",fetch);
+ mountComposeBackupPanel("git");
+ await waitFor(()=>expect(fetch).toHaveBeenCalled());
+ if(status===403)await screen.findByText(/Component database backups are paused/);
+ else await waitFor(()=>expect(screen.queryByText(/Component database backups are paused/)).toBeNull());
+ expect(screen.queryByRole("region",{name:"Component database backups"})).toBeNull();
+ expect(api.getDatabaseBackupComponents).not.toHaveBeenCalled();
+ expect(api.listDatabaseBackups).not.toHaveBeenCalled();
 });

@@ -13,9 +13,6 @@ export type HostingOperation = components["schemas"]["HostingOperation"] & {
   plan?: { previous_stopped?: { stop_operation_id: string; target: components["schemas"]["HostingHealthy"] } };
   result?: { stack_stopped?: boolean };
 };
-export function committedGitCompose(operation: components["schemas"]["HostingOperation"]) {
-  return operation.state === "succeeded" && Boolean("git_compose" in operation.snapshot && operation.snapshot.git_compose && "stack" in operation.snapshot && operation.snapshot.stack);
-}
 export type HostingOperationList = components["schemas"]["HostingOperationList"];
 export type HostingCleanupInput = components["schemas"]["HostingCleanupInput"];
 export type HostingRetainedRelease = components["schemas"]["HostingRetainedRelease"];

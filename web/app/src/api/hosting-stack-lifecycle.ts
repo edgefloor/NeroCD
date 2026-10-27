@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { request } from "./client";
-import type { HostingOperation } from "./hosting-deployments";
+import { getHostingOperation, type HostingOperation } from "./hosting-deployments";
 import { boundedStorageRequest, type StorageDeploymentScope } from "./hosting-storage-deployment";
 
 export type StackLifecycleState = { resource_id: string; state: "running" | "stopped" | "unavailable" | "held"; deployed_operation_id?: string; stop_operation_id?: string; resource_generation: number };
@@ -18,6 +18,21 @@ export async function getStackLifecycle(scope: StorageDeploymentScope, signal?: 
 }
 export const stackLifecycleKey = (scope: StorageDeploymentScope) => ["stackLifecycle", scope.actor, scope.project, scope.resource] as const;
 export const stackLifecycleQuery = (scope: StorageDeploymentScope) => queryOptions({ queryKey: stackLifecycleKey(scope), queryFn: ({ signal }) => getStackLifecycle(scope, signal), retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
+export const currentGitStackKey = (scope: StorageDeploymentScope) => ["currentGitStack", scope.actor, scope.project, scope.resource] as const;
+export async function getCurrentGitStack(scope: StorageDeploymentScope, signal?: AbortSignal) {
+  const lifecycle = await getStackLifecycle(scope, signal);
+  if (lifecycle.state === "unavailable" || !lifecycle.deployed_operation_id) return { lifecycle, operation: null };
+  const operation = await boundedStorageRequest(signal => getHostingOperation(lifecycle.deployed_operation_id!, { signal }), signal);
+  const stack = "stack" in operation.snapshot ? operation.snapshot.stack : undefined;
+  const git = "git_compose" in operation.snapshot ? operation.snapshot.git_compose : undefined;
+  if (operation.id !== lifecycle.deployed_operation_id || operation.project_id !== scope.project || operation.resource_id !== scope.resource || operation.state !== "succeeded" ||
+      operation.snapshot.resource_id !== scope.resource || operation.snapshot.binding_id !== operation.binding_id ||
+      !stack || !Number.isSafeInteger(stack.generation) || stack.generation < 1 || !/^sha256:[a-f0-9]{64}$/.test(stack.hash) ||
+      !git || !identifier(git.build_id) || !Number.isSafeInteger(git.source_generation) || git.source_generation < 1 || !/^sha256:[a-f0-9]{64}$/.test(git.result_hash))
+    throw new Error("Current Git Compose deployment evidence mismatch");
+  return { lifecycle, operation };
+}
+export const currentGitStackQuery = (scope: StorageDeploymentScope) => queryOptions({ queryKey: currentGitStackKey(scope), queryFn: ({ signal }) => getCurrentGitStack(scope, signal), retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
 export async function requestStackStop(scope: StorageDeploymentScope, body: StackStopInput, signal?: AbortSignal): Promise<HostingOperation> {
   const operation = await boundedStorageRequest((signal) => request<HostingOperation>(`${path(scope.resource)}/stack-stop`, { method: "POST", body, signal, cache: "no-store" }), signal);
   const plan = operation?.stack_stop_plan, target = plan?.target;

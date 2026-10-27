@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { getStackLifecycle, requestStackStop, stackLifecycleKey, validateStackLifecycle } from "./hosting-stack-lifecycle";
+import { getCurrentGitStack, getStackLifecycle, requestStackStop, stackLifecycleKey, validateStackLifecycle } from "./hosting-stack-lifecycle";
 const scope = { actor: "u", project: "p", resource: "r" }, digest = "sha256:" + "a".repeat(64);
 const running = { resource_id: "r", resource_generation: 2, state: "running", deployed_operation_id: "deploy" };
 const body = Object.freeze({ idempotency_key: "key", expected_deployed_operation_id: "deploy", expected_generation: 2 });
@@ -23,4 +23,37 @@ test.each([401, 403])("permission HTTP%s is preserved for clearing UI drafts", a
 });
 test.each([{ ...stopReceipt, resource_id: "other" }, { ...stopReceipt, project_id: "other" }, { ...stopReceipt, stack_stop_plan: undefined }, { ...stopReceipt, stack_stop_plan: { ...stopReceipt.stack_stop_plan, target: { ...stopReceipt.stack_stop_plan.target, operation_id: "other" } } }, { ...stopReceipt, stack_stop_plan: { ...stopReceipt.stack_stop_plan, target_plan: { ...stopReceipt.stack_stop_plan.target_plan, hash: "foreign" } } }])("rejects a foreign or mismatched Stop receipt %j", async (value) => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(value)))); await expect(requestStackStop(scope, body)).rejects.toThrow();
+});
+
+
+const deployedGit = { id: "deploy", project_id: "p", resource_id: "r", binding_id: "b", state: "succeeded", snapshot: { ...snapshot, stack: { generation: 1, hash: digest }, git_compose: { build_id: "build", source_generation: 1, result_hash: digest } } };
+test("current Git stack uses lifecycle's exact deployed operation and never history pagination", async () => {
+  const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith("/stack-lifecycle") ? running : deployedGit)));
+  vi.stubGlobal("fetch", fetch);
+  expect(await getCurrentGitStack(scope)).toEqual({ lifecycle: running, operation: deployedGit });
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(["/api/v1/resources/r/stack-lifecycle", "/api/v1/hosting-operations/deploy"]);
+});
+test("later single-image release stays non-Compose despite historical Compose metadata", async () => {
+  const unavailable = { resource_id: "r", resource_generation: 3, state: "unavailable" };
+  const fetch = vi.fn(async () => new Response(JSON.stringify(unavailable)));
+  vi.stubGlobal("fetch", fetch);
+  expect(await getCurrentGitStack(scope)).toEqual({ lifecycle: unavailable, operation: null });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+test.each([
+  { ...deployedGit, id: "other" },
+  { ...deployedGit, resource_id: "other" },
+  { ...deployedGit, project_id: "other" },
+  { ...deployedGit, state: "failed" },
+  { ...deployedGit, snapshot: { ...deployedGit.snapshot, binding_id: "other" } },
+  { ...deployedGit, snapshot: { ...deployedGit.snapshot, stack: undefined } },
+  { ...deployedGit, snapshot: { ...deployedGit.snapshot, git_compose: undefined } },
+])("rejects foreign, uncommitted or incomplete current deployment %j", async operation => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith("/stack-lifecycle") ? running : operation))));
+  await expect(getCurrentGitStack(scope)).rejects.toThrow("evidence mismatch");
+});
+test("stopped proof retains historical deployed source and exact stop identity after desired settings change", async () => {
+  const stopped = { ...running, state: "stopped", resource_generation: 5, stop_operation_id: "stop" };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith("/stack-lifecycle") ? stopped : deployedGit))));
+  expect(await getCurrentGitStack(scope)).toEqual({ lifecycle: stopped, operation: deployedGit });
 });
