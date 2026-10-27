@@ -263,6 +263,10 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
   step = "follow_component_logs";
   const logRegion = application.getByRole("region", { name: `Runtime logs for ${applicationName}`, exact: true });
+  await logRegion.scrollIntoViewIfNeeded();
+  const refreshedTargets = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/runtime-log-targets`);
+  await logRegion.getByRole("button", { name: "Refresh component targets", exact: true }).click();
+  await checkedResponse(refreshedTargets, 200);
   const selector = logRegion.getByRole("combobox", { name: "Compose component", exact: true });
   for (const component of ["vikunja", "postgresql", "init"]) {
     await selector.selectOption(component);
