@@ -243,3 +243,34 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 		t.Fatalf("Git Compose build claim mismatch: %v", err)
 	}
 }
+
+// This bounded prerequisite uses the exact constructor and compiled CLI used by
+// the application qualification, without queuing a build or deploying a stack.
+func TestGitComposeFixtureCompiledRunnerStartup(t *testing.T) {
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
+		t.Skip("requires exact approved Git Compose runtime profile")
+	}
+	f := newStorageRuntimeFixture(t, true)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if exited, category, code := storageRuntimeRunnerExit(f.process); exited {
+			t.Fatalf("compiled Git runner exited before polling: category=%s code=%d", category, code)
+		}
+		if f.heartbeats.Load() >= 2 && f.emptyClaims.Load() >= 2 {
+			if f.archiveConfig != "" {
+				t.Fatal("Git profile unexpectedly configures standalone archive execution")
+			}
+			for _, capability := range f.capabilities {
+				switch capability {
+				case domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability, domain.RunTypeStorageBackupTransfer,
+					domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability:
+					t.Fatal("Git profile unexpectedly advertises standalone archive/database execution")
+				}
+			}
+			t.Log("assembled Git CLI authenticated, completed two heartbeat/empty-claim cycles, and remains alive")
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("assembled Git CLI did not complete heartbeat/empty-claim polling")
+}

@@ -61,6 +61,7 @@ type storageRuntimeFixture struct {
 	fault                                               atomic.Pointer[storageRuntimeFault]
 	completions                                         atomic.Int64
 	archiveCompletions                                  atomic.Int64
+	heartbeats, emptyClaims                             atomic.Int64
 	capabilities                                        []string
 	archiveConfig                                       string
 	buildConfig                                         string
@@ -212,6 +213,25 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		}
 		fault := f.fault.Load()
 		if fault == nil || r.URL.Path != fault.path || !f.fault.CompareAndSwap(fault, nil) {
+			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" && (r.URL.Path == "/api/v1/runners/heartbeat" || r.URL.Path == "/api/v1/runners/claim") {
+				receipt := httptest.NewRecorder()
+				server.ServeHTTP(receipt, r)
+				if r.URL.Path == "/api/v1/runners/heartbeat" && receipt.Code == http.StatusOK {
+					f.heartbeats.Add(1)
+				}
+				if r.URL.Path == "/api/v1/runners/claim" && receipt.Code == http.StatusNotFound {
+					var failure map[string]string
+					if json.Unmarshal(receipt.Body.Bytes(), &failure) == nil && failure["code"] == "not_found" && f.heartbeats.Load() > 0 {
+						f.emptyClaims.Add(1)
+					}
+				}
+				for name, values := range receipt.Header() {
+					w.Header()[name] = values
+				}
+				w.WriteHeader(receipt.Code)
+				_, _ = w.Write(receipt.Body.Bytes())
+				return
+			}
 			server.ServeHTTP(w, r)
 			return
 		}
@@ -259,7 +279,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	}](f, "", http.MethodPost, "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
 	f.token = login.Token
 	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability}
-	if len(archive) > 0 && archive[0] {
+	if len(archive) > 0 && archive[0] && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
 		storageRuntimeConfigureArchive(t, f, pg)
 		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
@@ -283,7 +303,10 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability)
+			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
+			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
+				caps = append(caps, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability)
+			}
 		}
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
@@ -334,7 +357,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		}
 	})
 	t.Cleanup(func() { f.stop(); t.Logf("compiled runner logs:\n%s", f.logs.String()) })
-	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
+	if (os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind") || os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		for _, name := range []string{"database-state", "database-secrets"} {
 			if err := os.Mkdir(filepath.Join(f.root, name), 0700); err != nil {
 				t.Fatal(err)
@@ -433,7 +456,13 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 		command.Args = append(command.Args, "--hosting-runtime-env")
 	}
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-		command.Args = append(command.Args, "--hosting-storage-backup-download", "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+		if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+			// PostgreSQL runs as a Compose service. This profile retains prior
+			// archive evidence and does not exercise standalone database engines.
+			command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute")
+		} else {
+			command.Args = append(command.Args, "--hosting-storage-backup-download", "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+		}
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		command.Args = append(command.Args, "--hosting-registry-pull", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute", "--hosting-database", "--hosting-database-network-capture", "--hosting-database-network-upgrade", "--hosting-application-database", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
