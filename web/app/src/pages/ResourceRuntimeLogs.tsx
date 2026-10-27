@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, principalQuery } from "@/api";
-import { hostingOperationQuery } from "@/api/hosting-deployments";
-import { storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import type { Resource } from "@/api/hosting";
-import { appendLogRows, closeRuntimeLogs, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, type LogLease, type LogOpen, type LogPage, type LogRow, type LogScope, type LogSession } from "@/api/hosting-runtime-logs";
+import { appendLogRows, closeRuntimeLogs, displayLogText, leaseRemaining, logLease, newLogOpen, openRuntimeLogs, readRuntimeLogs, renewRuntimeLogs, runtimeLogTargetsQuery, type LogLease, type LogOpen, type LogPage, type LogRow, type LogScope, type LogSession } from "@/api/hosting-runtime-logs";
 import { Button } from "@/components/ui/button";
 
 type Kind = "open" | "read" | "renew" | "close";
@@ -27,19 +25,18 @@ function LogOutput({ scope, name, compose }: { scope: LogScope; name: string; co
 }
 type Selection = { component: string; expected_operation_id: string };
 function StackLogReader({ scope, hide }: { scope: LogScope; hide: () => void }) {
-  const options = useQuery(storageDeploymentOptionsQuery(scope));
-  const operationID = options.data?.previous_healthy_operation_id;
-  const operation = useQuery({ ...hostingOperationQuery(scope.project, scope.resource, operationID ?? "", scope.actor), enabled: Boolean(options.data?.available && options.data.stack_ref && operationID), gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
+  const targets = useQuery(runtimeLogTargetsQuery(scope));
   const [selected, select] = useState("");
-  const value = operation.data, stack = value?.result?.stack;
-  const ready = !options.isFetching && !options.isError && options.data?.available && options.data.stack_ref && !operation.isFetching && !operation.isError && value && value.id === operationID && value.state === "succeeded" && value.result?.ready && !value.result.uncertain && !value.mutation_hold && !value.restore_ownership_held && stack?.observation_complete;
-  const choices = ready ? stack.components : [];
+  const ready = targets.isSuccess && !targets.isFetching;
+  const operationID = ready ? targets.data.operation_id : undefined;
+  const choices = ready ? targets.data.components : [];
   const component = choices.find((item) => item.component === selected);
   return <div className="min-w-0 space-y-3">
     <label className="block space-y-1"><span>Compose component</span><select className="block max-w-full rounded border bg-background p-2" value={component?.component ?? ""} onChange={(event) => select(event.target.value)}>
       <option value="">Select a component</option>
       {choices.map((item) => <option key={item.component} value={item.component}>{item.component}{item.running ? " · running" : ` · stopped, exit ${item.exit_code}`}</option>)}
     </select></label>
+    <Button className={buttonClass} variant="outline" disabled={targets.isFetching} onClick={() => { select(""); void targets.refetch(); }}>Refresh component targets</Button>
     {component && operationID ? <LogReader key={JSON.stringify([operationID, component.component])} scope={scope} hide={hide} selection={{ component: component.component, expected_operation_id: operationID }} /> : <><p role="status">{ready ? "Select a component, then choose Follow runtime logs. Selection alone opens no demand." : "Settled Compose component evidence is pending or unavailable. Output is cleared."}</p><Button className={buttonClass} variant="outline" onClick={hide}>Hide output</Button></>}
   </div>;
 }

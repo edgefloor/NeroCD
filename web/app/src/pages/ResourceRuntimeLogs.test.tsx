@@ -2,10 +2,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
-import { hostingDeploymentKeys } from "@/api/hosting-deployments";
-import { storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import type { Resource } from "@/api/hosting";
-import type { LogSession } from "@/api/hosting-runtime-logs";
+import { runtimeLogTargetsQuery, type LogSession } from "@/api/hosting-runtime-logs";
 import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 const time = "2026-10-23T00:00:00Z", digest = "sha256:" + "a".repeat(64);
 const resource: Resource = { id: "r", project_id: "p", project_environment_id: "e", name: "Web", kind: "application", generation: 1, source: { kind: "image", image: { reference: "web:1" } }, created_by: "u", created_at: "", updated_at: "" };
@@ -24,8 +22,7 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
   }); vi.stubGlobal("fetch", fetch); return fetch;
 }
 function setup(compose = false) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] }); if (compose) {
-  client.setQueryData(storageDeploymentOptionsQuery({ actor: "u", project: "p", resource: "r" }).queryKey, { resource_id: "r", resource_generation: 1, storage_ref: null, available: true, reason: "available", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, routes: [], storage_route_continuity: null, stack_ref: { generation: 1, hash: digest }, previous_healthy_operation_id: "op" });
-  client.setQueryData(hostingDeploymentKeys.operation("p", "r", "op", "u"), { id: "op", project_id: "p", resource_id: "r", state: "succeeded", mutation_hold: false, restore_ownership_held: false, result: { ready: true, uncertain: false, stack: { observation_complete: true, components: ["app", "db", "init"].map((component) => ({ component, running: component !== "init", exit_code: 0, container_id: component + "-container", image_id: digest, operation_id: "op" })) } } });
+  client.setQueryData(runtimeLogTargetsQuery({ actor: "u", project: "p", resource: "r" }).queryKey, { resource_id: "r", operation_id: "op", components: ["app", "db", "init"].map((component) => ({ component, running: component !== "init", exit_code: 0 })) });
 } return render(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={compose ? { ...resource, source: { kind: "compose", compose: {} } } as Resource : resource} blocked={false} /></QueryClientProvider>); }
 async function click(name: string) { await act(async () => { fireEvent.click(screen.getByRole("button", { name })); }); }
 async function advance(ms: number) { for (let remaining = ms; remaining > 0;) { const step = Math.min(1000, remaining); now += step; wall += step; await act(async () => { await vi.advanceTimersByTimeAsync(step); }); remaining -= step; } }
@@ -125,10 +122,12 @@ test("Compose selection opens no demand and switching closes, clears and follows
   await advance(4000); expect(fetch).toHaveBeenCalledTimes(count);
   await click("Follow runtime logs"); expect(screen.getByText("private init")).toBeTruthy();
 });
-test("Compose evidence failure offers no legacy application Follow fallback", () => {
-  const fetch = backend(); setup(true);
-  act(() => client.setQueryData(hostingDeploymentKeys.operation("p", "r", "op", "u"), { id: "op", state: "failed" }));
-  expect(screen.queryByRole("button", { name: "Follow runtime logs" })).toBeNull(); expect(fetch).not.toHaveBeenCalled();
+test.each([403, 409])("target discovery HTTP%s removes choices without a legacy Follow fallback", async (status) => {
+  const fetch = backend((url) => url.endsWith("/runtime-log-targets") ? json({}, status) : undefined); setup(true);
+  await click("Refresh component targets"); await advance(1);
+  expect(screen.queryByRole("button", { name: "Follow runtime logs" })).toBeNull();
+  expect(screen.getByText(/Settled Compose component evidence is pending or unavailable/)).toBeTruthy();
+  expect(fetch.mock.calls).toHaveLength(1);
 });
 
 test.each(["open", "read"])("component change retires a pending %s and rejects its late output", async (kind) => {
@@ -148,6 +147,28 @@ test.each(["open", "read"])("component change retires a pending %s and rejects i
   const late = kind === "open" ? lateSession : { session: lateSession, items: [{ sequence: 1, component: "app", stream: "stdout", message: "late component secret", received_at: time }], next_sequence: 1, earliest_available_sequence: 1, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true };
   pending = false; await act(async () => resolve(json(late)));
   expect(screen.queryByText("late component secret")).toBeNull(); expect(screen.queryByText(/Immutable session/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "DELETE")).toHaveLength(1);
+  const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
+});
+
+test("component discovery uses settled runtime targets independently of redeploy availability", async () => {
+  const fetch = backend((url) => url.endsWith("/runtime-log-targets") ? json({ resource_id: "r", operation_id: "settled", components: [{ component: "init", running: false, exit_code: 0 }] }) : json({ reason: "https_unavailable" }, 409));
+  setup(true); await click("Refresh component targets");
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(["/api/v1/resources/r/runtime-log-targets"]);
+  expect(screen.getByRole("option", { name: "init · stopped, exit 0" })).toBeTruthy();
+  await act(async () => fireEvent.change(screen.getByRole("combobox"), { target: { value: "init" } }));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Follow runtime logs" })).toBeTruthy();
+});
+test("refreshing component targets closes the prior session and requires selection and Follow again", async () => {
+  const fetch = backend((url, options) => {
+    if (url.endsWith("/runtime-log-targets")) return json({ resource_id: "r", operation_id: "successor", components: [{ component: "db", running: true, exit_code: 0 }] });
+    if (url.endsWith("/runtime-log-sessions")) { const body = JSON.parse(String(options.body)); session = { ...structuredClone(original), request_id: body.request_id, target: { ...original.target, component: body.component, container_name: "ncd_" + "a".repeat(32) } }; return json(session); }
+    if (url.includes("/logs?")) return json({ session, items: [{ sequence: 1, component: "db", stream: "stdout", message: "old sensitive output", received_at: time }], next_sequence: 1, earliest_available_sequence: 1, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true });
+  });
+  setup(true); await act(async () => fireEvent.change(screen.getByRole("combobox"), { target: { value: "db" } })); await click("Follow runtime logs");
+  expect(screen.getByText("old sensitive output")).toBeTruthy(); await click("Refresh component targets");
+  expect(screen.queryByText("old sensitive output")).toBeNull(); expect(screen.queryByRole("button", { name: "Follow runtime logs" })).toBeNull();
   expect(fetch.mock.calls.filter(([, options]) => options.method === "DELETE")).toHaveLength(1);
   const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
 });

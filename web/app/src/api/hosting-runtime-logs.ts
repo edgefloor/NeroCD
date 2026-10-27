@@ -1,3 +1,4 @@
+import { queryOptions } from "@tanstack/react-query";
 import type { components } from "./generated";
 import { request } from "./client";
 
@@ -16,6 +17,26 @@ function keys(value: unknown, required: string[], optional: string[] = []): asse
 const id = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 256 && /^[\x21-\x7e]+$/.test(value);
 const random = (value: unknown) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
 const integer = (value: unknown): value is number => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 2147483647;
+export type LogTargets = { resource_id: string; operation_id: string; components: { component: string; running: boolean; exit_code: number }[] };
+export function validateLogTargets(value: unknown, scope: LogScope): asserts value is LogTargets {
+  keys(value, ["resource_id", "operation_id", "components"]);
+  if (value.resource_id !== scope.resource || typeof value.operation_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.operation_id) || !Array.isArray(value.components) || value.components.length < 1 || value.components.length > 16) fail();
+  const seen = new Set<string>();
+  for (const item of value.components) {
+    keys(item, ["component", "running", "exit_code"]);
+    if (typeof item.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(item.component) || seen.has(item.component) || typeof item.running !== "boolean" || !Number.isInteger(item.exit_code) || Number(item.exit_code) < -2147483648 || Number(item.exit_code) > 2147483647) fail();
+    seen.add(item.component);
+  }
+}
+export async function getRuntimeLogTargets(scope: LogScope, signal?: AbortSignal): Promise<LogTargets> {
+  const value: unknown = await request(`/api/v1/resources/${encodeURIComponent(scope.resource)}/runtime-log-targets`, { signal, cache: "no-store" });
+  validateLogTargets(value, scope); return value;
+}
+export const runtimeLogTargetsQuery = (scope: LogScope) => queryOptions({
+  queryKey: ["runtimeLogTargets", scope.actor, scope.project, scope.resource],
+  queryFn: ({ signal }) => getRuntimeLogTargets(scope, signal), retry: false, gcTime: 0,
+  refetchOnWindowFocus: false, refetchOnReconnect: false,
+});
 export function logTime(value: unknown): number {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
   const year = Number(value.slice(0, 4)), month = Number(value.slice(5, 7)), day = Number(value.slice(8, 10));
