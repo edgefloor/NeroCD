@@ -896,8 +896,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Atomically install an immutable template into ordinary image hosting
-         * @description Requires project owner and current destination grant. Saves generated encrypted credential versions and retained storage without starting a container. Exact retries preserve original template bytes and references. Arbitrary Compose import remains incomplete.
+         * Atomically install an immutable template into image or managed Compose hosting
+         * @description Requires project owner and current destination grant. First-time installations recheck the same current runtime and runner capabilities shown by destination options before persisting resource, credential or storage records. Exact authorized retries preserve the original installation even if the runner becomes unavailable. Installation does not start containers. Arbitrary Compose import remains incomplete.
          */
         post: operations["installHostingCatalog"];
         delete?: never;
