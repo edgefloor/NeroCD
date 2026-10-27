@@ -8,13 +8,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -38,6 +41,46 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
+	const publicImage = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
+	registryPassword := hostingStorageRemoteRuntimeRandom(t)
+	storageRuntimeDocker(t, "pull", publicImage)
+	protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, publicImage)
+	manifestRequest, _ := http.NewRequestWithContext(t.Context(), "HEAD", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
+	manifestRequest.SetBasicAuth("fixture", registryPassword)
+	manifestRequest.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+	manifest, manifestErr := f.client.Do(manifestRequest)
+	if manifestErr != nil {
+		t.Fatal("protected manifest lookup")
+	}
+	_ = manifest.Body.Close()
+	digest := manifest.Header.Get("Docker-Content-Digest")
+	if manifest.StatusCode != 200 || len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") {
+		t.Fatal("protected manifest identity")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
+		t.Fatal("protected manifest digest")
+	}
+	protectedImage := protectedRepository + ":a@" + digest
+	registryValue := func(value string) string {
+		raw, _ := json.Marshal(map[string]string{"registry": "127.0.0.1:25001", "username": "fixture", "password": value})
+		return string(raw)
+	}
+	registrySecrets := map[string]domain.ManagedSecret{}
+	for name, value := range map[string]string{"correct": registryPassword, "wrong": "incorrect", "revoked": registryPassword} {
+		registrySecrets[name] = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Compose registry " + name, Value: registryValue(value)}, 201)
+	}
+	assertUncached := func() {
+		t.Helper()
+		output, err := exec.CommandContext(t.Context(), "/usr/local/bin/docker", "--host", "unix:///var/run/docker.sock", "image", "inspect", protectedImage).CombinedOutput()
+		if err == nil || !strings.Contains(strings.ToLower(string(output)), "no such image") && !strings.Contains(strings.ToLower(string(output)), "no such object") {
+			t.Fatal("protected Compose image is not demonstrably uncached")
+		}
+	}
+	assertUncached()
+	registryRef := domain.HostingRegistryCredentialRef{SecretID: registrySecrets["correct"].ID, Version: 1}
+	b.mu.Lock()
+	b.imageReference = protectedImage
+	b.mu.Unlock()
 	password := hostingStorageRemoteRuntimeRandom(t) + "$cash$$${NEVER_EXPAND}"
 	jwt := hostingStorageRemoteRuntimeRandom(t) + "$jwt$$${NEVER_EXPAND}"
 	for name, value := range map[string]string{"Compose PostgreSQL": password, "Compose JWT": jwt} {
@@ -50,7 +93,12 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("browser did not save Compose source")
 	}
 	definition, err := domain.ParseHostingStack(*resource.Source.Compose)
-	if err != nil || definition.OriginalHash != "sha256:c46d52024d31bad0a70342051c26dd4401ad80d29ec8867c22cca0e60e9a6925" || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
+	originalPublic := strings.Replace(resource.Source.Compose.Original, protectedImage, publicImage, 1)
+	originalSum := sha256.Sum256([]byte(originalPublic))
+	if strings.Count(resource.Source.Compose.Original, protectedImage) != 1 || "sha256:"+hex.EncodeToString(originalSum[:]) != "sha256:c46d52024d31bad0a70342051c26dd4401ad80d29ec8867c22cca0e60e9a6925" {
+		t.Fatal("unexpected Compose source substitution")
+	}
+	if err != nil || definition.OriginalHash != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(resource.Source.Compose.Original))) || definition.PublicComponent != "vikunja" || definition.ContainerPort != 3456 {
 		t.Fatal("original reference-bearing source or public component changed")
 	}
 	runtime := storageRuntimeJSON[struct {
@@ -66,10 +114,20 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	verify := func(op domain.HostingOperation) {
 		t.Helper()
+		if op.Snapshot.RegistryCredential != registryRef {
+			t.Fatal("Compose registry snapshot reference changed")
+		}
 		for _, component := range op.Result.Stack.Components {
 			var ports map[string]json.RawMessage
 			if json.Unmarshal(storageRuntimeDocker(t, "container", "inspect", component.ContainerID, "--format", "{{json .HostConfig.PortBindings}}"), &ports) != nil {
 				t.Fatal("component port inspection")
+			}
+			if component.Component == "vikunja" {
+				actual := bytes.TrimSpace(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Image}}"))
+				pinned := bytes.TrimSpace(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}"))
+				if !bytes.Equal(actual, pinned) {
+					t.Fatal("protected image differs from pinned Vikunja content")
+				}
 			}
 			if component.Component == "postgresql" && len(ports) != 0 {
 				t.Fatal("PostgreSQL published a host port")
@@ -176,6 +234,41 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	b.set("volume_schedule", resourceID)
 	volumeScheduleID := b.await(t, "volume_scheduled")
 	volumeSchedule := composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)
+	containersBefore := map[string][]byte{}
+	for _, component := range first.Result.Stack.Components {
+		containersBefore[component.ContainerID] = storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Id}} {{json .Config}} {{json .Mounts}} {{.State.Running}} {{.State.StartedAt}}")
+	}
+	routesBefore := storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+resourceID+"/routes", nil, 200)
+	proxyBefore := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+	denialOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+	deniedBody := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-registry-wrong", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, StorageRouteContinuity: denialOptions.StorageRouteContinuity, RegistryCredential: &domain.HostingRegistryCredentialRef{SecretID: registrySecrets["wrong"].ID, Version: 1}}
+	storageRuntimeDocker(t, "image", "rm", "--force", protectedImage)
+	assertUncached()
+	denied := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 202)
+	if replay := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 202); replay.ID != denied.ID {
+		t.Fatal("Compose registry identical request changed operation")
+	}
+	denied = f.await(denied.ID, "failed")
+	if denied.MutationHold || denied.Result != nil && denied.Result.Uncertain {
+		t.Fatal("denied pull acquired mutation hold")
+	}
+	deniedBody.RegistryCredential = &registryRef
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 409)
+	revoked := registrySecrets["revoked"]
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/managed-secrets/"+revoked.ID+"/revoke", app.ManagedSecretRevokeInput{ExpectedVersion: 1}, 200)
+	deniedBody.IdempotencyKey = "compose-registry-revoked"
+	deniedBody.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: revoked.ID, Version: 1}
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 409)
+	for id, before := range containersBefore {
+		if !bytes.Equal(before, storageRuntimeDocker(t, "inspect", id, "--format", "{{.Id}} {{json .Config}} {{json .Mounts}} {{.State.Running}} {{.State.StartedAt}}")) {
+			t.Fatal("denied Compose credentials mutated previous component")
+		}
+	}
+	if !reflect.DeepEqual(routesBefore, storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+resourceID+"/routes", nil, 200)) || !reflect.DeepEqual(proxyBefore, storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)) {
+		t.Fatal("denied Compose credentials changed loaded route or proxy holds")
+	}
+	verifyHTTPS()
+	assertUncached()
 	b.set("redeploy", resourceID)
 	second := f.await(b.await(t, "redeployed"), "succeeded")
 	if second.Plan == nil || second.Result == nil || second.Result.Stack == nil || second.Snapshot.HostPort != first.Snapshot.HostPort || second.Snapshot.RuntimeConfiguration != first.Snapshot.RuntimeConfiguration || !reflect.DeepEqual(second.Result.Stack.Volumes, first.Result.Stack.Volumes) || second.Result.Stack.NetworkID != first.Result.Stack.NetworkID {
@@ -230,6 +323,8 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if lifecycle.State != "stopped" || lifecycle.StopOperationID != stopped.ID {
 		t.Fatal("missing explicit stopped state")
 	}
+	storageRuntimeDocker(t, "image", "rm", "--force", protectedImage)
+	assertUncached()
 	b.set("start", resourceID)
 	started := f.await(b.await(t, "started"), "succeeded")
 	if started.Plan == nil || started.Plan.PreviousStopped == nil || started.Plan.PreviousStopped.StopOperationID != stopped.ID || started.Snapshot.StackStoppedOperationID != stopped.ID || started.Result == nil || started.Result.Stack == nil || !reflect.DeepEqual(started.Result.Stack.Volumes, second.Result.Stack.Volumes) || started.Result.Stack.NetworkID != second.Result.Stack.NetworkID || started.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration {
@@ -263,7 +358,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		}
 	}
 	storageRuntimeJSON[json.RawMessage](f, "PUT", "/api/v1/resources/"+target.ID+"/runtime-configuration", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: target.Generation, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("e", 32), Entries: targetEntries}, 200)
-	targetDeploy := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+target.ID+"/deployments", domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: target.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "compose-import-target", ContainerPort: 3456, HostPort: first.Snapshot.HostPort + 1, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}}, 202)
+	targetDeploy := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+target.ID+"/deployments", domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: target.Generation, ExpectedRuntimeConfigurationGeneration: 1, RegistryCredential: &registryRef, IdempotencyKey: "compose-import-target", ContainerPort: 3456, HostPort: first.Snapshot.HostPort + 1, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}}, 202)
 	targetDeploy = f.await(targetDeploy.ID, "succeeded")
 	verify(targetDeploy)
 	for _, a := range started.Result.Stack.Volumes {
@@ -326,7 +421,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("restored application records missing")
 	}
 	options := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
-	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
+	bad := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, RegistryCredential: &registryRef, IdempotencyKey: "compose-controlled-failure", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/api/v1/required-missing-compose-readiness", TimeoutSeconds: 2}, StorageRouteContinuity: options.StorageRouteContinuity}
 	failed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", bad, 202)
 	held := f.await(failed.ID, "reconciliation_required")
 	if !held.MutationHold || held.Result == nil || !held.Result.Uncertain || held.Result.Ready || held.Result.Stack == nil || !held.Result.Stack.ObservationComplete || len(held.Result.Stack.Components) != 3 {
@@ -339,14 +434,16 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, _ := json.Marshal([]any{resource, runtime, first, second, stopped, started, held})
+	ordinary, _ := json.Marshal([]any{resource, runtime, first, second, stopped, started, held, denied})
 	for _, value := range []string{password, jwt} {
 		if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
 			t.Fatal("managed credential entered ordinary operation/journal/log output")
 		}
 	}
+	registryRuntimeArtifactSecrecy(t, f, ordinary, registryPassword)
 	clear(journal)
 	clear(ordinary)
+	t.Log("private Compose registry: protected uncached pinned Vikunja, anonymous PostgreSQL/init, selected immutable refs, wrong/revoked pre-mutation route/container preservation, later valid redeploy/Start and artifact secrecy verified")
 	t.Log("real Vikunja/PostgreSQL: shipped Compose example, successful init job, UI credentials/destination/deploy, trusted HTTPS, fresh login/task/upload/new writes after redeploy, stable refs/volumes/upload ownership, private DB, no overlapping writers, UI Stop removes all writers, UI Start retains records/uploads/credentials/HTTPS, logical DB backup/UI distinct-target transactional replacement/source later-write exclusion/target independent writes (uploads excluded), controlled failed replacement held")
 	b.set("complete", resourceID)
 	b.await(t, "done")
@@ -865,4 +962,39 @@ func composeRuntimeUploadSnapshot(t *testing.T, root string) map[string]string {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestComposeRegistryRuntimeRequestContracts(t *testing.T) {
+	for _, mode := range []string{"initial", "replacement", "start"} {
+		t.Run(mode, func(t *testing.T) {
+			input := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "compose-registry-" + mode, ContainerPort: 3456, HostPort: 18080, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, RegistryCredential: &domain.HostingRegistryCredentialRef{SecretID: "msec_fixture", Version: 1}}
+			if mode != "initial" {
+				input.StorageRouteContinuity = &domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: 2, ExpectedLoadedProxyOperationID: "hop_proxy", Routes: []domain.HostingRouteSwitchSelection{{RouteID: "route_fixture", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_previous"}}}
+			}
+			if mode == "start" {
+				input.ManagedStack.ExpectedStoppedOperationID = "hop_stopped"
+			}
+			raw, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded domain.HostingDeploymentInput
+			if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/resources/res_fixture/deployments", bytes.NewReader(raw)), &decoded) || domain.ValidateHostingDeployment(decoded) != nil || !reflect.DeepEqual(input, decoded) {
+				t.Fatal("actual Compose deployment decoder/validator changed fixture body")
+			}
+			for _, invalid := range []domain.HostingDeploymentInput{func() domain.HostingDeploymentInput {
+				v := input
+				v.ManagedStack = &domain.HostingStackDeploymentInput{}
+				return v
+			}(), func() domain.HostingDeploymentInput { v := input; v.Readiness.TimeoutSeconds = 0; return v }(), func() domain.HostingDeploymentInput {
+				v := input
+				v.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_fixture", Version: 0}
+				return v
+			}()} {
+				if domain.ValidateHostingDeployment(invalid) == nil {
+					t.Fatal("invalid acknowledgement/readiness/credential accepted")
+				}
+			}
+		})
+	}
 }

@@ -113,9 +113,9 @@ func registryRuntimeDeploymentInput(resource domain.Resource, credential domain.
 	return domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "registry-identical-request", ContainerPort: 8080, HostPort: 20102, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 3}, StorageRouteContinuity: continuity, RegistryCredential: &credential}
 }
 
-// The existing guest registry seeds these scratch images. The second registry
-// requires real Basic authentication; Engine pushes and pulls never use login.
-func registryRuntimeProtectedImages(t *testing.T, f *storageRuntimeFixture, password string) string {
+// Seed the existing scratch images, or explicit pinned application images, into
+// a Basic-authenticated guest registry. Engine pushes and pulls never use login.
+func registryRuntimeProtectedImages(t *testing.T, f *storageRuntimeFixture, password string, sources ...string) string {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	if err != nil {
@@ -129,8 +129,14 @@ func registryRuntimeProtectedImages(t *testing.T, f *storageRuntimeFixture, pass
 	if strings.TrimSpace(string(storageRuntimeDocker(t, "ps", "-aq", "--filter", "name=^/"+name+"$"))) != "" {
 		t.Fatal("private registry name exists")
 	}
+	size := "64m"
+	if len(sources) != 0 {
+		size = "512m"
+	} else {
+		sources = []string{storageRuntimeImage + "a", storageRuntimeImage + "b"}
+	}
 	const image = "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
-	id := strings.TrimSpace(string(storageRuntimeDocker(t, "run", "--detach", "--pull=never", "--name", name, "--label", storageRuntimeLabel+"="+storageRuntimeOwner, "--network", "host", "--tmpfs", "/var/lib/registry:rw,size=64m", "--mount", "type=bind,src="+authPath+",dst=/auth/htpasswd,readonly", "--env", "REGISTRY_HTTP_ADDR=127.0.0.1:25001", "--env", "REGISTRY_AUTH=htpasswd", "--env", "REGISTRY_AUTH_HTPASSWD_REALM=NeroCD acceptance", "--env", "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd", image)))
+	id := strings.TrimSpace(string(storageRuntimeDocker(t, "run", "--detach", "--pull=never", "--name", name, "--label", storageRuntimeLabel+"="+storageRuntimeOwner, "--network", "host", "--tmpfs", "/var/lib/registry:rw,size="+size, "--mount", "type=bind,src="+authPath+",dst=/auth/htpasswd,readonly", "--env", "REGISTRY_HTTP_ADDR=127.0.0.1:25001", "--env", "REGISTRY_AUTH=htpasswd", "--env", "REGISTRY_AUTH_HTPASSWD_REALM=NeroCD acceptance", "--env", "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd", image)))
 	t.Cleanup(func() {
 		identity := strings.TrimSpace(string(storageRuntimeDocker(t, "inspect", "--format", `{{.Id}} {{index .Config.Labels "io.nerocd.storage-runtime.owner"}}`, id)))
 		if identity != id+" "+storageRuntimeOwner {
@@ -177,8 +183,9 @@ func registryRuntimeProtectedImages(t *testing.T, f *storageRuntimeFixture, pass
 	engine := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 	credentials, _ := json.Marshal(map[string]string{"username": "fixture", "password": password, "serveraddress": "127.0.0.1:25001"})
 	target := "127.0.0.1:25001/" + storageRuntimeOwner
-	for _, version := range []string{"a", "b"} {
-		storageRuntimeDocker(t, "tag", storageRuntimeImage+version, target+":"+version)
+	for index, source := range sources {
+		version := string(rune('a' + index))
+		storageRuntimeDocker(t, "tag", source, target+":"+version)
 		request, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://engine/images/"+target+"/push?tag="+version, nil)
 		request.Header.Set("X-Registry-Auth", base64.URLEncoding.EncodeToString(credentials))
 		response, e := engine.Do(request)
@@ -338,6 +345,21 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 	}
 	f.stop()
 	serialized, _ := json.Marshal([]any{states, failed})
+	registryRuntimeArtifactSecrecy(t, f, serialized, password)
+	if reflect.DeepEqual(states[0].Snapshot.Storage, states[1].Snapshot.Storage) {
+		t.Fatal("stateless/storage paths not distinct")
+	}
+	t.Log("private registry: uncached authenticated pulls, both UI forms, pinned runtime/ref, replay/conflict, wrong/revoked pre-mutation denial, retained uploads and artifact secrecy verified")
+	f.catalogBrowser.set("complete", stored.ID)
+	f.catalogBrowser.await(t, "done")
+}
+
+func registryRuntimeArtifactSecrecy(t *testing.T, f *storageRuntimeFixture, serialized []byte, password string) {
+	t.Helper()
+	secretValue := func(value string) string {
+		raw, _ := json.Marshal(map[string]string{"registry": "127.0.0.1:25001", "username": "fixture", "password": value})
+		return string(raw)
+	}
 	markers := [][]byte{[]byte("X-Registry-Auth"), []byte("x-registry-auth")}
 	for _, deliveredPassword := range []string{password, "incorrect"} {
 		engineAuth, _ := json.Marshal(struct {
@@ -381,10 +403,4 @@ func TestHostingPrivateRegistryCompiledRunnerHTTPS(t *testing.T) {
 			t.Fatal("durable Docker login configuration present")
 		}
 	}
-	if reflect.DeepEqual(states[0].Snapshot.Storage, states[1].Snapshot.Storage) {
-		t.Fatal("stateless/storage paths not distinct")
-	}
-	t.Log("private registry: uncached authenticated pulls, both UI forms, pinned runtime/ref, replay/conflict, wrong/revoked pre-mutation denial, retained uploads and artifact secrecy verified")
-	f.catalogBrowser.set("complete", stored.ID)
-	f.catalogBrowser.await(t, "done")
 }

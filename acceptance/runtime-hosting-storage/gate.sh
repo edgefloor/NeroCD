@@ -563,9 +563,10 @@ elif [[ "$managed_compose" == true ]]; then
  python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" <<'COMPOSE_BROWSER_PASS'
 import json,pathlib,sys
 text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
+if "private Compose registry: protected uncached pinned Vikunja" not in text:raise SystemExit("private Compose registry assertions missing")
 if "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Compose runtime test did not pass without skips")
 if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Compose browser did not pass")
-for key in ["served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence","browser_component_database_backup_import","database_only_original_uploads_not_restored","database_source_later_write_excluded_target_writes_independent"]:
+for key in ["protected_compose_image","browser_compose_registry_selection","served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence","browser_component_database_backup_import","database_only_original_uploads_not_restored","database_source_later_write_excluded_target_writes_independent"]:
  if browser.get(key) is not True:raise SystemExit("connected Compose browser proof missing: "+key)
 for key in ["browser_compose_volume_remote_schedule_saved","browser_compose_volume_remote_schedule_occurrence","browser_compose_volume_remote_schedule_disabled","browser_compose_volume_remote_failure_history_reloaded","browser_compose_volume_remote_same_archive_retry"]:
  if browser.get(key) is not True:raise SystemExit("connected Compose remote schedule proof missing: "+key)

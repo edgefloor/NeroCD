@@ -191,6 +191,10 @@ try {
   step = "save_original_compose";
   let source = await readFile(resolve("examples/compose/vikunja-postgresql.yaml"), "utf8");
   if (createHash("sha256").update(source).digest("hex") !== "2ed2a1cc22b4c020f26e214d4e96a419eb56445a9d14f87f2df703a7ee9de767") throw Error("shipped Compose example changed");
+  const publicImage = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576";
+  if (!/^127\.0\.0\.1:25001\/[a-z0-9-]+:a@sha256:[a-f0-9]{64}$/.test(initial.image_reference ?? "") || source.split(publicImage).length !== 2) throw Error("protected application image metadata invalid");
+  source = source.replace(publicImage, initial.image_reference);
+  safe.protected_compose_image = true;
   // Explicit test command emits finite init output; shipped example stays intact.
   source = source.replace("      - |\n", "      - |\n        printf 'nerocd-init-log-fixture\\n'\n");
   const create = h.getByRole("form", { name: "Create application", exact: true });
@@ -241,6 +245,7 @@ try {
   safe.browser_runtime_configuration = true;
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
+  let selectedRegistrySecret;
   async function deploy(replacement, stoppedOperation) {
     step = replacement ? "redeploy_saved_compose" : "deploy_saved_compose";
     if (!replacement) {
@@ -248,6 +253,15 @@ try {
       await review.getByLabel("Readiness path", { exact: true }).fill("/health");
       await review.getByLabel("Readiness timeout in seconds", { exact: true }).fill("120");
     }
+    step = "select_compose_registry_credential";
+    const registry = review.getByRole("region", { name: "Image registry credentials", exact: true });
+    await registry.getByLabel("Image access", { exact: true }).selectOption("private");
+    const secrets = registry.getByLabel("Registry credential secret", { exact: true });
+    const option = secrets.getByRole("option").filter({ hasText: "Compose registry correct · " });
+    await expect(option).toHaveCount(1);
+    selectedRegistrySecret = await option.getAttribute("value");
+    await secrets.selectOption(selectedRegistrySecret);
+    await registry.getByLabel("Registry credential version", { exact: true }).selectOption("1");
     step = "review_compose_options";
     await review.getByRole("button", { name: stoppedOperation ? "Review current Compose start" : "Review current Compose deployment", exact: true }).click();
     step = "acknowledge_compose_interruption";
@@ -260,6 +274,8 @@ try {
     const input = result.request().postDataJSON();
     if (input.managed_stack?.expected_stopped_operation_id !== stoppedOperation) throw Error("Start stopped authority missing");
     if (input.managed_stack?.acknowledge_interruption !== true || !input.expected_runtime_configuration_generation || Boolean(input.storage_route_continuity) !== replacement) throw Error("Compose admission authority missing");
+    if (input.registry_credential?.secret_id !== selectedRegistrySecret || input.registry_credential?.version !== 1) throw Error("Compose registry reference missing");
+    safe.browser_compose_registry_selection = true;
     return (await result.json()).id;
   }
   await state("deploy");

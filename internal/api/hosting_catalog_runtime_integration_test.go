@@ -238,6 +238,7 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 type catalogRuntimeBrowser struct {
 	mu                sync.Mutex
 	key, phase, id    string
+	imageReference    string
 	reports           chan hostingStorageRemoteRuntimeReport
 	original, retried *domain.HostingCatalogInstallation
 }
@@ -328,10 +329,10 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		b.mu.Lock()
-		phase, id := b.phase, b.id
+		phase, id, imageReference := b.phase, b.id, b.imageReference
 		b.mu.Unlock()
 		if r.Method == "GET" && r.URL.Path == "/__catalog_fixture/state" {
-			writeJSON(w, 200, map[string]string{"phase": phase, "id": id})
+			writeJSON(w, 200, map[string]string{"phase": phase, "id": id, "image_reference": imageReference})
 			return true
 		}
 		if r.Method == "POST" && r.URL.Path == "/__catalog_fixture/report" {

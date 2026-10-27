@@ -281,7 +281,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability)
+			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability)
 		}
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
@@ -342,7 +342,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			}
 		}
 	}
-	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
+	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" || os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
 		if err := os.Mkdir(filepath.Join(f.root, "runner"), 0700); err != nil {
 			t.Fatal("private fixture configured work root", err)
 		}
@@ -416,7 +416,7 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 		command.Args = append(command.Args, "--hosting-runtime-env")
 	}
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-		command.Args = append(command.Args, "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+		command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		command.Args = append(command.Args, "--hosting-registry-pull", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute", "--hosting-database", "--hosting-database-network-capture", "--hosting-database-network-upgrade", "--hosting-application-database", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
