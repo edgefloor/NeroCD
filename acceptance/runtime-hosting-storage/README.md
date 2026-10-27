@@ -67,8 +67,34 @@ record source `a1ce5a1b`, the passing 42-second gate and 13.73-second runtime te
 two retained failed runs, and the durable index/hash. Copy `catalog-browser-safe.json`
 explicitly when retaining safe evidence: the older tar allowlist does not include
 that browser receipt. Raw logs, private inventories, auth files, and credentials
-remain excluded. This mode does not qualify selected credentials for Compose,
-database, or local-build deployments, or registry inventory/login/logout/push.
+remain excluded. This ordinary-image mode does not establish Compose support;
+the existing `--managed-compose` profile has its separate qualification below.
+Database/local-build selection and registry inventory/login/logout/push remain
+outside qualification.
+
+## Private images in saved Compose
+
+The existing `--managed-compose` profile now seeds the actual pinned Vikunja
+image into a protected registry, while PostgreSQL and init remain public. It
+reuses the same setup, browser phases, routing, persistence, and cleanup. The
+application registry alone uses a bounded 512 MiB tmpfs; the ordinary-image seed
+keeps its 64 MiB allowance. No credentials enter browser-handshake metadata.
+
+The negative replacement uses a never-pulled immutable manifest with the same
+config, layers, and native image identity. Removing only visible aliases is not
+an authentication prerequisite: the pinned Engine can satisfy a previously
+pulled digest from hidden cache. The source update uses the real resource CAS;
+wrong/revoked denial must preserve the live predecessor, loaded route, records,
+and uploads before a later valid redeployment and Start. Start checks actual
+image-identity absence only after all application writers have stopped.
+
+[Accepted source `c4b9ef45`](../../docs/hosting-compose.md#private-registry-qualification)
+records the passing 255-second gate, 162.57-second API test, two retained failed
+runs and their deterministic repairs, source dependencies, and durable index/hash.
+Copy `compose-browser-safe.json` explicitly with the safe receipt selection;
+the legacy tar allowlist does not include it. This profile does not establish
+server registry inventory/login/logout/push, multiple selected private registries,
+or database/local-build credential selection.
 
 ## Remote archive qualification
 

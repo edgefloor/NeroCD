@@ -59,6 +59,23 @@ adapter, an isolated registry configuration, an explicit local Docker socket,
 and a protected stdin document. The agent never inherits interpolation values
 from its host environment or persists expanded Compose credentials in `.env`.
 
+For private service images, enable `--hosting-registry-pull` and
+`hosting_registry_pull_v1` in addition to those Compose capabilities. In the saved
+Compose deployment review, choose **Private registry**, an active project secret,
+and its exact version. The secret has the existing closed
+[`registry`, `username`, `password` contract](hosting-image-deployments.md#pull-a-private-image).
+Its normalized registry must match at least one service image. That credential
+authenticates only matching services; services from other registries pull
+anonymously. Initial deployment, redeployment, and Start retain the selected
+`registry_credential` reference in their immutable snapshots.
+
+All service images are pulled before the prepared receipt or workload mutation.
+Credential delivery uses verified controller HTTPS and fenced attempt authority; Engine
+authentication stays in memory, without Docker login or durable Docker config.
+Prepared recovery reuses its frozen release without credential redelivery. One
+registry credential can be selected per stack. Server registry inventory,
+login/logout, push, and multiple selected private registries remain unsupported.
+
 Preparation resolves every service image tag to an immutable release before
 requesting apply admission. The durable `managed-compose.compiler.v1` plan
 freezes the normalized source, image set, runtime configuration reference,
@@ -434,6 +451,39 @@ unqualified.
 Coordinated database and upload recovery is a separate NeroCD expansion, not an
 upstream workflow implemented by `VolumeBackupRecoveryJob`. No coordinated
 snapshot, full parity, or automatic rollback claim follows from this qualification.
+
+## Private registry qualification
+
+The existing `--managed-compose` gate passed on 2026-10-27 at
+`c4b9ef45b94d4628007bb9b7a8b327190788f130`:
+
+- [x] Saved and deployed a protected, digest-pinned Vikunja image with public
+  PostgreSQL and init images, using explicit credential selection in the UI.
+- [x] Rejected wrong and revoked credentials before mutation, preserving exact
+  previous containers and loaded routes. A later valid redeployment and Stop/Start
+  retained records, uploads, saved runtime variables, and successful new writes.
+- [x] Retained the existing component logs, local and remote backup/retry,
+  database-only separate-target import, and held failed-replacement assertions.
+- [x] Verified the served manifest and 1280/320/390/430-pixel layouts. All 41
+  baseline containers and 236 volumes, and the user's instance, remained unchanged.
+
+The gate ran from `16:25:49Z` to `16:30:04Z` in 255 seconds; the actual API test
+passed in 162.57 seconds. Two earlier runs remain failed: the first exposed
+Docker's hidden digest cache in the negative fixture; the second exposed a runner
+loop exiting after a safely settled pre-apply failure. A never-pulled immutable
+manifest with identical image content now exercises rejection, and the runner
+continues only after validating and acknowledging safe completion. An existing
+fixture-channel check now reports early runner exit without waiting 90 seconds.
+
+Safe evidence, source dependencies, independent reviews, and separate overlapping
+timing categories are indexed at
+`~/.local/share/nerocd/acceptance/runtime-hosting-compose-registry-20261027/c4b9ef45b94d4628007bb9b7a8b327190788f130/evidence-index.json`
+(SHA-256 `cd8feaec05929ed9252024441ea9aa27e52c5ebc4c250007788be9bbb63acb1d`).
+This qualifies one selected registry on the existing native arm64, rootful classic
+Docker profile with private fixture-CA HTTPS. Other architectures, rootless or
+cross-host execution, public ACME, database/local-build credential selection, and
+full Coolify registry parity remain unqualified. Earlier qualification evidence
+above remains attributed to its original revisions.
 
 ## Pasteable Vikunja/PostgreSQL example
 

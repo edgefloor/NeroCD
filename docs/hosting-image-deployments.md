@@ -78,8 +78,12 @@ The runner pulls through the configured Docker Unix socket before application
 mutation. Authentication stays in the Engine request, without Docker login or a
 durable Docker configuration. The daemon retains its existing registry transport
 policy. Ordinary stateless images and owned-upload images, including routed
-replacement and saved runtime variables, support selection. Compose, database,
-and local-build deployments do not support selected registry credentials.
+replacement and saved runtime variables, support selection.
+[Saved managed Compose](hosting-compose.md#private-registry-qualification) also
+supports one selected registry for matching service images, including initial
+deployment, redeployment, and Start. Database and local-build deployments still
+do not support selected registry credentials. Server registry inventory,
+login/logout, push, and multiple selected private registries remain separate gaps.
 
 <a id="private-registry-qualification"></a>
 
