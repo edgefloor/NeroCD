@@ -294,14 +294,15 @@ func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string
 	if err != nil || connection.Host == "" || (connection.Scheme != "postgres" && connection.Scheme != "postgresql") {
 		return errors.New("backup tool database URL is invalid")
 	}
-	query, err := url.ParseQuery(connection.RawQuery)
+	// libpq treats '+' literally in URIs, unlike HTML form query encoding.
+	query, err := url.ParseQuery(strings.ReplaceAll(connection.RawQuery, "+", "%2B"))
 	if err != nil || len(query["password"]) > 1 {
 		return errors.New("backup tool database URL is invalid")
 	}
 	// libpq passfiles cannot represent line breaks. SSL key passwords use a
 	// different libpq mechanism and must not accidentally remain on argv.
-	if query.Has("sslpassword") {
-		return errors.New("backup tools require SSL key credentials outside the database URL")
+	if query.Has("sslpassword") || query.Has("oauth_client_secret") {
+		return errors.New("backup tools require SSL key and OAuth credentials outside the database URL")
 	}
 	password := os.Getenv("PGPASSWORD")
 	if connection.User != nil {
@@ -341,7 +342,7 @@ func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string
 		// explicit password parameter is empty and PGPASSWORD is absent.
 		query.Set("password", "")
 	}
-	connection.RawQuery = query.Encode()
+	connection.RawQuery = strings.ReplaceAll(query.Encode(), "+", "%20")
 	command := backupCommand(ctx, tool, append([]string{"--dbname=" + connection.String()}, args...)...)
 	command.Env = make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {

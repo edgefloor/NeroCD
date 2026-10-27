@@ -37,7 +37,7 @@ func TestBackupToolKeepsPasswordsOffArgvAndRemovesPrivatePassfile(t *testing.T) 
 					connection.User = url.UserPassword("owner", "superseded-password")
 					query := connection.Query()
 					query.Set("password", password)
-					connection.RawQuery = query.Encode()
+					connection.RawQuery = strings.ReplaceAll(query.Encode(), "+", "%20")
 				case "environment":
 					t.Setenv("PGPASSWORD", password)
 				}
@@ -117,10 +117,57 @@ func TestBackupToolRejectsUnrepresentableCredentialsBeforeStarting(t *testing.T)
 		"postgres://owner@db/control?password=one&password=two",
 		"postgres://owner@db/control?password=%invalid",
 		"postgres://owner@db/control?sslpassword=private-key-secret",
+		"postgres://owner@db/control?oauth_client_secret=private-key-secret",
+		"postgres://owner@db/control?oauth_client_%73ecret=private-key-secret",
 	} {
 		if err := runBackupTool(t.Context(), "pg_restore", connection); err == nil || strings.Contains(err.Error(), "private-key-secret") {
 			t.Fatal("invalid credentials accepted or exposed")
 		}
+	}
+}
+
+func TestBackupToolPreservesURIQueryEncoding(t *testing.T) {
+	t.Setenv("PGPASSWORD", "")
+	previous := backupCommand
+	t.Cleanup(func() { backupCommand = previous })
+	backupCommand = func(ctx context.Context, tool string, args ...string) *exec.Cmd {
+		parsed, err := url.Parse(strings.TrimPrefix(args[0], "--dbname="))
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := make(map[string]string)
+		for _, pair := range strings.Split(parsed.RawQuery, "&") {
+			key, value, _ := strings.Cut(pair, "=")
+			decoded, err := url.PathUnescape(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values[key] = decoded
+		}
+		if values["options"] != "-c default_transaction_read_only=on" || values["application_name"] != "backup+verify run" || values["sslcert"] != "/private/cert files/client.pem" {
+			t.Fatalf("libpq URI values changed: %#v", values)
+		}
+		return exec.CommandContext(ctx, "sh", "-c", "exit 0")
+	}
+	if err := runBackupTool(t.Context(), "pg_dump", "postgres://owner@db/control?options=-c%20default_transaction_read_only%3Don&application_name=backup+verify%20run&sslcert=%2Fprivate%2Fcert%20files%2Fclient.pem"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackupToolURIQueryWithLibpq(t *testing.T) {
+	container := os.Getenv("NEROCD_TEST_LIBPQ_CONTAINER")
+	if container == "" {
+		t.Skip("set NEROCD_TEST_LIBPQ_CONTAINER to a disposable PostgreSQL container with local postgres access")
+	}
+	t.Setenv("PGPASSWORD", "")
+	previous := backupCommand
+	t.Cleanup(func() { backupCommand = previous })
+	backupCommand = func(ctx context.Context, tool string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "docker", append([]string{"exec", container, tool}, args...)...)
+	}
+	query := "DO $$ BEGIN IF current_setting('application_name') <> 'backup+verify run' OR current_setting('default_transaction_read_only') <> 'on' THEN RAISE EXCEPTION 'connection settings changed'; END IF; END $$;"
+	if err := runBackupTool(t.Context(), "psql", "postgres://postgres@localhost/postgres?options=-c%20default_transaction_read_only%3Don&application_name=backup+verify%20run", "--set=ON_ERROR_STOP=1", "--command="+query); err != nil {
+		t.Fatal(err)
 	}
 }
 

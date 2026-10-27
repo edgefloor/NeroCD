@@ -31,7 +31,7 @@ The wrapper supplies database passwords to `pg_dump` and `pg_restore` through a
 temporary libpq password file in a private directory. It removes the file after the
 tool exits and excludes the password and NeroCD credentials from child arguments and
 environment. Passwords containing line breaks or NUL are rejected because libpq
-password files cannot represent them. SSL key passwords must be configured outside
+password files cannot represent them. SSL key passwords and OAuth client secrets must be configured outside
 the database URL. See the [libpq password file format](https://www.postgresql.org/docs/current/libpq-pgpass.html).
 
 ```sh
