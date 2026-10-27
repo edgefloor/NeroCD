@@ -229,3 +229,132 @@ test("unmount aborts a pending mutation and ignores its late receipt", async () 
   expect(fetch.mock.calls).toHaveLength(readsBefore);
   expect(onDenied).not.toHaveBeenCalled();
 });
+
+test("held Compose archive requires consent and retries the exact resume recovery after response loss", async () => {
+  const hash = `sha256:${"a".repeat(64)}`;
+  const snapshot = { resource_id: "r", binding_id: "b", destination_id: "d" };
+  const volume = { name: "uploads", volume_name: "owned-uploads" };
+  const source = {
+    healthy: { snapshot, operation_id: "deploy", plan_hash: hash, stack: {} },
+    plan: { snapshot, hash, stack: { volumes: [volume] } },
+    volume,
+    retained: [],
+  };
+  const held = {
+    id: "op",
+    project_id: "p",
+    resource_id: "r",
+    binding_id: "b",
+    state: "reconciliation_required",
+    task_mode: "backup",
+    mutation_hold: true,
+    restore_ownership_held: false,
+    storage_archive: {
+      mode: "backup",
+      backup_id: "backup",
+      plan: {
+        operation_id: "op",
+        project_id: "p",
+        destination_id: "d",
+        mode: "backup",
+        backup_id: "backup",
+        hash,
+        compiler_version: "managed-compose.local-volume-archive.v1",
+        policy_version: "managed-compose.local-volume-archive.v1",
+        compose_source: source,
+        source_storage: {},
+        source_healthy: {},
+        source_materialization: {},
+        writers: [],
+      },
+      progress: [],
+      result: {
+        archive_outcome: "failed",
+        resume_outcome: "uncertain",
+        restore_verified: false,
+        uncertain: true,
+      },
+    },
+  };
+  const recovered = {
+    ...held,
+    id: "recover",
+    state: "succeeded",
+    task_mode: "recover",
+    mutation_hold: false,
+    storage_archive: {
+      ...held.storage_archive,
+      mode: "recover",
+      recovery_of_operation_id: "op",
+      plan: {
+        ...held.storage_archive.plan,
+        operation_id: "recover",
+        mode: "recover",
+        recovery_of_operation_id: "op",
+        recovery_evidence: { original_plan_hash: hash },
+      },
+      result: {
+        archive_outcome: "not_attempted",
+        resume_outcome: "resumed",
+        restore_verified: false,
+        uncertain: false,
+      },
+    },
+  };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  let attempts = 0;
+  const { fetch } = setup((url, options) => {
+    if (url.includes("?limit="))
+      return json({
+        items: [{ ...backup, state: "failed" }],
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+      });
+    if (url.endsWith("/hosting-operations/op")) return json(held);
+    if (url.endsWith("/hosting-operations/recover")) return json(recovered);
+    if (url.endsWith("/storage-archive-recovery")) {
+      if (++attempts === 1)
+        return Promise.reject(new Error("accepted receipt lost"));
+      return json(recovered);
+    }
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "View volume backup backup" }),
+  );
+  const submit = await screen.findByRole<HTMLButtonElement>("button", {
+    name: "Request Compose writer resume recovery",
+  });
+  expect(submit.disabled).toBe(true);
+  expect(
+    fetch.mock.calls.filter(([, options]) => options.method === "POST"),
+  ).toHaveLength(0);
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "I reviewed the held operation and request writer resumption.",
+    }),
+  );
+  fireEvent.click(submit);
+  await screen.findByRole("alert");
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Retry identical Compose resume recovery",
+    }),
+  );
+  await screen.findByRole("region", { name: "recover operation recover" });
+  const writes = fetch.mock.calls.filter(
+    ([, options]) => options.method === "POST",
+  );
+  expect(writes).toHaveLength(2);
+  expect(writes[0]![0]).toBe(
+    "/api/v1/hosting-operations/op/storage-archive-recovery",
+  );
+  expect(writes[1]![0]).toBe(writes[0]![0]);
+  expect(writes[1]![1].body).toBe(writes[0]![1].body);
+  expect(JSON.parse(String(writes[0]![1].body))).toEqual({
+    request_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+    expected_plan_hash: hash,
+  });
+  expect(screen.getByText("Writer resumption: resumed")).toBeTruthy();
+});
