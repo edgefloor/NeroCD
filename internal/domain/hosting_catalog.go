@@ -31,10 +31,15 @@ type HostingCatalogDefinition struct {
 }
 
 // HostingCatalogTemplate describes a versioned catalog template and its resource definition.
+// Category and architecture restrictions are pinned upstream declarations.
+// Omitting absent metadata preserves historical installation hashes.
 type HostingCatalogTemplate struct {
 	ID                 string                   `json:"id"`
 	Version            string                   `json:"immutable_version"`
 	Name               string                   `json:"name"`
+	Category           string                   `json:"category,omitempty"`
+	AMDOnly            bool                     `json:"amd_only,omitempty"`
+	ARMOnly            bool                     `json:"arm_only,omitempty"`
 	UpstreamRepository string                   `json:"upstream_repository"`
 	UpstreamCommit     string                   `json:"upstream_commit"`
 	UpstreamPath       string                   `json:"upstream_path"`
@@ -48,7 +53,7 @@ type HostingCatalogTemplate struct {
 func HostingCatalogTemplates() []HostingCatalogTemplate {
 	d := HostingCatalogDefinition{ImageReference: HostingCatalogLinkdingImage, ContainerPort: 9090, MountPath: "/etc/linkding/data", Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{"LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD"}}
 	sum := sha256.Sum256([]byte(hostingCatalogLinkdingOriginal))
-	return []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
+	return []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", Category: "RSS", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
 }
 
 // HostingCatalogInstallInput describes the requested catalog install.

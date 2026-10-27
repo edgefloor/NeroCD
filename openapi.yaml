@@ -16737,6 +16737,9 @@ components:
         id: {type: string}
         immutable_version: {type: string}
         name: {type: string}
+        category: {type: string, description: "Raw category declaration from the pinned upstream catalog; absent in older installations."}
+        amd_only: {type: boolean, description: "Upstream AMD-only declaration; absence is not proof of destination compatibility."}
+        arm_only: {type: boolean, description: "Upstream ARM-only declaration; absence is not proof of destination compatibility."}
         upstream_repository: {type: string}
         upstream_commit: {type: string}
         upstream_path: {type: string}

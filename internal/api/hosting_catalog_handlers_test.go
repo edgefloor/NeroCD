@@ -29,8 +29,11 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", "", 401)
 	raw := check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", token, 200)
 	var items []domain.HostingCatalogTemplate
-	if json.Unmarshal(raw, &items) != nil || len(items) != 1 || items[0].Version != domain.HostingCatalogLinkdingVersion {
+	if json.Unmarshal(raw, &items) != nil || len(items) != 1 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
 		t.Fatal("catalog metadata missing")
+	}
+	if strings.Contains(string(raw), `"amd_only"`) || strings.Contains(string(raw), `"arm_only"`) {
+		t.Fatal("catalog invented an upstream architecture restriction")
 	}
 	for _, body := range []string{`{}`, `{"request_id":"a","compose":"services: {}"}`, `{"request_id":"a","request_id":"b"}`, `null`} {
 		check("POST", "/api/v1/hosting-catalog/installations", body, token, 400)

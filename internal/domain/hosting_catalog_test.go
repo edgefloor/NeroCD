@@ -29,6 +29,43 @@ func TestHostingCatalogTypedCopyAndClosedInput(t *testing.T) {
 	}
 }
 
+// This is the template wire shape saved before catalog presentation metadata existed.
+// Stored installation verification hashes this typed template as part of its body.
+func TestHostingCatalogHistoricalTemplateHashRemainsStable(t *testing.T) {
+	const original = `{"id":"linkding","immutable_version":"coolify-b12d1386.linkding-1.47.0.v1","name":"Linkding","upstream_repository":"https://github.com/coollabsio/coolify","upstream_commit":"b12d1386f3d458618b4c579babcd1e339c6c40b3","upstream_path":"templates/compose/linkding.yaml","original":"saved original bytes","original_hash":"saved original hash","definition":{"image_reference":"saved digest","container_port":9090,"mount_path":"/etc/linkding/data","readiness":{"path":"/health","timeout_seconds":120},"credential_names":["LD_SUPERUSER_NAME","LD_SUPERUSER_PASSWORD"]},"definition_hash":"saved definition hash"}`
+	var template HostingCatalogTemplate
+	if err := json.Unmarshal([]byte(original), &template); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("historical template changed on decode: got %s", raw)
+	}
+	var old json.RawMessage = []byte(original)
+	if HostingDocumentHash(template) != HostingDocumentHash(old) {
+		t.Fatal("historical template hash changed")
+	}
+}
+
+func TestHostingCatalogPresentationDoesNotChangeDefinition(t *testing.T) {
+	template := HostingCatalogTemplates()[0]
+	if template.Category != "RSS" || template.AMDOnly || template.ARMOnly {
+		t.Fatalf("pinned upstream declarations differ: %+v", template)
+	}
+	definitionHash := template.DefinitionHash
+	template.Category = "changed"
+	template.AMDOnly = true
+	if HostingDocumentHash(template.Definition) != definitionHash || template.Version != HostingCatalogLinkdingVersion {
+		t.Fatal("presentation metadata changed immutable deployment definition")
+	}
+	if HostingCatalogTemplates()[0].Category != "RSS" {
+		t.Fatal("catalog presentation metadata is shared")
+	}
+}
+
 func TestHostingOwnedStorageRuntimePlanPinsBothFamilies(t *testing.T) {
 	id, volume := HostingStorageIdentity("binding")
 	ref := HostingStorageRef{StorageID: id, Generation: 1, Hash: "sha256:" + strings.Repeat("d", 64)}

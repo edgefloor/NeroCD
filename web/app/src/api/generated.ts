@@ -8074,6 +8074,12 @@ export interface components {
             id: string;
             immutable_version: string;
             name: string;
+            /** @description Raw category declaration from the pinned upstream catalog; absent in older installations. */
+            category?: string;
+            /** @description Upstream AMD-only declaration; absence is not proof of destination compatibility. */
+            amd_only?: boolean;
+            /** @description Upstream ARM-only declaration; absence is not proof of destination compatibility. */
+            arm_only?: boolean;
             upstream_repository: string;
             upstream_commit: string;
             upstream_path: string;
