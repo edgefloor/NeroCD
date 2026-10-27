@@ -11,6 +11,10 @@ import (
 const (
 	HostingComposeStorageArchiveVersion    = "managed-compose.local-volume-archive.v1"
 	HostingComposeStorageArchiveCapability = "hosting_compose_storage_archive_v1"
+	// HostingComposeStorageRemoteVersion identifies archives selected for remote upload.
+	HostingComposeStorageRemoteVersion = "managed-compose.remote-volume-archive.v1"
+	// HostingComposeStorageRemoteCapability fences the remote Compose plan family.
+	HostingComposeStorageRemoteCapability = "hosting_compose_storage_remote_v1"
 )
 
 // HostingStorageArchiveStackProof binds an observed stack to its immutable apply plan.
@@ -122,7 +126,14 @@ func (p HostingStorageArchivePlan) validateCompose() error {
 	if err != nil || len(raw) > HostingStorageArchiveJSONLimit {
 		return ErrInvalidStorageArchive
 	}
-	if c == nil || p.CompilerVersion != HostingComposeStorageArchiveVersion || p.PolicyVersion != HostingComposeStorageArchiveVersion || p.Helper.Validate() != nil || p.Limits.Validate() != nil || p.RemoteTarget != nil || p.RemoteSource != nil || p.Target != nil || p.Blob != nil || len(p.Writers) != 0 || HostingDocumentHash(p.SourceHealthy) != HostingDocumentHash(HostingHealthy{}) || p.SourceStorage != (HostingStorage{}) || HostingDocumentHash(p.SourceMaterialization) != HostingDocumentHash(HostingStorageMaterialization{}) {
+	version := HostingComposeStorageArchiveVersion
+	if p.RemoteTarget != nil || p.CompilerVersion == HostingComposeStorageRemoteVersion {
+		version = HostingComposeStorageRemoteVersion
+	}
+	if p.RemoteTarget != nil && (p.Mode != "backup" || p.RemoteTarget.Validate() != nil) || version == HostingComposeStorageRemoteVersion && p.Mode == "backup" && p.RemoteTarget == nil {
+		return ErrInvalidStorageArchive
+	}
+	if c == nil || p.CompilerVersion != version || p.PolicyVersion != version || p.Helper.Validate() != nil || p.Limits.Validate() != nil || p.RemoteSource != nil || p.Target != nil || p.Blob != nil || len(p.Writers) != 0 || HostingDocumentHash(p.SourceHealthy) != HostingDocumentHash(HostingHealthy{}) || p.SourceStorage != (HostingStorage{}) || HostingDocumentHash(p.SourceMaterialization) != HostingDocumentHash(HostingStorageMaterialization{}) {
 		return ErrInvalidStorageArchive
 	}
 	for _, id := range []string{p.OperationID, p.ProjectID, p.ServerID, p.DestinationID, p.RunnerID, p.BackupID} {

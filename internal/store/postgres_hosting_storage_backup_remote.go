@@ -104,8 +104,9 @@ func storageRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingStorag
 	return databaseBackupFinalizeActor(ctx, tx, p.ActorID)
 }
 
-func (s *PostgresStore) storageRemoteInsert(ctx context.Context, tx pgx.Tx, p domain.HostingStorageBackupTransferPlan, request, hash string, predecessor *string) error {
-	if p.Validate() != nil || !s.hostingJobs.StorageBackupTransferEnabled() {
+func (s *PostgresStore) storageRemoteInsert(ctx context.Context, tx pgx.Tx, p domain.HostingStorageBackupTransferPlan, request, hash string, predecessor *string, deferredDispatch bool) error {
+	enabled := s.hostingJobs.StorageBackupTransferEnabled()
+	if p.Validate() != nil || !enabled && !deferredDispatch {
 		return ErrConflict
 	}
 	var backup, restore *string
@@ -123,8 +124,10 @@ func (s *PostgresStore) storageRemoteInsert(ctx context.Context, tx pgx.Tx, p do
 	if err != nil {
 		return hostingError(err)
 	}
-	if _, err = s.hostingJobs.EnqueueStorageBackupTransferTx(ctx, tx, hostingjobs.StorageBackupTransferArgs{OperationID: p.Operation.ID}); err != nil {
-		return err
+	if enabled {
+		if _, err = s.hostingJobs.EnqueueStorageBackupTransferTx(ctx, tx, hostingjobs.StorageBackupTransferArgs{OperationID: p.Operation.ID}); err != nil {
+			return err
+		}
 	}
 	return storageRemoteAudit(ctx, tx, p.ActorID, p.Operation.ID, "requested", p.Operation.ProjectID)
 }
@@ -190,7 +193,7 @@ func (s *PostgresStore) ValidateStorageBackupTarget(ctx context.Context, id, pro
 		if err = storageRemoteCurrent(ctx, tx, p); err != nil {
 			return zero, err
 		}
-		if err = s.storageRemoteInsert(ctx, tx, p, in.RequestID, hash, nil); err != nil {
+		if err = s.storageRemoteInsert(ctx, tx, p, in.RequestID, hash, nil, false); err != nil {
 			return zero, err
 		}
 		return view, databaseBackupFinalizeActor(ctx, tx, actor)

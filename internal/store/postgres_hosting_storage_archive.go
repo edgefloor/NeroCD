@@ -165,7 +165,7 @@ func archivePrelock(ctx context.Context, tx pgx.Tx, destination string, resource
 
 func archiveRunner(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchivePlan) error {
 	if p.ComposeSource != nil {
-		_, err := sqlcgen.New(tx).LockComposeStorageArchiveRunner(ctx, sqlcgen.LockComposeStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
+		_, err := sqlcgen.New(tx).LockComposeStorageArchiveRunner(ctx, sqlcgen.LockComposeStorageArchiveRunnerParams{Remote: p.CompilerVersion == domain.HostingComposeStorageRemoteVersion, Upload: p.RemoteTarget != nil, RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
 		return hostingError(err)
 	}
 	_, err := sqlcgen.New(tx).LockStorageArchiveRunner(ctx, sqlcgen.LockStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})

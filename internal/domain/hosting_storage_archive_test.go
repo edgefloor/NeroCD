@@ -357,6 +357,10 @@ func TestComposeStorageArchiveRequestRequiresCompleteSelection(t *testing.T) {
 	if json.Unmarshal([]byte(valid), &in) != nil {
 		t.Fatal("valid Compose selection rejected")
 	}
+	remote := strings.Replace(valid, `}`, `,"remote_target":{"target_id":"target","revision":1}}`, 1)
+	if json.Unmarshal([]byte(remote), &in) != nil || in.RemoteTarget == nil {
+		t.Fatal("valid remote Compose selection rejected")
+	}
 	for _, raw := range []string{
 		strings.Replace(valid, `,"volume":"uploads"`, "", 1),
 		strings.Replace(valid, `,"expected_deployed_operation_id":"hop_deployed"`, "", 1),
@@ -367,7 +371,7 @@ func TestComposeStorageArchiveRequestRequiresCompleteSelection(t *testing.T) {
 		strings.Replace(valid, `"volume":"uploads"`, `"volume":"uploads","volume":"uploads"`, 1),
 		strings.Replace(valid, `"volume":"uploads"`, `"Volume":"uploads"`, 1),
 		`{"request_id":"` + strings.Repeat("a", 32) + `","expected_resource_generation":1,"acknowledge_interruption":false}`,
-		strings.Replace(valid, `}`, `,"remote_target":{"target_id":"target","revision":1}}`, 1),
+		strings.Replace(valid, `}`, `,"remote_target":{"target_id":"target","revision":0}}`, 1),
 	} {
 		if json.Unmarshal([]byte(raw), &in) == nil {
 			t.Fatal("partial or ambiguous volume selection accepted")

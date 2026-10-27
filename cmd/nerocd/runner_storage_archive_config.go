@@ -67,7 +67,7 @@ func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []st
 		return false
 	}
 	if !enabled {
-		if has(domain.RunTypeStorageArchive) || has(domain.HostingStorageArchiveCapability) || has(domain.HostingComposeStorageArchiveCapability) {
+		if has(domain.RunTypeStorageArchive) || has(domain.HostingStorageArchiveCapability) || has(domain.HostingComposeStorageArchiveCapability) || has(domain.HostingComposeStorageRemoteCapability) {
 			return nil, errors.New("storage archive capabilities require explicit qualified local configuration")
 		}
 		return capabilities, nil
@@ -85,6 +85,23 @@ func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []st
 	}
 	if has(domain.HostingStackCapability) && !has(domain.HostingComposeStorageArchiveCapability) {
 		capabilities = append(capabilities, domain.HostingComposeStorageArchiveCapability)
+	}
+	return capabilities, nil
+}
+
+// runnerComposeStorageRemoteCapabilities advertises current plan understanding.
+// Remote transfer capabilities independently require remote execution opt-in.
+func runnerComposeStorageRemoteCapabilities(capabilities []string) ([]string, error) {
+	compose, advertised := false, false
+	for _, c := range capabilities {
+		compose = compose || c == domain.HostingComposeStorageArchiveCapability
+		advertised = advertised || c == domain.HostingComposeStorageRemoteCapability
+	}
+	if advertised && !compose {
+		return nil, errors.New("compose remote archive capability requires configured Compose archives")
+	}
+	if compose && !advertised {
+		capabilities = append(capabilities, domain.HostingComposeStorageRemoteCapability)
 	}
 	return capabilities, nil
 }

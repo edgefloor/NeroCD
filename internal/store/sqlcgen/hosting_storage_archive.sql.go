@@ -459,6 +459,8 @@ const lockComposeStorageArchiveRunner = `-- name: LockComposeStorageArchiveRunne
 SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=$1::text
 WHERE r.id=$2::text AND s.id=$3::text AND d.id=$4::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
 AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND r.capabilities @> ARRAY['hosting_compose_storage_archive_v1','hosting_managed_compose_v1']::text[] AND NOT('shell'=ANY(r.capabilities))
+AND (NOT $5::boolean OR 'hosting_compose_storage_remote_v1'=ANY(r.capabilities))
+AND (NOT $6::boolean OR r.capabilities @> ARRAY['hosting_storage_remote_backup_v1','storage_backup_transfer']::text[])
 AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
 `
 
@@ -467,6 +469,8 @@ type LockComposeStorageArchiveRunnerParams struct {
 	RunnerID      string `json:"runner_id"`
 	ServerID      string `json:"server_id"`
 	DestinationID string `json:"destination_id"`
+	Remote        bool   `json:"remote"`
+	Upload        bool   `json:"upload"`
 }
 
 func (q *Queries) LockComposeStorageArchiveRunner(ctx context.Context, arg LockComposeStorageArchiveRunnerParams) (string, error) {
@@ -475,6 +479,8 @@ func (q *Queries) LockComposeStorageArchiveRunner(ctx context.Context, arg LockC
 		arg.RunnerID,
 		arg.ServerID,
 		arg.DestinationID,
+		arg.Remote,
+		arg.Upload,
 	)
 	var id string
 	err := row.Scan(&id)

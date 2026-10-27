@@ -7618,9 +7618,9 @@ export interface components {
             limits: components["schemas"]["HostingStorageArchiveLimits"];
             blob?: components["schemas"]["HostingStorageArchiveBlob"];
             /** @enum {string} */
-            compiler_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1";
+            compiler_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1" | "managed-compose.remote-volume-archive.v1";
             /** @enum {string} */
-            policy_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1";
+            policy_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1" | "managed-compose.remote-volume-archive.v1";
             hash: string;
             remote_target?: components["schemas"]["BackupTargetSelection"];
             remote_source?: components["schemas"]["BackupRemoteSource"];

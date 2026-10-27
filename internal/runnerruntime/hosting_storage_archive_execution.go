@@ -171,7 +171,7 @@ func executeStorageArchiveClaimWithEngine(s *attemptSupervisor, j *runner.Attemp
 	if err != nil {
 		return err
 	}
-	if op.StorageArchive == nil || !archivePlanMatches(op, a, op.StorageArchive.Plan) || op.TaskMode != claim.Run.RunSpec.HostingMode || op.StorageArchive.Plan.RunnerID != claim.Lease.RunnerID || op.StorageArchive.Plan.Helper != config.Helper {
+	if op.StorageArchive == nil || !archivePlanMatches(op, a, op.StorageArchive.Plan) || op.TaskMode != claim.Run.RunSpec.HostingMode || op.StorageArchive.Plan.RunnerID != claim.Lease.RunnerID || op.StorageArchive.Plan.Helper != config.Helper || op.StorageArchive.Plan.RemoteTarget != nil && op.StorageArchive.Plan.ComposeSource != nil && !config.RemoteBackups {
 		return errors.New("storage archive task target changed")
 	}
 	x := archiveCoordinator{s: s, j: j, drain: reporter.WaitEmpty, c: c, e: e, a: a, lease: claim.Lease, p: op.StorageArchive.Plan}

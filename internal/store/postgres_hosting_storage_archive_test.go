@@ -249,9 +249,9 @@ func (f archiveControlFixture) begin(t *testing.T, op domain.HostingOperation, a
 	return result
 }
 func archiveStates(p domain.HostingStorageArchivePlan, running bool) []domain.HostingStorageArchiveWriterState {
-	var out []domain.HostingStorageArchiveWriterState
-	for _, h := range p.Writers {
-		out = append(out, domain.HostingStorageArchiveWriterState{ContainerID: h.ContainerID, OperationID: h.OperationID, ImageID: h.Release.ImageID, PlanHash: h.PlanHash, ReleaseHash: h.Release.Hash, Running: running})
+	out := p.WriterStates()
+	for i := range out {
+		out[i].Running = running
 	}
 	return out
 }

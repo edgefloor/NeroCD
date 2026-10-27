@@ -312,7 +312,18 @@ func TestComposeArchiveDurableCoordinatorAndFreshResumeRecovery(t *testing.T) {
 }
 
 func TestComposeArchiveWireAndJournalPreserveEnvironmentMapKeys(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		t.Run(strconv.FormatBool(remote), func(t *testing.T) { testComposeArchiveWireAndJournalPreserveEnvironmentMapKeys(t, remote) })
+	}
+}
+func testComposeArchiveWireAndJournalPreserveEnvironmentMapKeys(t *testing.T, remote bool) {
 	p := composeArchiveTestPlan(t)
+	if remote {
+		p.RemoteTarget = &domain.BackupTargetSelection{TargetID: "target", Revision: 1}
+		p.CompilerVersion = domain.HostingComposeStorageRemoteVersion
+		p.PolicyVersion = p.CompilerVersion
+	}
+
 	old := p.ComposeSource.Healthy
 	old.OperationID = "previous"
 	oldState := *old.Stack
@@ -579,4 +590,59 @@ func TestComposeArchiveHeldJournalComposesWithUnrelatedStackAndDatabaseBackup(t 
 	reject("component backup typed alias", raw, `"source_component":"db"`, `"Source_component":"db"`)
 	reject("component backup duplicate typed field", raw, `"source_component":"db"`, `"source_component":"db","source_component":"db"`)
 	reject("component backup duplicate environment key", raw, `"POSTGRES_PASSWORD":"${PASSWORD}"`, `"POSTGRES_PASSWORD":"first","POSTGRES_PASSWORD":"${PASSWORD}"`)
+}
+
+func TestComposeRemoteArchiveFamilyRejectsCrossFamilyPlans(t *testing.T) {
+	p := composeArchiveTestPlan(t)
+	p.RemoteTarget = &domain.BackupTargetSelection{TargetID: "target", Revision: 1}
+	p.CompilerVersion = domain.HostingComposeStorageRemoteVersion
+	p.PolicyVersion = p.CompilerVersion
+	archiveHash(&p)
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"missing_target", "local_compiler", "local_policy", "remote_restore", "remote_source"} {
+		t.Run(kind, func(t *testing.T) {
+			v := p
+			switch kind {
+			case "missing_target":
+				v.RemoteTarget = nil
+			case "local_compiler":
+				v.CompilerVersion = domain.HostingComposeStorageArchiveVersion
+			case "local_policy":
+				v.PolicyVersion = domain.HostingComposeStorageArchiveVersion
+			case "remote_restore":
+				v.Mode = "restore"
+			case "remote_source":
+				v.RemoteSource = &domain.BackupRemoteSource{TransferID: "transfer", ExpectedTargetRevision: 1}
+			}
+			archiveHash(&v)
+			if v.Validate() == nil {
+				t.Fatal("mixed family accepted")
+			}
+		})
+	}
+}
+
+func TestComposeRemoteArchiveClaimRequiresUploadExecutionOptIn(t *testing.T) {
+	x, c, e, _ := archiveRuntimeFixture(t)
+	p := composeArchiveTestPlan(t)
+	p.RemoteTarget = &domain.BackupTargetSelection{TargetID: "target", Revision: 1}
+	p.CompilerVersion = domain.HostingComposeStorageRemoteVersion
+	p.PolicyVersion = p.CompilerVersion
+	archiveHash(&p)
+	x.p = p
+	c.op.ResourceID = p.SourceResourceID()
+	c.op.BindingID = p.SourceBindingID()
+	c.op.StorageArchive.Plan = p
+	e.writers = p.WriterStates()
+	claim := domain.ClaimedRun{Run: domain.TaskRun{ID: x.a.RunID, RunSpec: domain.RunSpec{Type: domain.RunTypeStorageArchive, HostingOperationID: x.a.OperationID, HostingMode: p.Mode}}, Lease: x.lease, PrimitivePlan: domain.RunnerPrimitivePlan{RunID: x.a.RunID}}
+	reporter := &attemptReporter{journal: x.j, supervisor: x.s, authority: journalAttemptIdentity(x.a.RunID, x.lease, x.s)}
+	config := &StorageArchiveExecutionConfig{Helper: p.Helper, TrustedLoopbackHTTP: true}
+	if err := executeStorageArchiveClaimWithEngine(x.s, x.j, reporter, x.c, claim, config, e); err == nil {
+		t.Fatal("remote archive executed without upload opt-in")
+	}
+	if len(x.j.Snapshot().StorageArchive) != 0 || e.closeCalls != 1 {
+		t.Fatal("rejected claim wrote archive intent or leaked engine")
+	}
 }

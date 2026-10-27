@@ -126,7 +126,7 @@ func (s *PostgresStore) StorageBackupVolumes(ctx context.Context, actor, resourc
 func (s *PostgresStore) requestComposeStorageBackup(ctx context.Context, tx pgx.Tx, id, resource, actor, requestHash string, in domain.HostingStorageBackupInput) (domain.HostingStorageBackup, error) {
 	var zero domain.HostingStorageBackup
 	q := sqlcgen.New(tx)
-	if in.Volume == "" || in.RemoteTarget != nil {
+	if in.Volume == "" {
 		return zero, domain.ErrInvalidStorageArchive
 	}
 	h, op, generation, err := databaseBackupComponentSource(ctx, tx, actor, resource, "", domain.RoleOwner)
@@ -175,6 +175,10 @@ func (s *PostgresStore) requestComposeStorageBackup(ctx context.Context, tx pgx.
 	}
 	backupID := "hsb_" + domain.HostingDocumentHash(struct{ Resource, Request string }{resource, in.RequestID})[7:39]
 	p := domain.HostingStorageArchivePlan{ComposeSource: c, OperationID: id, ProjectID: op.ProjectID, ServerID: h.Snapshot.ServerID, DestinationID: h.Snapshot.DestinationID, RunnerID: h.Snapshot.RunnerID, Mode: "backup", BackupID: backupID, Writers: []domain.HostingHealthy{}, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits, CompilerVersion: domain.HostingComposeStorageArchiveVersion, PolicyVersion: domain.HostingComposeStorageArchiveVersion}
+	if in.RemoteTarget != nil {
+		p.RemoteTarget = in.RemoteTarget
+		p.CompilerVersion, p.PolicyVersion = domain.HostingComposeStorageRemoteVersion, domain.HostingComposeStorageRemoteVersion
+	}
 	p.Hash = domain.HostingDocumentHash(p)
 	if err = archiveRunner(ctx, tx, p); err != nil {
 		return zero, err
@@ -187,6 +191,13 @@ func (s *PostgresStore) requestComposeStorageBackup(ctx context.Context, tx pgx.
 	}
 	if err = q.AdmitStorageArchiveHold(ctx, sqlcgen.AdmitStorageArchiveHoldParams{BindingID: h.Snapshot.BindingID, OperationID: id}); err != nil {
 		return zero, err
+	}
+	// Target validation flushes deferred constraints. The settled source hold
+	// must already exist so the archive origin invariant can be checked now.
+	if in.RemoteTarget != nil {
+		if err = s.storageRemoteSelect(ctx, tx, p, actor, *in.RemoteTarget); err != nil {
+			return zero, err
+		}
 	}
 	created, _, err := archiveOperation(ctx, tx, id)
 	if err != nil {

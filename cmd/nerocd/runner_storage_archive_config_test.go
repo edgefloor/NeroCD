@@ -154,3 +154,46 @@ func TestComposeStorageArchiveCapabilitiesRequireArchiveAndStack(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeStorageRemoteCapabilityUnderstandsRecoveryWithoutUploads(t *testing.T) {
+	base := []string{domain.HostingComposeStorageArchiveCapability}
+	got, err := runnerComposeStorageRemoteCapabilities(base)
+	if err != nil || len(got) != 2 || got[1] != domain.HostingComposeStorageRemoteCapability {
+		t.Fatal("qualified Compose reader missing", got, err)
+	}
+	if _, err = runnerComposeStorageRemoteCapabilities([]string{domain.HostingComposeStorageRemoteCapability}); err == nil {
+		t.Fatal("unsupported Compose reader advertised")
+	}
+	if _, err = runnerStorageArchiveCapabilities(false, true, []string{domain.HostingComposeStorageRemoteCapability}); err == nil {
+		t.Fatal("unconfigured archive reader advertised")
+	}
+}
+
+func TestRunnerStorageArchiveRemoteFixtureConfigurationDecoder(t *testing.T) {
+	path, raw := runnerArchiveFile(t)
+	var fields map[string]any
+	if json.Unmarshal(raw, &fields) != nil {
+		t.Fatal("fixture JSON")
+	}
+	fields["remote_backups"] = true
+	fields["remote_fixture_origin"] = "http://127.0.0.1:9001"
+	body, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadRunnerStorageArchiveConfig(path, true, "")
+	if err != nil || !config.RemoteBackups || config.RemoteFixtureOrigin != "http://127.0.0.1:9001" {
+		t.Fatal("real remote config decoder", err)
+	}
+	fields["remote_backups"] = "true"
+	body, _ = json.Marshal(fields)
+	if err = os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = loadRunnerStorageArchiveConfig(path, true, ""); err == nil {
+		t.Fatal("untyped remote flag accepted")
+	}
+}

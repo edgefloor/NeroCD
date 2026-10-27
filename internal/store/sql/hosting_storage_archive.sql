@@ -110,4 +110,6 @@ SELECT nerocd_storage_archive_flush_constraints();
 SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=sqlc.arg(project_id)::text
 WHERE r.id=sqlc.arg(runner_id)::text AND s.id=sqlc.arg(server_id)::text AND d.id=sqlc.arg(destination_id)::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
 AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND r.capabilities @> ARRAY['hosting_compose_storage_archive_v1','hosting_managed_compose_v1']::text[] AND NOT('shell'=ANY(r.capabilities))
+AND (NOT sqlc.arg(remote)::boolean OR 'hosting_compose_storage_remote_v1'=ANY(r.capabilities))
+AND (NOT sqlc.arg(upload)::boolean OR r.capabilities @> ARRAY['hosting_storage_remote_backup_v1','storage_backup_transfer']::text[])
 AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;

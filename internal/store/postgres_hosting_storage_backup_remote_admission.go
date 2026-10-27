@@ -58,7 +58,7 @@ func (s *PostgresStore) storageRemoteLocalComplete(ctx context.Context, tx pgx.T
 	v := domain.HostingStorageBackupTransfer{ID: "storage_upload_" + p.BackupID, Version: domain.HostingStorageBackupTransferVersion, ProjectID: p.ProjectID, TargetID: selection.TargetID, TargetRevision: selection.Revision, DestinationID: p.DestinationID, Mode: "upload", BackupID: p.BackupID, State: "queued", Blob: &blob, CreatedAt: now, UpdatedAt: now}
 	plan := domain.HostingStorageBackupTransferPlan{Operation: v, Target: snapshot, ActorID: actor, RunnerID: p.RunnerID, ServerID: p.ServerID, DaemonID: p.Helper.DaemonID, LocationID: p.BackupID, ObjectKey: domain.StorageRemoteObjectKey(p.BackupID, blob), MaxBytes: p.Limits.ArchiveBytes, TimeoutSeconds: 3600, Limits: p.Limits}
 	plan.Hash = domain.HostingDocumentHash(plan)
-	return s.storageRemoteInsert(ctx, tx, plan, "upload_"+p.BackupID, domain.HostingDocumentHash(struct{ Backup, Plan string }{p.BackupID, p.Hash}), nil)
+	return s.storageRemoteInsert(ctx, tx, plan, "upload_"+p.BackupID, domain.HostingDocumentHash(struct{ Backup, Plan string }{p.BackupID, p.Hash}), nil, p.ComposeSource != nil)
 }
 
 // RetryStorageBackupTransfer admits a retry of the selected failed storage backup upload.
@@ -74,7 +74,7 @@ func (s *PostgresStore) RetryStorageBackupTransfer(ctx context.Context, id, acto
 		if err != nil {
 			return zero, hostingError(err)
 		}
-		if _, _, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleOwner); err != nil {
+		if _, _, err := storageBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner); err != nil {
 			return zero, err
 		}
 		hash := domain.HostingDocumentHash(struct {
@@ -127,7 +127,7 @@ func (s *PostgresStore) RetryStorageBackupTransfer(ctx context.Context, id, acto
 		if err = storageRemoteCurrent(ctx, tx, p); err != nil {
 			return zero, err
 		}
-		if err = s.storageRemoteInsert(ctx, tx, p, in.RequestID, hash, &latest); err != nil {
+		if err = s.storageRemoteInsert(ctx, tx, p, in.RequestID, hash, &latest, false); err != nil {
 			return zero, err
 		}
 		return p.Operation, nil
@@ -167,7 +167,7 @@ func (s *PostgresStore) storageRemoteRestoreAdmit(ctx context.Context, tx pgx.Tx
 	check.MaxBytes = p.Limits.ArchiveBytes
 	check.Hash = ""
 	check.Hash = domain.HostingDocumentHash(check)
-	return s.storageRemoteInsert(ctx, tx, check, "download_"+p.OperationID, domain.HostingDocumentHash(source), &source.TransferID)
+	return s.storageRemoteInsert(ctx, tx, check, "download_"+p.OperationID, domain.HostingDocumentHash(source), &source.TransferID, false)
 }
 func (s *PostgresStore) storageRemoteDownloadComplete(ctx context.Context, tx pgx.Tx, p domain.HostingStorageBackupTransferPlan) error {
 	if p.Operation.Mode != "download" {

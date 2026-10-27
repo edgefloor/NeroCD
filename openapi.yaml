@@ -15607,14 +15607,16 @@ components:
             "type": "string",
             "enum": [
               "owned-upload.local-archive.v1",
-              "managed-compose.local-volume-archive.v1"
+              "managed-compose.local-volume-archive.v1",
+              "managed-compose.remote-volume-archive.v1"
             ]
           },
           "policy_version": {
             "type": "string",
             "enum": [
               "owned-upload.local-archive.v1",
-              "managed-compose.local-volume-archive.v1"
+              "managed-compose.local-volume-archive.v1",
+              "managed-compose.remote-volume-archive.v1"
             ]
           },
           "hash": {

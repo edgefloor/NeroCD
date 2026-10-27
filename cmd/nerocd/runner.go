@@ -292,6 +292,10 @@ func runRunner(args []string) error {
 	if archiveConfig != nil && archiveConfig.RemoteBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability)
 	}
+	registrationCapabilities, err = runnerComposeStorageRemoteCapabilities(registrationCapabilities)
+	if err != nil {
+		return err
+	}
 	registrationCapabilities, err = runnerDatabaseCaptureCapabilities(*hostingDatabaseCapture, *hostingDatabase, registrationCapabilities)
 	if err != nil {
 		return err

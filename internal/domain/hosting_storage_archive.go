@@ -51,7 +51,7 @@ type HostingStorageArchiveRecoveryInput struct {
 // Validate requires exact request identity and a positive resource generation.
 func (in HostingStorageBackupInput) Validate() error {
 	if in.Volume != "" || in.ExpectedDeployedOperationID != "" || in.AcknowledgeInterruption {
-		if !stackName.MatchString(in.Volume) || !hostingProxyID.MatchString(in.ExpectedDeployedOperationID) || !in.AcknowledgeInterruption || in.RemoteTarget != nil {
+		if !stackName.MatchString(in.Volume) || !hostingProxyID.MatchString(in.ExpectedDeployedOperationID) || !in.AcknowledgeInterruption {
 			return ErrInvalidStorageArchive
 		}
 	}

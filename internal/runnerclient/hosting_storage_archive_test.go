@@ -241,3 +241,33 @@ func TestStorageArchiveTransportRefusesRedirectAndUntaggedHTTP(t *testing.T) {
 		t.Fatal("untagged archive HTTP was accepted")
 	}
 }
+
+func TestComposeStorageRemoteIdentitySeparatesUnderstandingAndExecution(t *testing.T) {
+	base := []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingStackCapability, domain.HostingOwnedStorageCapability, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability, domain.HostingComposeStorageArchiveCapability, domain.HostingComposeStorageRemoteCapability}
+	for _, kind := range []string{"understanding_only", "remote_enabled", "old_reader", "unconfigured_transfer"} {
+		t.Run(kind, func(t *testing.T) {
+			caps := append([]string(nil), base...)
+			options := RuntimeExecutionOptions{StorageArchive: true, StorageArchiveTrustedLoopbackHTTP: true, RuntimeEnvironment: true}
+			want := true
+			switch kind {
+			case "remote_enabled":
+				caps = append(caps, domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability)
+				options.RemoteStorageBackups = true
+			case "old_reader":
+				caps = caps[:len(caps)-1]
+				want = false
+			case "unconfigured_transfer":
+				caps = append(caps, domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability)
+				want = false
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(proxyIdentityResponse{RunnerID: "runner", Capabilities: caps})
+			}))
+			defer server.Close()
+			_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), options)
+			if (err == nil) != want {
+				t.Fatal("capability/configuration mismatch", err)
+			}
+		})
+	}
+}
