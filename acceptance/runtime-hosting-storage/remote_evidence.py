@@ -25,7 +25,7 @@ def publication(value):
     host = value.get("HostConfig", {})
     requested = {"18190/tcp": [{"HostIp": "127.0.0.1", "HostPort": ""}]}
     application_owner = value.get("Config", {}).get("Labels", {}).get("io.nerocd.storage-runtime.owner")
-    application = application_owner in {"nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027"} and value.get("Name") == "/" + application_owner + "-dind"
+    application = application_owner in {"nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"} and value.get("Name") == "/" + application_owner + "-dind"
     if application:
         requested["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]
     if host.get("PortBindings") != requested:

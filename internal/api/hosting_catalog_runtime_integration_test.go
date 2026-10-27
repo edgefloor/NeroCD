@@ -274,8 +274,12 @@ func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 	} {
 		t.Run(tc.phase, func(t *testing.T) {
 			b := &catalogRuntimeBrowser{key: strings.Repeat("a", 64), phase: tc.phase, reports: make(chan hostingStorageRemoteRuntimeReport, 1)}
+			id := "fixture_id"
+			if strings.HasPrefix(tc.phase, "app_") {
+				id = "93243519-f944-4c36-ad33-c36fbe7801b7"
+			}
 			for _, action := range []string{"wrong_phase", tc.action} {
-				r := httptest.NewRequest(http.MethodPost, "/__catalog_fixture/report", strings.NewReader(`{"action":"`+action+`","id":"fixture_id"}`))
+				r := httptest.NewRequest(http.MethodPost, "/__catalog_fixture/report", strings.NewReader(`{"action":"`+action+`","id":"`+id+`"}`))
 				r.Header.Set("X-NeroCD-Fixture-Key", b.key)
 				w := httptest.NewRecorder()
 				if !b.serve(w, r, nil) {
@@ -291,7 +295,7 @@ func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 			}
 			select {
 			case v := <-b.reports:
-				if v.Action != tc.action || v.ID != "fixture_id" {
+				if v.Action != tc.action || v.ID != id {
 					t.Fatal("wrong report delivered")
 				}
 			default:

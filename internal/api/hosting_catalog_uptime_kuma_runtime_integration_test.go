@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -25,6 +26,17 @@ func TestHostingCatalogUptimeKumaCompiledRunnerHTTPS(t *testing.T) {
 	if testing.Short() || os.Getenv("NEROCD_CATALOG_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_CATALOG_APPLICATION") != "uptime-kuma" {
 		t.Skip("requires approved isolated Uptime Kuma catalog runtime gate")
 	}
+	catalogRuntimePersistentApplication(t, catalogRuntimeApplicationProfile{ID: "uptime-kuma", Version: domain.HostingCatalogUptimeKumaVersion, RequestPrefix: "kuma", Port: 3001, ReadinessPath: "/", FailurePath: "/api/status-page/nerocd-required-missing", HealthContent: "Uptime Kuma", Entries: []domain.HostingRuntimeEntry{}})
+}
+
+type catalogRuntimeApplicationProfile struct {
+	ID, Version, RequestPrefix, ReadinessPath, FailurePath, HealthContent string
+	Port                                                                  int
+	Entries                                                               []domain.HostingRuntimeEntry
+}
+
+func catalogRuntimePersistentApplication(t *testing.T, profile catalogRuntimeApplicationProfile) {
+	t.Helper()
 	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
 	b.set("install", f.destinationID)
@@ -33,7 +45,7 @@ func TestHostingCatalogUptimeKumaCompiledRunnerHTTPS(t *testing.T) {
 	b.mu.Lock()
 	original, retried := b.original, b.retried
 	b.mu.Unlock()
-	if installed.Template.ID != "uptime-kuma" || installed.Template.Version != domain.HostingCatalogUptimeKumaVersion || installed.Credentials == nil || len(installed.Credentials) != 0 || installed.RuntimeConfiguration.Generation != 1 || original == nil || retried == nil || domain.HostingDocumentHash(*original) != domain.HostingDocumentHash(installed) || domain.HostingDocumentHash(*retried) != domain.HostingDocumentHash(installed) {
+	if installed.Template.ID != profile.ID || installed.Template.Version != profile.Version || installed.Credentials == nil || len(installed.Credentials) != 0 || installed.RuntimeConfiguration.Generation != 1 || original == nil || retried == nil || domain.HostingDocumentHash(*original) != domain.HostingDocumentHash(installed) || domain.HostingDocumentHash(*retried) != domain.HostingDocumentHash(installed) {
 		t.Fatal("credential-free catalog installation or identical retry mismatch")
 	}
 	b.set("deploy", resourceID)
@@ -45,37 +57,37 @@ func TestHostingCatalogUptimeKumaCompiledRunnerHTTPS(t *testing.T) {
 		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
 	}](f, "GET", "/api/v1/resources/"+resourceID+"/runtime-configuration", nil, 200)
 	runtime := runtimeResponse.Configuration
-	if runtime.RuntimeGeneration != 1 || runtime.Entries == nil || len(runtime.Entries) != 0 {
-		t.Fatal("saved empty runtime generation missing")
+	if runtime.RuntimeGeneration != 1 || runtime.Entries == nil || !reflect.DeepEqual(runtime.Entries, profile.Entries) {
+		t.Fatal("saved canonical runtime generation missing")
 	}
 	current := first
 	t.Cleanup(func() { catalogRuntimeState(t, current) })
 	b.set("healthy", resourceID)
 	b.await(t, "healthy")
 	catalogRuntimeRoute(t, f, resourceID, first)
-	catalogUptimeKumaHTTPS(t, f)
+	catalogRuntimeApplicationHTTPS(t, f, profile)
 	b.set("app_create", resourceID)
 	monitorID := b.await(t, "app_created")
 	deploy := func(key, path string, seconds int) domain.HostingOperation {
-		return storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: installed.Resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: key, ContainerPort: 3001, HostPort: 20101, Readiness: domain.HostingReadiness{Path: path, TimeoutSeconds: seconds}, StorageRouteContinuity: storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200).StorageRouteContinuity}, 202)
+		return storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: installed.Resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: key, ContainerPort: profile.Port, HostPort: 20101, Readiness: domain.HostingReadiness{Path: path, TimeoutSeconds: seconds}, StorageRouteContinuity: storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200).StorageRouteContinuity}, 202)
 	}
-	second := f.await(deploy("kuma_redeploy", "/", 120).ID, "succeeded")
+	second := f.await(deploy(profile.RequestPrefix+"_redeploy", profile.ReadinessPath, 120).ID, "succeeded")
 	current = second
 	f.awaitContinuity(resourceID, second.ID)
 	if second.Plan == nil || second.Plan.Storage == nil || *first.Plan.Storage != *second.Plan.Storage || first.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration || first.Snapshot.Storage != second.Snapshot.Storage {
 		t.Fatal("redeployment changed pinned volume or runtime configuration")
 	}
-	catalogUptimeKumaHTTPS(t, f)
+	catalogRuntimeApplicationHTTPS(t, f, profile)
 	b.set("app_recheck", resourceID)
 	if b.await(t, "app_checked") != monitorID {
 		t.Fatal("redeploy changed monitor identity")
 	}
-	failed := f.await(deploy("kuma_failed_candidate", "/api/status-page/nerocd-required-missing", 3).ID, "failed")
+	failed := f.await(deploy(profile.RequestPrefix+"_failed_candidate", profile.FailurePath, 3).ID, "failed")
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed replacement did not retain proven restoration")
 	}
 	catalogRuntimeJoinFailedReplacement(t, f)
-	catalogUptimeKumaHTTPS(t, f)
+	catalogRuntimeApplicationHTTPS(t, f, profile)
 	b.set("app_start_recheck", resourceID)
 	if b.await(t, "app_start_checked") != monitorID {
 		t.Fatal("failed replacement changed monitor identity")
@@ -84,26 +96,26 @@ func TestHostingCatalogUptimeKumaCompiledRunnerHTTPS(t *testing.T) {
 	if domain.HostingDocumentHash(copy) != domain.HostingDocumentHash(installed) {
 		t.Fatal("installation changed during lifecycle")
 	}
-	t.Log("Kuma SQLite/admin setup, monitor/settings, fresh login/redeploy/new write, failed replacement recovery and immutable empty credential references verified")
+	t.Logf("catalog application=%s real setup, fresh login/redeploy/new write, failed replacement recovery, stable volume/runtime and immutable empty credential references verified", profile.ID)
 	b.set("complete", resourceID)
 	b.await(t, "done")
 }
 
-func catalogUptimeKumaHTTPS(t *testing.T, f *storageRuntimeFixture) {
+func catalogRuntimeApplicationHTTPS(t *testing.T, f *storageRuntimeFixture, profile catalogRuntimeApplicationProfile) {
 	t.Helper()
 	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: f.roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:443")
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	response, err := client.Get("https://catalog-runtime.example.test/")
+	response, err := client.Get("https://catalog-runtime.example.test" + profile.ReadinessPath)
 	if err != nil {
-		t.Fatal("Kuma managed HTTPS request failed")
+		t.Fatal("catalog managed HTTPS request failed")
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
-	if err != nil || response.StatusCode != 200 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || !bytes.Contains(body, []byte("Uptime Kuma")) {
-		t.Fatal("Kuma managed HTTPS trust/readiness missing")
+	if err != nil || response.StatusCode != 200 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || !bytes.Contains(body, []byte(profile.HealthContent)) {
+		t.Fatal("catalog managed HTTPS trust/readiness missing")
 	}
 }
 

@@ -9,10 +9,11 @@ const origin = process.env.NEROCD_CATALOG_BROWSER_ORIGIN;
 const key = process.env.NEROCD_CATALOG_BROWSER_KEY;
 const evidence = process.env.NEROCD_CATALOG_HOST_EVIDENCE;
 const kuma = process.env.NEROCD_CATALOG_APPLICATION === "uptime-kuma";
-const appID = kuma ? "uptime-kuma" : "linkding";
-const applicationName = kuma ? "Uptime Kuma acceptance" : "Linkding acceptance";
+const actual = process.env.NEROCD_CATALOG_APPLICATION === "actualbudget";
+const appID = actual ? "actualbudget" : kuma ? "uptime-kuma" : "linkding";
+const applicationName = actual ? "Actual Budget acceptance" : kuma ? "Uptime Kuma acceptance" : "Linkding acceptance";
 const appOrigin = "https://catalog-runtime.example.test:25443";
-const kumaPassword = randomBytes(24).toString("hex");
+const applicationPassword = randomBytes(24).toString("hex");
 if (
   !/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") ||
   !/^[a-f0-9]{64}$/.test(key ?? "") ||
@@ -108,6 +109,33 @@ const response = (p, path) =>
     (r) =>
       r.request().method() === "POST" && new URL(r.url()).pathname === path,
   );
+async function actualTransaction(p, note, amount) {
+  await p.getByRole("button", { name: "Add New", exact: true }).click();
+  const row = p.getByTestId("row").first();
+  await row.getByTestId("notes").click();
+  await p.getByRole("combobox", { name: "Notes", exact: true }).fill(note);
+  await row.getByTestId("debit").click();
+  await row.getByTestId("debit").locator("input").fill(amount);
+  await p.getByTestId("add-button").click();
+  await expect(p.getByTestId("transaction-table")).toContainText(note);
+  await p.getByRole("button", { name: "Cancel", exact: true }).click();
+}
+async function actualSync(p) {
+  const waiting = p.waitForResponse(async r => new URL(r.url()).pathname === "/sync/sync" && r.request().method() === "POST" && await r.finished() === null);
+  await p.getByRole("button", { name: "Server Sync", exact: true }).click();
+  if ((await waiting).status() !== 200) throw Error("Actual sync rejected");
+}
+async function actualOpenServerBudget(p) {
+  await p.goto("/");
+  await p.getByPlaceholder("Password", { exact: true }).fill(applicationPassword);
+  await p.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(p.getByText("Available for download", { exact: true })).toBeVisible();
+  const download = p.waitForResponse(async r => new URL(r.url()).pathname === "/sync/download-user-file" && r.request().method() === "GET" && await r.finished() === null);
+  await p.getByText("NeroCD retained budget", { exact: true }).click();
+  if ((await download).status() !== 200) throw Error("Actual server budget download rejected");
+  await p.getByRole("link", { name: /NeroCD retained account/ }).click();
+  await expect(p.getByTestId("transaction-table")).toContainText("NeroCD retained transaction");
+}
 async function kumaMonitor(p, name) {
   await p.getByRole("link", { name: "Add New Monitor", exact: true }).click();
   // Hidden notification dialogs share labels; these are the actual monitor IDs.
@@ -127,7 +155,7 @@ try {
     extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key },
     timeout: 10000,
   });
-  browser = await chromium.launch({ headless: true, args: kuma ? ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] : [] });
+  browser = await chromium.launch({ headless: true, args: kuma || actual ? ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] : [] });
   context = await browser.newContext({
     baseURL: origin,
     ignoreHTTPSErrors: true,
@@ -209,7 +237,7 @@ try {
   const installed = await retry.json();
   await expect(catalog).toContainText(`Installed ${applicationName}`);
   await expect(catalog.locator("output")).toHaveCount(0);
-  if (kuma) {
+  if (kuma || actual) {
     if (!Array.isArray(installed.credentials) || installed.credentials.length !== 0) throw Error("unexpected generated credentials");
     await expect(catalog.getByRole("button", { name: "Reveal login credentials", exact: true })).toHaveCount(0);
     await expect(catalog).toContainText("No login credentials were generated.");
@@ -232,7 +260,7 @@ try {
   await expect(catalog.locator("output")).toHaveCount(0);
   }
   safe.catalog_install_identical_retry = true;
-  if (!kuma) safe.explicit_reveal_and_hide = true;
+  if (!kuma && !actual) safe.explicit_reveal_and_hide = true;
   await report("installed", installed.resource.id);
   await state("deploy");
   const application = h.getByRole("article", {
@@ -245,7 +273,7 @@ try {
   });
   await expect(
     review.getByLabel("Container port", { exact: true }),
-  ).toHaveValue(kuma ? "3001" : "9090");
+  ).toHaveValue(actual ? "5006" : kuma ? "3001" : "9090");
   await expect(
     review.getByLabel("Readiness path", { exact: true }),
   ).toHaveValue(kuma ? "/" : "/health");
@@ -357,7 +385,60 @@ try {
   const route = await routed.json();
   safe.browser_route_selection = true;
   await report("routed", route.operation_id);
-  if (kuma) {
+  if (actual) {
+    await state("app_create");
+    appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
+    let app = await appContext.newPage();
+    app.setDefaultTimeout(30000);
+    await app.goto("/");
+    await expect(app.getByPlaceholder("Confirm password", { exact: true })).toBeVisible();
+    const startup = await app.evaluate(() => ({ secure: isSecureContext, isolated: crossOriginIsolated, shared: typeof SharedArrayBuffer === "function" }));
+    if (!startup.secure || !startup.isolated || !startup.shared) throw Error("Actual secure context unavailable");
+    safe.actual_secure_context = true;
+    await app.getByPlaceholder("Password", { exact: true }).fill(applicationPassword);
+    await app.getByPlaceholder("Confirm password", { exact: true }).fill(applicationPassword);
+    await app.getByRole("button", { name: "OK", exact: true }).click();
+    await app.getByRole("button", { name: "Start budgeting", exact: true }).click();
+    await app.getByRole("button", { name: "Close", exact: true }).click();
+    await app.getByRole("button", { name: "My Finances", exact: true }).click();
+    await app.getByText("Rename budget", { exact: true }).click();
+    await app.getByRole("textbox").fill("NeroCD retained budget");
+    await app.getByRole("textbox").press("Enter");
+    await app.getByRole("button", { name: "Add account", exact: true }).click();
+    await app.getByRole("button", { name: "Create a local account", exact: true }).click();
+    await app.getByLabel("Name:", { exact: true }).fill("NeroCD retained account");
+    await app.getByLabel("Balance:", { exact: true }).fill("100");
+    await app.getByRole("button", { name: "Create", exact: true }).click();
+    await app.getByRole("link", { name: /NeroCD retained account/ }).click();
+    await actualTransaction(app, "NeroCD retained transaction", "12.34");
+    await expect(app.getByTestId("account-balance")).toContainText("87.66");
+    await actualSync(app);
+    const accountID = new URL(app.url()).pathname.match(/\/accounts\/([a-f0-9-]{36})$/)?.[1];
+    if (!accountID) throw Error("Actual account identity absent");
+    safe.actual_password_budget_account_transaction_synced = true;
+    await report("app_created", accountID);
+    for (const [expectedPhase, action, newWrite] of [["app_recheck", "app_checked", true], ["app_start_recheck", "app_start_checked", false]]) {
+      await state(expectedPhase);
+      // A completely new context has no IndexedDB or cached budget to read.
+      await appContext.close();
+      appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
+      app = await appContext.newPage();
+      app.setDefaultTimeout(30000);
+      await actualOpenServerBudget(app);
+      if (!new URL(app.url()).pathname.endsWith("/accounts/" + accountID)) throw Error("Actual account identity changed");
+      if (newWrite) {
+        await expect(app.getByTestId("account-balance")).toContainText("87.66");
+        await actualTransaction(app, "NeroCD after redeploy", "1.23");
+        await actualSync(app);
+        safe.actual_fresh_context_server_download_new_write = true;
+      } else {
+        await expect(app.getByTestId("transaction-table")).toContainText("NeroCD after redeploy");
+        safe.actual_failed_replacement_server_persistence = true;
+      }
+      await expect(app.getByTestId("account-balance")).toContainText("86.43");
+      await report(action, accountID);
+    }
+  } else if (kuma) {
     await state("app_create");
     appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
     let app = await appContext.newPage();
@@ -368,8 +449,8 @@ try {
     await app.locator('label[for="btnradio1"]').click();
     await app.getByRole("button", { name: "Next", exact: true }).click();
     await app.getByLabel("Username", { exact: true }).fill("nerocdacceptance");
-    await app.getByLabel("Password", { exact: true }).fill(kumaPassword);
-    await app.getByLabel("Repeat Password", { exact: true }).fill(kumaPassword);
+    await app.getByLabel("Password", { exact: true }).fill(applicationPassword);
+    await app.getByLabel("Repeat Password", { exact: true }).fill(applicationPassword);
     await app.getByRole("button", { name: "Create", exact: true }).click();
     await expect(app.getByRole("link", { name: "Add New Monitor", exact: true })).toBeVisible();
     safe.kuma_sqlite_admin_setup = true;
@@ -388,7 +469,7 @@ try {
       app.setDefaultTimeout(30000);
       await app.goto("/");
       await app.getByLabel("Username", { exact: true }).fill("nerocdacceptance");
-      await app.getByLabel("Password", { exact: true }).fill(kumaPassword);
+      await app.getByLabel("Password", { exact: true }).fill(applicationPassword);
       await app.getByRole("button", { name: "Log in", exact: true }).click();
       // Wait for authenticated navigation before starting another document.
       await expect(app.getByRole("link", { name: "Add New Monitor", exact: true })).toBeVisible();

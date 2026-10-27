@@ -20,8 +20,10 @@ deletion=false
 catalog=false
 managed_compose=false
 uptime_kuma=false
+actual_budget=false
 case ${1:-} in
  --managed-compose) managed_compose=true; catalog=true; archive=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
+ --actual-budget) actual_budget=true; catalog=true; archive=true; owner=nerocd-catalog-actual-budget-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogActualBudgetCompiledRunnerHTTPS$';;
  --uptime-kuma) uptime_kuma=true; catalog=true; archive=true; owner=nerocd-catalog-uptime-kuma-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogUptimeKumaCompiledRunnerHTTPS$';;
  --catalog) catalog=true; archive=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
@@ -43,7 +45,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose|--uptime-kuma]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose|--uptime-kuma|--actual-budget]' >&2; exit 2;;
 esac
 browser_publication=false
 if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
@@ -342,7 +344,7 @@ if [[ "$remote" == true || "$catalog" == true ]]; then
  python3 -B scripts/skills/ui_manifest.py > "$evidence/browser-ui-manifest.json"
  git ls-files -s web/app/src web/app/package.json web/app/bun.lock web/assets.go > "$evidence/browser-source-blobs"
 fi
-git ls-files -s acceptance/runtime-hosting-catalog internal/api/hosting_catalog_runtime_integration_test.go internal/domain/hosting_catalog.go internal/domain/hosting_catalog_linkding.yaml internal/domain/hosting_catalog_uptime_kuma.yaml internal/api/hosting_catalog_uptime_kuma_runtime_integration_test.go acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go internal/api/hosting_storage_backup_deletion_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
+git ls-files -s acceptance/runtime-hosting-catalog internal/api/hosting_catalog_runtime_integration_test.go internal/domain/hosting_catalog.go internal/domain/hosting_catalog_linkding.yaml internal/domain/hosting_catalog_uptime_kuma.yaml internal/domain/hosting_catalog_actualbudget.yaml internal/api/hosting_catalog_uptime_kuma_runtime_integration_test.go internal/api/hosting_catalog_actual_budget_runtime_integration_test.go acceptance/runtime-hosting-storage acceptance/image-hosting-storage-fixture internal/api/hosting_storage_runtime_integration_test.go internal/api/hosting_storage_archive_runtime_integration_test.go internal/api/hosting_storage_remote_runtime* internal/api/hosting_storage_backup_retention_runtime_integration_test.go internal/api/hosting_storage_backup_deletion_runtime* Dockerfile.storage-archive cmd/nerocd-storage-archive internal/storagearchive > "$evidence/source-blobs"
 fixture_tags=nerocd_proxy_fixture
 if [[ "$remote" == true ]]; then fixture_tags=nerocd_proxy_fixture,nerocd_storage_remote_contract; fi
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -tags "$fixture_tags" -c -o "$evidence/api.test" ./internal/api
@@ -379,7 +381,7 @@ host_docker volume create --driver local --label "$label=$owner" "$volume"
 verify_volume || { echo 'new volume not proven owned and unused; preserving it' >&2; exit 1; }
 outer_attempted=true
 outer_run() {
- if [[ "$managed_compose" == true || "$uptime_kuma" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 --publish 127.0.0.1:25443:443 "$@"
+ if [[ "$managed_compose" == true || "$uptime_kuma" == true || "$actual_budget" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 --publish 127.0.0.1:25443:443 "$@"
  elif [[ "$browser_publication" == true ]]; then host_docker run --pull=never --publish 127.0.0.1::18190 "$@"
  else host_docker run --pull=never "$@"; fi
 }
@@ -453,6 +455,11 @@ if [[ "$uptime_kuma" == true ]]; then
  kuma=docker.io/louislam/uptime-kuma@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67
  inner_docker pull "$kuma"
  inner_docker image inspect "$kuma" > "$evidence/uptime-kuma-image.json"
+fi
+if [[ "$actual_budget" == true ]]; then
+ actual=docker.io/actualbudget/actual-server@sha256:24645e971da6bb1a1f953d6859e307a0b29be1e8b4130a35b3220c209b5b860c
+ inner_docker pull "$actual"
+ inner_docker image inspect "$actual" > "$evidence/actual-budget-image.json"
 fi
 inner_docker image ls --no-trunc --digests --format '{{json .}}' > "$evidence/inner-images-before-test"
 host_docker exec "$outer" df -Pk / /var/lib/docker /tmp > "$evidence/guest-filesystem-before-test"
@@ -562,7 +569,7 @@ for key in ["browser_compose_volume_remote_schedule_saved","browser_compose_volu
  if browser.get(key) is not True:raise SystemExit("connected Compose remote schedule proof missing: "+key)
 COMPOSE_BROWSER_PASS
 elif [[ "$catalog" == true ]]; then
- catalog_application=linkding; if [[ "$uptime_kuma" == true ]]; then catalog_application=uptime-kuma; fi
+ catalog_application=linkding; if [[ "$uptime_kuma" == true ]]; then catalog_application=uptime-kuma; elif [[ "$actual_budget" == true ]]; then catalog_application=actualbudget; fi
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
  host_docker exec --workdir /workspace/internal/api --env "NEROCD_CATALOG_APPLICATION=$catalog_application" --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
@@ -573,12 +580,12 @@ elif [[ "$catalog" == true ]]; then
  python3 - "$evidence/api-tests.log" "$evidence/catalog-browser-safe.json" "$catalog_application" <<'CATALOG_BROWSER_PASS'
 import json,pathlib,sys
 text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
-test="TestHostingCatalogUptimeKumaCompiledRunnerHTTPS" if sys.argv[3]=="uptime-kuma" else "TestHostingCatalogLinkdingCompiledRunnerHTTPS"
+test={"uptime-kuma":"TestHostingCatalogUptimeKumaCompiledRunnerHTTPS","actualbudget":"TestHostingCatalogActualBudgetCompiledRunnerHTTPS","linkding":"TestHostingCatalogLinkdingCompiledRunnerHTTPS"}[sys.argv[3]]
 if "--- PASS: "+test+" " not in text or "SKIP" in text:raise SystemExit("required catalog runtime test did not pass without skips")
 if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected catalog browser did not pass")
 for key in ["served_assets_match_manifest","catalog_install_identical_retry","browser_deployment","healthy_resource_result","current_viewer_denied_replay","browser_route_selection"]:
  if browser.get(key) is not True:raise SystemExit("connected catalog browser proof missing: "+key)
-required=["credential_free_installation","kuma_sqlite_admin_setup","kuma_monitor_and_setting_saved","kuma_fresh_login_redeploy_persistence_new_write","kuma_failed_replacement_persistence"] if sys.argv[3]=="uptime-kuma" else ["explicit_reveal_and_hide"]
+required={"uptime-kuma":["credential_free_installation","kuma_sqlite_admin_setup","kuma_monitor_and_setting_saved","kuma_fresh_login_redeploy_persistence_new_write","kuma_failed_replacement_persistence"],"actualbudget":["credential_free_installation","actual_secure_context","actual_password_budget_account_transaction_synced","actual_fresh_context_server_download_new_write","actual_failed_replacement_server_persistence"],"linkding":["explicit_reveal_and_hide"]}[sys.argv[3]]
 for key in required:
  if browser.get(key) is not True:raise SystemExit("connected catalog application proof missing: "+key)
 if browser.get("responsive_widths")!=[1280,320,390,430]:raise SystemExit("catalog responsive proof missing")
