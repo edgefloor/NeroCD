@@ -111,3 +111,16 @@ func validateRegistryPullConfig(c Config) error {
 	}
 	return runnerclient.ValidateRuntimeEnvironmentServer(c.Server, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: c.RegistryPull.TrustedLoopbackHTTP})
 }
+
+// registryPullDeliveryID preserves ordinary-image history and fences each stack component window.
+func registryPullDeliveryID(a domain.HostingAuthority, component string) string {
+	purpose := "pull"
+	if component != "" {
+		purpose = domain.HostingDocumentHash(struct {
+			Authority domain.HostingAuthority
+			Component string
+		}{a, component})
+	}
+	key := attemptMutationKey("registry", a.LeaseID, a.Attempt, purpose)
+	return domain.HostingDocumentHash(key)[7:39]
+}

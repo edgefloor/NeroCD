@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,8 +26,11 @@ type protectedComposeCommand interface {
 	RunProtectedInput(context.Context, string, []string, string, []string, []byte) ([]byte, error)
 }
 
+// stackRegistryDelivery delivers one component's stable, independently bounded pull window.
+type stackRegistryDelivery func(context.Context, string) (*domain.HostingRegistryCredentialDelivery, error)
+
 // prepareStack resolves every image before the caller can request mutation authority.
-func (e *imageEngine) prepareStack(ctx context.Context, definition domain.HostingStackDefinition) (domain.HostingRelease, []domain.HostingStackImage, error) {
+func (e *imageEngine) prepareStack(ctx context.Context, definition domain.HostingStackDefinition, deliver stackRegistryDelivery) (domain.HostingRelease, []domain.HostingStackImage, error) {
 	var zero domain.HostingRelease
 	if err := e.prepareCompose(ctx); err != nil {
 		return zero, nil, errors.New("managed stack requires Docker Compose v2")
@@ -36,8 +40,44 @@ func (e *imageEngine) prepareStack(ctx context.Context, definition domain.Hostin
 		return zero, nil, err
 	}
 	images := make([]domain.HostingStackImage, 0, len(definition.Services))
-	for _, service := range definition.Services {
-		release, err := e.Prepare(ctx, domain.HostingSnapshot{ImageReference: service.Image})
+	registries := make([]string, len(definition.Services))
+	for i, service := range definition.Services {
+		registries[i], err = domain.HostingImageRegistry(service.Image)
+		if err != nil {
+			return zero, nil, errors.New("invalid stack image registry")
+		}
+	}
+	selectedRegistry := ""
+	for i, service := range definition.Services {
+		var credential *domain.HostingRegistryCredentialDelivery
+		if deliver != nil && (selectedRegistry == "" || registries[i] == selectedRegistry) {
+			credential, err = deliver(ctx, service.Name)
+			if err != nil {
+				if credential != nil {
+					credential.Close()
+				}
+				return zero, nil, errors.New("stack registry credential unavailable")
+			}
+			if credential == nil || !slices.Contains(registries, credential.Credential.Registry) || selectedRegistry != "" && credential.Credential.Registry != selectedRegistry {
+				if credential != nil {
+					credential.Close()
+				}
+				return zero, nil, errors.New("registry credential does not match stack")
+			}
+			selectedRegistry = credential.Credential.Registry
+			if registries[i] != selectedRegistry {
+				credential.Close()
+				credential = nil
+			}
+		}
+		snapshot := domain.HostingSnapshot{ImageReference: service.Image}
+		var release domain.HostingRelease
+		if credential != nil {
+			release, err = e.prepareRegistryImage(ctx, snapshot, credential)
+			credential.Close()
+		} else {
+			release, err = e.Prepare(ctx, snapshot)
+		}
 		if err != nil {
 			return zero, nil, errors.New("stack image preparation failed; prior writers were not changed")
 		}

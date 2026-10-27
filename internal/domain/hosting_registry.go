@@ -33,13 +33,19 @@ func (r HostingRegistryCredentialRef) Validate() error {
 	return nil
 }
 
-// ValidateHostingRegistrySnapshot limits selected credentials to ordinary image paths.
+// ValidateHostingRegistrySnapshot limits selected credentials to image and saved managed-stack paths.
 func ValidateHostingRegistrySnapshot(s HostingSnapshot) error {
 	if s.RegistryCredential == (HostingRegistryCredentialRef{}) {
 		return nil
 	}
-	if s.RegistryCredential.Validate() != nil || s.Stack != (HostingStackRef{}) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
+	if s.RegistryCredential.Validate() != nil || s.LocalBuild != (HostingLocalBuildSource{}) || s.Database != (HostingDatabaseExecutionRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) {
 		return ErrInvalidRegistryCredential
+	}
+	if s.Stack != (HostingStackRef{}) {
+		if s.Stack.Generation < 1 || !imageSHA256.MatchString(s.Stack.Hash) || s.ImageReference != "" {
+			return ErrInvalidRegistryCredential
+		}
+		return nil
 	}
 	_, err := HostingImageRegistry(s.ImageReference)
 	return err

@@ -59,7 +59,7 @@ func (s *Service) RunnerHostingRegistryCredential(ctx context.Context, in domain
 	if err != nil {
 		return nil, ErrHostingRegistryCredentialUnavailable
 	}
-	if credential.Registry != verified.Registry || current() != nil || ctx.Err() != nil || !s.clock().Before(verified.UseUntil) {
+	if !slices.Contains(verified.Registries, credential.Registry) || current() != nil || ctx.Err() != nil || !s.clock().Before(verified.UseUntil) {
 		credential.Close()
 		return nil, ErrHostingRegistryCredentialUnavailable
 	}

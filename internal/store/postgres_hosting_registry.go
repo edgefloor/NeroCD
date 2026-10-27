@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,11 +18,11 @@ import (
 
 // HostingRegistryAuthorization returns encrypted storage only after audit commit.
 type HostingRegistryAuthorization struct {
-	ProjectID string
-	Ref       domain.HostingRegistryCredentialRef
-	Registry  string
-	UseUntil  time.Time
-	Record    ManagedSecretRecord
+	ProjectID  string
+	Ref        domain.HostingRegistryCredentialRef
+	Registries []string
+	UseUntil   time.Time
+	Record     ManagedSecretRecord
 }
 
 // Close clears the owned encrypted record.
@@ -177,11 +178,29 @@ func (s *PostgresStore) AuthorizeHostingRegistryCredential(ctx context.Context, 
 	if !now.Before(expected.UseUntil) {
 		return result, ErrConflict
 	}
-	registry, e := domain.HostingImageRegistry(op.Snapshot.ImageReference)
-	if e != nil {
-		return result, ErrConflict
+	var registries []string
+	if op.Snapshot.Stack != (domain.HostingStackRef{}) {
+		// hostingOperation loaded the immutable source by generation and verified its hash.
+		if op.StackSource == nil {
+			return result, ErrConflict
+		}
+		for _, service := range op.StackSource.Services {
+			registry, e := domain.HostingImageRegistry(service.Image)
+			if e != nil {
+				return result, ErrConflict
+			}
+			if !slices.Contains(registries, registry) {
+				registries = append(registries, registry)
+			}
+		}
+	} else {
+		registry, e := domain.HostingImageRegistry(op.Snapshot.ImageReference)
+		if e != nil {
+			return result, ErrConflict
+		}
+		registries = []string{registry}
 	}
-	result = HostingRegistryAuthorization{ProjectID: op.ProjectID, Ref: ref, Registry: registry, UseUntil: expected.UseUntil, Record: ManagedSecretRecord{Envelope: secretcrypto.Envelope{Version: int(record.EnvelopeVersion), KeyID: record.KeyID, Data: record.Ciphertext}}}
+	result = HostingRegistryAuthorization{ProjectID: op.ProjectID, Ref: ref, Registries: registries, UseUntil: expected.UseUntil, Record: ManagedSecretRecord{Envelope: secretcrypto.Envelope{Version: int(record.EnvelopeVersion), KeyID: record.KeyID, Data: record.Ciphertext}}}
 	err = tx.Commit(ctx)
 	return result, err
 }

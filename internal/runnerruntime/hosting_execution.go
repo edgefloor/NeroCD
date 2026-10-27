@@ -94,21 +94,27 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		var release domain.HostingRelease
 		var images []domain.HostingStackImage
 		var prepareErr error
-		if op.StackSource != nil {
-			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource)
-		} else if op.Snapshot.RegistryCredential != (domain.HostingRegistryCredentialRef{}) {
+		var deliver stackRegistryDelivery
+		if op.Snapshot.RegistryCredential != (domain.HostingRegistryCredentialRef{}) {
 			if len(registryConfigs) != 1 || registryConfigs[0] == nil {
 				return errors.New("registry pull requires explicit configuration")
 			}
-			deliveryID := attemptMutationKey("registry", a.LeaseID, a.Attempt, "pull")
-			deliveryID = domain.HostingDocumentHash(deliveryID)[7:39]
+			deliver = func(ctx context.Context, component string) (*domain.HostingRegistryCredentialDelivery, error) {
+				deliveryID := registryPullDeliveryID(a, component)
+				return client.HostingRegistryCredential(ctx, claim.Lease.RunnerID, domain.HostingRegistryCredentialRequest{Authority: a, DeliveryID: deliveryID}, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: registryConfigs[0].TrustedLoopbackHTTP})
+			}
+		}
+		switch {
+		case op.StackSource != nil:
+			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource, deliver)
+		case deliver != nil:
 			var material *domain.HostingRegistryCredentialDelivery
-			material, prepareErr = client.HostingRegistryCredential(supervisor.Context(), claim.Lease.RunnerID, domain.HostingRegistryCredentialRequest{Authority: a, DeliveryID: deliveryID}, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: registryConfigs[0].TrustedLoopbackHTTP})
+			material, prepareErr = deliver(supervisor.Context(), "")
 			if prepareErr == nil {
 				release, prepareErr = engine.prepareRegistryImage(supervisor.Context(), op.Snapshot, material)
 				material.Close()
 			}
-		} else {
+		default:
 			release, prepareErr = engine.Prepare(supervisor.Context(), op.Snapshot)
 		}
 		if prepareErr != nil {

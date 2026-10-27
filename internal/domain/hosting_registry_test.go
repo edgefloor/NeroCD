@@ -59,6 +59,45 @@ func TestHostingRegistryAnonymousHistoricalSerialization(t *testing.T) {
 	}
 	s.Stack = HostingStackRef{Generation: 1, Hash: "sha256:" + strings.Repeat("a", 64)}
 	if ValidateHostingRegistrySnapshot(s) == nil {
-		t.Fatal("stack credential accepted")
+		t.Fatal("mixed stack and image source accepted")
+	}
+}
+
+func TestHostingRegistryManagedStackDecoderAndSnapshot(t *testing.T) {
+	const raw = `{"expected_generation":1,"idempotency_key":"private-stack","container_port":80,"host_port":18080,"readiness":{"path":"/","timeout_seconds":5},"managed_stack":{"acknowledge_interruption":true},"registry_credential":{"secret_id":"secret","version":1}}`
+	var in HostingDeploymentInput
+	if json.Unmarshal([]byte(raw), &in) != nil || ValidateHostingDeployment(in) != nil {
+		t.Fatal("valid private stack request rejected")
+	}
+	for _, selection := range []string{`null`, `{}`, `{"secret_id":"secret","version":0}`, `{"secret_id":"secret","version":1,"registry":"ghcr.io"}`} {
+		body := strings.Replace(raw, `{"secret_id":"secret","version":1}`, selection, 1)
+		if json.Unmarshal([]byte(body), &in) == nil {
+			t.Fatal("invalid selected credential decoded")
+		}
+	}
+	s := HostingSnapshot{ResourceGeneration: 1, Stack: HostingStackRef{Generation: 1, Hash: "sha256:" + strings.Repeat("a", 64)}, RegistryCredential: HostingRegistryCredentialRef{SecretID: "secret", Version: 1}}
+	if ValidateHostingRegistrySnapshot(s) != nil {
+		t.Fatal("private stack snapshot rejected")
+	}
+	before := HostingDocumentHash(s)
+	s.RegistryCredential.Version++
+	if HostingDocumentHash(s) == before {
+		t.Fatal("credential version not included in immutable snapshot")
+	}
+	s.Stack.Hash = "invalid"
+	if ValidateHostingRegistrySnapshot(s) == nil {
+		t.Fatal("invalid stack identity accepted")
+	}
+}
+
+func TestHostingRegistryAnonymousStackHistoricalSerialization(t *testing.T) {
+	const historic = `{"stack":{"generation":1,"hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"resource_id":"res","resource_generation":1,"image_reference":"","binding_id":"binding","destination_id":"dest","server_id":"server","runner_id":"runner","runtime_namespace":"ncd_abc","container_port":80,"host_port":18080,"readiness":{"path":"/","timeout_seconds":5},"policy_version":"managed-compose.interrupting.v1"}`
+	var snapshot HostingSnapshot
+	if err := json.Unmarshal([]byte(historic), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil || string(raw) != historic || HostingDocumentHash(snapshot) != HostingDocumentHash(json.RawMessage(historic)) {
+		t.Fatal("anonymous saved-stack history changed", string(raw), err)
 	}
 }
