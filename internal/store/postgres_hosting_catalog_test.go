@@ -389,3 +389,139 @@ func TestHostingCatalogPostgresActualBudgetLiteralAndReplay(t *testing.T) {
 		t.Fatal("revoked Actual replay admitted", err)
 	}
 }
+
+func TestHostingCatalogPostgresVikunjaComposeInstallAndAdmission(t *testing.T) {
+	pg, database, service, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("e", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Tasks", TemplateID: "vikunja-with-postgresql", ImmutableVersion: domain.HostingCatalogVikunjaVersion, PublicURL: "https://tasks.example.test"}
+	var views [3]domain.HostingCatalogInstallation
+	var failures [3]error
+	var wg sync.WaitGroup
+	for i := range views {
+		wg.Go(func() { views[i], failures[i] = service.InstallHostingCatalog(ctx, in) })
+	}
+	wg.Wait()
+	for i, err := range failures {
+		if err != nil || domain.HostingDocumentHash(views[i]) != domain.HostingDocumentHash(views[0]) {
+			t.Fatal("concurrent Compose install changed receipt", err)
+		}
+	}
+	installed := views[0]
+	if installed.Resource.Source.Kind != "compose" || installed.Resource.Source.Compose == nil || *installed.Resource.Source.Compose != *installed.Template.Definition.Compose || installed.StorageRef != (domain.HostingStorageRef{}) || len(installed.Credentials) != 2 || installed.RuntimeConfiguration.Generation != 1 {
+		t.Fatal("Compose install disconnected")
+	}
+	got, err := service.GetHostingCatalogInstallation(ctx, installed.Resource.ID)
+	if err != nil || domain.HostingDocumentHash(got) != domain.HostingDocumentHash(installed) {
+		t.Fatal("Compose receipt read", err)
+	}
+	runtime, err := pg.GetHostingRuntimeConfiguration(ctx, "usr_bootstrap", installed.Resource.ID)
+	if err != nil || len(runtime.Entries) != 5 || domain.HostingDocumentHash(domain.HostingRuntimeDocument{Entries: runtime.Entries}) != installed.RuntimeConfiguration.Hash {
+		t.Fatal("complete runtime configuration missing", err)
+	}
+	values := map[string]string{}
+	body, _ := json.Marshal(installed)
+	for _, entry := range runtime.Entries {
+		if entry.Kind == "literal" {
+			values[entry.Name] = *entry.Value
+			continue
+		}
+		revealed, err := service.RevealManagedSecret(ctx, entry.Secret.SecretID, app.ManagedSecretRevealInput{Version: 1})
+		if err != nil || len(revealed.Value) < 32 || strings.Contains(string(body), revealed.Value) {
+			t.Fatal("generated credential unavailable or exposed", err)
+		}
+		values[entry.Name] = revealed.Value
+	}
+	if values["SERVICE_URL_VIKUNJA"] != in.PublicURL || values["SERVICE_USER_POSTGRESQL"] != "vikunja" || values["POSTGRESQL_DATABASE"] != "vikunja" || values["SERVICE_PASSWORD_JWTSECRET"] == values["SERVICE_PASSWORD_POSTGRESQL"] {
+		t.Fatal("runtime defaults or secret identity changed")
+	}
+	definition, err := domain.ParseHostingStack(*installed.Resource.Source.Compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range definition.Services {
+		for _, expression := range component.Environment {
+			if _, err := domain.ExpandHostingStackValue(expression, values, true); err != nil {
+				t.Fatal("missing required runtime variable", err)
+			}
+		}
+	}
+	var storageCount, receiptCount int
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_storage WHERE resource_id=$1),(SELECT count(*) FROM hosting_storage_receipts WHERE resource_id=$1)`, installed.Resource.ID).Scan(&storageCount, &receiptCount); err != nil || storageCount != 0 || receiptCount != 0 {
+		t.Fatal("Compose created image storage metadata", err)
+	}
+	input := hostingDeploymentRequest()
+	input.ExpectedRuntimeConfigurationGeneration = 1
+	input.ContainerPort = 3456
+	input.Readiness = installed.Template.Definition.Readiness
+	input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
+	if _, err = pg.RequestHostingDeployment(ctx, "hop_catalog_compose_old_runner", installed.Resource.ID, "usr_bootstrap", input, destinationEvent("catalog_compose_old_runner")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("old runner accepted Compose", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=capabilities || ARRAY[$1,$2,$3]::text[]`, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	options, err := pg.HostingStorageDeploymentOptions(ctx, installed.Resource.ID, "usr_bootstrap")
+	if err != nil || !options.Available || options.StackRef == nil || options.StorageRef != nil {
+		t.Fatal("saved Compose deployment unavailable", err)
+	}
+	op, err := pg.RequestHostingDeployment(ctx, "hop_catalog_compose", installed.Resource.ID, "usr_bootstrap", input, destinationEvent("catalog_compose"))
+	if err != nil || op.Snapshot.Stack == (domain.HostingStackRef{}) || op.Snapshot.RuntimeConfiguration != installed.RuntimeConfiguration {
+		t.Fatal("catalog did not use existing Compose admission", err)
+	}
+	input.ExpectedRuntimeConfigurationGeneration = 0
+	input.IdempotencyKey = "catalog-compose-stale-runtime"
+	if _, err = pg.RequestHostingDeployment(ctx, "hop_catalog_compose_stale", installed.Resource.ID, "usr_bootstrap", input, destinationEvent("catalog_compose_stale")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("stale runtime admitted", err)
+	}
+	changed := in
+	changed.PublicURL = "https://changed.example.test"
+	if _, err = service.InstallHostingCatalog(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("changed URL reused receipt", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1`, in.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.InstallHostingCatalog(ctx, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked install replay admitted", err)
+	}
+	if _, err = service.GetHostingCatalogInstallation(ctx, installed.Resource.ID); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked grant read admitted", err)
+	}
+}
+
+func TestHostingCatalogPostgresComposeRollbackAndOwnerAuthority(t *testing.T) {
+	_, database, service, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("d", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Tasks rollback", TemplateID: "vikunja-with-postgresql", ImmutableVersion: domain.HostingCatalogVikunjaVersion, PublicURL: "https://tasks.example.test"}
+	foreign, err := service.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_security", Name: "Foreign Compose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := hostingDatabaseCounts(t, database)
+	if _, err := database.Exec(ctx, `INSERT INTO service_accounts(id,project_id,owner_user_id,name,role,status) VALUES('sa_compose_catalog_viewer',$1,'usr_bootstrap','viewer','viewer','active')`, in.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	viewer := auth.WithPrincipal(t.Context(), auth.Principal{ID: "sa_compose_catalog_viewer", Provider: domain.PrincipalServiceAccount, Roles: []string{domain.RoleViewer}})
+	if _, err := service.InstallHostingCatalog(viewer, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("viewer installed Compose", err)
+	}
+	invalid := in
+	invalid.ProjectEnvironmentID = foreign.ID
+	if _, err = service.InstallHostingCatalog(ctx, invalid); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("foreign environment installed Compose", err)
+	}
+	if after := hostingDatabaseCounts(t, database); after != before {
+		t.Fatal("denied Compose install persisted components")
+	}
+	if _, err = database.Exec(ctx, `CREATE FUNCTION reject_compose_catalog_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'catalog fixture rollback'; END $$; CREATE TRIGGER reject_compose_catalog_test BEFORE INSERT ON hosting_catalog_installations FOR EACH ROW EXECUTE FUNCTION reject_compose_catalog_test()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.InstallHostingCatalog(ctx, in); err == nil {
+		t.Fatal("injected Compose install failure accepted")
+	}
+	if after := hostingDatabaseCounts(t, database); after != before {
+		t.Fatal("Compose install retained partial components")
+	}
+	var count int
+	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_compose_source_versions)+(SELECT count(*) FROM hosting_catalog_installations)+(SELECT count(*) FROM hosting_runtime_configuration_versions)`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("Compose normalization, runtime or receipt survived rollback", err)
+	}
+}

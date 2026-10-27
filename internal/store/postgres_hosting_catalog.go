@@ -89,7 +89,7 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 		return zero, err
 	}
 	template, available := domain.LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
-	if !available {
+	if !available || in.Validate() != nil {
 		return zero, ErrConflict
 	}
 	resource := domain.HostingCatalogResourceID(in.ProjectID, in.RequestID)
@@ -104,9 +104,22 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 			return zero, ErrConflict
 		}
 	}
-	row, err := q.CreateResource(ctx, sqlcgen.CreateResourceParams{ID: resource, ProjectID: in.ProjectID, ProjectEnvironmentID: in.ProjectEnvironmentID, Name: in.Name, Kind: "application", Source: buildJSON(domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: template.Definition.ImageReference}}), CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
+	source := domain.ResourceSource{Kind: "image", Image: domain.ImageSource{Reference: template.Definition.ImageReference}}
+	if template.Definition.Compose != nil {
+		source = domain.ResourceSource{Kind: "compose", Compose: template.Definition.Compose}
+	}
+	row, err := q.CreateResource(ctx, sqlcgen.CreateResourceParams{ID: resource, ProjectID: in.ProjectID, ProjectEnvironmentID: in.ProjectEnvironmentID, Name: in.Name, Kind: "application", Source: buildJSON(source), CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return zero, hostingError(err)
+	}
+	if source.Compose != nil {
+		definition, parseErr := domain.ParseHostingStack(*source.Compose)
+		if parseErr != nil {
+			return zero, ErrConflict
+		}
+		if err = q.AppendHostingComposeSourceVersion(ctx, sqlcgen.AppendHostingComposeSourceVersionParams{ResourceID: resource, Generation: row.Generation, Original: source.Compose.Original, OriginalHash: definition.OriginalHash, Definition: buildJSON(definition), DefinitionHash: domain.HostingDocumentHash(definition)}); err != nil {
+			return zero, err
+		}
 	}
 	namespace, err := newLeaseToken("ncd")
 	if err != nil {
@@ -116,11 +129,14 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	if err != nil {
 		return zero, hostingError(err)
 	}
-	storageID, volume := domain.HostingStorageIdentity(binding)
-	storage := domain.HostingStorage{ID: storageID, ProjectID: in.ProjectID, ResourceID: resource, BindingID: binding, DestinationID: in.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: template.Definition.MountPath, AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: actor, CreatedAt: now}
-	storage.Hash = storage.DocumentHash()
-	if _, err = q.InsertHostingStorage(ctx, sqlcgen.InsertHostingStorageParams{ID: storage.ID, ProjectID: in.ProjectID, ResourceID: resource, BindingID: binding, DestinationID: in.DestinationID, Kind: storage.Kind, Driver: storage.Driver, VolumeName: volume, MountPath: storage.MountPath, AccessMode: storage.AccessMode, Retention: storage.Retention, BodyHash: storage.Hash, CreatedBy: actor}); err != nil {
-		return zero, hostingError(err)
+	var storage domain.HostingStorage
+	if source.Kind == "image" {
+		storageID, volume := domain.HostingStorageIdentity(binding)
+		storage = domain.HostingStorage{ID: storageID, ProjectID: in.ProjectID, ResourceID: resource, BindingID: binding, DestinationID: in.DestinationID, Kind: "platform_managed", Driver: "local", VolumeName: volume, MountPath: template.Definition.MountPath, AccessMode: "read_write", Retention: "retain", Generation: 1, CreatedBy: actor, CreatedAt: now}
+		storage.Hash = storage.DocumentHash()
+		if _, err = q.InsertHostingStorage(ctx, sqlcgen.InsertHostingStorageParams{ID: storage.ID, ProjectID: in.ProjectID, ResourceID: resource, BindingID: binding, DestinationID: in.DestinationID, Kind: storage.Kind, Driver: storage.Driver, VolumeName: volume, MountPath: storage.MountPath, AccessMode: storage.AccessMode, Retention: storage.Retention, BodyHash: storage.Hash, CreatedBy: actor}); err != nil {
+			return zero, hostingError(err)
+		}
 	}
 	entries := make([]domain.HostingRuntimeEntry, 0, len(credentials))
 	for _, c := range credentials {
@@ -140,6 +156,9 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	runtimeEntries := append([]domain.HostingRuntimeEntry{}, entries...)
 	for name, value := range template.Definition.RuntimeEnvironment {
 		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: name, Kind: "literal", Value: &value})
+	}
+	if source.Kind == "compose" {
+		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: "SERVICE_URL_VIKUNJA", Kind: "literal", Value: &in.PublicURL})
 	}
 	doc, refs, err := domain.CanonicalHostingRuntimeDocument(runtimeEntries)
 	if err != nil {
@@ -167,12 +186,14 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 		}
 	}
 	view := domain.HostingCatalogInstallation{ID: resource, Request: in, Template: template, Resource: r, Binding: bindingFromDestinationSQL(bound), StorageRef: storage.Reference(), RuntimeConfiguration: domain.HostingRuntimeConfigurationRef{Generation: 1, Hash: domain.HostingDocumentHash(doc)}, Credentials: credentialEntries, CreatedBy: actor, CreatedAt: now}
-	storageAudit := domain.AuditEvent{ID: domain.HostingStorageAuditID(resource, in.RequestID), ActorID: actor, Action: "hosting.storage.created", TargetID: storage.ID, CreatedAt: now, Metadata: map[string]any{"project_id": in.ProjectID, "resource_id": resource, "binding_id": binding, "destination_id": in.DestinationID, "storage_generation": int64(1), "storage_hash": storage.Hash}}
-	if err = createAuditWithQueries(ctx, q, storageAudit); err != nil {
-		return zero, err
-	}
-	if err = q.InsertHostingStorageReceipt(ctx, sqlcgen.InsertHostingStorageReceiptParams{ResourceID: resource, RequestID: in.RequestID, StorageID: storage.ID, ActorID: actor, RequestHash: requestHash, ExpectedResourceGeneration: 1, AuditID: storageAudit.ID}); err != nil {
-		return zero, err
+	if source.Kind == "image" {
+		storageAudit := domain.AuditEvent{ID: domain.HostingStorageAuditID(resource, in.RequestID), ActorID: actor, Action: "hosting.storage.created", TargetID: storage.ID, CreatedAt: now, Metadata: map[string]any{"project_id": in.ProjectID, "resource_id": resource, "binding_id": binding, "destination_id": in.DestinationID, "storage_generation": int64(1), "storage_hash": storage.Hash}}
+		if err = createAuditWithQueries(ctx, q, storageAudit); err != nil {
+			return zero, err
+		}
+		if err = q.InsertHostingStorageReceipt(ctx, sqlcgen.InsertHostingStorageReceiptParams{ResourceID: resource, RequestID: in.RequestID, StorageID: storage.ID, ActorID: actor, RequestHash: requestHash, ExpectedResourceGeneration: 1, AuditID: storageAudit.ID}); err != nil {
+			return zero, err
+		}
 	}
 	runtimeAudit := domain.AuditEvent{ID: domain.HostingRuntimeAuditID(resource, in.RequestID), ActorID: actor, Action: "hosting.runtime_configuration.updated", TargetID: resource, CreatedAt: now, Metadata: map[string]any{"project_id": in.ProjectID, "resource_id": resource, "runtime_generation": int64(1), "entry_count": len(doc.Entries), "secret_reference_count": len(refs)}}
 	if err = createAuditWithQueries(ctx, q, runtimeAudit); err != nil {
@@ -205,7 +226,7 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 func (s *PostgresStore) GetHostingCatalogInstallation(ctx context.Context, actor, resource string) (domain.HostingCatalogInstallation, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingCatalogInstallation, error) {
 		var zero domain.HostingCatalogInstallation
-		r, b, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleViewer)
+		r, b, err := catalogPlacement(ctx, tx, actor, resource)
 		if err != nil {
 			return zero, err
 		}
@@ -229,4 +250,37 @@ func catalogBindingEqual(left, right domain.ResourceBinding) bool {
 	}
 	left.CreatedAt = right.CreatedAt
 	return left == right
+}
+
+// catalogPlacement retains image storage checks while authorizing Compose receipts
+// against their resource, binding and current destination grant.
+func catalogPlacement(ctx context.Context, tx pgx.Tx, actor, resource string) (domain.Resource, domain.ResourceBinding, error) {
+	q := sqlcgen.New(tx)
+	row, err := q.ReadHostingRuntimeResource(ctx, resource)
+	if err != nil {
+		return domain.Resource{}, domain.ResourceBinding{}, hostingError(err)
+	}
+	var source domain.ResourceSource
+	if json.Unmarshal(row.Source, &source) != nil {
+		return domain.Resource{}, domain.ResourceBinding{}, ErrConflict
+	}
+	if source.Kind != "compose" {
+		return hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleViewer)
+	}
+	if err = proxyAuthorize(ctx, tx, actor, row.ProjectID, domain.RoleViewer, false); err != nil {
+		return domain.Resource{}, domain.ResourceBinding{}, err
+	}
+	if row.Kind != "application" {
+		return domain.Resource{}, domain.ResourceBinding{}, ErrConflict
+	}
+	binding, err := q.GetResourceBinding(ctx, resource)
+	if err != nil {
+		return domain.Resource{}, domain.ResourceBinding{}, hostingError(err)
+	}
+	if _, err = q.LockHostingStorageGrant(ctx, sqlcgen.LockHostingStorageGrantParams{DestinationID: binding.DestinationID, ProjectID: row.ProjectID}); errors.Is(err, pgx.ErrNoRows) {
+		return domain.Resource{}, domain.ResourceBinding{}, auth.ErrForbidden
+	} else if err != nil {
+		return domain.Resource{}, domain.ResourceBinding{}, err
+	}
+	return domain.Resource{ID: row.ID, ProjectID: row.ProjectID, Kind: row.Kind, Generation: row.Generation, Source: source}, bindingFromDestinationSQL(binding), nil
 }

@@ -36,7 +36,12 @@ func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCa
 	if !ok {
 		return zero, store.ErrConflict
 	}
-	template, _ := domain.LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
+	template, available := domain.LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
+	if available {
+		if err = in.Validate(); err != nil {
+			return zero, InvalidInput(err)
+		}
+	}
 	if len(template.Definition.CredentialNames) > 0 && s.secretKeyring == nil {
 		return zero, ErrManagedSecretsUnavailable
 	}

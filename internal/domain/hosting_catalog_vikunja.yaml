@@ -1,0 +1,67 @@
+# Adapted from Coolify b12d1386f3d458618b4c579babcd1e339c6c40b3:
+# templates/compose/vikunja-with-postgresql.yaml and the BusyBox init service in
+# templates/compose/vikunja.yaml. Vikunja 2.7.1 runs as UID 1000, while Docker
+# copies /app/vikunja as root. Persist only uploads, not the application binary.
+# The init job initializes empty storage once and never rewrites retained data.
+services:
+  init:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command:
+      - sh
+      - -ec
+      - |
+        if [ "$$(stat -c '%u:%g:%a' /files)" = '1000:1000:755' ]; then
+          exit 0
+        fi
+        if [ -n "$$(ls -A /files)" ]; then
+          echo 'Upload storage has incompatible ownership; existing data was not changed.' >&2
+          exit 1
+        fi
+        chown 1000:1000 /files
+        chmod 0755 /files
+    volumes:
+      - vikunja-data:/files
+
+  vikunja:
+    image: vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576
+    environment:
+      - SERVICE_URL_VIKUNJA
+      - VIKUNJA_SERVICE_PUBLICURL=${SERVICE_URL_VIKUNJA:?Supply the public HTTPS URL}
+      - VIKUNJA_SERVICE_SECRET=${SERVICE_PASSWORD_JWTSECRET:?Supply a managed JWT secret reference}
+      - VIKUNJA_SERVICE_ENABLEREGISTRATION=true
+      - VIKUNJA_DATABASE_TYPE=postgres
+      - VIKUNJA_DATABASE_HOST=postgresql
+      - VIKUNJA_DATABASE_PASSWORD=${SERVICE_PASSWORD_POSTGRESQL:?Supply a managed PostgreSQL secret reference}
+      - VIKUNJA_DATABASE_USER=${SERVICE_USER_POSTGRESQL:-vikunja}
+      - VIKUNJA_DATABASE_DATABASE=${POSTGRESQL_DATABASE:-vikunja}
+    volumes:
+      - vikunja-data:/app/vikunja/files
+    healthcheck:
+      test: [CMD, /app/vikunja/vikunja, healthcheck]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      postgresql:
+        condition: service_healthy
+
+  postgresql:
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    volumes:
+      - vikunja-postgresql-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${SERVICE_USER_POSTGRESQL:-vikunja}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRESQL:?Supply a managed PostgreSQL secret reference}
+      - POSTGRES_DB=${POSTGRESQL_DATABASE:-vikunja}
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 20s
+      retries: 10
+
+volumes:
+  vikunja-data: {}
+  vikunja-postgresql-data: {}

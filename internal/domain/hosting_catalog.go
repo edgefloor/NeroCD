@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -38,16 +39,25 @@ var hostingCatalogUptimeKumaOriginal string
 //go:embed hosting_catalog_linkding.yaml
 var hostingCatalogLinkdingOriginal string
 
-// HostingCatalogDefinition is a closed typed translation into ordinary image hosting.
-// It deliberately cannot carry arbitrary Compose fields or execution scripts.
+// HostingCatalogDefinition translates a pinned template into image or managed Compose hosting.
 type HostingCatalogDefinition struct {
-	ImageReference     string            `json:"image_reference"`
-	ContainerPort      int               `json:"container_port"`
-	MountPath          string            `json:"mount_path"`
-	Readiness          HostingReadiness  `json:"readiness"`
-	CredentialNames    []string          `json:"credential_names"`
-	RuntimeEnvironment map[string]string `json:"runtime_environment,omitempty"`
+	ImageReference     string              `json:"image_reference"`
+	ContainerPort      int                 `json:"container_port"`
+	MountPath          string              `json:"mount_path"`
+	Readiness          HostingReadiness    `json:"readiness"`
+	CredentialNames    []string            `json:"credential_names"`
+	RuntimeEnvironment map[string]string   `json:"runtime_environment,omitempty"`
+	Compose            *HostingStackSource `json:"compose,omitempty"`
 }
+
+// HostingCatalogVikunjaVersion identifies the pinned managed Compose translation.
+const HostingCatalogVikunjaVersion = "coolify-b12d1386.vikunja-2.7.1.v1"
+
+//go:embed testdata/vikunja-with-postgresql.yaml
+var hostingCatalogVikunjaOriginal string
+
+//go:embed hosting_catalog_vikunja.yaml
+var hostingCatalogVikunjaCompose string
 
 // HostingCatalogTemplate describes a versioned catalog template and its resource definition.
 // Category and architecture restrictions are pinned upstream declarations.
@@ -78,7 +88,10 @@ func HostingCatalogTemplates() []HostingCatalogTemplate {
 	templates = append(templates, HostingCatalogTemplate{ID: "uptime-kuma", Version: HostingCatalogUptimeKumaVersion, Name: "Uptime Kuma", Category: "monitoring", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/uptime-kuma.yaml", Original: hostingCatalogUptimeKumaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(kumaSum[:]), Definition: kuma, DefinitionHash: HostingDocumentHash(kuma)})
 	actual := HostingCatalogDefinition{ImageReference: HostingCatalogActualBudgetImage, ContainerPort: 5006, MountPath: "/data", Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{}, RuntimeEnvironment: map[string]string{"ACTUAL_LOGIN_METHOD": "password"}}
 	actualSum := sha256.Sum256([]byte(hostingCatalogActualBudgetOriginal))
-	return append(templates, HostingCatalogTemplate{ID: "actualbudget", Version: HostingCatalogActualBudgetVersion, Name: "Actual Budget", Category: "finance", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/actualbudget.yaml", Original: hostingCatalogActualBudgetOriginal, OriginalHash: "sha256:" + hex.EncodeToString(actualSum[:]), Definition: actual, DefinitionHash: HostingDocumentHash(actual)})
+	templates = append(templates, HostingCatalogTemplate{ID: "actualbudget", Version: HostingCatalogActualBudgetVersion, Name: "Actual Budget", Category: "finance", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/actualbudget.yaml", Original: hostingCatalogActualBudgetOriginal, OriginalHash: "sha256:" + hex.EncodeToString(actualSum[:]), Definition: actual, DefinitionHash: HostingDocumentHash(actual)})
+	vikunja := HostingCatalogDefinition{ContainerPort: 3456, Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{"SERVICE_PASSWORD_JWTSECRET", "SERVICE_PASSWORD_POSTGRESQL"}, RuntimeEnvironment: map[string]string{"SERVICE_USER_POSTGRESQL": "vikunja", "POSTGRESQL_DATABASE": "vikunja"}, Compose: &HostingStackSource{Original: hostingCatalogVikunjaCompose, PublicComponent: "vikunja", ContainerPort: 3456}}
+	vikunjaSum := sha256.Sum256([]byte(hostingCatalogVikunjaOriginal))
+	return append(templates, HostingCatalogTemplate{ID: "vikunja-with-postgresql", Version: HostingCatalogVikunjaVersion, Name: "Vikunja with PostgreSQL", Category: "productivity", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/vikunja-with-postgresql.yaml", Original: hostingCatalogVikunjaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(vikunjaSum[:]), Definition: vikunja, DefinitionHash: HostingDocumentHash(vikunja)})
 }
 
 // LookupHostingCatalogTemplate selects one exact current template version.
@@ -101,6 +114,7 @@ type HostingCatalogInstallInput struct {
 	Name                 string `json:"name"`
 	TemplateID           string `json:"template_id"`
 	ImmutableVersion     string `json:"immutable_version"`
+	PublicURL            string `json:"public_url,omitempty"`
 }
 
 // ValidateShape is independent of current catalog contents so installed requests
@@ -108,6 +122,9 @@ type HostingCatalogInstallInput struct {
 func (in HostingCatalogInstallInput) ValidateShape() error {
 	if !hostingStorageRequest.MatchString(in.RequestID) || !hostingProxyID.MatchString(in.ProjectID) || !hostingProxyID.MatchString(in.ProjectEnvironmentID) || !hostingProxyID.MatchString(in.DestinationID) || ValidateHostingName(in.Name) != nil || !validRuntimeReferenceID(in.TemplateID) || !validRuntimeReferenceID(in.ImmutableVersion) {
 		return errors.New("invalid catalog install input")
+	}
+	if in.PublicURL != "" && (ValidateBackupRemoteEndpoint(in.PublicURL) != nil || strings.ContainsAny(in.PublicURL, "\x00\r\n\\?#")) {
+		return errors.New("invalid catalog public URL")
 	}
 	return nil
 }
@@ -117,8 +134,12 @@ func (in HostingCatalogInstallInput) Validate() error {
 	if err := in.ValidateShape(); err != nil {
 		return err
 	}
-	if _, ok := LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion); !ok {
+	template, ok := LookupHostingCatalogTemplate(in.TemplateID, in.ImmutableVersion)
+	if !ok {
 		return errors.New("catalog template is unavailable; arbitrary Compose import is incomplete")
+	}
+	if (template.Definition.Compose != nil) != (in.PublicURL != "") {
+		return errors.New("public URL is required only for Compose catalog applications")
 	}
 	return nil
 }
@@ -141,7 +162,7 @@ func (in *HostingCatalogInstallInput) UnmarshalJSON(raw []byte) error {
 			return errors.New("invalid catalog install input")
 		}
 		switch k {
-		case "request_id", "project_id", "project_environment_id", "destination_id", "name", "template_id", "immutable_version":
+		case "request_id", "project_id", "project_environment_id", "destination_id", "name", "template_id", "immutable_version", "public_url":
 		default:
 			return errors.New("invalid catalog install input")
 		}
@@ -151,7 +172,11 @@ func (in *HostingCatalogInstallInput) UnmarshalJSON(raw []byte) error {
 			return errors.New("invalid catalog install input")
 		}
 	}
-	if t, err = d.Token(); err != nil || t != json.Delim('}') || len(seen) != 7 || d.Decode(new(any)) != io.EOF {
+	requiredCount := len(seen)
+	if seen["public_url"] {
+		requiredCount--
+	}
+	if t, err = d.Token(); err != nil || t != json.Delim('}') || requiredCount != 7 || d.Decode(new(any)) != io.EOF {
 		return errors.New("invalid catalog install input")
 	}
 	type wire HostingCatalogInstallInput

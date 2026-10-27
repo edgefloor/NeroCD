@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/secretcrypto"
 )
 
 func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
@@ -34,7 +36,7 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", "", 401)
 	raw := check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", token, 200)
 	var items []domain.HostingCatalogTemplate
-	if json.Unmarshal(raw, &items) != nil || len(items) != 3 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
+	if json.Unmarshal(raw, &items) != nil || len(items) != 4 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
 		t.Fatal("catalog metadata missing")
 	}
 	if strings.Contains(string(raw), `"amd_only"`) || strings.Contains(string(raw), `"arm_only"`) {
@@ -48,10 +50,21 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	}
 }
 
-func TestHostingCatalogHTTPCurrentLookupAndCredentialFreeDefinitions(t *testing.T) {
-	for _, tc := range []struct{ id, version string }{{"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}} {
+func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
+	for _, tc := range []struct{ id, version string }{{"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}} {
 		t.Run(tc.id, func(t *testing.T) {
-			server, _, database := newHostingBuildAPIFixture(t)
+			server, pg, database := newHostingBuildAPIFixture(t)
+			if tc.id == "vikunja-with-postgresql" {
+				ring, e := secretcrypto.New("catalog", map[string][]byte{"catalog": bytes.Repeat([]byte{8}, 32)})
+				if e != nil {
+					t.Fatal(e)
+				}
+				service, e := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+				if e != nil {
+					t.Fatal(e)
+				}
+				server.app = service
+			}
 			ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
 			env, err := server.app.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Kuma catalog decoder"})
 			if err != nil {
@@ -74,6 +87,9 @@ func TestHostingCatalogHTTPCurrentLookupAndCredentialFreeDefinitions(t *testing.
 			}
 			token := createTestSession(t, server)
 			in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("8", 32), ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, DestinationID: detail.Destination.ID, Name: "Catalog app", TemplateID: tc.id, ImmutableVersion: tc.version}
+			if tc.id == "vikunja-with-postgresql" {
+				in.PublicURL = "https://tasks.example.test"
+			}
 			call := func(input domain.HostingCatalogInstallInput, status int) []byte {
 				t.Helper()
 				raw, e := json.Marshal(input)
@@ -90,6 +106,15 @@ func TestHostingCatalogHTTPCurrentLookupAndCredentialFreeDefinitions(t *testing.
 				}
 				return response.Body.Bytes()
 			}
+			badURL := in
+			if tc.id == "vikunja-with-postgresql" {
+				badURL.PublicURL = ""
+			} else {
+				badURL.PublicURL = "https://irrelevant.example.test"
+			}
+			call(badURL, 400)
+			badURL.PublicURL = "https://tasks.example.test/private"
+			call(badURL, 400)
 			for _, pair := range [][2]string{{tc.id, domain.HostingCatalogLinkdingVersion}, {"linkding", tc.version}} {
 				bad := in
 				bad.TemplateID = pair[0]
@@ -102,13 +127,25 @@ func TestHostingCatalogHTTPCurrentLookupAndCredentialFreeDefinitions(t *testing.
 			}
 			raw := call(in, 201)
 			var installed domain.HostingCatalogInstallation
-			if json.Unmarshal(raw, &installed) != nil || installed.Request != in || installed.Template.ID != tc.id || installed.Credentials == nil || len(installed.Credentials) != 0 {
+			if json.Unmarshal(raw, &installed) != nil || installed.Request != in || installed.Template.ID != tc.id || installed.Credentials == nil || len(installed.Credentials) != len(installed.Template.Definition.CredentialNames) {
 				t.Fatal("real decoder lost catalog identity or empty credentials")
 			}
 			if replay := call(in, 201); string(replay) != string(raw) {
 				t.Fatal("HTTP response-loss replay changed installed copy")
 			}
 
+			if tc.id == "vikunja-with-postgresql" {
+				if installed.Resource.Source.Kind != "compose" || installed.StorageRef != (domain.HostingStorageRef{}) {
+					t.Fatal("HTTP install did not select managed Compose")
+				}
+				req := httptest.NewRequest("GET", "/api/v1/resources/"+installed.Resource.ID+"/catalog-installation", nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				server.ServeHTTP(response, req)
+				if response.Code != 200 || response.Body.String() != string(raw) {
+					t.Fatal("Compose installation GET lost receipt", response.Code)
+				}
+			}
 			if tc.id == "actualbudget" && installed.Template.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] != "password" {
 				t.Fatal("HTTP install lost pinned literal")
 			}

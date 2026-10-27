@@ -16769,8 +16769,9 @@ components:
         project_environment_id: {type: string}
         destination_id: {type: string}
         name: {type: string, minLength: 1, maxLength: 128}
-        template_id: {type: string, enum: [linkding, uptime-kuma, actualbudget]}
-        immutable_version: {type: string, enum: [coolify-b12d1386.linkding-1.47.0.v1, coolify-b12d1386.uptime-kuma-2.5.8.v1, coolify-b12d1386.actualbudget-26.10.0.v1]}
+        template_id: {type: string, enum: [linkding, uptime-kuma, actualbudget, vikunja-with-postgresql]}
+        immutable_version: {type: string, enum: [coolify-b12d1386.linkding-1.47.0.v1, coolify-b12d1386.uptime-kuma-2.5.8.v1, coolify-b12d1386.actualbudget-26.10.0.v1, coolify-b12d1386.vikunja-2.7.1.v1]}
+        public_url: {type: string, maxLength: 512, description: "Public HTTP(S) base URL required only for managed Compose catalog applications. Does not create a route or hostname grant."}
     HostingCatalogDefinition:
       type: object
       additionalProperties: false
@@ -16782,6 +16783,7 @@ components:
         readiness: {$ref: "#/components/schemas/HostingReadiness"}
         credential_names: {type: array, items: {type: string}}
         runtime_environment: {type: object, additionalProperties: {type: string}, description: "Curated nonsecret literal runtime settings from the pinned template. Not user-supplied overrides."}
+        compose: {$ref: "#/components/schemas/ComposeResourceSource/properties/compose", description: "Pinned managed Compose source; absent for image catalog applications."}
     HostingCatalogTemplate:
       type: object
       additionalProperties: false
@@ -16810,7 +16812,17 @@ components:
         template: {$ref: "#/components/schemas/HostingCatalogTemplate"}
         resource: {$ref: "#/components/schemas/Resource"}
         binding: {$ref: "#/components/schemas/ResourceBinding"}
-        storage_ref: {$ref: "#/components/schemas/HostingStorageRef"}
+        storage_ref:
+          description: Image installations have ordinary storage; managed Compose installations retain an empty reference because volumes belong to the stack.
+          oneOf:
+            - {$ref: "#/components/schemas/HostingStorageRef"}
+            - type: object
+              additionalProperties: false
+              required: [storage_id, generation, hash]
+              properties:
+                storage_id: {type: string, enum: [""]}
+                generation: {type: integer, enum: [0]}
+                hash: {type: string, enum: [""]}
         runtime_configuration: {$ref: "#/components/schemas/HostingRuntimeConfigurationRef"}
         credentials: {type: array, items: {$ref: "#/components/schemas/HostingRuntimeEntry"}}
         created_by: {type: string}

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -162,5 +163,60 @@ func TestHostingCatalogActualBudgetPinnedLiteralAndHistoricalHashes(t *testing.T
 	in.ImmutableVersion = HostingCatalogUptimeKumaVersion
 	if in.Validate() == nil {
 		t.Fatal("cross-pair accepted")
+	}
+}
+
+func TestHostingCatalogVikunjaPinnedSourceAndPublicURL(t *testing.T) {
+	entry, ok := LookupHostingCatalogTemplate("vikunja-with-postgresql", HostingCatalogVikunjaVersion)
+	if !ok || entry.Category != "productivity" || entry.Definition.Compose == nil || entry.Definition.ContainerPort != 3456 || entry.Definition.Readiness.Path != "/health" || entry.DefinitionHash != HostingDocumentHash(entry.Definition) {
+		t.Fatal("missing managed Compose definition")
+	}
+	original, err := os.ReadFile("testdata/vikunja-with-postgresql.yaml")
+	if err != nil || entry.Original != string(original) {
+		t.Fatal("upstream attribution changed", err)
+	}
+	example, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+	if err != nil || entry.Definition.Compose.Original != string(example) {
+		t.Fatal("accepted Compose source changed", err)
+	}
+	parsed, err := ParseHostingStack(*entry.Definition.Compose)
+	if err != nil || len(parsed.Services) != 3 || len(parsed.Volumes) != 2 || parsed.PublicComponent != "vikunja" {
+		t.Fatal("invalid catalog Compose", err)
+	}
+	entry.Definition.Compose.Original = "changed"
+	fresh, _ := LookupHostingCatalogTemplate(entry.ID, entry.Version)
+	if fresh.Definition.Compose.Original != string(example) {
+		t.Fatal("shared Compose source")
+	}
+	in := HostingCatalogInstallInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj", ProjectEnvironmentID: "env", DestinationID: "dest", Name: "Tasks", TemplateID: entry.ID, ImmutableVersion: entry.Version, PublicURL: "https://tasks.example.test:8443/"}
+	for _, address := range []string{"https://tasks.example.test", "http://localhost:3456/", "https://[::1]:8443"} {
+		in.PublicURL = address
+		raw, _ := json.Marshal(in)
+		var decoded HostingCatalogInstallInput
+		if json.Unmarshal(raw, &decoded) != nil || decoded != in || decoded.Validate() != nil {
+			t.Fatalf("valid URL rejected: %q", address)
+		}
+	}
+	for _, address := range []string{"", "file:///tmp/socket", "https://user:pass@tasks.test", "https://tasks.test/path", "https://tasks.test?x=1", "https://tasks.test?", "https://tasks.test#", "https://tasks.test#fragment", "https://tasks.test\\path", " https://tasks.test", "https://tasks.test:99999"} {
+		in.PublicURL = address
+		if in.Validate() == nil {
+			t.Fatalf("invalid URL accepted: %q", address)
+		}
+	}
+	in.PublicURL = "https://tasks.test"
+	raw, _ := json.Marshal(in)
+	for _, bad := range []string{strings.Replace(string(raw), `"public_url":"https://tasks.test"`, `"public_url":null`, 1), strings.Replace(string(raw), `"public_url":"https://tasks.test"`, `"public_url":"https://tasks.test","public_url":"https://other.test"`, 1), strings.Replace(string(raw), `"public_url":"https://tasks.test"`, `"public_url":23`, 1)} {
+		var decoded HostingCatalogInstallInput
+		if json.Unmarshal([]byte(bad), &decoded) == nil {
+			t.Fatal("open URL decoder")
+		}
+	}
+	in.TemplateID, in.ImmutableVersion = "linkding", HostingCatalogLinkdingVersion
+	if in.Validate() == nil {
+		t.Fatal("image accepted irrelevant public URL")
+	}
+	in.PublicURL = ""
+	if in.Validate() != nil {
+		t.Fatal("legacy image install rejected")
 	}
 }
