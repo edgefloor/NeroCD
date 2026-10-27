@@ -74,6 +74,7 @@ func TestStorageBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 			defer s.Close()
 			var streams, completions, plans atomic.Int32
 			var allowCompletion atomic.Bool
+			var firstCompletion atomic.Value
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/runners/hosting/storage-backup-download/plan":
@@ -138,9 +139,17 @@ func TestStorageBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 
 					_ = json.NewEncoder(w).Encode(map[string]string{"session_id": p.SessionID, "plan_hash": p.Hash})
 				case "/api/v1/runners/complete":
-					completions.Add(1)
+					call := completions.Add(1)
 					var request runnerclient.CompleteRequest
 					_ = json.NewDecoder(r.Body).Decode(&request)
+					if request.LeaseID != claim.Lease.ID || request.Attempt != claim.Lease.Attempt || request.Fence != claim.Lease.Fence || request.CompletionKey == "" {
+						t.Error("completion authority or idempotency key changed")
+					}
+					if call == 1 {
+						firstCompletion.Store(request)
+					} else if firstCompletion.Load().(runnerclient.CompleteRequest) != request {
+						t.Error("completion replay changed metadata")
+					}
 					expected := "succeeded"
 					if mode == "missing" || mode == "tampered" || mode == "disconnect" || mode == "changed_plan" {
 						expected = "failed"
@@ -152,10 +161,27 @@ func TestStorageBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 						t.Error("completion was not durable before send")
 					}
 					if mode == "completion_loss" && !allowCompletion.Load() {
-						http.Error(w, "unavailable", http.StatusBadRequest)
+						conn, _, e := w.(http.Hijacker).Hijack()
+						if e != nil {
+							t.Error(e)
+							return
+						}
+						_ = conn.Close()
+						// End this attempt after actual response loss. Restart
+						// reconciliation must recover only its durable metadata.
+						s.cancel()
 						return
 					}
 					_ = json.NewEncoder(w).Encode(claim.Lease)
+				case "/api/v1/runners/claim":
+					if len(j.Snapshot().Completions) != 0 {
+						t.Error("successor claimed before completion ACK")
+					}
+					next := claim
+					next.Run.ID = "successor"
+					next.Lease.RunID = "successor"
+					next.Lease.ID = "successor_lease"
+					_ = json.NewEncoder(w).Encode(next)
 				case "/api/v1/runners/lease":
 					_ = json.NewEncoder(w).Encode(claim.Lease)
 				default:
@@ -174,6 +200,10 @@ func TestStorageBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 				t.Fatalf("execution/completion failed %v", err)
 			}
 			if mode == "completion_loss" {
+				// If startup accidentally reopened the copy, it would now fail.
+				if e := os.Remove(filepath.Join(root, key)); e != nil {
+					t.Fatal(e)
+				}
 				allowCompletion.Store(true)
 				if err = reconcileRunnerJournalWithCounters(server.URL, "token", j, &runnerOperationalCounters{}, parent); err != nil {
 					t.Fatal(err)
@@ -181,6 +211,10 @@ func TestStorageBackupDownloadOwnedCopyAndMetadataCompletion(t *testing.T) {
 				if streams.Load() != 1 || completions.Load() != 2 || len(j.Snapshot().Completions) != 0 {
 					t.Fatal("startup replay retransmitted bytes or retained completion")
 				}
+			}
+			next, e := runnerclient.New(server.URL, "token").Claim(parent)
+			if e != nil || next.Run.ID != "successor" || next.Lease.ID != "successor_lease" {
+				t.Fatalf("completed download blocked next claim: %v", e)
 			}
 			if !drained || completions.Load() < 1 {
 				t.Fatal("completion path not drained exactly once")
