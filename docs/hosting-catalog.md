@@ -24,7 +24,7 @@ Registry metadata is separate from runtime evidence. The Linux arm64 fixture
 passed at `3b0d9bbc5bd4159379d58aabe412f55f71bf147e`; see
 [qualification evidence](../acceptance/runtime-hosting-catalog/README.md#qualification-evidence).
 The extended workflow is physically qualified at `dd19157ce2e454b2ff6ad6c2d74b028a7dda9c86`;
-the catalog work is integrated in accepted commit `8b0ae4c17ade2145f273963d38bafe6c0057c31d`. The original physical evidence remains labeled with its tested revisions.
+combined integration acceptance remains separate.
 
 The original comes from
 [Coolify's Linkding template](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/compose/linkding.yaml),
@@ -34,7 +34,7 @@ managed-secret references, replaces its TCP shell health check with Linkding's
 HTTP database health endpoint, and uses NeroCD's owned-volume provenance. The
 Coolify `SERVICE_URL_LINKDING_9090` declaration is URL metadata, not a required
 Linkding environment variable. NeroCD uses its ordinary explicit route workflow.
-Pasted Compose source storage is described in [Managed Compose sources](hosting-compose.md). Its deployment qualification is separate from the Linkding catalog workflow.
+Arbitrary or pasted Compose imports remain incomplete and are rejected.
 
 ## Install and deploy
 
