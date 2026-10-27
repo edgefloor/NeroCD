@@ -38,6 +38,8 @@ test("owner searches catalog previews settings and installs after loading recove
   await expect(catalog.getByRole("option", { name: /Linkding ·/ })).toBeAttached();
   for (const width of [320, 390, 430, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
+    await catalog.getByLabel("Catalog category", { exact: true }).selectOption("rss");
+    await expect(catalog.getByRole("status")).toContainText("Catalog matches: 1 of 1.");
     await catalog.getByLabel("Search catalog", { exact: true }).fill("no-such-application");
     await expect(catalog.getByText(/No applications match your search/)).toBeVisible();
     await expect(catalog.getByRole("button", { name: "Install application", exact: true })).toBeDisabled();
@@ -47,6 +49,16 @@ test("owner searches catalog previews settings and installs after loading recove
     await catalog.getByLabel("Catalog application", { exact: true }).selectOption("linkding");
     const preview = catalog.getByRole("region", { name: "Catalog installation preview", exact: true });
     await expect(preview).toContainText("/etc/linkding/data");
+    await expect(preview).toContainText("CategoryRSS");
+    await expect(preview).toContainText("Upstream architecture restrictionNot declared");
+    await expect(preview).toContainText("does not verify compatibility with the selected destination");
+    await catalog.getByRole("button", { name: "Clear filters", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(catalog.getByLabel("Catalog category", { exact: true })).toHaveValue("");
+    await expect(catalog.getByLabel("Catalog application", { exact: true })).toHaveValue("");
+    await expect(catalog.getByRole("button", { name: "Install application", exact: true })).toBeDisabled();
+    await catalog.getByLabel("Catalog category", { exact: true }).selectOption("rss");
+    await catalog.getByLabel("Catalog application", { exact: true }).selectOption("linkding");
     await expect(preview).toContainText("LD_SUPERUSER_NAME, LD_SUPERUSER_PASSWORD");
     await expect(preview).toContainText("/health, timeout 120 seconds");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -32,6 +32,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const [destination, setDestination] = useState("");
     const [template, setTemplate] = useState("");
     const [search, setSearch] = useState("");
+    const [category, setCategory] = useState("");
     const [attempt, setAttempt] = useState<CatalogInstallInput>();
     const [created, setCreated] = useState<CatalogInstallation>();
     const [busy, setBusy] = useState(false);
@@ -49,11 +50,14 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const catalog = useQuery({ queryKey: ["hostingCatalog", actor, projectID], queryFn: ({ signal }) => getCatalog(projectID, signal), retry: false, gcTime: 0 });
     const [offset, setOffset] = useState(0);
     const destinations = useQuery({ queryKey: ["catalogDestinations", actor, projectID, offset], queryFn: ({ signal }) => listDestinations({ project_id: projectID, limit: 20, offset }, { signal }), retry: false, gcTime: 0 });
+    const categories = Array.from(new Map((catalog.data ?? []).flatMap(t =>
+        (t.category ?? "").split(",").map(value => value.trim()).filter(Boolean)
+    ).map(value => [value.toLowerCase(), value])).entries()).sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: "base" }));
     const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const matches = catalog.data?.filter(t => {
         const text = [t.name, t.id, t.immutable_version, t.definition.image_reference,
             t.definition.mount_path, ...t.definition.credential_names].join(" ").toLowerCase();
-        return terms.every(term => text.includes(term));
+        return terms.every(term => text.includes(term)) && (!category || (t.category ?? "").split(",").some(value => value.trim().toLowerCase() === category));
     }) ?? [];
     const selected = matches.find(t => t.id === template);
     const unavailable = blocked || busy || catalog.isError || catalog.isPending || destinations.isError || destinations.isPending;
@@ -132,19 +136,26 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
             </p>)}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
+        <label className="block" htmlFor={`${id}-category`}>Catalog category</label>
+        <select id={`${id}-category`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" value={category} disabled={unavailable || !!attempt} onChange={e => { setCategory(e.target.value); setTemplate(""); }}>
+            <option value="">All categories</option>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
         <label className="block" htmlFor={`${id}-search`}>Search catalog</label>
         <Input id={`${id}-search`} type="search" value={search} disabled={unavailable || !!attempt}
             aria-describedby={`${id}-search-help`} onChange={e => { setSearch(e.target.value); setTemplate(""); }}/>
         <p id={`${id}-search-help`} className="text-sm text-muted-foreground">Search by application, version, image, data mount or generated variable name.</p>
         {catalog.isSuccess ? <p role="status">Catalog matches: {matches.length} of {catalog.data.length}.</p> : null}
-        {catalog.isSuccess && matches.length === 0 ? <p>{catalog.data.length === 0 ? "No catalog applications are available." : "No applications match your search. Clear the search to see available applications."}</p> : null}
+        {catalog.isSuccess && matches.length === 0 ? <p>{catalog.data.length === 0 ? "No catalog applications are available." : "No applications match your search and category. Clear the filters to see available applications."}</p> : null}
         {search ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setSearch(""); setTemplate(""); }}>Clear search</Button> : null}
+        {category ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setCategory(""); setSearch(""); setTemplate(""); }}>Clear filters</Button> : null}
         <label className="block" htmlFor={`${id}-template`}>Catalog application</label>
         <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => setTemplate(e.target.value)}>
         <option value="">Select an application</option>{matches.map(t => <option key={t.id} value={t.id}>{t.name} · {t.immutable_version}</option>)}</select>
         {selected ? <section aria-label="Catalog installation preview" className="min-w-0 space-y-2 rounded-lg border p-3 text-sm">
             <h5 className="font-medium">{selected.name} installation preview</h5>
             <dl className="space-y-1 break-all">
+                <dt>Category</dt><dd>{selected.category || "Not declared"}</dd>
+                <dt>Upstream architecture restriction</dt><dd>{selected.arm_only && selected.amd_only ? "ARM only and AMD only are both declared. Review the upstream template before choosing a destination." : selected.arm_only ? "ARM only" : selected.amd_only ? "AMD only" : "Not declared"}</dd>
                 <dt>Template version</dt><dd>{selected.immutable_version}</dd>
                 <dt>Image</dt><dd>{selected.definition.image_reference}</dd>
                 <dt>Persistent data</dt><dd>{selected.definition.mount_path}</dd>
@@ -154,7 +165,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
             </dl>
             <p>Credentials are generated once during installation and stored as managed secrets. Configure a domain and HTTPS route after deployment.</p>
-            <p>Architecture compatibility and CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
+            <p>An upstream architecture restriction does not verify compatibility with the selected destination. CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
         </section> : null}
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>
         <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => setName(e.target.value)}/>

@@ -11,7 +11,7 @@ vi.mock("./ResourceDatabase", () => ({ useDatabaseAccess: vi.fn() }));
 vi.mock("@/api/hosting-catalog", () => ({ getCatalog: vi.fn(), installCatalog: vi.fn() }));
 vi.mock("@/api/destinations", () => ({ listDestinations: vi.fn() }));
 vi.mock("@/api/managed-secrets", () => ({ revealManagedSecret: vi.fn() }));
-const template: api.CatalogTemplate = { id: "linkding", immutable_version: "coolify-b12d1386.linkding-1.47.0.v1", name: "Linkding", upstream_repository: "https://github.com/coollabsio/coolify", upstream_commit: "b12d1386", upstream_path: "templates/compose/linkding.yaml", original: "services: {}", original_hash: "original", definition_hash: "definition", definition: { image_reference: "image@sha256:digest", container_port: 9090, mount_path: "/etc/linkding/data", readiness: { path: "/health", timeout_seconds: 120 }, credential_names: ["LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD"] } };
+const template: api.CatalogTemplate = { id: "linkding", immutable_version: "coolify-b12d1386.linkding-1.47.0.v1", name: "Linkding", category: "RSS", upstream_repository: "https://github.com/coollabsio/coolify", upstream_commit: "b12d1386", upstream_path: "templates/compose/linkding.yaml", original: "services: {}", original_hash: "original", definition_hash: "definition", definition: { image_reference: "image@sha256:digest", container_port: 9090, mount_path: "/etc/linkding/data", readiness: { path: "/health", timeout_seconds: 120 }, credential_names: ["LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD"] } };
 let client: QueryClient;
 afterEach(() => {
     cleanup();
@@ -46,6 +46,7 @@ test("response loss retains exact install identity and reveal is explicit", asyn
     fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
     await screen.findByRole("alert");
     expect(screen.getByLabelText<HTMLInputElement>("Search catalog").disabled).toBe(true);
+    expect(screen.getByLabelText<HTMLSelectElement>("Catalog category").disabled).toBe(true);
     const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
     expect(first.request_id).toMatch(/^[0-9a-f]{32}$/);
     fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
@@ -197,4 +198,55 @@ test("empty catalog is distinct from a search with no matches", async () => {
   await screen.findByText("No catalog applications are available.");
   expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(true);
+});
+
+
+test("categories use upstream comma-separated membership and combine with search", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([
+    { ...template, category: "RSS, Tools" },
+    { ...template, id: "other", name: "Other", immutable_version: "other-v1", category: "tools, Databases" },
+  ]);
+  await selectCatalogDraft();
+  const category = screen.getByLabelText("Catalog category");
+  fireEvent.change(category, { target: { value: "tools" } });
+  expect(screen.getByRole("option", { name: /Linkding ·/ })).toBeTruthy();
+  expect(screen.getByRole("option", { name: /Other ·/ })).toBeTruthy();
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog application").value).toBe("");
+  fireEvent.change(screen.getByLabelText("Search catalog"), { target: { value: "1.47.0" } });
+  expect(screen.queryByRole("option", { name: /Other ·/ })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  fireEvent.change(category, { target: { value: "databases" } });
+  expect(screen.queryByRole("region", { name: "Catalog installation preview" })).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog category").value).toBe("");
+  expect(screen.getByLabelText<HTMLInputElement>("Search catalog").value).toBe("");
+  expect(screen.getByRole("option", { name: /Linkding ·/ })).toBeTruthy();
+  expect(screen.getByRole("option", { name: /Other ·/ })).toBeTruthy();
+});
+
+for (const [flags, restriction] of [
+  [{ amd_only: true }, "AMD only"],
+  [{ arm_only: true }, "ARM only"],
+  [{}, "Not declared"],
+] as const) {
+  test(`installation preview reports upstream architecture declaration: ${restriction}`, async () => {
+    vi.mocked(api.getCatalog).mockResolvedValueOnce([{ ...template, ...flags }]);
+    await selectCatalogDraft();
+    const preview = screen.getByRole("region", { name: "Catalog installation preview" });
+    expect(preview.querySelector("dt:nth-of-type(2) + dd")?.textContent).toBe(restriction);
+    expect(preview.textContent).toContain("does not verify compatibility with the selected destination");
+    expect(preview.textContent).toContain("CPU, memory and disk requirements are not declared");
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(false);
+  });
+}
+
+test("older entries without category metadata remain available under All categories", async () => {
+  const { category: _category, ...legacy } = template;
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([legacy]);
+  await selectCatalogDraft();
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog category").options.length).toBe(1);
+  expect(screen.getByRole("region", { name: "Catalog installation preview" }).textContent).toContain("CategoryNot declared");
 });
