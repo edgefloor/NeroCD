@@ -137,7 +137,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         <p>Login and password are retained managed secrets. Linkding creates the initial account only when its username is absent. Changing startup credentials does not rotate an existing account password.</p>
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
-            </p>)}</> : <p>No login credentials were generated. After deployment, open the application to complete its initial account setup.</p>}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
+            </p>)}</> : <p>No login credentials were generated. After deployment, open the application to complete its initial setup.</p>}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
         <label className="block" htmlFor={`${id}-category`}>Catalog category</label>
         <select id={`${id}-category`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" value={category} disabled={unavailable || !!attempt} onChange={e => { setCategory(e.target.value); setTemplate(""); }}>
             <option value="">All categories</option>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -162,13 +162,16 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Image</dt><dd>{selected.definition.image_reference}</dd>
                 <dt>Persistent data</dt><dd>{selected.definition.mount_path}</dd>
                 <dt>Generated variables</dt><dd>{selected.definition.credential_names.join(", ") || "None"}</dd>
+                {Object.keys(selected.definition.runtime_environment ?? {}).length > 0 ? <>
+                    <dt>Runtime environment defaults</dt><dd>{Object.entries(selected.definition.runtime_environment ?? {}).map(([key, value]) => <p key={key}>{key}={value}</p>)}</dd>
+                </> : null}
                 <dt>Container port</dt><dd>{selected.definition.container_port}</dd>
                 <dt>Readiness check</dt><dd>{selected.definition.readiness.path}, timeout {selected.definition.readiness.timeout_seconds} seconds</dd>
                 <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
             </dl>
             <p>{selected.definition.credential_names.length > 0
                 ? "Credentials are generated once during installation and stored as managed secrets."
-                : "No login credentials are generated. After deployment, open the application to complete its initial account setup."} Configure a domain and HTTPS route after deployment.</p>
+                : "No login credentials are generated. After deployment, open the application to complete its initial setup."} Configure a domain and HTTPS route after deployment.</p>
             <p>An upstream architecture restriction does not verify compatibility with the selected destination. CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
         </section> : null}
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>

@@ -281,8 +281,9 @@ test("credential-free application filters by its upstream category and previews 
   expect(preview.textContent).toContain("Generated variablesNone");
   expect(preview.textContent).toContain("Container port3001");
   expect(preview.textContent).toContain("Persistent data/app/data");
-  expect(preview.textContent).toContain("No login credentials are generated. After deployment, open the application to complete its initial account setup.");
+  expect(preview.textContent).toContain("No login credentials are generated. After deployment, open the application to complete its initial setup.");
   expect(preview.textContent).not.toContain("Credentials are generated once");
+  expect(preview.textContent).not.toContain("Runtime environment defaults");
   fireEvent.change(screen.getByLabelText("Installation name"), { target: { value: "My monitor" } });
   fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
@@ -309,10 +310,63 @@ test("credential-free installation retries the identical request and offers setu
   expect(first.template_id).toBe("uptime-kuma");
   expect(first.immutable_version).toBe(kuma.immutable_version);
   fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
-  await screen.findByText("No login credentials were generated. After deployment, open the application to complete its initial account setup.");
+  await screen.findByText("No login credentials were generated. After deployment, open the application to complete its initial setup.");
   expect(vi.mocked(api.installCatalog).mock.calls[1]![0]).toBe(first);
   expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Hide credentials" })).toBeNull();
   expect(screen.queryByText(/Linkding creates the initial account/)).toBeNull();
+  expect(revealManagedSecret).not.toHaveBeenCalled();
+});
+
+
+const actual: api.CatalogTemplate = {
+  ...kuma,
+  id: "actualbudget",
+  name: "Actual Budget",
+  immutable_version: "coolify-b12d1386.actualbudget-26.10.0.v1",
+  category: "finance",
+  upstream_path: "templates/compose/actualbudget.yaml",
+  definition: {
+    image_reference: "docker.io/actualbudget/actual-server@sha256:24645e971da6bb1a1f953d6859e307a0b29be1e8b4130a35b3220c209b5b860c",
+    container_port: 5006,
+    mount_path: "/data",
+    readiness: { path: "/health", timeout_seconds: 120 },
+    credential_names: [],
+    runtime_environment: { ACTUAL_LOGIN_METHOD: "password" },
+  },
+};
+test("Actual Budget previews curated literal defaults and retries installation without generated secrets", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([template, kuma, actual]);
+  vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response")).mockImplementationOnce(async (body) => ({
+    id: "res", request: body, template: actual,
+    resource: { id: "res", project_id: "project", project_environment_id: "env", name: body.name, kind: "application", source: { kind: "image", image: { reference: actual.definition.image_reference } }, generation: 1, created_by: "actor", created_at: "", updated_at: "" },
+    binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" },
+    storage_ref: { storage_id: "storage", generation: 1, hash: "hash" }, runtime_configuration: { generation: 1, hash: "runtime" }, credentials: [], created_by: "actor", created_at: "",
+  }));
+  setup();
+  await screen.findByRole("option", { name: /Actual Budget ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog category"), { target: { value: "finance" } });
+  expect(screen.getByText("Catalog matches: 1 of 3.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "actualbudget" } });
+  expect(screen.getByLabelText<HTMLInputElement>("Installation name").value).toBe("Actual Budget");
+  const preview = screen.getByRole("region", { name: "Catalog installation preview" });
+  expect(preview.textContent).toContain("Runtime environment defaultsACTUAL_LOGIN_METHOD=password");
+  expect(preview.textContent).toContain("Generated variablesNone");
+  expect(preview.textContent).toContain("Persistent data/data");
+  expect(preview.textContent).toContain("Container port5006");
+  expect(preview.textContent).toContain("complete its initial setup.");
+  expect(preview.textContent).not.toContain("initial account setup");
+  await screen.findByRole("option", { name: "Docker" });
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
+  expect(first.template_id).toBe("actualbudget");
+  expect(first.immutable_version).toBe(actual.immutable_version);
+  expect(first).not.toHaveProperty("runtime_environment");
+  fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
+  await screen.findByText("No login credentials were generated. After deployment, open the application to complete its initial setup.");
+  expect(vi.mocked(api.installCatalog).mock.calls[1]![0]).toBe(first);
+  expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
   expect(revealManagedSecret).not.toHaveBeenCalled();
 });
