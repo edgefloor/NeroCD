@@ -1,13 +1,18 @@
 // Connected browser against the candidate Go-served UI; no route interception.
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 const require = createRequire(resolve("web/app/package.json"));
 const { chromium, expect, request } = require("@playwright/test");
 const origin = process.env.NEROCD_CATALOG_BROWSER_ORIGIN;
 const key = process.env.NEROCD_CATALOG_BROWSER_KEY;
 const evidence = process.env.NEROCD_CATALOG_HOST_EVIDENCE;
+const kuma = process.env.NEROCD_CATALOG_APPLICATION === "uptime-kuma";
+const appID = kuma ? "uptime-kuma" : "linkding";
+const applicationName = kuma ? "Uptime Kuma acceptance" : "Linkding acceptance";
+const appOrigin = "https://catalog-runtime.example.test:25443";
+const kumaPassword = randomBytes(24).toString("hex");
 if (
   !/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin ?? "") ||
   !/^[a-f0-9]{64}$/.test(key ?? "") ||
@@ -18,12 +23,14 @@ let api,
   browser,
   context,
   viewerContext,
+  appContext,
   page,
   stopped = false;
 const closing = new Map(),
   failures = new Set();
 async function closeOwned() {
   for (const [name, value, method] of [
+    ["app", appContext, "close"],
     ["viewer", viewerContext, "close"],
     ["context", context, "close"],
     ["browser", browser, "close"],
@@ -101,6 +108,18 @@ const response = (p, path) =>
     (r) =>
       r.request().method() === "POST" && new URL(r.url()).pathname === path,
   );
+async function kumaMonitor(p, name) {
+  await p.getByRole("link", { name: "Add New Monitor", exact: true }).click();
+  // Hidden notification dialogs share labels; these are the actual monitor IDs.
+  await p.locator("#name").fill(name);
+  await p.locator("#url").fill("http://127.0.0.1:3001/");
+  await p.locator("#monitor-submit-btn").click();
+  await expect(p.getByRole("heading", { level: 1 })).toContainText(name);
+  const id = new URL(p.url()).pathname.match(/^\/dashboard\/([1-9][0-9]*)$/)?.[1];
+  if (!id) throw Error("monitor identity absent");
+  await expect(p.getByRole("cell", { name: "Up", exact: true }).first()).toBeVisible({ timeout: 30000 });
+  return id;
+}
 try {
   api = await request.newContext({
     baseURL: origin,
@@ -108,7 +127,7 @@ try {
     extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key },
     timeout: 10000,
   });
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, args: kuma ? ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] : [] });
   context = await browser.newContext({
     baseURL: origin,
     ignoreHTTPSErrors: true,
@@ -146,10 +165,10 @@ try {
   await expect(catalog).toBeVisible();
   await catalog
     .getByLabel("Catalog application", { exact: true })
-    .selectOption("linkding");
+    .selectOption(appID);
   await catalog
     .getByLabel("Installation name", { exact: true })
-    .fill("Linkding acceptance");
+    .fill(applicationName);
   await catalog
     .getByLabel("Catalog destination", { exact: true })
     .selectOption(initial.id);
@@ -188,8 +207,14 @@ try {
   if (retry.status() !== 201 || retry.request().postData() !== original)
     throw Error("retry changed request");
   const installed = await retry.json();
-  await expect(catalog).toContainText("Installed Linkding acceptance");
+  await expect(catalog).toContainText(`Installed ${applicationName}`);
   await expect(catalog.locator("output")).toHaveCount(0);
+  if (kuma) {
+    if (!Array.isArray(installed.credentials) || installed.credentials.length !== 0) throw Error("unexpected generated credentials");
+    await expect(catalog.getByRole("button", { name: "Reveal login credentials", exact: true })).toHaveCount(0);
+    await expect(catalog).toContainText("No login credentials were generated.");
+    safe.credential_free_installation = true;
+  } else {
   const revealWait = page.waitForResponse(
     (r) =>
       r.request().method() === "POST" &&
@@ -205,12 +230,13 @@ try {
     .getByRole("button", { name: "Hide credentials", exact: true })
     .click();
   await expect(catalog.locator("output")).toHaveCount(0);
+  }
   safe.catalog_install_identical_retry = true;
-  safe.explicit_reveal_and_hide = true;
+  if (!kuma) safe.explicit_reveal_and_hide = true;
   await report("installed", installed.resource.id);
   await state("deploy");
   const application = h.getByRole("article", {
-    name: "Linkding acceptance",
+    name: applicationName,
     exact: true,
   });
   const review = application.getByRole("region", {
@@ -219,10 +245,10 @@ try {
   });
   await expect(
     review.getByLabel("Container port", { exact: true }),
-  ).toHaveValue("9090");
+  ).toHaveValue(kuma ? "3001" : "9090");
   await expect(
     review.getByLabel("Readiness path", { exact: true }),
-  ).toHaveValue("/health");
+  ).toHaveValue(kuma ? "/" : "/health");
   await review
     .getByLabel("Runner-local host port", { exact: true })
     .fill("20101");
@@ -250,7 +276,7 @@ try {
   safe.browser_deployment = true;
   await state("healthy");
   const deployments = application.getByRole("region", {
-    name: "Image deployments for Linkding acceptance",
+    name: `Image deployments for ${applicationName}`,
     exact: true,
   });
   await deployments
@@ -289,7 +315,7 @@ try {
     vh.getByRole("button", { name: "Install application", exact: true }),
   ).toHaveCount(0);
   await expect(
-    vh.getByRole("article", { name: "Linkding acceptance", exact: true }),
+    vh.getByRole("article", { name: applicationName, exact: true }),
   ).toBeVisible();
   const denial = await viewerContext.request.post(
     "/api/v1/hosting-catalog/installations",
@@ -303,14 +329,14 @@ try {
   await report("healthy", operation.id);
   await state("route");
   const routes = application.getByRole("region", {
-    name: "Routes for Linkding acceptance",
+    name: `Routes for ${applicationName}`,
     exact: true,
   });
   await routes
     .getByRole("button", { name: "Refresh resource routes", exact: true })
     .click();
   const routeForm = routes.getByRole("form", {
-    name: "Configure route for Linkding acceptance",
+    name: `Configure route for ${applicationName}`,
     exact: true,
   });
   await routeForm
@@ -331,6 +357,57 @@ try {
   const route = await routed.json();
   safe.browser_route_selection = true;
   await report("routed", route.operation_id);
+  if (kuma) {
+    await state("app_create");
+    appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
+    let app = await appContext.newPage();
+    app.setDefaultTimeout(30000);
+    await app.goto("/");
+    await expect(app.getByText("Which database would you like to use?", { exact: true })).toBeVisible();
+    // Bootstrap hides its radio behind the visible associated label.
+    await app.locator('label[for="btnradio1"]').click();
+    await app.getByRole("button", { name: "Next", exact: true }).click();
+    await app.getByLabel("Username", { exact: true }).fill("nerocdacceptance");
+    await app.getByLabel("Password", { exact: true }).fill(kumaPassword);
+    await app.getByLabel("Repeat Password", { exact: true }).fill(kumaPassword);
+    await app.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(app.getByRole("link", { name: "Add New Monitor", exact: true })).toBeVisible();
+    safe.kuma_sqlite_admin_setup = true;
+    const monitorID = await kumaMonitor(app, "NeroCD retained monitor");
+    await app.goto(appOrigin + "/settings/general");
+    await app.locator("#searchEngineIndexYes").check();
+    await app.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(app.getByText("Saved.", { exact: true })).toBeVisible();
+    safe.kuma_monitor_and_setting_saved = true;
+    await report("app_created", monitorID);
+    for (const [expectedPhase, action, newWrite] of [["app_recheck", "app_checked", true], ["app_start_recheck", "app_start_checked", false]]) {
+      await state(expectedPhase);
+      await appContext.close();
+      appContext = await browser.newContext({ baseURL: appOrigin, ignoreHTTPSErrors: true, locale: "en-US" });
+      app = await appContext.newPage();
+      app.setDefaultTimeout(30000);
+      await app.goto("/");
+      await app.getByLabel("Username", { exact: true }).fill("nerocdacceptance");
+      await app.getByLabel("Password", { exact: true }).fill(kumaPassword);
+      await app.getByRole("button", { name: "Log in", exact: true }).click();
+      // Wait for authenticated navigation before starting another document.
+      await expect(app.getByRole("link", { name: "Add New Monitor", exact: true })).toBeVisible();
+      await app.goto(appOrigin + "/dashboard/" + monitorID);
+      await expect(app.getByRole("heading", { level: 1 })).toContainText("NeroCD retained monitor");
+      await expect(app.getByRole("cell", { name: "Up", exact: true }).first()).toBeVisible({ timeout: 30000 });
+      await app.goto(appOrigin + "/settings/general");
+      await expect(app.locator("#searchEngineIndexYes")).toBeChecked();
+      if (newWrite) {
+        await kumaMonitor(app, "NeroCD after redeploy");
+        safe.kuma_fresh_login_redeploy_persistence_new_write = true;
+      } else {
+        await app.goto(appOrigin + "/dashboard");
+        await expect(app.getByRole("link", { name: "NeroCD after redeploy", exact: true })).toBeVisible();
+        safe.kuma_failed_replacement_persistence = true;
+      }
+      await report(action, monitorID);
+    }
+  } else {
   await state("backup");
   const archives = application.getByRole("region", {
     name: "Upload backups and restores", exact: true,
@@ -388,6 +465,7 @@ try {
   if (restoredDeployResponse.status() !== 202) throw Error("browser restored deployment rejected");
   await report("restored_deployed", (await restoredDeployResponse.json()).id);
   safe.browser_restored_deployment = true;
+  }
   await state("complete");
   await report("done", operation.id);
   safe.status = "passed";

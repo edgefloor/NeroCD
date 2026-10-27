@@ -34,6 +34,25 @@ class ProfileTest(unittest.TestCase):
             else: wrong["HostConfig"]["PortBindings"]["443/tcp"][0]["HostIp"] = "0.0.0.0"
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): evidence.publication(wrong)
 
+    def test_kuma_publication_requires_exact_owner_name_and_no_extra_ports(self):
+        value = self.fixture()
+        owner = "nerocd-catalog-uptime-kuma-runtime-20261027"
+        value["Name"] = "/" + owner + "-dind"
+        value["Config"] = {"Labels": {"io.nerocd.storage-runtime.owner": owner}}
+        for section, key in [("HostConfig", "PortBindings"), ("NetworkSettings", "Ports")]:
+            value[section][key]["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]
+        self.assertEqual(evidence.publication(value), "https://127.0.0.1:49155")
+        for mutation in ["owner", "name", "requested_port", "assigned_port", "address", "extra_requested", "extra_assigned"]:
+            wrong = copy.deepcopy(value)
+            if mutation == "owner": wrong["Config"]["Labels"]["io.nerocd.storage-runtime.owner"] = "foreign"
+            elif mutation == "name": wrong["Name"] = "/foreign-dind"
+            elif mutation == "requested_port": wrong["HostConfig"]["PortBindings"]["443/tcp"][0]["HostPort"] = "25444"
+            elif mutation == "assigned_port": wrong["NetworkSettings"]["Ports"]["443/tcp"][0]["HostPort"] = "25444"
+            elif mutation == "address": wrong["HostConfig"]["PortBindings"]["443/tcp"][0]["HostIp"] = "0.0.0.0"
+            elif mutation == "extra_requested": wrong["HostConfig"]["PortBindings"]["9000/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "49000"}]
+            else: wrong["NetworkSettings"]["Ports"]["9000/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "49000"}]
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError): evidence.publication(wrong)
+
     def test_rejects_non_loopback_and_extra_publications(self):
         for section in ("HostConfig", "NetworkSettings"):
             key = "PortBindings" if section == "HostConfig" else "Ports"

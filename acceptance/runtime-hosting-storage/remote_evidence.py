@@ -24,8 +24,9 @@ def publication(value):
     """Require the one explicit loopback publication and its dynamic assignment."""
     host = value.get("HostConfig", {})
     requested = {"18190/tcp": [{"HostIp": "127.0.0.1", "HostPort": ""}]}
-    compose = value.get("Name") == "/nerocd-compose-vikunja-runtime-20261027-dind" and value.get("Config", {}).get("Labels", {}).get("io.nerocd.storage-runtime.owner") == "nerocd-compose-vikunja-runtime-20261027"
-    if compose:
+    application_owner = value.get("Config", {}).get("Labels", {}).get("io.nerocd.storage-runtime.owner")
+    application = application_owner in {"nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027"} and value.get("Name") == "/" + application_owner + "-dind"
+    if application:
         requested["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]
     if host.get("PortBindings") != requested:
         raise ValueError("remote browser publication request mismatch")
@@ -36,8 +37,8 @@ def publication(value):
     bindings = assigned.get("18190/tcp")
     if set(assigned) != set(requested) or not isinstance(bindings, list) or len(bindings) != 1:
         raise ValueError("extra or missing published port")
-    if compose and assigned["443/tcp"] != requested["443/tcp"]:
-        raise ValueError("Compose application publication changed")
+    if application and assigned["443/tcp"] != requested["443/tcp"]:
+        raise ValueError("Catalog application publication changed")
     binding = bindings[0]
     if (not isinstance(binding, dict) or set(binding) != {"HostIp", "HostPort"}
             or binding["HostIp"] != "127.0.0.1"

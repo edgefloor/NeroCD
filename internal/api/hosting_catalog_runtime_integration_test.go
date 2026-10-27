@@ -155,27 +155,7 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	t.Cleanup(func() { catalogRuntimeState(t, currentDiagnosticOperation) })
 	b.set("healthy", v.Resource.ID)
 	b.await(t, "healthy")
-	// Reuse the ordinary managed proxy and hostname grant. API TLS above and
-	// application HTTPS below prove distinct trust boundaries.
-	f.stop()
-	proxy := storageRuntimeJSON[domain.HostingProxy](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "catalog-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
-	certDir := filepath.Join(f.root, "proxy", proxy.ID, "certificates")
-	if err := os.MkdirAll(certDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	publicRoot, err := os.ReadFile(filepath.Join(f.root, "minica.pem"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(certDir, "root.pem"), publicRoot, 0600); err != nil {
-		t.Fatal(err)
-	}
-	f.start()
-	f.awaitLoadedProxy(proxy.ID, first.Release.DaemonID)
-	storageRuntimeJSON[domain.HostingHostnameGrant](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: "catalog-runtime.example.test"}, 201)
-	b.set("route", v.Resource.ID)
-	routeOperation := b.await(t, "routed")
-	f.proxyAwait(routeOperation)
+	catalogRuntimeRoute(t, f, v.Resource.ID, first)
 	verifyHTTPS := func() {
 		transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: f.roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:443")
@@ -217,21 +197,7 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 	if failed.Result == nil || !failed.Result.Restored || failed.Result.Uncertain {
 		t.Fatal("failed candidate did not prove recovery")
 	}
-	// The runner command returns a failed workload after committing restoration.
-	// This fixture starts it without the owned service's restart supervisor.
-	// Prove the expected process exit before joining and restarting for new work.
-	select {
-	case processErr := <-f.process.done:
-		f.process.done <- processErr // Keep the existing stop helper's join receipt.
-		var exitErr *exec.ExitError
-		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage workload failed; committed restoration retained") {
-			t.Fatal("deliberately failed candidate did not produce the expected runner exit")
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("runner did not exit after the deliberately failed candidate")
-	}
-	f.stop()
-	f.start()
+	catalogRuntimeJoinFailedReplacement(t, f)
 	verifyHTTPS()
 	recovery := catalogSession(t, base, values["LD_SUPERUSER_NAME"], values["LD_SUPERUSER_PASSWORD"])
 	catalogBookmark(t, recovery, base, false)
@@ -292,6 +258,9 @@ func (b *catalogRuntimeBrowser) set(phase, id string) {
 
 func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 	for _, tc := range []struct{ phase, action string }{
+		{"app_create", "app_created"},
+		{"app_recheck", "app_checked"},
+		{"app_start_recheck", "app_start_checked"},
 		{"volume_schedule", "volume_scheduled"},
 		{"volume_schedule_run", "volume_schedule_backed_up"},
 		{"volume_backup", "volume_backed_up"},
@@ -740,4 +709,49 @@ func catalogArchiveAwaitReady(t *testing.T, base string, op domain.HostingOperat
 		case <-ticker.C:
 		}
 	}
+}
+
+func catalogRuntimeRoute(t *testing.T, f *storageRuntimeFixture, resourceID string, first domain.HostingOperation) {
+	t.Helper()
+	b := f.catalogBrowser
+	// Reuse the ordinary managed proxy and hostname grant. API TLS above and
+	// application HTTPS below prove distinct trust boundaries.
+	f.stop()
+	proxy := storageRuntimeJSON[domain.HostingProxy](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "catalog-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
+	certDir := filepath.Join(f.root, "proxy", proxy.ID, "certificates")
+	if err := os.MkdirAll(certDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	publicRoot, err := os.ReadFile(filepath.Join(f.root, "minica.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "root.pem"), publicRoot, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.start()
+	f.awaitLoadedProxy(proxy.ID, first.Release.DaemonID)
+	storageRuntimeJSON[domain.HostingHostnameGrant](f, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: "catalog-runtime.example.test"}, 201)
+	b.set("route", resourceID)
+	routeOperation := b.await(t, "routed")
+	f.proxyAwait(routeOperation)
+}
+
+func catalogRuntimeJoinFailedReplacement(t *testing.T, f *storageRuntimeFixture) {
+	t.Helper()
+	// The runner command returns a failed workload after committing restoration.
+	// This fixture starts it without the owned service's restart supervisor.
+	// Prove the expected process exit before joining and restarting for new work.
+	select {
+	case processErr := <-f.process.done:
+		f.process.done <- processErr // Keep the existing stop helper's join receipt.
+		var exitErr *exec.ExitError
+		if !errors.As(processErr, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(f.logs.String(), "storage workload failed; committed restoration retained") {
+			t.Fatal("deliberately failed candidate did not produce the expected runner exit")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner did not exit after the deliberately failed candidate")
+	}
+	f.stop()
+	f.start()
 }
