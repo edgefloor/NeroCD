@@ -212,7 +212,19 @@ shareable evidence.
 | Delivery category | Evidence and limits |
 | --- | --- |
 | Implementation | Worker and integration checks retain their source revisions. Exclusive implementation time was not measured. |
-| Product repair | Metadata deadlines, UI actor identity, pre-existing Compose completion cancellation, and composed download completion were repaired with focused proofs. Command windows overlap implementation and validation. |
-| Fixture repair | The paginated history decoder was corrected after the first failed gate. The real encoder/decoder regression is retained. |
+| Product repair and validation | UTC actor identity RED 18:17:15–18:17:16, GREEN 18:17:41–18:17:42. Compose lifecycle RED 18:27:02–18:27:08, final focused/static checks 18:31:12–18:31:25. Download completion RED 18:48:51–18:48:57, final GREEN 18:54:15–18:54:36. Metadata deadline repair has separate retained proof. These are overlapping repair and validation windows, not exclusive coding durations. |
+| Fixture repair and validation | History-envelope repair ran between the first failure ending 18:05:54 UTC and the focused encoder/decoder contract proof ending 18:07:49 UTC. This includes diagnosis and checks, not exclusive editing time. |
 | Test execution | Failed gates took 321, 239, 215, and 408 seconds. The accepted gate took 252 seconds. Their total is 1,435 seconds; API runtimes are subsets, not additional time. Final standard Go tests passed 18:56:23–18:59:38 UTC; PostgreSQL evidence is separate. |
 | Review and waiting | Three exact final reviews passed. Earlier repair reviews and validation overlapped; exclusive waiting durations are unavailable. |
+
+The repair windows overlap other validation and waiting. Missing implementation
+and review totals remain unmeasured; do not sum these windows as repair effort.
+
+- [x] Native download matches the selected archive bytes, length, and SHA-256.
+- [x] Download creates no archive and causes no writer interruption.
+- [x] Lost-ACK replay retires the journal and permits a successor claim. The
+  physical run completes later remote validation and transfer work.
+- [x] Application records, PostgreSQL data, uploads, routes, and controlled
+  failed-replacement recovery remain intact.
+- [x] Owned resources are removed and the exact host baseline and user instance
+  are preserved.
