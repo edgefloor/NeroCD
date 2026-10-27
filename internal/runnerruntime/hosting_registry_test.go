@@ -145,7 +145,6 @@ func TestRegistryPullManagedStackMixedRegistries(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var authenticated atomic.Int32
-			firstWindow := time.Now().Add(100 * time.Millisecond)
 			server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				authenticated.Add(1)
 				image := r.URL.Query().Get("fromImage")
@@ -157,9 +156,6 @@ func TestRegistryPullManagedStackMixedRegistries(t *testing.T) {
 				var auth map[string]string
 				if json.Unmarshal(raw, &auth) != nil || auth["serveraddress"] != "ghcr.io" || auth["password"] != "protected-token" {
 					t.Error("wrong selected registry auth")
-				}
-				if mode == "long-private-first" && authenticated.Load() == 1 {
-					time.Sleep(max(time.Until(firstWindow.Add(time.Millisecond)), 0))
 				}
 				if mode == "cancel" {
 					cancel()
@@ -200,6 +196,10 @@ func TestRegistryPullManagedStackMixedRegistries(t *testing.T) {
 					}
 					return []byte("Digest: sha256:" + strings.Repeat("a", 64) + "\n"), nil
 				case args[4] == "image" && args[5] == "inspect":
+					if mode == "long-private-first" && strings.HasPrefix(args[6], "ghcr.io/example/app@") {
+						// Expire the first window after its HTTP pull, without depending on setup speed.
+						borrowed.UseUntil = time.Now().Add(-time.Second)
+					}
 					return json.Marshal(map[string]any{"Id": "sha256:" + strings.Repeat("b", 64), "RepoDigests": []string{args[6]}, "Os": "linux", "Architecture": "arm64"})
 				default:
 					t.Error("preparation attempted workload mutation")
@@ -225,9 +225,6 @@ func TestRegistryPullManagedStackMixedRegistries(t *testing.T) {
 				borrowed = &domain.HostingRegistryCredentialDelivery{Credential: domain.HostingRegistryCredential{Registry: "ghcr.io", Username: "user", Password: "protected-token"}, UseUntil: time.Now().Add(time.Minute)}
 				if mode == "expired" || mode == "expired-replay" && len(components) > 1 {
 					borrowed.UseUntil = time.Now().Add(-time.Second)
-				}
-				if mode == "long-private-first" && len(components) == 1 {
-					borrowed.UseUntil = firstWindow
 				}
 				if mode == "no-match" {
 					borrowed.Credential.Registry = "unused.invalid"
