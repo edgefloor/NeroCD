@@ -233,7 +233,14 @@ func (s *PostgresStore) SaveStorageBackupSchedule(ctx context.Context, id, resou
 				return zero, err
 			}
 			if compose != nil {
-				err = archiveRunner(ctx, tx, domain.HostingStorageArchivePlan{ComposeSource: compose, ProjectID: resourceValue.ProjectID, DestinationID: binding.DestinationID, RunnerID: compose.Healthy.Snapshot.RunnerID, ServerID: compose.Healthy.Snapshot.ServerID})
+				plan := domain.HostingStorageArchivePlan{ComposeSource: compose, ProjectID: resourceValue.ProjectID, DestinationID: binding.DestinationID, RunnerID: compose.Healthy.Snapshot.RunnerID, ServerID: compose.Healthy.Snapshot.ServerID, Helper: s.storageArchiveConfiguration.helper, Limits: s.storageArchiveConfiguration.limits, RemoteTarget: selection}
+				if selection != nil {
+					plan.CompilerVersion = domain.HostingComposeStorageRemoteVersion
+				}
+				err = archiveRunner(ctx, tx, plan)
+				if err == nil && selection != nil {
+					err = s.storageRemoteSelect(ctx, tx, plan, actor, *selection)
+				}
 			} else {
 				err = s.storageBackupScheduleTarget(ctx, tx, actor, storageValue, selection)
 			}

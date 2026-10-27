@@ -39,7 +39,7 @@ func TestHostingComposeStorageBackupScheduleInput(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"no_consent", "no_deployment", "invalid_deployment", "invalid_volume", "remote", "image_consent", "image_deployment", "disabled_create"} {
+	for _, name := range []string{"no_consent", "no_deployment", "invalid_deployment", "invalid_volume", "invalid_remote", "image_consent", "image_deployment", "disabled_create"} {
 		t.Run(name, func(t *testing.T) {
 			in := valid
 			switch name {
@@ -51,8 +51,8 @@ func TestHostingComposeStorageBackupScheduleInput(t *testing.T) {
 				in.ExpectedDeployedOperationID = "../hop"
 			case "invalid_volume":
 				in.Volume = "../uploads"
-			case "remote":
-				in.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
+			case "invalid_remote":
+				in.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 0}
 			case "image_consent":
 				in.Volume = ""
 				in.ExpectedDeployedOperationID = ""
@@ -67,6 +67,10 @@ func TestHostingComposeStorageBackupScheduleInput(t *testing.T) {
 				t.Fatal("invalid selector accepted")
 			}
 		})
+	}
+	valid.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
+	if err := valid.Validate(); err != nil {
+		t.Fatal("remote Compose schedule rejected", err)
 	}
 	disabled := valid
 	disabled.ExpectedVersion = 1

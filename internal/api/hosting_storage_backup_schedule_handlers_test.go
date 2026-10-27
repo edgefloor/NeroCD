@@ -73,6 +73,18 @@ func TestStorageBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
 	if repo.input.ExpectedVersion != 1 || repo.input.Enabled || repo.schedule.ID != "schedule" {
 		t.Fatal("disable lost exact schedule CAS")
 	}
+	compose := strings.TrimSuffix(body, "}") + `,"volume":"uploads","expected_deployed_operation_id":"hop_source","acknowledge_interruption":true,"remote_target":{"target_id":"target","revision":1}}`
+	archiveHTTPCall(t, server, "POST", path, owner, compose, "application/json", 200)
+	if repo.input.Volume != "uploads" || repo.input.RemoteTarget == nil || repo.input.RemoteTarget.TargetID != "target" || repo.input.RemoteTarget.Revision != 1 {
+		t.Fatal("Compose remote schedule selector lost in real decoder")
+	}
+	for _, invalid := range []string{strings.Replace(compose, `"revision":1`, `"revision":0`, 1), strings.Replace(compose, `"target_id":"target"`, `"target_id":""`, 1), strings.Replace(compose, `"acknowledge_interruption":true`, `"acknowledge_interruption":false`, 1)} {
+		before := repo.calls
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+		if repo.calls != before {
+			t.Fatal("invalid Compose remote selector reached persistence")
+		}
+	}
 	before := repo.calls
 	for _, invalid := range []string{strings.Replace(body, `,"enabled":true`, "", 1), strings.Replace(body, `"enabled":true`, `"enabled":null`, 1), strings.Replace(body, `,"expected_version":0`, "", 1), strings.Replace(body, `"expected_version":0`, `"expected_version":null`, 1), strings.Replace(body, `"timezone":"UTC"`, `"timezone":"Local"`, 1), strings.Replace(body, `"frequency":"daily"`, `"frequency":"@every 1m"`, 1), strings.Replace(body, `"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`, `"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","request_id":"other"`, 1), strings.TrimSuffix(body, "}") + `,"command":"canary_private"}`} {
 		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)

@@ -10312,7 +10312,8 @@ components:
             "type": "boolean"
           },
           "remote_target": {
-            "$ref": "#/components/schemas/BackupTargetSelection"
+            "$ref": "#/components/schemas/BackupTargetSelection",
+            "description": "Optional immutable remote copy destination for image or managed Compose volume backups. Current target validation and runner capabilities are required when enabling and for each due occurrence. Disablement preserves the previous selection when omitted."
           }
         }
       }

@@ -50,6 +50,11 @@ func TestPostgresComposeStorageBackupScheduleAdmissionAndHeldControl(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Exercise the later-created schedule winning discovery. Creation order is not
+	// execution priority: discovery rotates by checked_at, then random schedule ID.
+	if _, err = f.db.Exec(f.ctx, `UPDATE hosting_storage_backup_schedules SET checked_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, schedule.ID); err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 4)
 	for range 4 {
@@ -63,12 +68,23 @@ func TestPostgresComposeStorageBackupScheduleAdmissionAndHeldControl(t *testing.
 		}
 	}
 	history, err := f.service.ListStorageBackupOccurrences(f.owner, f.resource.ID, schedule.ID)
-	if err != nil || len(history) != 1 || history[0].Volume != "db" || history[0].BackupID == "" || !history[0].OwnershipHeld {
-		t.Fatal("atomic occurrence", history, err)
+	if err != nil || len(history) != 1 {
+		t.Fatal("first schedule occurrence", history, err)
 	}
 	skipped, err := f.service.ListStorageBackupOccurrences(f.owner, f.resource.ID, otherSchedule.ID)
-	if err != nil || len(skipped) != 1 || skipped[0].Reason != "source_busy" || skipped[0].OperationID != "" {
-		t.Fatal("overlapping volume schedule admitted", skipped, err)
+	if err != nil || len(skipped) != 1 {
+		t.Fatal("second schedule occurrence", skipped, err)
+	}
+	if history[0].OperationID == "" {
+		history, skipped = skipped, history
+		schedule, otherSchedule = otherSchedule, schedule
+		in = otherInput
+	}
+	if history[0].Volume != "db" || history[0].BackupID == "" || !history[0].OwnershipHeld {
+		t.Fatal("atomic occurrence", history)
+	}
+	if skipped[0].Reason != "source_busy" || skipped[0].OperationID != "" {
+		t.Fatal("overlapping volume schedule admitted", skipped)
 	}
 	var jobs int
 	var raw []byte
@@ -121,17 +137,12 @@ func TestPostgresComposeStorageBackupScheduleAdmissionAndHeldControl(t *testing.
 	}
 }
 
-func TestPostgresComposeStorageBackupScheduleRejectsChangedOriginAndRemote(t *testing.T) {
+func TestPostgresComposeStorageBackupScheduleRejectsChangedOrigin(t *testing.T) {
 	f, _ := composeStorageScheduleFixture(t)
 	if err := f.stopExecution(); err != nil {
 		t.Fatal(err)
 	}
 	in := composeStorageScheduleInput(f)
-	remote := in
-	remote.RemoteTarget = &domain.BackupTargetSelection{TargetID: "target", Revision: 1}
-	if _, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", remote); !errors.Is(err, domain.ErrInvalidStorageBackupSchedule) {
-		t.Fatal("remote compose accepted", err)
-	}
 	bad := in
 	bad.ExpectedDeployedOperationID = "hop_stale"
 	if _, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", bad); !errors.Is(err, store.ErrConflict) {
@@ -323,5 +334,138 @@ func TestPostgresComposeStorageBackupScheduleGrantRevocation(t *testing.T) {
 	var op *string
 	if err = f.db.QueryRow(f.ctx, `SELECT state,reason,operation_id FROM hosting_storage_backup_schedule_occurrences WHERE schedule_id=$1`, saved.ID).Scan(&state, &reason, &op); err != nil || state != "denied" || reason != "authority_denied" || op != nil {
 		t.Fatal("grant denial misclassified", state, reason, err)
+	}
+}
+
+func TestPostgresComposeStorageRemoteScheduleAdmissionAndOccurrence(t *testing.T) {
+	f, target := storageRemoteControlFixture(t, true)
+	if err := f.stopExecution(); err != nil {
+		t.Fatal(err)
+	}
+	in := composeStorageScheduleInput(f)
+	in.RemoteTarget = &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}
+	bad := in
+	bad.RemoteTarget = &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision + 1}
+	if _, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", bad); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("stale target admitted", err)
+	}
+	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingComposeStorageRemoteCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("unqualified remote schedule admitted", err)
+	}
+	var count int
+	if err := f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_storage_backup_schedules`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("failed admission retained schedule", count, err)
+	}
+	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingComposeStorageRemoteCapability); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in)
+	if err != nil || saved.RemoteTarget == nil || *saved.RemoteTarget != *in.RemoteTarget || saved.Version != domain.HostingComposeStorageBackupScheduleVersion {
+		t.Fatal("remote schedule admission", saved, err)
+	}
+	for range 2 {
+		if err = f.pg.ReconcileStorageBackupSchedules(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := f.service.ListStorageBackupOccurrences(f.owner, f.resource.ID, saved.ID)
+	if err != nil || len(rows) != 1 || rows[0].OperationID == "" || rows[0].ScheduleRevision != saved.Revision {
+		t.Fatal("remote occurrence", rows, err)
+	}
+	var raw []byte
+	if err = f.db.QueryRow(f.ctx, `SELECT body FROM hosting_storage_archive_plans WHERE operation_id=$1`, rows[0].OperationID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var p domain.HostingStorageArchivePlan
+	if json.Unmarshal(raw, &p) != nil || p.RemoteTarget == nil || *p.RemoteTarget != *in.RemoteTarget || p.CompilerVersion != domain.HostingComposeStorageRemoteVersion || p.ComposeSource == nil || p.ComposeSource.Healthy.OperationID != f.source.ID {
+		t.Fatal("occurrence changed source or target")
+	}
+	backups, err := f.service.ListStorageBackups(f.owner, f.resource.ID, store.Page{Limit: 10})
+	if err != nil || len(backups.Items) != 1 {
+		t.Fatal("scheduled backup missing", err)
+	}
+	if err = f.pg.PrepareStorageArchive(f.ctx, rows[0].OperationID); err != nil {
+		t.Fatal(err)
+	}
+	backup := f.finishBackup(t, backups.Items[0])
+	transfers, err := f.service.ListStorageBackupTransfers(f.owner, backup.ID, false)
+	if err != nil || len(transfers) != 1 {
+		t.Fatal("scheduled transfer missing", err)
+	}
+	failed := settleStorageRemote(t, f, transfers[0].ID, "access_denied")
+	retry, err := f.service.RetryStorageBackupTransfer(f.owner, backup.ID, domain.HostingStorageBackupTransferRetryInput{RequestID: "schedule_retry", ExpectedTransferID: failed.ID})
+	if err != nil || retry.Blob == nil || domain.HostingDocumentHash(retry.Blob) != domain.HostingDocumentHash(backup.Blob) {
+		t.Fatal("scheduled upload retry changed archive", err)
+	}
+	if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_storage_archive_plans WHERE mode='backup'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("retry created another archive", count, err)
+	}
+}
+
+func TestPostgresComposeStorageRemoteScheduleOutageControl(t *testing.T) {
+	for _, kind := range []string{"target", "capability", "credential"} {
+		t.Run(kind, func(t *testing.T) {
+			f, target := storageRemoteControlFixture(t, true)
+			if err := f.stopExecution(); err != nil {
+				t.Fatal(err)
+			}
+			in := composeStorageScheduleInput(f)
+			in.RemoteTarget = &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}
+			saved, err := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "target":
+				_, err = f.service.SaveDatabaseBackupTarget(f.owner, target.ProjectID, target.ID, domain.HostingDatabaseBackupTargetInput{RequestID: "schedule_disable_target", ExpectedRevision: target.Revision, Name: target.Name, Endpoint: target.Endpoint, Bucket: target.Bucket, Region: target.Region, Enabled: false}, nil)
+			case "capability":
+				_, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingComposeStorageRemoteCapability)
+			case "credential":
+				_, err = f.db.Exec(f.ctx, `UPDATE hosting_database_backup_remote_credentials SET status='revoked'`)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replay, e := f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, "", in); e != nil || replay.ID != saved.ID || replay.RemoteTarget == nil {
+				t.Fatal("authorized replay blocked by outage", e)
+			}
+			update := in
+			update.RequestID = strings.Repeat("2", 32)
+			update.ExpectedVersion = 1
+			if _, err = f.service.SaveStorageBackupSchedule(f.owner, f.resource.ID, saved.ID, update); err == nil {
+				t.Fatal("invalid enabled update admitted")
+			}
+			if err = f.pg.ReconcileStorageBackupSchedules(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			rows, e := f.service.ListStorageBackupOccurrences(f.owner, f.resource.ID, saved.ID)
+			if e != nil || len(rows) != 1 || rows[0].OperationID != "" || rows[0].Reason != "source_unavailable" {
+				t.Fatal("invalid due effect admitted", rows, e)
+			}
+			offline, err := store.OpenPostgres(f.ctx, f.db.Config().ConnString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if e := offline.Close(); e != nil {
+					t.Error(e)
+				}
+			})
+			update.Enabled = false
+			update.RemoteTarget = nil
+			update.ExpectedDeployedOperationID = ""
+			update.AcknowledgeInterruption = false
+			disabled, err := offline.SaveStorageBackupSchedule(f.ctx, "unused", f.resource.ID, "usr_bootstrap", saved.ID, update)
+			if err != nil || disabled.Enabled || disabled.Revision != 2 || disabled.RemoteTarget == nil || *disabled.RemoteTarget != *in.RemoteTarget {
+				t.Fatal("outage disable erased target", disabled, err)
+			}
+			current, err := offline.ListStorageBackupSchedules(f.ctx, "usr_bootstrap", f.resource.ID)
+			if err != nil || len(current) != 1 || current[0].RemoteTarget == nil || *current[0].RemoteTarget != *in.RemoteTarget {
+				t.Fatal("history lost target", err)
+			}
+		})
 	}
 }

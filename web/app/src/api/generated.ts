@@ -5185,6 +5185,7 @@ export interface components {
             /** @description Explicit effective IANA timezone, for example UTC or Europe/Budapest. Local and inline cron timezones are rejected. */
             timezone: string;
             enabled: boolean;
+            /** @description Optional immutable remote copy destination for image or managed Compose volume backups. Current target validation and runner capabilities are required when enabling and for each due occurrence. Disablement preserves the previous selection when omitted. */
             remote_target?: components["schemas"]["BackupTargetSelection"];
         };
         HostingStorageBackupSchedule: {

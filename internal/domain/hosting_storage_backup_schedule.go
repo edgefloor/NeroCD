@@ -38,7 +38,7 @@ func (in HostingStorageBackupScheduleInput) Validate() error {
 		if in.ExpectedDeployedOperationID != "" || in.AcknowledgeInterruption {
 			return ErrInvalidStorageBackupSchedule
 		}
-	} else if !stackName.MatchString(in.Volume) || in.RemoteTarget != nil || (in.ExpectedDeployedOperationID != "" && !hostingProxyID.MatchString(in.ExpectedDeployedOperationID)) || ((in.Enabled || in.ExpectedVersion == 0) && (in.ExpectedDeployedOperationID == "" || !in.AcknowledgeInterruption)) {
+	} else if !stackName.MatchString(in.Volume) || (in.ExpectedDeployedOperationID != "" && !hostingProxyID.MatchString(in.ExpectedDeployedOperationID)) || ((in.Enabled || in.ExpectedVersion == 0) && (in.ExpectedDeployedOperationID == "" || !in.AcknowledgeInterruption)) {
 		return ErrInvalidStorageBackupSchedule
 	}
 	_, _, _, err := backupSchedule(in.Frequency, in.Timezone)
