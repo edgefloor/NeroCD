@@ -30,6 +30,7 @@ import (
 	"nerocd/internal/artifactfs"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/store"
 )
 
 // This is the single real application gate. Setup and component inspection share
@@ -863,7 +864,7 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 		t.Fatal(err)
 	}
 	assertWriters(since)
-	backupsBeforeDownload := storageRuntimeJSON[[]domain.HostingStorageBackup](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)
+	backupsBeforeDownload := storageRuntimeJSON[store.PageResult[domain.HostingStorageBackup]](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)
 	writersBeforeDownload := map[string][]byte{}
 	for _, component := range deployed.Result.Stack.Components {
 		writersBeforeDownload[component.ContainerID] = storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Id}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")
@@ -873,7 +874,7 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 	if f.catalogBrowser.await(t, "volume_checked") != taskID {
 		t.Fatal("application task/upload/new writes lost after volume backup compensation")
 	}
-	if !reflect.DeepEqual(backupsBeforeDownload, storageRuntimeJSON[[]domain.HostingStorageBackup](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)) {
+	if !reflect.DeepEqual(backupsBeforeDownload, storageRuntimeJSON[store.PageResult[domain.HostingStorageBackup]](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backups", nil, 200)) {
 		t.Fatal("archive download changed backup history or created another archive")
 	}
 	for id, beforeDownload := range writersBeforeDownload {
@@ -1211,5 +1212,31 @@ func TestComposeCatalogFixtureRequestContract(t *testing.T) {
 	definition, err := domain.ParseHostingStack(domain.HostingStackSource{Original: changed, PublicComponent: "vikunja", ContainerPort: 3456})
 	if err != nil || len(definition.Services) != 3 {
 		t.Fatal("catalog public to protected source contract invalid")
+	}
+}
+
+func TestComposeArchiveHistoryFixtureResponseContract(t *testing.T) {
+	want := store.PageResult[domain.HostingStorageBackup]{Items: []domain.HostingStorageBackup{{ID: "hsb_fixture", State: "succeeded"}}, Limit: 25, Offset: 0, Total: 1}
+	encoded := httptest.NewRecorder()
+	writeJSON(encoded, http.StatusOK, paginatedResult(want))
+	var legacy []domain.HostingStorageBackup
+	if err := json.Unmarshal(encoded.Body.Bytes(), &legacy); err == nil {
+		t.Fatal("legacy slice unexpectedly accepted the production list envelope")
+	} else {
+		t.Logf("legacy history decoder rejected production envelope: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/resources/res_fixture/storage-backups" {
+			t.Error("unexpected fixture history request")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, paginatedResult(want))
+	}))
+	defer server.Close()
+	f := &storageRuntimeFixture{t: t, control: server, client: server.Client()}
+	got := storageRuntimeJSON[store.PageResult[domain.HostingStorageBackup]](f, "GET", "/api/v1/resources/res_fixture/storage-backups", nil, http.StatusOK)
+	if !reflect.DeepEqual(want, got) {
+		t.Fatal("actual history decoder lost items or pagination metadata")
 	}
 }
