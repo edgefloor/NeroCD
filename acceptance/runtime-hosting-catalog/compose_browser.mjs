@@ -253,41 +253,63 @@ try {
   }
   const resourceID = resource.id;
   const application = h.getByRole("article", { name: applicationName, exact: true });
+  if (initial.git_repository) {
+    step="git_compose_wait_initial_grant_read";
+    const initialBuilds=application.getByRole("region",{name:`Git builds for ${applicationName}`,exact:true});
+    // The fixture adds the grant only after this handoff. Settle the initial
+    // empty query so the later refresh cannot deduplicate that pending read.
+    await expect(initialBuilds.getByRole("region",{name:"Private HTTPS source grants",exact:true}).getByRole("button",{name:"Refresh source grants",exact:true})).toBeEnabled();
+  }
   await report("installed", resourceID);
   const review = application.getByRole("region", { name: "Saved Compose deployment review", exact: true });
   let selectedRegistrySecret;
   let lastBuild;
   async function deployGit(stoppedOperation) {
-    step="git_compose_build_and_deploy";
+    step="git_compose_refresh_build_history";
     const builds=application.getByRole("region",{name:`Git builds for ${applicationName}`,exact:true});
     await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
     if(!stoppedOperation) {
       const requestBuild=builds.getByRole("region",{name:"Request private Git build",exact:true});
       const grants=requestBuild.getByLabel("Private source grant",{exact:true});
+      step="git_compose_verify_eligible_grant";
       await expect(grants.locator("option:not([value=\"\"]):not([disabled])")).toHaveCount(1);
+      step="git_compose_select_private_grant";
       await grants.selectOption(await grants.locator("option:not([value=\"\"]):not([disabled])").getAttribute("value"));
+      step="git_compose_acknowledge_private_source";
       await requestBuild.getByRole("checkbox").check();
       const requested=response(page,`/api/v1/resources/${resourceID}/builds`);
+      step="git_compose_request_private_build";
       await requestBuild.getByRole("button",{name:"Request private Git build",exact:true}).click();
+      step="git_compose_read_private_build_response";
       lastBuild=(await checkedResponse(requested,202)).build.id;
+      step="git_compose_wait_build_receipt";
       const stopAt=Date.now()+5*60_000;
       let built;
       while(Date.now()<stopAt){const r=await context.request.get(`/api/v1/hosting-builds/${lastBuild}`);if(r.status()!==200)throw Error("build readback denied");built=(await r.json()).build;if(["succeeded","failed","canceled"].includes(built.state))break;await new Promise(r=>setTimeout(r,250));}
+      step="git_compose_verify_build_receipt";
       if(built?.state!=="succeeded"||!built.compose_result?.hash||!built.source_receipt?.commit||built.artifact)throw Error("Git Compose build did not produce immutable result");
       safe.browser_git_compose_build_receipt=true;
     }
+    step="git_compose_refresh_completed_build";
     await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
+    step="git_compose_open_selected_build";
     await builds.getByRole("button",{name:`View build ${lastBuild}`,exact:true}).click();
     const deployment=builds.getByRole("form",{name:"Deploy selected build",exact:true});
+    step="git_compose_configure_deployment_readiness";
     await deployment.getByLabel("Build readiness path",{exact:true}).fill("/health");
     await deployment.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("120");
+    step="git_compose_acknowledge_stack_interruption";
     await deployment.getByRole("checkbox").check();
     const requested=response(page,`/api/v1/resources/${resourceID}/deployments/from-build`);
+    step="git_compose_request_from_build_deployment";
     await deployment.getByRole("button",{name:stoppedOperation?"Start selected Compose build":"Deploy selected build",exact:true}).click();
+    step="git_compose_read_from_build_response";
     const r=await requested;
     const input=r.request().postDataJSON();
+    step="git_compose_verify_from_build_authority";
     if(input.build_id!==lastBuild||input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation)throw Error("from-build immutable authority mismatch");
     safe.browser_git_compose_from_build=true;
+    step="git_compose_verify_from_build_acceptance";
     return (await checkedResponse(r,202)).id;
   }
   async function deploy(replacement, stoppedOperation) {
