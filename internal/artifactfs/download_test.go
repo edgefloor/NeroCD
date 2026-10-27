@@ -19,7 +19,11 @@ func TestOpenOwnedPinsExactDownloadDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	content := []byte("exact archived upload")
 	digest := sha256.Sum256(content)
 	key := hex.EncodeToString(digest[:])
@@ -31,7 +35,11 @@ func TestOpenOwnedPinsExactDownloadDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if got != blob {
 		t.Fatal("blob changed")
 	}
@@ -47,20 +55,26 @@ func TestOpenOwnedPinsExactDownloadDescriptor(t *testing.T) {
 		t.Fatal("pinned descriptor changed")
 	}
 	if next, _, err := store.OpenOwned(context.Background(), key, proof); err == nil {
-		next.Close()
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal("replacement inode adopted")
 	}
 	wrong := proof
 	wrong.PoolID = "wrong"
 	if next, _, err := store.OpenOwned(context.Background(), key, wrong); err == nil {
-		next.Close()
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal("wrong pool accepted")
 	}
 	if err = os.WriteFile(filepath.Join(root, key), []byte("tampered"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if next, _, err := store.OpenOwned(context.Background(), key, proof); err == nil {
-		next.Close()
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal("tampered object accepted")
 	}
 }
