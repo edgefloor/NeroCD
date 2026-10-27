@@ -31,6 +31,10 @@ func storageRetentionScopeAuthority(ctx context.Context, tx pgx.Tx, actor, resou
 func storageRetentionActive(ctx context.Context, tx pgx.Tx, runner, backup string) (bool, error) {
 	var active bool
 	active, e := sqlcgen.New(tx).StorageRetentionActiveUse(ctx, sqlcgen.StorageRetentionActiveUseParams{Column1: runner, Column2: backup})
+	if e != nil || active {
+		return active, e
+	}
+	active, e = sqlcgen.New(tx).StorageDownloadActive(ctx, runner)
 	return active, e
 }
 func storageRetentionLocation(c domain.StorageBackupRetentionCopy) string {

@@ -39,6 +39,9 @@ var safeRequestID = regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z`)
 
 // Server serves the NeroCD HTTP API.
 type Server struct {
+	storageBackupDownloadEnabled bool
+	storageDownloads             storageDownloadBroker
+
 	app                                   *app.Service
 	logger                                *slog.Logger
 	mux                                   *http.ServeMux
@@ -53,6 +56,9 @@ type Server struct {
 
 // ServerConfig controls HTTP server boundary behavior.
 type ServerConfig struct {
+	// StorageBackupDownload opts into a single-controller, ephemeral archive stream.
+	StorageBackupDownload bool
+
 	// TrustedLoopbackRuntimeEnvironmentHTTP permits literal loopback HTTP test fixtures only.
 	TrustedLoopbackRuntimeEnvironmentHTTP bool
 	// TrustedLoopbackSourceCredentialHTTP permits this endpoint's literal loopback
@@ -179,7 +185,7 @@ func NewServerWithConfig(appService *app.Service, logger *slog.Logger, static fs
 	if err != nil {
 		panic("invalid trusted proxy configuration")
 	}
-	s := &Server{app: appService, logger: logger, mux: http.NewServeMux(), metrics: newMetrics(), cookieSecure: !cfg.AllowInsecureCookies, publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicOrigin), "/"), trustedProxies: trusted, trustedLoopbackSourceCredentialHTTP: cfg.TrustedLoopbackSourceCredentialHTTP, trustedLoopbackRuntimeEnvironmentHTTP: cfg.TrustedLoopbackRuntimeEnvironmentHTTP}
+	s := &Server{storageBackupDownloadEnabled: cfg.StorageBackupDownload, app: appService, logger: logger, mux: http.NewServeMux(), metrics: newMetrics(), cookieSecure: !cfg.AllowInsecureCookies, publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicOrigin), "/"), trustedProxies: trusted, trustedLoopbackSourceCredentialHTTP: cfg.TrustedLoopbackSourceCredentialHTTP, trustedLoopbackRuntimeEnvironmentHTTP: cfg.TrustedLoopbackRuntimeEnvironmentHTTP}
 	s.routes(static)
 	return s
 }
@@ -249,7 +255,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if hostingStorageBackupDeletionPath(r.URL.Path) || hostingStorageBackupSchedulePath(r.URL.Path) || hostingStorageBackupRemotePath(r.URL.Path) || hostingNotificationPath(r.URL.Path) || hostingStorageBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
+	if storageDownloadPath(r.URL.Path) || hostingStorageBackupDeletionPath(r.URL.Path) || hostingStorageBackupSchedulePath(r.URL.Path) || hostingStorageBackupRemotePath(r.URL.Path) || hostingNotificationPath(r.URL.Path) || hostingStorageBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if hostingStorageRouteRecoveryPath(r.URL.Path) {
@@ -322,6 +328,9 @@ func (s *Server) securityHeaders(w http.ResponseWriter) {
 }
 
 func requiresJSONDocument(r *http.Request) bool {
+	if r.URL.Path == storageDownloadStreamPath {
+		return false
+	}
 	// Webhook bytes must reach HMAC verification before JSON interpretation.
 	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/hosting/github-push/") {
 		return false
@@ -471,7 +480,7 @@ func requiresAuth(path string) bool {
 }
 
 func requiresRunnerAuth(path string) bool {
-	if hostingStorageBackupTransferRunnerPath(path) || hostingStorageBackupRetentionRunnerPath(path) || hostingDatabaseBackupRetentionRunnerPath(path) || hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
+	if storageDownloadRunnerPath(path) || hostingStorageBackupTransferRunnerPath(path) || hostingStorageBackupRetentionRunnerPath(path) || hostingDatabaseBackupRetentionRunnerPath(path) || hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
 		return true
 	}
 	switch path {
@@ -816,3 +825,6 @@ func (r *statusRecorder) Write(value []byte) (int, error) {
 	}
 	return r.ResponseWriter.Write(value)
 }
+
+// Unwrap permits narrow streaming handlers to set connection deadlines.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }

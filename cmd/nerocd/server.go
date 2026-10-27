@@ -53,6 +53,7 @@ type runtimeConfig struct {
 
 func runServer(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	storageDownloads := fs.Bool("hosting-storage-backup-download", false, "enable single-controller local archive download rendezvous")
 	addr := fs.String("addr", ":8080", "listen address")
 	backupBytes := fs.Int64("database-backup-max-bytes", domain.HostingDatabaseBackupMaxBytes, "operator limit for each local hosted PostgreSQL logical dump")
 	backupTimeout := fs.Int("database-backup-timeout-seconds", 900, "operator timeout for each hosted PostgreSQL dump or restore, including guest tools")
@@ -68,6 +69,9 @@ func runServer(args []string) error {
 		return err
 	}
 
+	if *storageDownloads && (cfg.databaseURL == "" || cfg.hostingStorageArchivePolicy == nil) {
+		return errors.New("archive downloads require PostgreSQL and qualified archive policy")
+	}
 	cfg.databaseBackupLimits = &limits
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	service, closeStore, err := newService(context.Background(), cfg)
@@ -91,7 +95,7 @@ func runServer(args []string) error {
 			}
 		}
 	}()
-	server := api.NewServerWithConfig(service, logger, web.Static(), api.ServerConfig{AllowInsecureCookies: !cfg.cookieSecure, PublicOrigin: cfg.publicOrigin, TrustedProxyCIDRs: cfg.trustedProxyCIDRs})
+	server := api.NewServerWithConfig(service, logger, web.Static(), api.ServerConfig{StorageBackupDownload: *storageDownloads, AllowInsecureCookies: !cfg.cookieSecure, PublicOrigin: cfg.publicOrigin, TrustedProxyCIDRs: cfg.trustedProxyCIDRs})
 
 	if cfg.databaseURL == "" {
 		logger.Warn("server using in-memory store; set NEROCD_DATABASE_URL for durable runtime state")

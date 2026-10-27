@@ -445,6 +445,17 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
 		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		if claim.Run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode {
+			plan, err := s.RunnerStorageBackupDownloadPlan(ctx, a)
+			if err != nil {
+				return domain.ClaimedRun{}, err
+			}
+			if plan.Validate() != nil || plan.SessionID != a.OperationID || plan.RunnerID != principal.ID {
+				return domain.ClaimedRun{}, store.ErrConflict
+			}
+			claim.PrimitivePlan = domain.RunnerPrimitivePlan{RunID: claim.Run.ID}
+			return claim, nil
+		}
 		plan, err := s.RunnerStorageBackupTransferPlan(ctx, a)
 		if err != nil {
 			return domain.ClaimedRun{}, err

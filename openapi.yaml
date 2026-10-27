@@ -2175,6 +2175,59 @@ paths:
         }
       }
     }
+  /api/v1/runners/hosting/storage-backup-download/plan:
+    post:
+      operationId: runnerStorageBackupDownloadPlan
+      summary: Resolve an exact local archive under current runner lease authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingAuthority'
+      responses:
+        '200':
+          description: Immutable one-use download plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingStorageBackupDownloadPlan'
+        '403': {description: Authority denied}
+        '503': {description: Controller rendezvous unavailable}
+  /api/v1/runners/hosting/storage-backup-download/stream:
+    post:
+      operationId: runnerStorageBackupDownloadStream
+      summary: Send one verified local archive to its waiting browser request
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [metadata]
+              properties:
+                metadata:
+                  $ref: '#/components/schemas/HostingStorageBackupDownloadStream'
+                archive: {type: string, format: binary}
+            encoding:
+              metadata: {contentType: application/json}
+              archive: {contentType: application/x-tar}
+      responses:
+        '200':
+          description: Exact stream or unavailable-copy notice acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session_id, plan_hash]
+                properties:
+                  session_id: {type: string}
+                  plan_hash: {type: string}
+        '403': {description: Authority denied}
+        '409': {description: Stream identity or framing mismatch}
+        '503': {description: Controller rendezvous unavailable}
   /api/v1/storage-backups/{id}/archive-options:
     get:
       operationId: storageBackupArchiveOptions
@@ -15465,6 +15518,37 @@ components:
         },
         "description": "All six limits are explicit. file_bytes <= data_bytes <= archive_bytes. Zero is never a default or unbounded."
       }
+    HostingStorageBackupDownloadStream:
+      allOf:
+        - $ref: '#/components/schemas/HostingAuthority'
+        - type: object
+          required: [plan_hash]
+          properties:
+            plan_hash: {type: string}
+            failure_code:
+              type: string
+              enum: ['', archive_unavailable]
+    HostingStorageBackupDownloadPlan:
+      type: object
+      additionalProperties: false
+      required: [session_id, actor_id, project_id, resource_id, binding_id, backup_id, copy_id, runner_id, destination_id, daemon_id, blob, local_copy, expires_at, hash]
+      properties:
+        session_id: {type: string}
+        actor_id: {type: string}
+        project_id: {type: string}
+        resource_id: {type: string}
+        binding_id: {type: string}
+        backup_id: {type: string}
+        copy_id: {type: string}
+        runner_id: {type: string}
+        destination_id: {type: string}
+        daemon_id: {type: string}
+        blob:
+          $ref: '#/components/schemas/HostingStorageArchiveBlob'
+        local_copy:
+          $ref: '#/components/schemas/BackupLocalCopyProof'
+        expires_at: {type: string, format: date-time}
+        hash: {type: string}
     HostingStorageBackupDownloadOptions:
       type: object
       additionalProperties: false

@@ -3,6 +3,10 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}/archive-options"},
+	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}/archive"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-download/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-download/stream"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-schedules"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backup-schedules"},
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/storage-backup-schedules/{schedule_id}"},
@@ -472,6 +476,14 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.hostingStorageBackupVolumes
 	case "/api/v1/resources/{id}/storage-backups":
 		return s.hostingStorageBackups
+	case "/api/v1/storage-backups/{id}/archive-options":
+		return s.storageBackupDownloadOptions
+	case "/api/v1/storage-backups/{id}/archive":
+		return s.storageBackupDownload
+	case "/api/v1/runners/hosting/storage-backup-download/plan":
+		return s.runnerStorageBackupDownloadPlan
+	case "/api/v1/runners/hosting/storage-backup-download/stream":
+		return s.runnerStorageBackupDownloadStream
 	case "/api/v1/storage-backups/{id}":
 		return s.hostingStorageBackup
 	case "/api/v1/storage-backups/{id}/restores":

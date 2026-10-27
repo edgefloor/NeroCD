@@ -521,7 +521,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 			return errors.New("backup retention execution not configured")
 		}
 	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer {
-		if options.storageArchive == nil || !options.storageArchive.RemoteBackups || domain.ValidateStorageBackupTransferTask(claim.Run) != nil {
+		if options.storageArchive == nil || (claim.Run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode && !options.storageArchive.BackupDownloads) || (claim.Run.RunSpec.HostingMode != domain.HostingStorageBackupDownloadMode && !options.storageArchive.RemoteBackups) || domain.ValidateStorageBackupTransferTask(claim.Run) != nil {
 			return errors.New("storage remote backup execution not configured")
 		}
 	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
@@ -635,6 +635,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return executeDatabaseBackupRetentionClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer {
+		if claim.Run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode {
+			return executeStorageBackupDownloadClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.storageArchive)
+		}
 		return executeStorageBackupTransferClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.storageArchive)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {

@@ -1868,6 +1868,9 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention {
 		return s.databaseBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
 	}
+	if run.RunSpec.Type == domain.RunTypeStorageBackupTransfer && run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode {
+		return s.storageDownloadClaimAllowed(ctx, tx, run, runnerID)
+	}
 	if run.RunSpec.Type == domain.RunTypeStorageBackupTransfer {
 		return s.storageBackupTransferClaimAllowed(ctx, tx, run, runnerID)
 	}

@@ -6,9 +6,13 @@ import (
 	"time"
 )
 
+// HostingStorageBackupDownloadCapability advertises explicitly configured local archive streaming.
 const HostingStorageBackupDownloadCapability = "hosting_storage_backup_download_v1"
+
+// HostingStorageBackupDownloadMode identifies the closed storage-transfer read mode.
 const HostingStorageBackupDownloadMode = "browser_download"
 
+// ErrInvalidStorageBackupDownload reports invalid download identity or framing.
 var ErrInvalidStorageBackupDownload = errors.New("invalid storage archive download")
 
 // HostingStorageBackupDownloadOptions reports current authorized download eligibility.
@@ -38,6 +42,7 @@ type HostingStorageBackupDownloadPlan struct {
 	Hash          string                    `json:"hash"`
 }
 
+// Validate verifies immutable scope, copy identity, and the plan hash.
 func (p HostingStorageBackupDownloadPlan) Validate() error {
 	h := p.Hash
 	p.Hash = ""
@@ -59,6 +64,7 @@ type HostingStorageBackupDownloadStream struct {
 	FailureCode string `json:"failure_code,omitempty"`
 }
 
+// Validate checks the complete fenced stream authority and closed failure code.
 func (in HostingStorageBackupDownloadStream) Validate() error {
 	if in.FailureCode != "" && in.FailureCode != "archive_unavailable" {
 		return ErrInvalidStorageBackupDownload
