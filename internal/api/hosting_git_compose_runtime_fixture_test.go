@@ -4,7 +4,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,9 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"nerocd/internal/app"
+	"nerocd/internal/auth"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/hostingfixture"
+	"nerocd/internal/hostingjobs"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/runnerruntime"
 	"nerocd/internal/source"
 	"nerocd/internal/store"
@@ -56,7 +65,7 @@ func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *stor
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: identity, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, GitCompose: true, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 4 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 256 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
+	policy := gitComposeRuntimeBuildPolicy(identity)
 	if err = pg.ConfigureHostingBuild(&policy); err != nil {
 		t.Fatal(err)
 	}
@@ -70,6 +79,10 @@ func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *stor
 		t.Fatal(err)
 	}
 }
+func gitComposeRuntimeBuildPolicy(identity string) domain.HostingBuildPolicy {
+	return domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: identity, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, GitCompose: true, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 4 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 256 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
+}
+
 func gitComposeRuntimeRepository(t *testing.T, raw, base, password string) (string, func(string, bool) string, func(bool), string) {
 	t.Helper()
 	files := func(marker string, fail bool) map[string]string {
@@ -117,4 +130,81 @@ func gitComposeRuntimeBuild(f *storageRuntimeFixture, resource domain.Resource, 
 	}
 	f.t.Fatal("Git Compose build did not settle")
 	return domain.PublicHostingBuild{}
+}
+
+func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
+	t.Setenv("NEROCD_GIT_COMPOSE_RUNTIME", "disposable-dind")
+	t.Setenv("NEROCD_CATALOG_BROWSER_ORIGIN", "https://127.0.0.1:25444")
+	_, pg, database := newHostingBuildAPIFixture(t)
+	server := catalogRuntimeServer(t, pg)
+	control := httptest.NewTLSServer(server)
+	t.Cleanup(control.Close)
+	f := &storageRuntimeFixture{t: t, control: control, client: control.Client()}
+	f.token = createTestSession(t, server)
+	env := storageRuntimeJSON[domain.ProjectEnvironment](f, "POST", "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Git Compose startup"}, 201)
+	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Compose Vikunja acceptance", Kind: "application", Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}}}}, 201)
+	// Keep the fixture's current credential-file capability profile. Trigger
+	// revision support remains optional for existing registered build runners.
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability}
+	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
+	credential := "ncr_git_compose_startup_fixture"
+	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("e", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}, 200)
+	client := runnerclient.New(control.URL, credential)
+	client.HTTP = control.Client()
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Build: true, ComposeBuild: true, PrivateGit: true})
+	if err != nil || id != enrolled.Runner.ID {
+		t.Fatalf("actual enrolled Git build identity: id=%q error=%v", id, err)
+	}
+	target := storageRuntimeJSON[app.ServerDetail](f, "POST", "/api/v1/servers", app.ServerInput{Name: "Git Compose startup", RunnerID: id}, 201)
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/destinations/"+target.Destination.ID+"/project-grants", app.DestinationProjectInput{ProjectID: resource.ProjectID}, 201)
+	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: target.Destination.ID}, 201)
+	for {
+		tx, e := database.Begin(t.Context())
+		if e != nil {
+			t.Fatal(e)
+		}
+		changed, e := hostingjobs.MigrateNextTx(t.Context(), tx)
+		if e != nil {
+			if rollbackErr := storageRuntimeRollback(tx); rollbackErr != nil {
+				t.Errorf("queue migration rollback: %v", rollbackErr)
+			}
+			t.Fatal(e)
+		}
+		if e = tx.Commit(t.Context()); e != nil {
+			t.Fatal(e)
+		}
+		if !changed {
+			break
+		}
+	}
+	policy := gitComposeRuntimeBuildPolicy("sha256:" + strings.Repeat("d", 64))
+	startStorageRuntimeExecution(t, pg, func() {
+		if err := pg.ConfigureHostingBuild(&policy); err != nil {
+			t.Fatal("Git Compose policy must be configured before worker startup:", err)
+		}
+	})
+	if err := pg.ConfigureHostingBuild(&policy); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("late policy mutation must remain rejected: %v", err)
+	}
+	secret := storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Git Compose source", Value: `{"username":"fixture-user","password":"fixture-password"}`}, 201)
+	grant := storageRuntimeJSON[struct {
+		Grant domain.PublicHostingSourceGrant `json:"grant"`
+	}](f, "POST", "/api/v1/resources/"+resource.ID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: secret.ID, SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, 201)
+	build := storageRuntimeJSON[struct {
+		Build domain.PublicHostingBuild `json:"build"`
+	}](f, "POST", "/api/v1/resources/"+resource.ID+"/builds", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: grant.Grant.ID, IdempotencyKey: "git-compose-startup"}, 202).Build
+	deadline := time.Now().Add(10 * time.Second)
+	for build.RunID == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		build = storageRuntimeJSON[struct {
+			Build domain.PublicHostingBuild `json:"build"`
+		}](f, http.MethodGet, "/api/v1/hosting-builds/"+build.ID, nil, 200).Build
+	}
+	if build.RunID == "" {
+		t.Fatal("configured Git Compose build was not dispatched")
+	}
+	claim, err := server.app.ClaimRun(auth.WithPrincipal(t.Context(), auth.Principal{ID: id, Provider: domain.PrincipalRunner}))
+	if err != nil || claim.Run.ID != build.RunID {
+		t.Fatalf("Git Compose build claim mismatch: %v", err)
+	}
 }

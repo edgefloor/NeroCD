@@ -26,6 +26,20 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool) map[string]stri
 	}
 	return map[string]string{"project/deploy/compose.yaml": compose, "project/app/Dockerfile": dockerfile, "project/app/marker": marker + "\n"}
 }
+
+type gitComposeFixtureSource struct {
+	Kind string                           `json:"kind"`
+	Git  *domain.GitResourceConfiguration `json:"git"`
+}
+
+type gitComposeFixtureCreateRequest struct {
+	ProjectID            string                  `json:"project_id"`
+	ProjectEnvironmentID string                  `json:"project_environment_id"`
+	Name                 string                  `json:"name"`
+	Kind                 string                  `json:"kind"`
+	Source               gitComposeFixtureSource `json:"source"`
+}
+
 func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 	raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
 	if err != nil {
@@ -51,12 +65,12 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			}
 		}
 	}
-	source := domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: settings}}}
+	source := gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: settings}}
 	bodies := []struct {
 		name    string
 		in, out any
 	}{
-		{"create", app.ResourceInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj_platform", ProjectEnvironmentID: "penv_fixture", Name: "Compose Vikunja acceptance", Kind: "application", Source: source}, new(app.ResourceInput)},
+		{"create", gitComposeFixtureCreateRequest{ProjectID: "proj_platform", ProjectEnvironmentID: "penv_fixture", Name: "Compose Vikunja acceptance", Kind: "application", Source: source}, new(gitComposeFixtureCreateRequest)},
 		{"binding", app.ResourceBindingInput{DestinationID: "dst_fixture"}, new(app.ResourceBindingInput)},
 		{"source_secret", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Git Compose HTTPS source", Value: `{"username":"fixture-user","password":"fixture-value"}`}, new(app.ManagedSecretInput)},
 		{"grant", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: "secret_fixture", SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, new(domain.HostingSourceGrantRequest)},

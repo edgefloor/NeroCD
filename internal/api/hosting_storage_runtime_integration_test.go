@@ -34,6 +34,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runner"
+	"nerocd/internal/store"
 )
 
 const storageRuntimeLabel = "io.nerocd.storage-runtime.owner"
@@ -327,15 +328,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			break
 		}
 	}
-	stopJobs, err := pg.StartHostingExecution(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := stopJobs(ctx); err != nil {
-			t.Error(err)
+	startStorageRuntimeExecution(t, pg, func() {
+		if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+			configureGitComposeRuntime(t, f, pg)
 		}
 	})
 	t.Cleanup(func() { f.stop(); t.Logf("compiled runner logs:\n%s", f.logs.String()) })
@@ -351,11 +346,26 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			t.Fatal("private fixture configured work root", err)
 		}
 	}
-	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
-		configureGitComposeRuntime(t, f, pg)
-	}
 	f.start(caps)
 	return f
+}
+
+func startStorageRuntimeExecution(t *testing.T, pg *store.PostgresStore, configure func()) {
+	t.Helper()
+	if configure != nil {
+		configure()
+	}
+	stopJobs, err := pg.StartHostingExecution(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := stopJobs(ctx); err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 func storageRuntimeRollback(tx interface{ Rollback(context.Context) error }) error {
