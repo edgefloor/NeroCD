@@ -8060,9 +8060,9 @@ export interface components {
             destination_id: string;
             name: string;
             /** @enum {string} */
-            template_id: "linkding" | "uptime-kuma";
+            template_id: "linkding" | "uptime-kuma" | "actualbudget";
             /** @enum {string} */
-            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1";
+            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1" | "coolify-b12d1386.actualbudget-26.10.0.v1";
         };
         HostingCatalogDefinition: {
             image_reference: string;
@@ -8070,6 +8070,10 @@ export interface components {
             mount_path: string;
             readiness: components["schemas"]["HostingReadiness"];
             credential_names: string[];
+            /** @description Curated nonsecret literal runtime settings from the pinned template. Not user-supplied overrides. */
+            runtime_environment?: {
+                [key: string]: string;
+            };
         };
         HostingCatalogTemplate: {
             id: string;

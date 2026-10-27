@@ -137,7 +137,11 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 		}
 		entries = append(entries, domain.HostingRuntimeEntry{Name: c.Name, Kind: "managed_secret", Secret: &domain.HostingRuntimeSecretReference{SecretID: m.SecretID, Version: 1}})
 	}
-	doc, refs, err := domain.CanonicalHostingRuntimeDocument(entries)
+	runtimeEntries := append([]domain.HostingRuntimeEntry{}, entries...)
+	for name, value := range template.Definition.RuntimeEnvironment {
+		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: name, Kind: "literal", Value: &value})
+	}
+	doc, refs, err := domain.CanonicalHostingRuntimeDocument(runtimeEntries)
 	if err != nil {
 		return zero, err
 	}
@@ -156,7 +160,13 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	if err != nil {
 		return zero, err
 	}
-	view := domain.HostingCatalogInstallation{ID: resource, Request: in, Template: template, Resource: r, Binding: bindingFromDestinationSQL(bound), StorageRef: storage.Reference(), RuntimeConfiguration: domain.HostingRuntimeConfigurationRef{Generation: 1, Hash: domain.HostingDocumentHash(doc)}, Credentials: doc.Entries, CreatedBy: actor, CreatedAt: now}
+	credentialEntries := make([]domain.HostingRuntimeEntry, 0, len(credentials))
+	for _, entry := range doc.Entries {
+		if entry.Kind == "managed_secret" {
+			credentialEntries = append(credentialEntries, entry)
+		}
+	}
+	view := domain.HostingCatalogInstallation{ID: resource, Request: in, Template: template, Resource: r, Binding: bindingFromDestinationSQL(bound), StorageRef: storage.Reference(), RuntimeConfiguration: domain.HostingRuntimeConfigurationRef{Generation: 1, Hash: domain.HostingDocumentHash(doc)}, Credentials: credentialEntries, CreatedBy: actor, CreatedAt: now}
 	storageAudit := domain.AuditEvent{ID: domain.HostingStorageAuditID(resource, in.RequestID), ActorID: actor, Action: "hosting.storage.created", TargetID: storage.ID, CreatedAt: now, Metadata: map[string]any{"project_id": in.ProjectID, "resource_id": resource, "binding_id": binding, "destination_id": in.DestinationID, "storage_generation": int64(1), "storage_hash": storage.Hash}}
 	if err = createAuditWithQueries(ctx, q, storageAudit); err != nil {
 		return zero, err

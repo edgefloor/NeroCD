@@ -34,7 +34,7 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", "", 401)
 	raw := check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", token, 200)
 	var items []domain.HostingCatalogTemplate
-	if json.Unmarshal(raw, &items) != nil || len(items) != 2 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
+	if json.Unmarshal(raw, &items) != nil || len(items) != 3 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
 		t.Fatal("catalog metadata missing")
 	}
 	if strings.Contains(string(raw), `"amd_only"`) || strings.Contains(string(raw), `"arm_only"`) {
@@ -48,62 +48,70 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	}
 }
 
-func TestHostingCatalogKumaHTTPCurrentLookupAndEmptyCredentials(t *testing.T) {
-	server, _, database := newHostingBuildAPIFixture(t)
-	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
-	env, err := server.app.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Kuma catalog decoder"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_kuma_catalog", RunnerName: "Kuma catalog", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = server.app.ConsumeRunnerEnrollment(ctx, enrollment.Token, app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("a", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte("kuma_fixture_runner")))})
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, err := server.app.CreateServer(ctx, app.ServerInput{Name: "Kuma catalog", RunnerID: "runner_kuma_catalog"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = server.app.GrantDestinationProject(ctx, detail.Destination.ID, app.DestinationProjectInput{ProjectID: env.ProjectID}); err != nil {
-		t.Fatal(err)
-	}
-	token := createTestSession(t, server)
-	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("8", 32), ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, DestinationID: detail.Destination.ID, Name: "Kuma", TemplateID: "uptime-kuma", ImmutableVersion: domain.HostingCatalogUptimeKumaVersion}
-	call := func(input domain.HostingCatalogInstallInput, status int) []byte {
-		t.Helper()
-		raw, e := json.Marshal(input)
-		if e != nil {
-			t.Fatal(e)
-		}
-		request := httptest.NewRequest("POST", "/api/v1/hosting-catalog/installations", strings.NewReader(string(raw)))
-		request.Header.Set("Authorization", "Bearer "+token)
-		request.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		server.ServeHTTP(response, request)
-		if response.Code != status {
-			t.Fatalf("catalog decoder status got=%d want=%d", response.Code, status)
-		}
-		return response.Body.Bytes()
-	}
-	for _, pair := range [][2]string{{"uptime-kuma", domain.HostingCatalogLinkdingVersion}, {"linkding", domain.HostingCatalogUptimeKumaVersion}} {
-		bad := in
-		bad.TemplateID = pair[0]
-		bad.ImmutableVersion = pair[1]
-		call(bad, 409)
-	}
-	var count int
-	if err = database.QueryRow(ctx, `SELECT count(*) FROM hosting_catalog_installations`).Scan(&count); err != nil || count != 0 {
-		t.Fatal("cross-pair persisted", err)
-	}
-	raw := call(in, 201)
-	var installed domain.HostingCatalogInstallation
-	if json.Unmarshal(raw, &installed) != nil || installed.Request != in || installed.Template.ID != "uptime-kuma" || installed.Credentials == nil || len(installed.Credentials) != 0 {
-		t.Fatal("real decoder lost Kuma identity or empty credentials")
-	}
-	if replay := call(in, 201); string(replay) != string(raw) {
-		t.Fatal("HTTP response-loss replay changed installed copy")
+func TestHostingCatalogHTTPCurrentLookupAndCredentialFreeDefinitions(t *testing.T) {
+	for _, tc := range []struct{ id, version string }{{"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}} {
+		t.Run(tc.id, func(t *testing.T) {
+			server, _, database := newHostingBuildAPIFixture(t)
+			ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+			env, err := server.app.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Kuma catalog decoder"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_kuma_catalog", RunnerName: "Kuma catalog", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = server.app.ConsumeRunnerEnrollment(ctx, enrollment.Token, app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("a", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte("kuma_fixture_runner")))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			detail, err := server.app.CreateServer(ctx, app.ServerInput{Name: "Kuma catalog", RunnerID: "runner_kuma_catalog"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = server.app.GrantDestinationProject(ctx, detail.Destination.ID, app.DestinationProjectInput{ProjectID: env.ProjectID}); err != nil {
+				t.Fatal(err)
+			}
+			token := createTestSession(t, server)
+			in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("8", 32), ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, DestinationID: detail.Destination.ID, Name: "Catalog app", TemplateID: tc.id, ImmutableVersion: tc.version}
+			call := func(input domain.HostingCatalogInstallInput, status int) []byte {
+				t.Helper()
+				raw, e := json.Marshal(input)
+				if e != nil {
+					t.Fatal(e)
+				}
+				request := httptest.NewRequest("POST", "/api/v1/hosting-catalog/installations", strings.NewReader(string(raw)))
+				request.Header.Set("Authorization", "Bearer "+token)
+				request.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				server.ServeHTTP(response, request)
+				if response.Code != status {
+					t.Fatalf("catalog decoder status got=%d want=%d", response.Code, status)
+				}
+				return response.Body.Bytes()
+			}
+			for _, pair := range [][2]string{{tc.id, domain.HostingCatalogLinkdingVersion}, {"linkding", tc.version}} {
+				bad := in
+				bad.TemplateID = pair[0]
+				bad.ImmutableVersion = pair[1]
+				call(bad, 409)
+			}
+			var count int
+			if err = database.QueryRow(ctx, `SELECT count(*) FROM hosting_catalog_installations`).Scan(&count); err != nil || count != 0 {
+				t.Fatal("cross-pair persisted", err)
+			}
+			raw := call(in, 201)
+			var installed domain.HostingCatalogInstallation
+			if json.Unmarshal(raw, &installed) != nil || installed.Request != in || installed.Template.ID != tc.id || installed.Credentials == nil || len(installed.Credentials) != 0 {
+				t.Fatal("real decoder lost catalog identity or empty credentials")
+			}
+			if replay := call(in, 201); string(replay) != string(raw) {
+				t.Fatal("HTTP response-loss replay changed installed copy")
+			}
+
+			if tc.id == "actualbudget" && installed.Template.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] != "password" {
+				t.Fatal("HTTP install lost pinned literal")
+			}
+		})
 	}
 }

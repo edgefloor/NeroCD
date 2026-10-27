@@ -131,3 +131,36 @@ func TestHostingCatalogUptimeKumaDefinitionAndLookup(t *testing.T) {
 		t.Fatal("historical request shape depends on live catalog")
 	}
 }
+
+func TestHostingCatalogActualBudgetPinnedLiteralAndHistoricalHashes(t *testing.T) {
+	kuma, _ := LookupHostingCatalogTemplate("uptime-kuma", HostingCatalogUptimeKumaVersion)
+	if HostingDocumentHash(kuma) != "sha256:0bf1574847028a69e3cfaa26e7d7b24edd1ace8e0e9f80edd6a585267c939274" {
+		t.Fatal("accepted Kuma catalog bytes changed")
+	}
+	actual, ok := LookupHostingCatalogTemplate("actualbudget", HostingCatalogActualBudgetVersion)
+	if !ok || actual.Definition.ImageReference != HostingCatalogActualBudgetImage || actual.Definition.ContainerPort != 5006 || actual.Definition.MountPath != "/data" || actual.Definition.Readiness.Path != "/health" || actual.Definition.CredentialNames == nil || len(actual.Definition.CredentialNames) != 0 || len(actual.Definition.RuntimeEnvironment) != 1 || actual.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] != "password" {
+		t.Fatal("Actual translation lost required settings")
+	}
+	actual.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] = "changed"
+	fresh, _ := LookupHostingCatalogTemplate("actualbudget", HostingCatalogActualBudgetVersion)
+	if fresh.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] != "password" {
+		t.Fatal("shared mutable literal defaults")
+	}
+	// The existing canonical boundary used by catalog installation rejects
+	// collisions between a curated literal and a generated secret name.
+	value := "password"
+	_, _, err := CanonicalHostingRuntimeDocument([]HostingRuntimeEntry{{Name: "ACTUAL_LOGIN_METHOD", Kind: "literal", Value: &value}, {Name: "ACTUAL_LOGIN_METHOD", Kind: "managed_secret", Secret: &HostingRuntimeSecretReference{SecretID: "msec_catalog", Version: 1}}})
+	if err == nil {
+		t.Fatal("literal/credential collision accepted")
+	}
+	in := HostingCatalogInstallInput{RequestID: strings.Repeat("a", 32), ProjectID: "proj", ProjectEnvironmentID: "env", DestinationID: "dest", Name: "Budget", TemplateID: "actualbudget", ImmutableVersion: HostingCatalogActualBudgetVersion}
+	raw, _ := json.Marshal(in)
+	var decoded HostingCatalogInstallInput
+	if json.Unmarshal(raw, &decoded) != nil || decoded.Validate() != nil {
+		t.Fatal("Actual install decoder rejected")
+	}
+	in.ImmutableVersion = HostingCatalogUptimeKumaVersion
+	if in.Validate() == nil {
+		t.Fatal("cross-pair accepted")
+	}
+}

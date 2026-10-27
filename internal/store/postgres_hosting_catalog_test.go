@@ -350,3 +350,42 @@ func TestHostingCatalogPostgresUptimeKumaEmptyCredentialsAndReplay(t *testing.T)
 		t.Fatal("revoked Kuma replay admitted", err)
 	}
 }
+
+func TestHostingCatalogPostgresActualBudgetLiteralAndReplay(t *testing.T) {
+	pg, database, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("7", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Budget", TemplateID: "actualbudget", ImmutableVersion: domain.HostingCatalogActualBudgetVersion}
+	v, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil || v.Credentials == nil || len(v.Credentials) != 0 || v.RuntimeConfiguration.Generation != 1 {
+		t.Fatal("Actual install contract", err)
+	}
+	var runtime []byte
+	var secrets int
+	if err = database.QueryRow(ctx, `SELECT body,(SELECT count(*) FROM project_managed_secret_versions) FROM hosting_runtime_configuration_versions WHERE resource_id=$1 AND generation=1`, v.Resource.ID).Scan(&runtime, &secrets); err != nil || secrets != 0 {
+		t.Fatal("Actual invented credentials", err)
+	}
+	var doc domain.HostingRuntimeDocument
+	if json.Unmarshal(runtime, &doc) != nil || len(doc.Entries) != 1 || doc.Entries[0].Name != "ACTUAL_LOGIN_METHOD" || doc.Entries[0].Kind != "literal" || doc.Entries[0].Value == nil || *doc.Entries[0].Value != "password" || domain.HostingDocumentHash(doc) != v.RuntimeConfiguration.Hash {
+		t.Fatal("pinned runtime literal lost")
+	}
+	replay, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil || domain.HostingDocumentHash(replay) != domain.HostingDocumentHash(v) {
+		t.Fatal("Actual response-loss replay changed snapshot", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$1,$2,$3,$4]::text[]`, domain.HostingOwnedStorageRuntimeCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability); err != nil {
+		t.Fatal(err)
+	}
+	deploy := hostingDeploymentRequest()
+	deploy.ExpectedRuntimeConfigurationGeneration = 1
+	deploy.ContainerPort = 5006
+	deploy.Readiness = v.Template.Definition.Readiness
+	op, err := pg.RequestHostingDeployment(ctx, "hop_actual_catalog", v.Resource.ID, "usr_bootstrap", deploy, destinationEvent("actual_deploy"))
+	if err != nil || op.Snapshot.RuntimeConfiguration != v.RuntimeConfiguration || op.Snapshot.Storage != v.StorageRef || op.Snapshot.PolicyVersion != domain.HostingOwnedStorageRuntimePolicyVersion {
+		t.Fatal("Actual deployment lost runtime/storage pins", err)
+	}
+	if _, err = database.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1`, in.DestinationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.InstallHostingCatalog(ctx, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked Actual replay admitted", err)
+	}
+}

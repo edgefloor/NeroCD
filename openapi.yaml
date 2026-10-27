@@ -16718,8 +16718,8 @@ components:
         project_environment_id: {type: string}
         destination_id: {type: string}
         name: {type: string, minLength: 1, maxLength: 128}
-        template_id: {type: string, enum: [linkding, uptime-kuma]}
-        immutable_version: {type: string, enum: [coolify-b12d1386.linkding-1.47.0.v1, coolify-b12d1386.uptime-kuma-2.5.8.v1]}
+        template_id: {type: string, enum: [linkding, uptime-kuma, actualbudget]}
+        immutable_version: {type: string, enum: [coolify-b12d1386.linkding-1.47.0.v1, coolify-b12d1386.uptime-kuma-2.5.8.v1, coolify-b12d1386.actualbudget-26.10.0.v1]}
     HostingCatalogDefinition:
       type: object
       additionalProperties: false
@@ -16730,6 +16730,7 @@ components:
         mount_path: {type: string}
         readiness: {$ref: "#/components/schemas/HostingReadiness"}
         credential_names: {type: array, items: {type: string}}
+        runtime_environment: {type: object, additionalProperties: {type: string}, description: "Curated nonsecret literal runtime settings from the pinned template. Not user-supplied overrides."}
     HostingCatalogTemplate:
       type: object
       additionalProperties: false

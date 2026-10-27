@@ -23,6 +23,15 @@ const HostingCatalogUptimeKumaVersion = "coolify-b12d1386.uptime-kuma-2.5.8.v1"
 // HostingCatalogUptimeKumaImage pins the upstream v2 image index by digest.
 const HostingCatalogUptimeKumaImage = "docker.io/louislam/uptime-kuma@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67"
 
+// HostingCatalogActualBudgetVersion identifies the pinned Actual Budget translation.
+const HostingCatalogActualBudgetVersion = "coolify-b12d1386.actualbudget-26.10.0.v1"
+
+// HostingCatalogActualBudgetImage pins the Actual Budget image index by digest.
+const HostingCatalogActualBudgetImage = "docker.io/actualbudget/actual-server@sha256:24645e971da6bb1a1f953d6859e307a0b29be1e8b4130a35b3220c209b5b860c"
+
+//go:embed hosting_catalog_actualbudget.yaml
+var hostingCatalogActualBudgetOriginal string
+
 //go:embed hosting_catalog_uptime_kuma.yaml
 var hostingCatalogUptimeKumaOriginal string
 
@@ -32,11 +41,12 @@ var hostingCatalogLinkdingOriginal string
 // HostingCatalogDefinition is a closed typed translation into ordinary image hosting.
 // It deliberately cannot carry arbitrary Compose fields or execution scripts.
 type HostingCatalogDefinition struct {
-	ImageReference  string           `json:"image_reference"`
-	ContainerPort   int              `json:"container_port"`
-	MountPath       string           `json:"mount_path"`
-	Readiness       HostingReadiness `json:"readiness"`
-	CredentialNames []string         `json:"credential_names"`
+	ImageReference     string            `json:"image_reference"`
+	ContainerPort      int               `json:"container_port"`
+	MountPath          string            `json:"mount_path"`
+	Readiness          HostingReadiness  `json:"readiness"`
+	CredentialNames    []string          `json:"credential_names"`
+	RuntimeEnvironment map[string]string `json:"runtime_environment,omitempty"`
 }
 
 // HostingCatalogTemplate describes a versioned catalog template and its resource definition.
@@ -65,7 +75,10 @@ func HostingCatalogTemplates() []HostingCatalogTemplate {
 	templates := []HostingCatalogTemplate{{ID: "linkding", Version: HostingCatalogLinkdingVersion, Name: "Linkding", Category: "RSS", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/linkding.yaml", Original: hostingCatalogLinkdingOriginal, OriginalHash: "sha256:" + hex.EncodeToString(sum[:]), Definition: d, DefinitionHash: HostingDocumentHash(d)}}
 	kuma := HostingCatalogDefinition{ImageReference: HostingCatalogUptimeKumaImage, ContainerPort: 3001, MountPath: "/app/data", Readiness: HostingReadiness{Path: "/", TimeoutSeconds: 120}, CredentialNames: []string{}}
 	kumaSum := sha256.Sum256([]byte(hostingCatalogUptimeKumaOriginal))
-	return append(templates, HostingCatalogTemplate{ID: "uptime-kuma", Version: HostingCatalogUptimeKumaVersion, Name: "Uptime Kuma", Category: "monitoring", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/uptime-kuma.yaml", Original: hostingCatalogUptimeKumaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(kumaSum[:]), Definition: kuma, DefinitionHash: HostingDocumentHash(kuma)})
+	templates = append(templates, HostingCatalogTemplate{ID: "uptime-kuma", Version: HostingCatalogUptimeKumaVersion, Name: "Uptime Kuma", Category: "monitoring", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/uptime-kuma.yaml", Original: hostingCatalogUptimeKumaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(kumaSum[:]), Definition: kuma, DefinitionHash: HostingDocumentHash(kuma)})
+	actual := HostingCatalogDefinition{ImageReference: HostingCatalogActualBudgetImage, ContainerPort: 5006, MountPath: "/data", Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{}, RuntimeEnvironment: map[string]string{"ACTUAL_LOGIN_METHOD": "password"}}
+	actualSum := sha256.Sum256([]byte(hostingCatalogActualBudgetOriginal))
+	return append(templates, HostingCatalogTemplate{ID: "actualbudget", Version: HostingCatalogActualBudgetVersion, Name: "Actual Budget", Category: "finance", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/actualbudget.yaml", Original: hostingCatalogActualBudgetOriginal, OriginalHash: "sha256:" + hex.EncodeToString(actualSum[:]), Definition: actual, DefinitionHash: HostingDocumentHash(actual)})
 }
 
 // LookupHostingCatalogTemplate selects one exact current template version.
