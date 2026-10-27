@@ -1,12 +1,30 @@
 CREATE TABLE hosting_build_compose_results (
  build_id text PRIMARY KEY REFERENCES hosting_builds(id),
  body jsonb NOT NULL CHECK (jsonb_typeof(body)='object'),
- body_hash text NOT NULL CHECK (body_hash ~ '^sha256:[0-9a-f]{64}$')
+ body_hash text NOT NULL CHECK (body_hash ~ '^sha256:[0-9a-f]{64}$'),
+ definition_hash text NOT NULL CHECK (definition_hash ~ '^sha256:[0-9a-f]{64}$')
 );
 CREATE TRIGGER hosting_build_compose_results_immutable BEFORE UPDATE OR DELETE ON hosting_build_compose_results FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_target_immutable();
 CREATE FUNCTION nerocd_hosting_build_compose_body() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
- IF NOT EXISTS(SELECT 1 FROM hosting_builds b JOIN hosting_build_receipts r ON r.build_id=b.id AND r.phase='source' WHERE b.id=NEW.build_id AND b.state='building' AND b.daemon_id<>'' AND b.snapshot->'source'->'settings'->>'strategy'='compose' AND b.snapshot->'operator_policy'->>'git_compose'='true' AND NEW.body->>'source_receipt_hash'=r.body_hash AND NEW.body->>'hash'=NEW.body_hash AND NOT EXISTS(SELECT 1 FROM hosting_build_artifacts a WHERE a.build_id=b.id)) THEN RAISE EXCEPTION 'Compose result scope mismatch' USING ERRCODE='23514'; END IF;
+ IF jsonb_typeof(NEW.body->'services') IS DISTINCT FROM 'array' OR jsonb_typeof(NEW.body->'definition'->'services') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'Compose result requires component arrays' USING ERRCODE='23514'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM hosting_builds b JOIN hosting_build_receipts r ON r.build_id=b.id AND r.phase='source' WHERE b.id=NEW.build_id AND b.state='building' AND b.daemon_id<>'' AND b.snapshot->'source'->'settings'->>'strategy'='compose' AND b.snapshot->'operator_policy'->>'git_compose'='true' AND NEW.body->>'source_receipt_hash'=r.body_hash AND NEW.body->>'hash'=NEW.body_hash
+ AND NEW.body->'source'->>'public_component'=b.snapshot->'source'->'settings'->>'public_component'
+ AND NEW.body->'source'->'container_port'=b.snapshot->'source'->'settings'->'container_port'
+ AND NEW.body->'definition'->>'version'='git-compose.v1'
+ AND jsonb_typeof(NEW.body->'services')='array' AND jsonb_typeof(NEW.body->'definition'->'services')='array'
+ AND jsonb_array_length(NEW.body->'services')=(SELECT count(*) FROM jsonb_array_elements(NEW.body->'definition'->'services') component WHERE component ? 'build')
+ AND (SELECT count(DISTINCT component->>'component') FROM jsonb_array_elements(NEW.body->'services') component)=jsonb_array_length(NEW.body->'services')
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.body->'services') component
+  WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.body->'definition'->'services') owner WHERE owner ? 'build' AND owner->>'name'=component->>'component')
+   OR component->'artifact'->>'origin' IS DISTINCT FROM 'local_build'
+   OR component->'artifact'->>'build_id' IS DISTINCT FROM ('cmp-'||substr(encode(sha256(convert_to('git-compose.v1','UTF8')||decode('00','hex')||convert_to(b.id,'UTF8')||decode('00','hex')||convert_to(component->>'component','UTF8')),'hex'),1,48))
+   OR component->'artifact'->>'source_id' IS DISTINCT FROM b.source_id
+   OR component->'artifact'->>'input_id' IS DISTINCT FROM b.snapshot->>'input_id'
+   OR component->'artifact'->>'source_receipt_hash' IS DISTINCT FROM r.body_hash
+   OR component->'artifact'->>'daemon_id' IS DISTINCT FROM b.daemon_id
+   OR component->'artifact'->>'platform' IS DISTINCT FROM b.snapshot->'operator_policy'->>'platform')
+ AND NOT EXISTS(SELECT 1 FROM hosting_build_artifacts a WHERE a.build_id=b.id)) THEN RAISE EXCEPTION 'Compose result scope mismatch' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END;$$;
 CREATE TRIGGER hosting_build_compose_body BEFORE INSERT ON hosting_build_compose_results FOR EACH ROW EXECUTE FUNCTION nerocd_hosting_build_compose_body();
@@ -51,6 +69,8 @@ BEGIN
     AND b.snapshot->'source'->>'generation'=snap->'git_compose'->>'source_generation'
     AND b.snapshot->>'resource_generation'=snap->>'resource_generation'
     AND b.snapshot->>'binding_id'=snap->>'binding_id' AND b.snapshot->>'runner_id'=snap->>'runner_id'
+    AND b.snapshot->>'destination_id'=snap->>'destination_id' AND b.snapshot->>'server_id'=snap->>'server_id'
+    AND c.definition_hash=snap->'stack'->>'hash'
     AND (rel IS NULL OR b.daemon_id=rel->>'daemon_id');
    IF NOT FOUND OR (snap->'git_compose')-'build_id'-'source_generation'-'result_hash'<>'{}'::jsonb THEN RAISE EXCEPTION 'Git stack build reference mismatch' USING ERRCODE='23514'; END IF;
    stack_source:=compose_result->'definition';
@@ -78,6 +98,11 @@ BEGIN
    OR EXISTS(SELECT 1 FROM jsonb_array_elements(stack_plan->'stack'->'images') WITH ORDINALITY AS image(body,n)
     WHERE image.body->>'component' IS DISTINCT FROM stack_source->'services'->(image.n::integer-1)->>'name'
     OR image.body->'release' ? 'stack'
+    OR (compose_result IS NOT NULL AND NOT (image.body->'release' ? 'local_build') AND (
+      stack_source->'services'->(image.n::integer-1) ? 'build'
+      OR EXISTS(SELECT 1 FROM jsonb_array_elements(stack_source->'services') owner
+       WHERE owner ? 'build' AND coalesce(owner->>'image','')<>'' AND owner->>'image'=stack_source->'services'->(image.n::integer-1)->>'image')))
+
     OR (image.body->'release' ? 'local_build' AND (compose_result IS NULL OR NOT EXISTS(
       SELECT 1 FROM jsonb_array_elements(compose_result->'services') built
       JOIN jsonb_array_elements(stack_source->'services') owner ON owner->>'name'=built->>'component'

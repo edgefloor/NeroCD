@@ -354,9 +354,10 @@ type HostingBuildArtifact struct {
 }
 
 type HostingBuildComposeResult struct {
-	BuildID  string          `json:"build_id"`
-	Body     json.RawMessage `json:"body"`
-	BodyHash string          `json:"body_hash"`
+	BuildID        string          `json:"build_id"`
+	Body           json.RawMessage `json:"body"`
+	BodyHash       string          `json:"body_hash"`
+	DefinitionHash string          `json:"definition_hash"`
 }
 
 type HostingBuildLogReceipt struct {

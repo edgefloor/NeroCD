@@ -98,4 +98,4 @@ UPDATE task_runs AS r SET status='canceled',finished_at=clock_timestamp() WHERE 
 UPDATE hosting_builds SET state='cleanup_required',failure_code='authority_lost',revision=revision+1,updated_at=clock_timestamp() WHERE run_id=$1 AND state IN('queued','sourcing','building');
 
 -- name: InsertHostingBuildComposeResult :exec
-INSERT INTO hosting_build_compose_results(build_id,body,body_hash) VALUES($1,$2,$3);
+INSERT INTO hosting_build_compose_results(build_id,body,body_hash,definition_hash) VALUES($1,$2,$3,$4);

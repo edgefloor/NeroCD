@@ -97,3 +97,25 @@ func TestHostingGitComposeResultBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestHostingGitComposeImageOnlyResultHasEmptyArtifactArray(t *testing.T) {
+	build, result := composeResultFixture(t)
+	result.Source.Original = "services:\n  web:\n    image: nginx:alpine\n"
+	var err error
+	result.Definition, err = domain.ParseHostingGitCompose(result.Source, build.Snapshot.Source.Settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Services = []domain.HostingBuildComposeService{}
+	result.Hash = ""
+	result.Hash = domain.HostingDocumentHash(result)
+	if domain.ValidateHostingBuildComposeResult(result, build) != nil {
+		t.Fatal("image-only prepared Git stack rejected")
+	}
+	result.Services = nil
+	result.Hash = ""
+	result.Hash = domain.HostingDocumentHash(result)
+	if domain.ValidateHostingBuildComposeResult(result, build) == nil {
+		t.Fatal("null artifact array accepted")
+	}
+}

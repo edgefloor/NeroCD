@@ -147,7 +147,7 @@ func HostingComposeBuildArtifact(result HostingBuildComposeResult, component str
 func ValidateHostingBuildComposeResult(result HostingBuildComposeResult, build HostingBuild) error {
 	expected := result
 	expected.Hash = ""
-	if build.SourceReceipt == nil || result.SourceReceiptHash != HostingDocumentHash(build.SourceReceipt) || result.Hash != HostingDocumentHash(expected) {
+	if result.Services == nil || build.SourceReceipt == nil || result.SourceReceiptHash != HostingDocumentHash(build.SourceReceipt) || result.Hash != HostingDocumentHash(expected) {
 		return errors.New("git Compose result binding changed")
 	}
 	definition, err := ParseHostingGitCompose(result.Source, build.Snapshot.Source.Settings)

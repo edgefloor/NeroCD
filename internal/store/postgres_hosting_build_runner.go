@@ -238,7 +238,7 @@ func (s *PostgresStore) CompleteHostingBuild(ctx context.Context, runner string,
 			}
 		}
 		if c.ComposeResult != nil {
-			if err = q.InsertHostingBuildComposeResult(ctx, sqlcgen.InsertHostingBuildComposeResultParams{BuildID: b.ID, Body: buildJSON(c.ComposeResult), BodyHash: c.ComposeResult.Hash}); err != nil {
+			if err = q.InsertHostingBuildComposeResult(ctx, sqlcgen.InsertHostingBuildComposeResultParams{BuildID: b.ID, Body: buildJSON(c.ComposeResult), BodyHash: c.ComposeResult.Hash, DefinitionHash: domain.HostingDocumentHash(c.ComposeResult.Definition)}); err != nil {
 				return b, err
 			}
 		}

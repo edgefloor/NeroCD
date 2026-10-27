@@ -1,7 +1,10 @@
 package store_test
 
 import (
+	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5/pgconn"
+	"nerocd/internal/store/sqlcgen"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +69,39 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 	bad.Hash = domain.HostingDocumentHash(bad)
 	if _, err = f.pg.CompleteHostingBuild(ctx, f.runner, a, "bad-coverage", b.Revision, store.HostingBuildCompletion{State: "succeeded", ComposeResult: &bad}); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("incomplete components stored", err)
+	}
+	for _, field := range []string{"daemon", "source", "input", "child", "coverage"} {
+		raw, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		var corrupt domain.HostingBuildComposeResult
+		if e := json.Unmarshal(raw, &corrupt); e != nil {
+			t.Fatal(e)
+		}
+		switch field {
+		case "daemon":
+			corrupt.Services[0].Artifact.DaemonID = "wrong-daemon"
+		case "source":
+			corrupt.Services[0].Artifact.SourceID = "wrong-source"
+		case "input":
+			corrupt.Services[0].Artifact.InputID = "wrong-input"
+		case "child":
+			corrupt.Services[0].Artifact.BuildID = b.ID
+		case "coverage":
+			corrupt.Services = nil
+		}
+		corrupt.Hash = ""
+		corrupt.Hash = domain.HostingDocumentHash(corrupt)
+		raw, marshalErr = json.Marshal(corrupt)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		e := sqlcgen.New(f.db).InsertHostingBuildComposeResult(ctx, sqlcgen.InsertHostingBuildComposeResultParams{BuildID: b.ID, Body: raw, BodyHash: corrupt.Hash, DefinitionHash: domain.HostingDocumentHash(corrupt.Definition)})
+		var pgErr *pgconn.PgError
+		if !errors.As(e, &pgErr) || pgErr.Code != "23514" {
+			t.Fatalf("direct %s artifact result was not rejected by SQL scope: %v", field, e)
+		}
 	}
 	completed, err := f.pg.CompleteHostingBuild(ctx, f.runner, a, "compose-complete", b.Revision, store.HostingBuildCompletion{State: "succeeded", ComposeResult: &result})
 	if err != nil {
@@ -152,6 +188,82 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 	}
 	if op.Plan == nil || op.Plan.Stack == nil || len(op.Plan.Stack.Images) != 3 || len(op.Plan.Stack.Volumes) != 1 {
 		t.Fatal("mixed stack plan incomplete")
+	}
+	for _, corruption := range []string{"destination", "server", "definition_hash", "owner_registry", "alias_registry"} {
+		t.Run(corruption, func(t *testing.T) {
+			tx, e := f.db.Begin(ctx)
+			if e != nil {
+				t.Fatal(e)
+			}
+			q := sqlcgen.New(tx)
+			id := "corrupt-" + corruption
+			snapshot := op.Snapshot
+			switch corruption {
+			case "destination":
+				snapshot.DestinationID = "wrong-destination"
+			case "server":
+				snapshot.ServerID = "wrong-server"
+			case "definition_hash":
+				snapshot.Stack.Hash = "sha256:" + strings.Repeat("f", 64)
+			}
+			_, e = q.CreateHostingOperation(ctx, sqlcgen.CreateHostingOperationParams{ID: id, ProjectID: op.ProjectID, ResourceID: resource.ID, BindingID: op.BindingID, IdempotencyKey: id, RequestHash: domain.HostingDocumentHash(id), CreatedBy: "usr_bootstrap"})
+			if e == nil {
+				raw, marshalErr := json.Marshal(snapshot)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				_, e = q.CreateHostingSnapshot(ctx, sqlcgen.CreateHostingSnapshotParams{OperationID: id, Body: raw, BodyHash: domain.HostingDocumentHash(snapshot)})
+			}
+			if e == nil && (corruption == "owner_registry" || corruption == "alias_registry") {
+				encoded, marshalErr := json.Marshal(op.Plan)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				var plan domain.HostingApplyPlan
+				if e = json.Unmarshal(encoded, &plan); e != nil {
+					t.Fatal(e)
+				}
+				selected := "web"
+				if corruption == "alias_registry" {
+					selected = "worker"
+				}
+				for i := range plan.Stack.Images {
+					if plan.Stack.Images[i].Component == selected {
+						r := domain.HostingRelease{CanonicalImage: "docker.io/library/local-app@sha256:" + strings.Repeat("d", 64), ImageID: "sha256:" + strings.Repeat("e", 64), OS: "linux", Architecture: "amd64", DaemonID: b.DaemonID}
+						r.Hash = domain.HostingDocumentHash(r)
+						plan.Stack.Images[i].Release = r
+					}
+				}
+				release := *op.Release
+				release.Stack.Hash = domain.HostingDocumentHash(plan.Stack.Images)
+				release.Hash = ""
+				release.Hash = domain.HostingDocumentHash(release)
+				plan.Release = release
+				plan.Hash = ""
+				plan.Hash = domain.HostingDocumentHash(plan)
+				raw, marshalErr := json.Marshal(release)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				_, e = q.CreateHostingRelease(ctx, sqlcgen.CreateHostingReleaseParams{OperationID: id, Body: raw, BodyHash: domain.HostingDocumentHash(release)})
+				if e == nil {
+					raw, marshalErr = json.Marshal(plan)
+					if marshalErr != nil {
+						t.Fatal(marshalErr)
+					}
+					_, e = q.CreateHostingApplyPlan(ctx, sqlcgen.CreateHostingApplyPlanParams{OperationID: id, Body: raw, BodyHash: domain.HostingDocumentHash(plan)})
+				}
+			}
+			if e == nil {
+				e = tx.Commit(ctx)
+			} else {
+				_ = tx.Rollback(ctx)
+			}
+			var pgErr *pgconn.PgError
+			if !errors.As(e, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("direct corrupted %s stack was not rejected by invariant: %v", corruption, e)
+			}
+		})
 	}
 	changedSource := f.src
 	changedSource.Generation++

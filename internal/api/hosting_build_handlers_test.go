@@ -102,180 +102,222 @@ func newHostingBuildAPIFixture(t *testing.T) (*Server, *store.PostgresStore, *pg
 }
 
 func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
-	server, pg, database := newHostingBuildAPIFixture(t)
-	ctx := t.Context()
-	admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
-	env, err := server.app.CreateProjectEnvironment(admin, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "build-api"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resource, err := server.app.CreateResource(admin, app.ResourceInput{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Git web", Kind: "application", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: "https://github.com/example/web", RequestedRef: "main", CredentialKind: "public", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment, err := server.app.CreateRunnerEnrollment(admin, app.RunnerEnrollmentInput{RunnerID: "runner_build_api", RunnerName: "build", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runnerToken := "ncr_build_api_fixture"
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(runnerToken)))
-	enrolled, err := server.app.ConsumeRunnerEnrollment(ctx, enrollment.Token, app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("a", 32), CredentialHash: hash})
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, err := server.app.CreateServer(admin, app.ServerInput{Name: "build", RunnerID: enrolled.Runner.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = server.app.GrantDestinationProject(admin, detail.Destination.ID, app.DestinationProjectInput{ProjectID: resource.ProjectID}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = server.app.BindResourceDestination(admin, resource.ID, app.ResourceBindingInput{DestinationID: detail.Destination.ID}); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		tx, e := database.Begin(ctx)
-		if e != nil {
-			t.Fatal(e)
-		}
-		changed, e := hostingjobs.MigrateNextTx(ctx, tx)
-		if e != nil {
-			_ = tx.Rollback(ctx)
-			t.Fatal(e)
-		}
-		if e = tx.Commit(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if !changed {
-			break
-		}
-	}
-	d := "sha256:" + strings.Repeat("a", 64)
-	policy := domain.HostingBuildPolicy{Identity: d, ToolchainIdentity: d, Protocol: domain.HostingBuildProtocol, Platform: "linux/amd64", SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 1 << 20, MaxWorkspaceBytes: 10 << 20, MinFreeBytes: 1 << 20, MaxEntries: 100, MaxDepth: 32, PollInterval: time.Second}, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 512 << 20, Deadline: time.Minute, ContextBytes: 1 << 20, ContextFiles: 100, PlanBytes: 1 << 20, LogBytes: 1 << 20, ExportBytes: 10 << 20, UnpackedBytes: 10 << 20, UsageBytes: 20 << 20, ReserveBytes: 10 << 20, PollInterval: time.Second, DiskMode: "monitored"}}
-	session := createTestSession(t, server)
-	request := func(method, path, token, body string, want int) []byte {
-		t.Helper()
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		if token != "" {
-			r.Header.Set("Authorization", "Bearer "+token)
-		}
-		w := httptest.NewRecorder()
-		server.ServeHTTP(w, r)
-		if w.Code != want {
-			t.Fatalf("%s %s got%d want%d: %s", method, path, w.Code, want, w.Body.String())
-		}
-		return w.Body.Bytes()
-	}
-	if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "member_build_api", ProjectID: resource.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
-		t.Fatal(err)
-	}
-	viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
-	account, err := server.app.CreateServiceAccount(admin, app.ServiceAccountCreateInput{ProjectID: "proj_security", Name: "other project build bot", Role: domain.RoleMaintainer})
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := "/api/v1/resources/" + resource.ID + "/builds"
-	input := `{"expected_resource_generation":1,"expected_source_generation":1,"idempotency_key":"api-build"}`
-	request("POST", path, session, input, 503)
-	request("POST", path, viewer, input, 403)
-	request("GET", path, account.Token, "", 403)
-	request("POST", path, account.Token, input, 403)
+	for _, compose := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compose=%t", compose), func(t *testing.T) {
+			server, pg, database := newHostingBuildAPIFixture(t)
+			ctx := t.Context()
+			admin := auth.WithPrincipal(ctx, auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+			env, err := server.app.CreateProjectEnvironment(admin, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "build-api"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := domain.HostingBuildSettings{Strategy: "dockerfile"}
+			if compose {
+				settings = domain.HostingBuildSettings{Strategy: "compose", ComposeFile: "compose.yaml", PublicComponent: "web", ContainerPort: 8080}
+			}
+			resource, err := server.app.CreateResource(admin, app.ResourceInput{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Git web", Kind: "application", Source: domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: "https://github.com/example/web", RequestedRef: "main", CredentialKind: "public", Settings: settings}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			capabilities := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType}
+			if compose {
+				capabilities = append(capabilities, domain.HostingGitComposeBuildCapability)
+			}
+			enrollment, err := server.app.CreateRunnerEnrollment(admin, app.RunnerEnrollmentInput{RunnerID: "runner_build_api", RunnerName: "build", Capabilities: capabilities})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runnerToken := "ncr_build_api_fixture"
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(runnerToken)))
+			enrolled, err := server.app.ConsumeRunnerEnrollment(ctx, enrollment.Token, app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("a", 32), CredentialHash: hash})
+			if err != nil {
+				t.Fatal(err)
+			}
+			detail, err := server.app.CreateServer(admin, app.ServerInput{Name: "build", RunnerID: enrolled.Runner.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = server.app.GrantDestinationProject(admin, detail.Destination.ID, app.DestinationProjectInput{ProjectID: resource.ProjectID}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = server.app.BindResourceDestination(admin, resource.ID, app.ResourceBindingInput{DestinationID: detail.Destination.ID}); err != nil {
+				t.Fatal(err)
+			}
+			for {
+				tx, e := database.Begin(ctx)
+				if e != nil {
+					t.Fatal(e)
+				}
+				changed, e := hostingjobs.MigrateNextTx(ctx, tx)
+				if e != nil {
+					_ = tx.Rollback(ctx)
+					t.Fatal(e)
+				}
+				if e = tx.Commit(ctx); e != nil {
+					t.Fatal(e)
+				}
+				if !changed {
+					break
+				}
+			}
+			d := "sha256:" + strings.Repeat("a", 64)
+			policy := domain.HostingBuildPolicy{Identity: d, ToolchainIdentity: d, Protocol: domain.HostingBuildProtocol, Platform: "linux/amd64", SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 1 << 20, MaxWorkspaceBytes: 10 << 20, MinFreeBytes: 1 << 20, MaxEntries: 100, MaxDepth: 32, PollInterval: time.Second}, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 512 << 20, Deadline: time.Minute, ContextBytes: 1 << 20, ContextFiles: 100, PlanBytes: 1 << 20, LogBytes: 1 << 20, ExportBytes: 10 << 20, UnpackedBytes: 10 << 20, UsageBytes: 20 << 20, ReserveBytes: 10 << 20, PollInterval: time.Second, DiskMode: "monitored"}}
+			policy.GitCompose = compose
+			session := createTestSession(t, server)
+			request := func(method, path, token, body string, want int) []byte {
+				t.Helper()
+				r := httptest.NewRequest(method, path, strings.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				if token != "" {
+					r.Header.Set("Authorization", "Bearer "+token)
+				}
+				w := httptest.NewRecorder()
+				server.ServeHTTP(w, r)
+				if w.Code != want {
+					t.Fatalf("%s %s got%d want%d: %s", method, path, w.Code, want, w.Body.String())
+				}
+				return w.Body.Bytes()
+			}
+			if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "member_build_api", ProjectID: resource.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
+				t.Fatal(err)
+			}
+			viewer := createTestSessionFor(t, server, "viewer@example.local", "viewer")
+			account, err := server.app.CreateServiceAccount(admin, app.ServiceAccountCreateInput{ProjectID: "proj_security", Name: "other project build bot", Role: domain.RoleMaintainer})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := "/api/v1/resources/" + resource.ID + "/builds"
+			input := `{"expected_resource_generation":1,"expected_source_generation":1,"idempotency_key":"api-build"}`
+			request("POST", path, session, input, 503)
+			request("POST", path, viewer, input, 403)
+			request("GET", path, account.Token, "", 403)
+			request("POST", path, account.Token, input, 403)
 
-	request("POST", path, session, `{"expected_resource_generation":1,"expected_source_generation":1,"idempotency_key":"api-build","grant_id":"forbidden"}`, 400)
-	if err = pg.ConfigureHostingBuild(&policy); err != nil {
-		t.Fatal(err)
-	}
-	stop, err := pg.StartHostingExecution(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if e := stop(c); e != nil {
-			t.Error(e)
-		}
-	})
-	raw := request("POST", path, session, input, 202)
-	var response struct {
-		Build domain.PublicHostingBuild `json:"build"`
-	}
-	if err = json.Unmarshal(raw, &response); err != nil {
-		t.Fatal(err)
-	}
-	id := response.Build.ID
-	replay := request("POST", path, session, input, 202)
-	var repeated struct {
-		Build domain.PublicHostingBuild `json:"build"`
-	}
-	_ = json.Unmarshal(replay, &repeated)
-	if repeated.Build.ID != id {
-		t.Fatal("request replay changed build")
-	}
-	for _, forbidden := range []string{"operator_policy", "policy_hash", "input_id", "allowed_hosts", "grant", "toolchain_identity"} {
-		if strings.Contains(string(raw), forbidden) {
-			t.Fatalf("public leak %s", forbidden)
-		}
-	}
-	request("GET", path+"?limit=1&offset=0", session, "", 200)
-	request("GET", path, viewer, "", 200)
-	request("POST", "/api/v1/hosting-builds/"+id+"/cancel", viewer, `{"expected_revision":1}`, 403)
+			request("POST", path, session, `{"expected_resource_generation":1,"expected_source_generation":1,"idempotency_key":"api-build","grant_id":"forbidden"}`, 400)
+			if err = pg.ConfigureHostingBuild(&policy); err != nil {
+				t.Fatal(err)
+			}
+			stop, err := pg.StartHostingExecution(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if e := stop(c); e != nil {
+					t.Error(e)
+				}
+			})
+			raw := request("POST", path, session, input, 202)
+			var response struct {
+				Build domain.PublicHostingBuild `json:"build"`
+			}
+			if err = json.Unmarshal(raw, &response); err != nil {
+				t.Fatal(err)
+			}
+			id := response.Build.ID
+			replay := request("POST", path, session, input, 202)
+			var repeated struct {
+				Build domain.PublicHostingBuild `json:"build"`
+			}
+			_ = json.Unmarshal(replay, &repeated)
+			if repeated.Build.ID != id {
+				t.Fatal("request replay changed build")
+			}
+			for _, forbidden := range []string{"operator_policy", "policy_hash", "input_id", "allowed_hosts", "grant", "toolchain_identity"} {
+				if strings.Contains(string(raw), forbidden) {
+					t.Fatalf("public leak %s", forbidden)
+				}
+			}
+			request("GET", path+"?limit=1&offset=0", session, "", 200)
+			request("GET", path, viewer, "", 200)
+			request("POST", "/api/v1/hosting-builds/"+id+"/cancel", viewer, `{"expected_revision":1}`, 403)
 
-	request("GET", "/api/v1/hosting-builds/"+id, session, "", 200)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		b, e := pg.GetHostingBuild(ctx, "usr_bootstrap", id)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if b.RunID != "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no real River dispatch")
-		}
-		time.Sleep(20 * time.Millisecond)
+			request("GET", "/api/v1/hosting-builds/"+id, session, "", 200)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				b, e := pg.GetHostingBuild(ctx, "usr_bootstrap", id)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if b.RunID != "" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no real River dispatch")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			claim, err := server.app.ClaimRun(auth.WithPrincipal(ctx, auth.Principal{ID: enrolled.Runner.ID, Provider: domain.PrincipalRunner}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			authority := domain.HostingBuildAuthority{BuildID: id, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			statusBody, _ := json.Marshal(hostingbuildprotocol.StatusRequest{Authority: authority})
+			request("POST", "/api/v1/runners/builds/status", session, string(statusBody), 401)
+			statusRaw := request("POST", "/api/v1/runners/builds/status", runnerToken, string(statusBody), 200)
+			var status hostingbuildprotocol.StatusResponse
+			if json.Unmarshal(statusRaw, &status) != nil || !status.MayExecute {
+				t.Fatal("live status denied")
+			}
+			begin, _ := json.Marshal(hostingbuildprotocol.SourceBeginRequest{Authority: authority, ExpectedRevision: status.Build.Revision})
+			phaseRaw := request("POST", "/api/v1/runners/builds/source-begin", runnerToken, string(begin), 200)
+			var phase hostingbuildprotocol.PhaseResponse
+			_ = json.Unmarshal(phaseRaw, &phase)
+			source := domain.HostingBuildSourceReceipt{BuildID: id, SourceID: phase.Build.Snapshot.Source.ID, InputID: phase.Build.Snapshot.InputID, Commit: strings.Repeat("b", 40), PolicyHash: domain.HostingDocumentHash(phase.Build.Snapshot.Source.Policy), TreeDigest: "sha256:" + strings.Repeat("b", 64)}
+			commit := hostingbuildprotocol.SourceCommitRequest{Authority: authority, ReceiptID: "api-source", Receipt: source}
+			body, _ := json.Marshal(commit)
+			phaseRaw = request("POST", "/api/v1/runners/builds/source-commit", runnerToken, string(body), 200)
+			_ = json.Unmarshal(phaseRaw, &phase)
+			if phase.Acknowledgment == nil || hostingbuildprotocol.ValidateAcknowledgment(*phase.Acknowledgment, authority, "source", commit.ReceiptID, hostingbuildprotocol.SourceReceiptHash(source)) != nil {
+				t.Fatal("incorrect source acknowledgment")
+			}
+			body, _ = json.Marshal(hostingbuildprotocol.PrepareRequest{Authority: authority, ExpectedRevision: phase.Build.Revision, DaemonID: "daemon-api"})
+			phaseRaw = request("POST", "/api/v1/runners/builds/prepare", runnerToken, string(body), 200)
+			_ = json.Unmarshal(phaseRaw, &phase)
+			completion := hostingbuildprotocol.CompleteRequest{Authority: authority, ReceiptID: "api-failure", ExpectedRevision: phase.Build.Revision, Completion: hostingbuildprotocol.Completion{State: "failed", FailureCode: "build_failed"}}
+			if compose {
+				source := domain.HostingStackSource{Original: "services:\n  web:\n    build: .\n  db:\n    image: postgres:17\n", PublicComponent: "web", ContainerPort: 8080}
+				definition, e := domain.ParseHostingGitCompose(source, settings)
+				if e != nil {
+					t.Fatal(e)
+				}
+				digest := "sha256:" + strings.Repeat("c", 64)
+				artifact := domain.HostingBuildArtifact{Origin: "local_build", BuildID: domain.HostingComposeBuildID(id, "web"), SourceID: phase.Build.Snapshot.Source.ID, InputID: phase.Build.Snapshot.InputID, SourceReceiptHash: domain.HostingDocumentHash(phase.Build.SourceReceipt), ContextDigest: digest, RequestDigest: digest, DaemonID: "daemon-api", ImageID: digest, IndexDigest: digest, ManifestDigest: digest, ConfigDigest: digest, Platform: "linux/amd64"}
+				result := domain.HostingBuildComposeResult{SourceReceiptHash: domain.HostingDocumentHash(phase.Build.SourceReceipt), Source: source, Definition: definition, Services: []domain.HostingBuildComposeService{{Component: "web", Artifact: artifact}}}
+				result.Hash = domain.HostingDocumentHash(result)
+				completion.Completion = hostingbuildprotocol.Completion{State: "succeeded", ComposeResult: &result}
+			}
+			body, _ = json.Marshal(completion)
+			phaseRaw = request("POST", "/api/v1/runners/builds/complete", runnerToken, string(body), 200)
+			_ = json.Unmarshal(phaseRaw, &phase)
+			expectedState := "failed"
+			if compose {
+				expectedState = "succeeded"
+			}
+			if phase.Build.State != expectedState || phase.Acknowledgment == nil {
+				t.Fatal("terminal phase not committed")
+			}
+			request("POST", "/api/v1/runners/builds/complete", runnerToken, string(body), 200)
+			if compose {
+				public := request("GET", "/api/v1/hosting-builds/"+id, session, "", 200)
+				var prepared struct {
+					Build domain.PublicHostingBuild `json:"build"`
+				}
+				if json.Unmarshal(public, &prepared) != nil || prepared.Build.ComposeResult == nil || prepared.Build.Artifact != nil || prepared.Build.ComposeResult.Hash != completion.Completion.ComposeResult.Hash {
+					t.Fatal("public Compose result projection lost typed completion")
+				}
+				if strings.Contains(string(public), "source_receipt_hash") || strings.Contains(string(public), "request_digest") {
+					t.Fatal("public Compose result leaked internal artifact fingerprints")
+				}
+			}
+
+			if _, err = database.Exec(ctx, `UPDATE runners SET status='revoked' WHERE id=$1`, enrolled.Runner.ID); err != nil {
+				t.Fatal(err)
+			}
+			request("POST", "/api/v1/runners/builds/status", runnerToken, string(statusBody), 401)
+		})
 	}
-	claim, err := server.app.ClaimRun(auth.WithPrincipal(ctx, auth.Principal{ID: enrolled.Runner.ID, Provider: domain.PrincipalRunner}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	authority := domain.HostingBuildAuthority{BuildID: id, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
-	statusBody, _ := json.Marshal(hostingbuildprotocol.StatusRequest{Authority: authority})
-	request("POST", "/api/v1/runners/builds/status", session, string(statusBody), 401)
-	statusRaw := request("POST", "/api/v1/runners/builds/status", runnerToken, string(statusBody), 200)
-	var status hostingbuildprotocol.StatusResponse
-	if json.Unmarshal(statusRaw, &status) != nil || !status.MayExecute {
-		t.Fatal("live status denied")
-	}
-	begin, _ := json.Marshal(hostingbuildprotocol.SourceBeginRequest{Authority: authority, ExpectedRevision: status.Build.Revision})
-	phaseRaw := request("POST", "/api/v1/runners/builds/source-begin", runnerToken, string(begin), 200)
-	var phase hostingbuildprotocol.PhaseResponse
-	_ = json.Unmarshal(phaseRaw, &phase)
-	source := domain.HostingBuildSourceReceipt{BuildID: id, SourceID: phase.Build.Snapshot.Source.ID, InputID: phase.Build.Snapshot.InputID, Commit: strings.Repeat("b", 40), PolicyHash: domain.HostingDocumentHash(phase.Build.Snapshot.Source.Policy), TreeDigest: "sha256:" + strings.Repeat("b", 64)}
-	commit := hostingbuildprotocol.SourceCommitRequest{Authority: authority, ReceiptID: "api-source", Receipt: source}
-	body, _ := json.Marshal(commit)
-	phaseRaw = request("POST", "/api/v1/runners/builds/source-commit", runnerToken, string(body), 200)
-	_ = json.Unmarshal(phaseRaw, &phase)
-	if phase.Acknowledgment == nil || hostingbuildprotocol.ValidateAcknowledgment(*phase.Acknowledgment, authority, "source", commit.ReceiptID, hostingbuildprotocol.SourceReceiptHash(source)) != nil {
-		t.Fatal("incorrect source acknowledgment")
-	}
-	body, _ = json.Marshal(hostingbuildprotocol.PrepareRequest{Authority: authority, ExpectedRevision: phase.Build.Revision, DaemonID: "daemon-api"})
-	phaseRaw = request("POST", "/api/v1/runners/builds/prepare", runnerToken, string(body), 200)
-	_ = json.Unmarshal(phaseRaw, &phase)
-	completion := hostingbuildprotocol.CompleteRequest{Authority: authority, ReceiptID: "api-failure", ExpectedRevision: phase.Build.Revision, Completion: hostingbuildprotocol.Completion{State: "failed", FailureCode: "build_failed"}}
-	body, _ = json.Marshal(completion)
-	phaseRaw = request("POST", "/api/v1/runners/builds/complete", runnerToken, string(body), 200)
-	_ = json.Unmarshal(phaseRaw, &phase)
-	if phase.Build.State != "failed" || phase.Acknowledgment == nil {
-		t.Fatal("terminal phase not committed")
-	}
-	request("POST", "/api/v1/runners/builds/complete", runnerToken, string(body), 200)
-	if _, err = database.Exec(ctx, `UPDATE runners SET status='revoked' WHERE id=$1`, enrolled.Runner.ID); err != nil {
-		t.Fatal(err)
-	}
-	request("POST", "/api/v1/runners/builds/status", runnerToken, string(statusBody), 401)
 }
 
 func TestPublicAPIsRejectBuildTaskAndAuthorityAtEveryWorkflowShape(t *testing.T) {

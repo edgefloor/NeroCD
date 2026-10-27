@@ -443,17 +443,23 @@ func (q *Queries) InsertHostingBuildArtifact(ctx context.Context, arg InsertHost
 }
 
 const insertHostingBuildComposeResult = `-- name: InsertHostingBuildComposeResult :exec
-INSERT INTO hosting_build_compose_results(build_id,body,body_hash) VALUES($1,$2,$3)
+INSERT INTO hosting_build_compose_results(build_id,body,body_hash,definition_hash) VALUES($1,$2,$3,$4)
 `
 
 type InsertHostingBuildComposeResultParams struct {
-	BuildID  string          `json:"build_id"`
-	Body     json.RawMessage `json:"body"`
-	BodyHash string          `json:"body_hash"`
+	BuildID        string          `json:"build_id"`
+	Body           json.RawMessage `json:"body"`
+	BodyHash       string          `json:"body_hash"`
+	DefinitionHash string          `json:"definition_hash"`
 }
 
 func (q *Queries) InsertHostingBuildComposeResult(ctx context.Context, arg InsertHostingBuildComposeResultParams) error {
-	_, err := q.db.Exec(ctx, insertHostingBuildComposeResult, arg.BuildID, arg.Body, arg.BodyHash)
+	_, err := q.db.Exec(ctx, insertHostingBuildComposeResult,
+		arg.BuildID,
+		arg.Body,
+		arg.BodyHash,
+		arg.DefinitionHash,
+	)
 	return err
 }
 
