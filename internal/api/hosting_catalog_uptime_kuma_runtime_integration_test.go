@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -39,7 +41,10 @@ func TestHostingCatalogUptimeKumaCompiledRunnerHTTPS(t *testing.T) {
 	if first.Plan == nil || first.Plan.Storage == nil || first.Release == nil || first.Result == nil || first.Plan.CompilerVersion != domain.HostingOwnedStorageRuntimeCompilerVersion || first.Snapshot.RuntimeConfiguration != installed.RuntimeConfiguration {
 		t.Fatal("empty runtime generation or owned storage deployment missing")
 	}
-	runtime := storageRuntimeJSON[domain.HostingRuntimeConfiguration](f, "GET", "/api/v1/resources/"+resourceID+"/runtime-configuration", nil, 200)
+	runtimeResponse := storageRuntimeJSON[struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}](f, "GET", "/api/v1/resources/"+resourceID+"/runtime-configuration", nil, 200)
+	runtime := runtimeResponse.Configuration
 	if runtime.RuntimeGeneration != 1 || runtime.Entries == nil || len(runtime.Entries) != 0 {
 		t.Fatal("saved empty runtime generation missing")
 	}
@@ -99,5 +104,33 @@ func catalogUptimeKumaHTTPS(t *testing.T, f *storageRuntimeFixture) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 	if err != nil || response.StatusCode != 200 || response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || !bytes.Contains(body, []byte("Uptime Kuma")) {
 		t.Fatal("Kuma managed HTTPS trust/readiness missing")
+	}
+}
+
+// TestCatalogKumaRuntimeResponseEnvelope reproduces the fixture's incorrect
+// top-level decode using the production serializer, without starting Docker.
+func TestCatalogKumaRuntimeResponseEnvelope(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeJSON(recorder, http.StatusOK, map[string]any{"runtime_configuration": domain.HostingRuntimeConfiguration{ResourceID: "resource_fixture", RuntimeGeneration: 1, Entries: []domain.HostingRuntimeEntry{}}})
+	var incorrect domain.HostingRuntimeConfiguration
+	if json.Unmarshal(recorder.Body.Bytes(), &incorrect) != nil || incorrect.RuntimeGeneration != 0 || incorrect.Entries != nil {
+		t.Fatal("original wrong-level decode was not reproduced")
+	}
+	var response struct {
+		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+	}
+	if json.Unmarshal(recorder.Body.Bytes(), &response) != nil || response.Configuration.RuntimeGeneration != 1 || response.Configuration.Entries == nil || len(response.Configuration.Entries) != 0 {
+		t.Fatal("production envelope lost persisted empty generation")
+	}
+	for _, raw := range []string{`{}`, `{"runtime_configuration":{"runtime_generation":1,"entries":null}}`, `{"runtime_configuration":{"runtime_generation":0,"entries":[]}}`} {
+		var missing struct {
+			Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
+		}
+		if json.Unmarshal([]byte(raw), &missing) != nil {
+			t.Fatal("negative decoder fixture malformed")
+		}
+		if missing.Configuration.RuntimeGeneration == 1 && missing.Configuration.Entries != nil && len(missing.Configuration.Entries) == 0 {
+			t.Fatal("missing generation or entries accepted")
+		}
 	}
 }
