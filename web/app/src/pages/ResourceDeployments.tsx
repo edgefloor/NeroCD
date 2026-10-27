@@ -74,7 +74,7 @@ export function OperationDetail({ actor, projectID, resourceID, operationID, wri
       {stackRef ? <p className="break-all text-sm">Saved Compose generation {stackRef.generation} · {stackRef.hash}</p> : null}
       {gitCompose ? <p className="break-all text-sm">Prepared Git Compose result {gitCompose.result_hash}</p> : null}
       <StackComponentStatus operation={operation} />
-      {operation.snapshot.storage_route_continuity ? <StorageContinuityDetail scope={{ actor, project: projectID, resource: resourceID }} operation={operationID} /> : null}
+      {operation.snapshot.storage_route_continuity ? <StorageContinuityDetail scope={{ actor, project: projectID, resource: resourceID }} operation={operationID} recovery={{ record: operation, writable, blocked: blocked || detail.isError || detail.isFetching }} /> : null}
       {operation.stack_stop_plan ? <p>Compose Stop · target {operation.stack_stop_plan.target.operation_id}. Containers are removed; named volumes are retained.</p> : null}
       {operation.cleanup_plan ? <p>Retained release cleanup · target {operation.cleanup_plan.target.operation_id}</p> : null}
       <dl className="space-y-1 break-all text-sm">

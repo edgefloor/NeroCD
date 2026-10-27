@@ -1,16 +1,23 @@
 import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { allProjectMembersQuery, principalQuery } from "@/api";
+import { canMaintainProject } from "@/lib/permissions";
 import { ApiError } from "@/api/errors";
 import { getCatalogInstallation } from "@/api/hosting-catalog";
 import { getHostingRuntimeConfiguration } from "@/api/hosting-runtime-config";
 import {
+  getHostingOperation,
   requestHostingDeployment,
+  type HostingOperation,
   type HostingDeploymentInput,
 } from "@/api/hosting-deployments";
 import {
   boundedStorageRequest,
   getStorageContinuityStatus,
+  recoverStorageRouteContinuity,
+  type StorageRouteRecoveryInput,
+  type StorageContinuityStatus,
   getStorageDeploymentOptions,
   getStorageDeploymentStorage,
   validStorageReadiness,
@@ -25,9 +32,11 @@ import { Button } from "@/components/ui/button";
 export function StorageContinuityDetail({
   scope,
   operation,
+  recovery,
 }: {
   scope: StorageDeploymentScope;
   operation: string;
+  recovery?: { record: HostingOperation; writable: boolean; blocked: boolean };
 }) {
   const detail = useQuery({
     queryKey: [
@@ -97,6 +106,7 @@ export function StorageContinuityDetail({
           ) : null}
         </>
       ) : null}
+      {recovery && status ? <StorageContinuityRecovery key={JSON.stringify([scope.actor, scope.project, scope.resource, operation])} scope={scope} operation={operation} record={recovery.record} status={status} blocked={recovery.blocked || detail.isError || detail.isFetching} writable={recovery.writable} onUpdated={() => { void detail.refetch(); }} /> : null}
       <Button
         type="button"
         variant="outline"
@@ -108,6 +118,76 @@ export function StorageContinuityDetail({
       </Button>
     </section>
   );
+}
+
+function continuityRecoveryInput(record: HostingOperation, scope: StorageDeploymentScope, operation: string): StorageRouteRecoveryInput | undefined {
+  const descriptor = record.snapshot.storage_route_continuity;
+  const receipt = record.complete_receipt;
+  if (record.id !== operation || record.resource_id !== scope.resource || record.project_id !== scope.project || record.snapshot.resource_id !== scope.resource ||
+    record.state !== "succeeded" || record.mutation_hold !== false || record.restore_ownership_held !== false || record.reconcile_requested !== false || record.cleanup_plan || record.stack_stop_plan ||
+    record.result?.outcome !== "succeeded" || record.result.ready !== true || record.result.uncertain !== false || record.result.restored !== false ||
+    !descriptor || !/^sha256:[a-f0-9]{64}$/.test(descriptor.hash) || !receipt || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(receipt.id) || !/^sha256:[a-f0-9]{64}$/.test(receipt.body_hash)) return undefined;
+  return { expected_descriptor_hash: descriptor.hash, expected_complete_receipt_id: receipt.id, expected_complete_receipt_hash: receipt.body_hash };
+}
+function StorageContinuityRecovery({ scope, operation, record, status, blocked, writable, onUpdated }: {
+  scope: StorageDeploymentScope; operation: string; record: HostingOperation; status: StorageContinuityStatus; blocked: boolean; writable: boolean; onUpdated: () => void;
+}) {
+  const principal = useQuery(principalQuery());
+  const members = useQuery(allProjectMembersQuery());
+  const [review, setReview] = useState<StorageRouteRecoveryInput>();
+  const [confirmed, setConfirmed] = useState(false), [sent, setSent] = useState(false), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [denied, setDenied] = useState(false);
+  const [message, setMessage] = useState("");
+  const active = useRef(true), request = useRef<AbortController | null>(null);
+  useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
+  const access = writable && !principal.isPending && !principal.isFetching && !principal.isError && !members.isPending && !members.isFetching && !members.isError && principal.data &&
+    JSON.stringify([principal.data.provider, principal.data.id]) === scope.actor && canMaintainProject(principal.data, members.data ?? [], scope.project);
+  const evidence = continuityRecoveryInput(record, scope, operation);
+  const eligible = Boolean(evidence) && (sent || status.state === "unresolved" && !status.successor_proxy_operation_id);
+  useEffect(() => {
+    if (!access || denied) { request.current?.abort(); setReview(undefined); setConfirmed(false); setSent(false); }
+    else if (blocked) request.current?.abort();
+  }, [Boolean(access), blocked, denied]);
+  async function prepare() {
+    if (!access || blocked || denied || busy || !eligible || sent && !conflict) return;
+    const controller = new AbortController(); request.current = controller; setBusy(true); setMessage("");
+    try {
+      const current = await getHostingOperation(operation, { signal: controller.signal });
+      const currentStatus = await getStorageContinuityStatus(scope, operation, controller.signal);
+      const input = continuityRecoveryInput(current, scope, operation);
+      if (!active.current || controller.signal.aborted) return;
+      if (!input || currentStatus.state !== "unresolved" || currentStatus.successor_proxy_operation_id || JSON.stringify(input) !== JSON.stringify(evidence)) throw new Error("Recovery evidence changed. Refresh operation and continuity evidence before reviewing again.");
+      setReview(input); setConfirmed(false); setSent(false); setConflict(false);
+    } catch (cause) {
+      if (!active.current || controller.signal.aborted) return;
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) setDenied(true);
+      setMessage("Unable to review current recovery evidence. Refresh operation and continuity evidence before another request.");
+    } finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
+  }
+  async function submit() {
+    if (!access || blocked || denied || busy || conflict || !review || !confirmed || !eligible || JSON.stringify(evidence) !== JSON.stringify(review)) return;
+    const controller = new AbortController(); request.current = controller; setBusy(true); setSent(true); setMessage("");
+    try {
+      const result = await recoverStorageRouteContinuity(scope, operation, review, controller.signal);
+      if (!active.current || controller.signal.aborted) return;
+      if (!["proxy_pending", "loaded", "proxy_failed"].includes(result.state) || result.successor_proxy_operation_id !== `pop_storage_${operation}`) throw new Error("Recovery response did not confirm a linked proxy operation");
+      setReview(undefined); setConfirmed(false); setSent(false); setMessage("Proxy continuity queue request confirmed. Review its recorded status; public traffic may still be pending."); onUpdated();
+    } catch (cause) {
+      if (!active.current || controller.signal.aborted) return;
+      if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) { setDenied(true); setMessage("Recovery permission is unavailable. Refresh access before another action."); }
+      else if (cause instanceof ApiError && [400, 409].includes(cause.status)) { setConflict(true); setMessage("Recovery conflicts with current evidence. Refresh operation and continuity evidence and explicitly review again."); }
+      else setMessage("Recovery delivery is unconfirmed. Retry the identical reviewed recovery request; no deployment is repeated.");
+    } finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
+  }
+  if (denied) return <p role="alert">Recovery permission is unavailable. Refresh access before another action.</p>;
+  if (!access || blocked || !eligible) return null;
+  return <section className="min-w-0 space-y-2 break-all" aria-label="Proxy continuity recovery">
+    <p>Recovery retries only the proxy queue for this completed deployment. It does not deploy containers or recreate data volumes.</p>
+    <Button type="button" variant="outline" disabled={busy || sent && !conflict} onClick={() => void prepare()}>Review proxy continuity recovery</Button>
+    {review ? <><p>Deployment receipt {review.expected_complete_receipt_id} · descriptor {review.expected_descriptor_hash}.</p>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || sent} onChange={event => setConfirmed(event.target.checked)} /><span>I reviewed this completed deployment and want to retry its proxy continuity queue.</span></label>
+      <Button type="button" disabled={busy || conflict || !confirmed || JSON.stringify(evidence) !== JSON.stringify(review)} onClick={() => void submit()}>{sent ? "Retry identical proxy continuity recovery" : "Retry proxy continuity queue"}</Button></> : null}
+    {message ? <p role="status">{message}</p> : null}
+  </section>;
 }
 
 export function StorageDeploymentReview({

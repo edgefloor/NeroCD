@@ -309,3 +309,18 @@ test("stopped Compose options retain predecessor evidence and require a valid st
     await expect(getStorageDeploymentOptions(scope)).rejects.toThrow();
   }
 });
+
+
+test("proxy continuity recovery encodes exact scope, preserves receipt CAS and validates response scope", async () => {
+  const { recoverStorageRouteContinuity } = await import("./hosting-storage-deployment");
+  const requestBody = { expected_descriptor_hash: `sha256:${"a".repeat(64)}`, expected_complete_receipt_id: "complete_hop", expected_complete_receipt_hash: `sha256:${"b".repeat(64)}` };
+  const signal = new AbortController().signal;
+  const scope = { actor: "actor", project: "project", resource: "resource/one" };
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ resource_id: scope.resource, operation_id: "hop/one", state: "proxy_pending", reason: "pending", successor_proxy_operation_id: "pop_storage_hop" }))).mockResolvedValueOnce(new Response(JSON.stringify({ resource_id: "other", operation_id: "hop/one", state: "proxy_pending", reason: "pending" })));
+  vi.stubGlobal("fetch", fetch);
+  await recoverStorageRouteContinuity(scope, "hop/one", requestBody, signal);
+  expect(fetch.mock.calls[0][0]).toBe("/api/v1/resources/resource%2Fone/storage-route-continuity/hop%2Fone/recover");
+  expect(fetch.mock.calls[0][1]).toMatchObject({ method: "POST", body: JSON.stringify(requestBody), credentials: "include", cache: "no-store", headers: expect.objectContaining({ "X-NeroCD-CSRF": "1" }) });
+  expect(fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  await expect(recoverStorageRouteContinuity(scope, "hop/one", requestBody)).rejects.toThrow("scope or evidence mismatch");
+});

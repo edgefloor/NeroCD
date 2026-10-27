@@ -9,6 +9,7 @@ export type StorageDeploymentOptions = Omit<components["schemas"]["HostingStorag
   stopped_operation_id?: string;
   application_database_storage?: components["schemas"]["HostingStorageDeploymentOptions"]["application_database_storage"];
 };
+export type StorageRouteRecoveryInput = components["schemas"]["HostingStorageRouteRecoveryInput"];
 export type StorageContinuityStatus =
   components["schemas"]["HostingStorageRouteContinuityStatus"];
 export type StorageDeploymentScope = {
@@ -333,6 +334,10 @@ export async function getStorageContinuityStatus(
       ),
     signal,
   );
+  validateStorageContinuityStatus(value, scope, operation);
+  return value;
+}
+function validateStorageContinuityStatus(value: StorageContinuityStatus, scope: StorageDeploymentScope, operation: string) {
   if (
     value.resource_id !== scope.resource ||
     value.operation_id !== operation ||
@@ -356,5 +361,9 @@ export async function getStorageContinuityStatus(
         value.reason !== "loaded_historical"))
   )
     throw new Error("Storage continuity scope or evidence mismatch");
+}
+export async function recoverStorageRouteContinuity(scope: StorageDeploymentScope, operation: string, input: StorageRouteRecoveryInput, signal?: AbortSignal): Promise<StorageContinuityStatus> {
+  const value = await boundedStorageRequest(signal => request<StorageContinuityStatus>(`${path(scope.resource)}/storage-route-continuity/${encodeURIComponent(operation)}/recover`, { method: "POST", body: input, signal, cache: "no-store" }), signal);
+  validateStorageContinuityStatus(value, scope, operation);
   return value;
 }
