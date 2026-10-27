@@ -842,7 +842,7 @@ export function StorageArchives({
     </section>
   );
 }
-function OperationDetails({ operation: o }: { operation: ArchiveOperation }) {
+export function OperationDetails({ operation: o }: { operation: ArchiveOperation }) {
   return (
     <section
       aria-label={`${o.mode} operation ${o.id}`}

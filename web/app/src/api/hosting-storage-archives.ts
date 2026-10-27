@@ -14,7 +14,7 @@ export type ArchiveScope = {
   destination: string;
   binding: string;
 };
-export type Backup = components["schemas"]["HostingStorageBackup"];
+export type Backup = components["schemas"]["HostingStorageBackup"] & { volume?: string; source_deployed_operation_id?: string };
 export type BackupInput = components["schemas"]["HostingStorageBackupInput"];
 export type RestoreInput = components["schemas"]["HostingStorageRestoreInput"];
 export type RecoveryInput =
@@ -113,7 +113,7 @@ export function archiveBackup(
         "created_by",
         "created_at",
       ],
-      ["blob", "copies"],
+      ["blob", "copies", "volume", "source_deployed_operation_id"],
     ) ||
     !id(value.id) ||
     (expected !== undefined && value.id !== expected) ||
@@ -125,6 +125,7 @@ export function archiveBackup(
     !Number.isFinite(Date.parse(value.created_at))
   )
     fail();
+  if ((value.volume === undefined) !== (value.source_deployed_operation_id === undefined) || value.volume !== undefined && (!id(value.volume) || !id(value.source_deployed_operation_id))) fail();
   blob(value.blob, scope, value.id);
   if (value.copies !== undefined) {
     if (!Array.isArray(value.copies) || value.copies.length > 10000) fail();
@@ -198,7 +199,7 @@ export function archiveOperation(
   backup?: string,
 ) {
   const a = value?.storage_archive,
-    p = a?.plan;
+    p = a?.plan as (NonNullable<typeof a>["plan"] & { compose_source?: { healthy: components["schemas"]["HostingHealthy"]; plan: components["schemas"]["HostingApplyPlan"]; volume: components["schemas"]["HostingStackVolume"]; retained: { healthy: components["schemas"]["HostingHealthy"]; plan: components["schemas"]["HostingApplyPlan"] }[] } }) | undefined;
   if (
     !id(expected) ||
     value?.id !== expected ||
@@ -225,7 +226,13 @@ export function archiveOperation(
     value.observation_lease !== undefined
   )
     fail();
-  storageScope(p.source_storage, scope, scope.resource, scope.binding);
+  if (!p.compose_source && (String(p.compiler_version) === "managed-compose.local-volume-archive.v1" || String(p.policy_version) === "managed-compose.local-volume-archive.v1")) fail();
+  if (p.compose_source) {
+    const c = p.compose_source, h = c.healthy, plan = c.plan;
+    if (p.source_storage?.id || p.source_healthy?.operation_id || p.source_materialization?.creation_operation_id || p.source_materialization?.storage_ref?.storage_id) fail();
+    if (String(p.compiler_version) !== "managed-compose.local-volume-archive.v1" || String(p.policy_version) !== "managed-compose.local-volume-archive.v1" || p.target || !["backup", "recover"].includes(a.mode) || value.resource_id !== scope.resource || value.binding_id !== scope.binding || !h?.stack || !plan?.stack || !id(h.operation_id) || h.snapshot.resource_id !== scope.resource || h.snapshot.binding_id !== scope.binding || h.snapshot.destination_id !== scope.destination || plan.snapshot.resource_id !== scope.resource || plan.snapshot.binding_id !== scope.binding || plan.snapshot.destination_id !== scope.destination || plan.hash !== h.plan_hash || !hash(plan.hash) || !id(c.volume?.name) || !runtimeID(c.volume.volume_name) || !plan.stack.volumes.some((v) => v.name === c.volume.name && v.volume_name === c.volume.volume_name) || !Array.isArray(c.retained) || c.retained.length > 64 || !Array.isArray(p.writers) || p.writers.length || p.remote_target || p.remote_source) fail();
+    for (const r of c.retained) if (!r.healthy?.stack || !r.plan?.stack || r.healthy.snapshot.resource_id !== scope.resource || r.healthy.snapshot.binding_id !== scope.binding || r.healthy.snapshot.destination_id !== scope.destination || r.plan.hash !== r.healthy.plan_hash) fail();
+  } else storageScope(p.source_storage, scope, scope.resource, scope.binding);
   if (p.target) {
     const t = p.target;
     if (

@@ -20,7 +20,7 @@ deletion=false
 catalog=false
 managed_compose=false
 case ${1:-} in
- --managed-compose) managed_compose=true; catalog=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
+ --managed-compose) managed_compose=true; catalog=true; archive=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
  --catalog) catalog=true; archive=true; owner=nerocd-catalog-linkding-runtime-20261026; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogLinkdingCompiledRunnerHTTPS$';;
  '') test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageCompiledRunnerHTTPS)$';;
  --archive) archive=true; test_pattern='^(TestStorageRuntimeRollback|TestHostingStorageArchiveCompiledRunnerHTTPS)$';;

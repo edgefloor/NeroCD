@@ -387,6 +387,37 @@ try {
   await checkApplication("compose-after-start");
   safe.browser_stack_stop_start_persistence = true;
   await report("app_start_checked", String(taskID));
+  await state("volume_backup");
+  await hosting(page);
+  step = "review_compose_volume_backup";
+  const volumeBackups = application.getByRole("region", {name:"Compose volume backups",exact:true});
+  await volumeBackups.getByRole("button", {name:"Refresh Compose backup evidence and history",exact:true}).click();
+  await volumeBackups.getByRole("combobox", {name:"Named volume to back up",exact:true}).selectOption("vikunja-data");
+  await volumeBackups.getByRole("button", {name:"Review Compose volume backup",exact:true}).click();
+  const volumeReview = volumeBackups.getByRole("region", {name:"Reviewed Compose volume backup",exact:true});
+  await expect(volumeReview).toContainText(startedOperation);
+  await volumeReview.getByRole("checkbox").check();
+  for (const width of [320,390,430,1280]) {
+    await page.setViewportSize({width,height:900});
+    if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error("volume backup responsive overflow");
+  }
+  const volumeResponse = response(page, `/api/v1/resources/${resourceID}/storage-backups`);
+  await volumeReview.getByRole("button", {name:"Confirm Compose volume backup",exact:true}).click();
+  const volumeResult = await checkedResponse(volumeResponse,202);
+  const volumeBody = JSON.parse((await volumeResponse).request().postData());
+  if(volumeResult.volume!=="vikunja-data"||volumeResult.source_deployed_operation_id!==startedOperation||volumeBody?.expected_deployed_operation_id!==startedOperation||volumeBody?.acknowledge_interruption!==true||volumeBody?.remote_target)throw Error("volume backup identity changed");
+  safe.browser_compose_volume_backup_admission=true;
+  await report("volume_backed_up", volumeResult.id);
+  await state("volume_recheck");
+  await checkApplication("compose-after-volume-backup");
+  await volumeBackups.getByRole("button",{name:"Refresh Compose backup evidence and history",exact:true}).click();
+  await volumeBackups.getByRole("button",{name:`View volume backup ${volumeResult.id}`,exact:true}).click();
+  await expect(volumeBackups).toContainText("Backup state: succeeded");
+  await expect(volumeBackups).toContainText("Local artifact:");
+  await expect(volumeBackups).toContainText("Writer resumption: resumed");
+  safe.browser_compose_volume_backup_persistence_new_writes=true;
+  safe.browser_compose_volume_backup_history=true;
+  await report("volume_checked",String(taskID));
   const backupState = await state("database_backup");
   await hosting(page);
   step = "seed_existing_import_target";

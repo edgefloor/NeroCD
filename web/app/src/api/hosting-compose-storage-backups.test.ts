@@ -1,0 +1,11 @@
+import { afterEach, expect, test, vi } from "vitest";
+import { requestComposeBackup, validateComposeBackupVolumes } from "./hosting-compose-storage-backups";
+const scope = { actor:"u",project:"p",resource:"r",binding:"b",destination:"d" };
+const evidence = {resource_id:"r",resource_generation:2,operation_id:"deploy",available:true,volumes:[{volume:"uploads",eligible:true,mounts:[{component:"web",mount_path:"/files",read_only:false}]}]};
+const body = {request_id:"a".repeat(32),expected_resource_generation:2,volume:"uploads",expected_deployed_operation_id:"deploy",acknowledge_interruption:true} as const;
+const backup = {id:"backup",project_id:"p",resource_id:"r",operation_id:"op",state:"queued",created_by:"u",created_at:"2026-10-27T00:00:00Z",volume:"uploads",source_deployed_operation_id:"deploy"};
+afterEach(()=>vi.unstubAllGlobals());
+test("validates scoped named volume mounts",()=>expect(()=>validateComposeBackupVolumes(evidence,"r")).not.toThrow());
+test.each([{...evidence,resource_id:"other"},{...evidence,operation_id:undefined},{...evidence,resource_generation:0},{...evidence,extra:true},{...evidence,volumes:[...evidence.volumes,...evidence.volumes]}])("rejects invalid evidence %j",v=>expect(()=>validateComposeBackupVolumes(v,"r")).toThrow());
+test("checks selected volume and deployment in receipt",async()=>{vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify(backup))));expect(await requestComposeBackup(scope,body)).toEqual(backup);vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({...backup,volume:"db"}))));await expect(requestComposeBackup(scope,body)).rejects.toThrow("receipt mismatch");});
+test("closed input refuses remote targets and missing consent",async()=>{const fetch=vi.fn();vi.stubGlobal("fetch",fetch);await expect(requestComposeBackup(scope,{...body,remote_target:{}} as typeof body)).rejects.toThrow();await expect(requestComposeBackup(scope,{...body,acknowledge_interruption:false} as unknown as typeof body)).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();});

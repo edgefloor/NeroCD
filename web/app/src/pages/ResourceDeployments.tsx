@@ -1,3 +1,4 @@
+import { ComposeStorageBackups } from "./ComposeStorageBackups";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, ApiError, principalQuery } from "@/api";
@@ -334,6 +335,7 @@ function Deployments({ actor, resource, writable, blocked, onDenied }: { actor: 
     {selected ? <OperationDetail actor={actor} key={selected} projectID={resource.project_id} resourceID={resource.id} operationID={selected} writable={writable} owner={owner} blocked={unavailable} onChanged={refreshHistory} /> : null}
     {binding.data && resource.source.kind !== "compose" ? <RetainedReleases actor={actor} key={JSON.stringify([resource.project_id, resource.id, binding.data.id, principal.data?.provider, principal.data?.id, writable])} resource={base} writable={writable} blocked={unavailable} mutationHeld={mutationHeld} restoreHeld={restoreHeld} onSelected={setSelected} onChanged={refreshHistory} /> : null}
     {resource.source.kind === "compose" ? <>
+      {binding.data ? <ComposeStorageBackups key={JSON.stringify([actor, resource.project_id, resource.id, binding.data.id, owner])} scope={{ actor, project: resource.project_id, resource: resource.id, binding: binding.data.id, destination: binding.data.destination_id }} generation={resource.generation} owner={owner} blocked={unavailable || restoreHeld} onDenied={onDenied} /> : null}
       <StackLifecycle key={binding.data?.id ?? "unbound"} scope={{ actor, project: resource.project_id, resource: resource.id }} generation={resource.generation} writable={writable} blocked={unavailable || restoreHeld} mutationHeld={mutationHeld} onDenied={onDenied} onSelected={(operationID) => { setSelected(operationID); setOffset(0); }} onRefresh={refreshHistory} />
       {!binding.isPending && !binding.isError && !binding.data ? <p role="status">Save a desired destination before requesting deployment.</p> : null}
       {binding.data && storageOptions.isPending ? <p role="status">Loading Compose deployment options...</p> : null}

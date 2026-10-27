@@ -616,3 +616,27 @@ test("recovery validates original plan selection and projects only the fresh rec
     "/api/v1/hosting-operations/op/storage-archive-recovery",
   );
 });
+
+test("Compose archive uses real stack proof without fabricated image storage", () => {
+  const value = fixture();
+  const snapshot = { resource_id: "r", binding_id: "b", destination_id: "d" };
+  const volume = { name: "uploads", volume_name: "owned-uploads" };
+  const plan = { snapshot, hash, stack: { volumes: [volume] } };
+  const healthy = { snapshot, operation_id: "deploy", plan_hash: hash, stack: {} };
+  const compose = { ...value, storage_archive: { ...value.storage_archive, plan: { ...value.storage_archive.plan, source_storage: {}, source_healthy: {}, source_materialization: {}, writers: [], compiler_version: "managed-compose.local-volume-archive.v1", policy_version: "managed-compose.local-volume-archive.v1", compose_source: { healthy, plan, volume, retained: [] } } } };
+  expect(archiveOperation(op(compose), scope, "op", "backup").backup).toBe("backup");
+  const mixed = structuredClone(compose); mixed.storage_archive.plan.source_storage = storage;
+  expect(() => archiveOperation(op(mixed), scope, "op", "backup")).toThrow();
+  const wrong = { ...value, storage_archive: { ...value.storage_archive, plan: { ...value.storage_archive.plan, compiler_version: "managed-compose.local-volume-archive.v1" } } };
+  expect(() => archiveOperation(op(wrong), scope, "op", "backup")).toThrow();
+  for (const change of [ { ...plan, hash: `sha256:${"b".repeat(64)}` }, { ...plan, snapshot: { ...snapshot, resource_id: "other" } }, { ...plan, stack: { volumes: [] } } ]) {
+    const invalid = structuredClone(compose); invalid.storage_archive.plan.compose_source.plan = change;
+    expect(() => archiveOperation(op(invalid), scope, "op", "backup")).toThrow();
+  }
+  const invalid = structuredClone(compose); invalid.storage_archive.plan.compose_source.healthy.snapshot.binding_id = "other";
+  expect(() => archiveOperation(op(invalid), scope, "op", "backup")).toThrow();
+});
+test("Compose history preserves logical volume and source deployment, rejecting partial metadata", () => {
+  expect(archiveBackup({ ...backup, volume: "uploads", source_deployed_operation_id: "deploy" } as never, scope)).toMatchObject({ volume: "uploads" });
+  expect(() => archiveBackup({ ...backup, volume: "uploads" } as never, scope)).toThrow();
+});
