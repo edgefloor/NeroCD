@@ -1,15 +1,15 @@
 <a id="hosting-catalog-contract"></a>
 
-# Install Linkding from the catalog
+# Install an application from the catalog
 
-The Linkding catalog entry translates the Coolify template at
+The Linkding and Uptime Kuma catalog entries translate Coolify templates at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3` into an ordinary image application.
 The installed application uses the existing resource, destination, deployment,
-managed-secret and owned-storage APIs. It has no automation TaskTemplate.
+managed-secret and owned-storage APIs. Neither entry creates an automation TaskTemplate.
 
 ## Pinned definition
 
-The immutable version is `coolify-b12d1386.linkding-1.47.0.v1`. It selects
+Linkding's immutable version is `coolify-b12d1386.linkding-1.47.0.v1`. It selects
 `docker.io/sissbruecker/linkding@sha256:e35cb50e0581178f245125ffaa909c565416c94c9f22ace305a7d234a4345522`,
 container port 9090, readiness `/health`, and a retained local Docker volume at
 `/etc/linkding/data`. The runtime configuration references separately generated,
@@ -27,30 +27,54 @@ Coolify `SERVICE_URL_LINKDING_9090` declaration is URL metadata, not a required
 Linkding environment variable. NeroCD uses its ordinary explicit route workflow.
 Arbitrary or pasted Compose imports remain incomplete and are rejected.
 
+## Uptime Kuma pinned definition
+
+Uptime Kuma uses immutable version `coolify-b12d1386.uptime-kuma-2.5.8.v1` and image
+`docker.io/louislam/uptime-kuma@sha256:20abea8c48a163cf0a7a5d5936ab418e4b742d908704e1f58f6c06e56a9c6b67`.
+Its container port is 3001 and retained data mount is `/app/data`. The original
+[Coolify Uptime Kuma template](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/compose/uptime-kuma.yaml)
+remains byte-identical in the installation. NeroCD pins upstream image tag `2`
+to version 2.5.8 and uses its ordinary explicit route workflow.
+
+The entry generates no login credentials. It saves runtime generation one with
+canonical `entries: []` and empty credential arrays, so deployment still pins an
+immutable runtime reference. First-run database and administrator setup remain
+application behavior. The qualified workflow selects SQLite through Uptime Kuma's
+visible setup screen, then creates its administrator account.
+
+Readiness requests `/` with a 120-second timeout, the existing API maximum.
+NeroCD requires a successful 2xx or 3xx response. The image's own health check
+accepts any HTTP status and has a 180-second start period; that period is not the
+NeroCD deployment timeout. This entry does not inject database bootstrap variables
+or account credentials.
+
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
 2. In Install from catalog, choose a Catalog category and search by application,
    version, image, data mount or generated variable name. Search ignores case and
    requires every word to match. Both filters apply together. Use All categories,
-   Clear search or Clear filters to recover an empty result, then select Linkding.
+   Clear search or Clear filters to recover an empty result, then select Linkding or Uptime Kuma.
    Review its upstream category and architecture declaration, pinned image, data
    mount, generated variables, container port, readiness check and template source.
    Enter a name and select a granted destination. Project owner access is required.
 3. Install the application. The transaction saves resource placement, storage,
-   encrypted credentials, runtime references, attribution and the exact request.
+   any generated encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
    readiness settings are prefilled. Enter the runner-local host port and review
    the first storage deployment before submitting it.
 5. After the deployment succeeds, use the ordinary route controls for HTTPS
    access, or the runner-local endpoint on an explicitly authorized local target.
-6. Use Reveal login credentials to retrieve the saved username and password.
+6. For Linkding, use Reveal login credentials to retrieve the saved username and password.
    This calls the existing managed-secret reveal operation explicitly. Values
    are never included in installation metadata or query caches.
+7. For Uptime Kuma, open the deployed application, select SQLite and create its
+   administrator account. NeroCD displays first-run guidance without reveal or
+   hide controls because this entry has no generated login credentials.
 
 The request identity survives an unconfirmed response. Retry uses the same
 project, environment, destination, name, template and immutable version. Current
-owner, destination and secret authority is checked before replay. Concurrent
+owner, destination and applicable secret authority is checked before replay. Concurrent
 identical requests commit one installation. Catalog refreshes cannot replace an
 installation's original bytes, hash, normalized definition or component references.
 A resource may later change through the ordinary resource APIs; installation
@@ -107,7 +131,8 @@ ownership; the existing trusted recovery boundary still applies.
 
 ## Supported scope
 
-Linkding 1.47.0 is the only catalog entry. The installation keeps its original
+The catalog contains pinned Linkding 1.47.0 and Uptime Kuma 2.5.8 entries. Each
+installation keeps its original
 template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
 changes do not rewrite that installed copy.
@@ -121,7 +146,7 @@ Linkding's upstream category is `RSS`, from
 [the pinned service metadata](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/service-templates.json).
 
 The preview displays upstream `arm_only` and `amd_only` declarations as ARM only
-or AMD only. Linkding declares neither, so its restriction reads Not declared.
+or AMD only. Neither current entry declares a restriction, so each reads Not declared.
 These declarations do not verify compatibility with the selected destination.
 CPU, memory and disk requirements are also undeclared. Use the qualified runtime
 profile below when choosing a destination.
@@ -161,10 +186,12 @@ same-destination disk retention; no host-disk-loss or cross-host recovery is imp
 
 The [catalog definition](../internal/domain/hosting_catalog.go),
 [installation store](../internal/store/postgres_hosting_catalog.go), and
-[catalog UI](../web/app/src/pages/HostingCatalog.tsx) define the current entry.
+[catalog UI](../web/app/src/pages/HostingCatalog.tsx) define the current entries.
 The [catalog runtime guide](../acceptance/runtime-hosting-catalog/README.md)
-records the passing install, replacement, backup, and restored-application checks.
-Its profile is pinned Linkding 1.47.0, native Linux arm64, trusted rootful
+records the separate Linkding and Uptime Kuma qualifications. Linkding includes
+passing backup and restored-application checks. Uptime Kuma covers install,
+replacement and persistence as described below.
+The retained recovery profile is pinned Linkding 1.47.0, native Linux arm64, trusted rootful
 classic-store Docker/overlay2, one destination, and a private fixture CA.
 Other architectures, production ACME, arbitrary applications, catalog upgrades,
 Compose, cross-host recovery, and destination disk loss are unqualified.
@@ -237,3 +264,84 @@ overlap because backend, UI, validation and review ran in parallel.
 | Fixture repair | Approximately 15 seconds for a synthetic search fixture collision. Anonymous-volume diagnosis and repair approximately 12:18:44–12:21:41, including checks. Worker estimates. |
 | Test execution | Focused Go checks 12:16:42–12:16:57, 15 seconds. Full WebUI tests and fresh builds 12:16:42–12:17:14, 32 seconds. API generation took 1 second. The browser run took 18.9 seconds overall, including 2.0 seconds in the test. |
 | Review and waiting | Initial reviews approximately 12:14–12:18, overlapping implementation and tests. Final cleanup review durations are unavailable. |
+
+<a id="uptime-kuma-qualification"></a>
+
+## Uptime Kuma qualification
+
+The install, route, application setup and persistent-data workflow is accepted at
+`397a8d826a97cceb37ae79f4384588b78860a8d8`. The existing catalog browser and isolated
+storage fixture deploy the actual pinned application. First-run SQLite and admin
+setup, a monitor against the task-owned application's healthy endpoint, and a
+saved server setting all use Uptime Kuma's real UI. A fresh login after redeploy
+reads the same monitor and setting and creates a new monitor. A controlled
+replacement fails against an absent status-page API route, restores the previous
+writer without uncertain ownership, and retains both monitors and the setting.
+The volume, runtime generation and empty credential references remain unchanged.
+Trusted managed HTTPS, installation response-loss retry, viewer denial and widths
+1280, 320, 390 and 430 also pass without intercepted browser responses.
+
+The qualified profile is Uptime Kuma 2.5.8 with SQLite, one destination, native
+Linux arm64, trusted rootful classic-store Docker/overlay2 and a private fixture
+CA. It does not qualify Kuma backup or restore, MariaDB, other architectures,
+production ACME, upgrades, cross-host recovery or disk loss. Historical receipt
+replay after retiring a template version has source-order and shape-test coverage,
+not an end-to-end retired-receipt fixture.
+
+Independent hygiene, specification and security reviews cover exact product
+`6e75653732c1bc2d4361339be8585275068c47ea`, fixture candidate
+`cafa793c9c5118e2a54734fbcce32e690b5823b1` and the repaired fixture at `397a8d826`.
+Product blobs are identical across those candidates. Backend PostgreSQL checks
+passed in 6.106 seconds and real HTTP checks in 1.547 seconds at source
+`c009839cbb19375d743e3f446e8cb35147ef31b7`; their exact blobs match the integrated
+candidate. Formatting, Go vet across `./cmd/...` and `./internal/...`, focused catalog
+domain/API/store tests,
+pinned changed-code lint with zero findings, shell checks, generated comparisons,
+17 publication/preservation tests and the Linux tagged fixture compile passed.
+The repaired envelope decoder and 13 shared phase cases passed before runtime.
+The app package had no tests matching the catalog filter; the real API and
+PostgreSQL checks exercise the service.
+
+The full WebUI run at `cafa793c` recorded 1,940 passing tests and one existing
+5-second timeout in the unchanged 64-variable runtime-configuration test.
+It remains a failed full run. That exact test then passed alone in 1.12 seconds
+without source or timeout changes. A fresh UI-to-Go build passed in 12 seconds;
+the resulting asset manifest matches the served qualification assets. These
+checks remain attributed to `cafa793c` because the subsequent repair changes only
+the runtime test's response decoder. Unchanged runner and Compose physical evidence retains the
+[accepted `26998a435` qualification](hosting-storage-remote-backups.md#compose-remote-schedule-qualification).
+[Linkding runtime and recovery evidence](../acceptance/runtime-hosting-catalog/README.md#final-physical-qualification)
+retains its original source attribution in the earlier evidence. Those physical
+suites were not repeated; `0cd0a715` is the unchanged-code comparison base, not
+a claimed runtime-test source.
+
+The first gate at `cafa793c` failed after 129 seconds, with a 9.04-second Go test.
+The fixture decoded the runtime GET envelope as its inner DTO, yielding zero
+values. Production returns `{"runtime_configuration": ...}`. A deterministic
+check using the production JSON serializer reproduced this mistake and verified
+the corrected decoder while retaining generation-one, nonnil empty entries and
+pinned-reference assertions. The exact failed response bytes were not retained.
+After the definitive Go failure, the owned browser was signalled and existing
+cleanup completed. The repaired gate passed at 13:22:56–13:24:41 UTC, 105 seconds
+overall and 43.46 seconds in the runtime test. Both runs preserved all 41 baseline
+containers and 236 volumes exactly, with no additions and unchanged user-instance
+identity, content and health. Owned gate containers and volumes are absent.
+
+The durable [evidence index](</Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-catalog-uptime-kuma-20261027/397a8d826a97cceb37ae79f4384588b78860a8d8/evidence-index.json>)
+has SHA-256 `9c46b0e410350c828d3cd26cc8cbc7ac1f8c834cf2d722d98fe006523143cd6c`.
+All 55 safe file hashes were audited. The failed gate, full WebUI failure,
+isolated pass, setup proof and repair checks remain separate. Raw private
+inventories, API logs and sessions are excluded; their hashes and original paths
+are retained where applicable.
+
+| Activity | Recorded time and limitation |
+| --- | --- |
+| Implementation | Integration and fixture development ran 13:03:31–13:13:26 UTC, 595 seconds. Coding and probes overlap; an exclusive implementation total was not recorded. Backend implementation is estimated at 13:00:37–approximately 13:03:00 UTC. The UI discovery/edit/test window is approximately 85 seconds, 12:59:16–13:00:41 UTC, including approximately 15 seconds of focused tests/build; commit at 13:01:08 UTC. These worker estimates overlap and do not provide exclusive editing totals. |
+| Product-defect repair | None identified in this slice. |
+| Fixture repair | Actual-image selector, navigation and absent-route checks, then the runtime-envelope decoder repair. Backend fixture repairs are estimated at 30 seconds for a Go JSON hash and 19 seconds for an enrollment ID, approximately 49 seconds. Acceptance repairs overlap development; exclusive elapsed totals are unavailable. The final small probe took 0.836 seconds. |
+| Test execution | Go checks 48 seconds; generated comparisons 46 seconds, overlapping. Full WebUI run 31.24 seconds; isolated test 1.40 seconds; fresh build 12 seconds. Gates took 129 and 105 seconds. |
+| Review and waiting | All required reviews completed at their exact revisions. Separate elapsed waiting time was not recorded; no percentages are inferred. |
+
+Backend command starts at 13:03:34 UTC for the core PostgreSQL check and 13:05:51 UTC
+for the focused HTTP retry are worker reports. The retained summary logs contain
+package durations, not those wall timestamps.

@@ -1,8 +1,9 @@
-# Test the Linkding catalog workflow
+# Test catalog application workflows
 
-This fixture installs pinned Linkding 1.47.0 through the public API and connected
-browser, deploys it with the compiled runner, and verifies real application data.
-It uses the [storage gate](../runtime-hosting-storage/README.md) in `--catalog` mode.
+The existing storage fixture installs pinned Linkding 1.47.0 or Uptime Kuma 2.5.8
+through the public API and connected browser. Both modes deploy with the compiled
+runner and verify real application data. Linkding uses `--catalog`; Uptime Kuma
+uses `--uptime-kuma` on the same [storage gate](../runtime-hosting-storage/README.md).
 
 ## Run the gate
 
@@ -17,20 +18,33 @@ The wrapper selects `TestHostingCatalogLinkdingCompiledRunnerHTTPS`. A pass
 requires the exact test result without a skip and every required browser marker.
 Compilation does not establish a runtime pass.
 
+For Uptime Kuma, use the existing gate directly:
+
+```sh
+bash acceptance/runtime-hosting-storage/gate.sh --uptime-kuma
+```
+
+This selects `TestHostingCatalogUptimeKumaCompiledRunnerHTTPS` and the same
+catalog browser driver, ownership guards and preservation checks. It does not
+run the completed Linkding workflow.
+
 ## Target and prerequisites
 
 The outer target is `unix:///var/run/docker.sock`, daemon
-`e37dd219-b13f-47dd-99ed-21d79442ed0c`, Linux aarch64. Its owner is
-`nerocd-catalog-linkding-runtime-20261026`; the container ends in `-dind` and its
+`e37dd219-b13f-47dd-99ed-21d79442ed0c`, Linux aarch64. The Linkding owner is
+`nerocd-catalog-linkding-runtime-20261026`; Uptime Kuma uses
+`nerocd-catalog-uptime-kuma-runtime-20261027`. Each container ends in `-dind` and its
 sole data volume ends in `-docker-data`. The owner label is
 `io.nerocd.storage-runtime.owner`.
 
 The gate uses
 `docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489`
 with four CPUs, 6 GiB memory, and 2048 PIDs. The privileged guest has no host bind
-or Docker socket mount. Only API port 18190 is published to a dynamic host
+or Docker socket mount. API port 18190 is published to a dynamic host
 `127.0.0.1` port for the browser. The gate verifies the requested and assigned
-binding before use and cleanup. No application port is published on the host.
+binding before use and cleanup. Linkding publishes no host application port. The Uptime Kuma profile additionally
+publishes guest HTTPS port 443 at `127.0.0.1:25443`; exact owner, container name
+and bindings are checked, including rejection of foreign owners or extra ports.
 
 PostgreSQL, registry, Traefik, Pebble, and the prepared archive helper are
 prerequisites of the reused storage fixture. The exact Linkding image and runtime
@@ -38,7 +52,7 @@ settings are in the [catalog definition](../../docs/hosting-catalog.md#pinned-de
 All application changes occur inside the owned guest. API and application HTTPS
 use the fixture CA.
 
-## Assertions
+## Linkding assertions
 
 The [runtime test](../../internal/api/hosting_catalog_runtime_integration_test.go)
 and connected browser verify:
@@ -88,3 +102,35 @@ This does not qualify production ACME, arbitrary applications or Compose,
 catalog version upgrades, other architectures, in-place restore, cross-host
 recovery, or destination disk loss. Retained installation-only runs do not supply
 backup/restore evidence; the complete fixture must pass for a new candidate.
+
+## Uptime Kuma assertions and accepted profile
+
+The [Kuma runtime test](../../internal/api/hosting_catalog_uptime_kuma_runtime_integration_test.go)
+reuses the existing catalog setup, handshake, route and failed-runner join helpers.
+The shared browser installs the credential-free entry, retries an identical lost
+response and verifies viewer denial. It selects SQLite through the visible
+first-run screen and creates an administrator. A monitor checks the task-owned
+application endpoint; a server setting is saved through the real application UI.
+Fresh login after redeploy retains both, allows another monitor write and proves
+retention again after a controlled failed replacement. Trusted managed HTTPS,
+stable volume/runtime references, restored ownership, responsive layouts and exact
+served asset hashes are required.
+
+The accepted source is `397a8d826a97cceb37ae79f4384588b78860a8d8`. The repaired gate
+passed in 105 seconds, including a 43.46-second runtime test. Its first 129-second
+attempt remains failed because the fixture decoded a runtime response without its
+required JSON envelope. Deterministic decoder checks precede the repaired run.
+Both runs preserve all 41 baseline containers and 236 volumes, with no additions,
+and leave the user instance unchanged. The exact failed response was not retained.
+
+The qualified profile is pinned Uptime Kuma 2.5.8, SQLite, `/app/data`, port 3001,
+root readiness with a 120-second timeout, native Linux arm64, trusted rootful
+classic-store Docker/overlay2, one destination and a private fixture CA.
+NeroCD accepts 2xx/3xx root responses; the image health check accepts any status.
+Kuma backup/restore, MariaDB, other architectures and production ACME remain
+unqualified. The Linkding recovery checks above do not supply Kuma recovery proof.
+
+[Uptime Kuma qualification](../../docs/hosting-catalog.md#uptime-kuma-qualification)
+records the durable evidence index and hash, retained source/check dependencies,
+the original full WebUI timeout and isolated pass, review limits and delivery
+timings. Private snapshots, sessions and credentials are excluded from safe evidence.
