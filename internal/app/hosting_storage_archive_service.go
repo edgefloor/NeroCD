@@ -229,6 +229,8 @@ func supportedHostingArchive(r domain.Resource) error {
 	}
 	return supportedHostingStorage(r)
 }
+
+// StorageBackupVolumes authorizes viewer discovery of settled Compose volumes.
 func (s *Service) StorageBackupVolumes(ctx context.Context, resourceID string) (domain.HostingStorageBackupVolumes, error) {
 	_, actor, err := s.resourceForDestinationRole(ctx, resourceID, domain.RoleViewer)
 	if err != nil {

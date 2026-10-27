@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// HostingComposeStorageArchiveVersion identifies local managed Compose volume archives.
 const (
 	HostingComposeStorageArchiveVersion    = "managed-compose.local-volume-archive.v1"
 	HostingComposeStorageArchiveCapability = "hosting_compose_storage_archive_v1"
@@ -36,36 +37,47 @@ type HostingStorageBackupVolumes struct {
 	Reason             string                       `json:"reason,omitempty"`
 	Volumes            []HostingStorageBackupVolume `json:"volumes"`
 }
+
+// HostingStorageBackupVolume describes one settled named volume and its consumers.
 type HostingStorageBackupVolume struct {
 	Volume   string                            `json:"volume"`
 	Eligible bool                              `json:"eligible"`
 	Reason   string                            `json:"reason,omitempty"`
 	Mounts   []HostingStorageBackupVolumeMount `json:"mounts"`
 }
+
+// HostingStorageBackupVolumeMount identifies a component mount of a named volume.
 type HostingStorageBackupVolumeMount struct {
 	Component string `json:"component"`
 	MountPath string `json:"mount_path"`
 	ReadOnly  bool   `json:"read_only"`
 }
 
+// SourceResourceID returns the resource selected by the archive family.
 func (p HostingStorageArchivePlan) SourceResourceID() string {
 	if p.ComposeSource != nil {
 		return p.ComposeSource.Healthy.Snapshot.ResourceID
 	}
 	return p.SourceStorage.ResourceID
 }
+
+// SourceBindingID returns the binding selected by the archive family.
 func (p HostingStorageArchivePlan) SourceBindingID() string {
 	if p.ComposeSource != nil {
 		return p.ComposeSource.Healthy.Snapshot.BindingID
 	}
 	return p.SourceStorage.BindingID
 }
+
+// SourceVolumeName returns the exact daemon volume selected for archiving.
 func (p HostingStorageArchivePlan) SourceVolumeName() string {
 	if p.ComposeSource != nil {
 		return p.ComposeSource.Volume.VolumeName
 	}
 	return p.SourceStorage.VolumeName
 }
+
+// SourceIdentityHash commits the complete source identity for this archive family.
 func (p HostingStorageArchivePlan) SourceIdentityHash() string {
 	if p.ComposeSource != nil {
 		return HostingDocumentHash(p.ComposeSource)

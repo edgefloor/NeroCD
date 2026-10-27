@@ -52,6 +52,7 @@ func composeArchiveVolume(ctx context.Context, tx pgx.Tx, c domain.HostingStorag
 	return nil
 }
 
+// StorageBackupVolumes returns named-volume eligibility under current viewer authority.
 func (s *PostgresStore) StorageBackupVolumes(ctx context.Context, actor, resource string) (domain.HostingStorageBackupVolumes, error) {
 	return archiveActorTransaction(ctx, s, actor, func(tx pgx.Tx) (domain.HostingStorageBackupVolumes, error) {
 		out := domain.HostingStorageBackupVolumes{ResourceID: resource, Reason: "unavailable", Volumes: []domain.HostingStorageBackupVolume{}}
