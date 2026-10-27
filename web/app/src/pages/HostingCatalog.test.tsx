@@ -155,6 +155,42 @@ test("failed catalog load can be retried without submitting an installation", as
   expect(api.installCatalog).not.toHaveBeenCalled();
 });
 
+test("failed destination load retries without refetching the successful catalog", async () => {
+  vi.mocked(listDestinations).mockRejectedValueOnce(new Error("unavailable"));
+  setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  await screen.findByText("Catalog or destination access is unavailable.");
+  expect(screen.queryByRole("option", { name: "Docker" })).toBeNull();
+  expect(api.getCatalog).toHaveBeenCalledTimes(1);
+  expect(listDestinations).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
+  await screen.findByRole("option", { name: "Docker" });
+  expect(screen.queryByText("Catalog or destination access is unavailable.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry catalog loading" })).toBeNull();
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").disabled).toBe(false);
+  expect(listDestinations).toHaveBeenCalledTimes(2);
+  expect(api.getCatalog).toHaveBeenCalledTimes(1);
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
+test("failed catalog and destination loads both recover on retry", async () => {
+  vi.mocked(api.getCatalog).mockRejectedValueOnce(new Error("unavailable"));
+  vi.mocked(listDestinations).mockRejectedValueOnce(new Error("unavailable"));
+  setup();
+  await screen.findByText("Catalog or destination access is unavailable.");
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry catalog loading" }).disabled).toBe(false));
+  expect(api.getCatalog).toHaveBeenCalledTimes(1);
+  expect(listDestinations).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  await screen.findByRole("option", { name: "Docker" });
+  expect(screen.queryByText("Catalog or destination access is unavailable.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry catalog loading" })).toBeNull();
+  expect(api.getCatalog).toHaveBeenCalledTimes(2);
+  expect(listDestinations).toHaveBeenCalledTimes(2);
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
 test("empty catalog is distinct from a search with no matches", async () => {
   vi.mocked(api.getCatalog).mockResolvedValueOnce([]);
   setup();
