@@ -89,7 +89,8 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 				if fixture.registryImage != "" {
 					expectedImage = fixture.registryImage
 				}
-				if service.Image != expectedImage || service.Build != nil {
+				expectedImage, normalizeErr := domain.NormalizeHostingImage(expectedImage)
+				if normalizeErr != nil || service.Image != expectedImage || service.Build != nil {
 					t.Fatal("registry fixture did not isolate the expected PostgreSQL image")
 				}
 			}
