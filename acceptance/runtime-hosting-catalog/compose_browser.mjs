@@ -305,7 +305,7 @@ try {
     await deployment.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("120");
     if(replacement) {
       step="git_compose_review_route_continuity";
-      await expect(deployment).toContainText("Keep HTTPS route catalog-runtime.example.test/");
+      await expect(builds.locator('[aria-label="Compose route continuity review"]')).toContainText("Keep HTTPS route catalog-runtime.example.test/");
     }
     step="git_compose_acknowledge_stack_interruption";
     await deployment.getByRole("checkbox",{name:/^I reviewed this exact successful Compose build/}).check();
