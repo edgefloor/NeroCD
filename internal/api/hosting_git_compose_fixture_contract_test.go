@@ -17,6 +17,7 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool) map[string]stri
 	compose := strings.Replace(raw, "    image: "+base, "    build: ../app\n    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
 	compose = strings.Replace(compose, "\n  postgresql:\n", "\n  version:\n    image: nerocd-vikunja:prepared\n    command: [version]\n\n  postgresql:\n", 1)
+	compose = strings.Replace(compose, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
 	if marker == "missing-registry" {
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
@@ -70,6 +71,9 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			t.Fatal("version alias lost built owner")
 		}
 		for _, service := range definition.Services {
+			if service.Name == "init" && !strings.Contains(strings.Join(service.Command, "\n"), "nerocd-init-log-fixture") {
+				t.Fatal("generated Git init command omitted required component log marker", marker)
+			}
 			if service.Name == "vikunja" && (service.Build == nil || service.Build.Context != "project/app" || service.DependsOn["version"] != "service_completed_successfully") {
 				t.Fatal("relative build path or completed alias contract changed")
 			}
