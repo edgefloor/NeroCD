@@ -61,7 +61,7 @@ returned_outer=''
 test_pid=''
 git_image_added=false
 git_image_id=''
-git_image='vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576'
+git_image='vikunja/vikunja@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576'
 dind='docker:29.4.0-dind@sha256:a6dd5322747a95cd8e3207bd8d415a8fd20ec34e9c00f06dc019cbd912013489'
 if [[ "$remote" == true ]]; then
  evidence_parent="$HOME/.local/share/nerocd/acceptance/runtime-hosting-storage-schedules-20261026"
