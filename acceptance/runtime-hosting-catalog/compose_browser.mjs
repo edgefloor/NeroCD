@@ -270,7 +270,7 @@ try {
     await builds.getByRole("button",{name:"Refresh build history",exact:true}).click();
     if(!stoppedOperation) {
       const requestBuild=builds.getByRole("region",{name:"Request private Git build",exact:true});
-      const grants=requestBuild.getByLabel("Private source grant",{exact:true});
+      const grants=requestBuild.getByRole("combobox",{name:"Private source grant",exact:true});
       step="git_compose_verify_eligible_grant";
       await expect(grants.locator("option:not([value=\"\"]):not([disabled])")).toHaveCount(1);
       step="git_compose_select_private_grant";

@@ -157,7 +157,14 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	}
 	target := storageRuntimeJSON[app.ServerDetail](f, "POST", "/api/v1/servers", app.ServerInput{Name: "Git Compose startup", RunnerID: id}, 201)
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/destinations/"+target.Destination.ID+"/project-grants", app.DestinationProjectInput{ProjectID: resource.ProjectID}, 201)
-	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: target.Destination.ID}, 201)
+	f.serverID, f.destinationID = target.Server.ID, target.Destination.ID
+	gitComposeRuntimeInstall(f, resource)
+	emptyGrants := storageRuntimeJSON[struct {
+		Items []domain.PublicHostingSourceGrant `json:"items"`
+	}](f, "GET", "/api/v1/resources/"+resource.ID+"/source-grants?limit=20&offset=0", nil, 200)
+	if len(emptyGrants.Items) != 0 {
+		t.Fatal("unexpected initial source grants")
+	}
 	for {
 		tx, e := database.Begin(t.Context())
 		if e != nil {
@@ -190,6 +197,34 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	grant := storageRuntimeJSON[struct {
 		Grant domain.PublicHostingSourceGrant `json:"grant"`
 	}](f, "POST", "/api/v1/resources/"+resource.ID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: secret.ID, SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, 201)
+	current := storageRuntimeJSON[domain.Resource](f, "GET", "/api/v1/resources/"+resource.ID, nil, 200)
+	resources := storageRuntimeJSON[struct {
+		Items []domain.Resource `json:"items"`
+	}](f, "GET", "/api/v1/resources?project_id="+resource.ProjectID+"&project_environment_id="+resource.ProjectEnvironmentID, nil, 200)
+	var listedResource *domain.Resource
+	for i := range resources.Items {
+		if resources.Items[i].ID == resource.ID {
+			listedResource = &resources.Items[i]
+			break
+		}
+	}
+	if listedResource == nil {
+		t.Fatal("created resource missing from actual UI list")
+	}
+	if listedResource.Source.Kind != current.Source.Kind || listedResource.Source.Git == nil || current.Source.Git == nil || *listedResource.Source.Git != *current.Source.Git {
+		t.Fatal("resource list source differs from actual saved source")
+	}
+
+	listed := storageRuntimeJSON[struct {
+		Items []domain.PublicHostingSourceGrant `json:"items"`
+	}](f, "GET", "/api/v1/resources/"+resource.ID+"/source-grants?limit=20&offset=0", nil, 200)
+	if len(listed.Items) != 1 {
+		t.Fatal("eligible grant list must contain the created grant")
+	}
+	g := listed.Items[0]
+	if current.Source.Kind != "git" || current.Source.Git == nil || current.Source.Git.CredentialKind != "https_basic" || g.ResourceID != current.ID || g.SourceID != current.Source.Git.SourceID || g.SourceGeneration <= 0 || g.SourceGeneration != current.Source.Git.Generation || g.Version != 1 || g.Kind != "https_basic" || g.Revoked || g != grant.Grant {
+		t.Fatal("real listed grant fails UI eligibility shape")
+	}
 	build := storageRuntimeJSON[struct {
 		Build domain.PublicHostingBuild `json:"build"`
 	}](f, "POST", "/api/v1/resources/"+resource.ID+"/builds", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: grant.Grant.ID, IdempotencyKey: "git-compose-startup"}, 202).Build
