@@ -207,10 +207,9 @@ Exact owned-process/container/volume cleanup preserved the 41-container,
 aggregate check failures and the historic anonymous-volume ownership evidence gap.
 
 The unsupported fields and broader registry limits above remain open; this does
-not complete A15/A16 or qualify standalone archive/database recovery again. An
-inherited limitation also remains: if a successful stack cannot enqueue its proxy
-successor, continuity stays unresolved. The existing recovery endpoint cannot
-recover stack plans; its fail-closed reservation must remain held.
+not complete A15/A16 or qualify standalone archive/database recovery again.
+Unresolved proxy queuing after successful stack execution has a separate
+[explicit recovery workflow](#stack-route-continuity-recovery).
 
 ### Git Compose private registry qualification
 
@@ -225,7 +224,35 @@ new writes. The existing failed-readiness hold and cleanup checks also passed.
 The bounded evidence index records source hashes, checks, reviews, timing limits
 and the retained prerequisite failures without replacing earlier Git evidence:
 `~/.local/share/nerocd/acceptance/runtime-hosting-git-compose-registry-20261027/db58c6abc3b41948a66b3bc7bcf93b9748a6cc35/evidence-index.json`.
-The broader profile and unresolved stack route-recovery limits above still apply.
+The broader profile limits above still apply.
+
+
+### Stack route-continuity recovery
+
+A stack can complete successfully while its proxy queue transaction fails. The
+operation remains succeeded and continuity becomes unresolved; the separate
+reservation blocks another deployment. Recovery retries only proxy queuing. It
+does not deploy again, recreate volumes or change the completed workload receipt.
+
+In the recorded operation detail, choose **Refresh operation** and **Refresh
+continuity evidence**. For an unresolved continuity result with a successful,
+ready, current workload, choose **Review proxy continuity recovery**. Review the
+descriptor and completion receipt, select the displayed acknowledgment, then
+choose **Retry proxy continuity queue**. An unconfirmed response retains the
+exact request for **Retry identical proxy continuity recovery**. Current
+permissions, grants and workload evidence are checked again; drift remains
+blocked. After the successor loads, verify HTTPS and the application separately:
+a loaded generation is historical evidence, not a current traffic guarantee.
+
+Qualification passed at `a50aac18f0c97ac061127e3053843c9d237f4257` after an actual
+queue failure during private Git Compose replacement. Explicit UI recovery and
+identical replay produced one successor without changing writers, volumes or
+receipts; records/uploads, uncached Start and failed-readiness holds also passed.
+The earlier `6d5304e6` attempt failed in the UI. A rendered-component test proved
+selection loss during a redundant membership fetch, repaired at `7e06bf1f`; the
+exact historical timeout action was not retained. Source hashes, both attempts,
+repair proof, reviews and cleanup are indexed at
+`~/.local/share/nerocd/acceptance/runtime-hosting-stack-route-recovery-20261027/a50aac18f0c97ac061127e3053843c9d237f4257/evidence-index.json`.
 
 ## Component runtime logs
 
