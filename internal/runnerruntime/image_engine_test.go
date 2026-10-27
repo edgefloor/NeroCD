@@ -368,3 +368,65 @@ func TestImageReadinessRechecksHostPolicyAfterHTTP(t *testing.T) {
 		t.Fatalf("host-policy drift escaped readiness recheck: %v", err)
 	}
 }
+
+func TestImageRestorationRechecksPreviousHostPolicyBeforeStart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer server.Close()
+	p := imageTestPlan(t)
+	u, _ := url.Parse(server.URL)
+	p.Snapshot.HostPort, _ = strconv.Atoi(u.Port())
+	p.Snapshot.Readiness.TimeoutSeconds = 1
+	h := domain.HostingHealthy{Snapshot: p.Snapshot, Release: p.Release, OperationID: "prior", PlanHash: p.Hash, ContainerID: strings.Repeat("c", 64)}
+	p.PreviousHealthy = &h
+	p.Hash = ""
+	p.Hash = domain.HostingDocumentHash(p)
+	prior := mountedContainer(h, true)
+	candidate := mountedContainer(domain.HostingHealthy{Snapshot: p.Snapshot, Release: p.Release, OperationID: "current", PlanHash: p.Hash, ContainerID: strings.Repeat("d", 64)}, false)
+	previousStarted := false
+	e := testImageEngine(t)
+	e.command = imageCommandFunc(func(_ context.Context, _ string, all []string, _ string, _ []string) ([]byte, error) {
+		args := all[4:]
+		if args[0] == "info" {
+			return json.Marshal(p.Release.DaemonID)
+		}
+		if args[0] == "image" {
+			return json.Marshal(inspectedImage{ID: p.Release.ImageID, OS: p.Release.OS, Architecture: p.Release.Architecture})
+		}
+		if args[0] != "container" {
+			t.Fatalf("unexpected command: %v", args)
+		}
+		id := args[len(args)-1]
+		switch args[1] {
+		case "ls":
+			return []byte(h.ContainerID), nil
+		case "inspect":
+			if args[2] == prior.ID {
+				return json.Marshal(prior)
+			}
+			return json.Marshal(candidate)
+		case "create":
+			prior.HostConfig.Privileged = true
+			return []byte(candidate.ID), nil
+		case "stop":
+			if id == prior.ID {
+				prior.State.Running = false
+			} else {
+				candidate.State.Running = false
+			}
+		case "start":
+			if id == prior.ID {
+				previousStarted = true
+			} else {
+				candidate.State.Running = true
+			}
+		case "rm":
+		default:
+			t.Fatalf("unexpected command: %v", args)
+		}
+		return nil, nil
+	})
+	result := e.Apply(t.Context(), "current", p)
+	if previousStarted || !result.Uncertain || result.Restored || result.Ready {
+		t.Fatalf("unsafe previous container restarted: %+v started=%v", result, previousStarted)
+	}
+}

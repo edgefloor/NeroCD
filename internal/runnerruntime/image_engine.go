@@ -565,6 +565,11 @@ func (e *imageEngine) apply(ctx context.Context, operationID string, plan domain
 			result.Uncertain = true
 			return result
 		}
+		previous, inspectErr := e.inspectContainer(ctx, plan.PreviousHealthy.ContainerID)
+		if inspectErr != nil || !storageContainerMatches(previous, *plan.PreviousHealthy) {
+			result.Uncertain = true
+			return result
+		}
 		if _, err = e.mutate(ctx, plan.Release.DaemonID, "container", "start", plan.PreviousHealthy.ContainerID); err != nil {
 			result.Uncertain = true
 			return result
