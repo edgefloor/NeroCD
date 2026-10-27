@@ -149,6 +149,29 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	b.set("app_create", resourceID)
 	taskID := b.await(t, "app_created")
 	logSession := composeRuntimeFollow(t, f, resourceID, first, "vikunja", false)
+	volumeEligibility := storageRuntimeJSON[domain.HostingStorageBackupVolumes](f, "GET", "/api/v1/resources/"+resourceID+"/storage-backup-volumes", nil, 200)
+	selectedEligible := false
+	selectedReason := "missing_volume"
+	for _, volume := range volumeEligibility.Volumes {
+		if volume.Volume == "vikunja-data" {
+			selectedEligible, selectedReason = volume.Eligible, volume.Reason
+		}
+	}
+	safeEligibilityReason := func(reason string) string {
+		switch reason {
+		case "", "missing_volume", "unavailable", "unsupported_source", "archive_unavailable", "deployment_changed", "runner_unavailable", "unused_volume", "volume_unavailable", "requires_runtime_ownership_verification", "no_eligible_volumes":
+			return reason
+		default:
+			return "unknown"
+		}
+	}
+	resourceMatches := volumeEligibility.ResourceID == resourceID
+	generationMatches := volumeEligibility.ResourceGeneration == resource.Generation
+	deploymentMatches := volumeEligibility.OperationID == first.ID
+	t.Logf("Compose schedule prerequisite available=%t resource_matches=%t generation_matches=%t deployment_matches=%t selected_eligible=%t reason=%s selected_reason=%s", volumeEligibility.Available, resourceMatches, generationMatches, deploymentMatches, selectedEligible, safeEligibilityReason(volumeEligibility.Reason), safeEligibilityReason(selectedReason))
+	if !volumeEligibility.Available || !resourceMatches || !generationMatches || !deploymentMatches || !selectedEligible {
+		t.Fatal("Compose schedule prerequisite eligibility failed")
+	}
 	b.set("volume_schedule", resourceID)
 	volumeScheduleID := b.await(t, "volume_scheduled")
 	volumeSchedule := composeRuntimeVolumeSchedule(t, f, resourceID, volumeScheduleID, false, 1)
