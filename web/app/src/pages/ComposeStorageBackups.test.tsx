@@ -661,3 +661,29 @@ test("selected Compose backup downloads through options without retention copy m
     "/api/v1/storage-backups/backup/archive",
   );
 });
+
+
+test("production session identity can recheck archive options after success-failure-success selection", async () => {
+  const blob = { backup_id: "backup", destination_id: "d", daemon_id: "daemon", sha256: `sha256:${"a".repeat(64)}`, size_bytes: 123, format: "nerocd-storage-v1" };
+  const succeeded = { ...backup, state: "succeeded", blob };
+  const failed = { ...backup, id: "failed", state: "failed" };
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  const { fetch, view, onDenied } = setup((url) => {
+    if (url.endsWith("/archive-options")) return json({ available: true, reason_code: "", backup_id: "backup", blob });
+    if (url.includes("storage-backups?")) return json({ items: [succeeded, failed], limit: 20, offset: 0, count: 2, total: 2 });
+    if (url === "/api/v1/storage-backups/backup") return json(succeeded);
+    if (url === "/api/v1/storage-backups/failed") return json(failed);
+    return undefined;
+  });
+  view.rerender(<QueryClientProvider client={client}><ComposeStorageBackups scope={{ ...scope, actor: JSON.stringify(["local", "00000000-0000-4000-8000-000000000001"]) }} generation={2} owner blocked={false} onDenied={onDenied} /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "View volume backup backup" }));
+  await screen.findByRole("button", { name: "Refresh download availability" });
+  fireEvent.click(screen.getByRole("button", { name: "View volume backup failed" }));
+  await screen.findByText("Only successful backups can be downloaded.");
+  fireEvent.click(screen.getByRole("button", { name: "View volume backup backup" }));
+  await screen.findByRole("button", { name: "Refresh download availability" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh download availability" }));
+  await screen.findByRole("button", { name: "Refresh download availability" });
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/archive-options"))).toHaveLength(3);
+  await screen.findByRole("link", { name: "Download archive" });
+});

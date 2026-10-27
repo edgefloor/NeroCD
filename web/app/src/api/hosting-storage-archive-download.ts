@@ -21,8 +21,9 @@ export async function getArchiveDownloadOptions(
   signal?: AbortSignal,
 ): Promise<Options> {
   if (
+    typeof scope.actor !== "string" ||
+    !scope.actor ||
     ![
-      scope.actor,
       scope.project,
       scope.resource,
       scope.destination,

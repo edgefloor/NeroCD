@@ -63,3 +63,25 @@ test.each(["../x", "bad/id", "", "a?secret=x"])(
     expect(() => archiveDownloadPath(id)).toThrow();
   },
 );
+
+test("actor is a client identity cache key, not a persisted identifier", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify(options)));
+  vi.stubGlobal("fetch", fetch);
+  await expect(
+    getArchiveDownloadOptions(
+      {
+        ...scope,
+        actor: JSON.stringify([
+          "local",
+          "00000000-0000-4000-8000-000000000001",
+        ]),
+      },
+      backup,
+    ),
+  ).resolves.toEqual(options);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0]).toEqual([
+    "/api/v1/storage-backups/backup/archive-options",
+    expect.objectContaining({ cache: "no-store", credentials: "include" }),
+  ]);
+});
