@@ -442,6 +442,9 @@ func (f *storageRuntimeFixture) stop() {
 		return
 	}
 	pid := f.process.command.Process.Pid
+	if exited, category, code := storageRuntimeRunnerExit(f.process); exited {
+		f.t.Logf("compiled runner already exited category=%s code=%d", category, code)
+	}
 	f.process.cancel()
 	select {
 	case <-f.process.done:
@@ -527,6 +530,9 @@ func (f *storageRuntimeFixture) await(id, state string) domain.HostingOperation 
 		}
 		if op.State == "failed" || op.State == "succeeded" || op.State == "canceled" {
 			f.t.Fatalf("operation %s settled %s want %s result=%+v logs=%s", id, op.State, state, op.Result, f.logs.String())
+		}
+		if exited, category, code := storageRuntimeRunnerExit(f.process); exited {
+			f.t.Fatalf("compiled runner exited before requested operation state category=%s code=%d", category, code)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -1005,4 +1011,72 @@ func testHostingStorageCompiledRunnerHTTPS(t *testing.T, archive bool) {
 	}
 	t.Logf("HTTPS upload bytes=%d sha256=%x A=%s B=%s unrelated=%s loaded_operation=%s volume=%s origin_operation=%s origin_plan=%s daemon=%s missing_volume=%s absent=true", len(upload), sha256.Sum256(upload), a.Result.ContainerID, b.Result.ContainerID, u.Result.ContainerID, loadedID, storage.VolumeName, origin.CreationOperationID, origin.CreationPlanHash, origin.DaemonID, missing.VolumeName)
 	// The outer gate records and removes all guest objects after joining this test.
+}
+
+// The fixture has one Wait producer and one test-thread consumer. Restore the
+// exact buffered result so stop retains its existing process-join ownership.
+func storageRuntimeRunnerExit(process *pushRunnerProcess) (bool, string, int) {
+	if process == nil {
+		return false, "", 0
+	}
+	select {
+	case err := <-process.done:
+		process.done <- err
+		if err == nil {
+			return true, "clean_exit", 0
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if code := exit.ExitCode(); code >= 0 {
+				return true, "process_exit", code
+			}
+			return true, "signal_exit", -1
+		}
+		return true, "wait_error", -1
+	default:
+		return false, "", 0
+	}
+}
+
+func TestStorageRuntimeRunnerExitPreservesJoin(t *testing.T) {
+	if exited, _, _ := storageRuntimeRunnerExit(nil); exited {
+		t.Fatal("nil process exited")
+	}
+	for _, tc := range []struct {
+		name      string
+		completed bool
+		err       error
+		category  string
+		code      int
+	}{
+		{"running", false, nil, "", 0},
+		{"clean", true, nil, "clean_exit", 0},
+		{"exit error", true, &exec.ExitError{}, "signal_exit", -1},
+		{"other error", true, errors.New("private wait error"), "wait_error", -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			process := &pushRunnerProcess{done: make(chan error, 1)}
+			if tc.completed {
+				process.done <- tc.err
+			}
+			exited, category, code := storageRuntimeRunnerExit(process)
+			if exited != tc.completed || category != tc.category || code != tc.code {
+				t.Fatal("fixed exit classification differs")
+			}
+			if !tc.completed {
+				if len(process.done) != 0 {
+					t.Fatal("running process result invented")
+				}
+				return
+			}
+			select {
+			case joined := <-process.done:
+				if joined != tc.err {
+					t.Fatal("Wait result changed before stop join")
+				}
+			default:
+				t.Fatal("Wait result consumed before stop join")
+			}
+		})
+	}
 }
