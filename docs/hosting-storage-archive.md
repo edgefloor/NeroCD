@@ -1,7 +1,8 @@
 # Configure the owned-upload archive controller
 
 Owned-upload backups stop the exact running writers, archive an owned local volume,
-and resume those writers. Restore extracts into a separate resource and volume.
+and resume those writers. Image-resource restore extracts into a separate resource
+and volume. Managed Compose supports immediate local named-volume backup only.
 Configure the controller and matching runner helper before admitting this work.
 
 The server's archive controller is disabled by default. Set
@@ -115,3 +116,37 @@ controller concerns owned upload volumes and restore into a new volume.
 [Remote backups](hosting-storage-remote-backups.md) add independent S3 transfer
 and verified download before new-volume extraction. [Database backups](hosting-database-backups.md) and
 [application database connections](hosting-database-connections.md) have separate contracts.
+
+## Managed Compose volume selection
+
+The same controller policy and helper limits apply to
+[managed Compose named-volume backups](hosting-compose.md#local-named-volume-backups).
+The helper recipe remains `owned-upload.local-archive.v1`; Compose plans use the
+separate `managed-compose.local-volume-archive.v1` family. A configured archive
+runner with managed Compose support advertises
+`hosting_compose_storage_archive_v1`. Archive configuration alone does not enable
+Compose execution.
+
+`GET /api/v1/resources/{id}/storage-backup-volumes` returns the current resource
+generation, settled operation, availability reason, and named volumes with
+component mount paths and read-only flags. Discovery requires current viewer
+access. This response records controller evidence; execution rechecks actual
+Docker identities and mounts.
+
+`POST /api/v1/resources/{id}/storage-backups` requires a 32-character lowercase
+hexadecimal `request_id`, `expected_resource_generation`, `volume`,
+`expected_deployed_operation_id`, and `acknowledge_interruption: true` for Compose.
+The three Compose selector fields must appear together. `remote_target` is
+rejected. Existing image backup requests keep their original contract.
+
+Backup list and detail records include `volume` and
+`source_deployed_operation_id`. Current authorization applies before identical
+request replay. Replay precedes new runtime eligibility checks, so an identical
+accepted request can recover its receipt when the runtime is unavailable.
+Authorized history remains readable independently of new backup availability.
+
+The existing
+`POST /api/v1/hosting-operations/{id}/storage-archive-recovery` endpoint handles
+unresolved writer resumption with an exact plan hash and a fresh request identity.
+Compose restore, remote copies, and schedules are rejected. A successful local
+archive does not establish a coordinated database and upload recovery point.

@@ -108,6 +108,37 @@ actual app/PostgreSQL output, finite output from an explicit test-only init
 command added to the pasted example, and redeployment ending an
 old follow. Component logs passed qualification at the candidate recorded below.
 
+## Local named-volume backups
+
+In **Compose volume backups**, select a named volume and choose **Review Compose
+volume backup**. Review its resource generation, deployed operation, component
+mounts, and interruption warning. A project owner must acknowledge interruption
+before choosing **Confirm Compose volume backup**. The controller requires a
+settled deployment and a configured [archive controller](hosting-storage-archive.md).
+The runner requires `hosting_compose_storage_archive_v1` in addition to its
+managed Compose and archive capabilities.
+
+A backup contains one selected local named volume. The runner verifies its
+recorded creation origin, daemon identity, and current and retained component
+users before stopping any container. It stops and resumes only users that were
+running at the start, including read-only users. Completed init containers stay
+stopped. Components that use other volumes keep running. Unknown users or changed
+mounts reject the operation.
+
+History records the selected volume, exact source deployment, archive identity,
+and writer recovery result. After an unconfirmed submission, retry the identical
+saved request to recover its receipt. Inspect history before creating a separate
+request. A failed archive can still report successful writer resumption. An
+unverified resumption retains the mutation hold and requires the existing
+explicit storage-archive recovery action. Recovery resumes recorded writers;
+it does not restore archived application data.
+
+Compose volume backups reuse the installed archive helper and configured size
+limits. Compose archive restore, remote copies, schedules, bind mounts, and
+coordinated database and upload snapshots are unsupported. Archive selection does
+not establish database consistency. Use the separate PostgreSQL component backup
+workflow for database archives.
+
 ## Qualification
 
 Focused source/runtime checks cover unsupported definitions, reference expansion,
@@ -209,10 +240,106 @@ from 08:47:09 to 08:47:45 UTC, 36 seconds. Integration verify,
 generated checks, and build took 226, 49, and 14 seconds in overlapping windows.
 Review waiting was not instrumented.
 
-The remaining gap is coordinated Compose application and upload recovery.
-Compose schedules support local database archives only; standalone PostgreSQL 17
-remote-target behavior is unchanged. Raw Compose, Git Compose, and mixed
-build/image stacks remain unqualified. These results do not qualify full parity
+### Accepted local named-volume backup
+
+The bounded immediate local Compose volume-backup workflow is accepted on
+2026-10-27 using product runtime and browser evidence at
+`02a56396b514a15dc26b96f3cedc5456b12b110d` and preservation replay at
+`37ddc31dab67ba5a230b4bbd8e319b7dc20eea52`. The latter changes only three acceptance
+fixture files. Product source is unchanged. Independent hygiene, specification,
+and security reviews reported no findings at `37ddc31`.
+
+- [x] Selected and reviewed the exact named volume and deployment in the browser,
+  acknowledged interruption, and inspected successful and failed backup history.
+- [x] Verified a 5,120-byte local CAS archive with five members against actual
+  uploaded file bytes, numeric UID/GID, and modes. The application resumed.
+- [x] A task-owned FIFO caused archive failure with no published artifact.
+  Writer resumption succeeded, PostgreSQL stayed running, and completed init
+  containers remained stopped.
+- [x] Application records, uploaded bytes, fresh login, and new writes survived
+  backup and redeployment. Component logs, Stop/Start, PostgreSQL schedules and
+  separate-target database import retained their existing assertions.
+- [x] Failed replacement retained its mutation hold and rejected a competing
+  deployment. Current authorization, exact volume origins, and durable recovery
+  checks remained required.
+- [x] All 39 baseline container profiles and 230 baseline volume profiles stayed
+  unchanged. Task cleanup completed, and the user's instance on port 18081 kept
+  its identity, content, and health.
+- [x] The reviewed verifier classified two added containers and their anonymous
+  volumes as non-task additions using captured mount provenance. Their creator
+  attribution is not proven. The earlier capture with a replaced baseline
+  container still fails verification.
+
+Safe receipts and their hashes are indexed under
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/37ddc31dab67ba5a230b4bbd8e319b7dc20eea52/evidence-index.json`.
+Both original aggregate gate commands remain failed. No Docker gate ran at
+`37ddc31`, and no third full run was performed. Acceptance combines retained
+product execution with focused verifier tests and read-only replay of captured
+preservation evidence. The original receipt hashes are unchanged.
+
+The first named-volume qualification attempt at
+`b133bd59fadd20f07f7949405f3662f8f853337f` failed from
+`2026-10-27T09:48:35Z` to `2026-10-27T09:52:46Z`, 251 seconds. The shared phase
+handler omitted both new volume-backup browser transitions. Backup admission
+returned 202, but the completion report returned 409 before the required archive
+assertions could run. Cleanup also rejected an unrelated pre-existing container
+replacement and a new anonymous volume. Owned resources were cleaned up, and the
+user's instance on port 18081 preserved its identity, content, and health. This
+attempt does not qualify the feature.
+
+A deterministic Linux handler check reproduced both missing transitions as 409.
+The fixture repair passed all six handler cases, including the existing
+wrong-action rejection, before a targeted rerun. Its source commit is
+`94983642`; the integrated candidate is
+`02a56396b514a15dc26b96f3cedc5456b12b110d`. Product implementation is unchanged
+from `b133bd5`. The repair took 82 seconds from 09:54:10 to 09:55:32 UTC,
+including checks. Each test execution took less than 0.01 seconds; compilation
+was approximately eight seconds. These checks have tool receipts, not retained
+log files.
+
+The second attempt at `02a5639` ran from `2026-10-27T09:57:30Z` to
+`2026-10-27T10:01:11Z`, 221 seconds. The product runtime test passed in 139.92
+seconds, and the browser workflow passed. Its aggregate command failed because
+the shared preservation checks treated anonymous volumes attached to classified
+non-task additions as unclassified, despite unchanged baseline profiles. The
+focused verifier repair retained exact baseline checks, rejection of unknown
+changes, task cleanup, and user-instance preservation. Sixteen tests passed in
+0.007 seconds, and captured-snapshot replay took less than 0.1 seconds. Repair
+work was approximately 10:03–10:06:21 UTC, including design and waiting.
+
+Source checks retain their original revisions. The full frontend suite passed
+1,898 tests in 128 files at `25d6d690eff58de0fed1ad88b2785c8a3229c622`, and its
+build passed in 17 seconds. The only
+later frontend change added recovery coverage, with seven passing tests at
+`ccf9f829fa694ba74f33771cd642d78d930638da`; production UI and the built manifest
+were unchanged. Generated checks
+passed in 54 seconds at `78fc02404763466d0c4a0916c338ea2e25d64ff0`, with no later
+SQL or schema changes. Isolated
+PostgreSQL Compose admission, recovery, and replay checks passed in 2.408 seconds
+before the journal-only repairs. Final focused Go checks, formatting, pinned
+lint with zero issues, shell checks, and a fresh Go build passed at `b133bd5`.
+The original 266-second `make verify` command failed on nine exported comments,
+after formatting, vet, and all Go package tests passed. Comment repair and the
+later lint pass do not turn that aggregate command into a pass. Broad
+`make check` was not run.
+
+Implementation and test windows overlapped. Initial backend implementation was
+approximately 09:04–09:23 UTC and UI implementation approximately 09:05–09:12 UTC.
+Fixture preparation took 76 seconds. An early browser phase-state repair, async
+UI test repairs, and a generated-type adapter correction have no separately
+measured totals. The first environment-map codec repair took approximately six
+minutes including checks. The later mixed-journal repair took 222 seconds,
+including focused tests and race checks. Final focused checks took 18 seconds,
+formatting and lint took ten seconds, and the Go build took six seconds in
+overlapping windows. Review and waiting time were not instrumented. These
+measurements do not provide an additive elapsed-time partition.
+
+The next bounded Coolify workflow is a local backup schedule for one managed
+Compose named volume. Remote copies and download remain later gaps. Compose
+archive restore, bind mounts, raw Compose, Git Compose, and
+mixed build/image stacks remain unsupported or unqualified. Coordinated database
+and upload recovery is a separate NeroCD expansion, not an upstream workflow
+implemented by `VolumeBackupRecoveryJob`. These results do not qualify full parity
 or automatic rollback after a failed stateful replacement.
 
 ## Pasteable Vikunja/PostgreSQL example
@@ -259,3 +386,11 @@ NeroCD retains those behaviors through its existing Go runner authority,
 protected material delivery, durable receipts, and owned-volume provenance.
 SSH scripts, persistent `.env` files, and remote shell cleanup are not the
 execution mechanism for this managed profile.
+
+The volume-backup reference paths are `app/Jobs/VolumeBackupJob.php` and
+`app/Jobs/VolumeBackupRecoveryJob.php` at the same pinned revision. Coolify discovers
+running volume users, stops them when configured, archives the selected source
+through a read-only helper mount, and resumes the stopped containers. Recovery
+retries unfinished container resumption and partial S3 cleanup. NeroCD reuses
+that sequence with its owned-volume proofs, fenced authority, durable journal,
+and existing archive helper.

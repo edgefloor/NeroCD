@@ -34,8 +34,10 @@ copies, retention and failure notifications. One pinned Linkding catalog
 workflow includes separate-target application recovery. Saved managed Compose now
 includes the qualified Vikunja/PostgreSQL save, deploy, HTTPS, redeploy, component
 logs, Stop/Start, database-only component backup/import, and local PostgreSQL 16
-component schedules at `09cd2670154443f788963d9812aa6b77a2c919c8`; see
-[Compose qualification](hosting-compose.md#qualification).
+component schedules at `09cd2670154443f788963d9812aa6b77a2c919c8`. Immediate local
+named-volume backup is accepted with product evidence at `02a5639` and reviewed
+preservation replay at `37ddc31`; both original aggregate gate commands remain
+failed. See [Compose qualification](hosting-compose.md#qualification).
 
 Use [compatibility](compatibility.md#accepted-foundations-and-evidence) for tested profiles and limits. These results do not complete the hosting
 requirements. Public production ACME, broader hosts, protected production plans,
@@ -59,9 +61,12 @@ A practical deployment demo alone does not complete Coolify parity.
 
 Continue H2 from the remaining stateful and catalog gaps. Select a complete user
 workflow with a recoverable failure path before adding another internal helper.
-Local PostgreSQL component schedules are accepted for the qualified managed
-Compose profile. The next bounded gap is coordinated Compose application and
-upload recovery.
+Local PostgreSQL component schedules and immediate local named-volume backup are
+accepted for the bounded managed Compose profile. The next workflow schedules a
+local backup for one managed Compose named volume. Remote copies and download
+remain later gaps. `VolumeBackupRecoveryJob` resumes stopped containers and cleans
+partial remote uploads. Coordinated database and upload recovery is a separate
+NeroCD expansion and must not displace those upstream workflows.
 
 | Area | Existing bounded workflow | Remaining work |
 | --- | --- | --- |
@@ -69,7 +74,7 @@ upload recovery.
 | PostgreSQL recovery | [Immediate backup/restore](hosting-database-backups.md), [schedules](hosting-database-backup-schedules.md), [remote copies](hosting-database-remote-backups.md), [retention](hosting-database-backup-retention.md), and [failure alerts](hosting-backup-notifications.md) | Production S3 HTTPS, additional engines, cross-destination and in-place recovery, broader cron grammar and notification events/channels |
 | Upload recovery | [Local archives](hosting-storage-archive.md), [remote copies](hosting-storage-remote-backups.md), [schedules/alerts](hosting-storage-backup-schedules.md), [retention](hosting-storage-backup-retention.md), and [selected-copy deletion](hosting-storage-backup-deletion.md) | Broader mount types, unknown-writer recovery, cross-host/in-place recovery and full A25–A27/A37 |
 | Catalog | [Search, definition preview and pinned Linkding install](hosting-catalog.md), then [separate-target recovery](hosting-catalog-recovery.md) | Category/compatibility filters and richer requirement presentation, more tested definitions, explicit upgrades and broader application-specific recovery |
-| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, and local PostgreSQL component schedules | Coordinated application and upload recovery; raw Compose, Git Compose and mixed build/image stacks remain unqualified |
+| Managed Compose | [Saved managed Compose with Vikunja/PostgreSQL](hosting-compose.md), including component logs, Stop/Start, database-only backup/import, local PostgreSQL component schedules, and immediate local named-volume backup | Local volume schedules, remote copies and download; archive restore, bind mounts, raw Compose, Git Compose and mixed build/image stacks remain unsupported or unqualified |
 | Practical hosting | [SSH onboarding](hosting-ssh-onboarding.md), [runtime logs](hosting-runtime-logs.md), [automatic deployment](hosting-auto-deploy.md) | Broader host/capability qualification, public ACME, protected plans under R17/R19, live provider setup and complete A01/A09/A29 |
 
 Keep the existing default-off flags and explicit capabilities. A successful
