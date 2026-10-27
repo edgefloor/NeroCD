@@ -129,17 +129,84 @@ def preservation(before, after, owner, name, volume):
             blocked.append(identity)
     containers_unchanged = all(identity in current and current[identity] == value for identity, value in old.items())
     volumes_unchanged = before["volumes"] == after["volumes"]
-    # Retain exact file/root/listener/HTTP content comparison, including unknown
-    # snapshot fields. Container additions are the only permitted difference.
-    other_unchanged = ({k: v for k, v in before.items() if k != "containers"} ==
-                       {k: v for k, v in after.items() if k != "containers"})
+    baseline_volumes_unchanged = all(key in after["volumes"] and after["volumes"][key] == value
+                                     for key, value in before["volumes"].items())
+    added_volumes = sorted(set(after["volumes"]) - set(before["volumes"]))
+    classified_volumes = []
+    unclassified_volumes = []
+    task_volumes = []
+    classified_containers = set(additions) - set(blocked) - set(uncertain)
+    for key in added_volumes:
+        value = after["volumes"][key]
+        if key == volume or key == owner or key.startswith(owner + "-") or key == name:
+            task_volumes.append(key)
+            continue
+        if not isinstance(value, dict):
+            unclassified_volumes.append(key)
+            continue
+        labels = value.get("Labels")
+        labels = {} if labels is None else labels
+        if isinstance(labels, dict) and labels.get("io.nerocd.storage-runtime.owner") == owner:
+            task_volumes.append(key)
+            continue
+        mountpoint = "/var/lib/docker/volumes/" + key + "/_data"
+        valid = (isinstance(key, str) and re.fullmatch(r"[a-f0-9]{64}", key) is not None
+                 and set(value) == {"CreatedAt", "Driver", "Labels", "Mountpoint", "Name", "Options", "Scope"}
+                 and isinstance(value.get("CreatedAt"), str) and bool(value["CreatedAt"])
+                 and value.get("Name") == key and value.get("Driver") == "local" and value.get("Scope") == "local"
+                 and value.get("Mountpoint") == mountpoint and value.get("Options") in (None, {})
+                 and labels == {"com.docker.volume.anonymous": ""})
+        users = []
+        for identity, container in current.items():
+            if not isinstance(container, dict):
+                valid = False
+                continue
+            mounts = container.get("Mounts")
+            if not isinstance(mounts, list) or any(not isinstance(m, dict) for m in mounts):
+                valid = False
+                continue
+            actual = [m for m in mounts if m.get("Name") == key or m.get("Source") == mountpoint]
+            for mount in actual:
+                users.append(identity)
+                valid = valid and (identity in classified_containers and mount.get("Type") == "volume"
+                                   and mount.get("Name") == key and mount.get("Source") == mountpoint
+                                   and mount.get("Driver") == "local" and isinstance(mount.get("Destination"), str)
+                                   and mount["Destination"].startswith("/") and isinstance(mount.get("RW"), bool)
+                                   and isinstance(container.get("Config", {}).get("Volumes"), dict)
+                                   and container["Config"]["Volumes"].get(mount["Destination"]) == {}
+                                   and container.get("HostConfig", {}).get("Binds") in (None, [])
+                                   and container.get("HostConfig", {}).get("Mounts") in (None, []))
+            host = container.get("HostConfig")
+            requested = host.get("Mounts") if isinstance(host, dict) else None
+            requested = [] if requested is None else requested
+            if not isinstance(requested, list) or any(not isinstance(m, dict) for m in requested):
+                valid = False
+                continue
+            for mount in requested:
+                if mount.get("Source") in (key, mountpoint):
+                    valid = valid and (identity in classified_containers and mount.get("Type") == "volume"
+                                       and mount.get("Source") == key
+                                       and any(m.get("Destination") == mount.get("Target") for m in actual))
+        if valid and users:
+            classified_volumes.append(key)
+        else:
+            unclassified_volumes.append(key)
+    # Inventories are checked above. Retain every other field, including unknown
+    # snapshot fields, in the exact user identity/content comparison.
+    other_unchanged = ({k: v for k, v in before.items() if k not in ("containers", "volumes")} ==
+                       {k: v for k, v in after.items() if k not in ("containers", "volumes")})
     healthy = bool(after["ui_health"]) and all(value["status"] == 200 for value in after["ui_health"].values())
-    passed = containers_unchanged and volumes_unchanged and other_unchanged and healthy and not blocked and not uncertain
+    passed = (containers_unchanged and baseline_volumes_unchanged and other_unchanged and healthy
+              and not blocked and not uncertain and not task_volumes and not unclassified_volumes)
     return {"status": "passed" if passed else "failed",
             "baseline_containers": len(old), "baseline_volumes": len(before["volumes"]),
             "baseline_container_profiles_unchanged": containers_unchanged,
             "volume_inventory_and_profiles_unchanged": volumes_unchanged,
-            "non_container_snapshot_unchanged": other_unchanged,
+            "baseline_volume_profiles_unchanged": baseline_volumes_unchanged,
+            "non_inventory_snapshot_unchanged": other_unchanged,
+            "non_task_added_volume_names": classified_volumes,
+            "task_owned_added_volume_names": task_volumes,
+            "unclassified_added_volume_names": unclassified_volumes,
             "non_task_added_container_ids": [identity for identity in additions if identity not in blocked and identity not in uncertain],
             "task_owned_or_task_volume_addition_ids": blocked,
             "unclassified_added_container_ids": uncertain,

@@ -300,10 +300,10 @@ cleanup() {
  host_docker volume ls --format '{{json .}}' > "$evidence/host-volumes-after" || result=1
  host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-after" || result=1
  host_docker volume ls --format '{{.Name}}' | sort > "$evidence/host-volume-names-after" || result=1
- if [[ "$remote" != true ]]; then
+ if [[ "$remote" != true && "$catalog" != true ]]; then
   cmp "$evidence/host-container-ids-before" "$evidence/host-container-ids-after" || result=1
+  cmp "$evidence/host-volume-names-before" "$evidence/host-volume-names-after" || result=1
  fi
- cmp "$evidence/host-volume-names-before" "$evidence/host-volume-names-after" || result=1
  git status --porcelain > "$evidence/status-after"
  [[ $(git rev-parse HEAD) == "$head_before" && $(git rev-parse 'HEAD^{tree}') == "$tree_before" && ! -s "$evidence/status-after" ]] || result=1
  printf 'gate_exit=%s\nouter_id=%s\nouter_volume=%s\n' "$result" "$outer" "$volume" > "$evidence/result"

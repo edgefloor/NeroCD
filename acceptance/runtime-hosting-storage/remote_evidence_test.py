@@ -96,6 +96,92 @@ class ProfileTest(unittest.TestCase):
         self.assertNotIn("concurrent-addition", json.dumps(result))
         self.assertEqual(after, original)
 
+    def concurrent_volume_fixture(self):
+        before = self.preservation_fixture()
+        after = copy.deepcopy(before)
+        name = "b" * 64
+        added = copy.deepcopy(after["containers"]["a" * 64])
+        added.update(Id="c" * 64, Name="/concurrent-postgres")
+        mountpoint = "/var/lib/docker/volumes/" + name + "/_data"
+        added["Config"]["Volumes"] = {"/var/lib/postgresql/data": {}}
+        added["Mounts"] = [{"Type": "volume", "Name": name, "Source": mountpoint,
+                            "Destination": "/var/lib/postgresql/data", "Driver": "local", "RW": True}]
+        after["containers"][added["Id"]] = added
+        after["volumes"][name] = {"Name": name, "Driver": "local", "Scope": "local", "CreatedAt": "2026-10-27T10:00:00Z",
+                                  "Mountpoint": mountpoint, "Labels": {"com.docker.volume.anonymous": ""}, "Options": None}
+        return before, after, added, name
+
+    def test_accepts_only_proven_non_task_added_volume_without_modifying_snapshots(self):
+        before, after, _, name = self.concurrent_volume_fixture()
+        original = copy.deepcopy(after)
+        result = self.preservation(before, after)
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["baseline_volume_profiles_unchanged"])
+        self.assertFalse(result["volume_inventory_and_profiles_unchanged"])
+        self.assertTrue(result["non_inventory_snapshot_unchanged"])
+        self.assertEqual(result["non_task_added_volume_names"], [name])
+        self.assertEqual(after, original)
+
+    def test_rejects_unproven_or_task_volume_additions(self):
+        for kind in ["unmounted", "wrong_name", "wrong_source", "wrong_driver", "missing_destination",
+                     "task_label", "task_name", "unknown_container", "conflicting_mount", "requested_conflict", "options",
+                     "named_volume", "extra_label", "missing_anonymous_label", "missing_declaration", "bind",
+                     "requested_only", "task_user", "unknown_user", "profile_driver", "scope", "mountpoint",
+                     "unknown_field", "bad_labels", "bad_options", "bad_profile", "bad_created_at", "bad_mounts"]:
+            before, after, added, name = self.concurrent_volume_fixture()
+            profile = after["volumes"][name]
+            if kind == "unmounted": added["Mounts"] = []
+            elif kind == "wrong_name": profile["Name"] = "other"
+            elif kind == "wrong_source": added["Mounts"][0]["Source"] = "/other"
+            elif kind == "wrong_driver": added["Mounts"][0]["Driver"] = "other"
+            elif kind == "missing_destination": del added["Mounts"][0]["Destination"]
+            elif kind == "task_label": profile["Labels"]["io.nerocd.storage-runtime.owner"] = "task-owner"
+            elif kind == "task_name":
+                profile["Name"] = "task-owner-docker-data"
+                after["volumes"]["task-owner-docker-data"] = after["volumes"].pop(name)
+            elif kind == "unknown_container": added["Config"] = None
+            elif kind == "conflicting_mount":
+                other = copy.deepcopy(added)
+                other.update(Id="d" * 64, Name="/other")
+                other["Mounts"][0]["Source"] = "/other"
+                after["containers"][other["Id"]] = other
+            elif kind == "requested_conflict": added["HostConfig"]["Mounts"] = [{"Type": "volume", "Source": name, "Target": "/other"}]
+            elif kind == "options": profile["Options"] = {"device": "/unproven"}
+            elif kind == "named_volume":
+                profile["Name"] = "unrelated-named-volume"
+                after["volumes"][profile["Name"]] = after["volumes"].pop(name)
+            elif kind == "extra_label": profile["Labels"]["unclassified"] = "value"
+            elif kind == "missing_anonymous_label": profile["Labels"] = None
+            elif kind == "missing_declaration": del added["Config"]["Volumes"]
+            elif kind == "bind": added["HostConfig"]["Binds"] = ["/host:/other"]
+            elif kind == "requested_only":
+                added["Mounts"] = []
+                added["HostConfig"]["Mounts"] = [{"Type": "volume", "Source": name, "Target": "/var/lib/postgresql/data"}]
+            elif kind in ("task_user", "unknown_user"):
+                other = copy.deepcopy(added)
+                other.update(Id="d" * 64, Name="/other")
+                if kind == "task_user": other["Config"]["Labels"] = {"io.nerocd.storage-runtime.owner": "task-owner"}
+                else: other["Config"] = None
+                after["containers"][other["Id"]] = other
+            elif kind == "profile_driver": profile["Driver"] = "other"
+            elif kind == "scope": profile["Scope"] = "global"
+            elif kind == "mountpoint": profile["Mountpoint"] = "/other"
+            elif kind == "unknown_field": profile["Unknown"] = "unsupported"
+            elif kind == "bad_labels": profile["Labels"] = []
+            elif kind == "bad_options": profile["Options"] = []
+            elif kind == "bad_profile": after["volumes"][name] = []
+            elif kind == "bad_created_at": profile["CreatedAt"] = None
+            else: added["Mounts"] = [None]
+            with self.subTest(kind=kind):
+                self.assertEqual(self.preservation(before, after)["status"], "failed")
+
+    def test_rejects_unknown_snapshot_field_changes(self):
+        before = self.preservation_fixture()
+        before["future_guard"] = {"identity": "original"}
+        after = copy.deepcopy(before)
+        after["future_guard"]["identity"] = "changed"
+        self.assertEqual(self.preservation(before, after)["status"], "failed")
+
     def test_rejects_deleted_or_modified_baseline_container_profiles(self):
         before = self.preservation_fixture()
         for key in [None, "Name", "Image", "Config", "HostConfig", "Mounts", "State", "NetworkSettings"]:
