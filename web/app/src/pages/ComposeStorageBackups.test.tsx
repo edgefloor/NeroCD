@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
@@ -425,7 +426,7 @@ test("immediate remote selection is frozen into review and exact retry while sch
     )
       return Promise.reject(Error("lost response"));
   });
-  await screen.findByRole("option", { name: /S3 target/ });
+  await screen.findAllByRole("option", { name: /S3 target/ });
   fireEvent.change(
     screen.getByRole("combobox", { name: "Remote Compose backup target" }),
     { target: { value: "target:3" } },
@@ -475,7 +476,7 @@ test("immediate remote selection is frozen into review and exact retry while sch
   expect(
     screen.getByRole("region", { name: "Recurring Compose volume backups" })
       .textContent,
-  ).toContain("Local archive only");
+  ).toContain("Remote target for this submission: local only");
 });
 
 const transferBlob = {
@@ -584,4 +585,36 @@ test("remote upload retry preserves archive and request identity after lost resp
       ([u, o]) => u.endsWith("/storage-backups") && o.method === "POST",
     ),
   ).toHaveLength(0);
+});
+
+
+test("scheduled remote selection is independent and locked across review and identical retry", async () => {
+  let writes = 0;
+  const { fetch } = setup((url, options) => {
+    if (url.endsWith("/database-backup-targets")) return new Response(JSON.stringify([remoteTarget]));
+    if (url.endsWith("/storage-validations")) return new Response(JSON.stringify([remoteValidation]));
+    if (options.method === "POST" && url.endsWith("/storage-backup-schedules")) {
+      if (++writes === 1) return Promise.reject(Error("lost response"));
+      const body = JSON.parse(String(options.body));
+      return new Response(JSON.stringify({ id: "schedule", version: "managed-compose.local-volume-archive.schedule.v1", project_id: "p", resource_id: "r", revision: 1, frequency: body.frequency, timezone: body.timezone, enabled: body.enabled, volume: body.volume, acknowledge_interruption: true, remote_target: body.remote_target, created_at: "2026-10-27T00:00:00Z", updated_at: "2026-10-27T00:00:00Z" }));
+    }
+  });
+  await screen.findAllByRole("option", { name: /S3 target/ });
+  const schedules = within(screen.getByRole("region", { name: "Recurring Compose volume backups" }));
+  fireEvent.change(schedules.getByRole("combobox", { name: "Remote scheduled Compose backup target" }), { target: { value: "target:3" } });
+  expect(screen.getByRole("combobox", { name: "Remote Compose backup target" })).toHaveProperty("value", "");
+  await screen.findByRole("option", { name: "uploads" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Named volume to back up" }), { target: { value: "uploads" } });
+  fireEvent.click(schedules.getByRole("button", { name: "Review Compose volume schedule" }));
+  await schedules.findByRole("region", { name: "Reviewed Compose volume schedule" });
+  expect(schedules.getByRole("combobox", { name: "Remote scheduled Compose backup target" })).toHaveProperty("disabled", true);
+  fireEvent.click(schedules.getByRole("checkbox", { name: /I acknowledge interruption/ }));
+  fireEvent.click(schedules.getByRole("button", { name: "Confirm Compose volume schedule" }));
+  await schedules.findByRole("button", { name: "Retry identical schedule request" });
+  expect(schedules.getByRole("combobox", { name: "Remote scheduled Compose backup target" })).toHaveProperty("disabled", true);
+  fireEvent.click(schedules.getByRole("button", { name: "Retry identical schedule request" }));
+  await waitFor(() => expect(writes).toBe(2));
+  const admissions = fetch.mock.calls.filter(([u, o]) => u.endsWith("/storage-backup-schedules") && o.method === "POST");
+  expect(admissions[1]![1].body).toBe(admissions[0]![1].body);
+  expect(JSON.parse(String(admissions[0]![1].body))).toMatchObject({ remote_target: { target_id: "target", revision: 3 }, volume: "uploads", expected_deployed_operation_id: "deploy", acknowledge_interruption: true });
 });

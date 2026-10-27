@@ -162,7 +162,7 @@ const volumeEvidence = {
     },
   ],
 };
-function mountCompose(owner = true, blocked = false) {
+function mountCompose(owner = true, blocked = false, remoteTarget?: { target_id: string; revision: number }) {
   const onDenied = vi.fn();
   const view = render(
     <QueryClientProvider client={client}>
@@ -172,6 +172,7 @@ function mountCompose(owner = true, blocked = false) {
         owner={owner}
         blocked={blocked}
         composeVolume="uploads"
+        remoteTarget={remoteTarget}
         onRemoteTarget={() => {}}
         onSelectBackup={() => {}}
         onDenied={onDenied}
@@ -402,4 +403,52 @@ test("denied fresh review retires scheduling and saved mutation controls", async
     ).toBeNull(),
   );
   expect(api.saveStorageBackupSchedule).not.toHaveBeenCalled();
+});
+
+
+test("Compose schedule review freezes the remote revision through ambiguous retry", async () => {
+  const remoteTarget = { target_id: "target", revision: 3 };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(volumeEvidence))));
+  vi.mocked(api.saveStorageBackupSchedule).mockRejectedValueOnce(Error("lost response")).mockResolvedValueOnce({ ...composeSchedule, remote_target: { ...remoteTarget } });
+  mountCompose(true, false, remoteTarget);
+  await reviewCompose();
+  expect(screen.getByRole("region", { name: "Reviewed Compose volume schedule" }).textContent).toContain("Remote target for this schedule: target revision 3");
+  remoteTarget.revision = 4;
+  consentCompose();
+  await screen.findByRole("button", { name: "Retry identical schedule request" });
+  const saved = vi.mocked(api.saveStorageBackupSchedule).mock.calls[0]![3];
+  expect(saved.remote_target).toEqual({ target_id: "target", revision: 3 });
+  expect(Object.isFrozen(saved.remote_target)).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Retry identical schedule request" }));
+  await waitFor(() => expect(api.saveStorageBackupSchedule).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.saveStorageBackupSchedule).mock.calls[1]![3]).toBe(saved);
+});
+
+test("Compose disable keeps the saved remote revision without live evidence or target validation", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const remote_target = { target_id: "target", revision: 3 };
+  vi.mocked(api.listStorageBackupSchedules).mockResolvedValue([{ ...composeSchedule, remote_target }]);
+  vi.mocked(api.saveStorageBackupSchedule).mockResolvedValue({ ...composeSchedule, remote_target, revision: 2, enabled: false });
+  mountCompose();
+  fireEvent.click(await screen.findByRole("button", { name: "View schedule schedule" }));
+  fireEvent.click(screen.getByRole("button", { name: "Disable schedule" }));
+  await waitFor(() => expect(api.saveStorageBackupSchedule).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.saveStorageBackupSchedule).mock.calls[0]![3]).toMatchObject({ enabled: false, volume: "uploads", remote_target });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test("disabled Compose schedule can change frequency and retained target while runtime is unavailable", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const remote_target = { target_id: "target", revision: 3 };
+  vi.mocked(api.listStorageBackupSchedules).mockResolvedValue([{ ...composeSchedule, enabled: false, remote_target }]);
+  vi.mocked(api.saveStorageBackupSchedule).mockResolvedValue({ ...composeSchedule, enabled: false, remote_target, frequency: "weekly", revision: 2 });
+  mountCompose(true, false, remote_target);
+  fireEvent.click(await screen.findByRole("button", { name: "View schedule schedule" }));
+  fireEvent.change(screen.getByLabelText("Backup frequency"), { target: { value: "weekly" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save schedule changes" }));
+  await waitFor(() => expect(api.saveStorageBackupSchedule).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.saveStorageBackupSchedule).mock.calls[0]![3]).toMatchObject({ enabled: false, frequency: "weekly", remote_target });
+  expect(fetch).not.toHaveBeenCalled();
 });

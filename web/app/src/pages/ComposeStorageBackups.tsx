@@ -57,6 +57,7 @@ export function ComposeStorageBackups({
     [selected, setSelected] = useState(""),
     [volume, setVolume] = useState("");
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
+  const [scheduleRemoteTarget, setScheduleRemoteTarget] = useState<RemoteBackupTarget>();
   const [remoteRetry, setRemoteRetry] = useState<StorageTransferRetry>();
   const [review, setReview] = useState<ComposeBackupInput>(),
     [sent, setSent] = useState(false),
@@ -447,7 +448,9 @@ export function ComposeStorageBackups({
         owner={owner}
         blocked={blocked}
         composeVolume={volume}
-        onRemoteTarget={() => {}}
+        remoteTarget={scheduleRemoteTarget}
+        onRemoteTarget={setScheduleRemoteTarget}
+        remoteDestinations={destinations}
         onSelectBackup={(value) => {
           if (!remoteRetry) {
             setSelected(value);

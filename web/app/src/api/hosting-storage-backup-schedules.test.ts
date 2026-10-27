@@ -261,7 +261,7 @@ for (const [name, change] of Object.entries({
   invalidVolume: { volume: "../uploads" },
   missingConsent: { acknowledge_interruption: undefined },
   falseConsent: { acknowledge_interruption: false },
-  remote: { remote_target: { target_id: "remote", revision: 1 } },
+  invalidRemote: { remote_target: { target_id: "remote", revision: 0 } },
   imageVolume: { version: "hosting.storage-backup.schedule.v1" },
 }))
   test(`Compose schedule rejects ${name}`, () => {
@@ -304,7 +304,7 @@ for (const [name, change] of Object.entries({
   missingConsent: { acknowledge_interruption: undefined },
   falseConsent: { acknowledge_interruption: false },
   invalidVolume: { volume: "../bad" },
-  remote: { remote_target: { target_id: "remote", revision: 1 } },
+  invalidRemote: { remote_target: { target_id: "remote", revision: 0 } },
   imageDeployment: { volume: undefined },
 }))
   test(`Compose input rejects ${name} before network`, async () => {
@@ -369,4 +369,19 @@ test("existing disable needs no source proof but validates selected volume recei
       new AbortController().signal,
     ),
   ).rejects.toThrow();
+});
+
+
+test("Compose schedules retain optional remote revision and send it through the existing endpoint", async () => {
+  const remote_target = { target_id: "remote", revision: 3 };
+  expect(parseStorageBackupSchedule({ ...composeSchedule, remote_target }, scope, db).remote_target).toEqual(remote_target);
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ ...composeSchedule, enabled: false, remote_target })));
+  vi.stubGlobal("fetch", fetch);
+  await saveStorageBackupSchedule(scope, db, "", { ...composeInput, remote_target }, new AbortController().signal);
+  expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).remote_target).toEqual(remote_target);
+});
+
+test("Compose schedule rejects a changed remote revision in the receipt", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...composeSchedule, enabled: false, remote_target: { target_id: "remote", revision: 4 } }))));
+  await expect(saveStorageBackupSchedule(scope, db, "", { ...composeInput, remote_target: { target_id: "remote", revision: 3 } }, new AbortController().signal)).rejects.toThrow();
 });

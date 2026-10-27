@@ -186,8 +186,7 @@ export function parseStorageBackupSchedule(
   if (
     compose
       ? !identifier(v.volume) ||
-        v.acknowledge_interruption !== true ||
-        v.remote_target !== undefined
+        v.acknowledge_interruption !== true
       : v.volume !== undefined || v.acknowledge_interruption !== undefined
   )
     return fail();
@@ -325,7 +324,6 @@ export async function saveStorageBackupSchedule(
   if (
     compose
       ? !identifier(input.volume) ||
-        input.remote_target !== undefined ||
         ((input.enabled || !schedule) &&
           (!identifier(input.expected_deployed_operation_id) ||
             input.acknowledge_interruption !== true)) ||

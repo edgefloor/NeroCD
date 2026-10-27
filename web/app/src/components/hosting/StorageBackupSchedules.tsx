@@ -15,6 +15,11 @@ import {
   type StorageBackupSchedule,
   type StorageBackupScheduleInput,
 } from "@/api/hosting-storage-backup-schedules";
+import {
+  BackupDestinationSelect,
+  validSelectedBackupDestination,
+  type useDatabaseBackupDestinations,
+} from "@/pages/DatabaseBackupDestinations";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -29,6 +34,7 @@ export function StorageBackupSchedules({
   onSelectBackup,
   onDenied,
   composeVolume,
+  remoteDestinations,
 }: {
   scope: ArchiveScope;
   resource: Pick<Resource, "id" | "generation">;
@@ -39,6 +45,7 @@ export function StorageBackupSchedules({
   onSelectBackup: (v: string) => void;
   onDenied: () => void;
   composeVolume?: string;
+  remoteDestinations?: ReturnType<typeof useDatabaseBackupDestinations>;
 }) {
   const compose = composeVolume !== undefined;
   const title = compose
@@ -167,11 +174,8 @@ export function StorageBackupSchedules({
       frequency,
       timezone,
       enabled,
-      ...(compose
-        ? { volume: selected?.volume ?? composeVolume }
-        : remoteTarget
-          ? { remote_target: remoteTarget }
-          : {}),
+      ...(compose ? { volume: selected?.volume ?? composeVolume } : {}),
+      ...(remoteTarget ? { remote_target: Object.freeze({ ...remoteTarget }) } : {}),
     };
     const next = { schedule: selected?.id ?? "", input };
     if (!compose || (selected && !enabled)) {
@@ -179,6 +183,13 @@ export function StorageBackupSchedules({
       return;
     }
     if (!owner || active.current || blocked || revoked) return;
+    if (
+      remoteDestinations &&
+      !validSelectedBackupDestination(remoteTarget, remoteDestinations)
+    ) {
+      setError("Refresh the remote target validation and select its current revision before review.");
+      return;
+    }
     const control = new AbortController();
     active.current = control;
     setBusy(true);
@@ -306,23 +317,43 @@ export function StorageBackupSchedules({
             />
             Enabled
           </label>
+          {compose && remoteDestinations ? (
+            <>
+              <BackupDestinationSelect
+                label="Remote scheduled Compose backup target"
+                value={remoteTarget}
+                onChange={onRemoteTarget}
+                destinations={remoteDestinations}
+                disabled={draftLocked}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={draftLocked}
+                onClick={() => void remoteDestinations.refresh()}
+              >
+                Refresh scheduled Compose backup targets
+              </Button>
+            </>
+          ) : null}
           {compose ? (
             <p className="break-all">
               Scheduled named volume:{" "}
               {selected?.volume ||
                 composeVolume ||
                 "Select a named volume above"}
-              . Local archive only.
+              .
             </p>
-          ) : (
-            <p>
-              Remote target for this submission:{" "}
-              {remoteTarget
-                ? `${remoteTarget.target_id} revision ${remoteTarget.revision}`
-                : "local only"}
-              . Review the remote target selector above.
-            </p>
-          )}
+          ) : null}
+          <p>
+            Remote target for this submission:{" "}
+            {remoteTarget
+              ? `${remoteTarget.target_id} revision ${remoteTarget.revision}`
+              : "local only"}
+            . {compose
+              ? "Writers resume before upload. Upload failure leaves the local archive successful; retry upload from that archive's transfer controls."
+              : "Review the remote target selector above."}
+          </p>
           <Button
             type="submit"
             disabled={
@@ -359,11 +390,8 @@ export function StorageBackupSchedules({
                     frequency: selected.frequency,
                     timezone: selected.timezone,
                     enabled: false,
-                    ...(compose
-                      ? { volume: selected.volume }
-                      : selected.remote_target
-                        ? { remote_target: selected.remote_target }
-                        : {}),
+                    ...(compose ? { volume: selected.volume } : {}),
+                    ...(selected.remote_target ? { remote_target: Object.freeze({ ...selected.remote_target }) } : {}),
                   },
                 })
               }
@@ -384,6 +412,13 @@ export function StorageBackupSchedules({
             {review.input.expected_deployed_operation_id} ·{" "}
             {review.input.frequency} · {review.input.timezone} ·{" "}
             {review.input.enabled ? "enabled" : "disabled"}
+          </p>
+          <p>
+            Remote target for this schedule:{" "}
+            {review.input.remote_target
+              ? `${review.input.remote_target.target_id} revision ${review.input.remote_target.revision}`
+              : "local only"}
+            . The target revision is pinned for due backups.
           </p>
           <label className="flex items-start gap-2">
             <input
