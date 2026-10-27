@@ -550,6 +550,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{id}/storage-backup-volumes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover settled managed Compose named volumes */
+        get: operations["storageBackupVolumes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{id}/storage-backups": {
         parameters: {
             query?: never;
@@ -7453,6 +7470,10 @@ export interface components {
             /** Format: int64 */
             expected_resource_generation: number;
             remote_target?: components["schemas"]["BackupTargetSelection"];
+            volume?: string;
+            expected_deployed_operation_id?: string;
+            /** @enum {boolean} */
+            acknowledge_interruption?: true;
         };
         HostingStorageRestoreInput: {
             request_id: string;
@@ -7517,21 +7538,82 @@ export interface components {
             backup_id: string;
             recovery_of_operation_id?: string;
             recovery_evidence?: components["schemas"]["HostingStorageArchiveRecoveryEvidence"];
-            source_healthy: components["schemas"]["HostingHealthy"];
-            source_storage: components["schemas"]["HostingStorage"];
-            source_materialization: components["schemas"]["HostingStorageMaterialization"];
+            /** @description The legacy image proof, or its exact zero value when compose_source selects the Compose family. */
+            source_healthy: components["schemas"]["HostingHealthy"] | {
+                snapshot: {
+                    resource_id: "";
+                    resource_generation: 0;
+                    image_reference: "";
+                    binding_id: "";
+                    destination_id: "";
+                    server_id: "";
+                    runner_id: "";
+                    runtime_namespace: "";
+                    container_port: 0;
+                    host_port: 0;
+                    readiness: {
+                        path: "";
+                        timeout_seconds: 0;
+                    };
+                    policy_version: "";
+                };
+                operation_id: "";
+                container_id: "";
+                release: {
+                    canonical_image: "";
+                    image_id: "";
+                    os: "";
+                    architecture: "";
+                    daemon_id: "";
+                    hash: "";
+                };
+                plan_hash: "";
+            };
+            /** @description The legacy image proof, or its exact zero value when compose_source selects the Compose family. */
+            source_storage: components["schemas"]["HostingStorage"] | {
+                id: "";
+                project_id: "";
+                resource_id: "";
+                binding_id: "";
+                destination_id: "";
+                kind: "";
+                driver: "";
+                volume_name: "";
+                mount_path: "";
+                access_mode: "";
+                retention: "";
+                generation: 0;
+                hash: "";
+                created_by: "";
+                created_at: "0001-01-01T00:00:00Z";
+            };
+            /** @description The legacy image proof, or its exact zero value when compose_source selects the Compose family. */
+            source_materialization: components["schemas"]["HostingStorageMaterialization"] | {
+                storage_ref: {
+                    storage_id: "";
+                    generation: 0;
+                    hash: "";
+                };
+                state: "";
+                creation_operation_id: "";
+                creation_plan_hash: "";
+                creation_nonce: "";
+                daemon_id: "";
+                labels: null;
+            };
             writers: components["schemas"]["HostingHealthy"][] | null;
             target?: components["schemas"]["HostingStorageArchiveTarget"];
             helper: components["schemas"]["HostingStorageArchiveHelper"];
             limits: components["schemas"]["HostingStorageArchiveLimits"];
             blob?: components["schemas"]["HostingStorageArchiveBlob"];
             /** @enum {string} */
-            compiler_version: "owned-upload.local-archive.v1";
+            compiler_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1";
             /** @enum {string} */
-            policy_version: "owned-upload.local-archive.v1";
+            policy_version: "owned-upload.local-archive.v1" | "managed-compose.local-volume-archive.v1";
             hash: string;
             remote_target?: components["schemas"]["BackupTargetSelection"];
             remote_source?: components["schemas"]["BackupRemoteSource"];
+            compose_source?: components["schemas"]["HostingStorageArchiveComposeSource"];
         };
         HostingStorageArchiveWriterState: {
             container_id: string;
@@ -7638,6 +7720,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             copies?: components["schemas"]["BackupRetentionItem"][];
+            volume?: string;
+            source_deployed_operation_id?: string;
         };
         HostingStorageRestore: {
             resource: components["schemas"]["Resource"];
@@ -10190,6 +10274,36 @@ export interface components {
             compiler_version: "managed-compose.stop.v1";
             hash: string;
         };
+        HostingStorageArchiveStackProof: {
+            healthy: components["schemas"]["HostingHealthy"];
+            plan: components["schemas"]["HostingApplyPlan"];
+        };
+        HostingStorageArchiveComposeSource: {
+            healthy: components["schemas"]["HostingHealthy"];
+            plan: components["schemas"]["HostingApplyPlan"];
+            volume: components["schemas"]["HostingStackVolume"];
+            retained: components["schemas"]["HostingStorageArchiveStackProof"][];
+        };
+        HostingStorageBackupVolumeMount: {
+            component: string;
+            mount_path: string;
+            read_only: boolean;
+        };
+        HostingStorageBackupVolume: {
+            volume: string;
+            eligible: boolean;
+            reason?: string;
+            mounts: components["schemas"]["HostingStorageBackupVolumeMount"][];
+        };
+        HostingStorageBackupVolumes: {
+            resource_id: string;
+            /** Format: int64 */
+            resource_generation: number;
+            operation_id?: string;
+            available: boolean;
+            reason?: string;
+            volumes: components["schemas"]["HostingStorageBackupVolume"][];
+        };
     };
     responses: {
         /** @description Stable error envelope. */
@@ -12105,6 +12219,42 @@ export interface operations {
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    storageBackupVolumes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled named-volume eligibility */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupVolumes"];
+                };
+            };
+            /** @description Current viewer or destination authority is absent */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Archive source unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listStorageBackups: {

@@ -210,18 +210,6 @@ func archiveProgressByPhase(op domain.HostingOperation, phase string) *domain.Ho
 	}
 	return nil
 }
-func archiveWriterStatesMatch(writers []domain.HostingStorageArchiveWriterState, eligible []domain.HostingHealthy) bool {
-	if len(writers) != len(eligible) {
-		return false
-	}
-	for i, w := range writers {
-		h := eligible[i]
-		if w.ContainerID != h.ContainerID || w.OperationID != h.OperationID || w.ImageID != h.Release.ImageID || w.PlanHash != h.PlanHash || w.ReleaseHash != h.Release.Hash {
-			return false
-		}
-	}
-	return true
-}
 func archiveBlobMatchesPlan(blob *domain.HostingStorageArchiveBlob, p domain.HostingStorageArchivePlan) bool {
 	return blob != nil && blob.Validate() == nil && blob.BackupID == p.BackupID && blob.DestinationID == p.DestinationID && blob.DaemonID == p.Helper.DaemonID && blob.SizeBytes <= p.Limits.ArchiveBytes
 }
@@ -260,7 +248,7 @@ func validateArchiveProgress(op domain.HostingOperation, in domain.HostingStorag
 	}
 	switch in.Phase {
 	case "writer_snapshot":
-		if previous != "" || p.Mode != "backup" || !archiveWriterStatesMatch(in.Writers, p.Writers) {
+		if previous != "" || p.Mode != "backup" || !archivePlanWriterStatesMatch(in.Writers, p) {
 			return ErrConflict
 		}
 	case "stop_intent":
@@ -268,7 +256,7 @@ func validateArchiveProgress(op domain.HostingOperation, in domain.HostingStorag
 			return ErrConflict
 		}
 	case "stopped":
-		if previous != "stop_intent" || !archiveWriterStatesMatch(in.Writers, p.Writers) {
+		if previous != "stop_intent" || snapshot == nil || !sameArchiveWriterInventory(in.Writers, snapshot.Writers) || !archivePlanWriterStatesMatch(in.Writers, p) {
 			return ErrConflict
 		}
 		for _, w := range in.Writers {
@@ -420,7 +408,7 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 			}
 		}
 		if p.Mode == "backup" && r.ArchiveOutcome == "succeeded" && clearHold {
-			if err := storageRetentionPublication(ctx, tx, p.SourceStorage.ResourceID, "archive_"+p.BackupID); err != nil {
+			if err := storageRetentionPublication(ctx, tx, p.SourceResourceID(), "archive_"+p.BackupID); err != nil {
 				return err
 			}
 		}
@@ -464,7 +452,7 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 				if json.Unmarshal(raw, &blob) != nil {
 					return ErrConflict
 				}
-				if e = storageRetentionPublication(ctx, tx, original.StorageArchive.Plan.SourceStorage.ResourceID, "archive_"+p.BackupID); e != nil {
+				if e = storageRetentionPublication(ctx, tx, original.StorageArchive.Plan.SourceResourceID(), "archive_"+p.BackupID); e != nil {
 					return e
 				}
 				if e = s.storageRemoteLocalComplete(ctx, tx, original.StorageArchive.Plan, original.CreatedBy, blob); e != nil {
@@ -483,4 +471,22 @@ func (s *PostgresStore) StorageArchiveComplete(ctx context.Context, runner strin
 		_, err := q.CompleteHostingTask(ctx, sqlcgen.CompleteHostingTaskParams{ID: in.RunID, Status: leaseState})
 		return err
 	})
+}
+
+func archivePlanWriterStatesMatch(w []domain.HostingStorageArchiveWriterState, p domain.HostingStorageArchivePlan) bool {
+	return p.MatchesWriterStates(w, true)
+}
+
+func sameArchiveWriterInventory(a, b []domain.HostingStorageArchiveWriterState) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, w := range a {
+		v := b[i]
+		v.Running = w.Running
+		if v != w {
+			return false
+		}
+	}
+	return true
 }

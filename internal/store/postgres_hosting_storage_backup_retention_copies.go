@@ -96,6 +96,9 @@ func storageRetentionRegister(ctx context.Context, tx pgx.Tx, c domain.StorageBa
 }
 func storageRetentionRegisterArchive(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, blob domain.HostingStorageArchiveBlob, proof *domain.BackupLocalCopyProof) error {
 	p := op.StorageArchive.Plan
+	if p.ComposeSource != nil {
+		return nil
+	}
 	c := domain.StorageBackupRetentionCopy{Item: domain.BackupRetentionItem{CopyID: "sbc_local_" + p.BackupID, BackupID: p.BackupID, Location: "local", Digest: blob.SHA256, Bytes: blob.SizeBytes, CreatedAt: op.CreatedAt, ProtectedReasons: []string{}}, RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, DaemonID: p.Helper.DaemonID, Storage: p.SourceStorage.Reference(), Local: proof}
 	return storageRetentionRegister(ctx, tx, c, p.SourceStorage.ResourceID)
 }

@@ -154,7 +154,7 @@ func (e *storageArchiveEngine) Prepare(ctx context.Context, p domain.HostingStor
 		return errStorageArchiveEngine
 	}
 	e.dockerRoot = daemon.DockerRootDir
-	if _, err := e.volume(ctx, archiveSourceRequest(p)); err != nil {
+	if _, err := e.sourceVolume(ctx, p); err != nil {
 		return errStorageArchiveEngine
 	}
 	// Own the immutable copy used by the volume-only seam. Later input slices
@@ -173,7 +173,7 @@ func (e *storageArchiveEngine) check(ctx context.Context, p domain.HostingStorag
 	if p.Hash == e.prepared.Hash {
 		return nil
 	}
-	if cleanup && e.prepared.Mode == "recover" && e.prepared.RecoveryEvidence != nil && p.Hash == e.prepared.RecoveryEvidence.OriginalPlanHash && p.OperationID == e.prepared.RecoveryOfOperationID && p.Helper == e.prepared.Helper && p.SourceStorage.Hash == e.prepared.SourceStorage.Hash {
+	if cleanup && e.prepared.Mode == "recover" && e.prepared.RecoveryEvidence != nil && p.Hash == e.prepared.RecoveryEvidence.OriginalPlanHash && p.OperationID == e.prepared.RecoveryOfOperationID && p.Helper == e.prepared.Helper && p.SourceIdentityHash() == e.prepared.SourceIdentityHash() {
 		return nil
 	}
 	return errStorageArchiveEngine
@@ -222,10 +222,13 @@ func (e *storageArchiveEngine) users(ctx context.Context, volume string, expecte
 }
 
 func (e *storageArchiveEngine) writers(ctx context.Context, p domain.HostingStorageArchivePlan, helperID string) ([]domain.HostingStorageArchiveWriterState, error) {
+	if p.ComposeSource != nil {
+		return e.composeWriters(ctx, p, helperID)
+	}
 	if p.Target != nil {
 		return nil, errStorageArchiveEngine
 	}
-	if _, err := e.volume(ctx, archiveSourceRequest(p)); err != nil {
+	if _, err := e.sourceVolume(ctx, p); err != nil {
 		return nil, errStorageArchiveEngine
 	}
 	ids := make([]string, 0, len(p.Writers)+1)
@@ -241,7 +244,7 @@ func (e *storageArchiveEngine) writers(ctx context.Context, p domain.HostingStor
 	if helperID != "" {
 		ids = append(ids, helperID)
 	}
-	if e.users(ctx, p.SourceStorage.VolumeName, ids) != nil {
+	if e.users(ctx, p.SourceVolumeName(), ids) != nil {
 		return nil, errStorageArchiveEngine
 	}
 	return states, nil
@@ -288,6 +291,15 @@ func (e *storageArchiveEngine) writerAction(ctx context.Context, p domain.Hostin
 			return errStorageArchiveEngine
 		}
 		got, err := e.image.inspectContainer(ctx, current.ContainerID)
+		if p.ComposeSource != nil {
+			observed, inspectErr := e.writers(ctx, p, "")
+			if inspectErr == nil && slices.ContainsFunc(observed, func(w domain.HostingStorageArchiveWriterState) bool {
+				return sameArchiveWriter(w, state) && w.Running == resume
+			}) {
+				return ctx.Err()
+			}
+			return errStorageArchiveEngine
+		}
 		for _, expected := range p.Writers {
 			if expected.ContainerID == current.ContainerID && err == nil && storageContainerMatches(got, expected) && got.State.Running == resume {
 				return ctx.Err()
@@ -311,7 +323,7 @@ func (e *storageArchiveEngine) emptyTarget(ctx context.Context, p domain.Hosting
 	if err != nil {
 		return errStorageArchiveEngine
 	}
-	source, err := e.volume(ctx, archiveSourceRequest(p))
+	source, err := e.sourceVolume(ctx, p)
 	if err != nil {
 		return errStorageArchiveEngine
 	}
@@ -376,7 +388,7 @@ func archiveHelperName(p domain.HostingStorageArchivePlan, nonce string) string 
 
 func archiveHelperLabels(p domain.HostingStorageArchivePlan, nonce string) map[string]string {
 	labels := archiveImageLabels(p.Helper)
-	for k, v := range map[string]string{"operation": p.OperationID, "plan": p.Hash, "nonce": nonce, "daemon": p.Helper.DaemonID, "helper": p.Helper.Hash, "mode": p.Mode, "source": p.SourceStorage.Hash} {
+	for k, v := range map[string]string{"operation": p.OperationID, "plan": p.Hash, "nonce": nonce, "daemon": p.Helper.DaemonID, "helper": p.Helper.Hash, "mode": p.Mode, "source": p.SourceIdentityHash()} {
 		labels[archiveLabel+k] = v
 	}
 	if p.Target != nil {
@@ -468,7 +480,7 @@ func (e *storageArchiveEngine) helper(ctx context.Context, p domain.HostingStora
 	if h.ID != id || h.Name != "/"+archiveHelperName(p, nonce) || h.Image != p.Helper.ImageID || !maps.Equal(h.Config.Labels, archiveHelperLabels(p, nonce)) || !slices.Equal(h.Config.Cmd, archiveHelperCommand(p)) || !slices.Equal(h.Config.Entrypoint, []string{"/nerocd-storage-archive"}) || !archiveHelperEnvironmentMatches(h.Config.Env) || h.Config.User != "0:0" || h.Config.Hostname != "nerocd-archive" || h.Config.Tty || !c.ReadonlyRootfs || c.Privileged || c.PublishAllPorts || c.AutoRemove || c.NetworkMode != "none" || c.PidMode != "" || c.IpcMode != "private" || c.UsernsMode != "" || c.UtsMode != "" || c.CgroupnsMode != "private" || c.Runtime != "" && c.Runtime != "runc" || len(c.Binds) != 0 || len(c.VolumesFrom) != 0 || len(c.PortBindings) != 0 || len(c.Devices) != 0 || len(c.DeviceRequests) != 0 || len(c.GroupAdd) != 0 || !slices.Equal(c.CapDrop, []string{"ALL"}) || !slices.Equal(caps, expectedCaps) || !slices.Equal(c.SecurityOpt, []string{"no-new-privileges"}) || c.Memory != memory || c.MemorySwap != memory || c.NanoCpus != 1000000000 || c.PidsLimit != 64 || c.LogConfig.Type != "none" || c.RestartPolicy.Name != "no" || !maps.Equal(c.Tmpfs, map[string]string{"/tmp": archiveTmpfs(p)}) {
 		return h, errStorageArchiveEngine
 	}
-	volume, destination, writable := p.SourceStorage.VolumeName, "/source", false
+	volume, destination, writable := p.SourceVolumeName(), "/source", false
 	if p.Target != nil {
 		volume, destination, writable = p.Target.Storage.VolumeName, "/target", true
 	}
@@ -518,7 +530,7 @@ func (e *storageArchiveEngine) CreateHelper(ctx context.Context, p domain.Hostin
 	for _, key := range keys {
 		args = append(args, "--label", key+"="+labels[key])
 	}
-	mount := "type=volume,src=" + p.SourceStorage.VolumeName + ",dst=/source,readonly,volume-nocopy"
+	mount := "type=volume,src=" + p.SourceVolumeName() + ",dst=/source,readonly,volume-nocopy"
 	if p.Target != nil {
 		mount = "type=volume,src=" + p.Target.Storage.VolumeName + ",dst=/target,volume-nocopy"
 	}

@@ -25,7 +25,7 @@ func TestStorageArchiveUnresolvedReplayAllowsUnrelatedClaimsAndGuardsSameVolume(
 	if !storageArchiveConflict(x.j.Snapshot(), x.p.SourceStorage.Reference(), "", "image_operation", "") {
 		t.Fatal("same volume image mutation not guarded")
 	}
-	if !storageArchiveConflict(x.j.Snapshot(), domain.HostingStorageRef{}, x.p.SourceStorage.BindingID, "image_operation", "") {
+	if !storageArchiveConflict(x.j.Snapshot(), domain.HostingStorageRef{}, x.p.SourceBindingID(), "image_operation", "") {
 		t.Fatal("same binding mutation not guarded")
 	}
 	if storageArchiveConflict(x.j.Snapshot(), domain.HostingStorageRef{}, "unrelated_binding", "image_operation", "") {
@@ -74,7 +74,7 @@ func archiveRecoveryRuntime(t *testing.T, x *archiveCoordinator, c *archiveRunti
 	s := newAttemptSupervisorFrom(ctx, lease)
 	t.Cleanup(s.Close)
 	c.lease = lease
-	c.op = domain.HostingOperation{ID: p.OperationID, ProjectID: p.ProjectID, ResourceID: p.SourceStorage.ResourceID, BindingID: p.SourceStorage.BindingID, RunID: a.RunID, TaskMode: p.Mode, State: "preparing", StorageArchive: &domain.HostingStorageArchive{Mode: p.Mode, BackupID: p.BackupID, RecoveryOfOperationID: p.RecoveryOfOperationID, Plan: p}}
+	c.op = domain.HostingOperation{ID: p.OperationID, ProjectID: p.ProjectID, ResourceID: p.SourceResourceID(), BindingID: p.SourceBindingID(), RunID: a.RunID, TaskMode: p.Mode, State: "preparing", StorageArchive: &domain.HostingStorageArchive{Mode: p.Mode, BackupID: p.BackupID, RecoveryOfOperationID: p.RecoveryOfOperationID, Plan: p}}
 	e.effects = nil
 	e.failAt = ""
 	return &archiveCoordinator{s: s, j: x.j, c: x.c, e: e, a: a, lease: lease, p: p}

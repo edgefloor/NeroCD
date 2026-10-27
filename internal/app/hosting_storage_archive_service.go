@@ -22,7 +22,7 @@ func (s *Service) RequestStorageBackup(ctx context.Context, resourceID string, i
 	if err != nil {
 		return zero, err
 	}
-	if err = supportedHostingStorage(r); err != nil {
+	if err = supportedHostingArchive(r); err != nil {
 		return zero, err
 	}
 	if err = in.Validate(); err != nil {
@@ -50,7 +50,7 @@ func (s *Service) ListStorageBackups(ctx context.Context, resourceID string, pag
 	if err != nil {
 		return zero, err
 	}
-	if err = supportedHostingStorage(r); err != nil {
+	if err = supportedHostingArchive(r); err != nil {
 		return zero, err
 	}
 	repo, err := s.storageArchiveRepository()
@@ -221,4 +221,22 @@ func (s *Service) RunnerStorageArchiveComplete(ctx context.Context, in domain.Ho
 	return s.withStorageArchiveRunner(ctx, in.HostingAuthority, func(r store.HostingStorageArchiveRepository, id string) (domain.HostingOperation, error) {
 		return r.StorageArchiveComplete(ctx, id, in)
 	})
+}
+
+func supportedHostingArchive(r domain.Resource) error {
+	if r.Kind == "application" && r.Source.Kind == "compose" {
+		return nil
+	}
+	return supportedHostingStorage(r)
+}
+func (s *Service) StorageBackupVolumes(ctx context.Context, resourceID string) (domain.HostingStorageBackupVolumes, error) {
+	_, actor, err := s.resourceForDestinationRole(ctx, resourceID, domain.RoleViewer)
+	if err != nil {
+		return domain.HostingStorageBackupVolumes{}, err
+	}
+	repo, err := s.storageArchiveRepository()
+	if err != nil {
+		return domain.HostingStorageBackupVolumes{}, err
+	}
+	return repo.StorageBackupVolumes(ctx, actor.ID, resourceID)
 }

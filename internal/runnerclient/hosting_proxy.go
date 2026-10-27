@@ -295,6 +295,14 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if storageRemoteCap != options.RemoteStorageBackups || storageRemoteTask != options.RemoteStorageBackups || storageRemoteCap && (!options.StorageArchive || shellCapable) {
 		return "", errors.New("storage remote backup capability mismatch")
 	}
+	composeArchiveCap, stackCapable := false, false
+	for _, capability := range result.Capabilities {
+		composeArchiveCap = composeArchiveCap || capability == domain.HostingComposeStorageArchiveCapability
+		stackCapable = stackCapable || capability == domain.HostingStackCapability
+	}
+	if composeArchiveCap && (!options.StorageArchive || !options.RuntimeEnvironment || !stackCapable) {
+		return "", errors.New("authenticated Compose archive capability requires configured archive and stack execution")
+	}
 	if archiveCapability != options.StorageArchive || archiveTask != options.StorageArchive || archiveCapability && (shellCapable || !storageCapable) {
 		return "", errors.New("authenticated storage archive capability does not match explicit configuration")
 	}

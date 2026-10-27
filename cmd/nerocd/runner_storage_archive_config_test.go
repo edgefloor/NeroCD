@@ -127,3 +127,30 @@ func TestRunnerStorageRetentionOptInIsIndependent(t *testing.T) {
 		t.Fatal("untyped retention opt-in accepted")
 	}
 }
+
+func TestComposeStorageArchiveCapabilitiesRequireArchiveAndStack(t *testing.T) {
+	base := []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.HostingStackCapability}
+	if _, err := runnerStorageArchiveCapabilities(false, true, append(base, domain.HostingComposeStorageArchiveCapability)); err == nil {
+		t.Fatal("unconfigured Compose archive advertised")
+	}
+	got, err := runnerStorageArchiveCapabilities(true, true, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range got {
+		found = found || c == domain.HostingComposeStorageArchiveCapability
+	}
+	if !found {
+		t.Fatal("configured stack/archive did not advertise capability")
+	}
+	got, err = runnerStorageArchiveCapabilities(true, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if c == domain.HostingComposeStorageArchiveCapability {
+			t.Fatal("archive-only runner advertised Compose")
+		}
+	}
+}

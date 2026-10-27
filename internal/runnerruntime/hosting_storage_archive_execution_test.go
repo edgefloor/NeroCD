@@ -286,7 +286,7 @@ func archiveRuntimeFixture(t *testing.T) (*archiveCoordinator, *archiveRuntimeCo
 	})
 	lease := domain.RunLease{ID: "lease", RunID: "backup_" + p.OperationID, RunnerID: p.RunnerID, Attempt: 1, Fence: "fence", Status: domain.LeaseActive, CreatedAt: time.Now().Add(-time.Second).UTC(), ExpiresAt: time.Now().Add(time.Minute).UTC()}
 	a := hostingAuthority(lease.RunID, p.OperationID, lease)
-	op := domain.HostingOperation{ID: p.OperationID, ProjectID: p.ProjectID, ResourceID: p.SourceStorage.ResourceID, BindingID: p.SourceStorage.BindingID, RunID: a.RunID, TaskMode: p.Mode, State: "preparing", StorageArchive: &domain.HostingStorageArchive{Mode: p.Mode, BackupID: p.BackupID, Plan: p}}
+	op := domain.HostingOperation{ID: p.OperationID, ProjectID: p.ProjectID, ResourceID: p.SourceResourceID(), BindingID: p.SourceBindingID(), RunID: a.RunID, TaskMode: p.Mode, State: "preparing", StorageArchive: &domain.HostingStorageArchive{Mode: p.Mode, BackupID: p.BackupID, Plan: p}}
 	c := &archiveRuntimeController{t: t, j: j, op: op, lease: lease}
 	server := httptest.NewServer(http.HandlerFunc(c.serve))
 	t.Cleanup(server.Close)

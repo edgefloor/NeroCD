@@ -164,6 +164,10 @@ func archivePrelock(ctx context.Context, tx pgx.Tx, destination string, resource
 }
 
 func archiveRunner(ctx context.Context, tx pgx.Tx, p domain.HostingStorageArchivePlan) error {
+	if p.ComposeSource != nil {
+		_, err := sqlcgen.New(tx).LockComposeStorageArchiveRunner(ctx, sqlcgen.LockComposeStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
+		return hostingError(err)
+	}
 	_, err := sqlcgen.New(tx).LockStorageArchiveRunner(ctx, sqlcgen.LockStorageArchiveRunnerParams{RunnerID: p.RunnerID, ServerID: p.ServerID, DestinationID: p.DestinationID, ProjectID: p.ProjectID})
 	if err != nil {
 		return hostingError(err)
@@ -193,32 +197,38 @@ func (s *PostgresStore) archiveGate(ctx context.Context, tx pgx.Tx, op domain.Ho
 			return err
 		}
 	}
-	resources := []string{p.SourceStorage.ResourceID}
+	resources := []string{p.SourceResourceID()}
 	if p.Target != nil {
 		resources = append(resources, p.Target.Resource.ID)
 	}
 	if err := archivePrelock(ctx, tx, p.DestinationID, resources...); err != nil {
 		return err
 	}
-	r, b, err := hostingStoragePlacement(ctx, tx, op.CreatedBy, p.SourceStorage.ResourceID, domain.RoleOwner)
+	r, b, err := archivePlacement(ctx, tx, op.CreatedBy, p.SourceResourceID(), domain.RoleOwner)
 	if err != nil {
 		return err
 	}
-	if r.ProjectID != p.ProjectID || b.ID != p.SourceStorage.BindingID || b.DestinationID != p.DestinationID {
+	if r.ProjectID != p.ProjectID || b.ID != p.SourceBindingID() || b.DestinationID != p.DestinationID {
 		return ErrConflict
 	}
-	current, err := currentHostingStorage(ctx, tx, p.ProjectID, p.SourceStorage.ResourceID)
-	if err != nil {
-		return err
-	}
-	if current.Reference() != p.SourceStorage.Reference() {
-		return ErrConflict
+	if p.ComposeSource != nil {
+		if err = composeArchiveGate(ctx, tx, op.CreatedBy, p); err != nil {
+			return err
+		}
+	} else {
+		current, err := currentHostingStorage(ctx, tx, p.ProjectID, p.SourceResourceID())
+		if err != nil {
+			return err
+		}
+		if current.Reference() != p.SourceStorage.Reference() {
+			return ErrConflict
+		}
 	}
 	if s.storageArchiveConfiguration == nil || s.storageArchiveConfiguration.helper != p.Helper || s.storageArchiveConfiguration.limits != p.Limits {
 		return ErrStorageArchiveUnavailable
 	}
 	if p.Target != nil {
-		target, placement, e := hostingStoragePlacement(ctx, tx, op.CreatedBy, p.Target.Resource.ID, domain.RoleOwner)
+		target, placement, e := archivePlacement(ctx, tx, op.CreatedBy, p.Target.Resource.ID, domain.RoleOwner)
 		if e != nil {
 			return e
 		}
@@ -249,7 +259,7 @@ func archiveInsertPlan(ctx context.Context, tx pgx.Tx, p domain.HostingStorageAr
 	if p.Validate() != nil {
 		return ErrConflict
 	}
-	resource, binding := p.SourceStorage.ResourceID, p.SourceStorage.BindingID
+	resource, binding := p.SourceResourceID(), p.SourceBindingID()
 	var targetResource, targetBinding, targetStorage, original *string
 	if p.Target != nil {
 		resource, binding = p.Target.Resource.ID, p.Target.Storage.BindingID
@@ -268,7 +278,7 @@ func archiveInsertPlan(ctx context.Context, tx pgx.Tx, p domain.HostingStorageAr
 	if err != nil {
 		return err
 	}
-	return q.InsertStorageArchivePlan(ctx, sqlcgen.InsertStorageArchivePlanParams{OperationID: p.OperationID, Mode: p.Mode, BackupID: p.BackupID, SourceResourceID: p.SourceStorage.ResourceID, SourceBindingID: p.SourceStorage.BindingID, SourceStorageID: p.SourceStorage.ID, TargetResourceID: targetResource, TargetBindingID: targetBinding, TargetStorageID: targetStorage, RecoveryOfOperationID: original, Body: raw, BodyHash: p.Hash})
+	return q.InsertStorageArchivePlan(ctx, sqlcgen.InsertStorageArchivePlanParams{OperationID: p.OperationID, Mode: p.Mode, BackupID: p.BackupID, SourceResourceID: p.SourceResourceID(), SourceBindingID: p.SourceBindingID(), SourceStorageID: optionalStorageRestore(p.SourceStorage.ID), SourceFamily: archiveSourceFamily(p), SourceVolume: archiveSourceVolume(p), TargetResourceID: targetResource, TargetBindingID: targetBinding, TargetStorageID: targetStorage, RecoveryOfOperationID: original, Body: raw, BodyHash: p.Hash})
 }
 
 func archiveLoadBackup(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.HostingStorageBackup) (domain.HostingStorageBackup, error) {
@@ -280,6 +290,10 @@ func archiveLoadBackup(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.Hosting
 		return domain.HostingStorageBackup{}, ErrConflict
 	}
 	b := domain.HostingStorageBackup{ID: row.ID, ProjectID: row.ProjectID, ResourceID: row.ResourceID, OperationID: row.OperationID, State: op.State, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt}
+	if op.StorageArchive.Plan.ComposeSource != nil {
+		b.Volume = op.StorageArchive.Plan.ComposeSource.Volume.Name
+		b.SourceDeployedOperationID = op.StorageArchive.Plan.ComposeSource.Healthy.OperationID
+	}
 	raw, err := sqlcgen.New(db).ReadStorageArchiveBlob(ctx, row.ID)
 	if err == nil {
 		var blob domain.HostingStorageArchiveBlob
@@ -289,6 +303,9 @@ func archiveLoadBackup(ctx context.Context, db sqlcgen.DBTX, row sqlcgen.Hosting
 		b.Blob = &blob
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return b, err
+	}
+	if op.StorageArchive.Plan.ComposeSource != nil {
+		return b, nil
 	}
 	rows, e := sqlcgen.New(db).StorageRetentionBackupCopies(ctx, row.ID)
 	if e != nil {
@@ -342,13 +359,13 @@ func (s *PostgresStore) RequestStorageBackup(ctx context.Context, id, resource, 
 func (s *PostgresStore) requestStorageBackupTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, in domain.HostingStorageBackupInput) (domain.HostingStorageBackup, error) {
 	var zero domain.HostingStorageBackup
 	q := sqlcgen.New(tx)
-	if err := s.archiveConfigured(ctx, q); err != nil {
+	if err := storageArchiveSchema(ctx, q); err != nil {
 		return zero, err
 	}
 	if err := lockHostingResourceDestination(ctx, tx, resource); err != nil {
 		return zero, err
 	}
-	r, b, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleOwner)
+	r, b, err := archivePlacement(ctx, tx, actor, resource, domain.RoleOwner)
 	if err != nil {
 		return zero, err
 	}
@@ -365,6 +382,15 @@ func (s *PostgresStore) requestStorageBackupTx(ctx context.Context, tx pgx.Tx, i
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return zero, err
+	}
+	if err = s.archiveConfigured(ctx, q); err != nil {
+		return zero, err
+	}
+	if r.Source.Kind == "compose" {
+		return s.requestComposeStorageBackup(ctx, tx, id, resource, actor, hash, in)
+	}
+	if in.Volume != "" {
+		return zero, domain.ErrInvalidStorageArchive
 	}
 	if r.Generation != in.ExpectedResourceGeneration {
 		return zero, ErrConflict
@@ -478,7 +504,7 @@ func (s *PostgresStore) GetStorageBackup(ctx context.Context, actor, id string) 
 		if err != nil {
 			return zero, hostingError(err)
 		}
-		if _, _, err = hostingStoragePlacement(ctx, tx, actor, row.ResourceID, domain.RoleViewer); err != nil {
+		if _, _, err = archivePlacement(ctx, tx, actor, row.ResourceID, domain.RoleViewer); err != nil {
 			return zero, err
 		}
 		return archiveLoadBackup(ctx, tx, row)
@@ -493,7 +519,7 @@ func (s *PostgresStore) ListStorageBackups(ctx context.Context, actor, resource 
 		if err := storageArchiveSchema(ctx, q); err != nil {
 			return result, err
 		}
-		if _, _, err := hostingStoragePlacement(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
+		if _, _, err := archivePlacement(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
 			return result, err
 		}
 		total, err := q.CountStorageBackups(ctx, resource)
@@ -516,4 +542,17 @@ func (s *PostgresStore) ListStorageBackups(ctx context.Context, actor, resource 
 		}
 		return result, nil
 	})
+}
+
+func archiveSourceFamily(p domain.HostingStorageArchivePlan) string {
+	if p.ComposeSource != nil {
+		return "compose"
+	}
+	return "image"
+}
+func archiveSourceVolume(p domain.HostingStorageArchivePlan) *string {
+	if p.ComposeSource != nil {
+		return &p.ComposeSource.Volume.Name
+	}
+	return nil
 }

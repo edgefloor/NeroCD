@@ -109,11 +109,11 @@ func validateJournalStorageArchive(e JournalStorageArchive) error {
 		noExtra := p.HelperContainerID == "" && p.Blob == nil && !p.RestoreVerified
 		switch p.Phase {
 		case "writer_snapshot":
-			if e.Plan.Mode != "backup" || len(p.Writers) != len(e.Plan.Writers) || !noExtra {
+			if e.Plan.Mode != "backup" || !e.Plan.MatchesWriterStates(p.Writers, true) || !noExtra {
 				return invalid
 			}
 		case "stop_intent", "stopped", "resume_intent", "resumed":
-			if e.Plan.Target != nil || len(p.Writers) != len(e.Plan.Writers) || !noExtra || e.Plan.Mode == "recover" && (p.Phase == "stop_intent" || p.Phase == "stopped") {
+			if e.Plan.Target != nil || !e.Plan.MatchesWriterStates(p.Writers, true) || !noExtra || e.Plan.Mode == "recover" && (p.Phase == "stop_intent" || p.Phase == "stopped") {
 				return invalid
 			}
 		case "helper_intent":
@@ -146,8 +146,9 @@ func validateJournalStorageArchive(e JournalStorageArchive) error {
 		authority, planHash, receipt = e.Progress.HostingAuthority, e.Progress.PlanHash, e.Progress.ReceiptID
 		for _, state := range e.Progress.Writers {
 			found := false
-			for _, writer := range e.Plan.Writers {
-				found = found || state.ContainerID == writer.ContainerID && state.OperationID == writer.OperationID && state.ImageID == writer.Release.ImageID && state.PlanHash == writer.PlanHash && state.ReleaseHash == writer.Release.Hash
+			for _, writer := range e.Plan.WriterStates() {
+				writer.Running = state.Running
+				found = found || state == writer
 			}
 			if !found {
 				return invalid

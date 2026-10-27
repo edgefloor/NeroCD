@@ -2002,6 +2002,46 @@ paths:
         }
       }
     }
+  /api/v1/resources/{id}/storage-backup-volumes:
+    {
+      "get": {
+        "operationId": "storageBackupVolumes",
+        "summary": "Discover settled managed Compose named volumes",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled named-volume eligibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostingStorageBackupVolumes"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current viewer or destination authority is absent"
+          },
+          "409": {
+            "description": "Archive source unavailable"
+          }
+        }
+      }
+    }
   /api/v1/resources/{id}/storage-backups:
     {
       "parameters": [
@@ -15155,6 +15195,19 @@ components:
           },
           "remote_target": {
             "$ref": "#/components/schemas/BackupTargetSelection"
+          },
+          "volume": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "expected_deployed_operation_id": {
+            "type": "string"
+          },
+          "acknowledge_interruption": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
           }
         }
       }
@@ -15431,13 +15484,94 @@ components:
             "$ref": "#/components/schemas/HostingStorageArchiveRecoveryEvidence"
           },
           "source_healthy": {
-            "$ref": "#/components/schemas/HostingHealthy"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostingHealthy"
+              },
+              {
+                "const": {
+                  "snapshot": {
+                    "resource_id": "",
+                    "resource_generation": 0,
+                    "image_reference": "",
+                    "binding_id": "",
+                    "destination_id": "",
+                    "server_id": "",
+                    "runner_id": "",
+                    "runtime_namespace": "",
+                    "container_port": 0,
+                    "host_port": 0,
+                    "readiness": {
+                      "path": "",
+                      "timeout_seconds": 0
+                    },
+                    "policy_version": ""
+                  },
+                  "operation_id": "",
+                  "container_id": "",
+                  "release": {
+                    "canonical_image": "",
+                    "image_id": "",
+                    "os": "",
+                    "architecture": "",
+                    "daemon_id": "",
+                    "hash": ""
+                  },
+                  "plan_hash": ""
+                }
+              }
+            ],
+            "description": "The legacy image proof, or its exact zero value when compose_source selects the Compose family."
           },
           "source_storage": {
-            "$ref": "#/components/schemas/HostingStorage"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostingStorage"
+              },
+              {
+                "const": {
+                  "id": "",
+                  "project_id": "",
+                  "resource_id": "",
+                  "binding_id": "",
+                  "destination_id": "",
+                  "kind": "",
+                  "driver": "",
+                  "volume_name": "",
+                  "mount_path": "",
+                  "access_mode": "",
+                  "retention": "",
+                  "generation": 0,
+                  "hash": "",
+                  "created_by": "",
+                  "created_at": "0001-01-01T00:00:00Z"
+                }
+              }
+            ],
+            "description": "The legacy image proof, or its exact zero value when compose_source selects the Compose family."
           },
           "source_materialization": {
-            "$ref": "#/components/schemas/HostingStorageMaterialization"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostingStorageMaterialization"
+              },
+              {
+                "const": {
+                  "storage_ref": {
+                    "storage_id": "",
+                    "generation": 0,
+                    "hash": ""
+                  },
+                  "state": "",
+                  "creation_operation_id": "",
+                  "creation_plan_hash": "",
+                  "creation_nonce": "",
+                  "daemon_id": "",
+                  "labels": null
+                }
+              }
+            ],
+            "description": "The legacy image proof, or its exact zero value when compose_source selects the Compose family."
           },
           "writers": {
             "type": [
@@ -15464,13 +15598,15 @@ components:
           "compiler_version": {
             "type": "string",
             "enum": [
-              "owned-upload.local-archive.v1"
+              "owned-upload.local-archive.v1",
+              "managed-compose.local-volume-archive.v1"
             ]
           },
           "policy_version": {
             "type": "string",
             "enum": [
-              "owned-upload.local-archive.v1"
+              "owned-upload.local-archive.v1",
+              "managed-compose.local-volume-archive.v1"
             ]
           },
           "hash": {
@@ -15482,6 +15618,9 @@ components:
           },
           "remote_source": {
             "$ref": "#/components/schemas/BackupRemoteSource"
+          },
+          "compose_source": {
+            "$ref": "#/components/schemas/HostingStorageArchiveComposeSource"
           }
         },
         "description": "Immutable dedicated authority. Backup writers are eligible platform-owned identities; runner snapshots actual states before stop. Restore writers are empty and source evidence grants no source stop/resume authority."
@@ -15969,6 +16108,12 @@ components:
             "items": {
               "$ref": "#/components/schemas/BackupRetentionItem"
             }
+          },
+          "volume": {
+            "type": "string"
+          },
+          "source_deployed_operation_id": {
+            "type": "string"
           }
         }
       }
@@ -21881,3 +22026,132 @@ components:
     HostingStackStopped: {"type": "object", "additionalProperties": false, "required": ["stop_operation_id", "target"], "properties": {"stop_operation_id": {"type": "string"}, "target": {"$ref": "#/components/schemas/HostingHealthy"}}}
 
     HostingStackStopPlan: {"type": "object", "additionalProperties": false, "required": ["target", "target_plan", "compiler_version", "hash"], "properties": {"target": {"$ref": "#/components/schemas/HostingHealthy"}, "target_plan": {"$ref": "#/components/schemas/HostingApplyPlan"}, "compiler_version": {"type": "string", "enum": ["managed-compose.stop.v1"]}, "hash": {"type": "string"}}}
+    HostingStorageArchiveStackProof:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "healthy",
+          "plan"
+        ],
+        "properties": {
+          "healthy": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/HostingApplyPlan"
+          }
+        }
+      }
+    HostingStorageArchiveComposeSource:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "healthy",
+          "plan",
+          "volume",
+          "retained"
+        ],
+        "properties": {
+          "healthy": {
+            "$ref": "#/components/schemas/HostingHealthy"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/HostingApplyPlan"
+          },
+          "volume": {
+            "$ref": "#/components/schemas/HostingStackVolume"
+          },
+          "retained": {
+            "type": "array",
+            "maxItems": 63,
+            "items": {
+              "$ref": "#/components/schemas/HostingStorageArchiveStackProof"
+            }
+          }
+        }
+      }
+    HostingStorageBackupVolumeMount:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "mount_path",
+          "read_only"
+        ],
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "mount_path": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        }
+      }
+    HostingStorageBackupVolume:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "volume",
+          "eligible",
+          "mounts"
+        ],
+        "properties": {
+          "volume": {
+            "type": "string"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostingStorageBackupVolumeMount"
+            }
+          }
+        }
+      }
+    HostingStorageBackupVolumes:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "resource_generation",
+          "available",
+          "volumes"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string"
+          },
+          "resource_generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "volumes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostingStorageBackupVolume"
+            }
+          }
+        }
+      }

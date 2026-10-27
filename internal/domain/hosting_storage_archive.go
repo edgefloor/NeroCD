@@ -1,7 +1,10 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"slices"
 	"strings"
@@ -14,6 +17,7 @@ const (
 	RunTypeStorageArchive                 = "storage_archive"
 	HostingStorageArchiveCapability       = "hosting_storage_archive_v1"
 	HostingStorageArchiveVersion          = "owned-upload.local-archive.v1"
+	HostingStorageArchiveJSONLimit        = 512 << 10
 	HostingStorageArchiveFormat           = "nerocd-storage-v1"
 	HostingStorageArchiveMaxBytes   int64 = 1 << 30
 )
@@ -23,9 +27,12 @@ var ErrInvalidStorageArchive = errors.New("invalid storage archive document")
 
 // HostingStorageBackupInput selects the exact saved resource generation.
 type HostingStorageBackupInput struct {
-	RemoteTarget               *BackupTargetSelection `json:"remote_target,omitempty"`
-	RequestID                  string                 `json:"request_id"`
-	ExpectedResourceGeneration int64                  `json:"expected_resource_generation"`
+	Volume                      string                 `json:"volume,omitempty"`
+	ExpectedDeployedOperationID string                 `json:"expected_deployed_operation_id,omitempty"`
+	AcknowledgeInterruption     bool                   `json:"acknowledge_interruption,omitempty"`
+	RemoteTarget                *BackupTargetSelection `json:"remote_target,omitempty"`
+	RequestID                   string                 `json:"request_id"`
+	ExpectedResourceGeneration  int64                  `json:"expected_resource_generation"`
 }
 
 // HostingStorageRestoreInput creates a new held resource, never an in-place restore.
@@ -43,6 +50,11 @@ type HostingStorageArchiveRecoveryInput struct {
 
 // Validate requires exact request identity and a positive resource generation.
 func (in HostingStorageBackupInput) Validate() error {
+	if in.Volume != "" || in.ExpectedDeployedOperationID != "" || in.AcknowledgeInterruption {
+		if !stackName.MatchString(in.Volume) || !hostingProxyID.MatchString(in.ExpectedDeployedOperationID) || !in.AcknowledgeInterruption || in.RemoteTarget != nil {
+			return ErrInvalidStorageArchive
+		}
+	}
 	if in.RemoteTarget != nil && in.RemoteTarget.Validate() != nil || !hostingStorageRequest.MatchString(in.RequestID) || in.ExpectedResourceGeneration < 1 {
 		return ErrInvalidStorageArchive
 	}
@@ -77,6 +89,22 @@ func (in *HostingStorageBackupInput) UnmarshalJSON(raw []byte) error {
 	type wire HostingStorageBackupInput
 	var v wire
 	if decodeStorageArchiveInput(raw, &v) != nil || HostingStorageBackupInput(v).Validate() != nil {
+		return ErrInvalidStorageArchive
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return ErrInvalidStorageArchive
+	}
+	present := 0
+	for _, key := range []string{"volume", "expected_deployed_operation_id", "acknowledge_interruption"} {
+		if value, ok := fields[key]; ok {
+			present++
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return ErrInvalidStorageArchive
+			}
+		}
+	}
+	if present != 0 && (present != 3 || v.Volume == "" || v.ExpectedDeployedOperationID == "" || !v.AcknowledgeInterruption) {
 		return ErrInvalidStorageArchive
 	}
 	*in = HostingStorageBackupInput(v)
@@ -183,6 +211,7 @@ type HostingStorageArchiveTarget struct {
 // Writers are controller-derived eligible identities. Their actual initial states
 // must be snapshotted durably before the first stop intent is acknowledged.
 type HostingStorageArchivePlan struct {
+	ComposeSource         *HostingStorageArchiveComposeSource    `json:"compose_source,omitempty"`
 	RemoteTarget          *BackupTargetSelection                 `json:"remote_target,omitempty"`
 	RemoteSource          *BackupRemoteSource                    `json:"remote_source,omitempty"`
 	OperationID           string                                 `json:"operation_id"`
@@ -301,15 +330,17 @@ type HostingStorageArchive struct {
 
 // HostingStorageBackup exposes metadata only. Bytes remain private to the daemon.
 type HostingStorageBackup struct {
-	Copies      []BackupRetentionItem      `json:"copies,omitempty"`
-	ID          string                     `json:"id"`
-	ProjectID   string                     `json:"project_id"`
-	ResourceID  string                     `json:"resource_id"`
-	OperationID string                     `json:"operation_id"`
-	State       string                     `json:"state"`
-	Blob        *HostingStorageArchiveBlob `json:"blob,omitempty"`
-	CreatedBy   string                     `json:"created_by"`
-	CreatedAt   time.Time                  `json:"created_at"`
+	Volume                    string                     `json:"volume,omitempty"`
+	SourceDeployedOperationID string                     `json:"source_deployed_operation_id,omitempty"`
+	Copies                    []BackupRetentionItem      `json:"copies,omitempty"`
+	ID                        string                     `json:"id"`
+	ProjectID                 string                     `json:"project_id"`
+	ResourceID                string                     `json:"resource_id"`
+	OperationID               string                     `json:"operation_id"`
+	State                     string                     `json:"state"`
+	Blob                      *HostingStorageArchiveBlob `json:"blob,omitempty"`
+	CreatedBy                 string                     `json:"created_by"`
+	CreatedAt                 time.Time                  `json:"created_at"`
 }
 
 // HostingStorageRestore returns the new held resource and its exact operation.
@@ -344,6 +375,9 @@ func ValidateStorageArchiveTask(run TaskRun) error {
 
 // Validate enforces source, helper, target, and origin identity before hashing.
 func (p HostingStorageArchivePlan) Validate() error {
+	if p.ComposeSource != nil {
+		return p.validateCompose()
+	}
 	if p.RemoteTarget != nil && (p.Mode != "backup" || p.RemoteTarget.Validate() != nil) || p.RemoteSource != nil && (p.Mode != "restore" || p.RemoteSource.Validate() != nil) {
 		return ErrInvalidStorageArchive
 	}
@@ -516,7 +550,13 @@ func (in HostingStorageArchiveCompleteRequest) Validate() error {
 // DecodeHostingStorageArchiveJSON accepts a bounded closed document, rejecting
 // unknown fields, duplicate keys and case aliases before typed validation.
 func DecodeHostingStorageArchiveJSON(raw []byte, out any) error {
-	if !validRuntimeJSONUnicode(raw) || DecodeHostingStorageProtocolJSON(raw, out) != nil {
+	trimmed := bytes.TrimSpace(raw)
+	if len(raw) > HostingStorageArchiveJSONLimit || !validRuntimeJSONUnicode(raw) || len(trimmed) == 0 || trimmed[0] != '{' || !storageProtocolUniqueJSON(json.NewDecoder(bytes.NewReader(raw))) {
+		return ErrInvalidStorageArchive
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(out) != nil || !errors.Is(d.Decode(new(any)), io.EOF) {
 		return ErrInvalidStorageArchive
 	}
 	return nil

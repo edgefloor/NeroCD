@@ -7,7 +7,7 @@ SELECT * FROM hosting_storage_archive_plans WHERE operation_id=$1;
 -- name: ReadStorageArchiveOperation :one
 SELECT * FROM hosting_operations WHERE id=$1;
 -- name: InsertStorageArchivePlan :exec
-INSERT INTO hosting_storage_archive_plans(operation_id,mode,backup_id,source_resource_id,source_binding_id,source_storage_id,target_resource_id,target_binding_id,target_storage_id,recovery_of_operation_id,body,body_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12);
+INSERT INTO hosting_storage_archive_plans(operation_id,mode,backup_id,source_resource_id,source_binding_id,source_storage_id,target_resource_id,target_binding_id,target_storage_id,recovery_of_operation_id,body,body_hash,source_family,source_volume) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14);
 -- name: ReadStorageArchiveReceipts :many
 SELECT * FROM hosting_storage_archive_receipts WHERE operation_id=$1 ORDER BY created_at,phase;
 -- name: ReadStorageArchiveReceipt :one
@@ -105,3 +105,9 @@ SELECT (SELECT COALESCE(bool_and(status='active' AND revoked_at IS NULL AND (exp
 -- name: FlushStorageArchiveConstraints :exec
 -- Finish potentially blocking deferred checks before the final authority clock.
 SELECT nerocd_storage_archive_flush_constraints();
+
+-- name: LockComposeStorageArchiveRunner :one
+SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=sqlc.arg(project_id)::text
+WHERE r.id=sqlc.arg(runner_id)::text AND s.id=sqlc.arg(server_id)::text AND d.id=sqlc.arg(destination_id)::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
+AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND r.capabilities @> ARRAY['hosting_compose_storage_archive_v1','hosting_managed_compose_v1']::text[] AND NOT('shell'=ANY(r.capabilities))
+AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r;

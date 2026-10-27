@@ -178,18 +178,18 @@ func (s *PostgresStore) RequestStorageArchiveRecovery(ctx context.Context, id, o
 			}
 		}
 		p := original.StorageArchive.Plan
-		resources := []string{p.SourceStorage.ResourceID}
+		resources := []string{p.SourceResourceID()}
 		if p.Target != nil {
 			resources = append(resources, p.Target.Resource.ID)
 		}
 		if err = archivePrelock(ctx, tx, p.DestinationID, resources...); err != nil {
 			return zero, err
 		}
-		if _, _, err = hostingStoragePlacement(ctx, tx, actor, p.SourceStorage.ResourceID, domain.RoleOwner); err != nil {
+		if _, _, err = archivePlacement(ctx, tx, actor, p.SourceResourceID(), domain.RoleOwner); err != nil {
 			return zero, err
 		}
 		if p.Target != nil {
-			if _, _, err = hostingStoragePlacement(ctx, tx, actor, p.Target.Resource.ID, domain.RoleOwner); err != nil {
+			if _, _, err = archivePlacement(ctx, tx, actor, p.Target.Resource.ID, domain.RoleOwner); err != nil {
 				return zero, err
 			}
 		}
@@ -337,7 +337,7 @@ func archiveCancel(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, a
 	if err := hostingLockOperationRuns(ctx, tx, op); err != nil {
 		return zero, err
 	}
-	resources := []string{p.SourceStorage.ResourceID}
+	resources := []string{p.SourceResourceID()}
 	if p.Target != nil {
 		resources = append(resources, p.Target.Resource.ID)
 	}
@@ -345,7 +345,7 @@ func archiveCancel(ctx context.Context, tx pgx.Tx, op domain.HostingOperation, a
 		return zero, err
 	}
 	for _, id := range resources {
-		if _, _, err := hostingStoragePlacement(ctx, tx, actor, id, domain.RoleOwner); err != nil {
+		if _, _, err := archivePlacement(ctx, tx, actor, id, domain.RoleOwner); err != nil {
 			return zero, err
 		}
 	}

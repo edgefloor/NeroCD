@@ -35,7 +35,7 @@ func storageArchiveConflict(snapshot runner.JournalSnapshot, ref domain.HostingS
 		if p.OperationID == operation || root != "" && (p.OperationID == root || p.Mode == "recover" && p.RecoveryOfOperationID == root) {
 			continue
 		}
-		if p.SourceStorage.Reference() == ref && ref != (domain.HostingStorageRef{}) || p.SourceStorage.BindingID == binding && binding != "" {
+		if p.SourceStorage.Reference() == ref && ref != (domain.HostingStorageRef{}) || p.SourceBindingID() == binding && binding != "" {
 			return true
 		}
 		if p.Target != nil && (p.Target.Storage.Reference() == ref && ref != (domain.HostingStorageRef{}) || p.Target.Storage.BindingID == binding && binding != "") {
@@ -162,7 +162,7 @@ func retireStorageArchiveRecoveryWithAck(j *runner.AttemptJournal, a domain.Host
 		if !root && !prior {
 			continue
 		}
-		if q.SourceStorage != p.SourceStorage || q.DestinationID != p.DestinationID || q.ServerID != p.ServerID || q.ProjectID != p.ProjectID || q.RunnerID != p.RunnerID || q.Helper != p.Helper || domain.HostingDocumentHash(q.SourceMaterialization) != domain.HostingDocumentHash(p.SourceMaterialization) || domain.HostingDocumentHash(q.Target) != domain.HostingDocumentHash(p.Target) {
+		if q.SourceIdentityHash() != p.SourceIdentityHash() || q.DestinationID != p.DestinationID || q.ServerID != p.ServerID || q.ProjectID != p.ProjectID || q.RunnerID != p.RunnerID || q.Helper != p.Helper || domain.HostingDocumentHash(q.SourceMaterialization) != domain.HostingDocumentHash(p.SourceMaterialization) || domain.HostingDocumentHash(q.Target) != domain.HostingDocumentHash(p.Target) {
 			return errStorageArchiveHeld
 		}
 		if prior && (q.RecoveryEvidence.SnapshotReceiptID != p.RecoveryEvidence.SnapshotReceiptID || domain.HostingDocumentHash(q.RecoveryEvidence.Writers) != domain.HostingDocumentHash(p.RecoveryEvidence.Writers)) {
@@ -330,7 +330,7 @@ func storageArchiveRecoverySource(snapshot runner.JournalSnapshot, p domain.Host
 			entries = append(entries, e)
 		}
 	}
-	if len(entries) == 0 || original.Mode == "recover" || original.SourceStorage != p.SourceStorage || domain.HostingDocumentHash(original.SourceMaterialization) != domain.HostingDocumentHash(p.SourceMaterialization) || original.Helper != p.Helper || domain.HostingDocumentHash(original.Target) != domain.HostingDocumentHash(p.Target) || domain.HostingDocumentHash(original.Blob) != domain.HostingDocumentHash(p.Blob) || original.BackupID != p.BackupID || original.DestinationID != p.DestinationID || original.RunnerID != p.RunnerID {
+	if len(entries) == 0 || original.Mode == "recover" || original.SourceIdentityHash() != p.SourceIdentityHash() || domain.HostingDocumentHash(original.SourceMaterialization) != domain.HostingDocumentHash(p.SourceMaterialization) || original.Helper != p.Helper || domain.HostingDocumentHash(original.Target) != domain.HostingDocumentHash(p.Target) || domain.HostingDocumentHash(original.Blob) != domain.HostingDocumentHash(p.Blob) || original.BackupID != p.BackupID || original.DestinationID != p.DestinationID || original.RunnerID != p.RunnerID {
 		return original, nil, errStorageArchiveHeld
 	}
 	stops := map[string]bool{}

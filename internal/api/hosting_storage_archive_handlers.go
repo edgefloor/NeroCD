@@ -18,7 +18,7 @@ func hostingStorageArchivePath(path string) bool {
 	if len(p) == 5 {
 		return p[3] == "storage-backups" || p[3] == "storage-restores"
 	}
-	return len(p) == 6 && (p[3] == "resources" && p[5] == "storage-backups" || p[3] == "storage-backups" && p[5] == "restores" || p[3] == "hosting-operations" && p[5] == "storage-archive-recovery")
+	return len(p) == 6 && (p[3] == "resources" && (p[5] == "storage-backups" || p[5] == "storage-backup-volumes") || p[3] == "storage-backups" && p[5] == "restores" || p[3] == "hosting-operations" && p[5] == "storage-archive-recovery")
 }
 
 func hostingStorageArchiveRunnerPath(path string) bool {
@@ -51,7 +51,7 @@ func archiveRequestParameters(w http.ResponseWriter, r *http.Request, list bool)
 func decodeStorageArchive(w http.ResponseWriter, r *http.Request, out any) bool {
 	limit := 4096
 	if hostingStorageArchiveRunnerPath(r.URL.Path) {
-		limit = domain.HostingStorageProtocolJSONLimit
+		limit = domain.HostingStorageArchiveJSONLimit
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if len(raw) > limit {
@@ -187,5 +187,13 @@ func (s *Server) runnerStorageArchiveComplete(w http.ResponseWriter, r *http.Req
 		return
 	}
 	out, err := s.app.RunnerStorageArchiveComplete(r.Context(), in)
+	proxyResponse(w, http.StatusOK, out, err)
+}
+
+func (s *Server) hostingStorageBackupVolumes(w http.ResponseWriter, r *http.Request) {
+	if !archiveRequestParameters(w, r, false) {
+		return
+	}
+	out, err := s.app.StorageBackupVolumes(r.Context(), r.PathValue("id"))
 	proxyResponse(w, http.StatusOK, out, err)
 }

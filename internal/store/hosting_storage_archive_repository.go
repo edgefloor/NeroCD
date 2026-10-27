@@ -11,6 +11,7 @@ var ErrStorageArchiveUnavailable = errors.New("storage archive requires qualifie
 
 // HostingStorageArchiveRepository owns archive admission and durable authority.
 type HostingStorageArchiveRepository interface {
+	StorageBackupVolumes(context.Context, string, string) (domain.HostingStorageBackupVolumes, error)
 	RequestStorageBackup(context.Context, string, string, string, domain.HostingStorageBackupInput, domain.AuditEvent) (domain.HostingStorageBackup, error)
 	GetStorageBackup(context.Context, string, string) (domain.HostingStorageBackup, error)
 	ListStorageBackups(context.Context, string, string, Page) (PageResult[domain.HostingStorageBackup], error)

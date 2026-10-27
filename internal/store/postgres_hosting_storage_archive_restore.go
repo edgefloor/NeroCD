@@ -44,7 +44,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 		if err = lockHostingResourceDestination(ctx, tx, backup.ResourceID); err != nil {
 			return zero, err
 		}
-		source, binding, err := hostingStoragePlacement(ctx, tx, actor, backup.ResourceID, domain.RoleOwner)
+		source, binding, err := archivePlacement(ctx, tx, actor, backup.ResourceID, domain.RoleOwner)
 		if err != nil {
 			return zero, err
 		}
@@ -63,7 +63,10 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 			return zero, ErrConflict
 		}
 		p := original.StorageArchive.Plan
-		if p.SourceStorage.ResourceID != source.ID || p.ProjectID != source.ProjectID || p.DestinationID != binding.DestinationID {
+		if p.ComposeSource != nil {
+			return zero, ErrConflict
+		}
+		if p.SourceResourceID() != source.ID || p.ProjectID != source.ProjectID || p.DestinationID != binding.DestinationID {
 			return zero, ErrConflict
 		}
 		// Read the exact backed-up generation, never the latest desired input.
@@ -77,7 +80,7 @@ func (s *PostgresStore) RequestStorageRestore(ctx context.Context, id, backupID,
 			if prior.CreatedBy != actor || prior.RequestHash != hash {
 				return zero, ErrConflict
 			}
-			if _, _, e := hostingStoragePlacement(ctx, tx, actor, prior.ResourceID, domain.RoleOwner); e != nil {
+			if _, _, e := archivePlacement(ctx, tx, actor, prior.ResourceID, domain.RoleOwner); e != nil {
 				return zero, e
 			}
 			return archiveLoadRestore(ctx, tx, prior.OperationID)
@@ -218,14 +221,14 @@ func (s *PostgresStore) GetStorageRestore(ctx context.Context, actor, id string)
 		if err != nil {
 			return zero, hostingError(err)
 		}
-		if _, _, err = hostingStoragePlacement(ctx, tx, actor, row.ResourceID, domain.RoleViewer); err != nil {
+		if _, _, err = archivePlacement(ctx, tx, actor, row.ResourceID, domain.RoleViewer); err != nil {
 			return zero, err
 		}
 		result, err := archiveLoadRestore(ctx, tx, id)
 		if err != nil {
 			return zero, err
 		}
-		if _, _, err = hostingStoragePlacement(ctx, tx, actor, result.Operation.StorageArchive.Plan.SourceStorage.ResourceID, domain.RoleViewer); err != nil {
+		if _, _, err = archivePlacement(ctx, tx, actor, result.Operation.StorageArchive.Plan.SourceStorage.ResourceID, domain.RoleViewer); err != nil {
 			return zero, err
 		}
 		return result, nil

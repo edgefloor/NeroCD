@@ -138,7 +138,7 @@ func (q *Queries) InsertStorageArchiveBlob(ctx context.Context, arg InsertStorag
 }
 
 const insertStorageArchivePlan = `-- name: InsertStorageArchivePlan :exec
-INSERT INTO hosting_storage_archive_plans(operation_id,mode,backup_id,source_resource_id,source_binding_id,source_storage_id,target_resource_id,target_binding_id,target_storage_id,recovery_of_operation_id,body,body_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO hosting_storage_archive_plans(operation_id,mode,backup_id,source_resource_id,source_binding_id,source_storage_id,target_resource_id,target_binding_id,target_storage_id,recovery_of_operation_id,body,body_hash,source_family,source_volume) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 `
 
 type InsertStorageArchivePlanParams struct {
@@ -147,13 +147,15 @@ type InsertStorageArchivePlanParams struct {
 	BackupID              string          `json:"backup_id"`
 	SourceResourceID      string          `json:"source_resource_id"`
 	SourceBindingID       string          `json:"source_binding_id"`
-	SourceStorageID       string          `json:"source_storage_id"`
+	SourceStorageID       *string         `json:"source_storage_id"`
 	TargetResourceID      *string         `json:"target_resource_id"`
 	TargetBindingID       *string         `json:"target_binding_id"`
 	TargetStorageID       *string         `json:"target_storage_id"`
 	RecoveryOfOperationID *string         `json:"recovery_of_operation_id"`
 	Body                  json.RawMessage `json:"body"`
 	BodyHash              string          `json:"body_hash"`
+	SourceFamily          string          `json:"source_family"`
+	SourceVolume          *string         `json:"source_volume"`
 }
 
 func (q *Queries) InsertStorageArchivePlan(ctx context.Context, arg InsertStorageArchivePlanParams) error {
@@ -170,6 +172,8 @@ func (q *Queries) InsertStorageArchivePlan(ctx context.Context, arg InsertStorag
 		arg.RecoveryOfOperationID,
 		arg.Body,
 		arg.BodyHash,
+		arg.SourceFamily,
+		arg.SourceVolume,
 	)
 	return err
 }
@@ -451,6 +455,32 @@ func (q *Queries) ListStorageBackups(ctx context.Context, arg ListStorageBackups
 	return items, nil
 }
 
+const lockComposeStorageArchiveRunner = `-- name: LockComposeStorageArchiveRunner :one
+SELECT r.id FROM runners r JOIN servers s ON s.runner_id=r.id JOIN destinations d ON d.server_id=s.id JOIN projects project ON project.id=$1::text
+WHERE r.id=$2::text AND s.id=$3::text AND d.id=$4::text AND project.archived_at IS NULL AND r.status='active' AND r.token_hash<>''
+AND 'storage_archive'=ANY(r.capabilities) AND 'hosting_storage_archive_v1'=ANY(r.capabilities) AND 'hosting_owned_storage_v1'=ANY(r.capabilities) AND r.capabilities @> ARRAY['hosting_compose_storage_archive_v1','hosting_managed_compose_v1']::text[] AND NOT('shell'=ANY(r.capabilities))
+AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
+`
+
+type LockComposeStorageArchiveRunnerParams struct {
+	ProjectID     string `json:"project_id"`
+	RunnerID      string `json:"runner_id"`
+	ServerID      string `json:"server_id"`
+	DestinationID string `json:"destination_id"`
+}
+
+func (q *Queries) LockComposeStorageArchiveRunner(ctx context.Context, arg LockComposeStorageArchiveRunnerParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockComposeStorageArchiveRunner,
+		arg.ProjectID,
+		arg.RunnerID,
+		arg.ServerID,
+		arg.DestinationID,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockStorageArchiveImage = `-- name: LockStorageArchiveImage :exec
 SELECT pg_advisory_xact_lock(hashtextextended('nerocd-archive-image:'||$1::text||':'||$2::text,0))
 `
@@ -571,7 +601,7 @@ func (q *Queries) ReadStorageArchiveOperation(ctx context.Context, id string) (H
 }
 
 const readStorageArchivePlan = `-- name: ReadStorageArchivePlan :one
-SELECT operation_id, mode, backup_id, source_resource_id, source_binding_id, source_storage_id, target_resource_id, target_binding_id, target_storage_id, recovery_of_operation_id, body, body_hash FROM hosting_storage_archive_plans WHERE operation_id=$1
+SELECT operation_id, mode, backup_id, source_resource_id, source_binding_id, source_storage_id, target_resource_id, target_binding_id, target_storage_id, recovery_of_operation_id, body, body_hash, source_family, source_volume FROM hosting_storage_archive_plans WHERE operation_id=$1
 `
 
 func (q *Queries) ReadStorageArchivePlan(ctx context.Context, operationID string) (HostingStorageArchivePlan, error) {
@@ -590,6 +620,8 @@ func (q *Queries) ReadStorageArchivePlan(ctx context.Context, operationID string
 		&i.RecoveryOfOperationID,
 		&i.Body,
 		&i.BodyHash,
+		&i.SourceFamily,
+		&i.SourceVolume,
 	)
 	return i, err
 }

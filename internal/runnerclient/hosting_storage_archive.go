@@ -41,7 +41,7 @@ func validateStorageArchiveOperation(op domain.HostingOperation, a domain.Hostin
 	if sidecar == nil || sidecar.Plan.Validate() != nil || op.ID != a.OperationID || op.RunID != a.RunID || op.TaskMode != sidecar.Plan.Mode || op.ProjectID != sidecar.Plan.ProjectID || sidecar.Plan.OperationID != op.ID || sidecar.Mode != sidecar.Plan.Mode || sidecar.BackupID != sidecar.Plan.BackupID || sidecar.RecoveryOfOperationID != sidecar.Plan.RecoveryOfOperationID || op.Snapshot != (domain.HostingSnapshot{}) || op.Plan != nil || op.Release != nil || op.Result != nil || op.CleanupPlan != nil || op.ReconciliationHealthy != nil || op.ObservationLease != nil || op.PreparedReceipt != nil {
 		return errStorageArchiveResponse
 	}
-	resource, binding := sidecar.Plan.SourceStorage.ResourceID, sidecar.Plan.SourceStorage.BindingID
+	resource, binding := sidecar.Plan.SourceResourceID(), sidecar.Plan.SourceBindingID()
 	if sidecar.Plan.Target != nil {
 		resource, binding = sidecar.Plan.Target.Resource.ID, sidecar.Plan.Target.Storage.BindingID
 	}

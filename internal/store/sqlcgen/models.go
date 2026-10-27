@@ -1442,13 +1442,15 @@ type HostingStorageArchivePlan struct {
 	BackupID              string          `json:"backup_id"`
 	SourceResourceID      string          `json:"source_resource_id"`
 	SourceBindingID       string          `json:"source_binding_id"`
-	SourceStorageID       string          `json:"source_storage_id"`
+	SourceStorageID       *string         `json:"source_storage_id"`
 	TargetResourceID      *string         `json:"target_resource_id"`
 	TargetBindingID       *string         `json:"target_binding_id"`
 	TargetStorageID       *string         `json:"target_storage_id"`
 	RecoveryOfOperationID *string         `json:"recovery_of_operation_id"`
 	Body                  json.RawMessage `json:"body"`
 	BodyHash              string          `json:"body_hash"`
+	SourceFamily          string          `json:"source_family"`
+	SourceVolume          *string         `json:"source_volume"`
 }
 
 type HostingStorageArchiveReceipt struct {

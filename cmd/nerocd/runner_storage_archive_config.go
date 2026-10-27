@@ -67,7 +67,7 @@ func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []st
 		return false
 	}
 	if !enabled {
-		if has(domain.RunTypeStorageArchive) || has(domain.HostingStorageArchiveCapability) {
+		if has(domain.RunTypeStorageArchive) || has(domain.HostingStorageArchiveCapability) || has(domain.HostingComposeStorageArchiveCapability) {
 			return nil, errors.New("storage archive capabilities require explicit qualified local configuration")
 		}
 		return capabilities, nil
@@ -82,6 +82,9 @@ func runnerStorageArchiveCapabilities(enabled, specified bool, capabilities []st
 		if !has(c) {
 			capabilities = append(capabilities, c)
 		}
+	}
+	if has(domain.HostingStackCapability) && !has(domain.HostingComposeStorageArchiveCapability) {
+		capabilities = append(capabilities, domain.HostingComposeStorageArchiveCapability)
 	}
 	return capabilities, nil
 }

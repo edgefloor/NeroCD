@@ -421,3 +421,31 @@ func TestStorageArchiveHTTPProjectOwnerAndDisabledConfiguration(t *testing.T) {
 	archiveHTTPCall(t, disabled, "GET", "/api/v1/storage-restores/restore", user, "", "", 503)
 	archiveHTTPCall(t, disabled, "POST", "/api/v1/hosting-operations/archive/storage-archive-recovery", user, `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_plan_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, "application/json", 503)
 }
+
+func (r *archiveHTTPRepository) StorageBackupVolumes(ctx context.Context, actor, resource string) (domain.HostingStorageBackupVolumes, error) {
+	r.calls++
+	if err := r.authorize(ctx, actor, domain.RoleViewer); err != nil {
+		return domain.HostingStorageBackupVolumes{}, err
+	}
+	return domain.HostingStorageBackupVolumes{ResourceID: resource, ResourceGeneration: r.resource.Generation, Available: true, OperationID: "deployed", Volumes: []domain.HostingStorageBackupVolume{{Volume: "uploads", Eligible: true, Mounts: []domain.HostingStorageBackupVolumeMount{{Component: "app", MountPath: "/uploads", ReadOnly: false}}}}}, nil
+}
+
+func TestStorageArchiveComposeSelectionHTTPDecoder(t *testing.T) {
+	server, repo, owner, viewer, _ := archiveHTTPFixture(t)
+	path := "/api/v1/resources/" + repo.resource.ID + "/storage-backups"
+	body := `{"request_id":"` + strings.Repeat("6", 32) + `","expected_resource_generation":1,"volume":"uploads","expected_deployed_operation_id":"hop_deployed","acknowledge_interruption":true}`
+	for _, invalid := range []string{strings.Replace(body, `,"acknowledge_interruption":true`, "", 1), strings.Replace(body, `true`, `false`, 1), strings.Replace(body, `"uploads"`, `null`, 1)} {
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+	}
+	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 202)
+	if repo.backupInput.Volume != "uploads" || repo.backupInput.ExpectedDeployedOperationID != "hop_deployed" || !repo.backupInput.AcknowledgeInterruption {
+		t.Fatal("real HTTP decoder dropped selection")
+	}
+	discoveryPath := "/api/v1/resources/" + repo.resource.ID + "/storage-backup-volumes"
+	response := archiveHTTPCall(t, server, "GET", discoveryPath, viewer, "", "", 200)
+	var discovery domain.HostingStorageBackupVolumes
+	if json.Unmarshal(response.Body.Bytes(), &discovery) != nil || !discovery.Available || len(discovery.Volumes) != 1 {
+		t.Fatal("viewer discovery failed")
+	}
+	archiveHTTPCall(t, server, "GET", discoveryPath+"?volume=foreign", owner, "", "", 400)
+}

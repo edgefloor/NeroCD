@@ -294,8 +294,12 @@ func TestPostgresComposeDatabaseBackupAndImportAuthority(t *testing.T) {
 }
 
 // deployBackupComponentStack shares the existing settled stack fixture with schedule tests.
-func deployBackupComponentStack(t *testing.T, pg *store.PostgresStore, base domain.Resource, server domain.Server, destination domain.Destination, name string) (domain.Resource, domain.HostingOperation) {
+func deployBackupComponentStack(t *testing.T, pg *store.PostgresStore, base domain.Resource, server domain.Server, destination domain.Destination, name string, daemon ...string) (domain.Resource, domain.HostingOperation) {
 	ctx := t.Context()
+	daemonID := "daemon_component_backup"
+	if len(daemon) > 0 {
+		daemonID = daemon[0]
+	}
 	sourceText := "services:\n  app:\n    image: nginx:alpine\n  postgresql:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: nerocd_fixture\n      POSTGRES_DB: nerocd_fixture\n    volumes:\n      - db:/var/lib/postgresql/data\nvolumes:\n  db:\n"
 
 	t.Helper()
@@ -337,11 +341,11 @@ func deployBackupComponentStack(t *testing.T, pg *store.PostgresStore, base doma
 		if i == 1 {
 			repo = "docker.io/library/postgres"
 		}
-		release := domain.HostingRelease{CanonicalImage: repo + "@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat(fmt.Sprint(i+1), 64), OS: "linux", Architecture: "amd64", DaemonID: "daemon_component_backup"}
+		release := domain.HostingRelease{CanonicalImage: repo + "@sha256:" + strings.Repeat("a", 64), ImageID: "sha256:" + strings.Repeat(fmt.Sprint(i+1), 64), OS: "linux", Architecture: "amd64", DaemonID: daemonID}
 		release.Hash = domain.HostingDocumentHash(release)
 		images = append(images, domain.HostingStackImage{Component: component, Release: release})
 	}
-	release := domain.HostingRelease{DaemonID: "daemon_component_backup", Stack: domain.HostingStackReleaseRef{Hash: domain.HostingDocumentHash(images)}}
+	release := domain.HostingRelease{DaemonID: daemonID, Stack: domain.HostingStackReleaseRef{Hash: domain.HostingDocumentHash(images)}}
 	release.Hash = domain.HostingDocumentHash(release)
 	prepared, err := pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "prepared_component_" + name, Release: release, StackImages: images})
 	if err != nil {

@@ -41,7 +41,7 @@ func archivePlanMatches(op domain.HostingOperation, a domain.HostingAuthority, p
 	if op.StorageArchive == nil || op.ID != a.OperationID || op.RunID != a.RunID || op.TaskMode != p.Mode || op.ProjectID != p.ProjectID || domain.HostingDocumentHash(op.StorageArchive.Plan) != domain.HostingDocumentHash(p) {
 		return false
 	}
-	resource, binding := p.SourceStorage.ResourceID, p.SourceStorage.BindingID
+	resource, binding := p.SourceResourceID(), p.SourceBindingID()
 	if p.Target != nil {
 		resource, binding = p.Target.Resource.ID, p.Target.Storage.BindingID
 	}
@@ -187,7 +187,7 @@ func (x *archiveCoordinator) execute(op domain.HostingOperation) error {
 			return errStorageArchiveHeld
 		}
 	}
-	if storageArchiveConflict(x.j.Snapshot(), x.p.SourceStorage.Reference(), x.p.SourceStorage.BindingID, x.p.OperationID, x.p.RecoveryOfOperationID) {
+	if storageArchiveConflict(x.j.Snapshot(), x.p.SourceStorage.Reference(), x.p.SourceBindingID(), x.p.OperationID, x.p.RecoveryOfOperationID) {
 		return errStorageArchiveHeld
 	}
 	entry := archiveRecord(x.j, x.a, x.lease, x.s, x.p, "plan", "plan")

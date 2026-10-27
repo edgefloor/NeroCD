@@ -91,6 +91,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/plan"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/database-network-captures/origin"},
 
+	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backup-volumes"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/storage-backups"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/storage-backups"},
 	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}"},
@@ -466,6 +467,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseBackupPlan
 	case "/api/v1/runners/hosting/database-backup/mutation":
 		return s.runnerDatabaseBackupMutation
+	case "/api/v1/resources/{id}/storage-backup-volumes":
+		return s.hostingStorageBackupVolumes
 	case "/api/v1/resources/{id}/storage-backups":
 		return s.hostingStorageBackups
 	case "/api/v1/storage-backups/{id}":
