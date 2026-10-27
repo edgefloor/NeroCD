@@ -52,9 +52,15 @@ func TestComponentDatabaseGuestValuesAreArguments(t *testing.T) {
 			t.Fatal("libpq connection string database accepted")
 		}
 	}
+	for _, name := range []string{"LD_PRELOAD=", "LD_LIBRARY_PATH=", "ENV=", "BASH_ENV="} {
+		args := componentDatabaseExec(strings.Repeat("a", 64), false, "/usr/local/bin/postgres", "--version")
+		if index := slices.Index(args, name); index < 1 || args[index-1] != "--env" {
+			t.Fatal("guest startup override inherited", name)
+		}
+	}
 	restore := databaseBackupComponentArgs("restore", strings.Repeat("a", 64), 30)
 	for _, flag := range []string{"--single-transaction", "--exit-on-error", "--clean", "--if-exists", "--no-owner", "--no-acl"} {
-		if !strings.Contains(restore[7], flag) {
+		if !strings.Contains(restore[slices.Index(restore, "-ceu")+1], flag) {
 			t.Fatal("missing replacement bound", flag)
 		}
 	}

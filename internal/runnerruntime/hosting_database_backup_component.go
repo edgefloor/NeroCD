@@ -24,6 +24,17 @@ const componentPostgresCleanEnvironment = `/usr/bin/env -i PATH=/usr/local/sbin:
 const componentPostgresEnvironment = componentPostgresSelection + `exec ` + componentPostgresCleanEnvironment
 const componentImportTerminal = "nerocd-component-import-v1:"
 
+// Clear guest dynamic-loader and shell startup overrides before even the first
+// fixed executable starts. POSTGRES_USER/DB remain available to the fixed shell.
+func componentDatabaseExec(id string, interactive bool, command ...string) []string {
+	args := []string{"exec", "--user", "postgres", "--env", "LD_PRELOAD=", "--env", "LD_LIBRARY_PATH=", "--env", "ENV=", "--env", "BASH_ENV="}
+	if interactive {
+		args = append(args, "--interactive")
+	}
+	args = append(args, id)
+	return append(args, command...)
+}
+
 func databaseBackupComponentArgs(mode, id string, seconds int) []string {
 	seconds = max(1, seconds-10)
 	if mode == "restore" {
@@ -31,9 +42,9 @@ func databaseBackupComponentArgs(mode, id string, seconds int) []string {
 		// joins. Transport errors or cancellation supply no such proof. Time is an
 		// argv value, never interpolated into shell source.
 		script := componentPostgresSelection + `set +e; ` + componentPostgresCleanEnvironment + `/usr/bin/timeout -s TERM -k 5 "$1" /usr/local/bin/pg_restore --username="$u" --dbname="$d" --single-transaction --exit-on-error --clean --if-exists --no-owner --no-acl; code=$?; printf 'nerocd-component-import-v1:%s\n' "$code"; exit 0`
-		return []string{"exec", "--user", "postgres", "--interactive", id, "/bin/sh", "-ceu", script, "nerocd-import", strconv.Itoa(seconds)}
+		return componentDatabaseExec(id, true, "/bin/sh", "-ceu", script, "nerocd-import", strconv.Itoa(seconds))
 	}
-	return []string{"exec", "--user", "postgres", "--interactive", id, "/usr/bin/timeout", "-s", "TERM", "-k", "5", strconv.Itoa(seconds), "/bin/sh", "-ceu", componentPostgresEnvironment + `/usr/local/bin/pg_dump --username="$u" --dbname="$d" --format=custom --no-owner --no-acl`}
+	return componentDatabaseExec(id, true, "/usr/bin/timeout", "-s", "TERM", "-k", "5", strconv.Itoa(seconds), "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/pg_dump --username="$u" --dbname="$d" --format=custom --no-owner --no-acl`)
 }
 
 func (e *databaseBackupEngine) inspectComponentStack(ctx context.Context, h domain.HostingHealthy, plan domain.HostingApplyPlan, name string) (domain.HostingStackComponent, []domain.HostingStorageArchiveWriterState, error) {
@@ -86,7 +97,7 @@ func (e *databaseBackupEngine) inspectComponentStack(ctx context.Context, h doma
 			}
 		}
 	}
-	version, err := e.image.docker(ctx, "exec", "--user", "postgres", db.ContainerID, "/usr/local/bin/postgres", "--version")
+	version, err := e.image.docker(ctx, componentDatabaseExec(db.ContainerID, false, "/usr/local/bin/postgres", "--version")...)
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(version)), "postgres (PostgreSQL) 16.") {
 		return db, nil, errDatabaseBackupHeld
 	}
@@ -132,7 +143,7 @@ func (e *databaseBackupEngine) componentPreflight(ctx context.Context, p domain.
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	if e.stream(ctx, []string{"exec", "--user", "postgres", "--interactive", db.ContainerID, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "20", "/usr/local/bin/pg_restore", "--list"}, f, io.Discard) != nil {
+	if e.stream(ctx, componentDatabaseExec(db.ContainerID, true, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "20", "/usr/local/bin/pg_restore", "--list"), f, io.Discard) != nil {
 		return errDatabaseBackupHeld
 	}
 	e.writers = writers
@@ -222,7 +233,7 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 		}
 	}
 	// Unknown SQL clients are not covered by the platform hold or stack inventory.
-	clients, err := e.image.docker(ctx, "exec", "--user", "postgres", db.ContainerID, "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --tuples-only --no-align --command="SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid <> pg_backend_pid()"`)
+	clients, err := e.image.docker(ctx, componentDatabaseExec(db.ContainerID, false, "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --tuples-only --no-align --command="SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid <> pg_backend_pid()"`)...)
 	if err != nil || strings.TrimSpace(string(clients)) != "0" {
 		return blob, errDatabaseBackupHeld
 	}
