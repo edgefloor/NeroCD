@@ -66,6 +66,57 @@ func TestComponentDatabaseGuestValuesAreArguments(t *testing.T) {
 	}
 }
 
+func TestComponentPostgresScriptsReplaceInitializedDatabase(t *testing.T) {
+	id := os.Getenv("NEROCD_COMPONENT_POSTGRES_SCRIPT_CONTAINER")
+	if id == "" {
+		t.Skip("explicit disposable PostgreSQL script target required")
+	}
+	if !dockerObjectID.MatchString(id) {
+		t.Fatal("invalid disposable PostgreSQL identity")
+	}
+	docker := func(args []string, input []byte) []byte {
+		t.Helper()
+		command := exec.CommandContext(t.Context(), "docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...)
+		command.Stdin = bytes.NewReader(input)
+		out, err := command.Output()
+		if err != nil {
+			t.Fatal("disposable PostgreSQL command failed")
+		}
+		return out
+	}
+	if strings.TrimSpace(string(docker([]string{"info", "--format", "{{.ID}}"}, nil))) != "e37dd219-b13f-47dd-99ed-21d79442ed0c" || strings.TrimSpace(string(docker([]string{"inspect", "--format", `{{index .Config.Labels "io.nerocd.storage-runtime.owner"}}`, id}, nil))) != "nerocd-compose-lifecycle-pg-20261027" {
+		t.Fatal("disposable PostgreSQL target mismatch")
+	}
+	sql := func(database, statement string) string {
+		t.Helper()
+		return strings.TrimSpace(string(docker(componentDatabaseExec(id, false, "/usr/local/bin/psql", "--username=nerocd_fixture", "--dbname="+database, "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--command="+statement), nil)))
+	}
+	for _, database := range []string{"component_script_source", "component_script_target"} {
+		sql("nerocd_fixture", "CREATE DATABASE "+database)
+		sql(database, "CREATE TABLE script_records (id integer PRIMARY KEY); INSERT INTO script_records VALUES (1)")
+	}
+	args := func(mode, database string) []string {
+		a := databaseBackupComponentArgs(mode, id, 30)
+		i := slices.Index(a, id)
+		out := append([]string{}, a[:i]...)
+		out = append(out, "--env", "POSTGRES_DB="+database)
+		return append(out, a[i:]...)
+	}
+	dump := docker(args("backup", "component_script_source"), nil)
+	if !bytes.HasPrefix(dump, []byte("PGDMP")) {
+		t.Fatal("fixed dump command did not produce a custom archive")
+	}
+	sql("component_script_source", "INSERT INTO script_records VALUES (2)")
+	sql("component_script_target", "INSERT INTO script_records VALUES (99)")
+	terminal := docker(args("restore", "component_script_target"), dump)
+	if string(terminal) != componentImportTerminal+"0\n" {
+		t.Fatalf("fixed import terminal marker mismatch: %q", terminal)
+	}
+	if sql("component_script_target", "SELECT string_agg(id::text, ',' ORDER BY id) FROM script_records") != "1" || sql("component_script_source", "SELECT string_agg(id::text, ',' ORDER BY id) FROM script_records") != "1,2" {
+		t.Fatal("transactional target replacement changed snapshot or source")
+	}
+}
+
 func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEngine, domain.HostingDatabaseBackupPlan, *map[string]bool, *int) {
 	t.Helper()
 	e, _, _ := backupEngineFixture(t)
@@ -275,6 +326,21 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 				}
 				return nil
 			})
+			if want, present := map[string]databaseBackupStage{
+				"corrupt archive":    databaseBackupStageArchiveList,
+				"foreign SQL writer": databaseBackupStageSQLClients,
+				"restore failure":    databaseBackupStageImportExit,
+				"tool timeout":       databaseBackupStageImportExit,
+				"unresolved import":  databaseBackupStageImportTransport,
+				"late launch":        databaseBackupStageImportTransport,
+				"cancelled import":   databaseBackupStageImportTransport,
+				"revoked authority":  databaseBackupStageAuthority,
+			}[mode]; present {
+				var stage *databaseBackupStageError
+				if !errors.As(err, &stage) || stage.stage != want || !errors.Is(err, errDatabaseBackupHeld) {
+					t.Fatal("component failure lost its fixed stage or hold identity", err)
+				}
+			}
 			if mode == "corrupt archive" {
 				if err == nil || *mutations != 0 {
 					t.Fatal("corrupt archive changed writers", err, *mutations)

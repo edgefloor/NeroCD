@@ -55,6 +55,13 @@ const (
 	databaseBackupStageAuthority
 	databaseBackupStageRestore
 	databaseBackupStageReadiness
+	databaseBackupStageWriterStop
+	databaseBackupStageWriterState
+	databaseBackupStageSQLClients
+	databaseBackupStageImportTransport
+	databaseBackupStageImportTerminal
+	databaseBackupStageImportExit
+	databaseBackupStageWriterResume
 )
 
 func (p databaseBackupPhase) name() string {
@@ -107,6 +114,20 @@ func (s databaseBackupStage) name() string {
 		return "restore"
 	case databaseBackupStageReadiness:
 		return "readiness"
+	case databaseBackupStageWriterStop:
+		return "writer_stop"
+	case databaseBackupStageWriterState:
+		return "writer_state"
+	case databaseBackupStageSQLClients:
+		return "sql_clients"
+	case databaseBackupStageImportTransport:
+		return "import_transport"
+	case databaseBackupStageImportTerminal:
+		return "import_terminal"
+	case databaseBackupStageImportExit:
+		return "import_exit"
+	case databaseBackupStageWriterResume:
+		return "writer_resume"
 	}
 	return "unknown"
 }
