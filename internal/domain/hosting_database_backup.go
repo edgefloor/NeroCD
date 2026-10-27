@@ -47,7 +47,7 @@ func (in HostingDatabaseBackupInput) Validate() error {
 type HostingDatabaseBackupRestoreInput struct {
 	ComponentTarget *HostingDatabaseBackupComponentTarget `json:"component_target,omitempty"`
 	RequestID       string                                `json:"request_id"`
-	Name            string                                `json:"name"`
+	Name            string                                `json:"name,omitempty"`
 	RemoteSource    *BackupRemoteSource                   `json:"remote_source,omitempty"`
 }
 
