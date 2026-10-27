@@ -551,6 +551,8 @@ if "--- PASS: TestHostingComposeVikunjaCompiledRunnerHTTPS " not in text or "SKI
 if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Compose browser did not pass")
 for key in ["served_assets_match_manifest","saved_compose_configuration","browser_runtime_configuration","browser_deployment","healthy_components","browser_route_selection","app_signup_task_upload","browser_redeployment","app_fresh_login_persistence_new_writes","browser_stack_stop_start_persistence","browser_component_database_backup_import","database_only_original_uploads_not_restored","database_source_later_write_excluded_target_writes_independent"]:
  if browser.get(key) is not True:raise SystemExit("connected Compose browser proof missing: "+key)
+for key in ["browser_compose_volume_remote_schedule_saved","browser_compose_volume_remote_schedule_occurrence","browser_compose_volume_remote_schedule_disabled","browser_compose_volume_remote_failure_history_reloaded","browser_compose_volume_remote_same_archive_retry"]:
+ if browser.get(key) is not True:raise SystemExit("connected Compose remote schedule proof missing: "+key)
 COMPOSE_BROWSER_PASS
 elif [[ "$catalog" == true ]]; then
  browser_origin=$(cat "$evidence/browser-origin")

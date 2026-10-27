@@ -477,6 +477,11 @@ func TestComposeVolumeScheduleFixtureRequestContract(t *testing.T) {
 	if repo.input.Enabled || repo.input.ExpectedVersion != 2 || repo.input.Volume != "vikunja-data" {
 		t.Fatal("production schedule decoder lost fixture disable contract")
 	}
+	remote := strings.TrimSuffix(update, "}") + `,"remote_target":{"target_id":"target_fixture","revision":1}}`
+	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, remote, "application/json", 200)
+	if repo.input.RemoteTarget == nil || repo.input.RemoteTarget.TargetID != "target_fixture" || repo.input.RemoteTarget.Revision != 1 || !repo.input.Enabled || repo.input.Volume != "vikunja-data" {
+		t.Fatal("production schedule decoder lost Compose remote fixture selection")
+	}
 	for _, invalid := range []string{
 		strings.Replace(body, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, `fixture-invalid-request`, 1),
 		strings.Replace(body, `"volume":"vikunja-data"`, `"volume":"../vikunja-data"`, 1),
@@ -730,8 +735,32 @@ func composeRuntimeRemoteVolumeArchive(t *testing.T, f *storageRuntimeFixture, r
 	operation := f.await(backup.OperationID, "succeeded")
 	failed := hostingStorageRemoteRuntimeAwait(remote, backupID, "upload", "failed")
 	backup = storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
-	if operation.StorageArchive == nil || operation.StorageArchive.Plan.CompilerVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Plan.PolicyVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Result == nil || operation.StorageArchive.Result.ResumeOutcome != "resumed" || operation.StorageArchive.Result.Uncertain || operation.MutationHold || backup.State != "succeeded" || backup.Volume != "vikunja-data" || backup.SourceDeployedOperationID != deployed.ID || backup.Blob == nil || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.FailureCode != "access_denied" || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
+	if operation.StorageArchive == nil || operation.StorageArchive.Plan.CompilerVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Plan.PolicyVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Plan.RemoteTarget == nil || operation.StorageArchive.Plan.RemoteTarget.TargetID != target.ID || operation.StorageArchive.Plan.RemoteTarget.Revision != target.Revision || operation.StorageArchive.Result == nil || operation.StorageArchive.Result.ResumeOutcome != "resumed" || operation.StorageArchive.Result.Uncertain || operation.MutationHold || backup.State != "succeeded" || backup.Volume != "vikunja-data" || backup.SourceDeployedOperationID != deployed.ID || backup.Blob == nil || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.FailureCode != "access_denied" || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
 		t.Fatal("Compose denied upload did not preserve successful local archive and resumed authority")
+	}
+	schedules := storageRuntimeJSON[[]domain.HostingStorageBackupSchedule](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules", nil, 200)
+	var remoteSchedule *domain.HostingStorageBackupSchedule
+	for i := range schedules {
+		candidate := &schedules[i]
+		if candidate.RemoteTarget != nil && candidate.RemoteTarget.TargetID == target.ID {
+			if remoteSchedule != nil {
+				t.Fatal("Compose remote fixture created multiple selected schedules")
+			}
+			remoteSchedule = candidate
+		}
+	}
+	if remoteSchedule == nil || remoteSchedule.Version != domain.HostingComposeStorageBackupScheduleVersion || remoteSchedule.ResourceID != resource.ID || remoteSchedule.Volume != "vikunja-data" || !remoteSchedule.AcknowledgeInterruption || remoteSchedule.Enabled || remoteSchedule.Revision != 2 || remoteSchedule.RemoteTarget.Revision != target.Revision {
+		t.Fatal("Compose remote schedule lost selected volume, consent or pinned target")
+	}
+	occurrences := storageRuntimeJSON[[]domain.HostingStorageBackupOccurrence](f, "GET", "/api/v1/resources/"+resource.ID+"/storage-backup-schedules/"+remoteSchedule.ID+"/occurrences", nil, 200)
+	var occurrence *domain.HostingStorageBackupOccurrence
+	for i := range occurrences {
+		if occurrences[i].BackupID == backupID {
+			occurrence = &occurrences[i]
+		}
+	}
+	if occurrence == nil || occurrence.ScheduleID != remoteSchedule.ID || occurrence.ScheduleRevision != 1 || occurrence.ResourceID != resource.ID || occurrence.Volume != "vikunja-data" || occurrence.OperationID != operation.ID || occurrence.OwnershipHeld {
+		t.Fatal("Compose remote occurrence lost immutable schedule-to-archive identity")
 	}
 	if storageArchiveHelperStarts(t, operation.ID, since) != 1 {
 		t.Fatal("Compose remote archive helper did not run exactly once")
@@ -787,7 +816,7 @@ func composeRuntimeRemoteVolumeArchive(t *testing.T, f *storageRuntimeFixture, r
 			t.Fatal("Compose remote credentials appeared in runner logs")
 		}
 	}
-	t.Logf("Compose remote backup=%s failed_transfer=%s retry=%s local_bytes=%d exact_remote_blob=true helper_starts=1 retry_component_events=0 resume_checks=%d", backupID, failed.ID, uploaded.ID, backup.Blob.SizeBytes, observedChecks)
+	t.Logf("Compose remote scheduled_backup=%s schedule=%s occurrence=%s failed_transfer=%s retry=%s local_bytes=%d exact_remote_blob=true helper_starts=1 retry_component_events=0 resume_checks=%d", backupID, remoteSchedule.ID, occurrence.ID, failed.ID, uploaded.ID, backup.Blob.SizeBytes, observedChecks)
 }
 
 func composeRuntimeUploadSnapshot(t *testing.T, root string) map[string]string {
