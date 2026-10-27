@@ -30,12 +30,13 @@ Arbitrary or pasted Compose imports remain incomplete and are rejected.
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
-2. In Install from catalog, search by application, version, image, data mount or
-   generated variable name. Search ignores case and requires every word to match.
-   Clear the search to recover an empty result, then select Linkding. Review its
-   pinned image, data mount, generated variables, container port, readiness check
-   and template source. Enter a name and select a granted destination. Project
-   owner access is required.
+2. In Install from catalog, choose a Catalog category and search by application,
+   version, image, data mount or generated variable name. Search ignores case and
+   requires every word to match. Both filters apply together. Use All categories,
+   Clear search or Clear filters to recover an empty result, then select Linkding.
+   Review its upstream category and architecture declaration, pinned image, data
+   mount, generated variables, container port, readiness check and template source.
+   Enter a name and select a granted destination. Project owner access is required.
 3. Install the application. The transaction saves resource placement, storage,
    encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
@@ -85,10 +86,11 @@ request ID. A definitive HTTP 400 rejection permits correction and a new request
 An ambiguous response retains the original request and disables edits so a retry
 cannot silently create a second installation.
 
-Changing or clearing the search clears the selected application. Select an entry
-again before installing. Search is also locked while an installation is
-unconfirmed. If catalog or destination loading fails, Retry catalog loading
-fetches the failed list again without submitting an installation.
+Changing or clearing either filter clears the selected application. Select an
+entry again before installing. Both filters are locked while an installation is
+unconfirmed, so Retry same installation retains the exact original request. If
+catalog or destination loading fails, Retry catalog loading fetches the failed
+list again without submitting an installation.
 
 After a combined owned-storage/runtime-environment deployment is prepared, a
 runner restart retains an explicit ownership barrier. It does not request a new
@@ -110,13 +112,23 @@ template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
 changes do not rewrite that installed copy.
 
-Catalog text search filters the available entries locally using the metadata
-listed above. Category and compatibility filters, a general template editor,
-catalog refresh and version upgrades remain unavailable. The installation preview
-shows the saved definition and source, but architecture compatibility and resource
-requirements are not declared by the entry. It does not provide general
-required-variable, domain or component-role presentation. General Compose import
-is unsupported.
+Catalog category and text search filter the authorized list locally. Category
+options come from the upstream comma-separated declaration. Matching splits on
+commas, trims whitespace and compares the entire category without regard to case,
+as in the pinned PHP
+[catalog selector](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/resources/views/livewire/project/new/select.blade.php).
+Linkding's upstream category is `RSS`, from
+[the pinned service metadata](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/service-templates.json).
+
+The preview displays upstream `arm_only` and `amd_only` declarations as ARM only
+or AMD only. Linkding declares neither, so its restriction reads Not declared.
+These declarations do not verify compatibility with the selected destination.
+CPU, memory and disk requirements are also undeclared. Use the qualified runtime
+profile below when choosing a destination.
+
+Compatibility filters, a general template editor, catalog refresh and version
+upgrades remain unavailable. The preview does not provide general required-variable,
+domain or component-role presentation. General Compose import is unsupported.
 
 ## Back up and recover into a separate application
 
@@ -156,3 +168,72 @@ Its profile is pinned Linkding 1.47.0, native Linux arm64, trusted rootful
 classic-store Docker/overlay2, one destination, and a private fixture CA.
 Other architectures, production ACME, arbitrary applications, catalog upgrades,
 Compose, cross-host recovery, and destination disk loss are unqualified.
+
+<a id="catalog-filter-qualification"></a>
+
+## Category filter qualification
+
+Category filtering and upstream declarations are accepted at
+`6aeac387975da5b9b76e847f3bbaeb354692e702`. Product candidate
+`4a994373fa2827191de9798a23220309e8c3f9c1` adds category filtering
+and upstream architecture declarations. Independent hygiene, specification and
+security reviews found no issues at that exact revision. Final candidate
+`6aeac387975da5b9b76e847f3bbaeb354692e702` changes only the existing PostgreSQL
+fixture cleanup to remove its anonymous volume. Product and browser sources are
+identical. Hygiene, specification and narrow security review of that cleanup
+change found no issues. All three reviewers retained their full product reviews
+and approved the exact cleanup change.
+
+The focused domain and API catalog checks passed in 0.511 and 0.963 seconds.
+They verify the real authorized list, historical serialization and unchanged
+normalized definition identity. Formatting, focused Go vet and the pinned
+v2.10.1 changed-code lint passed with zero findings. The full WebUI suite passed
+129 files and 1,933 tests in 13.81 seconds. A fresh UI build and Go embedding build
+passed. API generation, route generation and the UI artifact manifest comparison
+also passed.
+
+The existing responsive catalog metadata-install browser check passed once on
+`4a994373fa2827191de9798a23220309e8c3f9c1` at 12:18:25–12:18:44 UTC, 18.9 seconds
+overall and 2.0 seconds in the test. Its initial preservation check failed because
+the fixture left one anonymous PostgreSQL volume. The original failure remains
+part of the evidence.
+
+An isolated check at 12:20:56.436909–12:20:57.385237 UTC reproduced the cause.
+`docker rm -f` left the anonymous volume, while `docker rm -f -v` removed it and
+preserved an explicitly named mount. Docker events proved ownership of the
+original leaked volume. The steward removed it after confirming it was unused.
+Final preservation passed with all 41 baseline containers and 236 baseline volumes
+unchanged, no added containers or volumes, and the fixture port and runtime
+released. The running user instance retained its identity, content and health.
+The browser check was retained because the final repair changes teardown only.
+It covers category and search combinations, clearing filters, an empty result,
+loading recovery, metadata installation and preview widths 320, 390, 430 and
+1440 pixels.
+
+The audited durable evidence index is
+`/Users/bubble/.local/share/nerocd/acceptance/catalog-hosting-ci-20261026/6aeac387975da5b9b76e847f3bbaeb354692e702/evidence-index.json`,
+SHA-256 `f613aa08b289d4b7d098bfb31cfa54deeeccee50de00d02650d0c332c5097e86`.
+It retains 21 safe files, including both preservation receipts and the isolated
+cleanup proof. Private inventory snapshots remain excluded.
+
+Prior runtime and recovery evidence retains its original source revision and
+qualified profile. SQL, migrations, store generation, runner, runtime and command
+sources are byte-identical to accepted `27a2527a4203b6fa7526efd547d8903a27057169`.
+This change does not alter deployment, secret delivery, storage or recovery, so
+the completed Linkding runtime workflow was not repeated. Full `make verify` and
+`make check` were not run for this metadata and UI change. Per-asset served hash
+verification was not run. The fresh UI build, artifact manifest comparison, Go
+embedding build and actual browser check provide the retained artifact evidence.
+No additional catalog entry or architecture compatibility is qualified by these
+checks.
+
+The delivery times below use UTC command timestamps where available. Estimates
+overlap because backend, UI, validation and review ran in parallel.
+
+| Activity | Time and source |
+| --- | --- |
+| Implementation | Backend approximately 12:10:00–12:11:37, UI approximately 85 seconds. Estimates from worker reports. |
+| Product-defect repair | None reported for this change. |
+| Fixture repair | Approximately 15 seconds for a synthetic search fixture collision. Anonymous-volume diagnosis and repair approximately 12:18:44–12:21:41, including checks. Worker estimates. |
+| Test execution | Focused Go checks 12:16:42–12:16:57, 15 seconds. Full WebUI tests and fresh builds 12:16:42–12:17:14, 32 seconds. API generation took 1 second. The browser run took 18.9 seconds overall, including 2.0 seconds in the test. |
+| Review and waiting | Initial reviews approximately 12:14–12:18, overlapping implementation and tests. Final cleanup review durations are unavailable. |
