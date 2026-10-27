@@ -51,10 +51,10 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 }
 
 func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
-	for _, tc := range []struct{ id, version string }{{"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}} {
+	for _, tc := range []struct{ id, version string }{{"linkding", domain.HostingCatalogLinkdingVersion}, {"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}} {
 		t.Run(tc.id, func(t *testing.T) {
 			server, pg, database := newHostingBuildAPIFixture(t)
-			if tc.id == "vikunja-with-postgresql" {
+			if tc.id == "vikunja-with-postgresql" || tc.id == "linkding" {
 				ring, e := secretcrypto.New("catalog", map[string][]byte{"catalog": bytes.Repeat([]byte{8}, 32)})
 				if e != nil {
 					t.Fatal(e)
@@ -115,7 +115,10 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			call(badURL, 400)
 			badURL.PublicURL = "https://tasks.example.test/private"
 			call(badURL, 400)
-			for _, pair := range [][2]string{{tc.id, domain.HostingCatalogLinkdingVersion}, {"linkding", tc.version}} {
+			for _, pair := range [][2]string{{tc.id, domain.HostingCatalogLinkdingVersion}, {"linkding", tc.version}, {tc.id, tc.version + ".missing"}} {
+				if pair[0] == tc.id && pair[1] == tc.version {
+					continue
+				}
 				bad := in
 				bad.TemplateID = pair[0]
 				bad.ImmutableVersion = pair[1]
@@ -170,12 +173,23 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 				if installed.Resource.Source.Kind != "compose" || installed.StorageRef != (domain.HostingStorageRef{}) {
 					t.Fatal("HTTP install did not select managed Compose")
 				}
-				req := httptest.NewRequest("GET", "/api/v1/resources/"+installed.Resource.ID+"/catalog-installation", nil)
+			}
+			if installed.ID != installed.Resource.ID || installed.Binding.ResourceID != installed.Resource.ID {
+				t.Fatal("installation receipt resource identity mismatch")
+			}
+			for _, readback := range []struct {
+				path   string
+				status int
+			}{
+				{"/api/v1/hosting-catalog/installations/" + installed.ID, 404},
+				{"/api/v1/resources/" + installed.Resource.ID + "/catalog-installation", 200},
+			} {
+				req := httptest.NewRequest("GET", readback.path, nil)
 				req.Header.Set("Authorization", "Bearer "+token)
 				response := httptest.NewRecorder()
 				server.ServeHTTP(response, req)
-				if response.Code != 200 || response.Body.String() != string(raw) {
-					t.Fatal("Compose installation GET lost receipt", response.Code)
+				if response.Code != readback.status || readback.status == 200 && response.Body.String() != string(raw) {
+					t.Fatalf("installation readback %s returned %d want %d", readback.path, response.Code, readback.status)
 				}
 			}
 			if tc.id == "actualbudget" && installed.Template.Definition.RuntimeEnvironment["ACTUAL_LOGIN_METHOD"] != "password" {
