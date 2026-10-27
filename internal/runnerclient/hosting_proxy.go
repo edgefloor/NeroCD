@@ -67,6 +67,7 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
+	RegistryPull                                                                                                                 bool
 	StorageBackupRetention                                                                                                       bool
 	DatabaseBackupRetention                                                                                                      bool
 	RemoteStorageBackups                                                                                                         bool
@@ -154,6 +155,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		environmentCap = environmentCap || capability == domain.HostingRuntimeEnvironmentCapability
 		imageCap = imageCap || capability == domain.RunTypeImageDeploy
 		releaseCap = releaseCap || capability == domain.HostingReleasePortsCapability
+	}
+	registryCap := false
+	for _, capability := range result.Capabilities {
+		registryCap = registryCap || capability == domain.HostingRegistryPullCapability
+	}
+	if registryCap != options.RegistryPull || registryCap && (!imageCap || !releaseCap || shellCapable) {
+		return "", errors.New("registry pull capabilities do not match explicit configuration")
 	}
 	if environmentCap != options.RuntimeEnvironment || environmentCap && (!imageCap || !releaseCap || shellCapable) {
 		return "", errors.New("authenticated runtime environment capabilities do not match explicit configuration")

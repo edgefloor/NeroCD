@@ -55,6 +55,9 @@ func lockHostingRuntimeConfiguration(ctx context.Context, tx pgx.Tx, project, re
 }
 
 func requireHostingRuntimeAgent(ctx context.Context, tx pgx.Tx, snap domain.HostingSnapshot) error {
+	if err := requireHostingRegistryAgent(ctx, tx, snap); err != nil {
+		return err
+	}
 	if snap.RuntimeConfiguration == (domain.HostingRuntimeConfigurationRef{}) {
 		return nil
 	}
@@ -116,6 +119,9 @@ func hostingFreshRuntimeGate(ctx context.Context, tx pgx.Tx, op domain.HostingOp
 	if err = runtimeHostingActorAuthority(ctx, tx, op); err != nil {
 		return err
 	}
+	if err := validateHostingRegistrySecret(ctx, tx, op.ProjectID, op.Snapshot); err != nil {
+		return err
+	}
 	return requireHostingRuntimeAgent(ctx, tx, op.Snapshot)
 }
 
@@ -142,7 +148,7 @@ func runtimeHostingActorAuthority(ctx context.Context, tx pgx.Tx, op domain.Host
 	if connectionOperation(op) {
 		return authorizeBuildActor(ctx, tx, op.CreatedBy, op.ProjectID, domain.RoleOwner)
 	}
-	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 && op.Snapshot.Stack == (domain.HostingStackRef{}) {
+	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 && op.Snapshot.RegistryCredential == (domain.HostingRegistryCredentialRef{}) && op.Snapshot.Stack == (domain.HostingStackRef{}) {
 		return nil
 	}
 	err := authorizeBuildActor(ctx, tx, op.CreatedBy, op.ProjectID, "maintainer")
@@ -166,7 +172,7 @@ func finalHostingRuntimeAuthority(ctx context.Context, tx pgx.Tx, runner string,
 	if connectionOperation(op) {
 		return finalDatabaseConnectionAuthority(ctx, tx, runner, a, op, false, false)
 	}
-	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 {
+	if op.CleanupPlan != nil || op.Snapshot.RuntimeConfiguration.Generation == 0 && op.Snapshot.RegistryCredential == (domain.HostingRegistryCredentialRef{}) {
 		return nil
 	}
 	if err := runtimeHostingActorAuthority(ctx, tx, op); err != nil {

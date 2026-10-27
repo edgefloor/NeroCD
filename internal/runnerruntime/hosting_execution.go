@@ -36,7 +36,7 @@ func validateHostingPlanResponse(op domain.HostingOperation, a domain.HostingAut
 	return nil
 }
 
-func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, storageDrain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig) error {
+func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJournal, reporter *attemptReporter, storageDrain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, localEnabled bool, environmentConfig *RuntimeEnvironmentConfig, registryConfigs ...*RegistryPullConfig) error {
 	mode := claim.Run.RunSpec.HostingMode
 	if claim.Run.RunSpec.HostingOperationID == "" || (mode != "deploy" && mode != "observe" && mode != "cleanup" && mode != domain.HostingStackStopMode) || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 || claim.PrimitivePlan.RunID != claim.Run.ID || claim.Lease.RunID != claim.Run.ID {
 		return errors.New("invalid typed image task")
@@ -96,6 +96,18 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		var prepareErr error
 		if op.StackSource != nil {
 			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource)
+		} else if op.Snapshot.RegistryCredential != (domain.HostingRegistryCredentialRef{}) {
+			if len(registryConfigs) != 1 || registryConfigs[0] == nil {
+				return errors.New("registry pull requires explicit configuration")
+			}
+			deliveryID := attemptMutationKey("registry", a.LeaseID, a.Attempt, "pull")
+			deliveryID = domain.HostingDocumentHash(deliveryID)[7:39]
+			var material *domain.HostingRegistryCredentialDelivery
+			material, prepareErr = client.HostingRegistryCredential(supervisor.Context(), claim.Lease.RunnerID, domain.HostingRegistryCredentialRequest{Authority: a, DeliveryID: deliveryID}, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: registryConfigs[0].TrustedLoopbackHTTP})
+			if prepareErr == nil {
+				release, prepareErr = engine.prepareRegistryImage(supervisor.Context(), op.Snapshot, material)
+				material.Close()
+			}
 		} else {
 			release, prepareErr = engine.Prepare(supervisor.Context(), op.Snapshot)
 		}

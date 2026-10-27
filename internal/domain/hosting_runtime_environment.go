@@ -20,6 +20,9 @@ type HostingRuntimeConfigurationRef struct {
 
 // ValidateHostingRuntimeConfigurationRef binds runtime references to their policy family.
 func ValidateHostingRuntimeConfigurationRef(s HostingSnapshot) error {
+	if err := ValidateHostingRegistrySnapshot(s); err != nil {
+		return err
+	}
 	if s.Stack != (HostingStackRef{}) {
 		if s.PolicyVersion != HostingStackPolicyVersion || s.RuntimeConfiguration != (HostingRuntimeConfigurationRef{}) && (s.RuntimeConfiguration.Generation < 1 || !imageSHA256.MatchString(s.RuntimeConfiguration.Hash)) || s.LocalBuild != (HostingLocalBuildSource{}) || s.Storage != (HostingStorageRef{}) || s.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || s.Database != (HostingDatabaseExecutionRef{}) {
 			return errors.New("invalid stack runtime configuration")

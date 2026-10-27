@@ -137,11 +137,17 @@ func (e *imageEngine) Prepare(ctx context.Context, snapshot domain.HostingSnapsh
 	if len(matches) != 1 {
 		return domain.HostingRelease{}, errors.New("pull did not produce one unambiguous repository digest")
 	}
+	return e.preparedPulledImage(ctx, normalized, daemon, matches[0][1])
+}
+
+func (e *imageEngine) preparedPulledImage(ctx context.Context, normalized, daemon, digest string) (domain.HostingRelease, error) {
+	if !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(digest) {
+		return domain.HostingRelease{}, errors.New("invalid pulled digest")
+	}
 	named, err := reference.ParseNormalizedNamed(normalized)
 	if err != nil {
 		return domain.HostingRelease{}, err
 	}
-	digest := matches[0][1]
 	if supplied, ok := named.(reference.Digested); ok && supplied.Digest().String() != digest {
 		return domain.HostingRelease{}, errors.New("pulled digest differs from supplied digest")
 	}

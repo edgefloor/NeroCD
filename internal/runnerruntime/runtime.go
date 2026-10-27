@@ -172,6 +172,7 @@ type Config struct {
 	HostingReadiness       *HostingReadinessConfig
 	HostingObservation     *HostingObservationConfig
 	HostingRuntimeLogs     *HostingRuntimeLogsConfig
+	RegistryPull           *RegistryPullConfig
 	RuntimeEnvironment     *RuntimeEnvironmentConfig
 	LocalBuildDeploy       bool
 	Build                  *BuildConfig
@@ -224,6 +225,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := validateHostingObservationConfig(config); err != nil {
 		return err
 	}
+	if err := validateRegistryPullConfig(config); err != nil {
+		return err
+	}
 	if err := validateRuntimeEnvironmentConfig(config); err != nil {
 		return err
 	}
@@ -249,7 +253,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 	}
-	if config.StorageArchive != nil || config.Database != nil || config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
+	if config.StorageArchive != nil || config.Database != nil || config.Proxy.Enabled() || config.Build != nil || config.LocalBuildDeploy || config.RegistryPull != nil || config.RuntimeEnvironment != nil || config.HostingObservation != nil || config.HostingRuntimeLogs != nil || config.HostingReadiness != nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -337,7 +341,7 @@ func RunContext(ctx context.Context, config Config) error {
 	}
 	// Preserve legacy uncertain-journal reconciliation before ordinary lifecycle
 	// reads. Configured build/proxy runners authenticate before their replay.
-	if config.StorageArchive == nil && config.Database == nil && !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
+	if config.StorageArchive == nil && config.Database == nil && !config.Proxy.Enabled() && config.Build == nil && !config.LocalBuildDeploy && config.RegistryPull == nil && config.RuntimeEnvironment == nil && config.HostingObservation == nil && config.HostingRuntimeLogs == nil && config.HostingReadiness == nil {
 		if err := validateLocalBuildRuntimeIdentity(ctx, config); err != nil {
 			return err
 		}
@@ -419,7 +423,7 @@ func RunContext(ctx context.Context, config Config) error {
 			return err
 		}
 		if config.Execute {
-			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{storageArchive: config.StorageArchive, database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
+			if err := executeClaimWithOptionsContext(ctx, config.Server, config.Token, claim, config.WorkDir, config.CancelPollInterval, journal, config.SecretRoot, imagePolicy, operational, claimExecutionOptions{storageArchive: config.StorageArchive, database: config.Database, imageEndpoint: config.ImageDockerEndpoint, proxy: config.Proxy, localBuild: config.LocalBuildDeploy, registryPull: config.RegistryPull, runtimeEnvironment: config.RuntimeEnvironment}); err != nil {
 				return err
 			}
 		} else if config.CompleteStatus != "" {
@@ -484,6 +488,7 @@ func executeClaimWithJournalAndSecretRootAndCounters(server string, token string
 type claimExecutionOptions struct {
 	storageArchive     *StorageArchiveExecutionConfig
 	database           *DatabaseExecutionConfig
+	registryPull       *RegistryPullConfig
 	runtimeEnvironment *RuntimeEnvironmentConfig
 	localBuild         bool
 	imageEndpoint      string
@@ -652,9 +657,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeImageDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy {
 		if options.database != nil && options.database.ApplicationDatabase {
-			return executeConnectedImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.database)
+			return executeConnectedImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.database, options.registryPull)
 		}
-		return executeImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment)
+		return executeImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.registryPull)
 	}
 	if claim.PrimitivePlan.Process == nil {
 		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {

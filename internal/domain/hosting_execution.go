@@ -91,6 +91,7 @@ type HostingReadiness struct {
 
 // HostingDeploymentInput is the complete public image deployment request.
 type HostingDeploymentInput struct {
+	RegistryCredential                     *HostingRegistryCredentialRef                   `json:"registry_credential,omitempty"`
 	ManagedStack                           *HostingStackDeploymentInput                    `json:"managed_stack,omitempty"`
 	ApplicationDatabaseStorage             *HostingApplicationDatabaseStorageInput         `json:"application_database_storage,omitempty"`
 	ApplicationDatabaseRouteContinuity     *HostingApplicationDatabaseRouteContinuityInput `json:"application_database_route_continuity,omitempty"`
@@ -106,6 +107,7 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
+	RegistryCredential      HostingRegistryCredentialRef     `json:"registry_credential,omitzero"`
 	StackStoppedOperationID string                           `json:"stack_stopped_operation_id,omitempty"`
 	Stack                   HostingStackRef                  `json:"stack,omitzero"`
 	Database                HostingDatabaseExecutionRef      `json:"database,omitzero"`
@@ -271,6 +273,9 @@ type HostingObservation struct {
 
 // ValidateHostingDeployment checks the bounded public deployment contract.
 func ValidateHostingDeployment(in HostingDeploymentInput) error {
+	if in.RegistryCredential != nil && (in.RegistryCredential.Validate() != nil || in.ManagedStack != nil || in.StorageRouteContinuity != nil || in.ApplicationDatabaseStorage != nil || in.ApplicationDatabaseRouteContinuity != nil) {
+		return ErrInvalidRegistryCredential
+	}
 	if in.ManagedStack != nil && in.ManagedStack.ExpectedStoppedOperationID != "" && !hostingProxyID.MatchString(in.ManagedStack.ExpectedStoppedOperationID) {
 		return errors.New("invalid stopped operation selection")
 	}

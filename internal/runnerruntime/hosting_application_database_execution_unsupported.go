@@ -10,7 +10,7 @@ import (
 	"nerocd/internal/runner"
 )
 
-func executeConnectedImageClaim(*attemptSupervisor, *runner.AttemptJournal, *attemptReporter, func(context.Context) error, string, string, domain.ClaimedRun, string, bool, *RuntimeEnvironmentConfig, *DatabaseExecutionConfig) error {
+func executeConnectedImageClaim(*attemptSupervisor, *runner.AttemptJournal, *attemptReporter, func(context.Context) error, string, string, domain.ClaimedRun, string, bool, *RuntimeEnvironmentConfig, *DatabaseExecutionConfig, ...*RegistryPullConfig) error {
 	return errors.New("connected database execution requires native Linux arm64")
 }
 

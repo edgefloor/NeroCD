@@ -83,7 +83,7 @@ func (c applicationDatabasePrepareCommand) RunEnvironment(ctx context.Context, n
 	return c.command.RunEnvironment(ctx, name, args, dir, env)
 }
 
-func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, reporter *attemptReporter, drain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, local bool, environment *RuntimeEnvironmentConfig, config *DatabaseExecutionConfig) error {
+func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, reporter *attemptReporter, drain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, local bool, environment *RuntimeEnvironmentConfig, config *DatabaseExecutionConfig, registryConfigs ...*RegistryPullConfig) error {
 	a := hostingAuthority(claim.Run.ID, claim.Run.RunSpec.HostingOperationID, claim.Lease)
 	c := runnerclient.New(server, token)
 	var op domain.HostingOperation
@@ -91,7 +91,7 @@ func executeConnectedImageClaim(s *attemptSupervisor, j *runner.AttemptJournal, 
 		return err
 	}
 	if op.ApplicationDatabase == nil && op.Snapshot.ApplicationDatabase == (domain.HostingApplicationDatabaseRef{}) {
-		return executeImageClaim(s, j, reporter, drain, server, token, claim, endpoint, local, environment)
+		return executeImageClaim(s, j, reporter, drain, server, token, claim, endpoint, local, environment, registryConfigs...)
 	}
 	if config == nil || !config.ApplicationDatabase || environment == nil || !applicationDatabaseScope(op, a, claim.Lease.RunnerID, claim.Run.RunSpec.HostingMode) || claim.PrimitivePlan.RunID != a.RunID || claim.Lease.RunID != a.RunID || claim.PrimitivePlan.Process != nil || claim.PrimitivePlan.Checkout != nil || len(claim.PrimitivePlan.Secrets) != 0 || len(claim.PrimitivePlan.Artifacts) != 0 {
 		return errApplicationDatabaseExecution

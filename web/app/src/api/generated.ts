@@ -1497,6 +1497,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/registry-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deliver the snapshot-selected pre-pull registry credential */
+        post: operations["deliverHostingRegistryCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/runtime-environment": {
         parameters: {
             query?: never;
@@ -7047,7 +7064,26 @@ export interface components {
             /** @enum {unknown} */
             recovery_state?: "queued" | "running" | "succeeded" | "uncertain";
         }));
+        HostingRegistryCredentialRef: {
+            secret_id: string;
+            /** Format: int64 */
+            version: number;
+        };
+        HostingRegistryCredentialRequest: {
+            authority: components["schemas"]["HostingAuthority"];
+            delivery_id: string;
+        };
+        HostingRegistryCredentialDelivery: {
+            /** Format: date-time */
+            use_until: string;
+            credential: {
+                registry: string;
+                username: string;
+                password: string;
+            };
+        };
         HostingDeploymentInput: {
+            registry_credential?: components["schemas"]["HostingRegistryCredentialRef"];
             managed_stack?: components["schemas"]["HostingStackDeploymentInput"];
             application_database_storage?: components["schemas"]["HostingApplicationDatabaseStorageInput"];
             application_database_route_continuity?: components["schemas"]["HostingApplicationDatabaseRouteContinuityInput"];
@@ -7256,6 +7292,7 @@ export interface components {
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
         };
         HostingSnapshot: {
+            registry_credential?: components["schemas"]["HostingRegistryCredentialRef"];
             stack_stopped_operation_id?: string;
             stack?: components["schemas"]["HostingStackRef"];
             application_database?: components["schemas"]["HostingApplicationDatabaseRef"];
@@ -13837,6 +13874,35 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingRegistryCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingRegistryCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Protected credential with original bounded deadline; Cache-Control no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRegistryCredentialDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };

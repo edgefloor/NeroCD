@@ -76,6 +76,7 @@ func runRunner(args []string) error {
 	logicalDatabaseBackups := fs.Bool("hosting-database-backups", false, "explicitly enable local PostgreSQL logical backups and held new-database restores")
 	databaseStateRoot := fs.String("database-state-root", "", "persistent protected database engine state root")
 	databaseSecretRoot := fs.String("database-secret-root", "", "persistent protected database credential root")
+	hostingRegistryPull := fs.Bool("hosting-registry-pull", false, "explicitly enable protected private registry image pulls over HTTPS")
 	hostingRuntimeEnv := fs.Bool("hosting-runtime-env", false, "explicitly enable protected hosting runtime environment delivery over HTTPS")
 	localBuildDeploy := fs.Bool("local-build-deploy", false, "explicitly enable same-host local build artifact deployment")
 	imagePolicyFlag := fs.String("compose-image-policy", os.Getenv("NEROCD_COMPOSE_IMAGE_POLICY"), "runner-owned Compose image policy: preloaded or pull")
@@ -225,6 +226,17 @@ func runRunner(args []string) error {
 	registrationCapabilities, err = runnerLocalBuildCapabilities(*localBuildDeploy, buildConfig != nil, proxyConfig.Enabled(), capabilitiesSpecified || buildConfig != nil && buildConfig.PrivateGit != nil, registrationCapabilities)
 	if err != nil {
 		return err
+	}
+	registrationCapabilities, err = runnerRegistryPullCapabilities(*hostingRegistryPull, *execute, *completeStatus, capabilitiesSpecified, registrationCapabilities)
+	if err != nil {
+		return err
+	}
+	var registryPull *runnerruntime.RegistryPullConfig
+	if *hostingRegistryPull {
+		registryPull = &runnerruntime.RegistryPullConfig{}
+		if err := runnerclient.ValidateRuntimeEnvironmentServer(*server, runnerclient.RuntimeEnvironmentTransport{}); err != nil {
+			return err
+		}
 	}
 	registrationCapabilities, err = runnerRuntimeEnvironmentCapabilities(*hostingRuntimeEnv, *execute, *completeStatus, capabilitiesSpecified, registrationCapabilities)
 	if err != nil {
@@ -422,14 +434,14 @@ func runRunner(args []string) error {
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RegistryPull: *hostingRegistryPull, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}
 	if (idSpecified || buildConfig != nil) && strings.TrimSpace(*id) != effectiveRunnerID {
 		return errors.New("runner --id does not match authenticated runner identity")
 	}
-	runtimeConfig := runnerruntime.Config{StorageArchive: archiveConfig, Database: databaseConfig, HostingReadiness: readiness, HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
+	runtimeConfig := runnerruntime.Config{StorageArchive: archiveConfig, Database: databaseConfig, HostingReadiness: readiness, HostingRuntimeLogs: runtimeLogs, HostingObservation: observation, RegistryPull: registryPull, RuntimeEnvironment: runtimeEnvironment, LocalBuildDeploy: *localBuildDeploy, Build: buildConfig, ImageDockerEndpoint: *imageDockerEndpoint, Proxy: proxyConfig,
 		Server: *server, Token: runnerToken, RunnerID: effectiveRunnerID, WorkDir: *workDir, JournalDir: *journalDir,
 		SecretRoot: *secretRoot, ImagePolicy: *imagePolicyFlag, Execute: *execute, Once: *once, PollInterval: *pollInterval,
 		CancelPollInterval: *cancelPollInterval, CompleteStatus: *completeStatus,
@@ -505,4 +517,45 @@ func runnerRuntimeEnvironmentCapabilities(enabled, execute bool, complete string
 		capabilities = append(capabilities, domain.HostingOwnedStorageRuntimeCapability)
 	}
 	return capabilities, nil
+}
+
+func runnerRegistryPullCapabilities(enabled, execute bool, complete string, specified bool, caps []string) ([]string, error) {
+	has := func(c string) bool {
+		for _, v := range caps {
+			if c == v {
+				return true
+			}
+		}
+		return false
+	}
+	if !enabled {
+		if has(domain.HostingRegistryPullCapability) {
+			return nil, errors.New("hosting_registry_pull_v1 requires --hosting-registry-pull")
+		}
+		return caps, nil
+	}
+	if !execute || complete != "" {
+		return nil, errors.New("registry pull requires execution and forbids generic completion")
+	}
+	if !specified {
+		var filtered []string
+		for _, c := range caps {
+			if c != "shell" {
+				filtered = append(filtered, c)
+			}
+		}
+		caps = filtered
+		for _, c := range []string{domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability} {
+			if !has(c) {
+				caps = append(caps, c)
+			}
+		}
+	}
+	if has("shell") || !has(domain.RunTypeImageDeploy) || !has(domain.HostingReleasePortsCapability) {
+		return nil, errors.New("registry pull requires dedicated image execution")
+	}
+	if !has(domain.HostingRegistryPullCapability) {
+		caps = append(caps, domain.HostingRegistryPullCapability)
+	}
+	return caps, nil
 }

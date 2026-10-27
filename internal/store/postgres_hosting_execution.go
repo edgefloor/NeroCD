@@ -390,6 +390,12 @@ func (s *PostgresStore) RequestHostingDeployment(ctx context.Context, id, resour
 	}
 	snap.ResourceID = resourceID
 	snap.ImageReference = desired.Image.Reference
+	if in.RegistryCredential != nil {
+		snap.RegistryCredential = *in.RegistryCredential
+		if err = validateRuntimeReferences(ctx, sqlcgen.New(tx), projectID, []domain.HostingRuntimeSecretReference{{SecretID: in.RegistryCredential.SecretID, Version: in.RegistryCredential.Version}}); err != nil {
+			return domain.HostingOperation{}, err
+		}
+	}
 	snap.ContainerPort = in.ContainerPort
 	snap.HostPort = in.HostPort
 	snap.Readiness = in.Readiness

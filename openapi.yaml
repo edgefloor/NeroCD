@@ -3332,6 +3332,27 @@ paths:
   "/api/v1/runners/hosting-observations/report": {"post": {"operationId": "reportHostingObservation", "summary": "reportHostingObservation", "description": "Bounded continuous hosting evidence independent of deployment recovery. Disk, CPU and memory observations are unsupported. Each target or report is at most 8 KiB; target pages are at most 50 targets and 512 KiB. Current authority is required.", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingObservationAck"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeObservation"}}}}}}
   "/api/v1/resources/{id}/runtime-status": {"get": {"operationId": "hostingRuntimeStatus", "summary": "hostingRuntimeStatus", "description": "Bounded continuous hosting evidence independent of deployment recovery. Disk, CPU and memory observations are unsupported. Each target or report is at most 8 KiB; target pages are at most 50 targets and 512 KiB. Current authority is required.", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeStatus"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "413": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "maxLength": 128}}]}}
   "/api/v1/runners/hosting/database-credentials": {"post":{"operationId":"deliverHostingDatabaseCredentials","summary":"Deliver pinned private database credentials","description":"Current database deploy authority while prepared before writer ApplyBegin, or current explicit reconciliation authority only. Exact immutable recipe/configuration/credential references, actor, runner bearer/capabilities, destination, lease/fence and secret status are checked. Audit commits before decryption; a fresh transaction revalidates after decryption. Stable delivery IDs retain the original deadline capped by lease expiry and 60 seconds. Cache-Control: no-store on every response. Direct TLS or trusted immediate TLS termination required; ordinary JSON and logs suppress values. Delivered bytes cannot be recalled. This endpoint does not qualify an engine adapter.","security":[{"bearerAuth":[]}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/HostingDatabaseCredentialRequest"}}}},"responses":{"200":{"description":"Protected credentials, at most 16 KiB encoded","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HostingDatabaseCredentials"}}}},"400":{"$ref":"#/components/responses/Error"},"401":{"$ref":"#/components/responses/Error"},"403":{"$ref":"#/components/responses/Error"},"404":{"$ref":"#/components/responses/Error"},"409":{"$ref":"#/components/responses/Error"},"503":{"$ref":"#/components/responses/Error"}}}}
+  "/api/v1/runners/hosting/registry-credential":
+    post:
+      operationId: deliverHostingRegistryCredential
+      summary: Deliver the snapshot-selected pre-pull registry credential
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HostingRegistryCredentialRequest'}
+      responses:
+        '200':
+          description: Protected credential with original bounded deadline; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HostingRegistryCredentialDelivery'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   "/api/v1/runners/hosting/runtime-environment": {"post": {"operationId": "deliverHostingRuntimeEnvironment", "summary": "Deliver a prepared hosting runtime environment", "description": "Prepared deploy authority only. Current actor, runner, lease, destination, configuration and active pinned secret references are rechecked for each request. Audit metadata commits before decryption. The original delivery deadline is at most 60 seconds and capped by lease expiry; retries never extend it. Cache-Control: no-store on every response. Direct TLS or trusted immediate TLS termination required. Values go only through the protected codec. Docker administrators can inspect resulting Config.Env; delivered bytes cannot be instantly revoked.", "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeEnvironmentRequest"}}}}, "responses": {"200": {"description": "Protected environment, at most 512 KiB encoded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeEnvironment"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}}}
   "/api/v1/runners/builds/source-credential": {"post": {"operationId": "deliverHostingSourceCredential", "summary": "deliverHostingSourceCredential", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceCredential"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceCredentialRequest"}}}}, "security": [{"bearerAuth": []}], "description": "Live sourcing authority only. Cache-Control: no-store on every response. Direct TLS required, or an immediate configured TrustedProxyCIDRs peer asserting exactly one X-Forwarded-Proto value https. Trusted proxies must strip and replace client forwarding headers. No redirects or insecure remote transport."}}
   "/api/v1/resources/{id}/source-grants": {"post": {"operationId": "requestHostingSourceGrant", "summary": "requestHostingSourceGrant", "responses": {"201": {"description": "Bounded result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["grant"], "properties": {"grant": {"$ref": "#/components/schemas/HostingSourceGrant"}}}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceGrantRequest"}}}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}]}, "get": {"operationId": "listHostingSourceGrants", "summary": "listHostingSourceGrants", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["items", "limit", "offset", "count", "total"], "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/HostingSourceGrant"}}, "limit": {"type": "integer"}, "offset": {"type": "integer"}, "count": {"type": "integer"}, "total": {"type": "integer"}}}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}}, {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "maximum": 100000}}]}}
@@ -13757,6 +13778,34 @@ components:
         - oneOf:
             - properties: {recovery_action: {enum: ['']}, recovery_state: {enum: [none]}}
             - properties: {recovery_action: {enum: [resume_predecessor, complete_replacement]}, recovery_state: {enum: [queued, running, succeeded, uncertain]}}
+    HostingRegistryCredentialRef:
+      type: object
+      additionalProperties: false
+      required: [secret_id, version]
+      properties:
+        secret_id: {type: string}
+        version: {type: integer, format: int64, minimum: 1}
+    HostingRegistryCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [authority, delivery_id]
+      properties:
+        authority: {$ref: '#/components/schemas/HostingAuthority'}
+        delivery_id: {type: string, pattern: '^[a-f0-9]{32}([a-f0-9]{32})?$'}
+    HostingRegistryCredentialDelivery:
+      type: object
+      additionalProperties: false
+      required: [credential, use_until]
+      properties:
+        use_until: {type: string, format: date-time}
+        credential:
+          type: object
+          additionalProperties: false
+          required: [registry, username, password]
+          properties:
+            registry: {type: string, maxLength: 255}
+            username: {type: string, minLength: 1, maxLength: 255}
+            password: {type: string, minLength: 1, maxLength: 20000, writeOnly: true}
     HostingDeploymentInput:
       type: object
       additionalProperties: false
@@ -13766,6 +13815,7 @@ components:
         - container_port
         - readiness
       properties:
+        registry_credential: {$ref: "#/components/schemas/HostingRegistryCredentialRef"}
         managed_stack: {$ref: "#/components/schemas/HostingStackDeploymentInput"}
         application_database_storage: {$ref: "#/components/schemas/HostingApplicationDatabaseStorageInput"}
         application_database_route_continuity: {$ref: "#/components/schemas/HostingApplicationDatabaseRouteContinuityInput"}
@@ -14535,6 +14585,7 @@ components:
         - readiness
         - policy_version
       properties:
+        registry_credential: {$ref: "#/components/schemas/HostingRegistryCredentialRef"}
         stack_stopped_operation_id: {"type": "string"}
         stack: {$ref: "#/components/schemas/HostingStackRef"}
         application_database: {$ref: "#/components/schemas/HostingApplicationDatabaseRef"}
