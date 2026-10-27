@@ -146,7 +146,7 @@ and Docker daemon for preparation and deployment.
    moving branch again.
 4. Select that exact successful build ID. Review its stack, runtime generation,
    ports and readiness. For private service images, set **Image access** to
-   **Private**, then select the **Registry credential secret** and explicit
+   **Private registry**, then select the **Registry credential secret** and explicit
    **Registry credential version**. Review the credential and route readback,
    acknowledge interruption, then choose **Deploy selected build**. Repeat the
    explicit selection for **Start selected Compose build**. The existing
