@@ -71,7 +71,7 @@ cleanup() {
   stop_server
   stop_oidc_provider
   if [ -n "$browser_container_id" ]; then
-    docker rm -f "$browser_container_id" >/dev/null 2>&1 || true
+    docker rm -f -v "$browser_container_id" >/dev/null 2>&1 || true
   fi
   if [ -L "$browser_runtime_link" ] && [ "$(readlink "$browser_runtime_link")" = "$browser_runtime_dir" ]; then
     rm -f -- "$browser_runtime_link"
