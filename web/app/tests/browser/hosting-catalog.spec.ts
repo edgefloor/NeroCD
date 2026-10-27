@@ -15,7 +15,7 @@ test("owner checks catalog requirements and destinations before installing with 
   await postJSON(page, "/api/v1/project-environments", { project_id: project.id, name: "Catalog environment" });
   const runnerID = `runner_catalog_${suffix}`;
   const enrollment = await postJSON<{ token: string }>(page, "/api/v1/runner-enrollments", {
-    runner_id: runnerID, runner_name: "Catalog browser fixture", capabilities: ["image_deploy", "hosting_owned_storage_v1", "hosting_owned_storage_runtime_v1", "hosting_runtime_env_v1", "image_release_ports_v1", "hosting_managed_compose_v1"],
+    runner_id: runnerID, runner_name: "Catalog browser fixture", capabilities: ["compose-deploy", "image_deploy", "hosting_owned_storage_v1", "hosting_owned_storage_runtime_v1", "hosting_runtime_env_v1", "image_release_ports_v1", "hosting_managed_compose_v1"],
   });
   await postJSON(page, "/api/v1/runner-enrollments/consume", {
     request_id: `enroll_consume_${randomBytes(16).toString("hex")}`, credential_hash: randomBytes(32).toString("hex"),
@@ -23,7 +23,7 @@ test("owner checks catalog requirements and destinations before installing with 
   const server = await postJSON<{ destination: { id: string } }>(page, "/api/v1/servers", { name: "Catalog fixture server", runner_id: runnerID });
   await postJSON(page, `/api/v1/destinations/${server.destination.id}/project-grants`, { project_id: project.id });
   const limitedEnrollment = await postJSON<{ token: string }>(page, "/api/v1/runner-enrollments", {
-    runner_id: `runner_catalog_limited_${suffix}`, runner_name: "Catalog missing features", capabilities: ["image_deploy"],
+    runner_id: `runner_catalog_limited_${suffix}`, runner_name: "Catalog missing features", capabilities: ["compose-deploy", "image_deploy"],
   });
   await postJSON(page, "/api/v1/runner-enrollments/consume", {
     request_id: `enroll_consume_${randomBytes(16).toString("hex")}`, credential_hash: randomBytes(32).toString("hex"),
