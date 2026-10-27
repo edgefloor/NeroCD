@@ -109,6 +109,21 @@ writer stop/start events, HTTPS trust and a controlled failed replacement hold.
 Physical qualification and independent reviews remain required for acceptance;
 source and build checks alone do not establish a working application.
 
+Physical qualification passed on 2026-10-27 at
+`1c2ee593f07d30f7ce25c1719c5a3b0caa5a4279`:
+
+- [x] Saved Compose source, variables, managed-secret references and destination;
+  deployed through the UI and opened the application over verified HTTPS.
+- [x] Redeployed at the same URL; fresh login retained application records and
+  uploaded file bytes, with successful new writes and unchanged volume ownership.
+- [x] A controlled failed replacement reported actual component state, retained
+  its mutation hold and rejected a competing deployment.
+
+The existing gate evidence is preserved under
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/1c2ee593f07d30f7ce25c1719c5a3b0caa5a4279.fdSE3b`.
+This qualifies the managed profile and shipped example, not raw/Git/build parity
+or unverified rollback after a failed stateful replacement.
+
 ## Pasteable Vikunja/PostgreSQL example
 
 Use `examples/compose/vikunja-postgresql.yaml` for the tested application workflow.
