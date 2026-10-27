@@ -34,13 +34,13 @@ That evidence supports retaining `.agents/skills` and deleting `agent/skills`. T
 4. JSON-serialize the entry array with `sort_keys=True`, separators `(',', ':')`, and `ensure_ascii=True`.
 5. SHA-256 the UTF-8 JSON bytes without a trailing newline.
 
-This package digest covers instructions, references, scripts, assets, licenses, evaluation fixtures, and metadata. `python3 scripts/skills/validate.py --json` emits exactly `{"skills":{"skill-id":"localHash"}}` on success for orchestration preflight use.
+This package digest covers instructions, references, scripts, assets, licenses, evaluation fixtures, and metadata. `python3 scripts/skills/validate.py --json` emits exactly `{"skills":{"skill-id":"localHash"}}` on success for inventory inspection.
 
 ## Selection policy and evaluation limits
 
 Interactive skills remain eligible for implicit selection through narrow, discriminating descriptions. `research` is explicit-only and declares `policy.allow_implicit_invocation: false`. This policy controls automatic context injection; it is not a security sandbox or authorization boundary.
 
-`scripts/skills/selection-scenarios.json` records positive, negative, and overlapping requests with exact expected skill sets. The validator checks that fixture structure and reports the declared choices in human-readable mode. Static descriptions and fixtures cannot prove model behavior, so autonomous exact selection requires independent forward evaluation. Such evaluation should record the prompt, selected skills, observable procedure use, and any unavailable checks as `not_run`; it should not infer permission to install tools, create worktrees, delegate, deploy, or broaden scope.
+Skill selection is a host responsibility. Inventory validation checks metadata and local resources; it does not attempt to prove runtime skill selection or enforce prose.
 
 ## Validation
 
@@ -79,7 +79,16 @@ comparison silently.
 Use the UI manifest and runner concern commands documented in the two NeroCD
 skills for focused verification. UI manifest differences are reported as
 `failed` with exit 1; invalid inputs return exit 2. Runner commands are plans
-marked `not_run` until `--run` is supplied. Pre-review uses repository-pinned
-lint and reports standalone vet as `not_run` when lint covers it. `--force`
-allows an unavailable linter to be skipped explicitly. Benchmark JSON separates
-the overall `exit_code` from the underlying Go `tool_exit_code`.
+marked `not_run` until `--run` is supplied. Pre-review calls `make fmt-check` and pinned `make lint`, or
+`make lint-new` with `--base`. Its optional package argument scopes lint;
+formatting checks product sources. It forwards Make output and exit status.
+The old JSON, truncation, version, and fallback options were removed. Run
+`make vet` directly when standalone vet is the intended check.
+
+Pinned revive covers standard exported documentation and naming checks. The
+optional documentation AST scanner adds strict scans of unexported declarations;
+the error and interface scanners identify candidates that need contract and
+method-set review. Their findings are not blanket requirements. The regex naming
+scanner remains an optional advisory hook dependency, with its existing integrity
+pins and process limits unchanged. Benchmark JSON separates the overall
+`exit_code` from the underlying Go `tool_exit_code`.

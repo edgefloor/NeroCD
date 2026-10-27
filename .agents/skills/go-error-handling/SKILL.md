@@ -10,7 +10,7 @@ allowed-tools: Bash(bash:*)
 
 ## Resource Routing
 
-- `scripts/check-errors.sh` - Run when checking string-based error matching, bare error propagation, and log-and-return patterns.
+- `scripts/check-errors.sh` - Optional AST scan for string-based error matching, bare propagation, and log-and-return candidates. Prefer pinned lint for standard error checks; assess heuristic findings against the caller contract.
 - `scripts/check-errors-ast.go` - Implementation helper invoked by `check-errors.sh`; patch this when changing error-flow analysis behavior.
 - `scripts/check-errors-baseline.py` - Compare findings for selected tracked Go files at a base and candidate commit without changing the scanner.
 - `references/ERROR-FLOW.md` - Read when deciding where to handle, wrap, log, or return errors.

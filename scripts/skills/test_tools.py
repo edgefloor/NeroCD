@@ -82,38 +82,30 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(payload['tool_exit_code'], 3)
         self.assertEqual(payload['status'], 'failed')
 
-    def pre_review_fixture(self, installed=True):
+    def pre_review_fixture(self):
         relative = Path('.agents/skills/go-code-review/scripts/pre-review.sh')
         script = self.root / relative
         script.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / relative, script)
-        pinned = self.root / 'pinned-lint'
-        if installed:
-            pinned.write_text('#!/bin/sh\nexit 0\n')
-            pinned.chmod(0o755)
-        self.executable('make', f'if [[ "$*" == *skill-lint-path* ]]; then echo "{pinned}"; else echo "$*" > "{self.root / "make-call"}"; fi\n')
-        self.executable('go', f'echo "$*" >> "{self.root / "go-call"}"\n')
-        self.executable('gofmt', f'echo "$*" > "{self.root / "fmt-call"}"\n')
+        self.executable('make', f'echo "$*" >> "{self.root / "make-call"}"\nexit "${{MAKE_STATUS:-0}}"\n')
         return script
 
-    def test_pre_review_uses_pinned_make_target_without_duplicate_vet(self):
+    def test_pre_review_uses_existing_make_targets(self):
         script = self.pre_review_fixture()
-        result = subprocess.run(['bash', str(script), '--json'], env=self.env, text=True, capture_output=True)
+        result = subprocess.run(['bash', str(script)], env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('PRODUCT_PACKAGES=./cmd/... ./internal/...', (self.root / 'make-call').read_text())
-        self.assertFalse((self.root / 'go-call').exists())
-        self.assertEqual(json.loads(result.stdout)['golangci_lint']['status'], 'passed')
+        calls = (self.root / 'make-call').read_text().splitlines()
+        self.assertEqual(calls, ['--no-print-directory fmt-check',
+                                '--no-print-directory lint PRODUCT_PACKAGES=./cmd/... ./internal/...'])
 
     def test_pre_review_base_uses_changed_code_target(self):
         script = self.pre_review_fixture()
         self.executable('git', 'echo ' + 'a' * 40 + '\n')
-        result = subprocess.run(['bash', str(script), '--json', '--base', 'HEAD', './internal/runner'],
+        result = subprocess.run(['bash', str(script), '--base', 'HEAD', './internal/runner'],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        command = (self.root / 'make-call').read_text()
-        self.assertIn('lint-new', command)
-        self.assertIn('PRODUCT_PACKAGES=./internal/runner', command)
-        self.assertIn('LINT_BASE_REV=' + 'a' * 40, command)
+        self.assertIn('lint-new PRODUCT_PACKAGES=./internal/runner LINT_BASE_REV=' + 'a' * 40,
+                      (self.root / 'make-call').read_text())
 
     def test_pre_review_rejects_shell_syntax_in_make_package_override(self):
         script = self.pre_review_fixture()
@@ -122,19 +114,13 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertFalse((self.root / 'make-call').exists())
 
-    def test_pre_review_missing_tool_stops_before_analysis(self):
-        script = self.pre_review_fixture(installed=False)
-        result = subprocess.run(['bash', str(script)], env=self.env, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertFalse((self.root / 'fmt-call').exists())
-        self.assertFalse((self.root / 'go-call').exists())
-
-    def test_pre_review_force_reports_skipped_lint_and_runs_vet(self):
-        script = self.pre_review_fixture(installed=False)
-        result = subprocess.run(['bash', str(script), '--json', '--force'], env=self.env, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['golangci_lint']['status'], 'not_run')
-        self.assertIn('vet ./cmd/... ./internal/...', (self.root / 'go-call').read_text())
+    def test_pre_review_propagates_failed_check(self):
+        script = self.pre_review_fixture()
+        result = subprocess.run(['bash', str(script)], env=dict(self.env, MAKE_STATUS='2'),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual((self.root / 'make-call').read_text().splitlines(),
+                         ['--no-print-directory fmt-check'])
 
     def launcher_fixture(self):
         # A fake compiler lets this test exercise publication and invalidation

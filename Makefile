@@ -206,9 +206,7 @@ docker-down:
 docker-logs:
 	docker compose logs -f
 
-.PHONY: skill-lint-path skill-tools-test
-skill-lint-path:
-	@printf '%s\n' '$(GOLANGCI_LINT)'
+.PHONY: skill-tools-test
 
 skill-tools-test:
 	GOCACHE="$(GOCACHE_DIR)" go test -count=1 ./.agents/skills/go-documentation/scripts ./.agents/skills/go-interfaces/scripts

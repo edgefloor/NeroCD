@@ -11,7 +11,7 @@ allowed-tools: Bash(bash:*)
 ## Resource Routing
 
 - `assets/review-template.md` - Use when formatting review output with Must Fix, Should Fix, and Nits sections.
-- `scripts/pre-review.sh` - Run before manual review to collect formatting and repository-pinned lint results. Use `--base COMMIT` for changed-code lint; the default checks product packages. Missing tools fail before analysis; `--force` explicitly skips unavailable lint and runs standalone vet.
+- `scripts/pre-review.sh` - Run `make fmt-check` and repository-pinned lint before manual review. Use `--base COMMIT` for changed-code lint and an optional local package pattern to scope lint. Formatting checks all product sources. Install missing lint with `make lint-install`.
 - `references/WEB-SERVER.md` - Read when reviewing an HTTP server that combines concurrency, context, logging, error handling, and shutdown behavior.
 - `references/FAILURE-BOUNDARIES.md` - Read when a diff changes execution admission, streamed or replayed results, reload readiness, per-run files, signal shutdown, or structured configuration input.
 
@@ -172,20 +172,19 @@ base and use:
 
 ```bash
 bash .agents/skills/go-code-review/scripts/pre-review.sh --base <full-base-sha> ./internal/runnerruntime/...
-bash .agents/skills/go-code-review/scripts/pre-review.sh --json --base <full-base-sha> ./internal/runnerruntime/...
 ```
 
 Use the package paths affected by the actual diff. The script checks formatting
-within that scope and uses the pinned linter for findings added since `--base`.
+for product sources and uses the pinned linter for findings added since `--base`.
 Without `--base`, lint reports all findings in the selected scope. Without a
 package argument, the script selects product packages.
 
 Record each check's scope, base where applicable, candidate SHA, status, and
 bounded output or evidence location in `assets/review-template.md`. The pinned
 linter supplies the `govet` analyzer, so report standalone `go vet` as `not_run`
-with that explanation. Do not claim it ran separately. If the pinned linter is
-unavailable, `--force` explicitly permits standalone vet and reports lint as
-`not_run`; this does not satisfy a required lint check.
+with that explanation. Do not claim it ran separately. Install the pinned linter
+with `make lint-install` when it is unavailable.
+Run `make vet` directly when standalone vet is the intended check.
 
 Scoped pre-review does not replace required wider CI, integration, or release
 checks. Keep each required check and report a missing result as `not_run`.

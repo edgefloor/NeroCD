@@ -17,19 +17,6 @@ from typing import Any
 HASH_ALGORITHM = "sha256-path-content-v1"
 HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-FORBIDDEN_INSTRUCTIONS = (
-    "**Thinking mode:**",
-    "**Orchestration mode:**",
-    "ultrathink",
-    "ultracode",
-    "Spin up a **background agent**",
-)
-OVERBROAD_DESCRIPTIONS = (
-    "any Go code changes",
-    "any Go identifier",
-    "adding or refactoring any Go function",
-    "writing a simple if/else or for loop",
-)
 LOCK_BASE_FIELDS = {
     "source",
     "sourceType",
@@ -202,11 +189,17 @@ def _validate_skill(skill_id: str, skill_dir: Path) -> None:
     description = frontmatter.get("description", "").strip()
     if not description:
         raise ValidationError(f"missing description: {skill_id}")
-    if any(phrase in description for phrase in OVERBROAD_DESCRIPTIONS):
-        raise ValidationError(f"overbroad description: {skill_id}")
     text = skill_file.read_text(encoding="utf-8")
-    if any(phrase in text for phrase in FORBIDDEN_INSTRUCTIONS):
-        raise ValidationError(f"skill chooses orchestration or reasoning policy: {skill_id}")
+    resources = set(re.findall(r"`((?:references|scripts|assets)/[^`\s]+)`", text))
+    prose = re.sub(r"```[^\n]*\n.*?```", "", text, flags=re.DOTALL)
+    prose = re.sub(r"`[^`]+`", "", prose)
+    resources.update(re.findall(r"\[[^\]\n]+\]\(([^)\s]+)\)", prose))
+    for resource in sorted(resources):
+        if "://" in resource or resource.startswith("#"):
+            continue
+        target = resource.split("#", 1)[0]
+        if target and not (skill_dir / target).is_file():
+            raise ValidationError(f"missing skill resource: {skill_id}/{target}")
 
     metadata = skill_dir / "agents/openai.yaml"
     if skill_id == "research":
@@ -326,41 +319,7 @@ def _validate_provenance(skill_id: str, skill_dir: Path, record: dict[str, Any])
             raise ValidationError(f"invalid local provenance: {skill_id}")
 
 
-def _validate_scenarios(root: Path, inventory: set[str]) -> list[dict[str, Any]]:
-    payload = _load_json(root / "scripts/skills/selection-scenarios.json")
-    if not isinstance(payload, dict) or payload.get("version") != 1:
-        raise ValidationError("invalid selection scenario fixture")
-    scenarios = payload.get("scenarios")
-    if not isinstance(scenarios, list) or not scenarios:
-        raise ValidationError("selection scenario fixture is empty")
-    kinds: set[str] = set()
-    names: set[str] = set()
-    for scenario in scenarios:
-        if not isinstance(scenario, dict):
-            raise ValidationError("selection scenario must be an object")
-        name = scenario.get("name")
-        kind = scenario.get("kind")
-        expected = scenario.get("expectedSkills")
-        if not isinstance(name, str) or not name or name in names:
-            raise ValidationError("selection scenario names must be unique")
-        if kind not in {"positive", "negative", "overlap"}:
-            raise ValidationError(f"invalid selection scenario kind: {name}")
-        if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
-            raise ValidationError(f"invalid expected skill list: {name}")
-        if len(expected) != len(set(expected)) or not set(expected) <= inventory:
-            raise ValidationError(f"unknown or duplicate expected skill: {name}")
-        if kind == "negative" and expected:
-            raise ValidationError(f"negative scenario selects a skill: {name}")
-        if kind == "overlap" and len(expected) < 2:
-            raise ValidationError(f"overlap scenario needs multiple skills: {name}")
-        names.add(name)
-        kinds.add(kind)
-    if kinds != {"positive", "negative", "overlap"}:
-        raise ValidationError("selection scenarios must cover positive, negative, and overlap cases")
-    return scenarios
-
-
-def validate_repository(root: Path) -> tuple[dict[str, str], list[dict[str, Any]]]:
+def validate_repository(root: Path) -> dict[str, str]:
     root = root.resolve()
     canonical = root / ".agents/skills"
     lock = _load_json(root / "skills-lock.json")
@@ -423,8 +382,7 @@ def validate_repository(root: Path) -> tuple[dict[str, str], list[dict[str, Any]
     links = {path.name for path in (root / ".claude/skills").iterdir() if path.is_symlink()}
     if links != inventory:
         raise ValidationError("compatibility link inventory differs from canonical inventory")
-    scenarios = _validate_scenarios(root, inventory)
-    return hashes, scenarios
+    return hashes
 
 
 def main() -> int:
@@ -433,7 +391,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     try:
-        hashes, scenarios = validate_repository(root)
+        hashes = validate_repository(root)
     except ValidationError as exc:
         print(f"skill validation failed: {exc}", file=sys.stderr)
         return 1
@@ -441,10 +399,6 @@ def main() -> int:
         print(json.dumps({"skills": hashes}, sort_keys=True, separators=(",", ":")))
     else:
         print(f"validated {len(hashes)} canonical skills with {HASH_ALGORITHM}")
-        for scenario in scenarios:
-            expected = ", ".join(scenario["expectedSkills"]) or "none"
-            print(f"scenario {scenario['kind']}: {scenario['name']} -> {expected}")
-        print("scenario expectations are static routing fixtures; runtime skill selection requires independent behavioral evaluation")
     return 0
 
 

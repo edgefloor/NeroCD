@@ -8,7 +8,7 @@ allowed-tools: Bash(bash:*)
 
 ## Resource Routing
 
-- `scripts/check-docs.sh` - Run when checking exported functions, types, methods, constants, and packages for missing doc comments.
+- `scripts/check-docs.sh` - Optional AST scan for missing documentation, including strict scans of unexported declarations. Prefer `make lint` for exported-comment checks already covered by pinned revive.
 - `scripts/check-docs-ast.go` - Implementation helper invoked by `check-docs.sh`; patch this when changing documentation analysis behavior.
 - `assets/doc-template.go` - Use when starting a documented package or exported API.
 - `references/CONVENTIONS.md` - Read when documenting parameters, context behavior, concurrency safety, cleanup, errors, or named results.
@@ -37,7 +37,7 @@ func Encode(w io.Writer, req *Request) { ...
 
 Unexported types/functions with unobvious behavior should also have doc comments.
 
-> **Validation**: From the repository root, run `bash .agents/skills/go-documentation/scripts/check-docs.sh ./...` to check exported symbols for missing documentation. Fix relevant gaps before proceeding.
+Run `make lint` for standard exported-comment checks. For focused documentation review, the optional AST scan can identify additional declarations, including unexported names with `--strict`. Review findings in the affected scope.
 
 ---
 

@@ -8,7 +8,7 @@ allowed-tools: Bash(bash:*)
 
 ## Resource Routing
 
-- `scripts/check-naming.sh` - Run when checking SCREAMING_SNAKE_CASE constants, Get-prefixed getters, generic package names, or receivers named `this`/`self`.
+- `scripts/check-naming.sh` - Optional regex scan for naming review candidates. Findings require source review; this is not a mandatory gate. Prefer the repository-pinned revive analyzer through `make lint` for standard naming checks.
 - `references/IDENTIFIERS.md` - Read when choosing names for initialisms, exported identifiers, or package-level symbols.
 - `references/REPETITION.md` - Read when names repeat package, receiver, type, or local context.
 - `references/VARIABLES.md` - Read when choosing local variable names, receiver names, or loop identifiers.
@@ -174,7 +174,7 @@ section.
 | Variable | length ~ scope size | `i` (small), `userCount` (large) |
 | Built-in names | Never shadow predeclared identifiers | See `go-declarations` |
 
-> **Validation**: After renaming identifiers, run `bash scripts/check-naming.sh` to verify no naming anti-patterns remain. Then run `go build ./...` to confirm the rename didn't break anything.
+After renaming identifiers, run relevant package tests and `make lint`. The optional naming scan may suggest candidates, but a regex match alone does not establish a defect.
 
 ## Related Skills
 

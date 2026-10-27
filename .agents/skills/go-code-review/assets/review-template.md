@@ -22,7 +22,7 @@ or `not_run` for status. Explain every `not_run` result.
 
 | Check | Scope/base | Candidate SHA | passed/failed/not_run | Evidence |
 | --- | --- | --- | --- | --- |
-| `gofmt` via scoped pre-review | [local package scope] | [full SHA] | [status] | [bounded output or location] |
+| `make fmt-check` via pre-review | [product sources] | [full SHA] | [status] | [bounded output or location] |
 | Pinned lint via pre-review `--base` | [local package scope; full base SHA] | [full SHA] | [status] | [bounded output or location] |
 | Standalone `go vet` | [local package scope] | [full SHA] | `not_run` | Covered by pinned lint's `govet` analyzer; cite its actual result above |
 | [Required wider check] | [scope; base if applicable] | [full SHA] | [status] | [bounded output or location] |

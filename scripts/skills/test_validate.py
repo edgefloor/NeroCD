@@ -46,9 +46,25 @@ class SkillValidatorTest(unittest.TestCase):
         )
 
     def test_live_inventory_validates(self) -> None:
-        hashes, scenarios = VALIDATE.validate_repository(REPO_ROOT)
+        hashes = VALIDATE.validate_repository(REPO_ROOT)
         self.assertEqual(set(hashes), {path.name for path in (REPO_ROOT / ".agents/skills").iterdir() if path.is_dir()})
-        self.assertEqual({scenario["kind"] for scenario in scenarios}, {"positive", "negative", "overlap"})
+
+    def test_missing_resource_is_rejected(self) -> None:
+        skill = self.root / ".agents/skills/go-context/SKILL.md"
+        skill.write_text(skill.read_text() + "\n[Missing](references/missing.md)\n")
+        lock = self.load_lock()
+        self.refresh_local_hash("go-context", lock)
+        self.save_lock(lock)
+        with self.assertRaisesRegex(VALIDATE.ValidationError, "missing skill resource"):
+            VALIDATE.validate_repository(self.root)
+
+    def test_wording_is_not_a_validation_gate(self) -> None:
+        skill = self.root / ".agents/skills/go-context/SKILL.md"
+        skill.write_text(skill.read_text() + "\n**Orchestration mode:** Follow host preferences.\n")
+        lock = self.load_lock()
+        self.refresh_local_hash("go-context", lock)
+        self.save_lock(lock)
+        VALIDATE.validate_repository(self.root)
 
     def test_shared_launcher_tampering_is_rejected(self) -> None:
         helper = self.root / "scripts/skills/run_analyzer.py"
