@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getCatalog, installCatalog, type CatalogInstallInput, type CatalogInstallation } from "@/api/hosting-catalog";
-import { listDestinations } from "@/api/destinations";
+import { getCatalogDestinationOptions, destinationRequirementMessage } from "@/api/hosting-catalog-destinations";
+import { CatalogRequirements, catalogFeatureName } from "./CatalogRequirements";
 import { databaseRequestID } from "@/api/hosting-databases";
 import { ApiError } from "@/api/errors";
 import { revealManagedSecret } from "@/api/managed-secrets";
@@ -18,7 +19,7 @@ export function HostingCatalog({ projectID, environmentID, blocked }: {
         return <p role="status">Checking catalog access...</p>;
     if (!access.owner)
         return <p>Project owner access is required to install catalog applications.</p>;
-    return <CatalogForm key={access.epoch} projectID={projectID} environmentID={environmentID} actor={access.scope.actor} blocked={blocked || access.refreshing}/>;
+    return <CatalogForm key={JSON.stringify([access.epoch, projectID, environmentID, access.scope.actor])} projectID={projectID} environmentID={environmentID} actor={access.scope.actor} blocked={blocked || access.refreshing}/>;
 }
 function CatalogForm({ projectID, environmentID, actor, blocked }: {
     projectID: string;
@@ -51,7 +52,6 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     }, []);
     const catalog = useQuery({ queryKey: ["hostingCatalog", actor, projectID], queryFn: ({ signal }) => getCatalog(projectID, signal), retry: false, gcTime: 0 });
     const [offset, setOffset] = useState(0);
-    const destinations = useQuery({ queryKey: ["catalogDestinations", actor, projectID, offset], queryFn: ({ signal }) => listDestinations({ project_id: projectID, limit: 20, offset }, { signal }), retry: false, gcTime: 0 });
     const categories = Array.from(new Map((catalog.data ?? []).flatMap(t =>
         (t.category ?? "").split(",").map(value => value.trim()).filter(Boolean)
     ).map(value => [value.toLowerCase(), value])).entries()).sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: "base" }));
@@ -62,10 +62,15 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         return terms.every(term => text.includes(term)) && (!category || (t.category ?? "").split(",").some(value => value.trim().toLowerCase() === category));
     }) ?? [];
     const selected = matches.find(t => t.id === template);
-    const unavailable = blocked || busy || catalog.isError || catalog.isPending || destinations.isError || destinations.isPending;
+    const destinations = useQuery({ queryKey: ["catalogDestinationOptions", actor, projectID, selected?.id, selected?.immutable_version, offset], enabled: !!selected && !blocked && !attempt && !created, queryFn: ({ signal }) => getCatalogDestinationOptions(projectID, selected!, offset, signal), retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false });
+    const unavailable = blocked || busy || catalog.isError || catalog.isPending;
+    const currentOptions = selected && destinations.isSuccess && !destinations.isFetching && destinations.data.template_id === selected.id && destinations.data.immutable_version === selected.immutable_version && destinations.data.offset === offset ? destinations.data : undefined;
+    const selectedDestination = currentOptions?.items.find(option => option.destination.id === destination);
+    function resetDestination() { setDestination(""); setOffset(0); }
+
     async function submit(event: FormEvent) {
         event.preventDefault();
-        if (unavailable || (!attempt && (!selected || !destination)))
+        if (unavailable || (!attempt && (!selected || !selectedDestination?.available)))
             return;
         if (!attempt && (!name || name.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "") !== name || new TextEncoder().encode(name).length > 128 || /\p{Cc}/u.test(name))) {
             setError("Enter a name with 1 to 128 UTF-8 bytes, without surrounding whitespace or control characters.");
@@ -155,19 +160,19 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
             </p>)}</> : <p>No login credentials were generated. After deployment, open the application to complete its initial setup.</p>}</> : <form onSubmit={event => void submit(event)} className="space-y-3" aria-label="Install catalog application">
         <label className="block" htmlFor={`${id}-category`}>Catalog category</label>
-        <select id={`${id}-category`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" value={category} disabled={unavailable || !!attempt} onChange={e => { setCategory(e.target.value); setTemplate(""); }}>
+        <select id={`${id}-category`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" value={category} disabled={unavailable || !!attempt} onChange={e => { setCategory(e.target.value); setTemplate(""); resetDestination(); }}>
             <option value="">All categories</option>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
         <label className="block" htmlFor={`${id}-search`}>Search catalog</label>
         <Input id={`${id}-search`} type="search" value={search} disabled={unavailable || !!attempt}
-            aria-describedby={`${id}-search-help`} onChange={e => { setSearch(e.target.value); setTemplate(""); }}/>
+            aria-describedby={`${id}-search-help`} onChange={e => { setSearch(e.target.value); setTemplate(""); resetDestination(); }}/>
         <p id={`${id}-search-help`} className="text-sm text-muted-foreground">Search by application, version, image, data mount or generated variable name.</p>
         {catalog.isSuccess ? <p role="status">Catalog matches: {matches.length} of {catalog.data.length}.</p> : null}
         {catalog.isSuccess && matches.length === 0 ? <p>{catalog.data.length === 0 ? "No catalog applications are available." : "No applications match your search and category. Clear the filters to see available applications."}</p> : null}
-        {search ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setSearch(""); setTemplate(""); }}>Clear search</Button> : null}
-        {category ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setCategory(""); setSearch(""); setTemplate(""); }}>Clear filters</Button> : null}
+        {search ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setSearch(""); setTemplate(""); resetDestination(); }}>Clear search</Button> : null}
+        {category ? <Button type="button" variant="outline" disabled={unavailable || !!attempt} onClick={() => { setCategory(""); setSearch(""); setTemplate(""); resetDestination(); resetDestination(); }}>Clear filters</Button> : null}
         <label className="block" htmlFor={`${id}-template`}>Catalog application</label>
-        <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => { setTemplate(e.target.value); if (!nameEdited) setName(matches.find(t => t.id === e.target.value)?.name ?? ""); }}>
+        <select id={`${id}-template`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" disabled={unavailable || !!attempt} value={template} onChange={e => { setTemplate(e.target.value); resetDestination(); if (!nameEdited) setName(matches.find(t => t.id === e.target.value)?.name ?? ""); }}>
         <option value="">Select an application</option>{matches.map(t => <option key={t.id} value={t.id}>{t.name} · {t.immutable_version}</option>)}</select>
         {selected ? <section aria-label="Catalog installation preview" className="min-w-0 space-y-2 rounded-lg border p-3 text-sm">
             <h5 className="font-medium">{selected.name} installation preview</h5>
@@ -193,7 +198,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
             <p>{selected.definition.compose ? "Runtime secrets are generated once during installation and saved as managed-secret references. Register an application account after deployment." : selected.definition.credential_names.length > 0
                 ? "Credentials are generated once during installation and stored as managed secrets."
                 : "No login credentials are generated. After deployment, open the application to complete its initial setup."} Configure a domain and HTTPS route after deployment.</p>
-            <p>An upstream architecture restriction does not verify compatibility with the selected destination. CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
+            {currentOptions ? <CatalogRequirements requirements={currentOptions.requirements} /> : <p>Choose a destination after its requirements have loaded. Hardware requirements and compatibility have not been verified.</p>}
         </section> : null}
         {selected?.definition.compose ? <>
             <label className="block" htmlFor={`${id}-public-url`}>Public URL</label>
@@ -203,17 +208,25 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>
         <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => { setName(e.target.value); setNameEdited(true); }}/>
         <label className="block" htmlFor={`${id}-destination`}>Catalog destination</label>
-        <select id={`${id}-destination`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" required value={destination} disabled={unavailable || !!attempt} onChange={e => setDestination(e.target.value)}>
-        <option value="">Select a destination</option>{destinations.data?.items.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+        <select id={`${id}-destination`} className="h-10 w-full min-w-0 rounded-xl border bg-card px-2" required value={destination} disabled={unavailable || !currentOptions || !!attempt} onChange={e => setDestination(e.target.value)}>
+        <option value="">Select a destination</option>{currentOptions?.items.map(option => <option key={option.destination.id} value={option.destination.id} disabled={!option.available}>{option.destination.name}{option.available ? "" : ` · ${destinationRequirementMessage(option.reason_code)}`}</option>)}</select>
+        {selected && destinations.isFetching ? <p role="status">Checking application requirements and destinations...</p> : null}
+        {currentOptions && currentOptions.items.length === 0 ? <p>No destinations are granted to this project on this page. Ask an administrator to grant a Docker destination.</p> : null}
+        {currentOptions && currentOptions.items.length > 0 && currentOptions.items.every(option => !option.available) ? <p>No destination on this page can install this application. Review the reasons below or try another page.</p> : null}
+        {currentOptions ? <ul aria-label="Catalog destination requirements" className="space-y-2 break-words text-sm">{currentOptions.items.map(option => <li key={option.destination.id}>
+            {option.destination.name} on {option.server_name}: {option.available ? "Ready to install. Runtime and required features are available; hardware compatibility is unverified." : destinationRequirementMessage(option.reason_code)}
+            {!option.available && option.missing_capabilities.length ? <p>Missing features: {option.missing_capabilities.map(catalogFeatureName).join(", ")}</p> : null}
+        </li>)}</ul> : null}
+        {selected ? <Button type="button" variant="outline" disabled={unavailable || destinations.isFetching || !!attempt} onClick={() => { setDestination(""); void destinations.refetch(); }}>Refresh destination compatibility</Button> : null}
         <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" disabled={unavailable || !!attempt || offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous destinations</Button>
-        <Button type="button" variant="outline" disabled={unavailable || !!attempt || !destinations.data || offset + 20 >= destinations.data.total} onClick={() => setOffset(offset + 20)}>Next destinations</Button>
-        </div><Button disabled={unavailable || (!attempt && (!selected || !destination))} type="submit">{busy ? "Installing..." : attempt ? "Retry same installation" : "Install application"}</Button>{attempt ? <p className="break-all text-sm">Retained request: {attempt.request_id}</p> : null}</form>}
+        <Button type="button" variant="outline" disabled={unavailable || !currentOptions || !!attempt || offset === 0} onClick={() => { setDestination(""); setOffset(Math.max(0, offset - 20)); }}>Previous destinations</Button>
+        <Button type="button" variant="outline" disabled={unavailable || !currentOptions || !!attempt || offset + 20 >= (currentOptions?.total ?? 0)} onClick={() => { setDestination(""); setOffset(offset + 20); }}>Next destinations</Button>
+        </div><Button disabled={unavailable || (!attempt && (!selected || !selectedDestination?.available))} type="submit">{busy ? "Installing..." : attempt ? "Retry same installation" : "Install application"}</Button>{attempt ? <p className="break-all text-sm">Retained request: {attempt.request_id}</p> : null}</form>}
  {error ? <p role="alert">{error}</p> : null}{catalog.isError || destinations.isError ? <>
     <p role="alert">Catalog or destination access is unavailable.</p>
     <Button type="button" variant="outline" disabled={blocked || busy || catalog.isFetching || destinations.isFetching} onClick={() => {
         if (catalog.isError) void catalog.refetch();
-        if (destinations.isError) void destinations.refetch();
+        if (selected && destinations.isError) void destinations.refetch();
     }}>Retry catalog loading</Button>
  </> : null}
  </section>;

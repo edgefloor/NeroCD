@@ -866,6 +866,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/hosting-catalog/{id}/destination-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Qualify grant-scoped destinations for one exact pinned template
+         * @description Project viewer authority. Current runtime capabilities are advisory until checked again by installation. Architecture and capacity remain unverified. No runner credentials or global server inventory are returned.
+         */
+        get: operations["getHostingCatalogDestinationOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/hosting-catalog/installations": {
         parameters: {
             query?: never;
@@ -8213,6 +8233,41 @@ export interface components {
             /** @description Pinned managed Compose source; absent for image catalog applications. */
             compose?: components["schemas"]["ComposeResourceSource"]["compose"];
         };
+        HostingCatalogRequirements: {
+            /** @enum {string} */
+            source_kind: "image" | "compose";
+            required_capabilities: string[];
+            /** @enum {string} */
+            architecture_restriction: "undeclared" | "amd64" | "arm64";
+            /** @enum {string} */
+            architecture_verification: "unknown";
+            /** @enum {string} */
+            cpu: "undeclared";
+            /** @enum {string} */
+            memory: "undeclared";
+            /** @enum {string} */
+            disk: "undeclared";
+            mount_paths: string[];
+            public_url_required: boolean;
+            managed_credential_names: string[];
+        };
+        HostingCatalogDestinationOption: {
+            destination: components["schemas"]["HostingDestination"];
+            server_name: string;
+            available: boolean;
+            /** @enum {string} */
+            reason_code: "" | "unsupported_runtime" | "runner_unavailable" | "runner_ineligible" | "missing_capabilities";
+            missing_capabilities: string[];
+        };
+        HostingCatalogDestinationOptions: {
+            template_id: string;
+            immutable_version: string;
+            requirements: components["schemas"]["HostingCatalogRequirements"];
+            items: components["schemas"]["HostingCatalogDestinationOption"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
         HostingCatalogTemplate: {
             id: string;
             immutable_version: string;
@@ -12999,6 +13054,38 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    getHostingCatalogDestinationOptions: {
+        parameters: {
+            query: {
+                project_id: string;
+                immutable_version: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized paged destination qualifications and declared requirements */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingCatalogDestinationOptions"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     installHostingCatalog: {

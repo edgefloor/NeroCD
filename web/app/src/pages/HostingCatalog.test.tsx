@@ -1,17 +1,22 @@
 import { ApiError } from "@/api/errors";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { HostingCatalog } from "./HostingCatalog";
 import { useDatabaseAccess } from "./ResourceDatabase";
 import * as api from "@/api/hosting-catalog";
-import { listDestinations } from "@/api/destinations";
+import * as placement from "@/api/hosting-catalog-destinations";
 import { revealManagedSecret } from "@/api/managed-secrets";
 vi.mock("./ResourceDatabase", () => ({ useDatabaseAccess: vi.fn() }));
 vi.mock("@/api/hosting-catalog", () => ({ getCatalog: vi.fn(), installCatalog: vi.fn() }));
-vi.mock("@/api/destinations", () => ({ listDestinations: vi.fn() }));
+vi.mock("@/api/hosting-catalog-destinations", async importOriginal => ({ ...(await importOriginal<typeof import("@/api/hosting-catalog-destinations")>()), getCatalogDestinationOptions: vi.fn() }));
 vi.mock("@/api/managed-secrets", () => ({ revealManagedSecret: vi.fn() }));
 const template: api.CatalogTemplate = { id: "linkding", immutable_version: "coolify-b12d1386.linkding-1.47.0.v1", name: "Linkding", category: "RSS", upstream_repository: "https://github.com/coollabsio/coolify", upstream_commit: "b12d1386", upstream_path: "templates/compose/linkding.yaml", original: "services: {}", original_hash: "original", definition_hash: "definition", definition: { image_reference: "image@sha256:digest", container_port: 9090, mount_path: "/etc/linkding/data", readiness: { path: "/health", timeout_seconds: 120 }, credential_names: ["LD_SUPERUSER_NAME", "LD_SUPERUSER_PASSWORD"] } };
+function optionsFor(selected: api.CatalogTemplate, offset = 0): placement.CatalogDestinationOptions {
+  return { template_id: selected.id, immutable_version: selected.immutable_version, requirements: {
+    source_kind: selected.definition.compose ? "compose" : "image", required_capabilities: selected.definition.compose ? ["image_deploy", "hosting_managed_compose_v1", "hosting_runtime_env_v1", "image_release_ports_v1"] : ["image_deploy", "hosting_owned_storage_v1", "hosting_owned_storage_runtime_v1", "hosting_runtime_env_v1", "image_release_ports_v1"], architecture_restriction: selected.amd_only ? "amd64" : selected.arm_only ? "arm64" : "undeclared", architecture_verification: "unknown", cpu: "undeclared", memory: "undeclared", disk: "undeclared", mount_paths: selected.definition.compose ? ["/app/vikunja/files", "/var/lib/postgresql/data"] : [selected.definition.mount_path], public_url_required: !!selected.definition.compose, managed_credential_names: selected.definition.credential_names,
+  }, items: [{ destination: { id: "dest", name: "Docker", server_id: "server", runtime_kind: "docker_compose", created_at: "" }, server_name: "Hosting server", available: true, reason_code: "", missing_capabilities: [] }], total: offset + 1, offset, limit: 20 };
+}
 let client: QueryClient;
 afterEach(() => {
     cleanup();
@@ -21,7 +26,7 @@ afterEach(() => {
 beforeEach(() => {
     vi.mocked(useDatabaseAccess).mockReturnValue({ ready: true, refreshing: false, owner: true, viewer: true, maintainer: true, error: undefined, scope: { actor: "actor", project: "project", environment: "env" }, epoch: "epoch" });
     vi.mocked(api.getCatalog).mockResolvedValue([template]);
-    vi.mocked(listDestinations).mockResolvedValue({ items: [{ id: "dest", name: "Docker", server_id: "server", runtime_kind: "docker_compose", created_at: "" }], limit: 20, offset: 0, total: 1, count: 1 });
+    vi.mocked(placement.getCatalogDestinationOptions).mockImplementation(async (_project, selected, offset) => optionsFor(selected, offset));
 });
 function setup() {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -157,38 +162,39 @@ test("failed catalog load can be retried without submitting an installation", as
 });
 
 test("failed destination load retries without refetching the successful catalog", async () => {
-  vi.mocked(listDestinations).mockRejectedValueOnce(new Error("unavailable"));
+  vi.mocked(placement.getCatalogDestinationOptions).mockRejectedValueOnce(new Error("unavailable"));
   setup();
   await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
   await screen.findByText("Catalog or destination access is unavailable.");
   expect(screen.queryByRole("option", { name: "Docker" })).toBeNull();
   expect(api.getCatalog).toHaveBeenCalledTimes(1);
-  expect(listDestinations).toHaveBeenCalledTimes(1);
+  expect(placement.getCatalogDestinationOptions).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
   await screen.findByRole("option", { name: "Docker" });
   expect(screen.queryByText("Catalog or destination access is unavailable.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry catalog loading" })).toBeNull();
   expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").disabled).toBe(false);
-  expect(listDestinations).toHaveBeenCalledTimes(2);
+  expect(placement.getCatalogDestinationOptions).toHaveBeenCalledTimes(2);
   expect(api.getCatalog).toHaveBeenCalledTimes(1);
   expect(api.installCatalog).not.toHaveBeenCalled();
 });
 
-test("failed catalog and destination loads both recover on retry", async () => {
+test("catalog and selected-template destination failures recover separately", async () => {
   vi.mocked(api.getCatalog).mockRejectedValueOnce(new Error("unavailable"));
-  vi.mocked(listDestinations).mockRejectedValueOnce(new Error("unavailable"));
+  vi.mocked(placement.getCatalogDestinationOptions).mockRejectedValueOnce(new Error("unavailable"));
   setup();
   await screen.findByText("Catalog or destination access is unavailable.");
-  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Retry catalog loading" }).disabled).toBe(false));
-  expect(api.getCatalog).toHaveBeenCalledTimes(1);
-  expect(listDestinations).toHaveBeenCalledTimes(1);
+  expect(placement.getCatalogDestinationOptions).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
   await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  await screen.findByText("Catalog or destination access is unavailable.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry catalog loading" }));
   await screen.findByRole("option", { name: "Docker" });
   expect(screen.queryByText("Catalog or destination access is unavailable.")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Retry catalog loading" })).toBeNull();
   expect(api.getCatalog).toHaveBeenCalledTimes(2);
-  expect(listDestinations).toHaveBeenCalledTimes(2);
+  expect(placement.getCatalogDestinationOptions).toHaveBeenCalledTimes(2);
   expect(api.installCatalog).not.toHaveBeenCalled();
 });
 
@@ -237,8 +243,9 @@ for (const [flags, restriction] of [
     await selectCatalogDraft();
     const preview = screen.getByRole("region", { name: "Catalog installation preview" });
     expect(preview.querySelector("dt:nth-of-type(2) + dd")?.textContent).toBe(restriction);
-    expect(preview.textContent).toContain("does not verify compatibility with the selected destination");
-    expect(preview.textContent).toContain("CPU, memory and disk requirements are not declared");
+    await screen.findByRole("region", { name: "Catalog application requirements" });
+    expect(preview.textContent).toContain("Destination architecture is unverified.");
+    expect(preview.textContent).toContain("Not declared by the upstream template. Available server capacity is unverified.");
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(false);
   });
 }
@@ -433,6 +440,9 @@ test("switching from Compose to an image template omits the public URL", async (
   fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
   fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
   expect(screen.queryByLabelText("Public URL")).toBeNull();
+  await screen.findByRole("option", { name: "Docker" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").value).toBe("");
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
   vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response"));
   fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
   await screen.findByRole("button", { name: "Retry same installation" });
@@ -453,4 +463,96 @@ test("a changed pinned catalog hash cannot confirm installation and retains the 
   expect(screen.getByRole("alert").textContent).toContain("Installation unconfirmed");
   expect(screen.queryByText(/Installed Vikunja/)).toBeNull();
   expect(vi.mocked(api.installCatalog).mock.calls[0]![0].public_url).toBe("http://tasks.example.test");
+});
+
+
+test("destination options are selected-template scoped, unavailable choices explain missing features and cannot install", async () => {
+  const options = optionsFor(template);
+  options.items.unshift({ ...options.items[0]!, destination: { ...options.items[0]!.destination, id: "unavailable", name: "Needs setup" }, available: false, reason_code: "missing_capabilities", missing_capabilities: ["hosting_owned_storage_runtime_v1"] });
+  options.total = 2;
+  vi.mocked(placement.getCatalogDestinationOptions).mockResolvedValue(options);
+  setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  expect(placement.getCatalogDestinationOptions).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  const unavailable = await screen.findByRole<HTMLOptionElement>("option", { name: /Needs setup · Required deployment features/ });
+  expect(unavailable.disabled).toBe(true);
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").value).toBe("");
+  expect(await screen.findByText("Missing features: Persistent volume attachment")).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Catalog application requirements" }).textContent).toContain("Available server capacity is unverified");
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "unavailable" } });
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install application" }).disabled).toBe(false);
+});
+
+test("template change cancels stale options and resets selection before another application can install", async () => {
+  const other = { ...template, id: "other", immutable_version: "other.v1", name: "Other" };
+  vi.mocked(api.getCatalog).mockResolvedValue([template, other]);
+  let finish!: (value: placement.CatalogDestinationOptions) => void;
+  vi.mocked(placement.getCatalogDestinationOptions).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  await waitFor(() => expect(placement.getCatalogDestinationOptions).toHaveBeenCalledTimes(1));
+  const oldSignal = vi.mocked(placement.getCatalogDestinationOptions).mock.calls[0]![3];
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "other" } });
+  await screen.findByRole("option", { name: "Docker" });
+  expect(oldSignal?.aborted).toBe(true);
+  const stale = optionsFor(template); stale.items[0]!.destination.name = "Stale old destination";
+  await act(async () => finish(stale));
+  expect(screen.queryByRole("option", { name: "Stale old destination" })).toBeNull();
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").value).toBe("");
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
+test("paging and explicit compatibility refresh clear the prior destination", async () => {
+  vi.mocked(placement.getCatalogDestinationOptions).mockImplementation(async (_project, selected, offset) => ({ ...optionsFor(selected, offset), total: 21 }));
+  await selectCatalogDraft();
+  fireEvent.click(screen.getByRole("button", { name: "Next destinations" }));
+  await waitFor(() => expect(vi.mocked(placement.getCatalogDestinationOptions).mock.calls.at(-1)![2]).toBe(20));
+  await screen.findByRole("option", { name: "Docker" });
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").value).toBe("");
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+  const unavailable = optionsFor(template, 20); unavailable.total = 21; unavailable.items[0]!.available = false; unavailable.items[0]!.reason_code = "runner_unavailable";
+  vi.mocked(placement.getCatalogDestinationOptions).mockResolvedValueOnce(unavailable);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh destination compatibility" }));
+  await screen.findByRole("option", { name: /Docker · The server is offline/ });
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog destination").value).toBe("");
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
+test("project identity change retires options and clears the previous draft", async () => {
+  let finish!: (value: placement.CatalogDestinationOptions) => void;
+  vi.mocked(placement.getCatalogDestinationOptions).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const view = setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  await waitFor(() => expect(placement.getCatalogDestinationOptions).toHaveBeenCalledTimes(1));
+  const oldSignal = vi.mocked(placement.getCatalogDestinationOptions).mock.calls[0]![3];
+  view.rerender(<QueryClientProvider client={client}><HostingCatalog projectID="newproject" environmentID="newenv" blocked={false} /></QueryClientProvider>);
+  expect(oldSignal?.aborted).toBe(true);
+  await act(async () => finish(optionsFor(template)));
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  expect(screen.getByLabelText<HTMLSelectElement>("Catalog application").value).toBe("");
+  expect(screen.queryByRole("option", { name: "Docker" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  await screen.findByRole("option", { name: "Docker" });
+  expect(vi.mocked(placement.getCatalogDestinationOptions).mock.calls.at(-1)![0]).toBe("newproject");
+  expect(api.installCatalog).not.toHaveBeenCalled();
+});
+
+test.each([401, 403])("denied compatibility %i leaves no installable destination", async status => {
+  vi.mocked(placement.getCatalogDestinationOptions).mockRejectedValueOnce(new ApiError(status, "denied", null));
+  setup();
+  await screen.findByRole("option", { name: /Linkding ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  await screen.findByText("Catalog or destination access is unavailable.");
+  expect(screen.queryByRole("option", { name: "Docker" })).toBeNull();
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  expect(api.installCatalog).not.toHaveBeenCalled();
 });
