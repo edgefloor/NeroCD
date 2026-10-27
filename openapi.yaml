@@ -2175,6 +2175,45 @@ paths:
         }
       }
     }
+  /api/v1/storage-backups/{id}/archive-options:
+    get:
+      operationId: storageBackupArchiveOptions
+      summary: Check current owner access to a local backup archive download
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Current download eligibility
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingStorageBackupDownloadOptions'
+        '403':
+          description: Current owner or destination access denied
+  /api/v1/storage-backups/{id}/archive:
+    get:
+      operationId: downloadStorageBackupArchive
+      summary: Stream one exact local backup archive through a single controller
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Verified local archive attachment
+          content:
+            application/x-tar:
+              schema: {type: string, format: binary}
+        '403': {description: Authority revoked}
+        '404': {description: Local copy missing}
+        '409': {description: Backup state or copy reservation changed}
+        '429': {description: Download capacity exhausted}
+        '503': {description: Download capability or controller rendezvous unavailable}
+        '504': {description: Download deadline exceeded}
   /api/v1/storage-backups/{id}:
     {
       "parameters": [
@@ -15426,6 +15465,18 @@ components:
         },
         "description": "All six limits are explicit. file_bytes <= data_bytes <= archive_bytes. Zero is never a default or unbounded."
       }
+    HostingStorageBackupDownloadOptions:
+      type: object
+      additionalProperties: false
+      required: [available, reason_code, backup_id]
+      properties:
+        available: {type: boolean}
+        reason_code:
+          type: string
+          enum: ['', disabled, runner_unavailable, local_copy_unavailable, backup_not_succeeded]
+        backup_id: {type: string}
+        blob:
+          $ref: '#/components/schemas/HostingStorageArchiveBlob'
     HostingStorageArchiveBlob:
       {
         "type": "object",

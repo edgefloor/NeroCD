@@ -139,7 +139,7 @@ func (in HostingStorageBackupTransferMutation) Validate() error {
 // ValidateStorageBackupTransferTask checks the storage backup transfer task contract.
 func ValidateStorageBackupTransferTask(r TaskRun) error {
 	s := r.RunSpec
-	if s.Type != RunTypeStorageBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "storage_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download") || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
+	if s.Type != RunTypeStorageBackupTransfer || !validRuntimeReferenceID(s.HostingOperationID) || r.ID != "storage_transfer_"+s.HostingOperationID || (s.HostingMode != "validate" && s.HostingMode != "upload" && s.HostingMode != "download" && s.HostingMode != HostingStorageBackupDownloadMode) || s.HostingBuildID != "" || s.ProxyOperationID != "" || s.ProxyMode != "" || s.Process != nil || s.Repository != nil || s.Workflow != nil || len(s.Inputs) != 0 || len(s.Secrets) != 0 || len(s.Artifacts) != 0 || len(r.Workflow.Steps) != 0 {
 		return ErrInvalidStorageBackupRemote
 	}
 	return nil
