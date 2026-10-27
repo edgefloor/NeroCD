@@ -31,3 +31,5 @@ func (*directoryBackend) ownership(string, int64) (Ownership, error) {
 }
 
 func (*directoryBackend) poolID() (string, error) { return "", ErrUnsupported }
+
+func (*directoryBackend) verifyOwnershipFile(*os.File, Ownership) error { return ErrUnsupported }

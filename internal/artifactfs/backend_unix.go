@@ -220,3 +220,18 @@ func (d *directoryBackend) poolID() (string, error) {
 	id := sha256.Sum256([]byte(fmt.Sprintf("artifactfs.pool.v1:%d:%d", root.Dev, root.Ino)))
 	return fmt.Sprintf("sha256:%x", id), nil
 }
+
+func (d *directoryBackend) verifyOwnershipFile(file *os.File, proof Ownership) error {
+	pool, err := d.poolID()
+	if err != nil {
+		return err
+	}
+	meta, err := inspectRegularFile(int(file.Fd()), proof.Bytes)
+	if err != nil {
+		return err
+	}
+	if pool != proof.PoolID || meta.device != proof.Device || meta.inode != proof.Inode || meta.size != proof.Bytes {
+		return ErrIntegrity
+	}
+	return nil
+}

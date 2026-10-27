@@ -290,3 +290,29 @@ func invalidError(detail string) error { return fmt.Errorf("%w: %s", ErrInvalid,
 func ioError(operation string, err error) error {
 	return fmt.Errorf("artifactfs: %s: %w", operation, err)
 }
+
+// OpenOwned verifies digest and exact inode ownership on the same returned descriptor.
+// The caller owns the descriptor; no second path lookup selects its contents.
+func (s *Store) OpenOwned(ctx context.Context, key string, proof Ownership) (io.ReadSeekCloser, Blob, error) {
+	if ctx == nil || !validKey(key) || (proof.PoolID == "" || proof.Inode == 0 || proof.Bytes < 1) {
+		return nil, Blob{}, ErrIntegrity
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.backend == nil {
+		return nil, Blob{}, ErrClosed
+	}
+	if err := s.backend.lock(ctx); err != nil {
+		return nil, Blob{}, err
+	}
+	defer s.backend.unlock()
+	file, blob, err := s.openVerified(ctx, key)
+	if err != nil {
+		return nil, Blob{}, err
+	}
+	if err = s.backend.verifyOwnershipFile(file, proof); err != nil {
+		_ = file.Close()
+		return nil, Blob{}, err
+	}
+	return file, blob, nil
+}
