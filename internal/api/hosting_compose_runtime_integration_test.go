@@ -494,12 +494,18 @@ func TestComposeRemoteVolumeFixtureRequestContract(t *testing.T) {
 	if repo.backupInput.Volume != "vikunja-data" || repo.backupInput.ExpectedDeployedOperationID != "hop_fixture" || !repo.backupInput.AcknowledgeInterruption || repo.backupInput.RemoteTarget == nil || repo.backupInput.RemoteTarget.TargetID != "target_fixture" || repo.backupInput.RemoteTarget.Revision != 1 {
 		t.Fatal("production archive decoder lost Compose remote fixture selection")
 	}
-	for _, invalid := range []string{
-		strings.Replace(body, `"revision":1`, `"revision":0`, 1),
-		strings.Replace(body, `"target_id":"target_fixture"`, `"target_id":"../target_fixture"`, 1),
-		strings.Replace(body, `"acknowledge_interruption":true`, `"acknowledge_interruption":false`, 1),
+	for _, tc := range []struct{ name, body string }{
+		{"zero target revision", strings.Replace(body, `"revision":1`, `"revision":0`, 1)},
+		{"empty opaque target ID", strings.Replace(body, `"target_id":"target_fixture"`, `"target_id":""`, 1)},
+		{"interruption not acknowledged", strings.Replace(body, `"acknowledge_interruption":true`, `"acknowledge_interruption":false`, 1)},
 	} {
-		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+		t.Run(tc.name, func(t *testing.T) {
+			before := repo.calls
+			archiveHTTPCall(t, server, "POST", path, owner, tc.body, "application/json", 400)
+			if repo.calls != before {
+				t.Fatal("invalid Compose remote archive fixture reached persistence")
+			}
+		})
 	}
 }
 
