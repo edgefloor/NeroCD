@@ -12,11 +12,10 @@ Run from a clean committed repository root. The gate requires:
 
 - Go, Docker CLI and Python 3. Browser profiles also need Bun, Node.js, installed
   WebUI dependencies and Playwright Chromium.
-- The Docker target pinned in [gate.sh](gate.sh):
-  `unix:///var/run/docker.sock`, daemon
-  `e37dd219-b13f-47dd-99ed-21d79442ed0c`, Linux aarch64.
+- The exact Docker daemon and architecture pinned in [gate.sh](gate.sh). The
+  script rejects other targets.
 - The script's pinned images in the host image cache. Image references and guest
-  resource limits are defined in the script.
+  resource limits are defined in [gate.sh](gate.sh).
 - Permission to start a privileged guest. It uses a labelled Docker data volume,
   with no host bind mounts or Docker socket mount. Browser profiles publish the
   fixture API on a dynamic loopback port.

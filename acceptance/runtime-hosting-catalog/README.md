@@ -50,7 +50,7 @@ identities and preserves unrelated resources and the existing user instance.
 
 ## Catalog metadata and destination selection
 
-Run the focused browser test from `web/app`:
+Run the focused browser test from the repository root:
 
 ```sh
 cd web/app
