@@ -429,7 +429,7 @@ func (s *PostgresStore) ClaimRun(ctx context.Context, runnerID string, now time.
 }
 
 // ExpireLeases implements the corresponding repository operation.
-func (s *PostgresStore) ExpireLeases(ctx context.Context, now time.Time) error {
+func (s *PostgresStore) ExpireLeases(ctx context.Context, _ time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -454,15 +454,48 @@ func expireLeasesAtDBClock(ctx context.Context, queries *sqlcgen.Queries) error 
 		if expired == 0 {
 			continue
 		}
-		if err := queries.ExpireDeploymentAttemptsForRun(ctx, runID); err != nil {
-			return fmt.Errorf("expire deployment attempts for run query: %w", err)
-		}
-		if err := queries.ExpireHostingBuildForRun(ctx, &runID); err != nil {
+		if err := settleExpiredRun(ctx, queries, runID); err != nil {
 			return err
 		}
-		if err := queries.RequeueExpiredRun(ctx, runID); err != nil {
-			return fmt.Errorf("requeue expired run query: %w", err)
+	}
+	return nil
+}
+
+// InvalidateRunnerLeasesForRestoreTx revokes all restored active authority and
+// settles its dependent lifecycle in the caller's offline restore transaction.
+// Unlike the online sweeper, it includes future deadlines and drains all batches.
+// The target must remain offline until this transaction, including restore holds,
+// commits. It never authorizes host mutation or releases a binding mutation hold.
+func InvalidateRunnerLeasesForRestoreTx(ctx context.Context, tx pgx.Tx) error {
+	queries := sqlcgen.New(tx)
+	for {
+		runIDs, err := queries.ListRestoreActiveLeaseRunIDs(ctx, leaseExpiryBatchSize)
+		if err != nil {
+			return fmt.Errorf("list restored active lease run ids: %w", err)
 		}
+		if len(runIDs) == 0 {
+			return nil
+		}
+		for _, runID := range runIDs {
+			if err := queries.InvalidateActiveLeasesForRestoreRun(ctx, runID); err != nil {
+				return fmt.Errorf("invalidate restored run leases: %w", err)
+			}
+			if err := settleExpiredRun(ctx, queries, runID); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func settleExpiredRun(ctx context.Context, queries *sqlcgen.Queries, runID string) error {
+	if err := queries.ExpireDeploymentAttemptsForRun(ctx, runID); err != nil {
+		return fmt.Errorf("expire deployment attempts for run query: %w", err)
+	}
+	if err := queries.ExpireHostingBuildForRun(ctx, &runID); err != nil {
+		return fmt.Errorf("expire hosting build for run query: %w", err)
+	}
+	if err := queries.RequeueExpiredRun(ctx, runID); err != nil {
+		return fmt.Errorf("requeue expired run query: %w", err)
 	}
 	return nil
 }

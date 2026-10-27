@@ -119,8 +119,14 @@ DB-clock attempt; do not manually delete unknown files from a backup directory.
 
 Restore only into a newly created, empty database. The command verifies the manifest
 checksum and exact migration ledger before invalidating every active session and runner
-lease; operators must issue fresh credentials and let the reaper reconcile interrupted
-work. It never uses `--clean` against a live target. Restore requires both
+lease. In the same transaction, it settles all interrupted work, including leases with
+future deadlines and work spanning multiple expiry batches. Generic runs return to the
+queue with their prior deployment attempts failed. Build runs fail and their builds
+require cleanup with `authority_lost`. A deployment or cleanup operation that holds a
+binding requires reconciliation; its run fails and the mutation hold remains. Binding
+and proxy restore holds still require explicit recovery admission. Operators must issue
+fresh credentials and reconcile uncertain host effects before resuming work.
+It never uses `--clean` against a live target. Restore requires both
 `--allow-disposable-target` and an exact `--confirm-target-database` name. Before
 `pg_restore`, NeroCD holds a restore-admission advisory lock, rejects any other active
 DB session, and rejects non-public schemas and objects in `public` or another user
@@ -172,6 +178,18 @@ the empty target.
 The restore command itself rejects non-empty targets and other active database sessions
 before `pg_restore`. After its checks and restore finish, stop and remove this restore
 project; do not reuse its database for production.
+
+## Lease clock and development tests
+
+PostgreSQL uses `clock_timestamp()` for lease creation, renewal, expiry and completion.
+Caller timestamps cannot extend production authority. Restore revokes active authority
+regardless of its deadline, without changing its attempt or fence.
+
+The disposable memory store uses caller time for deterministic tests. It matches the
+running-run expiry and deployment-attempt transitions, including failure of malformed
+build tasks. It does not store hosting builds, operations or binding mutation holds and
+cannot validate their recovery. Use PostgreSQL integration tests for build cleanup and
+held-operation reconciliation.
 
 ## Runtime checks
 

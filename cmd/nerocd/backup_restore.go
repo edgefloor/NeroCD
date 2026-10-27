@@ -258,7 +258,7 @@ func restoreDatabase(args []string) error {
 	if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE run_leases SET status='expired', completed_at=clock_timestamp() WHERE status='active'`); err != nil {
+	if err := store.InvalidateRunnerLeasesForRestoreTx(ctx, tx); err != nil {
 		return err
 	}
 	// A backup may predate a later admission or even the first operation on a

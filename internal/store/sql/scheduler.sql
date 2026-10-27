@@ -94,8 +94,24 @@ WITH updated_operations AS (
 UPDATE task_runs SET status=CASE
  WHEN EXISTS(SELECT 1 FROM hosting_build_tasks bt WHERE bt.run_id=$1) OR run_spec->>'type'='hosting_build_v1' OR coalesce(run_spec->>'hosting_build_id','')<>'' THEN 'failed'
  WHEN EXISTS(SELECT 1 FROM hosting_task_targets target JOIN hosting_binding_state bs ON bs.hold_operation_id=target.operation_id WHERE target.run_id=$1 AND target.mode IN('deploy','cleanup')) THEN 'failed' ELSE 'queued' END,
- runner_id=NULL,finished_at=CASE WHEN EXISTS(SELECT 1 FROM hosting_build_tasks bt WHERE bt.run_id=$1) OR run_spec->>'type'='hosting_build_v1' OR coalesce(run_spec->>'hosting_build_id','')<>'' THEN clock_timestamp() ELSE NULL END,claim_order_at=clock_timestamp()
+ runner_id=NULL,finished_at=CASE
+ WHEN EXISTS(SELECT 1 FROM hosting_build_tasks bt WHERE bt.run_id=$1) OR run_spec->>'type'='hosting_build_v1' OR coalesce(run_spec->>'hosting_build_id','')<>''
+ OR EXISTS(SELECT 1 FROM hosting_task_targets target JOIN hosting_binding_state bs ON bs.hold_operation_id=target.operation_id WHERE target.run_id=$1 AND target.mode IN('deploy','cleanup'))
+ THEN clock_timestamp() ELSE NULL END,claim_order_at=clock_timestamp()
 WHERE id=$1 AND status='running';
+
+-- name: ListRestoreActiveLeaseRunIDs :many
+SELECT runs.id
+FROM task_runs AS runs
+WHERE EXISTS (SELECT 1 FROM run_leases AS leases WHERE leases.run_id=runs.id AND leases.status='active')
+ORDER BY runs.id
+FOR UPDATE OF runs
+LIMIT $1;
+
+-- name: InvalidateActiveLeasesForRestoreRun :exec
+UPDATE run_leases
+SET status='expired', completed_at=clock_timestamp()
+WHERE run_id=$1 AND status='active';
 
 -- name: QueueApprovedRun :one
 UPDATE task_runs

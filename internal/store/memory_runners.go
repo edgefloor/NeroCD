@@ -302,6 +302,18 @@ func (s *MemoryStore) expireLeasesLocked(now time.Time) {
 		if lease.Status != domain.LeaseActive || lease.ExpiresAt.After(now) {
 			continue
 		}
+		// Match the online PostgreSQL sweeper's running-run selection. A
+		// terminal run must not have its historical authority settled again.
+		runIndex := -1
+		for j := range s.runs {
+			if s.runs[j].ID == lease.RunID && s.runs[j].Status == domain.RunRunning {
+				runIndex = j
+				break
+			}
+		}
+		if runIndex < 0 {
+			continue
+		}
 		lease.Status = domain.LeaseExpired
 		lease.CompletedAt = &now
 		s.leases[i] = lease
@@ -315,25 +327,21 @@ func (s *MemoryStore) expireLeasesLocked(now time.Time) {
 				attempt.FinishedAt = &now
 			}
 		}
-		for j, run := range s.runs {
-			if run.ID == lease.RunID && run.Status == domain.RunRunning {
-				run.Status = domain.RunQueued
-				if run.RunSpec.Type == domain.HostingBuildTaskType || run.RunSpec.HostingBuildID != "" {
-					run.Status = domain.RunFailed
-				}
-				run.RunnerID = nil
-				run.FinishedAt = nil
-				if run.Status == domain.RunFailed {
-					run.FinishedAt = &now
-				}
-				s.runs[j] = run
-				if s.claimOrderByRun == nil {
-					s.claimOrderByRun = make(map[string]time.Time)
-				}
-				s.claimOrderByRun[run.ID] = now
-				break
-			}
+		run := s.runs[runIndex]
+		run.Status = domain.RunQueued
+		if run.RunSpec.Type == domain.HostingBuildTaskType || run.RunSpec.HostingBuildID != "" {
+			run.Status = domain.RunFailed
 		}
+		run.RunnerID = nil
+		run.FinishedAt = nil
+		if run.Status == domain.RunFailed {
+			run.FinishedAt = &now
+		}
+		s.runs[runIndex] = run
+		if s.claimOrderByRun == nil {
+			s.claimOrderByRun = make(map[string]time.Time)
+		}
+		s.claimOrderByRun[run.ID] = now
 	}
 }
 

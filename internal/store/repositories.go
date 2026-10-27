@@ -88,7 +88,10 @@ type RunLogRetentionRepository interface {
 	ExecuteRunLogRetention(context.Context, string, string, domain.AuditEvent) (domain.RunLogRetentionExecution, error)
 }
 
-// RunnerRepository persists runner registration and lease state.
+// RunnerRepository persists runner registration and lease state. PostgreSQL uses
+// its database clock for lease authority, ignoring caller timestamps for claim,
+// renew, expiry, and completion. Memory uses supplied times for deterministic
+// disposable development fixtures; it does not implement executable hosting.
 type RunnerRepository interface {
 	ListRunners(context.Context) ([]domain.Runner, error)
 	GetRunnerByID(context.Context, string) (domain.Runner, error)
