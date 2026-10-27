@@ -25,6 +25,7 @@ type PublicHostingBuild struct {
 	Snapshot      PublicHostingBuildSnapshot       `json:"snapshot"`
 	SourceReceipt *PublicHostingBuildSourceReceipt `json:"source_receipt,omitempty"`
 	Artifact      *PublicHostingBuildArtifact      `json:"artifact,omitempty"`
+	ComposeResult *PublicHostingBuildComposeResult `json:"compose_result,omitempty"`
 }
 
 // PublicHostingBuildSnapshot exposes only source intent and exact placement.
@@ -83,5 +84,26 @@ func PublicBuild(b HostingBuild) PublicHostingBuild {
 	if a := b.Artifact; a != nil {
 		p.Artifact = &PublicHostingBuildArtifact{Origin: a.Origin, ImageID: a.ImageID, IndexDigest: a.IndexDigest, ManifestDigest: a.ManifestDigest, ConfigDigest: a.ConfigDigest, Platform: a.Platform}
 	}
+	if c := b.ComposeResult; c != nil {
+		p.ComposeResult = &PublicHostingBuildComposeResult{Source: c.Source, Definition: c.Definition, Services: []PublicHostingBuildComposeService{}, Hash: c.Hash}
+		for _, service := range c.Services {
+			a := service.Artifact
+			p.ComposeResult.Services = append(p.ComposeResult.Services, PublicHostingBuildComposeService{Component: service.Component, Artifact: PublicHostingBuildArtifact{Origin: a.Origin, ImageID: a.ImageID, IndexDigest: a.IndexDigest, ManifestDigest: a.ManifestDigest, ConfigDigest: a.ConfigDigest, Platform: a.Platform}})
+		}
+	}
 	return p
+}
+
+// PublicHostingBuildComposeResult exposes prepared source and component image identities without transport policy.
+type PublicHostingBuildComposeResult struct {
+	Source     HostingStackSource                 `json:"source"`
+	Definition HostingStackDefinition             `json:"definition"`
+	Services   []PublicHostingBuildComposeService `json:"services"`
+	Hash       string                             `json:"hash"`
+}
+
+// PublicHostingBuildComposeService identifies a built component without internal request fingerprints.
+type PublicHostingBuildComposeService struct {
+	Component string                     `json:"component"`
+	Artifact  PublicHostingBuildArtifact `json:"artifact"`
 }

@@ -40,6 +40,7 @@ type HostingStackDefinition struct {
 // HostingStackService preserves service identity across source revisions.
 type HostingStackService struct {
 	Name        string                   `json:"name"`
+	Build       *HostingStackBuild       `json:"build,omitempty"`
 	Image       string                   `json:"image"`
 	Command     []string                 `json:"command"`
 	Environment map[string]string        `json:"environment,omitempty"`
@@ -79,6 +80,10 @@ func stackError(location, reason string) error {
 // ParseHostingStack fails before persistence on unknown, ambiguous, or unsafe fields.
 // It never expands variables or contacts registries, Docker, or secret storage.
 func ParseHostingStack(source HostingStackSource) (HostingStackDefinition, error) {
+	return parseHostingStack(source, nil)
+}
+
+func parseHostingStack(source HostingStackSource, settings *HostingBuildSettings) (HostingStackDefinition, error) {
 	var zero HostingStackDefinition
 	if len(source.Original) == 0 || len(source.Original) > 128<<10 || source.ContainerPort < 1 || source.ContainerPort > 65535 {
 		return zero, stackError("source", "requires bounded Compose text and a public container port")
@@ -124,7 +129,7 @@ func ParseHostingStack(source HostingStackSource) (HostingStackDefinition, error
 		if !stackName.MatchString(name) {
 			return zero, stackError("services", "invalid service name")
 		}
-		service, err := parseStackService(name, services.Content[i+1], volumes)
+		service, err := parseStackService(name, services.Content[i+1], volumes, settings)
 		if err != nil {
 			return zero, err
 		}
@@ -242,26 +247,44 @@ func stackStrings(node *yaml.Node) ([]string, error) {
 	}
 	return values, nil
 }
-func parseStackService(name string, node *yaml.Node, volumes map[string]bool) (HostingStackService, error) {
+func parseStackService(name string, node *yaml.Node, volumes map[string]bool, settings *HostingBuildSettings) (HostingStackService, error) {
 	var zero HostingStackService
 	location := "services." + name
-	fields, err := stackFields(node, location, "image", "environment", "command", "depends_on", "volumes", "healthcheck")
+	allowed := []string{"image", "environment", "command", "depends_on", "volumes", "healthcheck"}
+	if settings != nil {
+		allowed = append(allowed, "build")
+	}
+	fields, err := stackFields(node, location, allowed...)
 	if err != nil {
 		return zero, err
 	}
-	image, err := stackString(fields["image"])
-	if err != nil || strings.Contains(image, "$") {
-		return zero, stackError(location+".image", "requires literal image reference")
+	var build *HostingStackBuild
+	if fields["build"] != nil {
+		if settings == nil {
+			return zero, stackError(location+".build", "Git Compose required")
+		}
+		build, err = parseHostingStackBuild(fields["build"], *settings)
+		if err != nil {
+			return zero, err
+		}
 	}
-	// Compose permits an omitted tag. Freeze latest to its digest during preparation.
-	if !strings.Contains(image, "@") && strings.LastIndex(image, ":") <= strings.LastIndex(image, "/") {
-		image += ":latest"
+	image := ""
+	if fields["image"] != nil {
+		image, err = stackString(fields["image"])
+		if err != nil || strings.Contains(image, "$") {
+			return zero, stackError(location+".image", "requires literal image reference")
+		}
+		if !strings.Contains(image, "@") && strings.LastIndex(image, ":") <= strings.LastIndex(image, "/") {
+			image += ":latest"
+		}
+		image, err = NormalizeHostingImage(image)
+		if err != nil {
+			return zero, stackError(location+".image", "invalid image reference")
+		}
+	} else if build == nil {
+		return zero, stackError(location+".image", "requires image or Git Compose build")
 	}
-	image, err = NormalizeHostingImage(image)
-	if err != nil {
-		return zero, stackError(location+".image", "invalid image reference")
-	}
-	out := HostingStackService{Name: name, Image: image}
+	out := HostingStackService{Name: name, Image: image, Build: build}
 	if command := fields["command"]; command != nil {
 		out.Command, err = stackStrings(command)
 		if err == nil {

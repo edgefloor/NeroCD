@@ -23,9 +23,10 @@ type HostingBuildDispatchTx func(context.Context, pgx.Tx, domain.HostingBuild) (
 
 // HostingBuildCompletion records fixed metadata; failure codes never contain stderr.
 type HostingBuildCompletion struct {
-	State       string                       `json:"state"`
-	FailureCode string                       `json:"failure_code,omitempty"`
-	Artifact    *domain.HostingBuildArtifact `json:"artifact,omitempty"`
+	State         string                            `json:"state"`
+	FailureCode   string                            `json:"failure_code,omitempty"`
+	Artifact      *domain.HostingBuildArtifact      `json:"artifact,omitempty"`
+	ComposeResult *domain.HostingBuildComposeResult `json:"compose_result,omitempty"`
 }
 
 // HostingBuildRepository persists immutable source/build intent and fenced receipts.

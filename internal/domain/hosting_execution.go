@@ -195,6 +195,7 @@ type HostingResult struct {
 
 // HostingOperation exposes control state independently from task run terminal state.
 type HostingOperation struct {
+	ComposeResult                      *HostingBuildComposeResult                 `json:"compose_result,omitempty"`
 	StackStopPlan                      *HostingStackStopPlan                      `json:"stack_stop_plan,omitempty"`
 	StackSource                        *HostingStackDefinition                    `json:"stack_source,omitempty"`
 	StackCreatePermitted               bool                                       `json:"stack_create_permitted,omitempty"`

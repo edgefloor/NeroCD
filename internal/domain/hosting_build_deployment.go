@@ -17,19 +17,20 @@ const (
 
 // HostingBuildDeploymentInput selects only a server-owned successful build.
 type HostingBuildDeploymentInput struct {
-	ExpectedRuntimeConfigurationGeneration int64            `json:"expected_runtime_configuration_generation,omitempty"`
-	BuildID                                string           `json:"build_id"`
-	ExpectedSourceGeneration               int64            `json:"expected_source_generation"`
-	ExpectedGeneration                     int64            `json:"expected_generation"`
-	IdempotencyKey                         string           `json:"idempotency_key"`
-	ContainerPort                          int              `json:"container_port"`
-	HostPort                               int              `json:"host_port"`
-	Readiness                              HostingReadiness `json:"readiness"`
+	ManagedStack                           *HostingStackDeploymentInput `json:"managed_stack,omitempty"`
+	ExpectedRuntimeConfigurationGeneration int64                        `json:"expected_runtime_configuration_generation,omitempty"`
+	BuildID                                string                       `json:"build_id"`
+	ExpectedSourceGeneration               int64                        `json:"expected_source_generation"`
+	ExpectedGeneration                     int64                        `json:"expected_generation"`
+	IdempotencyKey                         string                       `json:"idempotency_key"`
+	ContainerPort                          int                          `json:"container_port"`
+	HostPort                               int                          `json:"host_port"`
+	Readiness                              HostingReadiness             `json:"readiness"`
 }
 
 // DeploymentInput returns the shared bounded port and readiness input.
 func (in HostingBuildDeploymentInput) DeploymentInput() HostingDeploymentInput {
-	return HostingDeploymentInput{ExpectedRuntimeConfigurationGeneration: in.ExpectedRuntimeConfigurationGeneration, ExpectedGeneration: in.ExpectedGeneration, IdempotencyKey: in.IdempotencyKey, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness}
+	return HostingDeploymentInput{ManagedStack: in.ManagedStack, ExpectedRuntimeConfigurationGeneration: in.ExpectedRuntimeConfigurationGeneration, ExpectedGeneration: in.ExpectedGeneration, IdempotencyKey: in.IdempotencyKey, ContainerPort: in.ContainerPort, HostPort: in.HostPort, Readiness: in.Readiness}
 }
 
 // ValidateHostingBuildDeployment rejects caller authority and incomplete selection.

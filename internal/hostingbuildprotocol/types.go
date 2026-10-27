@@ -33,9 +33,10 @@ type PrepareRequest struct {
 // Completion preserves the exact field order and JSON shape of the persisted
 // completion body. Request envelopes and revisions never enter its receipt hash.
 type Completion struct {
-	State       string                       `json:"state"`
-	FailureCode string                       `json:"failure_code,omitempty"`
-	Artifact    *domain.HostingBuildArtifact `json:"artifact,omitempty"`
+	State         string                            `json:"state"`
+	FailureCode   string                            `json:"failure_code,omitempty"`
+	Artifact      *domain.HostingBuildArtifact      `json:"artifact,omitempty"`
+	ComposeResult *domain.HostingBuildComposeResult `json:"compose_result,omitempty"`
 }
 
 // CompleteRequest records a completion receipt at the expected revision.

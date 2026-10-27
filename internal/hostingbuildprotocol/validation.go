@@ -78,11 +78,11 @@ func (r PrepareRequest) Validate() error {
 func (c Completion) Validate() error {
 	switch c.State {
 	case "succeeded":
-		if c.Artifact == nil || c.FailureCode != "" {
+		if (c.Artifact == nil) == (c.ComposeResult == nil) || c.FailureCode != "" {
 			return ErrInvalidMessage
 		}
 	case "failed", "canceled", "cleanup_required":
-		if c.Artifact != nil || !domain.ValidHostingBuildFailure(c.FailureCode) {
+		if c.Artifact != nil || c.ComposeResult != nil || !domain.ValidHostingBuildFailure(c.FailureCode) {
 			return ErrInvalidMessage
 		}
 	default:

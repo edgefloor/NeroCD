@@ -103,6 +103,7 @@ type HostingSourceLimits struct {
 // HostingBuildPolicy is trusted in-process operator input, never public request data.
 // ToolchainIdentity hashes the fixed, versioned operator toolchain configuration.
 type HostingBuildPolicy struct {
+	GitCompose        bool                `json:"git_compose,omitempty"`
 	Identity          string              `json:"identity"`
 	ToolchainIdentity string              `json:"toolchain_identity"`
 	Protocol          string              `json:"protocol"`
@@ -194,6 +195,7 @@ type HostingBuild struct {
 	Snapshot      HostingBuildSnapshot       `json:"snapshot"`
 	SourceReceipt *HostingBuildSourceReceipt `json:"source_receipt,omitempty"`
 	Artifact      *HostingBuildArtifact      `json:"artifact,omitempty"`
+	ComposeResult *HostingBuildComposeResult `json:"compose_result,omitempty"`
 	FailureCode   string                     `json:"failure_code,omitempty"`
 }
 
