@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
@@ -51,6 +52,7 @@ type storageRuntimeFault struct {
 
 type storageRuntimeFixture struct {
 	t                                                   *testing.T
+	database                                            *pgxpool.Pool
 	catalogBrowser                                      *catalogRuntimeBrowser
 	control                                             *httptest.Server
 	client                                              *http.Client
@@ -197,7 +199,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		server = catalogRuntimeServer(t, pg)
 	}
-	f = &storageRuntimeFixture{t: t, root: root, roots: roots, logs: &runtimeFixtureLog{}}
+	f = &storageRuntimeFixture{t: t, database: database, root: root, roots: roots, logs: &runtimeFixtureLog{}}
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
 		f.catalogBrowser = newCatalogRuntimeBrowser(t)
 	}

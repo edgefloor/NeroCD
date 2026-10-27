@@ -1226,6 +1226,7 @@ class GitComposeContractTests(unittest.TestCase):
         required = ast.literal_eval(re.search(r"for key in (\[.*?\]):", branch).group(1))
         self.assertIn("git_failures_preserved_records_uploads", required)
         self.assertIn("browser_git_compose_route_continuity", required)
+        self.assertIn("browser_git_compose_route_recovery", required)
         self.assertIn("browser_git_compose_registry_selection", required)
         for missing in [None, *required, "skip", "runtime"]:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:

@@ -525,10 +525,99 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	if !gitCompose {
 		assertReferenceAbsent(protectedImage)
 	}
+	if gitCompose {
+		if _, err := f.database.Exec(t.Context(), gitComposeRejectProxyQueue); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := f.database.Exec(ctx, gitComposeAllowProxyQueue); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 	b.set("redeploy", resourceID)
 	second := f.await(b.await(t, "redeployed"), "succeeded")
 	if second.Plan == nil || second.Plan.Stack == nil || second.Result == nil || second.Result.Stack == nil || second.Snapshot.HostPort != first.Snapshot.HostPort || second.Snapshot.RuntimeConfiguration != first.Snapshot.RuntimeConfiguration || !reflect.DeepEqual(second.Result.Stack.Volumes, first.Result.Stack.Volumes) || second.Result.Stack.NetworkID != first.Result.Stack.NetworkID {
 		t.Fatal("redeploy changed port, runtime references, volume origins or private network")
+	}
+	if gitCompose {
+		var continuity domain.HostingStorageRouteContinuityStatus
+		for deadline := time.Now().Add(5 * time.Second); ; {
+			continuity = storageRuntimeJSON[domain.HostingStorageRouteContinuityStatus](f, "GET", "/api/v1/resources/"+resourceID+"/storage-route-continuity/"+second.ID, nil, 200)
+			if continuity.State == "unresolved" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("injected proxy queue failure did not retain unresolved continuity", continuity.State)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if continuity.SuccessorProxyOperationID != "" || second.State != "succeeded" || second.MutationHold || second.CompleteReceipt == nil || second.Result.Uncertain || !second.Result.Ready {
+			t.Fatal("proxy queue failure changed successful runtime evidence")
+		}
+		heldOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+		if heldOptions.Available || heldOptions.Reason != "continuity_unresolved" {
+			t.Fatal("unresolved continuity did not retain exclusive deployment reservation", heldOptions.Reason)
+		}
+		beforeRecovery := storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+second.ID, nil, 200)
+		rows := func() string {
+			var value string
+			if err := f.database.QueryRow(t.Context(), `SELECT jsonb_build_array((SELECT count(*) FROM hosting_operations),(SELECT count(*) FROM hosting_apply_admissions),(SELECT count(*) FROM hosting_storage_operation_admissions),(SELECT jsonb_agg(to_jsonb(v) ORDER BY binding_id,volume_name) FROM hosting_compose_volumes v))::text`).Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			return value
+		}
+		beforeRows := rows()
+		containerIDs := storageRuntimeDocker(t, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.binding="+second.BindingID)
+		volumeNames := storageRuntimeDocker(t, "volume", "ls", "--quiet", "--filter", "label=io.nerocd.binding="+second.BindingID)
+		writers := map[string][]byte{}
+		for _, component := range second.Result.Stack.Components {
+			writers[component.ContainerID] = storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Id}} {{json .Config}} {{json .Mounts}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")
+		}
+		var beforeProxyCount int
+		if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_proxy_operations`).Scan(&beforeProxyCount); err != nil {
+			t.Fatal(err)
+		}
+		blocked := domain.HostingBuildDeploymentInput{BuildID: second.Snapshot.GitCompose.BuildID, ExpectedGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "git-compose-unresolved-competing", ContainerPort: 3456, HostPort: second.Snapshot.HostPort, RegistryCredential: &registryRef, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}
+		storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resourceID+"/deployments/from-build", blocked, 409)
+		if rows() != beforeRows {
+			t.Fatal("unresolved continuity admitted competing writer work")
+		}
+		verifyHTTPS()
+		if _, err := f.database.Exec(t.Context(), gitComposeAllowProxyQueue); err != nil {
+			t.Fatal(err)
+		}
+		b.set("recover_route", second.ID)
+		if b.await(t, "route_recovered") != second.ID {
+			t.Fatal("UI recovered a different deployment")
+		}
+		loaded := f.awaitContinuity(resourceID, second.ID)
+		if loaded.SuccessorProxyOperationID != "pop_storage_"+second.ID {
+			t.Fatal("recovery changed deterministic proxy successor")
+		}
+		recovery := domain.HostingStorageRouteRecoveryInput{ExpectedDescriptorHash: second.Snapshot.StorageRouteContinuity.Hash, ExpectedCompleteReceiptID: second.CompleteReceipt.ID, ExpectedCompleteReceiptHash: second.CompleteReceipt.BodyHash}
+		replay := storageRuntimeJSON[domain.HostingStorageRouteContinuityStatus](f, "POST", "/api/v1/resources/"+resourceID+"/storage-route-continuity/"+second.ID+"/recover", recovery, 200)
+		if replay.SuccessorProxyOperationID != loaded.SuccessorProxyOperationID || replay.State != "loaded" {
+			t.Fatal("identical recovery replay did not retain loaded successor")
+		}
+		var afterProxyCount, successors int
+		if err := f.database.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_proxy_operations),(SELECT count(*) FROM hosting_proxy_operations WHERE id=$1)`, loaded.SuccessorProxyOperationID).Scan(&afterProxyCount, &successors); err != nil || afterProxyCount != beforeProxyCount+1 || successors != 1 {
+			t.Fatal("recovery did not queue exactly one proxy successor", err)
+		}
+		if rows() != beforeRows || !reflect.DeepEqual(beforeRecovery, storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+second.ID, nil, 200)) {
+			t.Fatal("proxy recovery changed writer admission, volume ledger or deployment receipt")
+		}
+		if !bytes.Equal(containerIDs, storageRuntimeDocker(t, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "label=io.nerocd.binding="+second.BindingID)) || !bytes.Equal(volumeNames, storageRuntimeDocker(t, "volume", "ls", "--quiet", "--filter", "label=io.nerocd.binding="+second.BindingID)) {
+			t.Fatal("proxy recovery created a workload container or volume")
+		}
+		for id, before := range writers {
+			if !bytes.Equal(before, storageRuntimeDocker(t, "inspect", id, "--format", "{{.Id}} {{json .Config}} {{json .Mounts}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")) {
+				t.Fatal("proxy recovery changed a workload container")
+			}
+		}
+		verifyHTTPS()
 	}
 	logPage := storageRuntimeJSON[domain.HostingRuntimeLogPage](f, "GET", "/api/v1/runtime-log-sessions/"+logSession.ID+"/logs", nil, 200)
 	if logPage.Session.State != "target_changed" || logPage.Session.Target != logSession.Target {

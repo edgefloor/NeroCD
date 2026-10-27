@@ -273,6 +273,7 @@ func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 		{"restore_deploy", "restored_deployed"},
 		{"app_create", "app_created"},
 		{"app_recheck", "app_checked"},
+		{"recover_route", "route_recovered"},
 		{"app_start_recheck", "app_start_checked"},
 		{"volume_schedule", "volume_scheduled"},
 		{"volume_schedule_run", "volume_schedule_backed_up"},
@@ -353,7 +354,7 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 				w.WriteHeader(400)
 				return true
 			}
-			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "app_failure_recheck": "app_failure_checked", "redeploy": "redeployed", "app_recheck": "app_checked", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked", "volume_schedule": "volume_scheduled", "volume_schedule_run": "volume_schedule_backed_up", "volume_backup": "volume_backed_up", "volume_recheck": "volume_checked", "volume_remote_backup": "volume_remote_backed_up", "volume_remote_retry": "volume_remote_retried", "database_backup": "database_backed_up", "database_mutate": "database_source_mutated", "database_import": "database_imported", "database_check": "database_checked"}[phase]
+			expected := map[string]string{"install": "installed", "deploy": "deployed", "healthy": "healthy", "route": "routed", "complete": "done", "backup": "backed_up", "restore": "restored", "restore_deploy": "restored_deployed", "app_create": "app_created", "app_failure_recheck": "app_failure_checked", "redeploy": "redeployed", "app_recheck": "app_checked", "recover_route": "route_recovered", "stop": "stopped", "start": "started", "app_start_recheck": "app_start_checked", "volume_schedule": "volume_scheduled", "volume_schedule_run": "volume_schedule_backed_up", "volume_backup": "volume_backed_up", "volume_recheck": "volume_checked", "volume_remote_backup": "volume_remote_backed_up", "volume_remote_retry": "volume_remote_retried", "database_backup": "database_backed_up", "database_mutate": "database_source_mutated", "database_import": "database_imported", "database_check": "database_checked"}[phase]
 			if v.Action != expected {
 				w.WriteHeader(409)
 				return true

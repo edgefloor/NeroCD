@@ -525,6 +525,32 @@ try {
   if (secondOperation === firstOperation) throw Error("redeploy reused prior operation");
   safe.browser_redeployment = true;
   await report("redeployed", secondOperation);
+  if(gitCompose) {
+    await state("recover_route");
+    step="git_compose_verify_data_before_route_recovery";
+    await checkApplication("compose-before-route-recovery");
+    step="git_compose_read_successful_recovery_evidence";
+    const completed=await checkedResponse(await context.request.get(`/api/v1/hosting-operations/${secondOperation}`),200);
+    if(completed.id!==secondOperation||completed.state!=="succeeded"||completed.mutation_hold||!completed.result?.ready||completed.result?.uncertain||!completed.complete_receipt||!completed.snapshot?.storage_route_continuity?.hash)throw Error("route recovery changed successful deployment evidence");
+    const detail=application.getByRole("region",{name:"Deployment operation detail",exact:true});
+    await detail.getByRole("button",{name:"Refresh operation",exact:true}).click();
+    const continuity=detail.getByRole("region",{name:"Storage route continuity",exact:true});
+    await continuity.getByRole("button",{name:"Refresh continuity evidence",exact:true}).click();
+    const recovery=continuity.getByRole("region",{name:"Proxy continuity recovery",exact:true});
+    step="git_compose_review_proxy_recovery";
+    await recovery.getByRole("button",{name:"Review proxy continuity recovery",exact:true}).click();
+    await recovery.getByRole("checkbox",{name:"I reviewed this completed deployment and want to retry its proxy continuity queue.",exact:true}).check();
+    const recovering=response(page,`/api/v1/resources/${resourceID}/storage-route-continuity/${secondOperation}/recover`);
+    step="git_compose_submit_proxy_recovery";
+    await recovery.getByRole("button",{name:"Retry proxy continuity queue",exact:true}).click();
+    const recoveredResponse=await recovering;
+    const body=recoveredResponse.request().postDataJSON();
+    if(Object.keys(body).length!==3||body.expected_descriptor_hash!==completed.snapshot.storage_route_continuity.hash||body.expected_complete_receipt_id!==completed.complete_receipt.id||body.expected_complete_receipt_hash!==completed.complete_receipt.body_hash)throw Error("proxy recovery did not pin exact completed evidence");
+    const recovered=await checkedResponse(recoveredResponse,200);
+    if(recovered.resource_id!==resourceID||recovered.operation_id!==secondOperation||recovered.successor_proxy_operation_id!==`pop_storage_${secondOperation}`||!["proxy_pending","loaded"].includes(recovered.state))throw Error("proxy recovery successor identity changed");
+    safe.browser_git_compose_route_recovery=true;
+    await report("route_recovered",secondOperation);
+  }
   await state("app_recheck");
   async function checkApplication(suffix) {
     if (freshAppContext) await freshAppContext.close();

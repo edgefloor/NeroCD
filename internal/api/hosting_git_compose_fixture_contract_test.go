@@ -1,15 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
 )
+
+const gitComposeRejectProxyQueue = `CREATE FUNCTION reject_recovery_queue() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='hosting.proxy_generation_requested' THEN RAISE EXCEPTION 'fixture queue rejection'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_recovery_queue BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_recovery_queue()`
+const gitComposeAllowProxyQueue = `DROP TRIGGER IF EXISTS reject_recovery_queue ON audit_events; DROP FUNCTION IF EXISTS reject_recovery_queue()`
 
 const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
 
@@ -133,6 +138,10 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		name    string
 		in, out any
 	}{"from_build_private_start", start, new(domain.HostingBuildDeploymentInput)})
+	bodies = append(bodies, struct {
+		name    string
+		in, out any
+	}{"route_recovery", domain.HostingStorageRouteRecoveryInput{ExpectedDescriptorHash: "sha256:" + strings.Repeat("a", 64), ExpectedCompleteReceiptID: "receipt_fixture", ExpectedCompleteReceiptHash: "sha256:" + strings.Repeat("b", 64)}, new(domain.HostingStorageRouteRecoveryInput)})
 	for _, tc := range bodies {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := json.Marshal(tc.in)
@@ -172,6 +181,8 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"PUT", "/api/v1/resources/resource_fixture/runtime-configuration", "PUT /api/v1/resources/{id}/runtime-configuration"},
 		{"POST", "/api/v1/resources/resource_fixture/deployments/from-build", "POST /api/v1/resources/{id}/deployments/from-build"},
 		{"GET", "/api/v1/resources/resource_fixture/storage-deployment-options", "GET /api/v1/resources/{id}/storage-deployment-options"},
+		{"GET", "/api/v1/resources/resource_fixture/storage-route-continuity/hop_fixture", "GET /api/v1/resources/{id}/storage-route-continuity/{operation_id}"},
+		{"POST", "/api/v1/resources/resource_fixture/storage-route-continuity/hop_fixture/recover", "POST /api/v1/resources/{id}/storage-route-continuity/{operation_id}/recover"},
 		{"GET", "/api/v1/resources/resource_fixture/stack-lifecycle", "GET /api/v1/resources/{id}/stack-lifecycle"},
 		{"POST", "/api/v1/resources/resource_fixture/stack-stop", "POST /api/v1/resources/{id}/stack-stop"},
 	} {
@@ -180,8 +191,42 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			t.Fatalf("fixture route missing: %s %s resolved %s", route.method, route.path, pattern)
 		}
 	}
-	deployment := bodies[len(bodies)-1].in.(domain.HostingBuildDeploymentInput)
+	deployment := start
 	if domain.ValidateHostingBuildDeployment(deployment) != nil {
 		t.Fatal("fixture deployment failed semantic validation")
+	}
+}
+
+func TestGitComposeProxyQueueFailureInjection(t *testing.T) {
+	_, _, database := newHostingBuildAPIFixture(t)
+	if _, err := database.Exec(t.Context(), gitComposeRejectProxyQueue); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := database.Exec(ctx, gitComposeAllowProxyQueue); err != nil {
+			t.Error(err)
+		}
+	})
+	insert := func(id, action string) error {
+		_, err := database.Exec(t.Context(), `INSERT INTO audit_events(id,actor_id,action,target_id,metadata,created_at) VALUES($1,'usr_bootstrap',$2,'fixture','{}',clock_timestamp())`, id, action)
+		return err
+	}
+	if err := insert("audit_fixture_normal", "fixture.normal"); err != nil {
+		t.Fatal("queue injection rejected unrelated audit", err)
+	}
+	if err := insert("audit_fixture_rejected", "hosting.proxy_generation_requested"); err == nil || !strings.Contains(err.Error(), "fixture queue rejection") {
+		t.Fatal("queue injection did not reject exact production action")
+	}
+	var count int
+	if err := database.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE id='audit_fixture_rejected'`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("rejected queue audit persisted", err)
+	}
+	if _, err := database.Exec(t.Context(), gitComposeAllowProxyQueue); err != nil {
+		t.Fatal(err)
+	}
+	if err := insert("audit_fixture_accepted", "hosting.proxy_generation_requested"); err != nil {
+		t.Fatal("queue injection cleanup left queue blocked", err)
 	}
 }
