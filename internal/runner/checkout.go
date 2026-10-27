@@ -42,7 +42,11 @@ func ExecuteCheckout(ctx context.Context, plan domain.CheckoutPlan, workRoot str
 		return "", err
 	}
 
-	configDir, err := os.MkdirTemp(workRoot, "nerocd-checkout-config-")
+	configRoot, err := filepath.Abs(workRoot)
+	if err != nil {
+		return "", err
+	}
+	configDir, err := os.MkdirTemp(configRoot, "nerocd-checkout-config-")
 	if err != nil {
 		return "", err
 	}
@@ -51,7 +55,7 @@ func ExecuteCheckout(ctx context.Context, plan domain.CheckoutPlan, workRoot str
 	if ref := strings.TrimSpace(repository.Ref); ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, repoURL, destPath)
+	args = append(args, repoURL, filepath.Join(configRoot, dest))
 	emit(ProcessEvent{Stream: domain.LogSystem, Message: "Runner checking out repository"})
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = configDir

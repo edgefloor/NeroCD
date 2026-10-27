@@ -42,6 +42,8 @@ func TestExecuteCheckoutIsolatesEnvironmentAndDiscardsDiagnostics(t *testing.T) 
 [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 24
 [ "$HOME" -ef "$PWD" ] || exit 25
 [ "$XDG_CONFIG_HOME" = "$HOME" ] || exit 26
+for clone_dest do :; done
+case "$clone_dest" in /*) ;; *) exit 27;; esac
 printf 'credential-canary from Git stdout\n'
 printf 'credential-canary from Git stderr\n' >&2
 case "$*" in *failure*) exit 1;; esac
@@ -53,11 +55,22 @@ case "$*" in *failure*) exit 1;; esac
 	for _, name := range []string{"NEROCD_RUNNER_TOKEN", "SSH_AUTH_SOCK", "HTTP_PROXY", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} {
 		t.Setenv(name, "ambient-credential-canary")
 	}
-	for _, name := range []string{"success", "failure"} {
+	for _, name := range []string{"success", "failure", "relative-root"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
+			inputRoot := root
+			if name == "relative-root" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				inputRoot, err = filepath.Rel(cwd, root)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			var events []string
-			_, err := ExecuteCheckout(t.Context(), domain.CheckoutPlan{Repository: domain.RepositoryRef{URL: "https://github.com/example/" + name + ".git"}}, root, func(e ProcessEvent) { events = append(events, e.Message) })
+			_, err := ExecuteCheckout(t.Context(), domain.CheckoutPlan{Repository: domain.RepositoryRef{URL: "https://github.com/example/" + name + ".git"}}, inputRoot, func(e ProcessEvent) { events = append(events, e.Message) })
 			if (err != nil) != (name == "failure") {
 				t.Fatalf("checkout error = %v", err)
 			}
