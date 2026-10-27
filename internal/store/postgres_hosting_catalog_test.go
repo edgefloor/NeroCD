@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestHostingCatalogPostgresAtomicReplaySecretsAndDeployment(t *testing.T) {
-	pg, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	pg, db, s, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("c", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Bookmarks", TemplateID: "linkding", ImmutableVersion: domain.HostingCatalogLinkdingVersion}
 	var wg sync.WaitGroup
 	views := make([]domain.HostingCatalogInstallation, 4)
@@ -164,7 +165,7 @@ func TestHostingCatalogPostgresAtomicReplaySecretsAndDeployment(t *testing.T) {
 }
 
 func TestHostingCatalogPostgresDenialAndRollback(t *testing.T) {
-	_, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	_, db, s, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("d", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Bookmarks", TemplateID: "linkding", ImmutableVersion: domain.HostingCatalogLinkdingVersion}
 	if _, err := db.Exec(ctx, `INSERT INTO service_accounts(id,project_id,owner_user_id,name,role,status) VALUES('sa_catalog_viewer',$1,'usr_bootstrap','viewer','viewer','active')`, in.ProjectID); err != nil {
 		t.Fatal(err)
@@ -195,7 +196,7 @@ func TestHostingCatalogPostgresDenialAndRollback(t *testing.T) {
 }
 
 func TestHostingCatalogPostgresCommitFailureRollsBackEveryComponent(t *testing.T) {
-	_, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	_, db, s, ctx, base := catalogDatabaseFixture(t)
 	counts := func() string {
 		t.Helper()
 		var v string
@@ -242,7 +243,7 @@ func TestHostingCatalogPostgresReadUTCBindingIdentity(t *testing.T) {
 		t.Log(string(output))
 		return
 	}
-	pg, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	pg, db, s, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("f", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "UTC retained catalog", TemplateID: "linkding", ImmutableVersion: domain.HostingCatalogLinkdingVersion}
 	installed, err := s.InstallHostingCatalog(ctx, in)
 	if err != nil {
@@ -304,7 +305,7 @@ func TestHostingCatalogPostgresReadUTCBindingIdentity(t *testing.T) {
 }
 
 func TestHostingCatalogPostgresUptimeKumaEmptyCredentialsAndReplay(t *testing.T) {
-	pg, database, _, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	pg, database, _, ctx, base := catalogDatabaseFixture(t)
 	// An application that generates no secrets must not need an encryption keyring.
 	s, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Projects: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
 	if err != nil {
@@ -352,7 +353,7 @@ func TestHostingCatalogPostgresUptimeKumaEmptyCredentialsAndReplay(t *testing.T)
 }
 
 func TestHostingCatalogPostgresActualBudgetLiteralAndReplay(t *testing.T) {
-	pg, database, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	pg, database, s, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("7", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Budget", TemplateID: "actualbudget", ImmutableVersion: domain.HostingCatalogActualBudgetVersion}
 	v, err := s.InstallHostingCatalog(ctx, in)
 	if err != nil || v.Credentials == nil || len(v.Credentials) != 0 || v.RuntimeConfiguration.Generation != 1 {
@@ -391,7 +392,7 @@ func TestHostingCatalogPostgresActualBudgetLiteralAndReplay(t *testing.T) {
 }
 
 func TestHostingCatalogPostgresVikunjaComposeInstallAndAdmission(t *testing.T) {
-	pg, database, service, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	pg, database, service, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("e", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Tasks", TemplateID: "vikunja-with-postgresql", ImmutableVersion: domain.HostingCatalogVikunjaVersion, PublicURL: "https://tasks.example.test"}
 	var views [3]domain.HostingCatalogInstallation
 	var failures [3]error
@@ -453,6 +454,11 @@ func TestHostingCatalogPostgresVikunjaComposeInstallAndAdmission(t *testing.T) {
 	input.ContainerPort = 3456
 	input.Readiness = installed.Template.Definition.Readiness
 	input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
+	// Installation now requires a capable runner; simulate subsequent capability loss
+	// to preserve the deployment admission regression independently.
+	if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$1)`, domain.HostingStackCapability); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pg.RequestHostingDeployment(ctx, "hop_catalog_compose_old_runner", installed.Resource.ID, "usr_bootstrap", input, destinationEvent("catalog_compose_old_runner")); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("old runner accepted Compose", err)
 	}
@@ -489,7 +495,7 @@ func TestHostingCatalogPostgresVikunjaComposeInstallAndAdmission(t *testing.T) {
 }
 
 func TestHostingCatalogPostgresComposeRollbackAndOwnerAuthority(t *testing.T) {
-	_, database, service, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	_, database, service, ctx, base := catalogDatabaseFixture(t)
 	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("d", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Tasks rollback", TemplateID: "vikunja-with-postgresql", ImmutableVersion: domain.HostingCatalogVikunjaVersion, PublicURL: "https://tasks.example.test"}
 	foreign, err := service.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_security", Name: "Foreign Compose"})
 	if err != nil {
@@ -523,5 +529,132 @@ func TestHostingCatalogPostgresComposeRollbackAndOwnerAuthority(t *testing.T) {
 	var count int
 	if err = database.QueryRow(ctx, `SELECT (SELECT count(*) FROM hosting_compose_source_versions)+(SELECT count(*) FROM hosting_catalog_installations)+(SELECT count(*) FROM hosting_runtime_configuration_versions)`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("Compose normalization, runtime or receipt survived rollback", err)
+	}
+}
+
+func catalogDatabaseFixture(t *testing.T) (*store.PostgresStore, *pgxpool.Pool, *app.Service, context.Context, domain.HostingDatabaseCreateInput) {
+	t.Helper()
+	pg, db, s, ctx, in := hostingDatabaseFixture(t, "postgresql")
+	requirements := domain.CatalogRequirements(domain.HostingCatalogTemplates()[0])
+	capabilities := append(requirements.RequiredCapabilities, domain.HostingStackCapability)
+	if _, err := db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[]`, capabilities); err != nil {
+		t.Fatal(err)
+	}
+	return pg, db, s, ctx, in
+}
+
+func TestHostingCatalogDestinationOptionsPostgres(t *testing.T) {
+	_, db, s, ctx, base := hostingDatabaseFixture(t, "postgresql")
+	template := domain.HostingCatalogTemplates()[0]
+	beforeTemplates := domain.HostingDocumentHash(domain.HostingCatalogTemplates())
+	in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("9", 32), ProjectID: base.ProjectID, ProjectEnvironmentID: base.ProjectEnvironmentID, DestinationID: base.DestinationID, Name: "Options admission", TemplateID: template.ID, ImmutableVersion: template.Version}
+	if _, err := db.Exec(ctx, `INSERT INTO service_accounts(id,project_id,owner_user_id,name,role,status) VALUES('sa_options_viewer',$1,'usr_bootstrap','options viewer','viewer','active')`, in.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	viewer := auth.WithPrincipal(t.Context(), auth.Principal{ID: "sa_options_viewer", Provider: domain.PrincipalServiceAccount, Roles: []string{domain.RoleViewer}})
+	if v, err := s.HostingCatalogDestinationOptions(viewer, in.ProjectID, template.ID, template.Version, store.Page{}); err != nil || len(v.Items) != 1 {
+		t.Fatal("project viewer cannot inspect granted destination", err)
+	}
+	if _, err := s.HostingCatalogDestinationOptions(viewer, "proj_security", template.ID, template.Version, store.Page{}); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("foreign project information leaked", err)
+	}
+	if v, err := s.HostingCatalogDestinationOptions(ctx, "proj_security", template.ID, template.Version, store.Page{}); err != nil || v.Total != 0 {
+		t.Fatal("ungranted destination leaked", err)
+	}
+	if _, err := s.InstallHostingCatalog(viewer, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("viewer installed catalog", err)
+	}
+	before := hostingDatabaseCounts(t, db)
+	read := func() domain.HostingCatalogDestinationOptions {
+		t.Helper()
+		v, err := s.HostingCatalogDestinationOptions(ctx, in.ProjectID, template.ID, template.Version, store.Page{Enabled: true, LimitSpecified: true, Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Total != 1 || len(v.Items) != 1 {
+			t.Fatalf("unexpected authorized page %+v", v)
+		}
+		return v
+	}
+	page, err := s.HostingCatalogDestinationOptions(ctx, in.ProjectID, template.ID, template.Version, store.Page{Enabled: true, LimitSpecified: true, Limit: 1, Offset: 1})
+	if err != nil || page.Total != 1 || page.Offset != 1 || len(page.Items) != 0 {
+		t.Fatal("destination pagination changed grant scope", err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE runner_enrollments SET revoked_at=clock_timestamp() WHERE used_at IS NOT NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if read().Items[0].ReasonCode != "runner_ineligible" {
+		t.Fatal("revoked enrollment qualified")
+	}
+	if _, err = s.InstallHostingCatalog(ctx, in); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("revoked enrollment installed", err)
+	}
+	if hostingDatabaseCounts(t, db) != before {
+		t.Fatal("ineligible install retained side effects")
+	}
+	if _, err = db.Exec(ctx, `UPDATE runner_enrollments SET revoked_at=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	options := read()
+	if options.Items[0].Available || options.Items[0].ReasonCode != "missing_capabilities" || len(options.Items[0].MissingCapabilities) == 0 {
+		t.Fatal("underqualified runner accepted", options)
+	}
+	if _, err := s.InstallHostingCatalog(ctx, in); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("incompatible installation accepted", err)
+	}
+	if hostingDatabaseCounts(t, db) != before {
+		t.Fatal("rejected install retained side effects")
+	}
+	if _, err := db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[]`, options.Requirements.RequiredCapabilities); err != nil {
+		t.Fatal(err)
+	}
+	if !read().Items[0].Available {
+		t.Fatal("qualified runner unavailable")
+	}
+	if _, err := db.Exec(ctx, `UPDATE runners SET status='disabled'`); err != nil {
+		t.Fatal(err)
+	}
+	if read().Items[0].ReasonCode != "runner_unavailable" {
+		t.Fatal("inactive runner accepted")
+	}
+	if _, err := s.InstallHostingCatalog(ctx, in); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("stale qualification accepted", err)
+	}
+	if hostingDatabaseCounts(t, db) != before {
+		t.Fatal("stale install retained side effects")
+	}
+	if _, err := db.Exec(ctx, `UPDATE runners SET status='active'`); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installedHash := domain.HostingDocumentHash(installed)
+	if _, err = db.Exec(ctx, `UPDATE runners SET status='disabled'`); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := s.InstallHostingCatalog(ctx, in)
+	if err != nil || domain.HostingDocumentHash(replay) != installedHash {
+		t.Fatal("authorized saved replay changed", err)
+	}
+	if domain.HostingDocumentHash(domain.HostingCatalogTemplates()) != beforeTemplates {
+		t.Fatal("options changed pinned template")
+	}
+	if _, err = s.HostingCatalogDestinationOptions(ctx, in.ProjectID, "missing", template.Version, store.Page{}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("unknown template accepted", err)
+	}
+	if _, err = s.HostingCatalogDestinationOptions(ctx, in.ProjectID, template.ID, "old", store.Page{}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("unknown version accepted", err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp()`); err != nil {
+		t.Fatal(err)
+	}
+	options, err = s.HostingCatalogDestinationOptions(ctx, in.ProjectID, template.ID, template.Version, store.Page{})
+	if err != nil || options.Total != 0 || len(options.Items) != 0 {
+		t.Fatal("revoked destination leaked", err)
+	}
+	if _, err = s.InstallHostingCatalog(ctx, in); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatal("revoked replay admitted", err)
 	}
 }

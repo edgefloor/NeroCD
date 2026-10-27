@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"time"
 
 	"nerocd/internal/domain"
 	"nerocd/internal/secretcrypto"
@@ -86,4 +87,23 @@ func (s *Service) GetHostingCatalogInstallation(ctx context.Context, resource st
 		return zero, store.ErrNotFound
 	}
 	return repo.GetHostingCatalogInstallation(ctx, actor.ID, r.ID)
+}
+
+// HostingCatalogDestinationOptions qualifies a page without admitting an installation.
+func (s *Service) HostingCatalogDestinationOptions(ctx context.Context, project, id, version string, page store.Page) (domain.HostingCatalogDestinationOptions, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	actor, err := s.authorizeHostingProject(ctx, project, domain.RoleViewer)
+	if err != nil {
+		return domain.HostingCatalogDestinationOptions{}, err
+	}
+	template, ok := domain.LookupHostingCatalogTemplate(id, version)
+	if !ok {
+		return domain.HostingCatalogDestinationOptions{}, store.ErrNotFound
+	}
+	repo, ok := s.hosting.(store.HostingCatalogOptionsRepository)
+	if !ok {
+		return domain.HostingCatalogDestinationOptions{}, store.ErrConflict
+	}
+	return repo.HostingCatalogDestinationOptions(ctx, actor.ID, project, template, page)
 }

@@ -92,6 +92,18 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	if !available || in.Validate() != nil {
 		return zero, ErrConflict
 	}
+	// Receipt replay above preserves an already installed copy. New installs must
+	// qualify the same current runner evidence shown by destination options.
+	if err = q.LockCatalogRunner(ctx, in.DestinationID); err != nil {
+		return zero, err
+	}
+	options, err := q.CatalogDestinationOptions(ctx, sqlcgen.CatalogDestinationOptionsParams{ProjectID: in.ProjectID, DestinationID: in.DestinationID, PageLimit: 1})
+	if err != nil {
+		return zero, err
+	}
+	if len(options) != 1 || !catalogDestinationOption(options[0], domain.CatalogRequirements(template)).Available {
+		return zero, ErrConflict
+	}
 	resource := domain.HostingCatalogResourceID(in.ProjectID, in.RequestID)
 	binding := "binding_catalog_" + resource[len("res_catalog_"):]
 	now := time.Now().UTC()

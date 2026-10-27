@@ -70,7 +70,7 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_kuma_catalog", RunnerName: "Kuma catalog", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy}})
+			enrollment, err := server.app.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_kuma_catalog", RunnerName: "Kuma catalog", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingOwnedStorageCapability, domain.HostingOwnedStorageRuntimeCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingStackCapability}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,6 +124,38 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			var count int
 			if err = database.QueryRow(ctx, `SELECT count(*) FROM hosting_catalog_installations`).Scan(&count); err != nil || count != 0 {
 				t.Fatal("cross-pair persisted", err)
+			}
+			optionsPath := "/api/v1/hosting-catalog/" + tc.id + "/destination-options?project_id=" + in.ProjectID + "&immutable_version=" + tc.version
+			optionsCall := func(path, credential string, status int) []byte {
+				t.Helper()
+				request := httptest.NewRequest("GET", path, nil)
+				if credential != "" {
+					request.Header.Set("Authorization", "Bearer "+credential)
+				}
+				response := httptest.NewRecorder()
+				server.ServeHTTP(response, request)
+				if response.Code != status {
+					t.Fatalf("options HTTP status %d want %d body %s", response.Code, status, response.Body.String())
+				}
+				return response.Body.Bytes()
+			}
+			optionsCall(optionsPath, "", 401)
+			for _, suffix := range []string{"&limit=-1", "&limit=101", "&offset=-1", "&limit=1&limit=2", "&immutable_version=duplicate", "&unknown=x"} {
+				optionsCall(optionsPath+suffix, token, 400)
+			}
+			optionsCall(strings.Replace(optionsPath, tc.version, "missing", 1), token, 404)
+			optionsCall(strings.Replace(optionsPath, "/"+tc.id+"/", "/missing/", 1), token, 404)
+			optionsCall(strings.Replace(optionsPath, in.ProjectID, "missing", 1), token, 404)
+			var options domain.HostingCatalogDestinationOptions
+			if json.Unmarshal(optionsCall(optionsPath+"&limit=1", token, 200), &options) != nil || len(options.Items) != 1 || !options.Items[0].Available || options.Items[0].Destination.ID != in.DestinationID || options.Requirements.ArchitectureRestriction != "undeclared" {
+				t.Fatal("HTTP options contract disconnected")
+			}
+			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$1) WHERE id=$2`, domain.HostingReleasePortsCapability, detail.Server.RunnerID); err != nil {
+				t.Fatal(err)
+			}
+			call(in, 409)
+			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$1) WHERE id=$2`, domain.HostingReleasePortsCapability, detail.Server.RunnerID); err != nil {
+				t.Fatal(err)
 			}
 			raw := call(in, 201)
 			var installed domain.HostingCatalogInstallation

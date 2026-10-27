@@ -233,6 +233,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodGet, Path: "/api/v1/project-environments"},
 	{Method: http.MethodPost, Path: "/api/v1/project-environments"},
 	{Method: http.MethodGet, Path: "/api/v1/hosting-catalog"},
+	{Method: http.MethodGet, Path: "/api/v1/hosting-catalog/{id}/destination-options"},
 	{Method: http.MethodPost, Path: "/api/v1/hosting-catalog/installations"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/catalog-installation"},
 	{Method: http.MethodGet, Path: "/api/v1/resources"},
@@ -705,6 +706,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 
 	case "/api/v1/project-environments":
 		return s.projectEnvironmentsHandler
+	case "/api/v1/hosting-catalog/{id}/destination-options":
+		return s.hostingCatalogDestinationOptions
 	case "/api/v1/hosting-catalog":
 		return s.hostingCatalog
 	case "/api/v1/hosting-catalog/installations":

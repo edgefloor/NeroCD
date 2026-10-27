@@ -2878,11 +2878,33 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
+  "/api/v1/hosting-catalog/{id}/destination-options":
+    get:
+      operationId: getHostingCatalogDestinationOptions
+      summary: Qualify grant-scoped destinations for one exact pinned template
+      description: Project viewer authority. Current runtime capabilities are advisory until checked again by installation. Architecture and capacity remain unverified. No runner credentials or global server inventory are returned.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: project_id, in: query, required: true, schema: {type: string}}
+        - {name: immutable_version, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 0, maximum: 100}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200":
+          description: Authorized paged destination qualifications and declared requirements
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HostingCatalogDestinationOptions"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   "/api/v1/hosting-catalog/installations":
     post:
       operationId: installHostingCatalog
-      summary: Atomically install an immutable template into ordinary image hosting
-      description: Requires project owner and current destination grant. Saves generated encrypted credential versions and retained storage without starting a container. Exact retries preserve original template bytes and references. Arbitrary Compose import remains incomplete.
+      summary: Atomically install an immutable template into image or managed Compose hosting
+      description: Requires project owner and current destination grant. First-time installations recheck the same current runtime and runner capabilities shown by destination options before persisting resource, credential or storage records. Exact authorized retries preserve the original installation even if the runner becomes unavailable. Installation does not start containers. Arbitrary Compose import remains incomplete.
       requestBody:
         required: true
         content:
@@ -16919,6 +16941,40 @@ components:
         credential_names: {type: array, items: {type: string}}
         runtime_environment: {type: object, additionalProperties: {type: string}, description: "Curated nonsecret literal runtime settings from the pinned template. Not user-supplied overrides."}
         compose: {$ref: "#/components/schemas/ComposeResourceSource/properties/compose", description: "Pinned managed Compose source; absent for image catalog applications."}
+    HostingCatalogRequirements:
+      type: object
+      required: [source_kind, required_capabilities, architecture_restriction, architecture_verification, cpu, memory, disk, mount_paths, public_url_required, managed_credential_names]
+      properties:
+        source_kind: {type: string, enum: [image, compose]}
+        required_capabilities: {type: array, items: {type: string}}
+        architecture_restriction: {type: string, enum: [undeclared, amd64, arm64]}
+        architecture_verification: {type: string, enum: [unknown]}
+        cpu: {type: string, enum: [undeclared]}
+        memory: {type: string, enum: [undeclared]}
+        disk: {type: string, enum: [undeclared]}
+        mount_paths: {type: array, items: {type: string}}
+        public_url_required: {type: boolean}
+        managed_credential_names: {type: array, items: {type: string}}
+    HostingCatalogDestinationOption:
+      type: object
+      required: [destination, server_name, available, reason_code, missing_capabilities]
+      properties:
+        destination: {$ref: "#/components/schemas/HostingDestination"}
+        server_name: {type: string}
+        available: {type: boolean}
+        reason_code: {type: string, enum: ["", unsupported_runtime, runner_unavailable, runner_ineligible, missing_capabilities]}
+        missing_capabilities: {type: array, items: {type: string}}
+    HostingCatalogDestinationOptions:
+      type: object
+      required: [template_id, immutable_version, requirements, items, total, limit, offset]
+      properties:
+        template_id: {type: string}
+        immutable_version: {type: string}
+        requirements: {$ref: "#/components/schemas/HostingCatalogRequirements"}
+        items: {type: array, items: {$ref: "#/components/schemas/HostingCatalogDestinationOption"}}
+        total: {type: integer}
+        limit: {type: integer}
+        offset: {type: integer}
     HostingCatalogTemplate:
       type: object
       additionalProperties: false
