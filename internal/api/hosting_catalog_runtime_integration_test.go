@@ -258,6 +258,8 @@ func (b *catalogRuntimeBrowser) set(phase, id string) {
 
 func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 	for _, tc := range []struct{ phase, action string }{
+		{"deploy", "deployed"},
+		{"restore_deploy", "restored_deployed"},
 		{"app_create", "app_created"},
 		{"app_recheck", "app_checked"},
 		{"app_start_recheck", "app_start_checked"},

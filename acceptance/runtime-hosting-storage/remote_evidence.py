@@ -25,6 +25,10 @@ def publication(value):
     host = value.get("HostConfig", {})
     requested = {"18190/tcp": [{"HostIp": "127.0.0.1", "HostPort": ""}]}
     application_owner = value.get("Config", {}).get("Labels", {}).get("io.nerocd.storage-runtime.owner")
+    private_owner = "nerocd-private-registry-runtime-20261027"
+    if application_owner == private_owner or value.get("Name") == "/" + private_owner + "-dind":
+        if application_owner != private_owner or value.get("Name") != "/" + private_owner + "-dind":
+            raise ValueError("private registry owner/name mismatch")
     application = application_owner in {"nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"} and value.get("Name") == "/" + application_owner + "-dind"
     if application:
         requested["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]

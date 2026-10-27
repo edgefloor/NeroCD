@@ -20,6 +20,18 @@ class ProfileTest(unittest.TestCase):
     def test_exact_loopback_assignment(self):
         self.assertEqual(evidence.publication(self.fixture()), "https://127.0.0.1:49155")
 
+    def test_private_registry_api_only_publication(self):
+        value = self.fixture()
+        owner = "nerocd-private-registry-runtime-20261027"
+        value.update(Name="/" + owner + "-dind", Config={"Labels": {"io.nerocd.storage-runtime.owner": owner}})
+        self.assertEqual(evidence.publication(value), "https://127.0.0.1:49155")
+        for mutation in ["owner", "name", "extra"]:
+            wrong = copy.deepcopy(value)
+            if mutation == "owner": wrong["Config"]["Labels"]["io.nerocd.storage-runtime.owner"] = "foreign"
+            elif mutation == "name": wrong["Name"] = "/foreign-dind"
+            else: wrong["HostConfig"]["PortBindings"]["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError): evidence.publication(wrong)
+
     def test_compose_publication_requires_exact_owner_and_fixed_app_port(self):
         value = self.fixture()
         value["Name"] = "/nerocd-compose-vikunja-runtime-20261027-dind"

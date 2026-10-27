@@ -8,6 +8,7 @@ const { chromium, expect, request } = require("@playwright/test");
 const origin = process.env.NEROCD_CATALOG_BROWSER_ORIGIN;
 const key = process.env.NEROCD_CATALOG_BROWSER_KEY;
 const evidence = process.env.NEROCD_CATALOG_HOST_EVIDENCE;
+const privateRegistry = process.env.NEROCD_CATALOG_APPLICATION === "private-registry";
 const kuma = process.env.NEROCD_CATALOG_APPLICATION === "uptime-kuma";
 const actual = process.env.NEROCD_CATALOG_APPLICATION === "actualbudget";
 const appID = actual ? "actualbudget" : kuma ? "uptime-kuma" : "linkding";
@@ -148,6 +149,55 @@ async function kumaMonitor(p, name) {
   await expect(p.getByRole("cell", { name: "Up", exact: true }).first()).toBeVisible({ timeout: 30000 });
   return id;
 }
+async function privateRegistryDeploy(initial) {
+  await report("installed", initial.id);
+  let last;
+  for (const [phaseName, action, name, port, stored] of [
+    ["deploy", "deployed", "Private registry stateless", "20101", false],
+    ["restore_deploy", "restored_deployed", "Private registry uploads", "20102", true],
+  ]) {
+    const stateValue = await state(phaseName);
+    const h = await hosting(page);
+    const application = h.getByRole("article", { name, exact: true });
+    const form = stored ? application.getByRole("region", { name: "Persistent upload deployment review", exact: true }) : application.getByRole("form", { name: `Deploy image for ${name}`, exact: true });
+    const credentials = form.getByRole("region", { name: "Image registry credentials", exact: true });
+    await credentials.getByLabel("Image access", { exact: true }).selectOption("private");
+    const option = credentials.getByLabel("Registry credential secret", { exact: true }).getByRole("option", { name: /^private registry correct · / });
+    await expect(option).toHaveCount(1);
+    const secretID = await option.getAttribute("value");
+    await credentials.getByLabel("Registry credential secret", { exact: true }).selectOption(secretID);
+    await credentials.getByLabel("Registry credential version", { exact: true }).selectOption("1");
+    for (const width of [1280, 320, 390, 430]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(credentials.getByLabel("Registry credential version", { exact: true })).toBeVisible();
+      if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw Error("registry control responsive overflow");
+    }
+    safe.responsive_widths = [1280, 320, 390, 430];
+    await page.screenshot({ path: resolve(evidence, `registry-${stored ? "storage" : "stateless"}-430.png`), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await form.getByLabel("Container port", { exact: true }).fill("8080");
+    if (!stored) await form.getByLabel("Host port allocation", { exact: true }).selectOption("fixed");
+    await form.getByLabel("Runner-local host port", { exact: true }).fill(port);
+    await form.getByLabel("Readiness path", { exact: true }).fill("/");
+    if (stored) await form.getByRole("button", { name: "Review current storage deployment", exact: true }).click();
+    await form.getByRole("checkbox").check();
+    const waiting = response(page, `/api/v1/resources/${stateValue.id}/deployments`);
+    await form.getByRole("button", { name: stored ? "Deploy reviewed image with uploads" : "Request image deployment", exact: true }).click();
+    const result = await waiting;
+    if (result.status() !== 202) throw Error("selected registry deployment rejected");
+    const submitted = result.request().postDataJSON();
+    if (submitted.registry_credential?.secret_id !== secretID || submitted.registry_credential?.version !== 1 || submitted.expected_runtime_configuration_generation !== 1) throw Error("registry request lost selected immutable inputs");
+    const operation = await result.json();
+    if (operation.snapshot?.registry_credential?.secret_id !== secretID || operation.snapshot?.registry_credential?.version !== 1) throw Error("registry snapshot lost selected reference");
+    safe.registry_credential_selected = true;
+    safe.registry_snapshot_pinned = true;
+    safe.browser_deployment = true;
+    last = operation.id;
+    await report(action, operation.id);
+  }
+  await state("complete");
+  await report("done", last);
+}
 try {
   api = await request.newContext({
     baseURL: origin,
@@ -185,6 +235,9 @@ try {
   }
   safe.served_assets_match_manifest = true;
   await signIn(page, "admin@example.local", "admin");
+  if (privateRegistry) {
+    await privateRegistryDeploy(initial);
+  } else {
   let h = await hosting(page);
   const catalog = h.getByRole("region", {
     name: "Hosting catalog",
@@ -552,6 +605,7 @@ try {
   }
   await state("complete");
   await report("done", operation.id);
+  }
   safe.status = "passed";
 } catch (error) {
   safe.failure = stopped ? "cancelled" : "browser_workflow_failed";

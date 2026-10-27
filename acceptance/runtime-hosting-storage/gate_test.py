@@ -1146,7 +1146,27 @@ class CatalogModeContractTests(unittest.TestCase):
                 browser.write_text("invalid JSON" if kind == "malformed" else json.dumps(marker))
                 runtime = root / "runtime.log"
                 runtime.write_text("PASS" if kind == "missing_runtime_pass" else "--- PASS: TestHostingCatalogLinkdingCompiledRunnerHTTPS (1s)\n" + ("SKIP" if kind == "skipped" else ""))
-                result = subprocess.run([sys.executable, "-c", validator, str(runtime), str(browser)], capture_output=True, text=True, timeout=5)
+                result = subprocess.run([sys.executable, "-c", validator, str(runtime), str(browser), "linkding"], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
+
+
+class PrivateRegistryModeContractTests(unittest.TestCase):
+    def test_private_registry_requires_complete_connected_runtime_receipt(self):
+        source = Path(__file__).with_name("gate.sh").read_text()
+        validator = source.split("<<'CATALOG_BROWSER_PASS'\n", 1)[1].split("\nCATALOG_BROWSER_PASS", 1)[0]
+        required = ["served_assets_match_manifest", "browser_deployment", "registry_credential_selected", "registry_snapshot_pinned"]
+        for kind in ["valid", *required, "false", "numeric", "widths", "intercepted", "skip", "runtime"]:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                marker = {"status": "passed", "intercepted_requests": False, "responsive_widths": [1280,320,390,430], **dict.fromkeys(required, True)}
+                if kind in required: del marker[kind]
+                if kind == "false": marker[required[2]] = False
+                if kind == "numeric": marker[required[2]] = 1
+                if kind == "widths": marker["responsive_widths"] = [1280]
+                if kind == "intercepted": marker["intercepted_requests"] = True
+                browser = root / "browser.json"; browser.write_text(json.dumps(marker))
+                runtime = root / "runtime.log"; runtime.write_text("PASS" if kind == "runtime" else "--- PASS: TestHostingPrivateRegistryCompiledRunnerHTTPS (1s)\n" + ("SKIP" if kind == "skip" else ""))
+                result = subprocess.run([sys.executable,"-c",validator,str(runtime),str(browser),"private-registry"],capture_output=True,text=True,timeout=5)
                 self.assertEqual(result.returncode == 0, kind == "valid", result.stdout + result.stderr)
 
 
