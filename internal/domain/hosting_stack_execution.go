@@ -101,8 +101,21 @@ func ValidateHostingStackImages(definition HostingStackDefinition, daemon string
 		return errors.New("stack image set is incomplete")
 	}
 	for i, image := range images {
-		if image.Component != definition.Services[i].Name || i > 0 && images[i-1].Component >= image.Component || image.Release.Stack != (HostingStackReleaseRef{}) || image.Release.LocalBuild != (HostingBuildArtifact{}) || image.Release.DaemonID != daemon || ValidateHostingRelease(image.Release) != nil {
+		if image.Component != definition.Services[i].Name || i > 0 && images[i-1].Component >= image.Component || image.Release.Stack != (HostingStackReleaseRef{}) || image.Release.DaemonID != daemon || ValidateHostingRelease(image.Release) != nil {
 			return errors.New("stack component release changed")
+		}
+		if image.Release.LocalBuild != (HostingBuildArtifact{}) {
+			owner, err := HostingStackBuildOwner(definition, image.Component)
+			if definition.Version != HostingGitComposeVersion || err != nil || owner == "" || validateLocalBuildRelease(image.Release) != nil {
+				return errors.New("unbound stack local artifact")
+			}
+			continue
+		}
+		if definition.Version == HostingGitComposeVersion {
+			owner, err := HostingStackBuildOwner(definition, image.Component)
+			if err != nil || owner != "" {
+				return errors.New("local stack artifact required")
+			}
 		}
 		source, err := reference.ParseNormalizedNamed(definition.Services[i].Image)
 		if err != nil {
@@ -128,8 +141,11 @@ func CompileHostingStackPlan(snapshot HostingSnapshot, release HostingRelease, p
 	if snapshot.PolicyVersion != HostingStackPolicyVersion || snapshot.Stack.Generation != snapshot.ResourceGeneration || snapshot.Stack.Generation < 1 || snapshot.Stack.Hash != HostingDocumentHash(stack.Definition) || snapshot.ImageReference != "" || snapshot.LocalBuild != (HostingLocalBuildSource{}) || snapshot.Database != (HostingDatabaseExecutionRef{}) || snapshot.Storage != (HostingStorageRef{}) || snapshot.ApplicationDatabase != (HostingApplicationDatabaseRef{}) || snapshot.ContainerPort != stack.Definition.ContainerPort || snapshot.HostPort < 1024 || snapshot.HostPort > 65535 || ValidateHostingRuntimeConfigurationRef(snapshot) != nil || ValidateHostingStorageRouteContinuitySnapshot(snapshot) != nil {
 		return zero, errors.New("invalid stack snapshot")
 	}
-	if stack.Definition.Version != HostingStackVersion || !imageSHA256.MatchString(stack.Definition.OriginalHash) || release.Stack.Hash != HostingDocumentHash(stack.Images) || validateStackRelease(release) != nil || ValidateHostingStackImages(stack.Definition, release.DaemonID, stack.Images) != nil {
+	if (stack.Definition.Version != HostingStackVersion && stack.Definition.Version != HostingGitComposeVersion) || !imageSHA256.MatchString(stack.Definition.OriginalHash) || release.Stack.Hash != HostingDocumentHash(stack.Images) || validateStackRelease(release) != nil || ValidateHostingStackImages(stack.Definition, release.DaemonID, stack.Images) != nil {
 		return zero, errors.New("invalid stack image set")
+	}
+	if (stack.Definition.Version == HostingGitComposeVersion) != (snapshot.GitCompose != (HostingGitComposeRef{})) {
+		return zero, errors.New("Git stack result reference required")
 	}
 	if stack.NetworkName != HostingStackObjectID(snapshot.BindingID, "network", "private") || len(stack.Volumes) != len(stack.Definition.Volumes) || len(stack.Volumes) > 32 {
 		return zero, errors.New("stack ownership changed")

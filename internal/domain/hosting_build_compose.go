@@ -173,3 +173,10 @@ func ValidateHostingBuildComposeResult(result HostingBuildComposeResult, build H
 	}
 	return nil
 }
+
+// HostingGitComposeRef selects one successful prepared result without converting the Git resource.
+type HostingGitComposeRef struct {
+	BuildID          string `json:"build_id"`
+	SourceGeneration int64  `json:"source_generation"`
+	ResultHash       string `json:"result_hash"`
+}

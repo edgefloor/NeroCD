@@ -107,6 +107,7 @@ type HostingDeploymentInput struct {
 // HostingSnapshot is captured under the resource and binding transaction locks.
 // It is desired input, not evidence that an external workload exists.
 type HostingSnapshot struct {
+	GitCompose              HostingGitComposeRef             `json:"git_compose,omitzero"`
 	RegistryCredential      HostingRegistryCredentialRef     `json:"registry_credential,omitzero"`
 	StackStoppedOperationID string                           `json:"stack_stopped_operation_id,omitempty"`
 	Stack                   HostingStackRef                  `json:"stack,omitzero"`
