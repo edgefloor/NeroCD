@@ -83,3 +83,15 @@ test("closed input refuses remote targets and missing consent", async () => {
   ).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
 });
+test("immediate Compose backup freezes an optional valid remote target revision", async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify(backup)));
+  vi.stubGlobal("fetch", fetch);
+  await requestComposeBackup(scope, {
+    ...body,
+    remote_target: { target_id: "target", revision: 3 },
+  });
+  expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual({
+    ...body,
+    remote_target: { target_id: "target", revision: 3 },
+  });
+});

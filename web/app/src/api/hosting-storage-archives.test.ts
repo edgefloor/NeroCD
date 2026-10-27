@@ -625,6 +625,13 @@ test("Compose archive uses real stack proof without fabricated image storage", (
   const healthy = { snapshot, operation_id: "deploy", plan_hash: hash, stack: {} };
   const compose = { ...value, storage_archive: { ...value.storage_archive, plan: { ...value.storage_archive.plan, source_storage: {}, source_healthy: {}, source_materialization: {}, writers: [], compiler_version: "managed-compose.local-volume-archive.v1", policy_version: "managed-compose.local-volume-archive.v1", compose_source: { healthy, plan, volume, retained: [] } } } };
   expect(archiveOperation(op(compose), scope, "op", "backup").backup).toBe("backup");
+  const remote = { ...compose, storage_archive: { ...compose.storage_archive, plan: { ...compose.storage_archive.plan, compiler_version: "managed-compose.remote-volume-archive.v1", policy_version: "managed-compose.remote-volume-archive.v1", remote_target: { target_id: "target", revision: 3 } } } };
+  expect(archiveOperation(op(remote), scope, "op", "backup").remoteTarget).toEqual({ target_id: "target", revision: 3 });
+  const { remote_target: _, ...withoutRemoteTarget } = remote.storage_archive.plan;
+  const missingRemoteTarget = { ...remote, storage_archive: { ...remote.storage_archive, plan: withoutRemoteTarget } };
+  expect(() => archiveOperation(op(missingRemoteTarget), scope, "op", "backup")).toThrow();
+  const recovery = { ...missingRemoteTarget, task_mode: "recover", storage_archive: { ...missingRemoteTarget.storage_archive, mode: "recover", recovery_of_operation_id: "old-operation", plan: { ...withoutRemoteTarget, mode: "recover", recovery_of_operation_id: "old-operation", recovery_evidence: { original_plan_hash: hash } } } };
+  expect(archiveOperation(op(recovery), scope, "op", "backup").mode).toBe("recover");
   const mixed = structuredClone(compose); mixed.storage_archive.plan.source_storage = storage;
   expect(() => archiveOperation(op(mixed), scope, "op", "backup")).toThrow();
   const wrong = { ...value, storage_archive: { ...value.storage_archive, plan: { ...value.storage_archive.plan, compiler_version: "managed-compose.local-volume-archive.v1" } } };

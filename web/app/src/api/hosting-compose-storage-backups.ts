@@ -1,3 +1,7 @@
+import {
+  parseRemoteBackupTarget,
+  type RemoteBackupTarget,
+} from "./hosting-database-backup-targets";
 import { request } from "./client";
 import { boundedStorageRequest } from "./hosting-storage-deployment";
 import {
@@ -25,6 +29,7 @@ export type ComposeBackupInput = {
   volume: string;
   expected_deployed_operation_id: string;
   acknowledge_interruption: true;
+  remote_target?: RemoteBackupTarget;
 };
 const identifier = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
@@ -106,13 +111,17 @@ export async function requestComposeBackup(
   signal?: AbortSignal,
 ) {
   if (
-    !exact(body, [
-      "request_id",
-      "expected_resource_generation",
-      "volume",
-      "expected_deployed_operation_id",
-      "acknowledge_interruption",
-    ]) ||
+    !exact(
+      body,
+      [
+        "request_id",
+        "expected_resource_generation",
+        "volume",
+        "expected_deployed_operation_id",
+        "acknowledge_interruption",
+      ],
+      ["remote_target"],
+    ) ||
     !/^[a-f0-9]{32}$/.test(body.request_id) ||
     !Number.isSafeInteger(body.expected_resource_generation) ||
     body.expected_resource_generation < 1 ||
@@ -121,6 +130,8 @@ export async function requestComposeBackup(
     body.acknowledge_interruption !== true
   )
     throw new Error("Invalid Compose backup request");
+  if (body.remote_target !== undefined)
+    parseRemoteBackupTarget(body.remote_target);
   const raw = await boundedStorageRequest(
     (signal) =>
       request<

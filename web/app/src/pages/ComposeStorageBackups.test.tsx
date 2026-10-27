@@ -58,15 +58,17 @@ function setup(
       (await handler?.(u, o)) ??
       new Response(
         JSON.stringify(
-          u.includes("storage-backup-schedules")
+          u.includes("/transfers") || u.includes("database-backup-targets")
             ? []
-            : u.endsWith("storage-backup-volumes")
-              ? evidence
-              : o.method === "POST"
-                ? backup
-                : u.includes("?limit=")
-                  ? { items: [], limit: 20, offset: 0, count: 0, total: 0 }
-                  : backup,
+            : u.includes("storage-backup-schedules")
+              ? []
+              : u.endsWith("storage-backup-volumes")
+                ? evidence
+                : o.method === "POST"
+                  ? backup
+                  : u.includes("?limit=")
+                    ? { items: [], limit: 20, offset: 0, count: 0, total: 0 }
+                    : backup,
         ),
       ),
   );
@@ -88,9 +90,12 @@ function setup(
 }
 async function review() {
   await screen.findByRole("option", { name: "uploads" });
-  fireEvent.change(screen.getByRole("combobox"), {
-    target: { value: "uploads" },
-  });
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Named volume to back up" }),
+    {
+      target: { value: "uploads" },
+    },
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Review Compose volume backup" }),
   );
@@ -164,9 +169,12 @@ test("fresh generation mismatch blocks submission", async () => {
       : undefined,
   );
   await screen.findByRole("option", { name: "uploads" });
-  fireEvent.change(screen.getByRole("combobox"), {
-    target: { value: "uploads" },
-  });
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Named volume to back up" }),
+    {
+      target: { value: "uploads" },
+    },
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Review Compose volume backup" }),
   );
@@ -375,4 +383,205 @@ test("held Compose archive requires consent and retries the exact resume recover
     expected_plan_hash: hash,
   });
   expect(screen.getByText("Writer resumption: resumed")).toBeTruthy();
+});
+
+const remoteTarget = {
+  id: "target",
+  project_id: "p",
+  version: "postgresql.backup-target.v1",
+  revision: 3,
+  name: "S3 target",
+  endpoint: "https://s3.example.test",
+  bucket: "backups",
+  region: "us-east-1",
+  enabled: true,
+  created_at: "2026-10-27T00:00:00Z",
+  updated_at: "2026-10-27T00:00:00Z",
+};
+const remoteValidation = {
+  id: "validation",
+  project_id: "p",
+  version: "owned-upload.s3-transfer.v1",
+  target_id: "target",
+  target_revision: 3,
+  destination_id: "d",
+  mode: "validate",
+  state: "succeeded",
+  failure_code: "",
+  created_at: "2026-10-27T00:00:00Z",
+  updated_at: "2026-10-27T00:00:00Z",
+};
+test("immediate remote selection is frozen into review and exact retry while schedule stays local", async () => {
+  let writes = 0;
+  const { fetch } = setup((url, options) => {
+    if (url.endsWith("/database-backup-targets"))
+      return new Response(JSON.stringify([remoteTarget]));
+    if (url.endsWith("/storage-validations"))
+      return new Response(JSON.stringify([remoteValidation]));
+    if (
+      options.method === "POST" &&
+      url.endsWith("/storage-backups") &&
+      ++writes === 1
+    )
+      return Promise.reject(Error("lost response"));
+  });
+  await screen.findByRole("option", { name: /S3 target/ });
+  fireEvent.change(
+    screen.getByRole("combobox", { name: "Remote Compose backup target" }),
+    { target: { value: "target:3" } },
+  );
+  await review();
+  expect(
+    screen.getByText(
+      /Remote target for this immediate backup: target revision 3/,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("combobox", { name: "Remote Compose backup target" }),
+  ).toHaveProperty("disabled", true);
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /I acknowledge interruption of this volume.s writers while/,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Confirm Compose volume backup" }),
+  );
+  await screen.findByRole("button", {
+    name: "Retry identical Compose backup request",
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Retry identical Compose backup request",
+      }).disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Retry identical Compose backup request",
+    }),
+  );
+  await screen.findByText(/Volume backup backup/);
+  const admissions = fetch.mock.calls.filter(
+    ([u, o]) => u.endsWith("/storage-backups") && o.method === "POST",
+  );
+  expect(admissions).toHaveLength(2);
+  expect(admissions[0]![1].body).toBe(admissions[1]![1].body);
+  expect(JSON.parse(String(admissions[0]![1].body)).remote_target).toEqual({
+    target_id: "target",
+    revision: 3,
+  });
+  expect(
+    screen.getByRole("region", { name: "Recurring Compose volume backups" })
+      .textContent,
+  ).toContain("Local archive only");
+});
+
+const transferBlob = {
+  backup_id: "backup",
+  destination_id: "d",
+  daemon_id: "daemon",
+  sha256: `sha256:${"a".repeat(64)}`,
+  size_bytes: 10,
+  format: "nerocd-storage-v1",
+};
+const failedUpload = {
+  ...remoteValidation,
+  id: "upload",
+  mode: "upload",
+  backup_id: "backup",
+  blob: transferBlob,
+  state: "failed",
+  failure_code: "access_denied",
+};
+test("remote upload retry preserves archive and request identity after lost response and successful history refresh", async () => {
+  let retries = 0;
+  const { fetch } = setup((url, options) => {
+    if (url.endsWith("/transfers/retry") && options.method === "POST") {
+      if (++retries === 1) return Promise.reject(Error("lost retry response"));
+      return new Response(
+        JSON.stringify({
+          ...failedUpload,
+          id: "next-upload",
+          state: "succeeded",
+          failure_code: "",
+        }),
+        { status: 202 },
+      );
+    }
+    if (url.endsWith("/transfers"))
+      return new Response(
+        JSON.stringify([
+          {
+            ...failedUpload,
+            ...(retries
+              ? { id: "next-upload", state: "succeeded", failure_code: "" }
+              : {}),
+          },
+        ]),
+      );
+    if (url.includes("/storage-backups?"))
+      return new Response(
+        JSON.stringify({
+          items: [{ ...backup, state: "succeeded", blob: transferBlob }],
+          count: 1,
+          total: 1,
+          limit: 20,
+          offset: 0,
+        }),
+      );
+    if (url.endsWith("/storage-backups/backup"))
+      return new Response(
+        JSON.stringify({ ...backup, state: "succeeded", blob: transferBlob }),
+      );
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "View volume backup backup" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Retry remote upload of the same archive",
+    }),
+  );
+  await screen.findByRole("button", {
+    name: "Retry identical remote archive request",
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Refresh Compose backup evidence and history",
+      }).disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Refresh Compose backup evidence and history",
+    }),
+  );
+  await screen.findByText(/upload next-upload: succeeded/);
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Retry identical remote archive request",
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(
+        ([u, o]) => u.endsWith("/transfers/retry") && o.method === "POST",
+      ),
+    ).toHaveLength(2),
+  );
+  const writes = fetch.mock.calls.filter(
+    ([u, o]) => u.endsWith("/transfers/retry") && o.method === "POST",
+  );
+  expect(writes[0]![1].body).toBe(writes[1]![1].body);
+  expect(JSON.parse(String(writes[0]![1].body)).expected_transfer_id).toBe(
+    "upload",
+  );
+  expect(
+    fetch.mock.calls.filter(
+      ([u, o]) => u.endsWith("/storage-backups") && o.method === "POST",
+    ),
+  ).toHaveLength(0);
 });

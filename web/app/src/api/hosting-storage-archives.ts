@@ -1,3 +1,4 @@
+import { parseRemoteBackupTarget } from "./hosting-database-backup-targets";
 import { request } from "./client";
 import { ApiError } from "./errors";
 import type { components } from "./generated";
@@ -14,7 +15,10 @@ export type ArchiveScope = {
   destination: string;
   binding: string;
 };
-export type Backup = components["schemas"]["HostingStorageBackup"] & { volume?: string; source_deployed_operation_id?: string };
+export type Backup = components["schemas"]["HostingStorageBackup"] & {
+  volume?: string;
+  source_deployed_operation_id?: string;
+};
 export type BackupInput = components["schemas"]["HostingStorageBackupInput"];
 export type RestoreInput = components["schemas"]["HostingStorageRestoreInput"];
 export type RecoveryInput =
@@ -125,7 +129,13 @@ export function archiveBackup(
     !Number.isFinite(Date.parse(value.created_at))
   )
     fail();
-  if ((value.volume === undefined) !== (value.source_deployed_operation_id === undefined) || value.volume !== undefined && (!id(value.volume) || !id(value.source_deployed_operation_id))) fail();
+  if (
+    (value.volume === undefined) !==
+      (value.source_deployed_operation_id === undefined) ||
+    (value.volume !== undefined &&
+      (!id(value.volume) || !id(value.source_deployed_operation_id)))
+  )
+    fail();
   blob(value.blob, scope, value.id);
   if (value.copies !== undefined) {
     if (!Array.isArray(value.copies) || value.copies.length > 10000) fail();
@@ -200,7 +210,19 @@ export function archiveOperation(
   backup?: string,
 ) {
   const a = value?.storage_archive,
-    p = a?.plan as (NonNullable<typeof a>["plan"] & { compose_source?: { healthy: components["schemas"]["HostingHealthy"]; plan: components["schemas"]["HostingApplyPlan"]; volume: components["schemas"]["HostingStackVolume"]; retained: { healthy: components["schemas"]["HostingHealthy"]; plan: components["schemas"]["HostingApplyPlan"] }[] } }) | undefined;
+    p = a?.plan as
+      | (NonNullable<typeof a>["plan"] & {
+          compose_source?: {
+            healthy: components["schemas"]["HostingHealthy"];
+            plan: components["schemas"]["HostingApplyPlan"];
+            volume: components["schemas"]["HostingStackVolume"];
+            retained: {
+              healthy: components["schemas"]["HostingHealthy"];
+              plan: components["schemas"]["HostingApplyPlan"];
+            }[];
+          };
+        })
+      | undefined;
   if (
     !id(expected) ||
     value?.id !== expected ||
@@ -227,12 +249,80 @@ export function archiveOperation(
     value.observation_lease !== undefined
   )
     fail();
-  if (!p.compose_source && (String(p.compiler_version) === "managed-compose.local-volume-archive.v1" || String(p.policy_version) === "managed-compose.local-volume-archive.v1")) fail();
+  const composeVersions = [
+    "managed-compose.local-volume-archive.v1",
+    "managed-compose.remote-volume-archive.v1",
+  ];
+  if (
+    !p.compose_source &&
+    (composeVersions.includes(String(p.compiler_version)) ||
+      composeVersions.includes(String(p.policy_version)))
+  )
+    fail();
   if (p.compose_source) {
-    const c = p.compose_source, h = c.healthy, plan = c.plan;
-    if (p.source_storage?.id || p.source_healthy?.operation_id || p.source_materialization?.creation_operation_id || p.source_materialization?.storage_ref?.storage_id) fail();
-    if (String(p.compiler_version) !== "managed-compose.local-volume-archive.v1" || String(p.policy_version) !== "managed-compose.local-volume-archive.v1" || p.target || !["backup", "recover"].includes(a.mode) || value.resource_id !== scope.resource || value.binding_id !== scope.binding || !h?.stack || !plan?.stack || !id(h.operation_id) || h.snapshot.resource_id !== scope.resource || h.snapshot.binding_id !== scope.binding || h.snapshot.destination_id !== scope.destination || plan.snapshot.resource_id !== scope.resource || plan.snapshot.binding_id !== scope.binding || plan.snapshot.destination_id !== scope.destination || plan.hash !== h.plan_hash || !hash(plan.hash) || !id(c.volume?.name) || !runtimeID(c.volume.volume_name) || !plan.stack.volumes.some((v) => v.name === c.volume.name && v.volume_name === c.volume.volume_name) || !Array.isArray(c.retained) || c.retained.length > 64 || !Array.isArray(p.writers) || p.writers.length || p.remote_target || p.remote_source) fail();
-    for (const r of c.retained) if (!r.healthy?.stack || !r.plan?.stack || r.healthy.snapshot.resource_id !== scope.resource || r.healthy.snapshot.binding_id !== scope.binding || r.healthy.snapshot.destination_id !== scope.destination || r.plan.hash !== r.healthy.plan_hash) fail();
+    const c = p.compose_source,
+      h = c.healthy,
+      plan = c.plan;
+    if (
+      p.source_storage?.id ||
+      p.source_healthy?.operation_id ||
+      p.source_materialization?.creation_operation_id ||
+      p.source_materialization?.storage_ref?.storage_id
+    )
+      fail();
+    const composeVersion = String(p.compiler_version);
+    if (!composeVersions.includes(composeVersion)) fail();
+    if (composeVersion === "managed-compose.remote-volume-archive.v1") {
+      if (a.mode === "backup") parseRemoteBackupTarget(p.remote_target);
+      else if (
+        a.mode !== "recover" ||
+        p.remote_target !== undefined ||
+        !p.recovery_evidence ||
+        !hash(p.recovery_evidence.original_plan_hash) ||
+        !id(p.recovery_of_operation_id)
+      )
+        fail();
+    } else if (p.remote_target !== undefined) fail();
+    if (
+      String(p.policy_version) !== composeVersion ||
+      p.target ||
+      !["backup", "recover"].includes(a.mode) ||
+      value.resource_id !== scope.resource ||
+      value.binding_id !== scope.binding ||
+      !h?.stack ||
+      !plan?.stack ||
+      !id(h.operation_id) ||
+      h.snapshot.resource_id !== scope.resource ||
+      h.snapshot.binding_id !== scope.binding ||
+      h.snapshot.destination_id !== scope.destination ||
+      plan.snapshot.resource_id !== scope.resource ||
+      plan.snapshot.binding_id !== scope.binding ||
+      plan.snapshot.destination_id !== scope.destination ||
+      plan.hash !== h.plan_hash ||
+      !hash(plan.hash) ||
+      !id(c.volume?.name) ||
+      !runtimeID(c.volume.volume_name) ||
+      !plan.stack.volumes.some(
+        (v) =>
+          v.name === c.volume.name && v.volume_name === c.volume.volume_name,
+      ) ||
+      !Array.isArray(c.retained) ||
+      c.retained.length > 64 ||
+      !Array.isArray(p.writers) ||
+      p.writers.length ||
+      p.remote_source
+    )
+      fail();
+    for (const r of c.retained)
+      if (
+        !r.healthy?.stack ||
+        !r.plan?.stack ||
+        r.healthy.snapshot.resource_id !== scope.resource ||
+        r.healthy.snapshot.binding_id !== scope.binding ||
+        r.healthy.snapshot.destination_id !== scope.destination ||
+        r.plan.hash !== r.healthy.plan_hash
+      )
+        fail();
   } else storageScope(p.source_storage, scope, scope.resource, scope.binding);
   if (p.target) {
     const t = p.target;
@@ -339,6 +429,9 @@ export function archiveOperation(
   }
   // Only a small public projection reaches query caches and rendering.
   return {
+    ...(p.compose_source && p.remote_target
+      ? { remoteTarget: parseRemoteBackupTarget(p.remote_target) }
+      : {}),
     id: value.id,
     resource: value.resource_id,
     state: value.state,
@@ -639,10 +732,13 @@ export async function archiveBackupEligible(
     op.state === "succeeded" &&
     !op.mutation_hold &&
     !op.restore_ownership_held &&
-    ((snapshot.policy_version === "public-image.owned-storage.release-ports.v1" &&
+    ((snapshot.policy_version ===
+      "public-image.owned-storage.release-ports.v1" &&
       (!snapshot.runtime_configuration ||
-        (snapshot.runtime_configuration.generation === 0 && !snapshot.runtime_configuration.hash))) ||
-      (snapshot.policy_version === "public-image.owned-storage.runtime-env.release-ports.v1" &&
+        (snapshot.runtime_configuration.generation === 0 &&
+          !snapshot.runtime_configuration.hash))) ||
+      (snapshot.policy_version ===
+        "public-image.owned-storage.runtime-env.release-ports.v1" &&
         Number.isSafeInteger(snapshot.runtime_configuration?.generation) &&
         (snapshot.runtime_configuration?.generation ?? 0) > 0 &&
         hash(snapshot.runtime_configuration?.hash))) &&
@@ -650,6 +746,7 @@ export async function archiveBackupEligible(
     snapshot.storage.hash === storage.hash &&
     (!snapshot.local_build || !snapshot.local_build.artifact?.build_id) &&
     (!snapshot.database || !snapshot.database.engine) &&
-    (!snapshot.application_database || !snapshot.application_database.binding_id)
+    (!snapshot.application_database ||
+      !snapshot.application_database.binding_id)
   );
 }

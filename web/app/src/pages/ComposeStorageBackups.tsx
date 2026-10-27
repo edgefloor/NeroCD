@@ -1,3 +1,18 @@
+import {
+  BackupDestinationSelect,
+  useDatabaseBackupDestinations,
+  validSelectedBackupDestination,
+} from "./DatabaseBackupDestinations";
+import type { RemoteBackupTarget } from "@/api/hosting-database-backup-targets";
+import {
+  listStorageTransfers,
+  retryStorageTransfer,
+  type StorageBackupTransfer,
+} from "@/api/hosting-storage-backup-remote";
+import {
+  StorageArchiveTransfers,
+  type StorageTransferRetry,
+} from "@/components/hosting/StorageArchiveTransfers";
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
@@ -41,6 +56,8 @@ export function ComposeStorageBackups({
   const [offset, setOffset] = useState(0),
     [selected, setSelected] = useState(""),
     [volume, setVolume] = useState("");
+  const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
+  const [remoteRetry, setRemoteRetry] = useState<StorageTransferRetry>();
   const [review, setReview] = useState<ComposeBackupInput>(),
     [sent, setSent] = useState(false),
     [ack, setAck] = useState(false),
@@ -111,15 +128,63 @@ export function ComposeStorageBackups({
     refetchInterval: (q) =>
       !q.state.error && !terminal(q.state.data?.state) ? 2000 : false,
   });
+  const targetScope = {
+    actor: scope.actor,
+    project: scope.project,
+    environment: "",
+  };
+  const destinations = useDatabaseBackupDestinations({
+    storage: {
+      resource: { id: scope.resource },
+      destination_id: scope.destination,
+    },
+    scope: targetScope,
+    owner,
+    blocked: blocked || lost || !owner,
+    onDenied: lose,
+  });
+  const transfers = useQuery({
+    ...base,
+    queryKey: [...key, "transfers", selected],
+    enabled: !!selected && !lost,
+    queryFn: ({ signal }) =>
+      listStorageTransfers(targetScope, selected, signal),
+    refetchInterval: (q) =>
+      !q.state.error &&
+      (!terminal(backup.data?.state) ||
+        (!detail.data && !detail.isError) ||
+        (backup.data?.state === "succeeded" &&
+          detail.data?.remoteTarget &&
+          !q.state.data?.some((v) => v.mode === "upload")) ||
+        q.state.data?.some((v) =>
+          ["queued", "dispatched", "applying"].includes(v.state),
+        ))
+        ? 2000
+        : false,
+  });
   function lose() {
     controller.current?.abort();
     setLost(true);
     onDenied();
   }
   useEffect(() => {
-    if ([choices.error, history.error, backup.error, detail.error].some(denied))
+    if (
+      [
+        choices.error,
+        history.error,
+        backup.error,
+        detail.error,
+        transfers.error,
+      ].some(denied)
+    )
       lose();
-  }, [choices.error, history.error, backup.error, detail.error]);
+  }, [
+    choices.error,
+    history.error,
+    backup.error,
+    detail.error,
+    transfers.error,
+  ]);
   async function run(work: (signal: AbortSignal) => Promise<void>) {
     if (controller.current || lost || blocked) return;
     const c = new AbortController();
@@ -148,6 +213,15 @@ export function ComposeStorageBackups({
   }
   async function prepare() {
     if (!owner || sent || blocked) return;
+    if (!validSelectedBackupDestination(remoteTarget, destinations)) {
+      setError(
+        "Refresh the remote target validation and select its current revision before review.",
+      );
+      return;
+    }
+    const selectedTarget = remoteTarget
+      ? Object.freeze({ ...remoteTarget })
+      : undefined;
     await run(async (signal) => {
       const current = await getComposeBackupVolumes(scope, signal);
       if (!active.current || signal.aborted) return;
@@ -172,6 +246,7 @@ export function ComposeStorageBackups({
           expected_deployed_operation_id: current.operation_id,
           volume,
           acknowledge_interruption: true,
+          ...(selectedTarget ? { remote_target: selectedTarget } : {}),
         }),
       );
     });
@@ -213,6 +288,37 @@ export function ComposeStorageBackups({
       setResumeAck(false);
     });
   }
+  async function retryRemote(transfer?: StorageBackupTransfer) {
+    if (
+      !owner ||
+      blocked ||
+      lost ||
+      (!remoteRetry && !transfer) ||
+      (remoteRetry &&
+        (remoteRetry.backup !== selected ||
+          (transfer && remoteRetry.input.expected_transfer_id !== transfer.id)))
+    )
+      return;
+    const attempt = remoteRetry ?? {
+      backup: selected,
+      input: {
+        request_id: storageRequestID(),
+        expected_transfer_id: transfer!.id,
+      },
+    };
+    setRemoteRetry(attempt);
+    await run(async (signal) => {
+      await retryStorageTransfer(
+        targetScope,
+        attempt.backup,
+        attempt.input,
+        signal,
+      );
+      if (!active.current || signal.aborted) return;
+      setRemoteRetry(undefined);
+      await transfers.refetch();
+    });
+  }
   const disabled = busy || blocked || lost;
   if (lost)
     return (
@@ -243,6 +349,7 @@ export function ComposeStorageBackups({
           }
           void choices.refetch();
           void history.refetch();
+          if (selected) void transfers.refetch();
         }}
       >
         Refresh Compose backup evidence and history
@@ -265,7 +372,7 @@ export function ComposeStorageBackups({
           <select
             id={`${id}-volume`}
             className="w-full min-w-0 rounded border bg-card p-2"
-            disabled={disabled || !!review}
+            disabled={disabled || !!review || !!remoteRetry}
             value={volume}
             onChange={(e) => setVolume(e.target.value)}
           >
@@ -295,6 +402,7 @@ export function ComposeStorageBackups({
               disabled={
                 disabled ||
                 sent ||
+                !!remoteRetry ||
                 !!review ||
                 !volume ||
                 !choices.data.available ||
@@ -312,6 +420,26 @@ export function ComposeStorageBackups({
           )}
         </>
       ) : null}
+      {owner ? (
+        <>
+          <BackupDestinationSelect
+            label="Remote Compose backup target"
+            value={remoteTarget}
+            onChange={setRemoteTarget}
+            destinations={destinations}
+            disabled={disabled || !!review}
+          />
+          <Button
+            className={button}
+            type="button"
+            variant="outline"
+            disabled={busy || !!review}
+            onClick={() => void destinations.refresh()}
+          >
+            Refresh remote Compose backup targets
+          </Button>
+        </>
+      ) : null}
       <StorageBackupSchedules
         key={JSON.stringify([scope, generation, owner])}
         scope={scope}
@@ -321,8 +449,10 @@ export function ComposeStorageBackups({
         composeVolume={volume}
         onRemoteTarget={() => {}}
         onSelectBackup={(value) => {
-          setSelected(value);
-          setRecovered("");
+          if (!remoteRetry) {
+            setSelected(value);
+            setRecovered("");
+          }
         }}
         onDenied={lose}
       />
@@ -335,6 +465,14 @@ export function ComposeStorageBackups({
             Volume {review.volume} · generation{" "}
             {review.expected_resource_generation} · deployed operation{" "}
             {review.expected_deployed_operation_id}
+          </p>
+          <p>
+            Remote target for this immediate backup:{" "}
+            {review.remote_target
+              ? `${review.remote_target.target_id} revision ${review.remote_target.revision}`
+              : "local only"}
+            . Remote upload begins after the local archive completes and writers
+            resume. Local and remote outcomes are separate.
           </p>
           <label className="flex items-start gap-2">
             <input
@@ -391,7 +529,7 @@ export function ComposeStorageBackups({
             <Button
               className={button}
               variant="outline"
-              disabled={busy || !!recovery}
+              disabled={busy || !!recovery || !!remoteRetry}
               onClick={() => {
                 setSelected(b.id);
                 setRecovered("");
@@ -452,6 +590,24 @@ export function ComposeStorageBackups({
             <p>No local archive artifact is confirmed.</p>
           )}
         </div>
+      ) : null}
+      {transfers.isError ? (
+        <p role="alert">
+          Remote transfer history is unavailable. Local archive evidence remains
+          separate.
+        </p>
+      ) : null}
+      {selected && (!transfers.isError || remoteRetry) ? (
+        <StorageArchiveTransfers
+          transfers={transfers.data}
+          selected={selected}
+          owner={owner}
+          blocked={blocked || lost}
+          remoteBusy={busy}
+          remoteRetry={remoteRetry}
+          onRetry={(v) => void retryRemote(v)}
+          onRetrySaved={() => void retryRemote()}
+        />
       ) : null}
       {detail.data && !detail.isError ? (
         <OperationDetails operation={detail.data} />

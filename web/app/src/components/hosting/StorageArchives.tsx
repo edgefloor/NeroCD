@@ -1,3 +1,4 @@
+import { StorageArchiveTransfers } from "./StorageArchiveTransfers";
 import { StorageBackupDeletion } from "./StorageBackupDeletion";
 import { StorageBackupRetention } from "./StorageBackupRetention";
 import { StorageBackupSchedules } from "./StorageBackupSchedules";
@@ -394,10 +395,11 @@ export function StorageArchives({
       </p>
       <p>
         Restore always creates a new resource on the same destination. File
-        validation does not prove application read/write behavior. For an application
-        with runtime configuration, restore copies the backed-up deployment's
-        public variables and exact secret references into the new resource.
-        Deployment and application verification remain separate operator steps.
+        validation does not prove application read/write behavior. For an
+        application with runtime configuration, restore copies the backed-up
+        deployment's public variables and exact secret references into the new
+        resource. Deployment and application verification remain separate
+        operator steps.
       </p>
       <DatabaseBackupDestinations {...destinationProps} />
       {owner ? (
@@ -590,70 +592,37 @@ export function StorageArchives({
           </dd>
         </dl>
       ) : null}
-      {!backup.isError && backup.data ? <StorageBackupDeletion key={[actor, scope.project, scope.resource, scope.binding, scope.destination, selected, resource.generation].join(":")} scope={scope} resource={resource} backup={selected} copies={backup.data.copies ?? []} owner={owner} blocked={blocked} onDenied={() => setLost(true)} /> : null}
+      {!backup.isError && backup.data ? (
+        <StorageBackupDeletion
+          key={[
+            actor,
+            scope.project,
+            scope.resource,
+            scope.binding,
+            scope.destination,
+            selected,
+            resource.generation,
+          ].join(":")}
+          scope={scope}
+          resource={resource}
+          backup={selected}
+          copies={backup.data.copies ?? []}
+          owner={owner}
+          blocked={blocked}
+          onDenied={() => setLost(true)}
+        />
+      ) : null}
       {selected ? (
-        <section
-          aria-label="Remote archive transfers"
-          className="space-y-2 break-all"
-        >
-          <h5>Remote archive transfers</h5>
-          {transfers.data?.length === 0 ? (
-            <p>No remote transfer requested.</p>
-          ) : null}
-          {transfers.data?.map((v) => (
-            <p key={v.id}>
-              {v.mode} {v.id}: {v.state}
-              {v.failure_code ? ` · ${v.failure_code}` : ""}. Local archive
-              remains independent.
-              {owner &&
-              v.mode === "download" &&
-              ["failed", "uncertain"].includes(v.state) ? (
-                <>
-                  <span>
-                    {" "}
-                    Restore remains held until a verified download completes.
-                  </span>
-                  <Button
-                    disabled={
-                      blocked ||
-                      remoteBusy ||
-                      (!!remoteRetry &&
-                        (remoteRetry.backup !== selected ||
-                          remoteRetry.input.expected_transfer_id !== v.id))
-                    }
-                    onClick={() => void retryRemote(v)}
-                  >
-                    Retry remote download
-                  </Button>
-                </>
-              ) : null}
-            </p>
-          ))}
-          {owner &&
-          remoteUpload &&
-          ["failed", "uncertain"].includes(remoteUpload.state) ? (
-            <Button
-              disabled={
-                blocked ||
-                remoteBusy ||
-                (!!remoteRetry &&
-                  (remoteRetry.backup !== selected ||
-                    remoteRetry.input.expected_transfer_id !== remoteUpload.id))
-              }
-              onClick={() => void retryRemote()}
-            >
-              Retry remote upload of the same archive
-            </Button>
-          ) : null}
-          {remoteRetry ? (
-            <p>
-              Saved remote retry {remoteRetry.input.request_id} for transfer{" "}
-              {remoteRetry.input.expected_transfer_id} in backup{" "}
-              {remoteRetry.backup}. Retry that transfer to keep the same archive
-              and request identity.
-            </p>
-          ) : null}
-        </section>
+        <StorageArchiveTransfers
+          transfers={transfers.data}
+          selected={selected}
+          owner={owner}
+          blocked={blocked}
+          remoteBusy={remoteBusy}
+          remoteRetry={remoteRetry}
+          onRetry={(v) => void retryRemote(v)}
+          allowDownload
+        />
       ) : null}
       {operation ? <OperationDetails operation={operation} /> : null}
       {owner &&
@@ -842,7 +811,11 @@ export function StorageArchives({
     </section>
   );
 }
-export function OperationDetails({ operation: o }: { operation: ArchiveOperation }) {
+export function OperationDetails({
+  operation: o,
+}: {
+  operation: ArchiveOperation;
+}) {
   return (
     <section
       aria-label={`${o.mode} operation ${o.id}`}
