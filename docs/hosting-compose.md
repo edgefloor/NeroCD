@@ -389,13 +389,15 @@ cause of the first failure.
 Required affected Go package tests, formatting, vet, pinned lint with zero issues,
 shell checks, generated checks, and the full frontend suite and embedded build
 passed at `95b9413977752f48ffdc64a6708a9ccd061e8c12`. The frontend suite passed
-1,922 tests in 128 files. Backend authority-repair checks retained actual
-PostgreSQL schedule, revocation, overlap, rollback, and race coverage from
-`1685973304dbaae2c21cf0aebd97b6d9d759a136`. Final formatting, lint, real request
+1,922 tests in 128 files. Actual PostgreSQL schedule, revocation, overlap, and
+rollback checks passed at `1685973304dbaae2c21cf0aebd97b6d9d759a136`. Domain and
+API race checks passed at `cc3722000664d1b23356328492520b3ae5408a80` and carry
+forward through unchanged package blobs. Final formatting, lint, real request
 decoder, and route checks passed at `5318035`. Later changes affected fixture
 assertions and diagnostics only. Protected-runtime diagnostic checks passed
-before the final gate. Broad `make check` and unrelated product suites were not
-run. Retained passes apply to these unchanged dependencies, not full hosting parity.
+before the final gate. Repository-wide `make test`, `make verify`, broad
+`make check`, and unrelated product suites were not run in this schedule slice.
+Retained passes apply to these unchanged dependencies, not full hosting parity.
 
 Implementation estimates are six minutes for backend work and five for UI work,
 with tests overlapping both. Product authority repair took approximately one
@@ -407,8 +409,9 @@ seconds for affected Go packages, 23 seconds for static checks, 33 seconds for
 frontend tests and build, and 64 seconds for generated checks, concurrently.
 Later backend command windows took approximately 72, 38, three, and 55 seconds
 for focused and race checks, also overlapping. Final preflight took 13 seconds.
-Protected-runtime diagnostic compilation and checks took 37 seconds. Review and
-waiting time were not instrumented. These categories cannot be added into an
+Go fixture diagnostic compilation and contract checks took 37 seconds. The
+protected-runtime PostgreSQL experiment took 4.390 seconds separately. Review
+and waiting time were not instrumented. These categories cannot be added into an
 elapsed-time percentage.
 
 Compose remote transfer, download, archive restore, bind mounts, raw Compose,
