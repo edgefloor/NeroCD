@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -249,6 +250,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("fresh login after Start lost application data")
 	}
 	composeRuntimeVolumeArchive(t, f, resource, started, taskID, volumeScheduleID)
+	composeRuntimeRemoteVolumeArchive(t, f, resource, started)
 	// Provision a distinct already-deployed application through ordinary setup
 	// APIs. Backup and destructive import themselves are requested through UI.
 	target := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("d", 32), ProjectID: resource.ProjectID, ProjectEnvironmentID: resource.ProjectEnvironmentID, Name: "Compose database restore target", Kind: "application", Source: resource.Source}, 201)
@@ -484,6 +486,23 @@ func TestComposeVolumeScheduleFixtureRequestContract(t *testing.T) {
 	}
 }
 
+func TestComposeRemoteVolumeFixtureRequestContract(t *testing.T) {
+	server, repo, owner, _, _ := archiveHTTPFixture(t)
+	path := "/api/v1/resources/" + repo.resource.ID + "/storage-backups"
+	body := `{"request_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expected_resource_generation":1,"volume":"vikunja-data","expected_deployed_operation_id":"hop_fixture","acknowledge_interruption":true,"remote_target":{"target_id":"target_fixture","revision":1}}`
+	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 202)
+	if repo.backupInput.Volume != "vikunja-data" || repo.backupInput.ExpectedDeployedOperationID != "hop_fixture" || !repo.backupInput.AcknowledgeInterruption || repo.backupInput.RemoteTarget == nil || repo.backupInput.RemoteTarget.TargetID != "target_fixture" || repo.backupInput.RemoteTarget.Revision != 1 {
+		t.Fatal("production archive decoder lost Compose remote fixture selection")
+	}
+	for _, invalid := range []string{
+		strings.Replace(body, `"revision":1`, `"revision":0`, 1),
+		strings.Replace(body, `"target_id":"target_fixture"`, `"target_id":"../target_fixture"`, 1),
+		strings.Replace(body, `"acknowledge_interruption":true`, `"acknowledge_interruption":false`, 1),
+	} {
+		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
+	}
+}
+
 // A disabled schedule must survive replacement and Stop/Start unchanged. Its
 // occurrence resolves current deployment authority when the owner enables it.
 func composeRuntimeVolumeSchedule(t *testing.T, f *storageRuntimeFixture, resourceID, scheduleID string, enabled bool, revision int64) domain.HostingStorageBackupSchedule {
@@ -643,6 +662,126 @@ func composeRuntimeVolumeArchive(t *testing.T, f *storageRuntimeFixture, resourc
 		t.Fatal("application task/upload/new writes lost after volume backup compensation")
 	}
 	t.Logf("Compose local archive scheduled_backup=%s failed_backup=%s stable named volume preserved after redeploy and Start", backupID, failedBackup.ID)
+}
+
+// Reuse the existing Silo, upload guard and transfer machinery. A denied PUT
+// follows a successful local archive, and retry must upload that same artifact.
+func composeRuntimeRemoteVolumeArchive(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, deployed domain.HostingOperation) {
+	t.Helper()
+	for _, address := range []string{"127.0.0.1:9000", "127.0.0.1:9001"} {
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			t.Fatal("Compose remote fixture loopback port unavailable")
+		}
+		if listener.Close() != nil {
+			t.Fatal("Compose remote fixture loopback probe cleanup failed")
+		}
+	}
+	remote := &hostingStorageRemoteRuntimeFixture{storageRuntimeFixture: f}
+	silo := hostingStorageRemoteRuntimeStartSilo(remote)
+	observation := &hostingStorageRemoteRuntimeObservation{}
+	checks, violations := 0, 0
+	var guardMu sync.Mutex
+	hostingStorageRemoteRuntimeProxy(t, observation, func() bool {
+		guardMu.Lock()
+		defer guardMu.Unlock()
+		checks++
+		valid := true
+		for _, component := range deployed.Result.Stack.Components {
+			valid = valid && hostingStorageRemoteRuntimeWriterState(component.ContainerID, component.Running)
+		}
+		if !valid {
+			violations++
+		}
+		return valid
+	})
+	target := storageRuntimeJSON[domain.HostingDatabaseBackupTarget](f, "POST", "/api/v1/projects/"+resource.ProjectID+"/database-backup-targets", map[string]any{"request_id": strings.Repeat("a", 31) + "1", "expected_revision": 0, "name": "Compose selected S3", "endpoint": "http://127.0.0.1:9001", "bucket": "nerocd-storage-runtime", "region": "us-east-1", "enabled": true, "credentials": map[string]string{"access_key": silo.access, "secret_key": silo.secret}}, 200)
+	validation := storageRuntimeJSON[hostingStorageRemoteRuntimeTransfer](f, "POST", "/api/v1/projects/"+resource.ProjectID+"/database-backup-targets/"+target.ID+"/storage-validations", domain.HostingDatabaseBackupTargetValidationInput{RequestID: "compose-remote-target-validation", ExpectedRevision: target.Revision, DestinationID: f.destinationID}, 202)
+	validated := hostingStorageRemoteRuntimeAwaitID(remote, validation.ID, "succeeded")
+	if validated.Mode != "validate" || validated.TargetID != target.ID || validated.TargetRevision != target.Revision {
+		t.Fatal("Compose remote validation changed target identity")
+	}
+	var volumeRoot string
+	for _, volume := range deployed.Result.Stack.Volumes {
+		if volume.Name == "vikunja-data" {
+			volumeRoot = filepath.Join("/var/lib/docker/volumes", volume.VolumeName, "_data")
+		}
+	}
+	if volumeRoot == "" {
+		t.Fatal("Compose remote upload volume missing")
+	}
+	beforeFiles := composeRuntimeUploadSnapshot(t, volumeRoot)
+	unselectedStates := map[string]string{}
+	for _, component := range deployed.Result.Stack.Components {
+		if component.Component != "vikunja" {
+			unselectedStates[component.ContainerID] = string(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}"))
+		}
+	}
+	since := time.Now().Format(time.RFC3339Nano)
+	f.catalogBrowser.set("volume_remote_backup", target.ID)
+	backupID := f.catalogBrowser.await(t, "volume_remote_backed_up")
+	backup := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	operation := f.await(backup.OperationID, "succeeded")
+	failed := hostingStorageRemoteRuntimeAwait(remote, backupID, "upload", "failed")
+	backup = storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	if operation.StorageArchive == nil || operation.StorageArchive.Plan.CompilerVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Plan.PolicyVersion != "managed-compose.remote-volume-archive.v1" || operation.StorageArchive.Result == nil || operation.StorageArchive.Result.ResumeOutcome != "resumed" || operation.StorageArchive.Result.Uncertain || operation.MutationHold || backup.State != "succeeded" || backup.Volume != "vikunja-data" || backup.SourceDeployedOperationID != deployed.ID || backup.Blob == nil || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.FailureCode != "access_denied" || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
+		t.Fatal("Compose denied upload did not preserve successful local archive and resumed authority")
+	}
+	if storageArchiveHelperStarts(t, operation.ID, since) != 1 {
+		t.Fatal("Compose remote archive helper did not run exactly once")
+	}
+	archive := hostingStorageRemoteRuntimeArchive(remote, *backup.Blob)
+	postArchiveStates := map[string]string{}
+	for _, component := range deployed.Result.Stack.Components {
+		postArchiveStates[component.ContainerID] = string(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}"))
+		if component.Component != "vikunja" && postArchiveStates[component.ContainerID] != unselectedStates[component.ContainerID] {
+			t.Fatal("Compose remote archive touched PostgreSQL or completed init")
+		}
+	}
+	silo.policy(true, false)
+	retrySince := time.Now().Format(time.RFC3339Nano)
+	f.catalogBrowser.set("volume_remote_retry", backupID)
+	retryID := f.catalogBrowser.await(t, "volume_remote_retried")
+	uploaded := hostingStorageRemoteRuntimeAwaitID(remote, retryID, "succeeded")
+	if uploaded.ID == failed.ID || uploaded.Mode != "upload" || uploaded.BackupID != backupID || uploaded.TargetID != target.ID || uploaded.TargetRevision != target.Revision || uploaded.Blob == nil || *uploaded.Blob != *backup.Blob || storageArchiveHelperStarts(t, operation.ID, since) != 1 {
+		t.Fatal("Compose upload retry changed archive identity or rearchived")
+	}
+	survived := storageRuntimeJSON[domain.HostingStorageBackup](f, "GET", "/api/v1/storage-backups/"+backupID, nil, 200)
+	if survived.OperationID != backup.OperationID || survived.State != "succeeded" || survived.Blob == nil || *survived.Blob != *backup.Blob || !bytes.Equal(archive, hostingStorageRemoteRuntimeArchive(remote, *survived.Blob)) {
+		t.Fatal("Compose retry changed retained local archive")
+	}
+	key := domain.StorageRemoteObjectKey(backupID, *backup.Blob)
+	object := silo.command("mc cat fixture/nerocd-storage-runtime/" + key + "\n")
+	if !bytes.Equal(object, archive) || "sha256:"+fmt.Sprintf("%x", sha256.Sum256(object)) != backup.Blob.SHA256 {
+		t.Fatal("Compose remote object differs from retained local archive")
+	}
+	clear(object)
+	clear(archive)
+	for _, component := range deployed.Result.Stack.Components {
+		if postArchiveStates[component.ContainerID] != string(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.State.Running}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")) {
+			t.Fatal("Compose upload retry changed writer or init state")
+		}
+		for _, action := range []string{"start", "stop", "die"} {
+			if len(bytes.TrimSpace(storageRuntimeDocker(t, "events", "--since", retrySince, "--until", time.Now().Format(time.RFC3339Nano), "--filter", "container="+component.ContainerID, "--filter", "event="+action, "--format", "{{.Action}}"))) != 0 {
+				t.Fatal("Compose upload retry interrupted a component")
+			}
+		}
+	}
+	if !reflect.DeepEqual(beforeFiles, composeRuntimeUploadSnapshot(t, volumeRoot)) {
+		t.Fatal("Compose remote archive or retry changed uploads or numeric metadata")
+	}
+	guardMu.Lock()
+	observedChecks, observedViolations := checks, violations
+	guardMu.Unlock()
+	if observedChecks < 2 || observedViolations != 0 {
+		t.Fatal("Compose upload began before exact writers were resumed")
+	}
+	for _, secret := range []string{silo.access, silo.secret} {
+		if strings.Contains(f.logs.String(), secret) {
+			t.Fatal("Compose remote credentials appeared in runner logs")
+		}
+	}
+	t.Logf("Compose remote backup=%s failed_transfer=%s retry=%s local_bytes=%d exact_remote_blob=true helper_starts=1 retry_component_events=0 resume_checks=%d", backupID, failed.ID, uploaded.ID, backup.Blob.SizeBytes, observedChecks)
 }
 
 func composeRuntimeUploadSnapshot(t *testing.T, root string) map[string]string {

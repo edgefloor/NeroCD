@@ -368,7 +368,7 @@ host_docker image inspect "$dind" "$postgres" "$registry" > "$evidence/pinned-ho
 traefik=docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368
 pebble=ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
 silo=pgsty/silo@sha256:87585bb783b7822318b3e1bcc4497c8427c98e2b021826d20b5f888713299f95
-if [[ "$remote" == true ]]; then
+if [[ "$remote" == true || "$managed_compose" == true ]]; then
  # Host cache supplies the exact content/config baseline, not guest digest lookup.
  host_docker image inspect "$traefik" "$pebble" "$silo" > "$evidence/pinned-remote-images"
 fi
@@ -411,6 +411,7 @@ if [[ "$remote" == true ]]; then
  host_docker exec "$outer" mkdir -m 700 /fixture/evidence
 else
  for image in "$traefik" "$pebble"; do inner_docker pull "$image"; done
+ if [[ "$managed_compose" == true ]]; then preload_image "$silo" "$evidence/pinned-remote-images" silo; fi
 fi
 # BASE_SERVICE_START_BEGIN
 pg_image=$postgres; registry_image=$registry

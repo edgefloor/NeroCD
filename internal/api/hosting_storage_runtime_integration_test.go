@@ -261,7 +261,21 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		storageRuntimeConfigureArchive(t, f, pg)
 		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, "hosting_compose_storage_archive_v1")
+			caps = append(caps, "hosting_compose_storage_archive_v1", domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability, "hosting_compose_storage_remote_v1")
+			raw, err := os.ReadFile(f.archiveConfig)
+			if err != nil {
+				t.Fatal("Compose remote archive configuration unavailable")
+			}
+			var cfg map[string]any
+			if json.Unmarshal(raw, &cfg) != nil {
+				t.Fatal("Compose remote archive configuration invalid")
+			}
+			cfg["remote_backups"] = true
+			cfg["remote_fixture_origin"] = "http://127.0.0.1:9001"
+			raw, err = json.Marshal(cfg)
+			if err != nil || os.WriteFile(f.archiveConfig, raw, 0600) != nil {
+				t.Fatal("Compose remote archive configuration write failed")
+			}
 		}
 	}
 	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
