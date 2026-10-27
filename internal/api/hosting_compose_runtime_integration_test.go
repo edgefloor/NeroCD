@@ -44,23 +44,60 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	const publicImage = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 	registryPassword := hostingStorageRemoteRuntimeRandom(t)
 	storageRuntimeDocker(t, "pull", publicImage)
+	pinnedImageID := strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}")))
 	protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, publicImage)
-	manifestRequest, _ := http.NewRequestWithContext(t.Context(), "HEAD", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
+	manifestRequest, _ := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
 	manifestRequest.SetBasicAuth("fixture", registryPassword)
 	manifestRequest.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
 	manifest, manifestErr := f.client.Do(manifestRequest)
 	if manifestErr != nil {
 		t.Fatal("protected manifest lookup")
 	}
+	manifestBytes, readErr := io.ReadAll(io.LimitReader(manifest.Body, (1<<20)+1))
 	_ = manifest.Body.Close()
+	if readErr != nil || len(manifestBytes) > 1<<20 {
+		t.Fatal("protected manifest payload")
+	}
 	digest := manifest.Header.Get("Docker-Content-Digest")
-	if manifest.StatusCode != 200 || len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") {
+	if manifest.StatusCode != 200 || len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") || fmt.Sprintf("sha256:%x", sha256.Sum256(manifestBytes)) != digest {
 		t.Fatal("protected manifest identity")
 	}
 	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
 		t.Fatal("protected manifest digest")
 	}
 	protectedImage := protectedRepository + ":a@" + digest
+	// Registry2 retains raw manifest bytes. JSON whitespace changes only the
+	// immutable manifest digest, preserving every config/layer descriptor.
+	manifestB := append(append([]byte(nil), manifestBytes...), '\n')
+	sumB := sha256.Sum256(manifestB)
+	digestB := fmt.Sprintf("sha256:%x", sumB)
+	if digestB == digest {
+		t.Fatal("replacement manifest identity unchanged")
+	}
+	putManifest, _ := http.NewRequestWithContext(t.Context(), "PUT", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/b", bytes.NewReader(manifestB))
+	putManifest.SetBasicAuth("fixture", registryPassword)
+	putManifest.Header.Set("Content-Type", manifest.Header.Get("Content-Type"))
+	published, publishErr := f.client.Do(putManifest)
+	if publishErr != nil {
+		t.Fatal("replacement manifest publish")
+	}
+	_ = published.Body.Close()
+	if published.StatusCode != 201 || published.Header.Get("Docker-Content-Digest") != digestB {
+		t.Fatal("replacement manifest content identity")
+	}
+	getManifest, _ := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/b", nil)
+	getManifest.SetBasicAuth("fixture", registryPassword)
+	getManifest.Header.Set("Accept", manifest.Header.Get("Content-Type"))
+	storedManifest, storedErr := f.client.Do(getManifest)
+	if storedErr != nil {
+		t.Fatal("replacement manifest read")
+	}
+	storedBytes, storedReadErr := io.ReadAll(io.LimitReader(storedManifest.Body, (1<<20)+1))
+	_ = storedManifest.Body.Close()
+	if storedReadErr != nil || storedManifest.StatusCode != 200 || storedManifest.Header.Get("Docker-Content-Digest") != digestB || !bytes.Equal(storedBytes, manifestB) {
+		t.Fatal("replacement manifest representation changed")
+	}
+	replacementImage := protectedRepository + ":b@" + digestB
 	registryValue := func(value string) string {
 		raw, _ := json.Marshal(map[string]string{"registry": "127.0.0.1:25001", "username": "fixture", "password": value})
 		return string(raw)
@@ -69,14 +106,17 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	for name, value := range map[string]string{"correct": registryPassword, "wrong": "incorrect", "revoked": registryPassword} {
 		registrySecrets[name] = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Compose registry " + name, Value: registryValue(value)}, 201)
 	}
-	assertUncached := func() {
+	assertReferenceAbsent := func(reference string) {
 		t.Helper()
-		output, err := exec.CommandContext(t.Context(), "/usr/local/bin/docker", "--host", "unix:///var/run/docker.sock", "image", "inspect", protectedImage).CombinedOutput()
+		output, err := exec.CommandContext(t.Context(), "/usr/local/bin/docker", "--host", "unix:///var/run/docker.sock", "image", "inspect", reference).CombinedOutput()
 		if err == nil || !strings.Contains(strings.ToLower(string(output)), "no such image") && !strings.Contains(strings.ToLower(string(output)), "no such object") {
-			t.Fatal("protected Compose image is not demonstrably uncached")
+			t.Fatal("protected Compose reference is present")
 		}
 	}
-	assertUncached()
+	assertReferenceAbsent(protectedImage)
+	if registrySecrets["correct"].ID == "" || registrySecrets["wrong"].ID == "" || registrySecrets["correct"].ID == registrySecrets["wrong"].ID || registrySecrets["revoked"].ID == "" || registrySecrets["revoked"].ID == registrySecrets["correct"].ID || registrySecrets["revoked"].ID == registrySecrets["wrong"].ID {
+		t.Fatal("distinct registry secret identities required")
+	}
 	registryRef := domain.HostingRegistryCredentialRef{SecretID: registrySecrets["correct"].ID, Version: 1}
 	b.mu.Lock()
 	b.imageReference = protectedImage
@@ -124,8 +164,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 			}
 			if component.Component == "vikunja" {
 				actual := bytes.TrimSpace(storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Image}}"))
-				pinned := bytes.TrimSpace(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}"))
-				if !bytes.Equal(actual, pinned) {
+				if string(actual) != pinnedImageID {
 					t.Fatal("protected image differs from pinned Vikunja content")
 				}
 			}
@@ -240,11 +279,32 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	}
 	routesBefore := storageRuntimeJSON[[]domain.HostingRoute](f, "GET", "/api/v1/resources/"+resourceID+"/routes", nil, 200)
 	proxyBefore := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
+	changedCompose := *resource.Source.Compose
+	changedCompose.Original = strings.Replace(changedCompose.Original, protectedImage, replacementImage, 1)
+	changedSource := resource.Source
+	changedSource.Compose = &changedCompose
+	oldGeneration := resource.Generation
+	resource = storageRuntimeJSON[domain.Resource](f, "PATCH", "/api/v1/resources/"+resourceID, app.ResourcePatch{ExpectedGeneration: oldGeneration, Source: &changedSource}, 200)
+	updatedDefinition, updatedErr := domain.ParseHostingStack(*resource.Source.Compose)
+	if updatedErr != nil || resource.Generation != oldGeneration+1 || resource.Source.Compose.Original != changedCompose.Original || updatedDefinition.OriginalHash == definition.OriginalHash {
+		t.Fatal("immutable replacement source update")
+	}
+	protectedImage = replacementImage
+	assertReferenceAbsent(protectedImage)
+	originalOperation := storageRuntimeJSON[domain.HostingOperation](f, "GET", "/api/v1/hosting-operations/"+first.ID, nil, 200)
+	if !reflect.DeepEqual(originalOperation.Snapshot, first.Snapshot) || originalOperation.StackSource == nil || originalOperation.StackSource.OriginalHash != definition.OriginalHash {
+		t.Fatal("source update changed deployed immutable A")
+	}
 	denialOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
+	if denialOptions.StackRef == nil || denialOptions.StackRef.Generation != resource.Generation || denialOptions.StackRef.Hash != domain.HostingDocumentHash(updatedDefinition) {
+		t.Fatal("saved replacement Stack identity")
+	}
 	deniedBody := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: runtime.Configuration.RuntimeGeneration, IdempotencyKey: "compose-registry-wrong", ContainerPort: 3456, HostPort: first.Snapshot.HostPort, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, StorageRouteContinuity: denialOptions.StorageRouteContinuity, RegistryCredential: &domain.HostingRegistryCredentialRef{SecretID: registrySecrets["wrong"].ID, Version: 1}}
-	storageRuntimeDocker(t, "image", "rm", "--force", protectedImage)
-	assertUncached()
+	assertReferenceAbsent(protectedImage)
 	denied := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 202)
+	if denied.Snapshot.RegistryCredential != *deniedBody.RegistryCredential || denied.Snapshot.ResourceGeneration != resource.Generation || denied.Snapshot.Stack != *denialOptions.StackRef {
+		t.Fatal("admitted wrong credential/source snapshot differs from request")
+	}
 	if replay := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resourceID+"/deployments", deniedBody, 202); replay.ID != denied.ID {
 		t.Fatal("Compose registry identical request changed operation")
 	}
@@ -268,7 +328,7 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 		t.Fatal("denied Compose credentials changed loaded route or proxy holds")
 	}
 	verifyHTTPS()
-	assertUncached()
+	assertReferenceAbsent(protectedImage)
 	b.set("redeploy", resourceID)
 	second := f.await(b.await(t, "redeployed"), "succeeded")
 	if second.Plan == nil || second.Result == nil || second.Result.Stack == nil || second.Snapshot.HostPort != first.Snapshot.HostPort || second.Snapshot.RuntimeConfiguration != first.Snapshot.RuntimeConfiguration || !reflect.DeepEqual(second.Result.Stack.Volumes, first.Result.Stack.Volumes) || second.Result.Stack.NetworkID != first.Result.Stack.NetworkID {
@@ -297,7 +357,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	runtimeAgain := storageRuntimeJSON[struct {
 		Configuration domain.HostingRuntimeConfiguration `json:"runtime_configuration"`
 	}](f, "GET", "/api/v1/resources/"+resourceID+"/runtime-configuration", nil, 200)
-	if !reflect.DeepEqual(runtime.Configuration, runtimeAgain.Configuration) {
+	expectedRuntime := runtime.Configuration
+	expectedRuntime.ResourceGeneration = resource.Generation
+	if !reflect.DeepEqual(expectedRuntime, runtimeAgain.Configuration) {
 		t.Fatal("saved credential references changed on redeploy")
 	}
 	stopFollow := composeRuntimeFollow(t, f, resourceID, second, "vikunja", false)
@@ -323,8 +385,9 @@ func TestHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T) {
 	if lifecycle.State != "stopped" || lifecycle.StopOperationID != stopped.ID {
 		t.Fatal("missing explicit stopped state")
 	}
-	storageRuntimeDocker(t, "image", "rm", "--force", protectedImage)
-	assertUncached()
+	storageRuntimeDocker(t, "image", "rm", "--force", pinnedImageID)
+	assertReferenceAbsent(pinnedImageID)
+	assertReferenceAbsent(protectedImage)
 	b.set("start", resourceID)
 	started := f.await(b.await(t, "started"), "succeeded")
 	if started.Plan == nil || started.Plan.PreviousStopped == nil || started.Plan.PreviousStopped.StopOperationID != stopped.ID || started.Snapshot.StackStoppedOperationID != stopped.ID || started.Result == nil || started.Result.Stack == nil || !reflect.DeepEqual(started.Result.Stack.Volumes, second.Result.Stack.Volumes) || started.Result.Stack.NetworkID != second.Result.Stack.NetworkID || started.Snapshot.RuntimeConfiguration != second.Snapshot.RuntimeConfiguration {
@@ -991,10 +1054,60 @@ func TestComposeRegistryRuntimeRequestContracts(t *testing.T) {
 				v.RegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_fixture", Version: 0}
 				return v
 			}()} {
-				if domain.ValidateHostingDeployment(invalid) == nil {
+				badRaw, err := json.Marshal(invalid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var badDecoded domain.HostingDeploymentInput
+				if decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/resources/res_fixture/deployments", bytes.NewReader(badRaw)), &badDecoded) && domain.ValidateHostingDeployment(badDecoded) == nil {
 					t.Fatal("invalid acknowledgement/readiness/credential accepted")
 				}
 			}
 		})
 	}
+}
+
+func TestComposeRegistrySourceUpdateContract(t *testing.T) {
+	server, _ := newTestServer()
+	ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+	environment, err := server.app.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "compose-registry-patch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := createTestSession(t, server)
+	send := func(method, path string, input any, want int) []byte {
+		t.Helper()
+		raw, e := json.Marshal(input)
+		if e != nil {
+			t.Fatal(e)
+		}
+		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("actual patch contract status%d want%d", w.Code, want)
+		}
+		return w.Body.Bytes()
+	}
+	a := "127.0.0.1:25001/fixture:a@sha256:" + strings.Repeat("a", 64)
+	b := "127.0.0.1:25001/fixture:b@sha256:" + strings.Repeat("b", 64)
+	source := domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{Original: "services:\n  app:\n    image: " + a + "\n  db:\n    image: postgres:17\n", PublicComponent: "app", ContainerPort: 3456}}
+	var resource domain.Resource
+	if json.Unmarshal(send("POST", "/api/v1/resources", app.ResourceInput{RequestID: strings.Repeat("c", 32), ProjectID: "proj_platform", ProjectEnvironmentID: environment.ID, Name: "Compose registry patch", Kind: "application", Source: source}, 201), &resource) != nil {
+		t.Fatal("resource receipt")
+	}
+	changed := *source.Compose
+	changed.Original = strings.Replace(changed.Original, a, b, 1)
+	source.Compose = &changed
+	patch := app.ResourcePatch{ExpectedGeneration: resource.Generation, Source: &source}
+	var updated domain.Resource
+	if json.Unmarshal(send("PATCH", "/api/v1/resources/"+resource.ID, patch, 200), &updated) != nil || updated.Generation != resource.Generation+1 || !reflect.DeepEqual(updated.Source, source) {
+		t.Fatal("A to B source CAS receipt")
+	}
+	send("PATCH", "/api/v1/resources/"+resource.ID, patch, 409)
+	patch.ExpectedGeneration = 0
+	send("PATCH", "/api/v1/resources/"+resource.ID, patch, 400)
+	send("PATCH", "/api/v1/resources/"+resource.ID, map[string]any{"expected_generation": updated.Generation, "source": nil}, 400)
 }
