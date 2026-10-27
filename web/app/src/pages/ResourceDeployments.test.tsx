@@ -178,8 +178,10 @@ test.each(["deadline", "actor", "resource"])("mixed refresh ignores late denial 
   vi.useRealTimers();
   if (retirement === "resource") view.rerender(<QueryClientProvider client={client}><ResourceDeployments resource={{ ...resource, id: "other" }} writable blocked={false} /></QueryClientProvider>);
   if (retirement === "actor") await act(async () => { client.setQueryData(queryKeys.principal, { id: "other", provider: "oidc", roles: [] }); });
-  if (retirement !== "deadline") await waitFor(() => expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull());
-  expect(pendingSignal?.aborted).toBe(true);
+  // Actor query notifications can retire the keyed panel after the receipt text
+  // is already absent. Wait for request retirement itself before the late reply.
+  await waitFor(() => expect(pendingSignal?.aborted).toBe(true));
+  if (retirement !== "deadline") expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
   await act(async () => { completeDenial(json({ error: "retired denial" }, 403)); });
   expect(screen.queryByText(/Deployment permission is unavailable. Reload to verify current project access/)).toBeNull();
   if (retirement === "deadline") expect(screen.getByText(/Deployment request accepted: hop_one/)).toBeTruthy();
