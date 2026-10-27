@@ -432,10 +432,37 @@ try {
   await report("app_start_checked", String(taskID));
   step = "await_compose_volume_schedule_run_phase";
   await state("volume_schedule_run");
-  step = "open_compose_volume_schedule_run_page";
-  await hosting(page);
-  step = "select_saved_compose_volume_schedule";
-  await volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true}).click();
+  const savedScheduleList = page.waitForResponse(r => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/v1/resources/${resourceID}/storage-backup-schedules`);
+  void savedScheduleList.catch(() => {});
+  try {
+    step = "open_compose_volume_schedule_run_page";
+    await hosting(page);
+    step = "read_saved_compose_volume_schedule_list";
+    const listed = await savedScheduleList;
+    safe.volume_schedule_run_list_status = listed.status();
+    const items = await listed.json();
+    safe.volume_schedule_run_list_array = Array.isArray(items);
+    safe.volume_schedule_run_list_count = Array.isArray(items) ? items.length : 0;
+    safe.volume_schedule_run_list_id_matches = Array.isArray(items) && items.some(v => v?.id === volumeSchedule.id);
+    step = "select_saved_compose_volume_schedule";
+    await volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true}).click();
+  } catch (error) {
+    // Only bounded state from this failed selection enters the safe receipt.
+    safe.volume_schedule_run_region_count = await volumeSchedules.count();
+    const savedButton = volumeSchedules.getByRole("button", {name:`View schedule ${volumeSchedule.id}`,exact:true});
+    safe.volume_schedule_run_button_count = await savedButton.count();
+    if (safe.volume_schedule_run_button_count === 1)
+      safe.volume_schedule_run_button_disabled = await savedButton.isDisabled();
+    const text = await application.innerText().catch(() => "");
+    safe.volume_schedule_run_error_category = [
+      ["Schedule metadata is unavailable.", "schedule_metadata_unavailable"],
+      ["Compose backup access is unavailable.", "compose_backup_access_unavailable"],
+      ["Deployment permission is unavailable.", "deployment_permission_unavailable"],
+      ["Deployment access is pending or unavailable.", "deployment_access_pending"],
+      ["Unable to refresh deployment information.", "deployment_information_unavailable"],
+    ].find(([message]) => text.includes(message))?.[1] ?? "unclassified";
+    throw error;
+  }
   step = "enable_saved_compose_volume_schedule_draft";
   await volumeSchedules.getByRole("checkbox", {name:"Enabled",exact:true}).check();
   step = "verify_saved_compose_volume_schedule_selection";
