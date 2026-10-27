@@ -252,12 +252,12 @@ func (s *Server) runnerStorageBackupDownloadPlan(w http.ResponseWriter, r *http.
 	if !archiveRequestParameters(w, r, false) {
 		return
 	}
-	if !s.storageBackupDownloadEnabled {
-		storageDownloadError(w, store.ErrStorageDownloadUnavailable)
-		return
-	}
 	var a domain.HostingAuthority
 	if !decodeStorageArchive(w, r, &a) {
+		return
+	}
+	if !s.storageBackupDownloadEnabled {
+		storageDownloadError(w, store.ErrStorageDownloadUnavailable)
 		return
 	}
 	var ok bool
@@ -281,13 +281,13 @@ func (s *Server) runnerStorageBackupDownloadStream(w http.ResponseWriter, r *htt
 		writeErrorEnvelope(w, 400, "bad_request", "download stream accepts no query")
 		return
 	}
-	if !s.storageBackupDownloadEnabled || !s.runtimeEnvironmentTransport(r) {
-		storageDownloadError(w, store.ErrStorageDownloadUnavailable)
-		return
-	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "multipart/form-data" {
-		writeErrorEnvelope(w, 415, "unsupported_media_type", "multipart stream required")
+		writeErrorEnvelope(w, 400, "invalid_request", "multipart stream required")
+		return
+	}
+	if !s.storageBackupDownloadEnabled || !s.runtimeEnvironmentTransport(r) {
+		storageDownloadError(w, store.ErrStorageDownloadUnavailable)
 		return
 	}
 	var ok bool
