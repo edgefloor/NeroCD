@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
+import { hostingDeploymentKeys } from "@/api/hosting-deployments";
+import { storageDeploymentOptionsQuery } from "@/api/hosting-storage-deployment";
 import type { Resource } from "@/api/hosting";
 import type { LogSession } from "@/api/hosting-runtime-logs";
 import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
@@ -21,7 +23,10 @@ function backend(handler?: (url: string, options: RequestInit) => Response | Pro
     return json(session);
   }); vi.stubGlobal("fetch", fetch); return fetch;
 }
-function setup() { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={resource} blocked={false} /></QueryClientProvider>); }
+function setup(compose = false) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "u", provider: "oidc", roles: [] }); if (compose) {
+  client.setQueryData(storageDeploymentOptionsQuery({ actor: "u", project: "p", resource: "r" }).queryKey, { resource_id: "r", resource_generation: 1, storage_ref: null, available: true, reason: "available", host_port: 8080, container_port: 80, readiness: { path: "/", timeout_seconds: 30 }, routes: [], storage_route_continuity: null, stack_ref: { generation: 1, hash: digest }, previous_healthy_operation_id: "op" });
+  client.setQueryData(hostingDeploymentKeys.operation("p", "r", "op", "u"), { id: "op", project_id: "p", resource_id: "r", state: "succeeded", mutation_hold: false, restore_ownership_held: false, result: { ready: true, uncertain: false, stack: { observation_complete: true, components: ["app", "db", "init"].map((component) => ({ component, running: component !== "init", exit_code: 0, container_id: component + "-container", image_id: digest, operation_id: "op" })) } } });
+} return render(<QueryClientProvider client={client}><ResourceRuntimeLogs resource={compose ? { ...resource, source: { kind: "compose", compose: {} } } as Resource : resource} blocked={false} /></QueryClientProvider>); }
 async function click(name: string) { await act(async () => { fireEvent.click(screen.getByRole("button", { name })); }); }
 async function advance(ms: number) { for (let remaining = ms; remaining > 0;) { const step = Math.min(1000, remaining); now += step; wall += step; await act(async () => { await vi.advanceTimersByTimeAsync(step); }); remaining -= step; } }
 function validLateResult(kind: string, options: RequestInit) {
@@ -97,4 +102,52 @@ test("old-target closed history drains bounded pages and distinguishes source ga
     return json({ session, items: [{ sequence: after ? 3 : 2, component: "application", stream: "stderr", message: after ? "clipped historical row" : "earlier retained row", message_truncated: Boolean(after), source_timestamp: time, received_at: time }], next_sequence: after ? 3 : 2, earliest_available_sequence: 2, deleted_through_sequence: 1, gap: true, truncated: !after, markers: ["source_gap", "prefix_evicted"], sensitive: true });
   }); setup(); await click("Follow runtime logs"); expect(screen.getByText(/The target changed/)).toBeTruthy(); expect(screen.getByText(/Source gap:/)).toBeTruthy(); expect(screen.getByText(/Retention prefix removed/)).toBeTruthy(); expect(screen.getByText(/Page truncated:/)).toBeTruthy();
   await advance(3000); expect(screen.getByText(/Message clipped by producer or server/)).toBeTruthy(); expect(screen.getByText("Closed session history is fully drained.")).toBeTruthy(); expect(screen.getByText("op / container")).toBeTruthy(); expect(screen.queryByRole("button", { name: "Resume runtime logs" })).toBeNull();
+});
+
+test("Compose selection opens no demand and switching closes, clears and follows only explicitly", async () => {
+  const fetch = backend((url, options) => {
+    if (url.endsWith("/runtime-log-sessions")) {
+      const body = JSON.parse(String(options.body));
+      session = { ...structuredClone(original), request_id: body.request_id, target: { ...original.target, component: body.component, container_name: "ncd_" + "a".repeat(32) } };
+      return json(session);
+    }
+    if (url.includes("/logs?")) return json({ session, items: [{ sequence: 1, component: session.target.component, stream: "stdout", message: "private " + session.target.component, received_at: time }], next_sequence: 1, earliest_available_sequence: 1, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true });
+  });
+  setup(true); expect(fetch).not.toHaveBeenCalled();
+  expect(screen.getByRole("option", { name: "init · stopped, exit 0" })).toBeTruthy();
+  await act(async () => fireEvent.change(screen.getByRole("combobox", { name: "Compose component" }), { target: { value: "db" } }));
+  expect(fetch).not.toHaveBeenCalled(); await click("Follow runtime logs");
+  expect(JSON.parse(String(fetch.mock.calls[0]![1].body))).toMatchObject({ component: "db", expected_operation_id: "op" });
+  expect(screen.getByText("private db")).toBeTruthy(); expect(screen.getByText("db / ncd_" + "a".repeat(32))).toBeTruthy();
+  await act(async () => fireEvent.change(screen.getByRole("combobox"), { target: { value: "init" } }));
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "DELETE")).toHaveLength(1);
+  expect(screen.queryByText("private db")).toBeNull(); const count = fetch.mock.calls.length;
+  await advance(4000); expect(fetch).toHaveBeenCalledTimes(count);
+  await click("Follow runtime logs"); expect(screen.getByText("private init")).toBeTruthy();
+});
+test("Compose evidence failure offers no legacy application Follow fallback", () => {
+  const fetch = backend(); setup(true);
+  act(() => client.setQueryData(hostingDeploymentKeys.operation("p", "r", "op", "u"), { id: "op", state: "failed" }));
+  expect(screen.queryByRole("button", { name: "Follow runtime logs" })).toBeNull(); expect(fetch).not.toHaveBeenCalled();
+});
+
+test.each(["open", "read"])("component change retires a pending %s and rejects its late output", async (kind) => {
+  let resolve!: (response: Response) => void, pending = false;
+  const fetch = backend((url, options) => {
+    if (pending && (kind === "open" ? url.endsWith("/runtime-log-sessions") : url.includes("/logs?"))) return new Promise<Response>((done) => { resolve = done; });
+    if (url.endsWith("/runtime-log-sessions")) { const body = JSON.parse(String(options.body)); session = { ...structuredClone(original), request_id: body.request_id, target: { ...original.target, component: body.component, container_name: "ncd_" + "a".repeat(32) } }; return json(session); }
+    if (url.includes("/logs?")) return json({ session, items: [], next_sequence: 0, earliest_available_sequence: 0, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true });
+  });
+  setup(true); await act(async () => fireEvent.change(screen.getByRole("combobox"), { target: { value: "app" } }));
+  pending = kind === "open"; await click("Follow runtime logs");
+  if (kind === "read") { pending = true; await advance(3000); }
+  const attempt = fetch.mock.calls.at(-1)!;
+  const lateSession = { ...structuredClone(original), request_id: kind === "open" ? JSON.parse(String(attempt[1].body)).request_id : session.request_id, target: { ...original.target, component: "app", container_name: "ncd_" + "a".repeat(32) } };
+  await act(async () => fireEvent.change(screen.getByRole("combobox"), { target: { value: "db" } }));
+  expect(attempt[1].signal?.aborted).toBe(true);
+  const late = kind === "open" ? lateSession : { session: lateSession, items: [{ sequence: 1, component: "app", stream: "stdout", message: "late component secret", received_at: time }], next_sequence: 1, earliest_available_sequence: 1, deleted_through_sequence: 0, gap: false, truncated: false, markers: [], sensitive: true };
+  pending = false; await act(async () => resolve(json(late)));
+  expect(screen.queryByText("late component secret")).toBeNull(); expect(screen.queryByText(/Immutable session/)).toBeNull();
+  expect(fetch.mock.calls.filter(([, options]) => options.method === "DELETE")).toHaveLength(1);
+  const count = fetch.mock.calls.length; await advance(10_000); expect(fetch).toHaveBeenCalledTimes(count);
 });

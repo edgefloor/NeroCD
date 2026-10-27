@@ -40,3 +40,20 @@ test("demand expires conservatively under request delay, wall rollback, suspensi
   const lease = logLease(session, 4000); expect(lease.remaining).toBe(25998); expect(leaseRemaining(lease, 26100, -5000)).toBe(0); expect(leaseRemaining(lease, 100, 27000)).toBe(0); expect(leaseRemaining(lease, 99, 1000)).toBe(0);
   const newerClock = { ...session, server_time: "2026-10-22T23:59:59Z" }; expect(logLease(newerClock, 0, lease).remaining).toBe(lease.remaining);
 });
+
+test("component targets are paired, immutable and bound to every returned row", () => {
+  const component = { ...session, target: { ...session.target, component: "db", container_name: "ncd_" + "b".repeat(32) } };
+  expect(() => validateLogSession(component, scope)).not.toThrow();
+  for (const target of [{ ...component.target, component: undefined }, { ...component.target, container_name: undefined }, { ...component.target, component: "../db" }, { ...component.target, container_name: "foreign" }]) expect(() => validateLogSession({ ...component, target }, scope)).toThrow();
+  for (const target of [{ ...component.target, component: "app" }, { ...component.target, container_name: "ncd_" + "c".repeat(32) }, session.target]) expect(() => validateLogSession({ ...component, target }, scope, component)).toThrow();
+  expect(() => validateLogPage({ ...page(), session: component, items: [{ ...row(), component: "db" }] }, scope, component, 0)).not.toThrow();
+  expect(() => validateLogPage({ ...page(), session: component }, scope, component, 0)).toThrow();
+});
+test("component open freezes paired selection and rejects another operation or component", async () => {
+  const body = newLogOpen(Date.parse(time), { component: "db", expected_operation_id: "op" });
+  expect(body).toMatchObject({ component: "db", expected_operation_id: "op" });
+  for (const target of [{ ...session.target, component: "app", container_name: "ncd_" + "a".repeat(32) }, { ...session.target, component: "db", container_name: "ncd_" + "a".repeat(32), operation_id: "other" }]) {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...session, request_id: body.request_id, target }))));
+    await expect(openRuntimeLogs(scope, body, new AbortController().signal)).rejects.toThrow();
+  }
+});
