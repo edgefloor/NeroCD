@@ -170,13 +170,14 @@ export function archiveBackup(
   return value;
 }
 function storageScope(
-  value: HostingStorage,
+  input: unknown,
   scope: ArchiveScope,
   resource: string,
   binding?: string,
 ) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail();
+  const value = input as Record<string, unknown>;
   if (
-    !value ||
     value.project_id !== scope.project ||
     value.resource_id !== resource ||
     value.destination_id !== scope.destination ||

@@ -640,3 +640,9 @@ test("Compose history preserves logical volume and source deployment, rejecting 
   expect(archiveBackup({ ...backup, volume: "uploads", source_deployed_operation_id: "deploy" } as never, scope)).toMatchObject({ volume: "uploads" });
   expect(() => archiveBackup({ ...backup, volume: "uploads" } as never, scope)).toThrow();
 });
+
+test("legacy archives reject zero Compose storage proof without a Compose source", () => {
+  const value = fixture();
+  value.storage_archive.plan.source_storage = { ...storage, id: "", kind: "" };
+  expect(() => archiveOperation(op(value), scope, "op", "backup")).toThrow();
+});
