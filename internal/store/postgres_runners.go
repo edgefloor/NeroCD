@@ -562,7 +562,15 @@ func (s *PostgresStore) CompleteLeaseRequest(ctx context.Context, leaseID string
 	if err := queries.AcquireRunLogLock(ctx, runID); err != nil {
 		return domain.RunLease{}, fmt.Errorf("acquire run log lock query: %w", err)
 	}
-	if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
+	downloadCompletion, err := completeStorageDownloadMetadata(ctx, tx, runID, runnerID, domain.HostingAuthority{RunID: runID, LeaseID: leaseID, Attempt: attempt, Fence: fence}, status)
+	if err != nil {
+		return domain.RunLease{}, err
+	}
+	if downloadCompletion {
+		if workflowState != nil || runStatus != status {
+			return domain.RunLease{}, ErrConflict
+		}
+	} else if err := rejectGenericHostingRun(ctx, queries, runID); err != nil {
 		return domain.RunLease{}, err
 	}
 	if deploymentRun, deploymentErr := queries.IsDeploymentRun(ctx, runID); deploymentErr != nil {

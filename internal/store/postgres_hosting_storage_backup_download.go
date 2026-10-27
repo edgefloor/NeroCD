@@ -309,3 +309,69 @@ func (s *PostgresStore) storageDownloadClaimAllowed(ctx context.Context, tx pgx.
 	}
 	return err == nil, err
 }
+
+// Complete only terminal metadata for a validated local-download task. This
+// exception is private to CompleteLeaseRequest; every other generic mutation
+// continues rejecting all hosting execution. The caller already locked the task
+// and commits this metadata together with the ordinary fenced lease CAS/audit.
+func completeStorageDownloadMetadata(ctx context.Context, tx pgx.Tx, runID, runner string, a domain.HostingAuthority, status string) (bool, error) {
+	q := sqlcgen.New(tx)
+	task, err := q.GetRun(ctx, runID)
+	if err != nil {
+		return false, hostingError(err)
+	}
+	run, err := taskRunFromSQLC(task)
+	if err != nil {
+		return false, err
+	}
+	if run.RunSpec.Type != domain.RunTypeStorageBackupTransfer || run.RunSpec.HostingMode != domain.HostingStorageBackupDownloadMode {
+		return false, nil
+	}
+	if domain.ValidateStorageBackupTransferTask(run) != nil {
+		return false, ErrConflict
+	}
+	a.OperationID = run.RunSpec.HostingOperationID
+	row, err := q.LockStorageDownload(ctx, a.OperationID)
+	if err != nil {
+		return false, hostingError(err)
+	}
+	var p domain.HostingStorageBackupDownloadPlan
+	if json.Unmarshal(row.Plan, &p) != nil || p.Validate() != nil || p.SessionID != row.ID || p.SessionID != a.OperationID || row.RunID != runID || row.RunnerID != runner || p.RunnerID != runner || p.ProjectID != run.ProjectID || p.ActorID != run.RequestedBy || p.BackupID != row.BackupID || p.ActorID != row.ActorID || p.Hash != row.PlanHash || !p.ExpiresAt.Equal(row.ExpiresAt) {
+		return false, ErrConflict
+	}
+	if row.Authority != nil {
+		var original domain.HostingAuthority
+		if json.Unmarshal(row.Authority, &original) != nil || original != a {
+			return false, ErrConflict
+		}
+	}
+	if row.State == "succeeded" && row.Authority == nil {
+		return false, ErrConflict
+	}
+	switch status {
+	case domain.RunSucceeded:
+		// A runner cannot manufacture successful browser delivery, including before
+		// Begin. Replay is metadata only and keeps the exact recorded stream tuple.
+		if row.State != "succeeded" || row.Authority == nil {
+			return false, ErrConflict
+		}
+	case domain.RunFailed, domain.RunCanceled:
+		// A delivered browser archive can coexist with a failed runner outcome
+		// when the stream acknowledgment was lost. Preserve delivery evidence;
+		// retiring this lease does not authorize another stream.
+		if row.State == "succeeded" {
+			return true, nil
+		}
+		if row.State != "failed" {
+			if err = q.FinishStorageDownload(ctx, sqlcgen.FinishStorageDownloadParams{ID: row.ID, State: "failed"}); err != nil {
+				return false, err
+			}
+			if err = createAuditWithQueries(ctx, q, domain.AuditEvent{ID: "aud_download_closed_" + row.ID, ActorID: row.ActorID, Action: "hosting.storage_backup_download.failed", TargetID: row.ID, CreatedAt: time.Now().UTC(), Metadata: map[string]any{"backup_id": row.BackupID}}); err != nil {
+				return false, err
+			}
+		}
+	default:
+		return false, ErrConflict
+	}
+	return true, nil
+}

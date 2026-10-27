@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,7 +175,27 @@ func TestPostgresStorageDownloadHTTPAuthorityAndDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.runnerContext = storageDownloadRunnerContext(t, f)
-	server := httptest.NewUnstartedServer(api.NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), api.ServerConfig{StorageBackupDownload: true, TrustedLoopbackRuntimeEnvironmentHTTP: true}))
+	apiHandler := api.NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), api.ServerConfig{StorageBackupDownload: true, TrustedLoopbackRuntimeEnvironmentHTTP: true})
+	var dropStreamAck atomic.Bool
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/runners/hosting/storage-backup-download/stream" && dropStreamAck.Swap(false) {
+			receipt := httptest.NewRecorder()
+			apiHandler.ServeHTTP(receipt, r)
+			if receipt.Code != http.StatusOK {
+				t.Errorf("expected committed stream acknowledgment, got %d", receipt.Code)
+			}
+			connection, _, e := w.(http.Hijacker).Hijack()
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			if e = connection.Close(); e != nil {
+				t.Error(e)
+			}
+			return
+		}
+		apiHandler.ServeHTTP(w, r)
+	}))
 	server.Config.ReadTimeout = 80 * time.Millisecond
 	server.Config.WriteTimeout = 80 * time.Millisecond
 	server.Start()
@@ -265,6 +286,89 @@ func TestPostgresStorageDownloadHTTPAuthorityAndDeadline(t *testing.T) {
 	got := <-browser
 	if got.err != nil || got.status != 200 || got.length != int64(len(data)) || !bytes.Equal(got.body, data) || !strings.Contains(got.content, b.ID+".tar") {
 		t.Fatal("native attachment", got.status, got.err)
+	}
+
+	// The HTTP stream acknowledgment must compose with the real controller's
+	// ordinary durable completion before the same runner can continue its loop.
+	completion := runnerclient.CompleteRequest{LeaseID: authority.LeaseID, Attempt: authority.Attempt, Fence: authority.Fence, Status: domain.RunSucceeded, CompletionKey: "download_http_complete"}
+	completed, err := client.Complete(transport, completion)
+	if err != nil || completed.Status != domain.RunSucceeded {
+		t.Fatal("successful archive could not complete its real runner lease", err)
+	}
+	replay, err := client.Complete(transport, completion)
+	if err != nil || replay.ID != completed.ID || replay.Status != completed.Status {
+		t.Fatal("lost completion acknowledgment did not replay", err)
+	}
+	var recordedKey string
+	if err = f.db.QueryRow(f.ctx, `SELECT completion_key FROM run_leases WHERE id=$1`, authority.LeaseID).Scan(&recordedKey); err != nil || recordedKey != completion.CompletionKey {
+		t.Fatal("durable completion key changed", err)
+	}
+	changed := completion
+	changed.Status = domain.RunFailed
+	if _, err = client.Complete(transport, changed); err == nil {
+		t.Fatal("contradictory completion replay accepted")
+	}
+	changed = completion
+	changed.CompletionKey = "different_completion"
+	if _, err = client.Complete(transport, changed); err == nil {
+		t.Fatal("changed completion key accepted")
+	}
+	successor, err := f.service.CreateStorageBackupDownload(f.owner, "download_after_http", b.ID, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := f.service.ClaimRun(f.runnerContext)
+	if err != nil || next.Run.RunSpec.HostingOperationID != successor.SessionID {
+		t.Fatal("runner could not claim work after download completion", err)
+	}
+	if _, err = client.Complete(transport, runnerclient.CompleteRequest{LeaseID: next.Lease.ID, Attempt: next.Lease.Attempt, Fence: next.Lease.Fence, Status: domain.RunFailed, CompletionKey: "successor_failed"}); err != nil {
+		t.Fatal("exact unread successor did not retire", err)
+	}
+
+	// Drop only the runner's stream acknowledgment after controller/browser
+	// success. Terminal runner failure must preserve successful delivery and
+	// release the worker for its next claim, without sending archive bytes again.
+	dropStreamAck.Store(true)
+	lostBrowser := runBrowser(t.Context())
+	activeBrowser = lostBrowser
+	lostID := waitSession(id)
+	lostClaim, err := f.service.ClaimRun(f.runnerContext)
+	if err != nil || lostClaim.Run.RunSpec.HostingOperationID != lostID {
+		t.Fatal("lost-ACK claim", err)
+	}
+	lostAuthority := domain.HostingAuthority{OperationID: lostID, RunID: lostClaim.Run.ID, LeaseID: lostClaim.Lease.ID, Attempt: lostClaim.Lease.Attempt, Fence: lostClaim.Lease.Fence}
+	lostPlan, err := client.HostingStorageBackupDownloadPlan(transport, lostAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.StreamStorageBackupDownload(transport, domain.HostingStorageBackupDownloadStream{HostingAuthority: lostAuthority, PlanHash: lostPlan.Hash}, lostPlan, bytes.NewReader(data)); err == nil {
+		t.Fatal("dropped stream acknowledgment was not observed")
+	}
+	delivered := <-lostBrowser
+	if delivered.err != nil || delivered.status != 200 || !bytes.Equal(delivered.body, data) {
+		t.Fatal("stream-ACK loss changed browser delivery", delivered.status, delivered.err)
+	}
+	lostCompletion := runnerclient.CompleteRequest{LeaseID: lostAuthority.LeaseID, Attempt: lostAuthority.Attempt, Fence: lostAuthority.Fence, Status: domain.RunFailed, CompletionKey: "lost_stream_ack"}
+	if _, err = client.Complete(transport, lostCompletion); err != nil {
+		t.Fatal("lost stream ACK blocked terminal metadata", err)
+	}
+	if _, err = client.Complete(transport, lostCompletion); err != nil {
+		t.Fatal("lost stream ACK metadata replay", err)
+	}
+	var deliveredState string
+	if err = f.db.QueryRow(f.ctx, `SELECT state FROM hosting_storage_backup_downloads WHERE id=$1`, lostID).Scan(&deliveredState); err != nil || deliveredState != "succeeded" {
+		t.Fatal("runner failure overwrote successful browser evidence", deliveredState, err)
+	}
+	afterLoss, err := f.service.CreateStorageBackupDownload(f.owner, "download_after_ack_loss", b.ID, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := f.service.ClaimRun(f.runnerContext)
+	if err != nil || resumed.Run.RunSpec.HostingOperationID != afterLoss.SessionID {
+		t.Fatal("stream ACK loss blocked successor claim", err)
+	}
+	if _, err = client.Complete(transport, runnerclient.CompleteRequest{LeaseID: resumed.Lease.ID, Attempt: resumed.Lease.Attempt, Fence: resumed.Lease.Fence, Status: domain.RunCanceled, CompletionKey: "successor_canceled"}); err != nil {
+		t.Fatal(err)
 	}
 	// Cancellation while awaiting a runner closes the one-use session immediately.
 	cancelCtx, cancel := context.WithCancel(t.Context())
@@ -538,5 +642,76 @@ func TestPostgresStorageDownloadLockedAdmissionBudgetAndUnavailableHTTP(t *testi
 	got := <-browser
 	if got.err != nil || got.status != 404 || got.disposition != "" || !strings.HasPrefix(got.content, "application/json") || !bytes.Contains(got.body, []byte(`"code":"not_found"`)) {
 		t.Fatal("missing archive did not fail before attachment", got.status, got.disposition, got.content, got.err)
+	}
+}
+
+func TestPostgresStorageDownloadCompletionAuthorityAndReadOnlyBoundary(t *testing.T) {
+	f, b := storageDownloadFixture(t)
+	var err error
+	for _, status := range []string{domain.RunFailed, domain.RunCanceled} {
+		p, err := f.service.CreateStorageBackupDownload(f.owner, "download_terminal_"+status, b.ID, time.Now().Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim, err := f.service.ClaimRun(f.runnerContext)
+		if err != nil || claim.Run.RunSpec.HostingOperationID != p.SessionID {
+			t.Fatal(err)
+		}
+		a := domain.HostingAuthority{OperationID: p.SessionID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		// Neither service nor direct repository callers may invent browser success.
+		if _, err = f.service.CompleteLease(f.runnerContext, a.LeaseID, domain.RunSucceeded, a.Attempt, a.Fence, "premature"); !errors.Is(err, store.ErrConflict) {
+			t.Fatal("premature successful completion", err)
+		}
+		finished := time.Now().UTC()
+		if _, err = f.pg.CompleteLeaseRequest(f.ctx, a.LeaseID, f.runner, domain.RunSucceeded, a.Attempt, a.Fence, "direct_premature", finished, domain.RunSucceeded, &finished, nil, nil, destinationEvent("premature_"+status)); !errors.Is(err, store.ErrConflict) {
+			t.Fatal("repository bypassed controller-success evidence", err)
+		}
+		expectedState := "waiting"
+		if status == domain.RunFailed {
+			if _, err = f.service.BeginStorageBackupDownload(f.runnerContext, domain.HostingStorageBackupDownloadStream{HostingAuthority: a, PlanHash: p.Hash}); err != nil {
+				t.Fatal(err)
+			}
+			expectedState = "streaming"
+		}
+		if _, err = f.service.CompleteLease(f.runnerContext, a.LeaseID, status, a.Attempt, "wrong_fence", "wrong_fence"); err == nil {
+			t.Fatal("wrong authority accepted")
+		}
+		if _, err = f.pg.CompleteLeaseRequest(f.ctx, a.LeaseID, f.runner, status, a.Attempt+1, a.Fence, "wrong_attempt", finished, status, &finished, nil, nil, destinationEvent("wrong_attempt_"+status)); err == nil {
+			t.Fatal("direct stale attempt accepted")
+		}
+		var state string
+		if err = f.db.QueryRow(f.ctx, `SELECT state FROM hosting_storage_backup_downloads WHERE id=$1`, p.SessionID).Scan(&state); err != nil || state != expectedState {
+			t.Fatal("rejected completion changed read metadata", state, err)
+		}
+		completed, err := f.service.CompleteLease(f.runnerContext, a.LeaseID, status, a.Attempt, a.Fence, "terminal_"+status)
+		if err != nil || completed.Status != status {
+			t.Fatal("exact failed/canceled read not retired", err)
+		}
+		replay, err := f.service.CompleteLease(f.runnerContext, a.LeaseID, status, a.Attempt, a.Fence, "terminal_"+status)
+		if err != nil || replay.ID != completed.ID || replay.Status != status {
+			t.Fatal("terminal metadata replay", err)
+		}
+		if _, err = f.service.CompleteLease(f.runnerContext, a.LeaseID, domain.RunSucceeded, a.Attempt, a.Fence, "terminal_"+status); err == nil {
+			t.Fatal("failed/canceled replay promoted read to success")
+		}
+		if err = f.db.QueryRow(f.ctx, `SELECT state FROM hosting_storage_backup_downloads WHERE id=$1`, p.SessionID).Scan(&state); err != nil || state != "failed" {
+			t.Fatal("terminal read remained streamable", state, err)
+		}
+		if _, err = f.service.RunnerStorageBackupDownloadPlan(f.runnerContext, a); err == nil {
+			t.Fatal("completion reopened byte delivery")
+		}
+	}
+	// All mutating hosting families retain the blanket generic completion guard.
+	var leaseID, fence string
+	var attempt int
+	if err = f.db.QueryRow(f.ctx, `SELECT id,attempt,fence FROM run_leases WHERE run_id=$1 ORDER BY attempt DESC LIMIT 1`, f.source.RunID).Scan(&leaseID, &attempt, &fence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.CompleteLease(f.runnerContext, leaseID, domain.RunSucceeded, attempt, fence, "ordinary_hosting"); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("ordinary image hosting generic completion accepted", err)
+	}
+	finished := time.Now().UTC()
+	if _, err = f.pg.CompleteLeaseRequest(f.ctx, leaseID, f.runner, domain.RunSucceeded, attempt, fence, "ordinary_hosting_direct", finished, domain.RunSucceeded, &finished, nil, nil, destinationEvent("ordinary_hosting_direct")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("ordinary hosting repository guard weakened", err)
 	}
 }

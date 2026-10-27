@@ -613,7 +613,15 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	if err != nil {
 		return domain.RunLease{}, err
 	}
-	if run.RunSpec.Type == domain.RunTypeComposeDeploy || domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
+	// Download bytes are already settled by the controller. Only this closed
+	// read mode uses ordinary durable terminal metadata; mutating hosting tasks
+	// retain their dedicated receipt protocols. Memory storage cannot admit it.
+	downloadCompletion := run.RunSpec.Type == domain.RunTypeStorageBackupTransfer && run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode && domain.ValidateStorageBackupTransferTask(run) == nil
+	if downloadCompletion {
+		_, repositoryErr := s.storageDownloadRepository()
+		downloadCompletion = repositoryErr == nil
+	}
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy || domain.ContainsHostingExecution(run.RunSpec, run.Workflow) && !downloadCompletion {
 		return domain.RunLease{}, store.ErrConflict
 	}
 	if lease.CompletionKey != "" {
