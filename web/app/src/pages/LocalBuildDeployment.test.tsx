@@ -312,3 +312,95 @@ test("new Git Compose build keeps historical routed stack proof after desired so
   await composeSubmit(); await screen.findByRole("region", { name: "Deployment operation detail" });
   expect(JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body))).toMatchObject({ expected_generation: 3, expected_source_generation: 4, storage_route_continuity: routedComposeOptions.storage_route_continuity, host_port: 30000 });
 });
+
+function registryMetadata(url: string) {
+  if (!url.includes("managed-secrets")) return undefined;
+  return json({ items: url.includes("versions") ? [{ secret_id: "credential", version: 1 }, { secret_id: "credential", version: 2 }] : [{ id: "credential", name: "Registry access", project_id: "p", status: "active" }, { id: "foreign", name: "Foreign", project_id: "other", status: "active" }, { id: "revoked", name: "Revoked", project_id: "p", status: "revoked" }], limit: 20, offset: 0, count: 2, total: 2 });
+}
+async function chooseGitComposeRegistry() {
+  await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Image access").disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  await screen.findByRole("option", { name: "Registry access · credential" });
+  expect(screen.queryByRole("option", { name: "Foreign · foreign" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Revoked · revoked" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Registry credential secret"), { target: { value: "credential" } });
+  await screen.findByRole("option", { name: "Version 1" });
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  await screen.findByText("Image access: Registry credential credential, version 1.");
+}
+test.each(["initial", "replacement", "start"])("private Git Compose %s freezes exact credential with build, routes and stopped reference", async (mode) => {
+  let writes = 0;
+  const fetch = composeBackend((url) => {
+    const metadata = registryMetadata(url); if (metadata) return metadata;
+    if (mode === "start" && url.endsWith("/stack-lifecycle")) return json({ resource_id: "r", resource_generation: 2, state: "stopped", deployed_operation_id: "prior", stop_operation_id: "stop" });
+    if (mode === "start" && url.endsWith("/storage-deployment-options")) return json({ ...routedComposeOptions, stopped_operation_id: "stop" });
+    if (url.endsWith("/from-build")) {
+      if (++writes === 1) throw new TypeError("lost receipt");
+      return json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, registry_credential: { secret_id: "credential", version: 1 }, ...(mode !== "initial" ? { storage_route_continuity: { hash: "continuity" } } : {}), ...(mode === "start" ? { stack_stopped_operation_id: "stop" } : {}) } }, 202);
+    }
+    return mode === "initial" ? undefined : runningCompose(url);
+  });
+  await setup(true, composeResource); await chooseGitComposeRegistry();
+  await composeSubmit(mode === "start" ? "Start selected Compose build" : "Deploy selected build");
+  await screen.findByText(/Deployment delivery is unconfirmed/);
+  expect(screen.getByLabelText<HTMLSelectElement>("Registry credential version").disabled).toBe(true);
+  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  const requests = fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"));
+  expect(requests).toHaveLength(2); expect(requests[1]![1].body).toBe(requests[0]![1].body);
+  const input = JSON.parse(String(requests[0]![1].body));
+  expect(input).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3, registry_credential: { secret_id: "credential", version: 1 } });
+  expect(input).not.toHaveProperty("grant_id"); expect(input).not.toHaveProperty("password");
+  if (mode !== "initial") expect(input).toMatchObject({ host_port: 30000, storage_route_continuity: routedComposeOptions.storage_route_continuity });
+  if (mode === "start") expect(input.managed_stack.expected_stopped_operation_id).toBe("stop");
+  expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});
+test("private Git Compose requires explicit version and credential changes clear acknowledgment", async () => {
+  const fetch = composeBackend(registryMetadata); await setup(true, composeResource);
+  await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Image access").disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+  await chooseGitComposeRegistry();
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "2" } });
+  await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).checked).toBe(false));
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test.each([undefined, { secret_id: "other", version: 1 }, { secret_id: "credential", version: 2 }])("Git Compose rejects substituted registry receipt %j", async (registry_credential) => {
+  composeBackend(url => registryMetadata(url) ?? (url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, registry_credential } }, 202) : undefined));
+  await setup(true, composeResource); await chooseGitComposeRegistry(); await composeSubmit();
+  await screen.findByText(/Deployment delivery is unconfirmed/);
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+});
+test("registry metadata denial clears Git Compose deployment controls", async () => {
+  const fetch = composeBackend(url => url.includes("managed-secrets") ? json({}, 403) : undefined);
+  await setup(true, composeResource); await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Image access").disabled).toBe(false));
+  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  await screen.findByText(/Local deployment access is pending or unavailable/);
+  expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test("ordinary local artifact deployment has no registry credential control", async () => {
+  const fetch = backend(); await setup();
+  expect(screen.queryByLabelText("Image access")).toBeNull(); await submit();
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  expect(JSON.parse(String(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body))).not.toHaveProperty("registry_credential");
+});
+
+test("withdrawn registry version clears acknowledgment without selecting another version", async () => {
+  let withdrawn = false;
+  const fetch = composeBackend(url => withdrawn && url.includes("managed-secrets") && url.includes("versions") ? json({ items: [{ secret_id: "credential", version: 2 }], limit: 20, offset: 0, count: 1, total: 1 }) : registryMetadata(url));
+  await setup(true, composeResource); await chooseGitComposeRegistry();
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+  withdrawn = true; fireEvent.click(screen.getByRole("button", { name: "Refresh registry credential metadata" }));
+  await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).checked).toBe(false));
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+  expect(screen.getByLabelText<HTMLSelectElement>("Registry credential version").value).not.toBe("2");
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+test("public Git Compose cannot accept an unexpected credential in its receipt", async () => {
+  composeBackend(url => url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, registry_credential: { secret_id: "unexpected", version: 1 } } }, 202) : undefined);
+  await setup(true, composeResource); await composeSubmit(); await screen.findByText(/Deployment delivery is unconfirmed/);
+  expect(screen.queryByRole("region", { name: "Deployment operation detail" })).toBeNull();
+});

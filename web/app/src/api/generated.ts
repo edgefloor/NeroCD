@@ -7193,6 +7193,8 @@ export interface components {
             readiness: components["schemas"]["HostingReadiness"];
         };
         HostingBuildDeploymentInput: {
+            /** @description One selected project secret version for registry-pulled Git Compose services. Requires managed_stack; local build owners and aliases never receive this credential. */
+            registry_credential?: components["schemas"]["HostingRegistryCredentialRef"];
             /** @description Explicit current route and proxy selections for a Git Compose same-port replacement. Requires managed_stack and the exact current successful Compose build. */
             storage_route_continuity?: components["schemas"]["HostingStorageRouteContinuityInput"];
             managed_stack?: components["schemas"]["HostingStackDeploymentInput"];
