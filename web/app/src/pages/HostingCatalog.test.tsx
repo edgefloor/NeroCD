@@ -370,3 +370,87 @@ test("Actual Budget previews curated literal defaults and retries installation w
   expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
   expect(revealManagedSecret).not.toHaveBeenCalled();
 });
+
+const vikunja: api.CatalogTemplate = {
+  ...kuma, id: "vikunja-with-postgresql", name: "Vikunja with PostgreSQL",
+  immutable_version: "coolify-b12d1386.vikunja-2.7.1.v1", category: "productivity",
+  upstream_path: "templates/compose/vikunja-with-postgresql.yaml",
+  definition: {
+    ...kuma.definition, container_port: 3456, readiness: { path: "/health", timeout_seconds: 120 },
+    credential_names: ["SERVICE_PASSWORD_JWTSECRET", "SERVICE_PASSWORD_POSTGRESQL"],
+    compose: { original: "services:\n  vikunja:\n    image: vikunja/vikunja@sha256:pinned\nvolumes:\n  vikunja-data: {}\n", public_component: "vikunja", container_port: 3456 },
+  },
+};
+async function selectVikunja() {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([template, vikunja]);
+  setup();
+  await screen.findByRole("option", { name: /Vikunja with PostgreSQL ·/ });
+  fireEvent.change(screen.getByLabelText("Search catalog"), { target: { value: "vikunja-data" } });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: vikunja.id } });
+  await screen.findByRole("option", { name: "Docker" });
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+}
+test("Compose catalog previews exact source and retains the URL and secret identity across retry", async () => {
+  await selectVikunja();
+  const preview = screen.getByRole("region", { name: "Catalog installation preview" });
+  expect(preview.querySelector("pre")?.textContent).toBe(vikunja.definition.compose!.original);
+  expect(preview.textContent).toContain("Public componentvikunja");
+  expect(preview.textContent).toContain("Runtime secrets are generated once");
+  expect(preview.textContent).not.toContain("No login credentials are generated");
+  fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: "https://tasks.example.test" } });
+  vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response")).mockImplementationOnce(async body => ({
+    id: "res", request: body, template: vikunja,
+    resource: { id: "res", project_id: "project", project_environment_id: "env", name: body.name, kind: "application", source: { kind: "compose", compose: vikunja.definition.compose! }, generation: 1, created_by: "actor", created_at: "", updated_at: "" },
+    binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" },
+    storage_ref: { storage_id: "", generation: 0, hash: "" }, runtime_configuration: { generation: 1, hash: "runtime" },
+    credentials: [{ name: "SERVICE_PASSWORD_POSTGRESQL", kind: "managed_secret", secret: { secret_id: "secret", version: 1 } }], created_by: "actor", created_at: "",
+  }));
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  expect(screen.getByLabelText<HTMLInputElement>("Public URL").disabled).toBe(true);
+  const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
+  expect(first).toMatchObject({ template_id: vikunja.id, immutable_version: vikunja.immutable_version, public_url: "https://tasks.example.test" });
+  fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
+  await screen.findByText(/Generated runtime secrets are saved as managed-secret references/);
+  expect(vi.mocked(api.installCatalog).mock.calls[1]![0]).toBe(first);
+  expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
+  expect(screen.queryByText(/Linkding creates the initial account/)).toBeNull();
+  expect(revealManagedSecret).not.toHaveBeenCalled();
+});
+for (const url of ["", "ftp://tasks.example.test", "https://user:pass@tasks.example.test", "https://tasks.example.test?q=1", "https://tasks.example.test#part", "https://tasks.example.test/subpath", "https://tasks.example.test\\path"]) {
+  test(`Compose catalog rejects an invalid public URL before freezing: ${url}`, async () => {
+    await selectVikunja();
+    fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: url } });
+    fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+    await screen.findByText("Enter a public HTTP or HTTPS base URL without credentials, a path, a query or a fragment.");
+    expect(api.installCatalog).not.toHaveBeenCalled();
+    expect(screen.getByLabelText<HTMLInputElement>("Public URL").disabled).toBe(false);
+  });
+}
+test("switching from Compose to an image template omits the public URL", async () => {
+  await selectVikunja();
+  fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: "http://tasks.example.test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: "linkding" } });
+  expect(screen.queryByLabelText("Public URL")).toBeNull();
+  vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response"));
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  expect(vi.mocked(api.installCatalog).mock.calls[0]![0]).not.toHaveProperty("public_url");
+});
+
+test("a changed pinned catalog hash cannot confirm installation and retains the exact attempt", async () => {
+  await selectVikunja();
+  fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: "http://tasks.example.test" } });
+  vi.mocked(api.installCatalog).mockImplementationOnce(async body => ({
+    id: "res", request: body, template: { ...vikunja, definition_hash: "changed" },
+    resource: { id: "res", project_id: "project", project_environment_id: "env", name: body.name, kind: "application", source: { kind: "compose", compose: vikunja.definition.compose! }, generation: 1, created_by: "actor", created_at: "", updated_at: "" },
+    binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" },
+    storage_ref: { storage_id: "", generation: 0, hash: "" }, runtime_configuration: { generation: 1, hash: "runtime" }, credentials: [], created_by: "actor", created_at: "",
+  }));
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  expect(screen.getByRole("alert").textContent).toContain("Installation unconfirmed");
+  expect(screen.queryByText(/Installed Vikunja/)).toBeNull();
+  expect(vi.mocked(api.installCatalog).mock.calls[0]![0].public_url).toBe("http://tasks.example.test");
+});

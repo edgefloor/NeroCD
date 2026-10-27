@@ -8097,9 +8097,11 @@ export interface components {
             destination_id: string;
             name: string;
             /** @enum {string} */
-            template_id: "linkding" | "uptime-kuma" | "actualbudget";
+            template_id: "linkding" | "uptime-kuma" | "actualbudget" | "vikunja-with-postgresql";
             /** @enum {string} */
-            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1" | "coolify-b12d1386.actualbudget-26.10.0.v1";
+            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1" | "coolify-b12d1386.actualbudget-26.10.0.v1" | "coolify-b12d1386.vikunja-2.7.1.v1";
+            /** @description Public HTTP(S) base URL required only for managed Compose catalog applications. Does not create a route or hostname grant. */
+            public_url?: string;
         };
         HostingCatalogDefinition: {
             image_reference: string;
@@ -8111,6 +8113,8 @@ export interface components {
             runtime_environment?: {
                 [key: string]: string;
             };
+            /** @description Pinned managed Compose source; absent for image catalog applications. */
+            compose?: components["schemas"]["ComposeResourceSource"]["compose"];
         };
         HostingCatalogTemplate: {
             id: string;
@@ -8136,7 +8140,15 @@ export interface components {
             template: components["schemas"]["HostingCatalogTemplate"];
             resource: components["schemas"]["Resource"];
             binding: components["schemas"]["ResourceBinding"];
-            storage_ref: components["schemas"]["HostingStorageRef"];
+            /** @description Image installations have ordinary storage; managed Compose installations retain an empty reference because volumes belong to the stack. */
+            storage_ref: components["schemas"]["HostingStorageRef"] | {
+                /** @enum {string} */
+                storage_id: "";
+                /** @enum {integer} */
+                generation: 0;
+                /** @enum {string} */
+                hash: "";
+            };
             runtime_configuration: components["schemas"]["HostingRuntimeConfigurationRef"];
             credentials: components["schemas"]["HostingRuntimeEntry"][];
             created_by: string;

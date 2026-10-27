@@ -31,6 +31,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const [name, setName] = useState("Linkding");
     const [nameEdited, setNameEdited] = useState(false);
     const [destination, setDestination] = useState("");
+    const [publicURL, setPublicURL] = useState("");
     const [template, setTemplate] = useState("");
     const [search, setSearch] = useState("");
     const [category, setCategory] = useState("");
@@ -57,7 +58,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const matches = catalog.data?.filter(t => {
         const text = [t.name, t.id, t.immutable_version, t.definition.image_reference,
-            t.definition.mount_path, ...t.definition.credential_names].join(" ").toLowerCase();
+            t.definition.mount_path, t.definition.compose?.original, t.definition.compose?.public_component, ...t.definition.credential_names].join(" ").toLowerCase();
         return terms.every(term => text.includes(term)) && (!category || (t.category ?? "").split(",").some(value => value.trim().toLowerCase() === category));
     }) ?? [];
     const selected = matches.find(t => t.id === template);
@@ -70,7 +71,17 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
             setError("Enter a name with 1 to 128 UTF-8 bytes, without surrounding whitespace or control characters.");
             return;
         }
-        const body = attempt ?? { request_id: databaseRequestID(), project_id: projectID, project_environment_id: environmentID, destination_id: destination, name, template_id: selected!.id as CatalogInstallInput["template_id"], immutable_version: selected!.immutable_version as CatalogInstallInput["immutable_version"] };
+        if (!attempt && selected?.definition.compose) {
+            try {
+                const url = new URL(publicURL);
+                if (publicURL !== publicURL.trim() || publicURL.length > 512 || /[\\\p{Cc}]/u.test(publicURL) || !["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname))
+                    throw new Error("Invalid public URL");
+            } catch {
+                setError("Enter a public HTTP or HTTPS base URL without credentials, a path, a query or a fragment.");
+                return;
+            }
+        }
+        const body = attempt ?? { request_id: databaseRequestID(), project_id: projectID, project_environment_id: environmentID, destination_id: destination, name, template_id: selected!.id as CatalogInstallInput["template_id"], immutable_version: selected!.immutable_version as CatalogInstallInput["immutable_version"], ...(selected!.definition.compose ? { public_url: publicURL } : {}) };
         setAttempt(body);
         setBusy(true);
         setError("");
@@ -79,8 +90,13 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
             const result = await installCatalog(body, controller.current.signal);
             if (!active.current)
                 return;
-            if (result.request.request_id !== body.request_id || result.request.project_id !== projectID || result.request.project_environment_id !== environmentID || result.binding.destination_id !== body.destination_id)
+            if (result.request.request_id !== body.request_id || result.request.project_id !== projectID || result.request.project_environment_id !== environmentID || result.binding.destination_id !== body.destination_id || result.request.template_id !== body.template_id || result.request.immutable_version !== body.immutable_version || result.request.public_url !== body.public_url)
                 throw new Error("Catalog response scope mismatch");
+            const pinned = catalog.data?.find(entry => entry.id === body.template_id && entry.immutable_version === body.immutable_version);
+            if (!pinned || result.template.id !== pinned.id || result.template.immutable_version !== pinned.immutable_version || result.template.original_hash !== pinned.original_hash || result.template.definition_hash !== pinned.definition_hash)
+                throw new Error("Catalog response template mismatch");
+            if (pinned.definition.compose && (result.resource.source.kind !== "compose" || result.resource.source.compose.original !== pinned.definition.compose.original || result.resource.source.compose.public_component !== pinned.definition.compose.public_component || result.resource.source.compose.container_port !== pinned.definition.compose.container_port || result.storage_ref.storage_id !== "" || result.storage_ref.generation !== 0 || result.storage_ref.hash !== ""))
+                throw new Error("Catalog response Compose mismatch");
             setCreated(result);
             await client.invalidateQueries({ queryKey: ["hostingResources", projectID] });
         }
@@ -133,7 +149,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     <p className="text-sm">Arbitrary Compose import is incomplete.</p>
  {created ? <>
         <p role="status">Installed {created.resource.name}. Open its application, review deployment settings, and deploy.</p>
-        {created.credentials.length > 0 ? <>
+        {created.resource.source.kind === "compose" ? <p>Generated runtime secrets are saved as managed-secret references. Review the saved runtime configuration and Compose deployment settings before deploying. Open the application after deployment to register an account. The public URL does not create a route or HTTPS certificate.</p> : created.credentials.length > 0 ? <>
         <p>Login and password are retained managed secrets. Linkding creates the initial account only when its username is absent. Changing startup credentials does not rotate an existing account password.</p>
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
@@ -159,8 +175,13 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Category</dt><dd>{selected.category || "Not declared"}</dd>
                 <dt>Upstream architecture restriction</dt><dd>{selected.arm_only && selected.amd_only ? "ARM only and AMD only are both declared. Review the upstream template before choosing a destination." : selected.arm_only ? "ARM only" : selected.amd_only ? "AMD only" : "Not declared"}</dd>
                 <dt>Template version</dt><dd>{selected.immutable_version}</dd>
-                <dt>Image</dt><dd>{selected.definition.image_reference}</dd>
-                <dt>Persistent data</dt><dd>{selected.definition.mount_path}</dd>
+                {selected.definition.compose ? <>
+                    <dt>Public component</dt><dd>{selected.definition.compose.public_component}</dd>
+                    <dt>Compose source</dt><dd><pre className="max-h-96 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-lg border p-2">{selected.definition.compose.original}</pre></dd>
+                </> : <>
+                    <dt>Image</dt><dd>{selected.definition.image_reference}</dd>
+                    <dt>Persistent data</dt><dd>{selected.definition.mount_path}</dd>
+                </>}
                 <dt>Generated variables</dt><dd>{selected.definition.credential_names.join(", ") || "None"}</dd>
                 {Object.keys(selected.definition.runtime_environment ?? {}).length > 0 ? <>
                     <dt>Runtime environment defaults</dt><dd>{Object.entries(selected.definition.runtime_environment ?? {}).map(([key, value]) => <p key={key}>{key}={value}</p>)}</dd>
@@ -169,11 +190,16 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Readiness check</dt><dd>{selected.definition.readiness.path}, timeout {selected.definition.readiness.timeout_seconds} seconds</dd>
                 <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
             </dl>
-            <p>{selected.definition.credential_names.length > 0
+            <p>{selected.definition.compose ? "Runtime secrets are generated once during installation and saved as managed-secret references. Register an application account after deployment." : selected.definition.credential_names.length > 0
                 ? "Credentials are generated once during installation and stored as managed secrets."
                 : "No login credentials are generated. After deployment, open the application to complete its initial setup."} Configure a domain and HTTPS route after deployment.</p>
             <p>An upstream architecture restriction does not verify compatibility with the selected destination. CPU, memory and disk requirements are not declared by this catalog entry. Review the documented supported profile before choosing a destination.</p>
         </section> : null}
+        {selected?.definition.compose ? <>
+            <label className="block" htmlFor={`${id}-public-url`}>Public URL</label>
+            <Input id={`${id}-public-url`} type="url" required maxLength={512} value={publicURL} disabled={unavailable || !!attempt} onChange={e => setPublicURL(e.target.value)} aria-describedby={`${id}-public-url-help`} placeholder="https://tasks.example.com" />
+            <p id={`${id}-public-url-help`} className="text-sm text-muted-foreground">Saved as the application's public URL. Configure a matching domain and HTTPS route separately. Installation does not publish the application.</p>
+        </> : null}
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>
         <Input id={`${id}-name`} required value={name} disabled={unavailable || !!attempt} onChange={e => { setName(e.target.value); setNameEdited(true); }}/>
         <label className="block" htmlFor={`${id}-destination`}>Catalog destination</label>

@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { getCatalogInstallation } from "@/api/hosting-catalog";
 import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import type { Resource } from "@/api/hosting";
 import { ApiError } from "@/api/errors";
@@ -20,6 +22,21 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
   const [hostPort, setHostPort] = useState("");
   const [path, setPath] = useState("/");
   const [timeout, setTimeout] = useState("30");
+  const readinessEdited = useRef(false);
+  const catalogDefaults = useRef(false);
+  const catalog = useQuery({
+    queryKey: ["catalogInstallation", scope.actor, resource.id],
+    queryFn: ({ signal }) => getCatalogInstallation(resource.id, signal),
+    retry: false,
+    gcTime: 0,
+  });
+  useEffect(() => {
+    if (!catalog.data || catalogDefaults.current) return;
+    catalogDefaults.current = true;
+    if (catalog.data.resource.project_id !== scope.project || !catalog.data.template.definition.compose || readinessEdited.current) return;
+    setPath(catalog.data.template.definition.readiness.path);
+    setTimeout(String(catalog.data.template.definition.readiness.timeout_seconds));
+  }, [catalog.data, scope.project]);
   const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
   const [review, setReview] = useState<Review>();
   const [confirmed, setConfirmed] = useState(false);
@@ -116,8 +133,8 @@ export function StackDeploymentReview({ resource, scope, bindingID, options, blo
     {initial ? <><p className="text-sm">The first deployment creates owned named volumes as needed and retains existing data. Configure the existing HTTPS route after the stack settles healthy.</p>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <label htmlFor={`${id}-host`}>Runner-local host port (optional)<Input id={`${id}-host`} type="number" min={1024} max={65535} value={hostPort} disabled={busy || Boolean(review)} onChange={(e) => setHostPort(e.target.value)} placeholder="Automatic allocation" /></label>
-        <label htmlFor={`${id}-path`}>Readiness path<Input id={`${id}-path`} required value={path} disabled={busy || Boolean(review)} onChange={(e) => setPath(e.target.value)} /></label>
-        <label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={busy || Boolean(review)} onChange={(e) => setTimeout(e.target.value)} /></label>
+        <label htmlFor={`${id}-path`}>Readiness path<Input id={`${id}-path`} required value={path} disabled={busy || Boolean(review)} onChange={(e) => { readinessEdited.current = true; setPath(e.target.value); }} /></label>
+        <label htmlFor={`${id}-timeout`}>Readiness timeout in seconds<Input id={`${id}-timeout`} type="number" min={1} max={120} value={timeout} disabled={busy || Boolean(review)} onChange={(e) => { readinessEdited.current = true; setTimeout(e.target.value); }} /></label>
       </div></> : <p className="text-sm">Redeployment stops the previous stack before replacement readiness and reuses its port and retained volumes. Existing selected HTTPS routes are carried forward through the server's continuity plan. Data writes are not rolled back.</p>}
     <ImageRegistryCredential actor={scope.actor} project={scope.project} image="" compose disabled={paused || busy || !!review} onChange={setRegistrySelection} onDenied={onDenied} />
     {!options.available ? <p role="status">Compose deployment unavailable: {options.reason}. Refresh deployment information after resolving this condition.</p> : null}

@@ -847,3 +847,30 @@ test.each([undefined, { secret_id: "credential", version: 2 }, { secret_id: "oth
   expect(screen.queryByText(/Deployment request accepted: hop_one/)).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
+
+test("catalog Compose prefills readiness while preserving operator review and saved runtime references", async () => {
+  const fetch = composeBackend(false, url => url.endsWith("/catalog-installation") ? json({
+    id: compose.id, resource: compose, binding, storage_ref: { storage_id: "", generation: 0, hash: "" },
+    template: { definition: { container_port: 3000, readiness: { path: "/health", timeout_seconds: 120 }, compose: compose.source.kind === "compose" ? compose.source.compose : undefined } },
+  }) : undefined);
+  setup("maintainer", [], false, compose);
+  await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/health"));
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("120");
+  expect(fetch.mock.calls.some(([, init]) => init.method === "POST")).toBe(false);
+  await reviewCompose();
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  await screen.findByText(/Deployment request accepted: hop_one/);
+  const write = fetch.mock.calls.find(([url, init]) => url.endsWith("/deployments") && init.method === "POST")!;
+  expect(JSON.parse(write[1].body as string)).toMatchObject({ readiness: { path: "/health", timeout_seconds: 120 }, expected_runtime_configuration_generation: 3 });
+});
+
+test("late catalog readiness defaults preserve edits made by the operator", async () => {
+  let finish!: (response: Response) => void;
+  composeBackend(false, url => url.endsWith("/catalog-installation") ? new Promise<Response>(resolve => { finish = resolve; }) : undefined);
+  setup("maintainer", [], false, compose);
+  await screen.findByLabelText("Readiness path");
+  fireEvent.change(screen.getByLabelText("Readiness path"), { target: { value: "/custom" } });
+  await act(async () => finish(json({ id: compose.id, resource: compose, binding, storage_ref: { storage_id: "", generation: 0, hash: "" }, template: { definition: { container_port: 3000, readiness: { path: "/health", timeout_seconds: 120 }, compose: compose.source.kind === "compose" ? compose.source.compose : undefined } } })));
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/custom");
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("30");
+});
