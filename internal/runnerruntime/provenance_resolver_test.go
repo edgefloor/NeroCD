@@ -923,7 +923,7 @@ func TestComposeSSHTransportEndsBeforeWorkspaceRenderAndApply(t *testing.T) {
 			_, err = resolveDeploymentProvenanceWithCredentialWorkspace(t.Context(), p, workRoot, f, root, func(context.Context, domain.SecretBinding) error { return nil }, func(_ context.Context, workspace string) (runner.PreparedComposeSecrets, error) {
 				prepared = true
 				assertRemoved(workspace)
-				return runner.PreparedComposeSecrets{}, nil
+				return runner.PreparedComposeSecrets{Cleanup: func() {}}, nil
 			}, func(_ resolvedProvenance, workspace, _ string) error {
 				applied = true
 				assertRemoved(workspace)
