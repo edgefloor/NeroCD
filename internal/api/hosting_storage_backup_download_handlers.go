@@ -121,6 +121,9 @@ func storageDownloadError(w http.ResponseWriter, err error) {
 	}
 }
 func (s *Server) downloadBrowserAuthority(r *http.Request) error {
+	ctx, stop := context.WithTimeout(r.Context(), 5*time.Second)
+	defer stop()
+	r = r.WithContext(ctx)
 	original, err := s.app.CurrentPrincipal(r.Context())
 	if err != nil {
 		return auth.ErrForbidden
@@ -133,6 +136,9 @@ func (s *Server) downloadBrowserAuthority(r *http.Request) error {
 	} else {
 		return auth.ErrForbidden
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil || current.ID != original.ID {
 		return auth.ErrForbidden
 	}
@@ -144,7 +150,9 @@ func (s *Server) storageBackupDownloadOptions(w http.ResponseWriter, r *http.Req
 	if !archiveRequestParameters(w, r, false) {
 		return
 	}
-	out, err := s.app.StorageBackupDownloadOptions(r.Context(), r.PathValue("id"))
+	ctx, stop := context.WithTimeout(r.Context(), 5*time.Second)
+	defer stop()
+	out, err := s.app.StorageBackupDownloadOptions(ctx, r.PathValue("id"))
 	if err != nil {
 		storageDownloadError(w, err)
 		return
@@ -200,7 +208,9 @@ func (s *Server) storageBackupDownload(w http.ResponseWriter, r *http.Request) {
 		_ = s.app.CloseStorageBackupDownload(cleanup, id, success)
 		s.storageDownloads.remove(id, success)
 	}()
-	p, err := s.app.CreateStorageBackupDownload(ctx, id, r.PathValue("id"), time.Now().UTC().Add(300*time.Second))
+	metadata, stopMetadata := context.WithTimeout(ctx, 5*time.Second)
+	p, err := s.app.CreateStorageBackupDownload(metadata, id, r.PathValue("id"), time.Now().UTC().Add(300*time.Second))
+	stopMetadata()
 	if err != nil {
 		storageDownloadError(w, err)
 		return
@@ -260,6 +270,9 @@ func (s *Server) runnerStorageBackupDownloadPlan(w http.ResponseWriter, r *http.
 		storageDownloadError(w, store.ErrStorageDownloadUnavailable)
 		return
 	}
+	ctx, stop := context.WithTimeout(r.Context(), 5*time.Second)
+	defer stop()
+	r = r.WithContext(ctx)
 	var ok bool
 	r, ok = s.databaseConnectionRunnerRequest(w, r)
 	if !ok {

@@ -426,3 +426,117 @@ func TestPostgresStorageDownloadComposeUsesImmutablePublishedProof(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestPostgresStorageDownloadLockedAdmissionBudgetAndUnavailableHTTP(t *testing.T) {
+	f, b := storageDownloadFixture(t)
+	_, ownerToken := proxyLegacyToken(t, f.pg, f.service, "tok_download_budget", []string{domain.RoleSystemAdmin})
+	registered, err := f.service.RotateRunnerToken(f.owner, app.RunnerTokenInput{RunnerID: f.runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE runner_enrollments SET credential_hash=(SELECT token_hash FROM runners WHERE id=$1) WHERE runner_id=$1 AND revoked_at IS NULL`, f.runner); err != nil {
+		t.Fatal(err)
+	}
+	f.runnerContext = storageDownloadRunnerContext(t, f)
+	server := httptest.NewServer(api.NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), web.Static(), api.ServerConfig{StorageBackupDownload: true, TrustedLoopbackRuntimeEnvironmentHTTP: true}))
+	defer server.Close()
+	server.Client().Timeout = 8 * time.Second
+	type result struct {
+		status               int
+		disposition, content string
+		body                 []byte
+		elapsed              time.Duration
+		err                  error
+	}
+	request := func(suffix string, results chan<- result) {
+		start := time.Now()
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/v1/storage-backups/"+b.ID+suffix, nil)
+		req.Header.Set("Authorization", "Bearer "+ownerToken)
+		response, e := server.Client().Do(req)
+		if e != nil {
+			results <- result{elapsed: time.Since(start), err: e}
+			return
+		}
+		defer func() {
+			if e := response.Body.Close(); e != nil {
+				t.Error(e)
+			}
+		}()
+		body, e := io.ReadAll(response.Body)
+		results <- result{status: response.StatusCode, disposition: response.Header.Get("Content-Disposition"), content: response.Header.Get("Content-Type"), body: body, elapsed: time.Since(start), err: e}
+	}
+	barrier, err := f.db.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = barrier.Rollback(context.Background()) }()
+	if _, err = barrier.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nerocd-storage-copy-admission',0))`); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan result, 2)
+	go request("/archive-options", results)
+	go request("/archive", results)
+	deadline := time.Now().Add(2 * time.Second)
+	blocked := false
+	for time.Now().Before(deadline) {
+		var admissionLocks, advisoryLocks int
+		// The first request owns the destination/resource row locks while
+		// waiting for retention; the second waits behind that lock chain.
+		if e := f.db.QueryRow(f.ctx, `SELECT count(*) FILTER (WHERE wait_event_type='Lock'),count(*) FILTER (WHERE wait_event='advisory' AND query LIKE '%nerocd-storage-copy-admission%') FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()`).Scan(&admissionLocks, &advisoryLocks); e != nil {
+			t.Fatal(e)
+		} else if admissionLocks >= 2 && advisoryLocks >= 1 {
+			blocked = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !blocked {
+		t.Fatal("both admission routes did not reach the controlled lock")
+	}
+	for range 2 {
+		got := <-results
+		if got.err != nil || got.status != 504 || got.disposition != "" || got.elapsed > 7*time.Second {
+			t.Fatalf("metadata budget did not bound admission: status=%d elapsed=%v error=%v body=%s", got.status, got.elapsed, got.err, got.body)
+		}
+	}
+	var sessions, runs int
+	if err = f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_storage_backup_downloads),(SELECT count(*) FROM task_runs WHERE run_spec->>'hosting_mode'='browser_download')`).Scan(&sessions, &runs); err != nil || sessions != 0 || runs != 0 {
+		t.Fatal("timed-out admission persisted a session or task", sessions, runs, err)
+	}
+	if err = barrier.Rollback(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The same actor can immediately occupy a fresh slot. Missing local bytes
+	// arrive as readiness metadata and produce a clean 404 before attachment headers.
+	browser := make(chan result, 1)
+	go request("/archive", browser)
+	var id string
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if e := f.db.QueryRow(f.ctx, `SELECT id FROM hosting_storage_backup_downloads WHERE backup_id=$1 AND state='waiting' LIMIT 1`, b.ID).Scan(&id); e == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if id == "" {
+		t.Fatal("timed-out requests retained actor capacity")
+	}
+	claim, err := f.service.ClaimRun(f.runnerContext)
+	if err != nil || claim.Run.RunSpec.HostingOperationID != id {
+		t.Fatal("unavailable-copy claim", err)
+	}
+	a := domain.HostingAuthority{OperationID: id, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+	transport := runnerclient.WithStorageArchiveTransport(t.Context(), runnerclient.StorageArchiveTransport{TrustedLoopbackHTTP: true})
+	client := runnerclient.New(server.URL, registered.Token)
+	plan, err := client.HostingStorageBackupDownloadPlan(transport, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.StreamStorageBackupDownload(transport, domain.HostingStorageBackupDownloadStream{HostingAuthority: a, PlanHash: plan.Hash, FailureCode: "archive_unavailable"}, plan, nil); err != nil {
+		t.Fatal("failure metadata rejected", err)
+	}
+	got := <-browser
+	if got.err != nil || got.status != 404 || got.disposition != "" || !strings.HasPrefix(got.content, "application/json") || !bytes.Contains(got.body, []byte(`"code":"not_found"`)) {
+		t.Fatal("missing archive did not fail before attachment", got.status, got.disposition, got.content, got.err)
+	}
+}

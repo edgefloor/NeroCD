@@ -3,8 +3,9 @@ package store
 import (
 	"context"
 	"errors"
-	"nerocd/internal/domain"
 	"time"
+
+	"nerocd/internal/domain"
 )
 
 // ErrStorageDownloadUnavailable reports missing qualified download execution.
