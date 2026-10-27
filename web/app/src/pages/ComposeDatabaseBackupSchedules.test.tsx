@@ -293,3 +293,97 @@ test("owner downgrade aborts pending mutation while preserving viewer history", 
     screen.getByText(/You can inspect schedules and occurrence history/),
   ).toBeTruthy();
 });
+
+test.each(["Create backup schedule", "Enable schedule"])(
+  "%s waits for matching generation and settled component refresh while disable and history stay available",
+  async (action) => {
+    values = [saved];
+    const view = mount();
+    await choose();
+    const current = view.client.getQueryData<backup.DatabaseBackupComponents>([
+      "database-backup-components",
+      scope,
+      resource.id,
+    ]);
+    if (!current) throw new Error("Expected reviewed component evidence");
+    let resolve!: (value: backup.DatabaseBackupComponents) => void;
+    vi.mocked(backup.getDatabaseBackupComponents).mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    await click("Refresh schedule components");
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Create backup schedule",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true),
+    );
+    await click("View occurrences");
+    await screen.findByText("No occurrences yet.");
+    await click("Disable schedule");
+    await screen.findByText("Saved schedule schedule revision 2.");
+    expect(call()[3].expected_deployed_operation_id).toBeUndefined();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Enable schedule",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    await act(async () =>
+      resolve({
+        ...current,
+        resource_generation: 2,
+        operation_id: "stale_deployment",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Refresh schedule components",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    for (const name of ["Create backup schedule", "Enable schedule"]) {
+      const button = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+    }
+    expect(api.saveDatabaseBackupSchedule).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("No occurrences yet.")).toBeTruthy();
+
+    vi.mocked(backup.getDatabaseBackupComponents).mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    await click("Refresh schedule components");
+    expect(
+      (screen.getByRole("button", { name: action }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await act(async () =>
+      resolve({ ...current, operation_id: "newest_deployment" }),
+    );
+    await click(action);
+    await waitFor(() =>
+      expect(api.saveDatabaseBackupSchedule).toHaveBeenCalledTimes(2),
+    );
+    expect(call(1)[3]).toMatchObject({
+      component: "postgresql",
+      expected_resource_generation: 3,
+      expected_deployed_operation_id: "newest_deployment",
+      enabled: true,
+      expected_version: action === "Enable schedule" ? 2 : 0,
+    });
+  },
+);
