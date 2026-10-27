@@ -173,9 +173,47 @@ in total. This qualification required no product or fixture repairs and no rerun
 The qualified image-store profile is classic overlay2; containerd image-store
 support remains unqualified.
 
-The next bounded gap is local backup schedules for the qualified managed Compose
-PostgreSQL component. That implementation is not complete. Raw Compose, Git
-Compose and mixed build/image stacks remain outside this accepted workflow.
+Local [PostgreSQL component schedules](hosting-database-backup-schedules.md#schedule-a-compose-postgresql-component)
+passed qualification on 2026-10-27 at
+`09cd2670154443f788963d9812aa6b77a2c919c8`:
+
+- [x] Created a local schedule for the immutable PostgreSQL 16 component after
+  review of the current settled deployment; each due backup follows the current
+  deployment and retains its exact operation identity.
+- [x] Disabled the schedule and inspected occurrence history. Current authorization
+  applies to history, disable, and identical-request replay while unavailable.
+- [x] One scheduled backup produced a local archive and passed separate-target
+  import with the same immutable blob identity. This covers database records only.
+- [x] All 39 pre-existing containers, all 223 volumes, and the user's UI identity,
+  content, and health on port 18081 remained unchanged.
+- [x] Independent hygiene, specification, and security reviews reported no findings
+  at this candidate.
+
+Safe evidence is preserved under
+`$HOME/.local/share/nerocd/acceptance/runtime-hosting-compose-20261027/09cd2670154443f788963d9812aa6b77a2c919c8.mFI17j`.
+The gate ran once from `2026-10-27T08:50:32Z` to `2026-10-27T08:54:17Z`,
+225 seconds, with the physical runtime test passing in 134.33 seconds.
+`make verify`, `make check-generated`, `make build`, focused PostgreSQL checks,
+API preflight, and the full frontend suite passed at `39c7e49672498e564735eda1d5f1894cbab24aa6`.
+Only the schedule UI test changed afterward, and its 11 tests passed at `09cd267`;
+the built UI manifest was unchanged. The initial frontend run retained one DOM
+assertion failure. Targeted reproductions passed, followed by one full rerun with
+1,879 passing tests. A baseline flake is not proven. Broad `make check` was not run.
+
+Implementation and checks overlapped from 08:30:14 to 08:43:43 UTC. Recorded
+estimates were seven minutes for backend implementation, one for product
+corrections, two for tool fixtures, and three for checks; these are not additive.
+UI implementation from 08:30:56 to 08:37:47 UTC overlapped tests. Browser fixture
+repair ran from 08:42:31 to 08:42:49 UTC, 18 seconds. Later test-only coverage ran
+from 08:47:09 to 08:47:45 UTC, 36 seconds. Integration verify,
+generated checks, and build took 226, 49, and 14 seconds in overlapping windows.
+Review waiting was not instrumented.
+
+The remaining gap is coordinated Compose application and upload recovery.
+Compose schedules support local database archives only; standalone PostgreSQL 17
+remote-target behavior is unchanged. Raw Compose, Git Compose, and mixed
+build/image stacks remain unqualified. These results do not qualify full parity
+or automatic rollback after a failed stateful replacement.
 
 ## Pasteable Vikunja/PostgreSQL example
 

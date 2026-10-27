@@ -6,10 +6,13 @@ schedules and occurrence history. A schedule uses the same local custom-format
 backup, protected execution limits, fenced runner and new-database restore path
 as [immediate PostgreSQL backups](hosting-database-backups.md).
 
-The supported source is the pinned PostgreSQL 17.11 recipe on its authorized
-stable destination. [Remote backup targets](hosting-database-remote-backups.md)
-can now be selected explicitly by target ID and revision for immediate and
-scheduled backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure
+Supported sources are the pinned standalone PostgreSQL 17.11 recipe and the
+qualified managed Compose PostgreSQL 16 component on their authorized stable
+destinations. Compose schedules create local database archives only. They do not
+include application uploads or support remote backup targets. Standalone
+PostgreSQL remote-target semantics are unchanged. [Remote backup targets](hosting-database-remote-backups.md)
+can be selected explicitly by target ID and revision for standalone immediate
+and scheduled backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure
 [retention](hosting-database-backup-retention.md) and
 [failure alerts](hosting-backup-notifications.md) separately.
 A local archive remains dependent on that destination. Remote acceptance uses
@@ -69,6 +72,32 @@ returns its historical acknowledgment under current access checks. A changed
 request with the same ID is rejected. The UI retains the exact request after an
 ambiguous transport failure. A version conflict requires an explicit refresh
 and review before submitting another edit; it is never silently resubmitted.
+
+## Schedule a Compose PostgreSQL component
+
+Use the application's **Database backups** panel and select its PostgreSQL
+component. The same resource-scoped endpoints accept the additional `component`
+and `expected_deployed_operation_id` fields. For example, add these fields to
+the POST document above, using the operation ID from the reviewed deployment:
+
+```json
+{
+  "component": "postgresql",
+  "expected_deployed_operation_id": "<reviewed settled deployment operation ID>"
+}
+```
+
+The component is immutable for the schedule's lifetime. Creation and enabling
+require a fresh review of the current settled deployment. Each due occurrence
+resolves that component from the current deployment, so a successful redeployment
+does not leave the schedule attached to its predecessor. Admission retains the
+exact deployment operation used for that backup.
+
+You can disable a schedule, inspect history, and replay an identical accepted
+request while the stack is unavailable. Current authorization still applies.
+A disable stops future discovery without canceling admitted work. The archive
+contains database records only. A separate-target database import does not restore
+the application's uploaded files or provide coordinated application recovery.
 
 ## Due discovery and execution
 
@@ -153,3 +182,9 @@ The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful
 classic-store Docker, one destination, and private fixture-CA HTTPS. Broader cron
 grammar, other engines, production ACME, cross-host recovery, and disk loss are
 unqualified.
+
+The managed Compose PostgreSQL 16 schedule workflow passed the existing
+`--managed-compose` gate at
+`09cd2670154443f788963d9812aa6b77a2c919c8` on 2026-10-27. See the
+[Compose qualification checklist](hosting-compose.md#qualification) for retained
+evidence, check limits, and the tested profile.
