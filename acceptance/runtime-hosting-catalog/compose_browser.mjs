@@ -197,6 +197,15 @@ try {
   await catalog.getByLabel("Catalog destination", { exact: true }).selectOption(initial.id);
   await catalog.getByLabel("Public URL", { exact: true }).fill(appOrigin);
   await expect(catalog.getByRole("heading", { name: "Vikunja with PostgreSQL installation preview", exact: true })).toBeVisible();
+  for (const width of [1280, 320, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(catalog.getByLabel("Public URL", { exact: true })).toBeVisible();
+    await expect(catalog.getByRole("heading", { name: "Vikunja with PostgreSQL installation preview", exact: true })).toBeVisible();
+    await expect(catalog.getByRole("button", { name: "Install application", exact: true })).toBeVisible();
+    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw Error("catalog installation responsive overflow");
+  }
+  safe.catalog_compose_install_responsive_widths = [1280, 320, 390, 430];
+  await page.setViewportSize({ width: 1280, height: 900 });
   const firstWait = response(page, "/api/v1/hosting-catalog/installations");
   await catalog.getByRole("button", { name: "Install application", exact: true }).click();
   const firstInstall = await firstWait;
