@@ -1,6 +1,7 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -464,10 +465,11 @@ func TestFailedComposeCancellationReceiptRetainsRootFallback(t *testing.T) {
 }
 
 type fakeProvenanceCommand struct {
-	calls   [][]string
-	compose string
-	keyscan string
-	envs    [][]string
+	beforeRun func(string, []string, string, []string) error
+	calls     [][]string
+	compose   string
+	keyscan   string
+	envs      [][]string
 }
 
 func (f *fakeProvenanceCommand) Run(_ context.Context, n string, a []string, _ string) ([]byte, error) {
@@ -485,6 +487,11 @@ func (f *fakeProvenanceCommand) Run(_ context.Context, n string, a []string, _ s
 }
 func (f *fakeProvenanceCommand) RunEnvironment(ctx context.Context, n string, a []string, d string, env []string) ([]byte, error) {
 	f.envs = append(f.envs, append([]string(nil), env...))
+	if f.beforeRun != nil {
+		if err := f.beforeRun(n, a, d, env); err != nil {
+			return nil, err
+		}
+	}
 	return f.Run(ctx, n, a, d)
 }
 func TestResolveDeploymentProvenanceDetachedAndDigestPinned(t *testing.T) {
@@ -843,5 +850,93 @@ func TestGitCurlResolveOptionRetainsExactTransportHostname(t *testing.T) {
 		if pin != host+":8443:127.0.0.2" {
 			t.Fatalf("pin %q does not retain transport host %q", pin, host)
 		}
+	}
+}
+
+func TestComposeSSHTransportEndsBeforeWorkspaceRenderAndApply(t *testing.T) {
+	previous := lookupRepositoryIP
+	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() { lookupRepositoryIP = previous })
+	for _, mode := range []string{"success", "fetch-failed", "cleanup-failed"} {
+		t.Run(mode, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			key := []byte("-----BEGIN OPENSSH PRIVATE KEY-----\ncredential-lifetime-canary\n-----END OPENSSH PRIVATE KEY-----\n")
+			if err := os.WriteFile(filepath.Join(root, "deploy_key"), key, 0o400); err != nil {
+				t.Fatal(err)
+			}
+			blob := testSSHHostKeyBlob("ssh-ed25519")
+			sum := sha256.Sum256(blob)
+			p := domain.DeploymentPlan{RepositoryURL: "ssh://git@git.internal/repo.git", RequestedRef: "main", ComposePath: "compose.yaml", ComposeProject: "test", SecretBindings: []domain.SecretBinding{{Name: "deploy-key", Provider: domain.ProviderRunnerFile, Reference: "deploy_key", Target: "env:UNUSED", Version: "v1"}}, RepositoryPolicy: domain.RepositoryPolicy{Version: 1, State: "configured", Mode: "internal", AllowedSchemes: []string{"ssh"}, AllowedHosts: []string{"git.internal"}, AllowedCIDRs: []string{"127.0.0.0/8"}, AllowInternal: true, CredentialReferenceID: "deploy_key", SSHHostFingerprints: []string{"SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])}}}
+			f := &fakeProvenanceCommand{keyscan: "127.0.0.1 ssh-ed25519 " + base64.StdEncoding.EncodeToString(blob) + "\n", compose: `{"services":{"api":{"image":"example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`}
+			assertRemoved := func(workspace string) {
+				t.Helper()
+				for _, name := range []string{".nerocd-identity", ".nerocd-known-hosts"} {
+					if _, err := os.Lstat(filepath.Join(workspace, name)); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("transport file remains before callback: %s %v", name, err)
+					}
+				}
+			}
+			fetched, rendered, prepared, applied := false, false, false, false
+			f.beforeRun = func(binary string, args []string, workspace string, env []string) error {
+				if binary == "git" && slices.Contains(args, "fetch") {
+					fetched = true
+					got, err := os.ReadFile(filepath.Join(workspace, ".nerocd-identity"))
+					if err != nil || !bytes.Equal(got, key) {
+						t.Fatalf("fetch lost its authorized key: %v", err)
+					}
+					if mode == "fetch-failed" {
+						return errors.New("fetch unavailable")
+					}
+				}
+				if binary == "git" && args[0] == "rev-parse" && mode == "cleanup-failed" {
+					path := filepath.Join(workspace, ".nerocd-identity")
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(path, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(path, "block-remove"), []byte("fixture"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if binary == "docker" {
+					rendered = true
+					assertRemoved(workspace)
+					for _, value := range env {
+						if strings.HasPrefix(value, "GIT_SSH") {
+							t.Fatal("render inherited SSH transport environment")
+						}
+					}
+				}
+				return nil
+			}
+			workRoot := t.TempDir()
+			_, err = resolveDeploymentProvenanceWithCredentialWorkspace(t.Context(), p, workRoot, f, root, func(context.Context, domain.SecretBinding) error { return nil }, func(_ context.Context, workspace string) (runner.PreparedComposeSecrets, error) {
+				prepared = true
+				assertRemoved(workspace)
+				return runner.PreparedComposeSecrets{}, nil
+			}, func(_ resolvedProvenance, workspace, _ string) error {
+				applied = true
+				assertRemoved(workspace)
+				return nil
+			})
+			success := mode == "success"
+			if (err == nil) != success || !fetched || prepared != success || rendered != success || applied != success {
+				t.Fatalf("credential lifetime: fetched=%v prepared=%v rendered=%v applied=%v err=%v", fetched, prepared, rendered, applied, err)
+			}
+			left, err := os.ReadDir(workRoot)
+			if err != nil || len(left) != 0 {
+				t.Fatalf("transport workspace remains after return: %v %v", left, err)
+			}
+		})
 	}
 }

@@ -616,6 +616,7 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		return resolvedProvenance{}, err
 	}
 	gitEnvironment := []string(nil)
+	var cleanupTransport func() error
 	if repositoryURL.Scheme == "https" && strings.TrimSpace(policy.CredentialReferenceID) != "" {
 		return resolvedProvenance{}, errors.New("HTTPS credential references are unsupported by the controlled transport")
 	}
@@ -627,13 +628,22 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 		if err != nil {
 			return resolvedProvenance{}, err
 		}
-		defer cleanup()
+		cleanupTransport = cleanup
+		defer func() { _ = cleanup() }()
 		gitEnvironment = sshEnvironment
 	}
 	commit, err := controlledGitCheckout(ctx, command, workspace, repositoryURL, pinnedIP, plan.RequestedRef, gitEnvironment)
 	if err != nil {
 		return resolvedProvenance{}, err
 	}
+	// Repository transport authority ends at acquisition. Rendering and apply
+	// callbacks must not see the SSH file or inherit its command environment.
+	if cleanupTransport != nil {
+		if err := cleanupTransport(); err != nil {
+			return resolvedProvenance{}, errors.New("SSH transport cleanup unconfirmed")
+		}
+	}
+	gitEnvironment = nil
 	composePath := filepath.Clean(plan.ComposePath)
 	if filepath.IsAbs(composePath) || composePath == "." || strings.HasPrefix(composePath, ".."+string(os.PathSeparator)) {
 		return resolvedProvenance{}, errors.New("compose path escapes checkout")
@@ -798,7 +808,7 @@ func gitCurlResolveOption(repositoryURL *url.URL, address netip.Addr) (string, e
 	return repositoryURL.Hostname() + ":" + strconv.Itoa(port) + ":" + ip, nil
 }
 
-func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspace, secretRoot string, plan domain.DeploymentPlan, policy source.RepositoryPolicy, repositoryURL *url.URL, pinnedIP netip.Addr, authorize runner.SecretAuthorizer) ([]string, func(), error) {
+func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspace, secretRoot string, plan domain.DeploymentPlan, policy source.RepositoryPolicy, repositoryURL *url.URL, pinnedIP netip.Addr, authorize runner.SecretAuthorizer) ([]string, func() error, error) {
 	provenanceDiagnostic("ssh_credential", "start")
 	reference := strings.TrimSpace(policy.CredentialReferenceID)
 	if reference == "" {
@@ -826,30 +836,43 @@ func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspa
 	}
 	defer func() { _ = resolver.Close() }()
 	privateKey, err := resolver.ReadBytes(reference)
+	defer clear(privateKey)
 	if err != nil || !bytes.Contains(privateKey, []byte("PRIVATE KEY-----")) {
 		return nil, nil, errors.New("SSH credential is not a private key")
 	}
 	keyPath := filepath.Join(workspace, ".nerocd-identity")
+	knownHostsPath := filepath.Join(workspace, ".nerocd-known-hosts")
+	cleanup := func() error {
+		var failures []error
+		for _, path := range []string{keyPath, knownHostsPath} {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				failures = append(failures, err)
+			}
+		}
+		return errors.Join(failures...)
+	}
+	prepared := false
+	defer func() {
+		if !prepared {
+			_ = cleanup()
+		}
+	}()
 	if err := os.WriteFile(keyPath, privateKey, 0600); err != nil {
 		return nil, nil, err
 	}
 	knownHosts, err := pinnedKnownHosts(ctx, command, repositoryURL, pinnedIP, policy.SSHHostFingerprints)
 	if err != nil {
-		_ = os.Remove(keyPath)
 		return nil, nil, err
 	}
 	provenanceDiagnostic("ssh_transport", "ready")
-	knownHostsPath := filepath.Join(workspace, ".nerocd-known-hosts")
 	if err := os.WriteFile(knownHostsPath, knownHosts, 0600); err != nil {
-		_ = os.Remove(keyPath)
 		return nil, nil, err
 	}
-	cleanup := func() { _ = os.Remove(keyPath); _ = os.Remove(knownHostsPath) }
 	environment, err := sshTransportEnvironment(repositoryURL, pinnedIP, keyPath, knownHostsPath, "")
 	if err != nil {
-		cleanup()
 		return nil, nil, err
 	}
+	prepared = true
 	return environment, cleanup, nil
 }
 
