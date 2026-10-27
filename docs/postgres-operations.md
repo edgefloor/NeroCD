@@ -27,6 +27,13 @@ migration ledger, and can inventory runner-file metadata without copying any sec
 contents. The parent directory must already be owned by the process running the command
 and have mode exactly `0700`.
 
+The wrapper supplies database passwords to `pg_dump` and `pg_restore` through a
+temporary libpq password file in a private directory. It removes the file after the
+tool exits and excludes the password and NeroCD credentials from child arguments and
+environment. Passwords containing line breaks or NUL are rejected because libpq
+password files cannot represent them. SSL key passwords must be configured outside
+the database URL. See the [libpq password file format](https://www.postgresql.org/docs/current/libpq-pgpass.html).
+
 ```sh
 mkdir -m 0700 /secure/nerocd-backups
 nerocd backup --database-url "$NEROCD_DATABASE_URL" --output-dir /secure/nerocd-backups \

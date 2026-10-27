@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,8 +112,8 @@ func backupDatabaseContext(parent context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 	backupReason = "dump"
-	if _, err := backupCommand(ctx, "pg_dump", "--format=custom", "--no-owner", "--no-acl", "--file="+dumpPath, resolvedURL).CombinedOutput(); err != nil {
-		return errors.New("pg_dump failed")
+	if err := runBackupTool(ctx, "pg_dump", resolvedURL, "--format=custom", "--no-owner", "--no-acl", "--file="+dumpPath); err != nil {
+		return err
 	}
 	// pg_dump honours the process umask, which is not a backup security
 	// boundary. Force the staged artifact private before hashing or publishing
@@ -238,8 +239,8 @@ func restoreDatabase(args []string) error {
 		return err
 	}
 	defer releaseRestoreAdmission()
-	if _, err := backupCommand(ctx, "pg_restore", "--exit-on-error", "--single-transaction", "--no-owner", "--no-acl", "--dbname="+resolvedURL, dumpPath).CombinedOutput(); err != nil {
-		return errors.New("pg_restore failed")
+	if err := runBackupTool(ctx, "pg_restore", resolvedURL, "--exit-on-error", "--single-transaction", "--no-owner", "--no-acl", dumpPath); err != nil {
+		return err
 	}
 	current, _, err := backupDatabaseState(ctx, resolvedURL)
 	if err != nil {
@@ -283,6 +284,77 @@ func restoreDatabase(args []string) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// runBackupTool supplies the database password through a private libpq passfile.
+// Neither argv nor the child's inherited environment contains the owner URL or
+// PGPASSWORD. Tool output may contain connection details, so errors stay bounded.
+func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string) (result error) {
+	connection, err := url.Parse(databaseURL)
+	if err != nil || connection.Host == "" || (connection.Scheme != "postgres" && connection.Scheme != "postgresql") {
+		return errors.New("backup tool database URL is invalid")
+	}
+	query, err := url.ParseQuery(connection.RawQuery)
+	if err != nil || len(query["password"]) > 1 {
+		return errors.New("backup tool database URL is invalid")
+	}
+	// libpq passfiles cannot represent line breaks. SSL key passwords use a
+	// different libpq mechanism and must not accidentally remain on argv.
+	if query.Has("sslpassword") {
+		return errors.New("backup tools require SSL key credentials outside the database URL")
+	}
+	password := os.Getenv("PGPASSWORD")
+	if connection.User != nil {
+		if supplied, ok := connection.User.Password(); ok {
+			password = supplied
+		}
+		connection.User = url.User(connection.User.Username())
+	}
+	if query.Has("password") {
+		password = query.Get("password")
+		query.Del("password")
+	}
+	if strings.ContainsAny(password, "\r\n\x00") {
+		return errors.New("backup tool password cannot contain line breaks or NUL")
+	}
+	if password != "" {
+		dir, err := os.MkdirTemp("", "nerocd-libpq-")
+		if err != nil {
+			return errors.New("backup tool credentials could not be staged")
+		}
+		defer func() {
+			if err := os.RemoveAll(dir); err != nil && result == nil {
+				result = errors.New("backup tool credentials could not be removed")
+			}
+		}()
+		passfile := filepath.Join(dir, "pgpass")
+		escaped := strings.NewReplacer("\\", "\\\\", ":", "\\:").Replace(password)
+		// This file belongs to one process invocation and one explicit URL. The
+		// wildcard fields also cover libpq multi-host and Unix-socket URLs.
+		if err := os.WriteFile(passfile, []byte("*:*:*:*:"+escaped+"\n"), 0600); err != nil {
+			return errors.New("backup tool credentials could not be staged")
+		}
+		// An explicit URI passfile overrides an inherited PGPASSFILE or a
+		// caller's passfile parameter when the URL supplies its own password.
+		query.Set("passfile", passfile)
+		// Clear service-file passwords too. libpq uses the passfile when this
+		// explicit password parameter is empty and PGPASSWORD is absent.
+		query.Set("password", "")
+	}
+	connection.RawQuery = query.Encode()
+	command := backupCommand(ctx, tool, append([]string{"--dbname=" + connection.String()}, args...)...)
+	command.Env = make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "PGPASSWORD" || strings.HasPrefix(key, "NEROCD_") {
+			continue
+		}
+		command.Env = append(command.Env, entry)
+	}
+	if _, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s failed", tool)
+	}
+	return nil
 }
 
 func validateRestoreConfirmation(allowed bool, confirmed string) error {

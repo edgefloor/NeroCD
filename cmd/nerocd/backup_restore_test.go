@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,114 @@ import (
 
 	"nerocd/internal/domain"
 )
+
+func TestBackupToolKeepsPasswordsOffArgvAndRemovesPrivatePassfile(t *testing.T) {
+	password := `private:pass\word % value`
+	for _, source := range []string{"userinfo", "query", "environment"} {
+		for _, outcome := range []string{"success", "failure", "canceled"} {
+			t.Run(source+"/"+outcome, func(t *testing.T) {
+				t.Setenv("PGPASSWORD", "ambient-password")
+				t.Setenv("NEROCD_DATABASE_URL", "postgres://owner:parent-secret@db/control")
+				t.Setenv("NEROCD_DATABASE_URL_FILE", "/private/owner-credential")
+				t.Setenv("NEROCD_TOKEN", "parent-token")
+				t.Setenv("PGPASSFILE", "/unused/ambient-passfile")
+				connection, err := url.Parse("postgres://owner@db:5433/control?sslmode=require&application_name=backup&passfile=/unused/url-passfile")
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch source {
+				case "userinfo":
+					connection.User = url.UserPassword("owner", password)
+				case "query":
+					connection.User = url.UserPassword("owner", "superseded-password")
+					query := connection.Query()
+					query.Set("password", password)
+					connection.RawQuery = query.Encode()
+				case "environment":
+					t.Setenv("PGPASSWORD", password)
+				}
+				previous := backupCommand
+				t.Cleanup(func() { backupCommand = previous })
+				var command *exec.Cmd
+				var passfile string
+				backupCommand = func(ctx context.Context, tool string, args ...string) *exec.Cmd {
+					if tool != "pg_dump" || len(args) != 2 || args[1] != "--format=custom" || !strings.HasPrefix(args[0], "--dbname=") {
+						t.Fatal("unexpected tool invocation", tool, args)
+					}
+					for _, secret := range []string{password, url.QueryEscape(password), "ambient-password", "superseded-password", "parent-secret"} {
+						if strings.Contains(strings.Join(args, " "), secret) {
+							t.Fatal("credential reached tool argv")
+						}
+					}
+					parsed, err := url.Parse(strings.TrimPrefix(args[0], "--dbname="))
+					if err != nil {
+						t.Fatal("invalid tool URL")
+					}
+					if _, present := parsed.User.Password(); present || parsed.Query().Get("password") != "" || parsed.Query().Get("sslmode") != "require" || parsed.Query().Get("application_name") != "backup" || parsed.Host != "db:5433" || parsed.Path != "/control" || parsed.User.Username() != "owner" {
+						t.Fatal("tool URL changed connection semantics or retained a password")
+					}
+					passfile = parsed.Query().Get("passfile")
+					fileInfo, err := os.Stat(passfile)
+					if err != nil || fileInfo.Mode().Perm() != 0600 {
+						t.Fatal("passfile is not private", err)
+					}
+					parentInfo, err := os.Stat(filepath.Dir(passfile))
+					if err != nil || parentInfo.Mode().Perm() != 0700 {
+						t.Fatal("passfile directory is not private", err)
+					}
+					raw, err := os.ReadFile(passfile)
+					if err != nil || string(raw) != "*:*:*:*:private\\:pass\\\\word % value\n" {
+						t.Fatal("libpq password escaping is incorrect", err)
+					}
+					script := "exit 0"
+					if outcome == "failure" {
+						script = "echo secret-tool-diagnostic >&2; exit 1"
+					}
+					command = exec.CommandContext(ctx, "sh", "-c", script)
+					return command
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if outcome == "canceled" {
+					cancel()
+				}
+				err = runBackupTool(ctx, "pg_dump", connection.String(), "--format=custom")
+				if (err == nil) != (outcome == "success") || err != nil && err.Error() != "pg_dump failed" {
+					t.Fatal("unexpected tool outcome", err)
+				}
+				for _, entry := range command.Env {
+					if strings.HasPrefix(entry, "NEROCD_") || strings.HasPrefix(entry, "PGPASSWORD=") {
+						t.Fatal("parent credential reached tool environment")
+					}
+				}
+				if _, err := os.Stat(filepath.Dir(passfile)); !os.IsNotExist(err) {
+					t.Fatal("credential directory remains after tool exit", err)
+				}
+			})
+		}
+	}
+}
+
+func TestBackupToolRejectsUnrepresentableCredentialsBeforeStarting(t *testing.T) {
+	previous := backupCommand
+	t.Cleanup(func() { backupCommand = previous })
+	backupCommand = func(context.Context, string, ...string) *exec.Cmd {
+		t.Fatal("invalid credentials started a tool")
+		return nil
+	}
+	for _, connection := range []string{
+		"postgres://owner:line%0Abreak@db/control",
+		"postgres://owner:line%0Dbreak@db/control",
+		"postgres://owner:nul%00byte@db/control",
+		"postgres://owner@db/control?password=one&password=two",
+		"postgres://owner@db/control?password=%invalid",
+		"postgres://owner@db/control?sslpassword=private-key-secret",
+	} {
+		if err := runBackupTool(t.Context(), "pg_restore", connection); err == nil || strings.Contains(err.Error(), "private-key-secret") {
+			t.Fatal("invalid credentials accepted or exposed")
+		}
+	}
+}
 
 func TestVerifyBackupArchiveRejectsTamperingAndUnexpectedEntries(t *testing.T) {
 	root := privateBackupTestDir(t)
