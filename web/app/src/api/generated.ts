@@ -593,6 +593,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/storage-backup-download/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an exact local archive under current runner lease authority */
+        post: operations["runnerStorageBackupDownloadPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/storage-backup-download/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send one verified local archive to its waiting browser request */
+        post: operations["runnerStorageBackupDownloadStream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage-backups/{id}/archive-options": {
         parameters: {
             query?: never;
@@ -7593,6 +7627,28 @@ export interface components {
             depth: number;
             path_bytes: number;
         };
+        HostingStorageBackupDownloadStream: components["schemas"]["HostingAuthority"] & {
+            plan_hash: string;
+            /** @enum {string} */
+            failure_code?: "" | "archive_unavailable";
+        };
+        HostingStorageBackupDownloadPlan: {
+            session_id: string;
+            actor_id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            backup_id: string;
+            copy_id: string;
+            runner_id: string;
+            destination_id: string;
+            daemon_id: string;
+            blob: components["schemas"]["HostingStorageArchiveBlob"];
+            local_copy: components["schemas"]["BackupLocalCopyProof"];
+            /** Format: date-time */
+            expires_at: string;
+            hash: string;
+        };
         HostingStorageBackupDownloadOptions: {
             available: boolean;
             /** @enum {string} */
@@ -12438,6 +12494,96 @@ export interface operations {
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    runnerStorageBackupDownloadPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Immutable one-use download plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingStorageBackupDownloadPlan"];
+                };
+            };
+            /** @description Authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    runnerStorageBackupDownloadStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    metadata: components["schemas"]["HostingStorageBackupDownloadStream"];
+                    /** Format: binary */
+                    archive?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Exact stream or unavailable-copy notice acknowledged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session_id: string;
+                        plan_hash: string;
+                    };
+                };
+            };
+            /** @description Authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stream identity or framing mismatch */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     storageBackupArchiveOptions: {
