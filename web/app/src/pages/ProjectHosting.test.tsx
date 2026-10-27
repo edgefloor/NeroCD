@@ -428,3 +428,43 @@ test("Compose creation preserves exact source and request identity after a lost 
   await screen.findByText("Application configuration saved. Deployment is a separate request.");
   expect(vi.mocked(api.createResource).mock.calls[1]![0]).toEqual(first);
 });
+
+
+test("Git Compose creation saves repository settings without converting source or requesting deployment", async () => {
+  setup(); await selectEnvironment();
+  const form = screen.getByRole("form", { name: "Create application" });
+  fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+  fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Git stack" } });
+  fireEvent.change(within(form).getByLabelText("Git repository URL"), { target: { value: "https://github.com/team/app" } });
+  fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "release" } });
+  fireEvent.change(within(form).getByLabelText("Build strategy"), { target: { value: "compose" } });
+  fireEvent.change(within(form).getByLabelText("Context directory"), { target: { value: "app" } });
+  fireEvent.change(within(form).getByLabelText("Compose file"), { target: { value: "deploy/compose.yaml" } });
+  fireEvent.change(within(form).getByLabelText("Public Compose service"), { target: { value: "web" } });
+  fireEvent.change(within(form).getByLabelText("Public Compose service port"), { target: { value: "3456" } });
+  vi.mocked(api.createResource).mockRejectedValue(new ApiError(503, "unavailable", null));
+  fireEvent.submit(form); await screen.findByRole("alert");
+  expect(api.createResource).toHaveBeenCalledWith({ project_id: "one", project_environment_id: "env", name: "Git stack", kind: "application", source: { kind: "git", git: { repository_url: "https://github.com/team/app", requested_ref: "release", credential_kind: "public", settings: { strategy: "compose", context_dir: "app", compose_file: "deploy/compose.yaml", public_component: "web", container_port: 3456 } } } });
+  expect(within(form).getByLabelText<HTMLInputElement>("Compose file").value).toBe("deploy/compose.yaml");
+});
+
+test("Git Compose CAS conflict displays current file and service while retaining the reviewed draft", async () => {
+  if (gitResource.source.kind !== "git") throw new Error("Expected Git test resource");
+  const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...gitResource.source.git, settings: { strategy: "compose", context_dir: "app", compose_file: "compose.yaml", public_component: "web", container_port: 80 } } } };
+  if (saved.source.kind !== "git") throw new Error("Expected saved Git test resource");
+  const current: api.Resource = { ...saved, generation: 2, source: { kind: "git", git: { ...saved.source.git, generation: 3, requested_ref: "current-ref", settings: { strategy: "compose", context_dir: "latest", compose_file: "current.yaml", public_component: "api", container_port: 3000 } } } };
+  vi.mocked(api.listResources).mockResolvedValue(page([saved]));
+  vi.mocked(api.updateResource).mockRejectedValueOnce(new ApiError(409, "stale", null)).mockResolvedValueOnce(current);
+  vi.mocked(api.getResource).mockResolvedValue(current);
+  setup(); const form = await edit();
+  fireEvent.change(within(form).getByLabelText("Compose file"), { target: { value: "draft.yaml" } });
+  fireEvent.submit(form); await screen.findByRole("button", { name: "Keep my draft with generation 2" });
+  const metadata = within(screen.getByRole("region", { name: "Current Git configuration" }));
+  for (const [label, value] of [["Current Compose file", "current.yaml"], ["Current public Compose service", "api"], ["Current public Compose service port", "3000"], ["Current requested ref", "current-ref"], ["Current source generation", "3"]] as const) expect(metadata.getByText(label).nextElementSibling?.textContent).toBe(value);
+  expect(within(form).getByLabelText<HTMLInputElement>("Compose file").value).toBe("draft.yaml");
+  expect(api.updateResource).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Keep my draft with generation 2" }));
+  expect(api.updateResource).toHaveBeenCalledTimes(1);
+  fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
+  expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "compose", context_dir: "app", compose_file: "draft.yaml", public_component: "web", container_port: 80 } } } });
+});

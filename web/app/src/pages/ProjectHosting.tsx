@@ -122,6 +122,9 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
             <dt>Current context directory</dt><dd>{latest.source.git.settings.context_dir || "Repository root (default)"}</dd>
             <dt>Current Dockerfile path</dt><dd>{latest.source.git.settings.dockerfile_path || (latest.source.git.settings.strategy === "dockerfile" ? "Dockerfile (default)" : "Not applicable")}</dd>
             <dt>Current build target</dt><dd>{latest.source.git.settings.build_target || (latest.source.git.settings.strategy === "dockerfile" ? "Final stage (default)" : "Not applicable")}</dd>
+            <dt>Current Compose file</dt><dd>{latest.source.git.settings.compose_file || "Not applicable"}</dd>
+            <dt>Current public Compose service</dt><dd>{latest.source.git.settings.public_component || "Not applicable"}</dd>
+            <dt>Current public Compose service port</dt><dd>{latest.source.git.settings.container_port ?? "Not applicable"}</dd>
             <dt>Current publish directory</dt><dd>{latest.source.git.settings.publish_dir || (latest.source.git.settings.strategy === "static" ? "Selected context root (default)" : "Not applicable")}</dd>
             <dt>Current SPA fallback</dt><dd>{latest.source.git.settings.spa_fallback ? "Enabled" : "Disabled (default)"}</dd>
           </dl>

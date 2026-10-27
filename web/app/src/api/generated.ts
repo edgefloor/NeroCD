@@ -8145,12 +8145,18 @@ export interface components {
         };
         HostingBuildSettings: {
             /** @enum {string} */
-            strategy: "dockerfile" | "railpack" | "static";
+            strategy: "dockerfile" | "railpack" | "static" | "compose";
             context_dir?: string;
             dockerfile_path?: string;
             build_target?: string;
             publish_dir?: string;
             spa_fallback?: boolean;
+            /** @description Required only for Compose strategy. Canonical repository-relative file path beneath context_dir. */
+            compose_file?: string;
+            /** @description Required only for Compose strategy. Service exposed by the managed stack. */
+            public_component?: string;
+            /** @description Required only for Compose strategy. Port of the public component. */
+            container_port?: number;
         };
         GitResourceInput: {
             /** @description HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
