@@ -215,3 +215,23 @@ memory.
   reading. A legacy resolved revision is replay-compatible only for a
   single-service image whose new untagged `repository@sha256:` suffix exactly
   matches; all new receipts persist complete immutable references.
+
+## Generic runner execution trust
+
+`runner.ExecuteProcess` supplies an explicit environment on every invocation.
+Defaults are the operator's `PATH`, or `/usr/bin:/bin` when empty, and
+`LANG=C` and `LC_ALL=C`. The process plan's environment overrides those defaults.
+Authorized prepared secret bindings join that explicit plan environment.
+Runner bearer tokens, database URLs, proxy settings, SSH agents, and other ambient
+variables do not pass to the child unless explicitly supplied by the plan.
+
+Generic shell commands retain normal shell behavior and run with the runner's
+OS identity and filesystem access. Environment filtering is not an OS sandbox.
+The host, executable search path, and submitted commands remain trusted.
+A command can read accessible host files or deliberately print its own inputs.
+
+Legacy primitive checkout uses a private temporary home, disables ambient Git
+configuration and credential helpers, and does not forward Git diagnostics.
+It supports public HTTP and HTTPS sources. Runtime startup events record the
+process stage without command arguments. Process output still passes through
+prepared-secret redaction before durable reporting.

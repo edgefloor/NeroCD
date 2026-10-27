@@ -179,3 +179,28 @@ func TestTerminateProcessGroupPersistentProbeErrorIsBounded(t *testing.T) {
 		t.Fatalf("persistent probe error cleanup was not bounded as expected: %v", elapsed)
 	}
 }
+
+func TestExecuteProcessUsesOnlyExplicitEnvironment(t *testing.T) {
+	for _, name := range []string{"NEROCD_RUNNER_TOKEN", "DATABASE_URL", "SSH_AUTH_SOCK", "GIT_CONFIG_COUNT", "HTTP_PROXY", "AWS_SECRET_ACCESS_KEY", "HOME", "BASH_ENV"} {
+		t.Setenv(name, "ambient-credential-canary")
+	}
+	for _, environment := range []map[string]string{nil, {"EXPLICIT_VALUE": "authorized-value", "LANG": "explicit-locale"}} {
+		var mu sync.Mutex
+		var output strings.Builder
+		result, err := ExecuteProcess(t.Context(), domain.ProcessSpec{Command: []string{"sh", "-c", "env; printf 'shell:%s\\n' \"$(printf works)\""}, Environment: environment}, func(event ProcessEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			output.WriteString(event.Message + "\n")
+		})
+		if err != nil || result.ExitCode != 0 {
+			t.Fatalf("process failed: %+v %v", result, err)
+		}
+		got := output.String()
+		if strings.Contains(got, "ambient-credential-canary") || !strings.Contains(got, "PATH=") || !strings.Contains(got, "shell:works") {
+			t.Fatalf("unexpected child environment or shell behavior: %s", got)
+		}
+		if environment != nil && (!strings.Contains(got, "EXPLICIT_VALUE=authorized-value") || !strings.Contains(got, "LANG=explicit-locale")) {
+			t.Fatalf("explicit environment missing: %s", got)
+		}
+	}
+}

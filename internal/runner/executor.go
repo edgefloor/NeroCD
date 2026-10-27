@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"sync"
 	"time"
 
@@ -66,12 +67,7 @@ func ExecuteProcess(ctx context.Context, spec domain.ProcessSpec, emit func(Proc
 	if spec.WorkingDir != "" {
 		cmd.Dir = spec.WorkingDir
 	}
-	if len(spec.Environment) > 0 {
-		cmd.Env = cmd.Environ()
-		for key, value := range spec.Environment {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
-	}
+	cmd.Env = processEnvironment(spec.Environment)
 
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
@@ -262,4 +258,28 @@ func receiveProcessWait(waitCh <-chan error, timeout time.Duration) (processWait
 	case <-time.After(timeout):
 		return processWaitOutcome{}, false
 	}
+}
+
+// processEnvironment passes only operator-selected executable lookup and fixed
+// locale defaults, plus values explicitly authorized by the process plan.
+// It limits ambient credential disclosure; it does not isolate host resources.
+func processEnvironment(explicit map[string]string) []string {
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = "/usr/bin:/bin"
+	}
+	values := map[string]string{"PATH": path, "LANG": "C", "LC_ALL": "C"}
+	for key, value := range explicit {
+		values[key] = value
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	environment := make([]string, 0, len(keys))
+	for _, key := range keys {
+		environment = append(environment, key+"="+values[key])
+	}
+	return environment
 }

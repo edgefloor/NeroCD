@@ -25,9 +25,13 @@ func TestExecuteClaimRunnerFileSecretsAreAuthorizedAndRedactedBeforeReporting(t 
 		t.Fatal(err)
 	}
 	claim := secretTestClaim(secret)
+	// An argument need not be a registered secret to be sensitive. The process
+	// does not print this value, so only an unsafe startup diagnostic can leak it.
+	claim.PrimitivePlan.Process.Command = append(claim.PrimitivePlan.Process.Command, "unregistered-argv-credential-canary")
 	var mu sync.Mutex
 	paths := []string{}
 	messages := []string{}
+	var stdout, stderr strings.Builder
 	accesses := 0
 	completions := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -67,6 +71,12 @@ func TestExecuteClaimRunnerFileSecretsAreAuthorizedAndRedactedBeforeReporting(t 
 			mu.Lock()
 			for _, event := range batch.Events {
 				messages = append(messages, event.Message)
+				if event.Stream == domain.LogStdout {
+					stdout.WriteString(event.Message)
+				}
+				if event.Stream == domain.LogStderr {
+					stderr.WriteString(event.Message)
+				}
 			}
 			mu.Unlock()
 			writeRunnerEventBatchAck(t, w, batch)
@@ -91,6 +101,7 @@ func TestExecuteClaimRunnerFileSecretsAreAuthorizedAndRedactedBeforeReporting(t 
 	defer mu.Unlock()
 	joined := strings.Join(messages, "\n")
 	for _, forbidden := range []string{
+		"unregistered-argv-credential-canary",
 		secret,
 		base64.StdEncoding.EncodeToString([]byte(secret)),
 		base64.RawURLEncoding.EncodeToString([]byte(secret)),
@@ -102,7 +113,7 @@ func TestExecuteClaimRunnerFileSecretsAreAuthorizedAndRedactedBeforeReporting(t 
 		}
 	}
 	for _, expected := range []string{"safe-before", "safe-after", runner.RedactionMarker} {
-		if !strings.Contains(joined, expected) {
+		if !strings.Contains(joined, expected) && !strings.Contains(stdout.String(), expected) && !strings.Contains(stderr.String(), expected) {
 			t.Fatalf("reported messages missing %q: %s", expected, joined)
 		}
 	}

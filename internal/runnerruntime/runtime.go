@@ -743,7 +743,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if supervisor.Context().Err() != nil {
 		return fmt.Errorf("%w: before process spawn", errLeaseAuthorityLost)
 	}
-	emit("system", "Runner starting process: "+strings.Join(claim.PrimitivePlan.Process.Command, " "))
+	emit("system", "Runner starting process")
 	result, err := runner.ExecuteProcess(processCtx, *claim.PrimitivePlan.Process, func(event runner.ProcessEvent) {
 		emit(event.Stream, event.Message)
 	})
