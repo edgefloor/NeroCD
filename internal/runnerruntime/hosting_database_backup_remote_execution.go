@@ -97,7 +97,7 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 		return err
 	}
 	defer credentials.Close()
-	if credentials.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version) {
+	if credentials.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version, p.Operation.Mode) {
 		return errBackupRemoteHeld
 	}
 	deliverySequence := 0
@@ -114,7 +114,7 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 			return time.Time{}, err
 		}
 		defer fresh.Close()
-		if fresh.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version) {
+		if fresh.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version, p.Operation.Mode) {
 			return time.Time{}, errBackupRemoteHeld
 		}
 		if err = fresh.Use(func(nextAccess, nextSecret []byte) error {

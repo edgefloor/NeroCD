@@ -74,7 +74,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	storageDownloads := fs.Bool("hosting-storage-backup-download", false, "enable local archive streaming through one explicitly configured controller")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
 	backupRetention := fs.Bool("hosting-database-backup-retention", false, "enable fenced exact-copy local and remote backup retention")
-	remoteDatabaseBackups := fs.Bool("hosting-database-remote-backups", false, "enable fenced PostgreSQL and MySQL S3 copies; remote restores require PostgreSQL")
+	remoteDatabaseBackups := fs.Bool("hosting-database-remote-backups", false, "enable fenced PostgreSQL and MySQL S3 copies and separate-database remote restores")
 	remoteEndpoints := fs.String("hosting-backup-remote-endpoints", "", "operator-approved private HTTPS origins, comma-separated")
 	remoteCIDRs := fs.String("hosting-backup-remote-cidrs", "", "operator-approved private endpoint CIDRs, comma-separated")
 	remoteFixture := fs.String("hosting-backup-remote-trusted-loopback", "", "trusted exact loopback HTTP origin for isolated fixtures only")
@@ -290,7 +290,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		if *backupRetention {
 			registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability)
 		}
-		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability)
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, domain.HostingDatabaseMySQLRemoteRestoreCapability)
 	}
 	if *logicalDatabaseBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability)

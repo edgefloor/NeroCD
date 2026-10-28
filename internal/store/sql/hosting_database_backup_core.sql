@@ -171,3 +171,6 @@ SELECT id FROM hosting_database_backup_transfers WHERE target_id=$1 AND mode='va
 
 -- name: MySQLRemoteBackupSchemaPresent :one
 SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_remote_backup_schema_compatible()') IS NOT NULL)::boolean;
+
+-- name: MySQLRemoteRestoreSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_remote_restore_schema_compatible()') IS NOT NULL)::boolean;

@@ -37,6 +37,9 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		if !retention && !storageFamily && !storageRetention && (purpose == domain.HostingDatabaseMySQLBackupRemoteCredentialPurpose || purpose == "" && !slices.Contains(identity.Capabilities, capability)) {
 			capability = domain.HostingDatabaseMySQLBackupRemoteCapability
 		}
+		if !retention && !storageFamily && !storageRetention && purpose == domain.HostingDatabaseMySQLRemoteRestoreCredentialPurpose {
+			capability = domain.HostingDatabaseMySQLRemoteRestoreCapability
+		}
 		if storageRetention {
 			capability, kind = domain.HostingStorageBackupRetentionCapability, domain.RunTypeStorageBackupRetention
 		}

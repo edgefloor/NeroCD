@@ -438,9 +438,6 @@ func (s *PostgresStore) RequestDatabaseBackupRestore(ctx context.Context, id, ba
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
-		if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion && in.RemoteSource != nil {
-			return zero, ErrConflict
-		}
 		if err = backupRetentionArchiveAdmission(ctx, tx, backup, in.RemoteSource); err != nil {
 			return zero, err
 		}

@@ -10,14 +10,20 @@ import (
 )
 
 func TestMySQLRemoteIdentityRequiresExplicitAdapter(t *testing.T) {
-	for _, scenario := range []string{"mysql", "postgresql", "remote_flag_absent", "logical_flag_absent", "database_flag_absent", "missing_task", "shell"} {
+	for _, scenario := range []string{"mysql", "postgresql", "remote_flag_absent", "logical_flag_absent", "database_flag_absent", "missing_task", "missing_mysql_engine", "missing_mysql_backup", "shell"} {
 		t.Run(scenario, func(t *testing.T) {
-			caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability}
+			caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, domain.HostingDatabaseMySQLRemoteRestoreCapability}
 			if scenario == "postgresql" {
 				caps = []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability}
 			}
 			if scenario == "missing_task" {
 				caps = append(caps[:6], caps[7:]...)
+			}
+			if scenario == "missing_mysql_engine" {
+				caps = append(caps[:4], caps[5:]...)
+			}
+			if scenario == "missing_mysql_backup" {
+				caps = append(caps[:5], caps[6:]...)
 			}
 			if scenario == "shell" {
 				caps = append(caps, "shell")

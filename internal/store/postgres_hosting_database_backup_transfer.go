@@ -64,6 +64,15 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 		if !present {
 			return ErrConflict
 		}
+		if p.Operation.Mode == "download" {
+			restorePresent, restoreErr := sqlcgen.New(tx).MySQLRemoteRestoreSchemaPresent(ctx)
+			if restoreErr != nil {
+				return restoreErr
+			}
+			if !restorePresent {
+				return ErrConflict
+			}
+		}
 	}
 	if err := proxyAuthorize(ctx, tx, p.ActorID, p.Operation.ProjectID, domain.RoleOwner, false); err != nil {
 		return err
@@ -105,7 +114,7 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 	if server != p.ServerID || runner != p.RunnerID {
 		return ErrConflict
 	}
-	_, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: runner, Column2: domain.HostingDatabaseBackupRemoteCapabilityFor(p.Operation.Version), Column3: domain.RunTypeDatabaseBackupTransfer})
+	_, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: runner, Column2: domain.HostingDatabaseBackupRemoteCapabilityFor(p.Operation.Version, p.Operation.Mode), Column3: domain.RunTypeDatabaseBackupTransfer})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -471,12 +480,12 @@ func backupRemoteExpiredUploadClassification(ctx context.Context, tx pgx.Tx, run
 	if in.Phase != "uncertain" || in.FailureCode != "interrupted" || r.view.Mode != "upload" || r.view.State != "applying" || in.PlanHash != r.plan.Hash || r.daemon != in.DaemonID {
 		return false
 	}
-	_, err := sqlcgen.New(tx).LockExpiredDatabaseBackupUploadRunner(ctx, sqlcgen.LockExpiredDatabaseBackupUploadRunnerParams{ID: runner, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version)})
+	_, err := sqlcgen.New(tx).LockExpiredDatabaseBackupUploadRunner(ctx, sqlcgen.LockExpiredDatabaseBackupUploadRunnerParams{ID: runner, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version, r.view.Mode)})
 	if err != nil {
 		return false
 	}
 	var allowed bool
-	allowed, err = sqlcgen.New(tx).ExpiredDatabaseBackupUploadAllowed(ctx, sqlcgen.ExpiredDatabaseBackupUploadAllowedParams{OperationID: in.OperationID, ID: in.LeaseID, RunID: in.RunID, RunnerID: runner, Attempt: int32(in.Attempt), Fence: in.Fence, Authority: buildJSON(in.HostingAuthority), Column8: in.PlanHash, Column9: in.DaemonID, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version)})
+	allowed, err = sqlcgen.New(tx).ExpiredDatabaseBackupUploadAllowed(ctx, sqlcgen.ExpiredDatabaseBackupUploadAllowedParams{OperationID: in.OperationID, ID: in.LeaseID, RunID: in.RunID, RunnerID: runner, Attempt: int32(in.Attempt), Fence: in.Fence, Authority: buildJSON(in.HostingAuthority), Column8: in.PlanHash, Column9: in.DaemonID, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version, r.view.Mode)})
 	return err == nil && allowed
 }
 

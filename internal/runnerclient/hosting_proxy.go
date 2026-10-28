@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 
 	"nerocd/internal/domain"
@@ -289,6 +290,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
 	for _, capability := range result.Capabilities {
+		if capability == domain.HostingDatabaseMySQLRemoteRestoreCapability && (!options.Database || !options.LogicalDatabaseBackups || !options.RemoteDatabaseBackups || !remoteCap || !remoteTask || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLCapability) || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLBackupCapability) || shellCapable) {
+			return "", errors.New("authenticated MySQL remote restore capability requires explicit database configuration")
+		}
 		if capability == domain.HostingDatabaseMySQLCapability && (!options.Database || shellCapable) || capability == domain.HostingDatabaseMySQLBackupCapability && (!options.Database || !options.LogicalDatabaseBackups || shellCapable) || capability == domain.HostingDatabaseMySQLBackupRemoteCapability && (!options.Database || !options.LogicalDatabaseBackups || !options.RemoteDatabaseBackups || !remoteCap || !remoteTask || shellCapable) {
 			return "", errors.New("authenticated MySQL capability requires explicit database configuration")
 		}

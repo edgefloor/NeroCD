@@ -88,8 +88,10 @@ func TestPostgresMySQLRemoteBackupRetryKeepsLocalArtifact(t *testing.T) {
 	if _, err = f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("remote MySQL gained retention", err)
 	}
+	// This fixture intentionally has only the accepted upload capability. Older
+	// runners must still be denied remote restore before a new target is retained.
 	if _, err = f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, domain.HostingDatabaseBackupRestoreInput{RequestID: "mysql_remote_restore_denied", Name: "Unsupported remote restore", RemoteSource: &domain.BackupRemoteSource{TransferID: retry.ID, ExpectedTargetRevision: 1}}); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("MySQL remote-only restore admitted", err)
+		t.Fatal("upload-only MySQL runner admitted remote restore", err)
 	}
 }
 

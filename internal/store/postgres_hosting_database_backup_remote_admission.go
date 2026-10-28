@@ -150,14 +150,14 @@ func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, act
 }
 
 func (s *PostgresStore) backupRemoteRestoreAdmit(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan, source domain.BackupRemoteSource) error {
-	if domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) != domain.HostingDatabaseBackupTransferVersion {
+	if domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) == "" {
 		return ErrConflict
 	}
 	upload, err := backupRemoteLoad(ctx, tx, source.TransferID, false)
 	if err != nil {
 		return err
 	}
-	if upload.view.Mode != "upload" || upload.view.State != "succeeded" || upload.view.BackupID != p.Operation.BackupID || upload.view.TargetRevision != source.ExpectedTargetRevision || upload.view.ProjectID != p.Operation.ProjectID || upload.view.DestinationID != p.Source.Snapshot.DestinationID || upload.plan.RunnerID != p.RunnerID || upload.plan.DaemonID != p.Source.Release.DaemonID || domain.HostingDocumentHash(upload.view.Blob) != domain.HostingDocumentHash(p.Operation.Blob) {
+	if upload.view.Version != domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) || upload.view.Mode != "upload" || upload.view.State != "succeeded" || upload.view.BackupID != p.Operation.BackupID || upload.view.TargetRevision != source.ExpectedTargetRevision || upload.view.ProjectID != p.Operation.ProjectID || upload.view.DestinationID != p.Source.Snapshot.DestinationID || upload.plan.RunnerID != p.RunnerID || upload.plan.DaemonID != p.Source.Release.DaemonID || domain.HostingDocumentHash(upload.view.Blob) != domain.HostingDocumentHash(p.Operation.Blob) {
 		return ErrConflict
 	}
 	check := upload.plan
@@ -178,5 +178,8 @@ func (s *PostgresStore) backupRemoteRestoreAdmit(ctx context.Context, tx pgx.Tx,
 	check.Operation.UpdatedAt = now
 	check.Hash = ""
 	check.Hash = domain.HostingDocumentHash(check)
+	if err = backupRemoteCurrent(ctx, tx, check); err != nil {
+		return err
+	}
 	return s.backupRemoteInsert(ctx, tx, check, "download_"+p.Operation.ID, domain.HostingDocumentHash(source), &source.TransferID)
 }

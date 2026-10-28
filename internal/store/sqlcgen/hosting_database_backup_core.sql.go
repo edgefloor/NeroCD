@@ -898,6 +898,17 @@ func (q *Queries) MySQLRemoteBackupSchemaPresent(ctx context.Context) (bool, err
 	return column_1, err
 }
 
+const mySQLRemoteRestoreSchemaPresent = `-- name: MySQLRemoteRestoreSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_remote_restore_schema_compatible()') IS NOT NULL)::boolean
+`
+
+func (q *Queries) MySQLRemoteRestoreSchemaPresent(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, mySQLRemoteRestoreSchemaPresent)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const readDatabaseBackupDownloadState = `-- name: ReadDatabaseBackupDownloadState :one
 SELECT state FROM hosting_database_backup_transfers WHERE restore_operation_id=$1
 `

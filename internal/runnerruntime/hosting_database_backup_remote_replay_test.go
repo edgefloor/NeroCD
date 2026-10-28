@@ -55,19 +55,26 @@ func remoteReplayPlanFor(t *testing.T, mysql bool) (*databaseBackupEngine, *data
 
 func TestBackupRemoteCoordinatorLostAckReplayDoesNotRepeatUpload(t *testing.T) {
 	for _, tc := range []struct {
-		name                string
-		mysql, wrongPurpose bool
-	}{{"postgresql", false, false}, {"mysql", true, false}, {"mysql_wrong_purpose", true, true}} {
-		t.Run(tc.name, func(t *testing.T) { backupRemoteCoordinatorLostAck(t, tc.mysql, tc.wrongPurpose) })
+		name                          string
+		mysql, wrongPurpose, download bool
+	}{{"postgresql", false, false, false}, {"mysql", true, false, false}, {"mysql_wrong_purpose", true, true, false}, {"mysql_download", true, false, true}, {"mysql_download_wrong_purpose", true, true, true}} {
+		t.Run(tc.name, func(t *testing.T) { backupRemoteCoordinatorLostAck(t, tc.mysql, tc.wrongPurpose, tc.download) })
 	}
 }
 
-func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
+func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose, download bool) {
 	t.Helper()
 	e, f, p, data := remoteReplayPlanFor(t, mysql)
 	var mu sync.Mutex
-	puts := 0
+	puts, gets := 0, 0
 	var object []byte
+	if download {
+		p.Operation.Mode, p.Operation.RestoreOperationID = "download", "restore"
+		object = bytes.Clone(data)
+		if err := e.root.Remove(strings.TrimPrefix(p.Operation.Blob.Digest, "sha256:")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	s3server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -85,6 +92,7 @@ func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
 			object, _ = io.ReadAll(r.Body)
 			puts++
 		case http.MethodGet:
+			gets++
 			w.Header().Set("Content-Length", fmt.Sprint(len(object)))
 			_, _ = w.Write(object)
 		default:
@@ -98,7 +106,7 @@ func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
 	p.Hash = domain.HostingDocumentHash(p)
 	now := time.Now().UTC()
 	lease := domain.RunLease{ID: "lease", RunID: "db_transfer_" + p.Operation.ID, RunnerID: p.RunnerID, Attempt: 1, Fence: "fence", Status: domain.LeaseActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
-	claim := domain.ClaimedRun{Run: domain.TaskRun{ID: lease.RunID, ProjectID: p.Operation.ProjectID, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseBackupTransfer, HostingOperationID: p.Operation.ID, HostingMode: "upload"}}, Lease: lease, PrimitivePlan: domain.RunnerPrimitivePlan{RunID: lease.RunID}}
+	claim := domain.ClaimedRun{Run: domain.TaskRun{ID: lease.RunID, ProjectID: p.Operation.ProjectID, RunSpec: domain.RunSpec{Type: domain.RunTypeDatabaseBackupTransfer, HostingOperationID: p.Operation.ID, HostingMode: p.Operation.Mode}}, Lease: lease, PrimitivePlan: domain.RunnerPrimitivePlan{RunID: lease.RunID}}
 	path := filepath.Join(t.TempDir(), "journal")
 	j, err := runner.OpenAttemptJournal(path)
 	if err != nil {
@@ -119,7 +127,7 @@ func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
 			if json.NewDecoder(r.Body).Decode(&in) != nil {
 				t.Error("invalid delivery request")
 			}
-			purpose := domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version)
+			purpose := domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version, p.Operation.Mode)
 			if wrongPurpose {
 				purpose = domain.HostingDatabaseBackupRemoteCredentialPurpose
 			}
@@ -199,7 +207,14 @@ func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if puts != 1 || !bytes.Equal(object, data) || completePosts != 2 || deliveryPosts != 1 || j.Depth() != 0 || f.creates != 1 {
+	wantPuts := 1
+	if download {
+		wantPuts = 0
+		if accepted.LocalCopy == nil || !accepted.LocalCopy.Created || accepted.LocalCopy.Bytes != p.Operation.Blob.Bytes {
+			t.Fatal("download lost owned CAS publication")
+		}
+	}
+	if puts != wantPuts || gets != 1 || !bytes.Equal(object, data) || completePosts != 2 || deliveryPosts != 1 || j.Depth() != 0 || f.creates != 1 {
 		t.Fatal("replay repeated effects or failed retirement")
 	}
 	for _, call := range f.calls {
