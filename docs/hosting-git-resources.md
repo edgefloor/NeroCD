@@ -16,6 +16,28 @@ Build success is distinct from deployment, readiness and route selection.
 Git applications cannot call the image deployment endpoint. Source-kind
 conversion between image and Git remains unsupported.
 
+## Configure Dockerfile build variables
+
+In the Git source form, use **Dockerfile build variables** and **Add build variable**
+to save explicit public values. `settings.build_variables` accepts up to 64 unique
+names, with literal UTF-8 values of at most 4096 bytes each. Empty and multiline
+values are supported; NUL is rejected. These values are not secrets and do not
+implicitly import host or runtime environment variables.
+
+**Inject build arguments into Dockerfile** is enabled by default. With configured
+variables, the runner adds their `ARG` declarations after each `FROM` in its
+prepared Dockerfile copy. It does not edit the repository. To declare `ARG`
+yourself, clear the checkbox. The API setting
+`settings.inject_build_args_to_dockerfile` accepts `false` to disable injection;
+absent, `null`, or `true` enables it when variables exist. Both modes pass the
+configured values as build arguments.
+
+Editing variables advances the saved source generation. Request a new build
+and, for private HTTPS sources, create a grant for that generation. Existing
+builds and grants remain tied to their original source. Nonempty Dockerfile
+variables require the runner capability `hosting_dockerfile_args_v1` in addition
+to the existing build and source-access capabilities.
+
 ## Request and review a public Git build
 
 1. Save a desired destination with an active project grant. Its active enrolled
@@ -172,3 +194,20 @@ The [local build fixture](../acceptance/runtime-hosting-local-build/README.md)
 covers Dockerfile and Railpack in CLI and browser modes, including a compiled
 Vite SPA variant. These tests use isolated DNS and a trusted test CA. They do not
 qualify arbitrary Railpack language providers, production ACME, or workspace execution.
+
+### Dockerfile argument qualification
+
+The private HTTPS Dockerfile workflow passed at `3b6e0b39` on 2026-10-28.
+It proved default injection across stages without source `ARG` declarations,
+variable-edit rebuilds with new image identity and served content, explicit
+injection disablement with declared `ARG`, and exact multiline and empty values.
+A genuine failed build retained the prior HTTPS application. The existing grant,
+source provenance, typed output, responsive layout and owned cleanup checks passed.
+The grant retry deliberately drops the first committed response in Playwright.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-dockerfile-build-arguments-20261028/3b6e0b39f47f3bc5561955ea528640cd6e8dea53/evidence-index.json)
+records source hashes, scoped checks, reviews, cleanup and remaining test limits.
+The initial aggregate Go test failed stale CLI expectations; the complete affected
+package passed after repair. The contract check still exposes an unchanged
+undocumented 401 on storage-backup-volumes. Build secrets, private build-base
+registry authentication and remote artifact publication remain outside this qualification.
