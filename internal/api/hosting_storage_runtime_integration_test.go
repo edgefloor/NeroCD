@@ -306,8 +306,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
 			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
-			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" && os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true" {
+			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
 				caps = append(caps, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability)
+				caps = append(caps, "hosting_compose_mysql_backup_v1")
 			}
 		}
 	}
@@ -359,7 +360,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		}
 	})
 	t.Cleanup(func() { f.stop(); t.Logf("compiled runner logs:\n%s", f.logs.String()) })
-	if (os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" && os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true") || os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
+	if (os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind") || os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
 		for _, name := range []string{"database-state", "database-secrets"} {
 			if err := os.Mkdir(filepath.Join(f.root, name), 0700); err != nil {
 				t.Fatal(err)
@@ -458,12 +459,14 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 		command.Args = append(command.Args, "--hosting-runtime-env")
 	}
 	if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-		if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_WORDPRESS_RUNTIME") == "true" {
-			// Database services belong to these stacks. Neither profile operates
-			// standalone databases or storage archive downloads.
+		if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+			// This profile operates neither database backups nor archive downloads.
 			command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--execute")
 		} else {
-			command.Args = append(command.Args, "--hosting-storage-backup-download", "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+			if os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true" {
+				command.Args = append(command.Args, "--hosting-storage-backup-download")
+			}
+			command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
 		}
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {

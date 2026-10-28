@@ -913,21 +913,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		f.proxyAwait(targetRoute.OperationID)
 		b.set("database_backup", target.ID)
 		backupID := b.await(t, "database_backed_up")
-		awaitBackup := func(id string) domain.HostingDatabaseBackupOperation {
-			t.Helper()
-			for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
-				operation := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+id, nil, 200)
-				if operation.State == "succeeded" && !operation.OwnershipHeld {
-					return operation
-				}
-				if operation.State == "failed" || operation.State == "uncertain" {
-					t.Fatalf("component database operation settled %s code=%s held=%t", operation.State, operation.FailureCode, operation.OwnershipHeld)
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			t.Fatal("component database operation deadline")
-			return domain.HostingDatabaseBackupOperation{}
-		}
+
 		schedules := storageRuntimeJSON[[]domain.HostingDatabaseBackupSchedule](f, "GET", "/api/v1/resources/"+resourceID+"/database-backup-schedules", nil, 200)
 		if len(schedules) != 1 || schedules[0].Enabled || schedules[0].Component != "postgresql" || schedules[0].Version != domain.HostingDatabaseBackupComponentScheduleVersion {
 			t.Fatal("browser component schedule not disabled with immutable identity")
@@ -936,14 +922,14 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if len(occurrences) != 1 || occurrences[0].OperationID != backupID || occurrences[0].Component != "postgresql" || occurrences[0].ScheduleRevision != 1 {
 			t.Fatal("browser scheduled source dump lost historical identity")
 		}
-		backup := awaitBackup(backupID)
+		backup := composeRuntimeAwaitDatabaseBackup(t, f, backupID)
 		if backup.SourceComponent != "postgresql" || backup.SourceDeployedOperationID != started.ID || backup.Version != domain.HostingDatabaseBackupComponentVersion || backup.Blob == nil {
 			t.Fatal("wrong logical component backup")
 		}
 		b.set("database_mutate", resourceID)
 		b.await(t, "database_source_mutated")
 		b.set("database_import", target.ID)
-		imported := awaitBackup(b.await(t, "database_imported"))
+		imported := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_imported"))
 		if imported.BackupID != backupID || imported.TargetResourceID != target.ID || imported.TargetComponent != "postgresql" || imported.TargetDeployedOperationID != targetDeploy.ID || imported.Blob == nil || *imported.Blob != *backup.Blob {
 			t.Fatal("wrong immutable logical import target or archive")
 		}
@@ -1720,4 +1706,20 @@ func TestComposeArchiveHistoryFixtureResponseContract(t *testing.T) {
 	if !reflect.DeepEqual(want, got) {
 		t.Fatal("actual history decoder lost items or pagination metadata")
 	}
+}
+
+func composeRuntimeAwaitDatabaseBackup(t *testing.T, f *storageRuntimeFixture, id string) domain.HostingDatabaseBackupOperation {
+	t.Helper()
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
+		operation := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+id, nil, 200)
+		if operation.State == "succeeded" && !operation.OwnershipHeld {
+			return operation
+		}
+		if operation.State == "failed" || operation.State == "uncertain" {
+			t.Fatalf("component database operation settled %s code=%s held=%t", operation.State, operation.FailureCode, operation.OwnershipHeld)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("component database operation deadline")
+	return domain.HostingDatabaseBackupOperation{}
 }

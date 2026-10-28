@@ -53,3 +53,43 @@ func TestWordPressFixtureExactTemplateAndDeploymentContract(t *testing.T) {
 		}
 	}
 }
+
+func TestWordPressComponentDatabaseFixtureRequests(t *testing.T) {
+	backup := domain.HostingDatabaseBackupInput{RequestID: strings.Repeat("a", 32), Component: "mysql", ExpectedResourceGeneration: 3, ExpectedDeployedOperationID: "hop_source"}
+	raw, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got domain.HostingDatabaseBackupInput
+	if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/resources/res_source/database-backups", bytes.NewReader(raw)), &got) || !reflect.DeepEqual(backup, got) || got.Validate() != nil {
+		t.Fatal("MySQL component backup fixture decoder contract changed")
+	}
+	restore := domain.HostingDatabaseBackupRestoreInput{RequestID: strings.Repeat("b", 32), ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: "res_target", Component: "mysql", ExpectedDeployedOperationID: "hop_target", ExpectedResourceGeneration: 2, AcknowledgeReplacement: true}}
+	for _, tc := range []struct {
+		name   string
+		change func(*domain.HostingDatabaseBackupRestoreInput)
+		valid  bool
+	}{
+		{"exact distinct reviewed target", func(*domain.HostingDatabaseBackupRestoreInput) {}, true},
+		{"missing destructive acknowledgement", func(in *domain.HostingDatabaseBackupRestoreInput) { in.ComponentTarget.AcknowledgeReplacement = false }, false},
+		{"missing generation", func(in *domain.HostingDatabaseBackupRestoreInput) { in.ComponentTarget.ExpectedResourceGeneration = 0 }, false},
+		{"missing deployed identity", func(in *domain.HostingDatabaseBackupRestoreInput) {
+			in.ComponentTarget.ExpectedDeployedOperationID = ""
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := restore
+			target := *restore.ComponentTarget
+			in.ComponentTarget = &target
+			tc.change(&in)
+			raw, err := json.Marshal(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got domain.HostingDatabaseBackupRestoreInput
+			if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/database-backups/dbb_fixture/restores", bytes.NewReader(raw)), &got) || !reflect.DeepEqual(in, got) || (got.Validate() == nil) != tc.valid {
+				t.Fatal("MySQL import fixture public decoder/authority fields changed")
+			}
+		})
+	}
+}

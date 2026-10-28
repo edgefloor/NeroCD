@@ -1431,7 +1431,7 @@ class WordPressModeContractTests(unittest.TestCase):
     def test_wordpress_pass_contract_rejects_unrelated_or_incomplete_proof(self):
         source = GATE.read_text()
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
-        required=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"]
+        required=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold","wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive"]
         for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker"]:
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp)
@@ -1440,7 +1440,7 @@ class WordPressModeContractTests(unittest.TestCase):
                 if kind=="false":proof[required[-1]]=False
                 if kind=="numeric":proof[required[-1]]=1
                 if kind=="intercepted":proof["intercepted_requests"]=True
-                output="--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS (1s)\nWORDPRESS_CATALOG_RUNTIME_PASS\n"
+                output="--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS (1s)\nWORDPRESS_CATALOG_RUNTIME_PASS\nCOMPOSE_MYSQL_DATABASE_IMPORT_PASS\nCOMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS\nCOMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS\n"
                 if kind=="skip":output+="SKIP"
                 if kind=="wrong_test":output=output.replace("TestHostingCatalogWordPressCompiledRunnerHTTPS","TestHostingComposeVikunjaCompiledRunnerHTTPS")
                 if kind=="missing_marker":output=output.replace("WORDPRESS_CATALOG_RUNTIME_PASS","")

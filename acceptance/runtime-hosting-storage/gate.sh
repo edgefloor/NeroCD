@@ -762,9 +762,9 @@ text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.a
 if len(sys.argv)>4 and sys.argv[4]=="true":
  if "--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required WordPress runtime test did not pass")
  if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected WordPress browser did not pass")
- for key in ["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"]:
+ for key in ["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold","wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive"]:
   if browser.get(key) is not True:raise SystemExit("WordPress proof missing: "+key)
- if "WORDPRESS_CATALOG_RUNTIME_PASS" not in text:raise SystemExit("WordPress runtime markers absent")
+ if any(marker not in text for marker in ["WORDPRESS_CATALOG_RUNTIME_PASS", "COMPOSE_MYSQL_DATABASE_IMPORT_PASS", "COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS", "COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS"]):raise SystemExit("WordPress runtime markers absent")
  raise SystemExit(0)
 if len(sys.argv)>3 and sys.argv[3]=="true":
  if "Git Compose: private HTTPS source and exact receipt built;" not in text or "--- PASS: TestHostingGitComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Git Compose runtime test did not pass")
