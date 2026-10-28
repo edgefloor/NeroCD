@@ -8182,7 +8182,18 @@ export interface components {
             authority: components["schemas"]["HostingBuildAuthority"];
             delivery_id: string;
         };
+        HostingBuildSecretReference: {
+            /** @description Unique RUN environment name. Same reserved names as public build variables. Cannot collide with build_variables. */
+            name: string;
+            secret: components["schemas"]["HostingRegistryCredentialRef"];
+        };
+        HostingBuildSecretsRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+        };
         HostingBuildSettings: {
+            /** @description Explicit managed secret versions for Dockerfile or Compose RUN environments. Only references enter immutable metadata. Values are delivered for live fresh builds and staged outside the source context. */
+            build_secrets?: components["schemas"]["HostingBuildSecretReference"][];
             /** @description Explicit build registry credential for Dockerfile or Compose base images. Omitted or null clears the selection. Separate from Git source and deployment image credentials. Only the immutable secret reference is stored in build metadata. */
             build_registry_credential?: components["schemas"]["HostingRegistryCredentialRef"] | null;
             /** @description Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source. */

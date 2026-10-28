@@ -101,3 +101,26 @@ test.each(["railpack", "static"])("switching to %s clears the build registry cre
  fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } });
  expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_registry_credential");
 });
+
+
+test.each(["bad-name", "HTTP_PROXY", "https_proxy", "NeRoCd_config", "BUILDKIT_SYNTAX", "buildx_config", "TARGETPLATFORM"])("build secrets reject invalid or reserved name %s", name => {
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: [{ name, secret: { secret_id: "secret", version: 1 } }] })).not.toBe("");
+});
+test("build secrets enforce unique names, public argument separation and exact version selection", () => {
+ const row = { name: "TOKEN", secret: { secret_id: "secret", version: 1 } };
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: [row] })).toBe("");
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: [row, row] })).toMatch(/unique/);
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: [row], build_variables: [{ name: "TOKEN", value: "public" }] })).toMatch(/differ/);
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: [{ ...row, secret: { secret_id: "secret", version: 0 } }] })).toMatch(/explicit version/);
+ expect(gitBuildVariablesError({ strategy: "dockerfile", build_secrets: Array.from({ length: 65 }, (_, i) => ({ ...row, name: `TOKEN_${i}` })) })).toMatch(/64/);
+});
+test.each(["railpack", "static"])("build secrets survive Dockerfile and Compose changes and clear for %s", strategy => {
+ const refs = [{ name: "TOKEN", secret: { secret_id: "secret", version: 2 } }];
+ render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "dockerfile", build_secrets: refs } }} />);
+ fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "compose" } });
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_secrets).toEqual(refs);
+ fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "dockerfile" } });
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_secrets).toEqual(refs);
+ fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } });
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_secrets");
+});

@@ -217,3 +217,13 @@ test("reviewed and recorded build registry references remain independent of sour
  fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
  await screen.findByText(/Recorded build registry credential: build-registry, version 2/);
 });
+
+test("reviewed and recorded build secrets show only names and immutable metadata", async () => {
+ const settings = { strategy: "dockerfile" as const, build_secrets: [{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "dependency", version: 2 } }] };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
+});

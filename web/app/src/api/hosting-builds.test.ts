@@ -90,3 +90,11 @@ test("public build cache keeps only the explicit build registry reference", asyn
  expect(decoded.snapshot.source.settings.build_registry_credential).toEqual({ secret_id: "credential", version: 2 });
  expect(JSON.stringify(decoded)).not.toContain("never-public");
 });
+
+test("public build cache retains only build secret names and immutable references", async () => {
+ const settings = { strategy: "dockerfile", build_secrets: [{ name: "DEPENDENCY_TOKEN", value: "never-public", secret: { secret_id: "dependency", version: 2, value: "never-public" } }] };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_secrets).toEqual([{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "dependency", version: 2 } }]);
+ expect(JSON.stringify(decoded)).not.toContain("never-public");
+});

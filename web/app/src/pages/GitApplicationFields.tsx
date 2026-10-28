@@ -21,9 +21,20 @@ export function gitBuildVariablesError(settings: GitApplicationDraft["settings"]
   names.add(row.name);
   if (new TextEncoder().encode(row.value).length > 4096 || /\0/.test(row.value)) return "Build variable values allow at most 4096 UTF-8 bytes and no NUL.";
  }
+ const secrets = settings.build_secrets ?? [];
+ if (secrets.length > 64) return "At most 64 build secrets are allowed.";
+ const secretNames = new Set<string>();
+ for (const row of secrets) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(row.name)) return "Build secret names must use ASCII letters, numbers or underscores and start with a letter or underscore, with at most 128 characters.";
+  if (/^(NEROCD_|BUILDKIT_|BUILDX_)/i.test(row.name) || reserved.has(row.name.toUpperCase())) return "This build secret name is reserved for build execution.";
+  if (secretNames.has(row.name)) return "Build secret names must be unique.";
+  if (names.has(row.name)) return "Build secret names must differ from public build variable names.";
+  if (!row.secret.secret_id || !Number.isSafeInteger(row.secret.version) || row.secret.version < 1) return "Choose a managed secret and explicit version for every build secret.";
+  secretNames.add(row.name);
+ }
  return "";
 }
-export function GitApplicationFields({ value, onChange, disabled, projectID, onRegistryValidityChange }: { value: GitApplicationDraft; onChange: (value: GitApplicationDraft) => void; disabled: boolean; projectID?: string; onRegistryValidityChange?: (valid: boolean) => void }) {
+export function GitApplicationFields({ value, onChange, disabled, projectID, onRegistryValidityChange, onSecretsValidityChange }: { value: GitApplicationDraft; onChange: (value: GitApplicationDraft) => void; disabled: boolean; projectID?: string; onRegistryValidityChange?: (valid: boolean) => void; onSecretsValidityChange?: (valid: boolean) => void }) {
  const id = useId();
  const settings = value.settings;
  const setBuildVariables = (rows: NonNullable<GitApplicationDraft["settings"]["build_variables"]>) => {
@@ -37,7 +48,7 @@ export function GitApplicationFields({ value, onChange, disabled, projectID, onR
   <div className="space-y-1.5"><label htmlFor={`${id}-ref`}>Git branch, tag, or commit</label><Input id={`${id}-ref`} required value={value.requested_ref} onChange={(event) => onChange({ ...value, requested_ref: event.target.value })} disabled={disabled} spellCheck={false} /></div>
   <div className="space-y-1.5"><label htmlFor={`${id}-credentials`}>Git source access</label><select id={`${id}-credentials`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={value.credential_kind} disabled={disabled} onChange={(event) => onChange({ ...value, credential_kind: event.target.value as GitApplicationDraft["credential_kind"] })}>{!["public", "https_basic"].includes(value.credential_kind) ? <option value={value.credential_kind} disabled>Unsupported saved credential kind</option> : null}<option value="public">Public HTTPS</option><option value="https_basic">Private HTTPS with a source grant</option></select></div>
   <p className="text-xs text-muted-foreground">The server controls allowed HTTPS hosts. Private HTTPS builds require an owner-created source grant referencing an existing managed secret version. SSH is not supported in this editor.</p>
-  <div className="space-y-1.5"><label htmlFor={`${id}-strategy`}>Build strategy</label><select id={`${id}-strategy`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={settings.strategy} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { strategy: event.target.value as GitApplicationDraft["settings"]["strategy"], ...(settings.context_dir ? { context_dir: settings.context_dir } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_registry_credential ? { build_registry_credential: { ...settings.build_registry_credential } } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_variables?.length ? { build_variables: settings.build_variables } : {}), ...(event.target.value === "compose" ? { compose_file: "docker-compose.yaml", public_component: "", container_port: 80 } : {}) } })}><option value="dockerfile">Dockerfile</option><option value="railpack">Railpack</option><option value="static">Static assets</option><option value="compose">Docker Compose</option></select></div>
+  <div className="space-y-1.5"><label htmlFor={`${id}-strategy`}>Build strategy</label><select id={`${id}-strategy`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={settings.strategy} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { strategy: event.target.value as GitApplicationDraft["settings"]["strategy"], ...(settings.context_dir ? { context_dir: settings.context_dir } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_registry_credential ? { build_registry_credential: { ...settings.build_registry_credential } } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_secrets?.length ? { build_secrets: settings.build_secrets } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_variables?.length ? { build_variables: settings.build_variables } : {}), ...(event.target.value === "compose" ? { compose_file: "docker-compose.yaml", public_component: "", container_port: 80 } : {}) } })}><option value="dockerfile">Dockerfile</option><option value="railpack">Railpack</option><option value="static">Static assets</option><option value="compose">Docker Compose</option></select></div>
   <div className="space-y-1.5"><label htmlFor={`${id}-context`}>Context directory</label><Input id={`${id}-context`} value={settings.context_dir ?? ""} onChange={(event) => setSetting("context_dir", event.target.value)} disabled={disabled} placeholder="Repository root when empty" spellCheck={false} /></div>
   {settings.strategy === "compose" ? <>
    <div className="space-y-1.5"><label htmlFor={`${id}-compose-file`}>Compose file</label><Input id={`${id}-compose-file`} value={settings.compose_file ?? ""} onChange={event => setSetting("compose_file", event.target.value)} disabled={disabled} required placeholder="docker-compose.yaml" spellCheck={false} aria-describedby={`${id}-compose-path-help`} /></div>
@@ -65,6 +76,7 @@ export function GitApplicationFields({ value, onChange, disabled, projectID, onR
     <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={disabled || (settings.build_variables?.length ?? 0) >= 64} onClick={() => setBuildVariables([...(settings.build_variables ?? []), { name: "", value: "" }])}>Add build variable</Button>
    </section>
   </> : null}
+  {projectID ? <BuildSecretsField value={value} projectID={projectID} disabled={disabled} onChange={onChange} onValidityChange={onSecretsValidityChange} /> : null}
   {projectID ? <BuildRegistryField value={value} projectID={projectID} disabled={disabled} onChange={onChange} onValidityChange={onRegistryValidityChange} /> : null}
   {settings.strategy === "static" ? <>
    <div className="space-y-1.5"><label htmlFor={`${id}-publish`}>Publish directory</label><Input id={`${id}-publish`} value={settings.publish_dir ?? ""} onChange={(event) => setSetting("publish_dir", event.target.value)} disabled={disabled} placeholder="Prepared assets in repository root when empty" spellCheck={false} /></div>
@@ -95,4 +107,39 @@ function BuildRegistryField({ value, projectID, disabled, onChange, onValidityCh
   }} /> : null}
   <p className="break-all text-sm">Selected build registry credential: {selected ? `${selected.secret_id}, version ${selected.version}` : "None"}. This does not select deployment registry credentials or a Git source grant.</p>
  </>;
+}
+
+function BuildSecretsField({ value, projectID, disabled, onChange, onValidityChange }: { value: GitApplicationDraft; projectID: string; disabled: boolean; onChange: (value: GitApplicationDraft) => void; onValidityChange?: (valid: boolean) => void }) {
+ const id = useId();
+ const identity = useQuery({ ...principalQuery(), enabled: false });
+ const [denied, setDenied] = useState(false);
+ const [validated, setValidated] = useState<Record<string, boolean>>({});
+ const supported = ["dockerfile", "compose"].includes(value.settings.strategy);
+ const rows = value.settings.build_secrets ?? [];
+ const ready = Boolean(identity.data) && !identity.isPending && !identity.isFetching && !identity.isError;
+ const actor = identity.data ? JSON.stringify([identity.data.provider, identity.data.id]) : "";
+ const keyFor = (index: number) => JSON.stringify([actor, projectID, index, rows[index]?.secret]);
+ const valid = !supported || !rows.length || ready && !denied && rows.every((_, index) => validated[keyFor(index)]);
+ useEffect(() => { onValidityChange?.(Boolean(valid)); }, [valid, onValidityChange]);
+ const update = (nextRows: typeof rows) => {
+  const settings = { ...value.settings };
+  if (nextRows.length) settings.build_secrets = nextRows; else delete settings.build_secrets;
+  onChange({ ...value, settings });
+ };
+ if (!supported) return null;
+ return <section aria-label="Build secrets" className="min-w-0 space-y-3 rounded-lg border p-3">
+  <h6 className="font-medium">Build secrets</h6>
+  <p className="text-xs text-muted-foreground">Choose existing managed secret versions for private build dependencies. Mount each name in your Dockerfile with RUN --mount=type=secret,id=NAME,env=NAME. Secret values are not shown here. Runtime secrets are configured separately.</p>
+  {rows.length && (!ready || denied) ? <p role="alert">Build secret access is unavailable. Refresh build secret metadata to recheck access before saving this Git source.</p> : null}
+  {rows.map((row, index) => <div key={index} className="min-w-0 space-y-2">
+   <label htmlFor={`${id}-build-secret-name-${index}`}>Build secret name {index + 1}</label><Input id={`${id}-build-secret-name-${index}`} value={row.name} required pattern="[A-Za-z_][A-Za-z0-9_]{0,127}" maxLength={128} disabled={disabled} spellCheck={false} onChange={event => update(rows.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} />
+   {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID, index, row.secret])} actor={actor} project={projectID} image="" purpose="build-secret" secretLabel={`Build secret ${index + 1}`} initialCredential={row.secret.secret_id ? row.secret : undefined} disabled={disabled || denied} onAccessRestored={denied && !disabled ? () => setDenied(false) : undefined} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={selection => {
+    const key = keyFor(index);
+    setValidated(previous => previous[key] === selection.valid ? previous : { ...previous, [key]: selection.valid });
+    if (selection.valid && selection.credential && JSON.stringify(selection.credential) !== JSON.stringify(row.secret)) update(rows.map((entry, i) => i === index ? { ...entry, secret: { ...selection.credential! } } : entry));
+   }} /> : null}
+   <Button type="button" variant="outline" disabled={disabled} onClick={() => update(rows.filter((_, i) => i !== index))}>Remove build secret {index + 1}</Button>
+  </div>)}
+  <Button type="button" variant="outline" disabled={disabled || rows.length >= 64} onClick={() => { onValidityChange?.(false); update([...rows, { name: "", secret: { secret_id: "", version: 0 } }]); }}>Add build secret</Button>
+ </section>;
 }
