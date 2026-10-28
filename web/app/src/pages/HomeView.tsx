@@ -123,7 +123,6 @@ export function HomeView(props: {
   }
   return (
     <div className="grid min-w-0 gap-6">
-      <HostingStart />
       {query && onClearQuery ? (
         <SearchScope
           query={query}
@@ -131,6 +130,7 @@ export function HomeView(props: {
           onClear={onClearQuery}
         />
       ) : null}
+      <HostingStart />
 
       <DashboardActivitySummary {...viewModel} />
 

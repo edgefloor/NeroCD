@@ -32,6 +32,13 @@ test("dashboard filtering hides unrelated activity without changing overall tota
   expect(clear).toHaveBeenCalledOnce();
 });
 
+test("active filter controls precede the hosting introduction", () => {
+  show("unmatched_" + "x".repeat(190));
+  const clear = screen.getByRole("button", { name: "Clear" });
+  const introduction = screen.getByRole("heading", { name: "Host an application" });
+  expect(clear.compareDocumentPosition(introduction) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
 test("dashboard filtering matches related project names and keeps approval context", () => {
   show("pLaTfOrM");
   expect(screen.getAllByText("Release").length).toBeGreaterThan(0);
