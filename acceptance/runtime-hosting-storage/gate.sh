@@ -19,11 +19,13 @@ retention=false
 deletion=false
 catalog=false
 managed_compose=false
+wordpress=false
 git_compose=false
 uptime_kuma=false
 actual_budget=false
 private_registry=false
 case ${1:-} in
+ --wordpress) wordpress=true; managed_compose=true; catalog=true; owner=nerocd-catalog-wordpress-runtime-20261028; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogWordPressCompiledRunnerHTTPS$';;
  --private-registry) private_registry=true; catalog=true; owner=nerocd-private-registry-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingPrivateRegistryCompiledRunnerHTTPS$';;
  --git-compose) git_compose=true; managed_compose=true; catalog=true; archive=true; owner=nerocd-git-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingGitComposeVikunjaCompiledRunnerHTTPS$';;
  --managed-compose) managed_compose=true; catalog=true; archive=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
@@ -49,7 +51,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--managed-compose|--git-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--wordpress|--managed-compose|--git-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
 esac
 browser_publication=false
 if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
@@ -473,7 +475,25 @@ for binary in api.test nerocd-proxy-fixture; do host_docker cp "$evidence/$binar
 if [[ "$remote" == true || "$managed_compose" == true ]]; then host_docker cp "$evidence/store.test" "$outer:/fixture/store.test"; fi
 host_docker cp db/seeds/dev.sql "$outer:/workspace/db/seeds/dev.sql"
 if [[ "$managed_compose" == true ]]; then host_docker cp openapi.yaml "$outer:/workspace/openapi.yaml"; fi
-host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+if [[ "$wordpress" == true ]]; then
+ # Persistence qualification uses an ordinary day-long leaf, outside the
+ # fixture Traefik one-hour renewal window; shared renewal fixtures stay short.
+ python3 - "$evidence" <<'WORDPRESS_PEBBLE_CONFIG'
+import copy,hashlib,json,pathlib,sys
+source=pathlib.Path("acceptance/runtime-proxy-control/pebble.json").read_bytes()
+original=json.loads(source);effective=copy.deepcopy(original)
+assert effective["pebble"]["profiles"]["default"]["validityPeriod"]==600
+effective["pebble"]["profiles"]["default"]["validityPeriod"]=86400
+check=copy.deepcopy(effective);check["pebble"]["profiles"]["default"]["validityPeriod"]=600
+assert check==original
+raw=(json.dumps(effective,sort_keys=True,indent=2)+"\n").encode()
+root=pathlib.Path(sys.argv[1]);(root/"pebble-effective.json").write_bytes(raw)
+(root/"pebble-config-hashes.json").write_text(json.dumps({"source_sha256":hashlib.sha256(source).hexdigest(),"effective_sha256":hashlib.sha256(raw).hexdigest(),"only_change":"default.validityPeriod600-to86400"})+"\n")
+WORDPRESS_PEBBLE_CONFIG
+ host_docker cp "$evidence/pebble-effective.json" "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+else
+ host_docker cp acceptance/runtime-proxy-control/pebble.json "$outer:/workspace/acceptance/runtime-proxy-control/pebble.json"
+fi
 if [[ "$git_compose" == true ]]; then
  host_docker exec "$outer" apk add --no-cache git=2.52.0-r0 git-daemon=2.52.0-r0
  for binary in buildx railpack; do host_docker cp "$evidence/$binary" "$outer:/fixture/$binary"; done
@@ -731,14 +751,21 @@ elif [[ "$managed_compose" == true ]]; then
  git_compose_mode=''; if [[ "$git_compose" == true ]]; then git_compose_mode=disposable-dind; fi
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
- host_docker exec --workdir /workspace/internal/api --env "NEROCD_GIT_COMPOSE_RUNTIME=$git_compose_mode" --env "NEROCD_BUILDX_SHA256=sha256:${buildx_sha:-}" --env "NEROCD_PLANNER_IMAGE=${planner_id:-}" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
+ host_docker exec --workdir /workspace/internal/api --env "NEROCD_WORDPRESS_RUNTIME=$wordpress" --env "NEROCD_GIT_COMPOSE_RUNTIME=$git_compose_mode" --env "NEROCD_BUILDX_SHA256=sha256:${buildx_sha:-}" --env "NEROCD_PLANNER_IMAGE=${planner_id:-}" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
  test_pid=$!
- NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/compose_browser.mjs > "$evidence/browser.log" 2>&1
+ NEROCD_WORDPRESS_RUNTIME="$wordpress" NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/compose_browser.mjs > "$evidence/browser.log" 2>&1
  wait "$test_pid"
  test_pid=''
- python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" "$git_compose" <<'COMPOSE_BROWSER_PASS'
+ python3 - "$evidence/api-tests.log" "$evidence/compose-browser-safe.json" "$git_compose" "$wordpress" <<'COMPOSE_BROWSER_PASS'
 import json,pathlib,sys
 text=pathlib.Path(sys.argv[1]).read_text();browser=json.loads(pathlib.Path(sys.argv[2]).read_text())
+if len(sys.argv)>4 and sys.argv[4]=="true":
+ if "--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required WordPress runtime test did not pass")
+ if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected WordPress browser did not pass")
+ for key in ["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"]:
+  if browser.get(key) is not True:raise SystemExit("WordPress proof missing: "+key)
+ if "WORDPRESS_CATALOG_RUNTIME_PASS" not in text:raise SystemExit("WordPress runtime markers absent")
+ raise SystemExit(0)
 if len(sys.argv)>3 and sys.argv[3]=="true":
  if "Git Compose: private HTTPS source and exact receipt built;" not in text or "--- PASS: TestHostingGitComposeVikunjaCompiledRunnerHTTPS " not in text or "SKIP" in text:raise SystemExit("required Git Compose runtime test did not pass")
  if browser.get("status")!="passed" or browser.get("intercepted_requests") is not False:raise SystemExit("connected Git Compose browser did not pass")

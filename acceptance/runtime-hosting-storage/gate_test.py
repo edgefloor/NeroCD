@@ -1392,5 +1392,61 @@ host_docker() {
         self.assertIn('test "$(stat -c "%d:%i" "$probe")" = "$identity"', block)
         self.assertIn('test ! -e "$probe" && test ! -L "$probe"', block)
 
+
+class WordPressModeContractTests(unittest.TestCase):
+    def test_catalog_entrypoint_forwards_wordpress(self):
+        gate = Path(__file__).parents[1] / "runtime-hosting-catalog/gate.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stub = root / "bash"
+            stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+            stub.chmod(0o700)
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]}
+            result = subprocess.run(["/bin/bash", str(gate), "--wordpress"], env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", "--wordpress"])
+
+    def test_wordpress_selector_and_compiled_test_identity(self):
+        source = GATE.read_text()
+        selector = source.split("case ${1:-} in\n", 1)[1].split("\nesac", 1)[0]
+        result = subprocess.run(["bash", "-c", "case ${1:-} in\n" + selector + "\nesac\nprintf '%s\\n' \"$wordpress\" \"$managed_compose\" \"$catalog\" \"$owner\" \"$test_pattern\"", "fixture", "--wordpress"], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ["true", "true", "true", "nerocd-catalog-wordpress-runtime-20261028", "^TestHostingCatalogWordPressCompiledRunnerHTTPS$"])
+        fixture = Path("internal/api/hosting_catalog_wordpress_runtime_integration_test.go").read_text()
+        self.assertIn("func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T)", fixture)
+        self.assertIn('--env "NEROCD_WORDPRESS_RUNTIME=$wordpress"', source)
+        self.assertIn('NEROCD_WORDPRESS_RUNTIME="$wordpress" NEROCD_CATALOG_BROWSER_ORIGIN=', source)
+
+    def test_wordpress_effective_certificate_config_only_changes_validity(self):
+        source = GATE.read_text()
+        code = source.split("<<'WORDPRESS_PEBBLE_CONFIG'\n", 1)[1].split("\nWORDPRESS_PEBBLE_CONFIG", 1)[0]
+        original = json.loads(Path("acceptance/runtime-proxy-control/pebble.json").read_bytes())
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run([sys.executable,"-c",code,tmp], check=True)
+            effective = json.loads((Path(tmp)/"pebble-effective.json").read_bytes())
+            self.assertEqual(effective["pebble"]["profiles"]["default"]["validityPeriod"],86400)
+            effective["pebble"]["profiles"]["default"]["validityPeriod"]=600
+            self.assertEqual(effective,original)
+            hashes=json.loads((Path(tmp)/"pebble-config-hashes.json").read_text())
+            self.assertEqual(hashes["source_sha256"],hashlib.sha256(Path("acceptance/runtime-proxy-control/pebble.json").read_bytes()).hexdigest())
+
+    def test_wordpress_pass_contract_rejects_unrelated_or_incomplete_proof(self):
+        source = GATE.read_text()
+        validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
+        required=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"]
+        for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker"]:
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                proof={"status":"passed","intercepted_requests":False,**dict.fromkeys(required,True)}
+                if kind=="missing":del proof[required[-1]]
+                if kind=="false":proof[required[-1]]=False
+                if kind=="numeric":proof[required[-1]]=1
+                if kind=="intercepted":proof["intercepted_requests"]=True
+                output="--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS (1s)\nWORDPRESS_CATALOG_RUNTIME_PASS\n"
+                if kind=="skip":output+="SKIP"
+                if kind=="wrong_test":output=output.replace("TestHostingCatalogWordPressCompiledRunnerHTTPS","TestHostingComposeVikunjaCompiledRunnerHTTPS")
+                if kind=="missing_marker":output=output.replace("WORDPRESS_CATALOG_RUNTIME_PASS","")
+                (root/"browser.json").write_text(json.dumps(proof));(root/"runtime.log").write_text(output)
+                result=subprocess.run([sys.executable,"-c",validator,str(root/"runtime.log"),str(root/"browser.json"),"false","true"],capture_output=True,text=True)
+                self.assertEqual(result.returncode==0,kind=="valid",result.stderr)
+
 if __name__ == "__main__":
     unittest.main()

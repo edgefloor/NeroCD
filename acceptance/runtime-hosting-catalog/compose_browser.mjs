@@ -171,6 +171,132 @@ async function addTask(p, title) {
   if (!Number.isSafeInteger(task?.id) || task.id < 1 || task.title !== title) throw Error("task identity missing");
   return task.id;
 }
+async function wordpressWorkflow(h, initial) {
+  const name = "WordPress acceptance";
+  const version = "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1";
+  const catalog = h.getByRole("region", {name:"Hosting catalog",exact:true});
+  step="wordpress_catalog_install";
+  await catalog.getByLabel("Catalog application",{exact:true}).selectOption("wordpress-with-mysql");
+  await catalog.getByLabel("Installation name",{exact:true}).fill(name);
+  await catalog.getByLabel("Catalog destination",{exact:true}).selectOption(initial.id);
+  await catalog.getByLabel("Public URL",{exact:true}).fill(appOrigin);
+  await expect(catalog.getByRole("heading",{name:"WordPress with MySQL installation preview",exact:true})).toBeVisible();
+  const firstPending=response(page,"/api/v1/hosting-catalog/installations");
+  await catalog.getByRole("button",{name:"Install application",exact:true}).click();
+  const first=await firstPending;
+  if(first.status()!==503)throw Error("WordPress installation response-loss contract missing");
+  const retryPending=response(page,"/api/v1/hosting-catalog/installations");
+  await catalog.getByRole("button",{name:"Retry same installation",exact:true}).click();
+  const retry=await retryPending;
+  if(retry.request().postData()!==first.request().postData())throw Error("WordPress installation retry changed request");
+  const installed=await checkedResponse(retry,201);
+  const resource=installed.resource, resourceID=resource.id;
+  if(installed.request.template_id!=="wordpress-with-mysql"||installed.request.immutable_version!==version||installed.request.public_url!==appOrigin||installed.binding.destination_id!==initial.id||resource.source.kind!=="compose"||installed.credentials.length!==3||installed.credentials.some(x=>!['SERVICE_USER_WORDPRESS','SERVICE_PASSWORD_WORDPRESS','SERVICE_PASSWORD_ROOT'].includes(x.name)||x.kind!=="managed_secret"||!x.secret?.secret_id||x.secret.version!==1||x.value!==undefined))throw Error("WordPress catalog receipt changed");
+  safe.wordpress_install_retry=true;
+  await report("installed",resourceID);
+  let application=h.getByRole("article",{name,exact:true});
+  async function reloadHosting(){h=await hosting(page);application=h.getByRole("article",{name,exact:true});}
+  async function deploy(replacement,stoppedOperation){
+    step=stoppedOperation?"wordpress_start":"wordpress_deploy";
+    const review=application.getByRole("region",{name:"Saved Compose deployment review",exact:true});
+    await expect(review.getByLabel("Readiness path",{exact:true})).toHaveValue("/");
+    await review.getByRole("button",{name:stoppedOperation?"Review current Compose start":"Review current Compose deployment",exact:true}).click();
+    await review.getByRole("checkbox").check();
+    const pending=response(page,`/api/v1/resources/${resourceID}/deployments`);
+    await review.getByRole("button",{name:stoppedOperation?"Start reviewed Compose":"Deploy reviewed Compose",exact:true}).click();
+    const r=await pending,input=r.request().postDataJSON();
+    if(input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation||Boolean(input.storage_route_continuity)!==replacement||input.container_port!==80||input.readiness.path!=="/")throw Error("WordPress deployment authority/readiness changed");
+    return (await checkedResponse(r,202)).id;
+  }
+  await state("deploy");const firstOperation=await deploy(false);await report("deployed",firstOperation);
+  await state("healthy");
+  const deployments=application.getByRole("region",{name:`Image deployments for ${name}`,exact:true});
+  await deployments.getByRole("button",{name:"Refresh deployment history",exact:true}).click();
+  await deployments.getByRole("button",{name:`View operation ${firstOperation}`,exact:true}).click();
+  const components=deployments.getByRole("region",{name:"Recorded Compose components",exact:true});
+  await expect(components).toContainText("Observation complete");
+  for(const component of ["wordpress","mysql"])await expect(components.getByRole("article",{name:`Component ${component}`,exact:true})).toContainText("Running");
+  for(const width of [1280,320,390,430]){
+    await page.setViewportSize({width,height:900});
+    if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error("WordPress hosting responsive overflow");
+    await page.screenshot({path:resolve(evidence,`wordpress-hosting-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1280,height:900});await report("healthy",resourceID);
+  await state("route");
+  const routes=application.getByRole("region",{name:`Routes for ${name}`,exact:true});
+  await routes.getByRole("button",{name:"Refresh resource routes",exact:true}).click();
+  const routeForm=routes.getByRole("form",{name:`Configure route for ${name}`,exact:true});
+  await routeForm.getByLabel("Route hostname",{exact:true}).fill("catalog-runtime.example.test");
+  await routeForm.getByLabel("Expected settled healthy deployment",{exact:true}).selectOption(firstOperation);
+  const routing=response(page,`/api/v1/resources/${resourceID}/routes`);
+  await routeForm.getByRole("button",{name:"Save desired route",exact:true}).click();
+  const route=await checkedResponse(routing,202);await report("routed",route.operation_id);
+  await state("app_create");step="wordpress_setup";
+  appContext=await browser.newContext({baseURL:appOrigin,ignoreHTTPSErrors:true});
+  let wp=await appContext.newPage();wp.setDefaultTimeout(30000);
+  await wp.goto("/wp-admin/install.php?language=en_US");
+  await wp.locator('#weblog_title').fill("NeroCD WordPress acceptance");
+  await wp.locator('#user_login').fill(username);
+  await wp.locator('#pass1').fill(password);
+  await wp.locator('#admin_email').fill("wordpress@example.test");
+  const weak=wp.locator('input[name="pw_weak"]');if(await weak.isVisible())await weak.check();
+  await wp.getByRole("button",{name:"Install WordPress",exact:true}).click();
+  await expect(wp.getByRole("heading",{name:"Success!",exact:true})).toBeVisible();
+  async function login(){
+    if(freshAppContext)await freshAppContext.close();
+    freshAppContext=await browser.newContext({baseURL:appOrigin,ignoreHTTPSErrors:true});
+    wp=await freshAppContext.newPage();wp.setDefaultTimeout(30000);
+    await wp.goto('/wp-login.php');await wp.locator('#user_login').fill(username);await wp.locator('#user_pass').fill(password);await wp.locator('#wp-submit').click();
+    await expect(wp.locator('#wpadminbar')).toBeVisible();
+  }
+  await login();step="wordpress_create_post";
+  // Dashboard Quick Draft and Posts Quick Edit use the real built-in editor,
+  // without depending on block-editor onboarding or installing a plugin.
+  await wp.goto('/wp-admin/index.php');
+  await wp.locator('#title').fill("NeroCD persistent WordPress post");
+  await wp.locator('#content').fill("NeroCD persistent WordPress body");
+  const draft=wp.waitForResponse(r=>r.request().method()==="POST"&&new URL(r.url()).pathname==='/wp-admin/post.php');
+  await wp.locator('#save-post').click();await draft;
+  await wp.goto('/wp-admin/edit.php');
+  const row=wp.locator('tr.type-post').filter({has:wp.getByRole('link',{name:"NeroCD persistent WordPress post",exact:true})});
+  await expect(row).toHaveCount(1);
+  const postID=(await row.getAttribute('id')).replace(/^post-/, '');
+  await row.hover();await row.getByRole('button',{name:/Quick edit/}).click();
+  const edit=wp.locator(`#edit-${postID}`);await edit.locator('select[name="_status"]').selectOption('publish');
+  await edit.getByRole('button',{name:'Update',exact:true}).click();
+  await expect(edit).toHaveCount(0);
+  step="wordpress_upload_media";
+  await wp.goto('/wp-admin/media-new.php');
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYaQAAAAASUVORK5CYII=','base64');
+  const uploading=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/async-upload.php');
+  await wp.locator('input[type=file]').setInputFiles({name:'nerocd-wordpress-persistence.png',mimeType:'image/png',buffer:png});
+  const uploaded=await uploading;if(uploaded.status()!==200)throw Error('WordPress upload rejected');
+  const media=await uploaded.json();if(media.success!==true||!media.data?.url)throw Error('WordPress upload receipt missing');
+  const mediaURL=new URL(media.data.url);if(mediaURL.origin!==appOrigin||!mediaURL.pathname.startsWith('/wp-content/uploads/'))throw Error('WordPress upload origin changed');
+  const proof=postID+'|'+mediaURL.pathname;
+  async function checkWordPress(stage){
+    step='wordpress_fresh_login_'+stage;await login();
+    await wp.goto('/wp-admin/edit.php');await expect(wp.getByRole('link',{name:'NeroCD persistent WordPress post',exact:true})).toBeVisible();
+    const post=await freshAppContext.request.get('/?p='+postID);if(post.status()!==200||!(await post.text()).includes('NeroCD persistent WordPress body'))throw Error('WordPress public post changed');
+    const image=await freshAppContext.request.get(mediaURL.pathname);if(image.status()!==200||!(await image.body()).equals(png))throw Error('WordPress upload bytes changed');
+    await wp.goto('/wp-admin/index.php');await wp.locator('#title').fill('New write after '+stage);await wp.locator('#content').fill('Fresh authenticated write '+stage);const written=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/post.php');await wp.locator('#save-post').click();await written;
+  }
+  await checkWordPress('initial');safe.wordpress_setup_post_media=true;await report('app_created',proof);
+  await state('redeploy');await reloadHosting();const second=await deploy(true);await report('redeployed',second);
+  await state('app_recheck');await checkWordPress('redeploy');safe.wordpress_redeploy_preserved=true;await report('app_checked',proof);
+  await state('stop');await reloadHosting();
+  const lifecycle=application.getByRole('region',{name:'Compose lifecycle',exact:true});
+  await lifecycle.getByRole('button',{name:'Refresh Compose lifecycle',exact:true}).click();await lifecycle.getByRole('button',{name:'Review Stop Compose',exact:true}).click();
+  const stopping=response(page,`/api/v1/resources/${resourceID}/stack-stop`);await lifecycle.getByRole('button',{name:'Confirm Stop Compose',exact:true}).click();const stopped=await checkedResponse(stopping,202);if(stopped.stack_stop_plan?.target?.operation_id!==second)throw Error('WordPress Stop target changed');await report('stopped',stopped.id);
+  await state('start');await reloadHosting();const started=await deploy(true,stopped.id);await report('started',started);
+  await state('app_start_recheck');await checkWordPress('start');safe.wordpress_stop_start_preserved=true;await report('app_start_checked',proof);
+  await state('app_failure_recheck');await checkWordPress('failed-image-prepare');safe.wordpress_failed_prepare_preserved=true;await report('app_failure_checked',proof);
+  const terminal=await state('complete');
+  const held=await checkedResponse(await context.request.get('/api/v1/hosting-operations/'+terminal.id),200);
+  if(held.id!==terminal.id||held.resource_id!==resourceID||held.state!=='reconciliation_required'||held.mutation_hold!==true||held.result?.uncertain!==true||held.result?.ready!==false||!held.result?.stack?.observation_complete)throw Error('WordPress post-mutation hold projection changed');
+  safe.wordpress_truthful_mutation_hold=true;await report('done',resourceID);
+}
+
 try {
   api = await request.newContext({ baseURL: origin, ignoreHTTPSErrors: true, extraHTTPHeaders: { "X-NeroCD-Fixture-Key": key }, timeout: 10000 });
   browser = await chromium.launch({ headless: true, args: ["--host-resolver-rules=MAP catalog-runtime.example.test 127.0.0.1, MAP restore.catalog-runtime.example.test 127.0.0.1", "--no-proxy-server"] });
@@ -189,6 +315,9 @@ try {
   safe.served_assets_match_manifest = true;
   await signIn(page, "admin@example.local", "admin");
   const h = await hosting(page);
+  if(process.env.NEROCD_WORDPRESS_RUNTIME === "true") {
+    await wordpressWorkflow(h,initial);
+  } else {
   const gitCompose=Boolean(initial.git_repository);
   let resource;
   if (gitCompose) {
@@ -1016,6 +1145,7 @@ try {
   }
   await state("complete");
   await report("done", resourceID);
+  }
   safe.status = "passed";
 } catch (error) {
   safe.failure = stopped ? "cancelled" : "browser_workflow_failed";
