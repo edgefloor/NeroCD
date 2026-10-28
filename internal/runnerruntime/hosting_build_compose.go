@@ -11,14 +11,8 @@ import (
 	"nerocd/internal/hostingbuild"
 )
 
-// buildCompose prepares local images without starting or replacing any stack
-// writer. All children share the parent's deadline, immutable source receipt,
-// daemon and authorized log sink.
-func (e *BuildExecutor) buildCompose(ctx context.Context, b domain.HostingBuild, checkout string, sink hostingbuild.OutputSink) (domain.HostingBuildComposeResult, error) {
-	return e.buildComposeWithEngine(ctx, b, checkout, sink, func(c context.Context, r hostingbuild.Request) (hostingbuild.Result, error) {
-		return e.engine.(buildOutputEngine).BuildWithOutput(c, r, sink)
-	})
-}
+// buildComposeWithEngine prepares local images without starting or replacing any
+// stack writer. Children share the parent deadline, source receipt and daemon.
 func (e *BuildExecutor) buildComposeWithEngine(ctx context.Context, b domain.HostingBuild, checkout string, sink hostingbuild.OutputSink, build func(context.Context, hostingbuild.Request) (hostingbuild.Result, error)) (domain.HostingBuildComposeResult, error) {
 	var zero domain.HostingBuildComposeResult
 	if !e.config.Compose || !b.Snapshot.Policy.GitCompose || b.SourceReceipt == nil {
