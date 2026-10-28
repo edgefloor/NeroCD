@@ -17,6 +17,7 @@ candidate() {
   cp "$root/.github/workflows/release.yml" "$tmp/$name/.github/workflows/release.yml"
   cp "$root/Makefile" "$tmp/$name/Makefile"
   cp "$root/scripts/observability-gate.sh" "$tmp/$name/scripts/observability-gate.sh"
+  cp "$root/scripts/ci-check.py" "$tmp/$name/scripts/ci-check.py"
 }
 expect_reject() {
   local name=$1

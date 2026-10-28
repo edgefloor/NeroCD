@@ -43,6 +43,19 @@ func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Con
 		if err = requireConnectionAgent(ctx, tx, b.RunnerID, false, b.Database.Engine); err != nil {
 			return zero, err
 		}
+		// Replay is a fresh read of operation state, so bind it to the currently
+		// authorized resource before either idempotency shortcut can return it.
+		execution, err := q.ReadDatabaseConnectionExecution(ctx, before.ID)
+		if err != nil || execution.ConnectionID != c.ID || before.ProjectID != c.ProjectID || !connectionOperation(before) {
+			return zero, ErrConflict
+		}
+		resource, binding := c.ApplicationResourceID, b.ApplicationBindingID
+		if execution.Family == "maintenance" {
+			resource, binding = c.DatabaseResourceID, b.DatabaseBindingID
+		}
+		if before.ResourceID != resource || before.BindingID != binding {
+			return zero, ErrConflict
+		}
 		requestHash := domain.HostingDocumentHash(in)
 
 		if in.Action != "observe" && before.ApplicationDatabaseStorage != nil {
@@ -66,8 +79,7 @@ func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Con
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return zero, err
 		}
-		execution, err := q.ReadDatabaseConnectionExecution(ctx, before.ID)
-		if err != nil || execution.ConnectionID != c.ID || !connectionOperation(before) || before.Plan == nil || before.ReconciliationRunID != "" {
+		if before.Plan == nil || before.ReconciliationRunID != "" {
 			return zero, ErrConflict
 		}
 		head, err := q.LockDatabaseMembershipHead(ctx, b.DatabaseBindingID)

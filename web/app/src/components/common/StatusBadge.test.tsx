@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { StatusBadge, statusTone } from "./StatusBadge";
+import { StatusBadge } from "./StatusBadge";
+import { statusTone } from "./status";
 
 afterEach(cleanup);
 

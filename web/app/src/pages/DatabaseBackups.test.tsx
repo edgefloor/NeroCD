@@ -621,3 +621,26 @@ test("Compose MySQL imports a local archive only into a matching separate compon
  expect(screen.getByText(/Failed or uncertain import/)).toBeTruthy();
  expect(screen.queryByLabelText("Restore archive source")).toBeNull();
 });
+
+
+test.each(["postgresql", "mysql"] as const)("Compose %s target A to B to A retires unsubmitted destructive consent", async engine => {
+ mountComposeBackupPanel("compose", "compose", engine);
+ await screen.findByRole("option", {name:/ · backup$/});
+ fireEvent.change(screen.getByRole("combobox", {name:"Backup to restore"}), {target:{value:"backup"}});
+ const applications = screen.getByRole("combobox", {name:"Restore target application"});
+ fireEvent.change(applications, {target:{value:"target"}});
+ const components = screen.getByRole("combobox", {name:"Restore target database component"});
+ await waitFor(()=>expect(components.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(components, {target:{value:engine}});
+ const consent = screen.getByRole("checkbox", {name:"Replace target database and interrupt its writers"});
+ fireEvent.click(consent);
+ const restore = screen.getByRole("button", {name:"Restore database backup"});
+ await waitFor(()=>expect((restore as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.change(applications, {target:{value:""}});
+ fireEvent.change(applications, {target:{value:"target"}});
+ await waitFor(()=>expect(components.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(components, {target:{value:engine}});
+ expect((consent as HTMLInputElement).checked).toBe(false);
+ expect((restore as HTMLButtonElement).disabled).toBe(true);
+ expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});

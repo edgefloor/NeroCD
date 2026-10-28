@@ -145,6 +145,7 @@ export async function getCatalogDestinationOptions(
   )
     throw new Error("Catalog requirement evidence mismatch");
   const seen = new Set<string>();
+  const requiredCapabilities = new Set(r.required_capabilities);
   for (const item of value.items) {
     if (
       !keys(item, [
@@ -176,7 +177,7 @@ export async function getCatalogDestinationOptions(
       (item.reason_code === "missing_capabilities" &&
         item.missing_capabilities.length === 0) ||
       !item.missing_capabilities.every((capability) =>
-        r.required_capabilities.includes(capability),
+        requiredCapabilities.has(capability),
       )
     )
       throw new Error("Catalog destination evidence mismatch");

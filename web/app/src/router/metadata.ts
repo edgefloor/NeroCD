@@ -19,7 +19,8 @@ export const navigationItems: NavigationItem[] = [
 ];
 
 export function navigationForRoles(roles: readonly string[]): NavigationItem[] {
-  return navigationItems.filter((item) => !item.adminOnly || roles.includes("system_admin"));
+  const administrator = roles.includes("system_admin");
+  return navigationItems.filter((item) => !item.adminOnly || administrator);
 }
 
 export function navigationForView(view: ViewKey): NavigationItem {

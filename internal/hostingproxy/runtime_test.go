@@ -903,7 +903,11 @@ func fixtureCopyState(t *testing.T, source, destination string, preserveLock boo
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer func() {
+			if err := in.Close(); err != nil {
+				t.Errorf("close backup source %s: %v", path, err)
+			}
+		}()
 		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
 		if err != nil {
 			return err

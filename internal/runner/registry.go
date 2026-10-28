@@ -117,8 +117,14 @@ func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, err
 		}
 		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
 	}
-	if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) {
-		return domain.RunnerPrimitivePlan{}, errors.New("hosting execution cannot be embedded in a generic plan")
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		if err := domain.ValidateComposeDeploymentTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
+	if err := domain.ValidateGenericRunDefinition(run.RunSpec, run.Workflow); err != nil {
+		return domain.RunnerPrimitivePlan{}, err
 	}
 	adapter, ok := r.adapters[run.RunSpec.Type]
 	if !ok {

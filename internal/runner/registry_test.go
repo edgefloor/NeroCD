@@ -147,3 +147,34 @@ func TestDatabaseDeploymentRegistryRequiresCanonicalInternalTask(t *testing.T) {
 		t.Fatal("internal database routing registered a generic adapter")
 	}
 }
+
+func TestComposeRegistryRequiresTypedShapeAndEmitsNoGenericPrimitives(t *testing.T) {
+	run := domain.TaskRun{ID: "run_compose", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy, Inputs: map[string]any{"deployment_id": "dep_compose"}, Secrets: []domain.SecretBinding{{Name: "deployment-secret"}}}}
+	plan, err := NewRegistry().BuildPlan(run)
+	if err != nil || !reflect.DeepEqual(plan, domain.RunnerPrimitivePlan{RunID: run.ID}) {
+		t.Fatalf("typed compose plan=%+v err=%v", plan, err)
+	}
+	for _, change := range []func(*domain.TaskRun){
+		func(r *domain.TaskRun) { r.RunSpec.Process = &domain.ProcessSpec{Command: []string{"not-executed"}} },
+		func(r *domain.TaskRun) {
+			r.RunSpec.Repository = &domain.RepositoryRef{URL: "https://example.invalid/repo"}
+		},
+		func(r *domain.TaskRun) { r.RunSpec.Artifacts = []domain.ArtifactSpec{{Name: "output", Path: "out"}} },
+		func(r *domain.TaskRun) {
+			r.RunSpec.Inputs = map[string]any{"deployment_id": "dep_compose", "command": "not-executed"}
+		},
+		func(r *domain.TaskRun) { r.RunSpec.Inputs = nil },
+		func(r *domain.TaskRun) { r.RunSpec.HostingMode = "deploy" },
+		func(r *domain.TaskRun) { r.RunSpec.Workflow = &domain.Workflow{} },
+	} {
+		bad := run
+		change(&bad)
+		if _, err := NewRegistry().BuildPlan(bad); err == nil {
+			t.Fatal("generic compose plan accepted")
+		}
+	}
+	nested := domain.TaskRun{ID: "run_nested", RunSpec: domain.RunSpec{Type: "ansible"}, Workflow: domain.Workflow{Steps: []domain.WorkflowStep{{ID: "compose", RunSpec: run.RunSpec}}}}
+	if _, err := NewRegistry().BuildPlan(nested); err == nil {
+		t.Fatal("nested compose plan accepted")
+	}
+}

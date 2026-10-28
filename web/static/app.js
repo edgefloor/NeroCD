@@ -28,48 +28,47 @@ function renderMetrics() {
 }
 
 function renderTemplates() {
+  const header = document.createElement("div");
+  header.className = "row header";
+  for (const title of ["Name", "Kind", "Runner tags", "Approval"]) {
+    header.append(textElement("span", title));
+  }
   const rows = state.templates.map((template) => {
-    const tags = template.runner_tags.map((tag) => `<span class="tag">${tag}</span>`).join("");
-    const approval = template.requires_ack ? "Required" : "Not required";
-    return `
-      <div class="row">
-        <strong>${template.name}</strong>
-        <span class="kind">${template.kind}</span>
-        <span>${tags}</span>
-        <span>${approval}</span>
-      </div>`;
+    const row = document.createElement("div");
+    row.className = "row";
+    const tags = document.createElement("span");
+    tags.append(...template.runner_tags.map((tag) => textElement("span", tag, "tag")));
+    row.append(textElement("strong", template.name), textElement("span", template.kind, "kind"), tags, textElement("span", template.requires_ack ? "Required" : "Not required"));
+    return row;
   });
+  $("#templates").replaceChildren(header, ...rows);
+}
 
-  $("#templates").innerHTML = `
-    <div class="row header">
-      <span>Name</span>
-      <span>Kind</span>
-      <span>Runner tags</span>
-      <span>Approval</span>
-    </div>
-    ${rows.join("")}`;
+function textElement(tag, text, className = "") {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.textContent = text;
+  return element;
 }
 
 function renderRuns() {
-  $("#runs").innerHTML = state.runs.map((run) => `
-    <article class="run">
-      <strong>${run.id}</strong>
-      <span class="status ${run.status}">${run.status}</span>
-      <p>${run.template_id} · ${new Date(run.started_at).toLocaleString()}</p>
-    </article>
-  `).join("");
+  $("#runs").replaceChildren(...state.runs.map((run) => {
+    const row = document.createElement("article");
+    row.className = "run";
+    row.append(textElement("strong", run.id), textElement("span", run.status, `status ${run.status}`), textElement("p", `${run.template_id} · ${new Date(run.started_at).toLocaleString()}`));
+    return row;
+  }));
 }
 
 function renderCapabilities() {
-  $("#capabilities").innerHTML = state.capabilities.map((capability) => `
-    <article class="capability">
-      <div>
-        <strong>${capability.name}</strong>
-        <span class="status ${capability.status}">${capability.status}</span>
-      </div>
-      <p>${capability.description}</p>
-    </article>
-  `).join("");
+  $("#capabilities").replaceChildren(...state.capabilities.map((capability) => {
+    const row = document.createElement("article");
+    row.className = "capability";
+    const title = document.createElement("div");
+    title.append(textElement("strong", capability.name), textElement("span", capability.status, `status ${capability.status}`));
+    row.append(title, textElement("p", capability.description));
+    return row;
+  }));
 }
 
 async function refresh() {

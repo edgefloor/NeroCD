@@ -1,5 +1,3 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { destinationsQuery } from "@/api/destinations";
 import {
   boundedDatabaseRequest,
@@ -8,14 +6,22 @@ import {
   databaseError,
   databaseRecipes,
   databaseRequestID,
+  type DatabaseScope,
   type HostingDatabase,
   type HostingDatabaseCreateInput,
-  type DatabaseScope,
 } from "@/api/hosting-databases";
+import { PageNavigation } from "@/components/common/PageNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PageNavigation } from "@/components/common/PageNavigation";
 import { maximumPageOffset } from "@/router/search";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { DatabaseMetadata, useDatabaseAccess } from "./ResourceDatabase";
 
 export function DatabaseCreateForm({
@@ -30,8 +36,10 @@ export function DatabaseCreateForm({
   accessError?: unknown;
 }) {
   const access = useDatabaseAccess(projectID, environmentID);
-  const currentError = [access.error, accessError].find(databaseDenied)
-    ?? access.error ?? accessError;
+  const currentError =
+    [access.error, accessError].find(databaseDenied) ??
+    access.error ??
+    accessError;
   const [denied, setDenied] = useState<{
     epoch: string;
     identity: string;
@@ -45,7 +53,11 @@ export function DatabaseCreateForm({
       </p>
     );
   if (!access.ready)
-    return <p role={access.error ? "alert" : "status"}>Database creation access is pending or unavailable.</p>;
+    return (
+      <p role={access.error ? "alert" : "status"}>
+        Database creation access is pending or unavailable.
+      </p>
+    );
   if (!access.owner)
     return (
       <p className="text-sm">
@@ -65,7 +77,93 @@ export function DatabaseCreateForm({
     />
   );
 }
-function Create({
+function Create(props: Parameters<typeof useDatabaseCreation>[0]) {
+  const {
+    accessError,
+    attempt,
+    acceptedID,
+    submit,
+    name,
+    refreshing,
+    busy,
+    setName,
+    engine,
+    setEngine,
+    destination,
+    setDestination,
+    selectable,
+    choices,
+    destinations,
+    setOffset,
+    offset,
+    paused,
+    setAttempt,
+    setError,
+    setNotice,
+    error,
+    notice,
+    created,
+  } = useDatabaseCreation(props);
+
+  if (databaseDenied(accessError))
+    return (
+      <p role="alert" className="break-all">
+        Database access is unavailable. Retained request ID:{" "}
+        {(attempt?.request_id ?? acceptedID) || "none"}.{" "}
+        {databaseError(accessError)}
+      </p>
+    );
+  return (
+    <section
+      className="min-w-0 space-y-3 border-t pt-4"
+      aria-label="Database creation"
+    >
+      <DatabaseConfigurationForm
+        submit={submit}
+        name={name}
+        refreshing={refreshing}
+        busy={busy}
+        attempt={attempt}
+        setName={setName}
+        engine={engine}
+        setEngine={setEngine}
+        destination={destination}
+        setDestination={setDestination}
+        selectable={selectable}
+        choices={choices}
+        destinations={destinations}
+        setOffset={setOffset}
+        offset={offset}
+        paused={paused}
+        setAttempt={setAttempt}
+        setError={setError}
+        setNotice={setNotice}
+        error={error}
+      />
+      {acceptedID ? (
+        <p className="break-all text-sm">Saved request ID: {acceptedID}</p>
+      ) : null}
+      {notice ? <p role="status">{notice}</p> : null}
+      {refreshing ? (
+        <p role="status">
+          Refreshing database authority; protected metadata is hidden.
+        </p>
+      ) : null}
+      {refreshing && accessError ? (
+        <p role="alert">
+          Database authority is unavailable. {databaseError(accessError)}
+        </p>
+      ) : null}
+      {created && !refreshing ? (
+        <DatabaseMetadata
+          database={created}
+          label={`Saved database metadata for ${created.resource.name}`}
+        />
+      ) : null}
+    </section>
+  );
+}
+function useDatabaseCreation({
   scope,
   blocked,
   refreshing,
@@ -128,30 +226,39 @@ function Create({
         );
       }, context.signal),
   });
-  const deny = useCallback((cause: unknown, identity = attempt?.request_id ?? acceptedID) => {
-    active.current = false;
-    request.current?.abort();
-    refresh.current?.abort();
-    setAttempt(undefined);
-    setCreated(undefined);
-    client.removeQueries({
-      queryKey: [
-        "hostingDatabase",
-        scope.actor,
-        scope.project,
-        scope.environment,
-      ],
-    });
-    client.removeQueries({
-      queryKey: [
-        "databaseDestinations",
-        scope.actor,
-        scope.project,
-        scope.environment,
-      ],
-    });
-    onDenied(identity, databaseError(cause));
-  }, [client, scope.actor, scope.project, scope.environment, onDenied, attempt?.request_id, acceptedID]);
+  const deny = useCallback(
+    (cause: unknown, identity = attempt?.request_id ?? acceptedID) => {
+      active.current = false;
+      request.current?.abort();
+      refresh.current?.abort();
+      client.removeQueries({
+        queryKey: [
+          "hostingDatabase",
+          scope.actor,
+          scope.project,
+          scope.environment,
+        ],
+      });
+      client.removeQueries({
+        queryKey: [
+          "databaseDestinations",
+          scope.actor,
+          scope.project,
+          scope.environment,
+        ],
+      });
+      onDenied(identity, databaseError(cause));
+    },
+    [
+      client,
+      scope.actor,
+      scope.project,
+      scope.environment,
+      onDenied,
+      attempt?.request_id,
+      acceptedID,
+    ],
+  );
   useEffect(() => {
     if (destinations.isError && databaseDenied(destinations.error))
       deny(destinations.error);
@@ -170,10 +277,13 @@ function Create({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (paused || request.current || !name.trim()) return;
-    const recipe = engine === "postgresql"
-      ? { engine: "postgresql" as const, recipe_version: databaseRecipes.postgresql }
-      : engine === "mysql" ? { engine: "mysql" as const, recipe_version: databaseRecipes.mysql }
-      : { engine: "redis" as const, recipe_version: databaseRecipes.redis };
+    const recipe =
+      engine === "postgresql"
+        ? {
+            engine: "postgresql" as const,
+            recipe_version: databaseRecipes.postgresql,
+          }
+        : engine === "mysql" ? {engine: "mysql" as const, recipe_version: databaseRecipes.mysql} : { engine: "redis" as const, recipe_version: databaseRecipes.redis };
     const body: HostingDatabaseCreateInput = attempt ?? {
       request_id: databaseRequestID(),
       project_id: scope.project,
@@ -229,148 +339,243 @@ function Create({
       else setError(databaseError(cause));
     } finally {
       if (request.current === controller) request.current = null;
-      if (active.current) setBusy(false);
+      setBusy(false);
     }
   }
-  if (databaseDenied(accessError))
-    return <p role="alert" className="break-all">Database access is unavailable. Retained request ID: {(attempt?.request_id ?? acceptedID) || "none"}. {databaseError(accessError)}</p>;
+  return {
+    accessError,
+    attempt,
+    acceptedID,
+    submit,
+    name,
+    refreshing,
+    busy,
+    setName,
+    engine,
+    setEngine,
+    destination,
+    setDestination,
+    selectable,
+    choices,
+    destinations,
+    setOffset,
+    offset,
+    paused,
+    setAttempt,
+    setError,
+    setNotice,
+    error,
+    notice,
+    created,
+  };
+}
+
+function DatabaseConfigurationForm({
+  submit,
+  name,
+  refreshing,
+  busy,
+  attempt,
+  setName,
+  engine,
+  setEngine,
+  destination,
+  setDestination,
+  selectable,
+  choices,
+  destinations,
+  setOffset,
+  offset,
+  paused,
+  setAttempt,
+  setError,
+  setNotice,
+  error,
+}: {
+  submit: (event: React.FormEvent<Element>) => Promise<void>;
+  name: string;
+  refreshing: boolean;
+  busy: boolean;
+  attempt: ReturnType<typeof useDatabaseCreation>["attempt"];
+  setName: React.Dispatch<React.SetStateAction<string>>;
+  engine: "postgresql" | "mysql" | "redis";
+  setEngine: React.Dispatch<React.SetStateAction<"postgresql" | "mysql" | "redis">>;
+  destination: string;
+  setDestination: React.Dispatch<React.SetStateAction<string>>;
+  selectable: boolean;
+  choices: ReturnType<typeof useDatabaseCreation>["choices"];
+  destinations: ReturnType<typeof useDatabaseCreation>["destinations"];
+  setOffset: React.Dispatch<React.SetStateAction<number>>;
+  offset: number;
+  paused: boolean;
+  setAttempt: ReturnType<typeof useDatabaseCreation>["setAttempt"];
+  setError: React.Dispatch<React.SetStateAction<string>>;
+  setNotice: React.Dispatch<React.SetStateAction<string>>;
+  error: string;
+}) {
   return (
-    <section
-      className="min-w-0 space-y-3 border-t pt-4"
-      aria-label="Database creation"
+    <form
+      aria-label="Create database configuration"
+      className="space-y-3"
+      onSubmit={(event) => void submit(event)}
     >
-      <form
-        aria-label="Create database configuration"
-        className="space-y-3"
-        onSubmit={(event) => void submit(event)}
+      <h4 className="font-medium">Add database configuration</h4>
+      <p className="text-sm">
+        Save PostgreSQL or Redis metadata with an owned storage reference and
+        encrypted credential references. Saving does not start an engine.
+      </p>
+      <label className="block space-y-1">
+        Database name
+        <Input
+          required
+          maxLength={255}
+          value={name}
+          disabled={refreshing || busy || Boolean(attempt)}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label className="block space-y-1">
+        Database engine
+        <select
+          className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm"
+          value={engine}
+          disabled={refreshing || busy || Boolean(attempt)}
+          onChange={(event) => {
+            if (Object.hasOwn(databaseRecipes, event.target.value))
+              setEngine(event.target.value as keyof typeof databaseRecipes);
+          }}
+        >
+          <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="redis">Redis</option>
+        </select>
+      </label>
+      {engine === "mysql" ? <p className="text-sm">The destination runner requires hosting_mysql_v1 for deployment and hosting_mysql_backup_v1 for logical backup and restore. The server verifies current placement and capabilities.</p> : null}
+      <p className="break-all text-sm">Recipe: {databaseRecipes[engine]}</p>
+      <DatabaseDestinationChoices
+        destination={destination}
+        refreshing={refreshing}
+        busy={busy}
+        attempt={attempt}
+        setDestination={setDestination}
+        selectable={selectable}
+        choices={choices}
+        destinations={destinations}
+        setOffset={setOffset}
+        offset={offset}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        className="h-auto max-w-full whitespace-normal"
+        disabled={refreshing || busy || destinations.isFetching}
+        onClick={() => void destinations.refetch()}
       >
-        <h4 className="font-medium">Add database configuration</h4>
-        <p className="text-sm">
-          Save PostgreSQL, MySQL, or Redis metadata with an owned storage reference and
-          encrypted credential references. Saving does not start an engine.
-        </p>
-        <label className="block space-y-1">
-          Database name
-          <Input
-            required
-            maxLength={255}
-            value={name}
-            disabled={refreshing || busy || Boolean(attempt)}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label className="block space-y-1">
-          Database engine
-          <select
-            className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm"
-            value={engine}
-            disabled={refreshing || busy || Boolean(attempt)}
-            onChange={(event) => {
-              if (Object.hasOwn(databaseRecipes, event.target.value))
-                setEngine(event.target.value as keyof typeof databaseRecipes);
+        Refresh database destinations
+      </Button>
+      <Button
+        type="submit"
+        className="h-auto max-w-full whitespace-normal"
+        disabled={paused || !name.trim()}
+      >
+        {busy
+          ? "Saving database metadata..."
+          : attempt
+            ? "Retry identical database request"
+            : "Save database configuration"}
+      </Button>
+      {attempt ? (
+        <>
+          <p className="break-all text-sm">
+            Retained request ID: {attempt.request_id}. The submitted body is
+            frozen for an identical retry.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-auto max-w-full whitespace-normal"
+            disabled={refreshing || busy}
+            onClick={() => {
+              setAttempt(undefined);
+              setError("");
+              setNotice(
+                "Retained intent abandoned. The earlier request may already exist. Changing this draft and saving creates a separate request.",
+              );
             }}
           >
-            <option value="postgresql">PostgreSQL</option>
-            <option value="redis">Redis</option>
-            <option value="mysql">MySQL</option>
-          </select>
-        </label>
-        <p className="break-all text-sm">Recipe: {databaseRecipes[engine]}</p>
-        {engine === "mysql" ? <p className="text-sm">The destination runner requires hosting_mysql_v1 for deployment and hosting_mysql_backup_v1 for logical backup and restore. The server verifies current placement and capabilities.</p> : null}
-        <label className="block space-y-1">
-          Database destination
-          <select
-            className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm"
-            value={destination}
-            disabled={refreshing || busy || Boolean(attempt)}
-            onChange={(event) => setDestination(event.target.value)}
-          >
-            <option value="">Select a granted destination</option>
-            {destination && !selectable ? (
-              <option value={destination}>
-                Retained selection: {destination}
-              </option>
-            ) : null}
-            {choices.map((choice) => (
-              <option key={choice.id} value={choice.id}>
-                {choice.name} · {choice.server_id}
-              </option>
-            ))}
-          </select>
-        </label>
-        {destinations.isError ? (
-          <p role="alert">
-            Destinations are unavailable. {databaseError(destinations.error)}
-          </p>
-        ) : null}
-        {!destinations.isPending && !destinations.isError && !choices.length ? (
-          <p>No granted destinations on this page.</p>
-        ) : null}
-        <PageNavigation
-          label="database destinations"
-          page={destinations.data}
-          loading={refreshing || destinations.isFetching || busy || Boolean(attempt)}
-          onFirst={() => setOffset(0)}
-          onPrevious={() => setOffset(Math.max(0, offset - 20))}
-          onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          className="h-auto max-w-full whitespace-normal"
-          disabled={refreshing || busy || destinations.isFetching}
-          onClick={() => void destinations.refetch()}
-        >
-          Refresh database destinations
-        </Button>
-        <Button
-          type="submit"
-          className="h-auto max-w-full whitespace-normal"
-          disabled={paused || !name.trim()}
-        >
-          {busy
-            ? "Saving database metadata..."
-            : attempt
-              ? "Retry identical database request"
-              : "Save database configuration"}
-        </Button>
-        {attempt ? (
-          <>
-            <p className="break-all text-sm">
-              Retained request ID: {attempt.request_id}. The submitted body is
-              frozen for an identical retry.
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-auto max-w-full whitespace-normal"
-              disabled={refreshing || busy}
-              onClick={() => {
-                setAttempt(undefined);
-                setError("");
-                setNotice(
-                  "Retained intent abandoned. The earlier request may already exist. Changing this draft and saving creates a separate request.",
-                );
-              }}
-            >
-              Change draft and abandon retained request
-            </Button>
-          </>
-        ) : null}
-        {error ? <p role="alert">{error}</p> : null}
-      </form>
-      {acceptedID ? (
-        <p className="break-all text-sm">Saved request ID: {acceptedID}</p>
+            Change draft and abandon retained request
+          </Button>
+        </>
       ) : null}
-      {notice ? <p role="status">{notice}</p> : null}
-      {refreshing ? <p role="status">Refreshing database authority; protected metadata is hidden.</p> : null}
-      {refreshing && accessError ? <p role="alert">Database authority is unavailable. {databaseError(accessError)}</p> : null}
-      {created && !refreshing ? (
-        <DatabaseMetadata
-          database={created}
-          label={`Saved database metadata for ${created.resource.name}`}
-        />
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
+  );
+}
+
+function DatabaseDestinationChoices({
+  destination,
+  refreshing,
+  busy,
+  attempt,
+  setDestination,
+  selectable,
+  choices,
+  destinations,
+  setOffset,
+  offset,
+}: {
+  destination: string;
+  refreshing: boolean;
+  busy: boolean;
+  attempt: ReturnType<typeof useDatabaseCreation>["attempt"];
+  setDestination: React.Dispatch<React.SetStateAction<string>>;
+  selectable: boolean;
+  choices: ReturnType<typeof useDatabaseCreation>["choices"];
+  destinations: ReturnType<typeof useDatabaseCreation>["destinations"];
+  setOffset: React.Dispatch<React.SetStateAction<number>>;
+  offset: number;
+}) {
+  return (
+    <>
+      <label className="block space-y-1">
+        Database destination
+        <select
+          className="h-10 w-full min-w-0 rounded-xl border bg-card px-2 text-sm"
+          value={destination}
+          disabled={refreshing || busy || Boolean(attempt)}
+          onChange={(event) => setDestination(event.target.value)}
+        >
+          <option value="">Select a granted destination</option>
+          {destination && !selectable ? (
+            <option value={destination}>
+              Retained selection: {destination}
+            </option>
+          ) : null}
+          {choices.map((choice) => (
+            <option key={choice.id} value={choice.id}>
+              {choice.name} · {choice.server_id}
+            </option>
+          ))}
+        </select>
+      </label>
+      {destinations.isError ? (
+        <p role="alert">
+          Destinations are unavailable. {databaseError(destinations.error)}
+        </p>
       ) : null}
-    </section>
+      {!destinations.isPending && !destinations.isError && !choices.length ? (
+        <p>No granted destinations on this page.</p>
+      ) : null}
+      <PageNavigation
+        label="database destinations"
+        page={destinations.data}
+        loading={
+          refreshing || destinations.isFetching || busy || Boolean(attempt)
+        }
+        onFirst={() => setOffset(0)}
+        onPrevious={() => setOffset(Math.max(0, offset - 20))}
+        onNext={() => setOffset(Math.min(maximumPageOffset, offset + 20))}
+      />
+    </>
   );
 }

@@ -54,6 +54,7 @@ require_safe_cache() {
 }
 require_safe_cache check "$check"
 require_safe_cache release "$release"
+python3 -B "$root/scripts/ci-check.py" --validate-workflow "$root" || fail 'parallel check coverage or aggregation is incomplete'
 
 rg -q "github.repository_owner == 'edgefloor'" "$release" || fail 'release must be owner fenced'
 rg -q '^      name: release$' "$release" || fail 'publish must require the protected release environment'

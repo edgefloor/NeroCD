@@ -84,7 +84,9 @@ local_registry_publish() {
 # created by local_registry_publish. It never searches or prunes by name.
 local_registry_image_state() {
   local image_ref=$1 output
-  if output=$(docker image inspect "$image_ref" 2>&1); then
+  # Handle failure inside the substitution too: Bash 3.2 otherwise runs an
+  # inherited ERR trap for an expected missing image despite the outer if.
+  if output=$(docker image inspect "$image_ref" 2>&1 || exit $?); then
     local_registry_last_query_state=present
     return 0
   fi
@@ -99,7 +101,7 @@ local_registry_image_state() {
 
 local_registry_container_state() {
   local container_id=$1 output
-  if output=$(docker inspect "$container_id" 2>&1); then
+  if output=$(docker inspect "$container_id" 2>&1 || exit $?); then
     local_registry_last_query_state=present
     return 0
   fi

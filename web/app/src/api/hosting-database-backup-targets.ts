@@ -72,9 +72,10 @@ const fail = (): never => {
 function document(raw: unknown, required: string[], optional: string[] = []) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
   const v = raw as Record<string, unknown>;
+  const allowed = new Set([...required, ...optional]);
   if (
     required.some((k) => !Object.hasOwn(v, k)) ||
-    Object.keys(v).some((k) => !required.includes(k) && !optional.includes(k))
+    Object.keys(v).some((k) => !allowed.has(k))
   )
     return fail();
   return v;

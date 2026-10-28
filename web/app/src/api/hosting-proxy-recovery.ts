@@ -17,7 +17,8 @@ const text = (value: unknown, limit = 512): value is string => typeof value === 
 const date = (value: unknown): value is string => typeof value === "string" && value.length <= 64 && Number.isFinite(Date.parse(value));
 function fail(): never { throw new Error("Recovery evidence is malformed or belongs to another scope"); }
 function keys(value: unknown, required: string[], optional: string[] = []): asserts value is Record<string, unknown> {
-  if (!object(value) || required.some(key => !(key in value)) || Object.keys(value).some(key => !required.includes(key) && !optional.includes(key))) fail();
+  const allowed = new Set([...required, ...optional]);
+  if (!object(value) || required.some(key => !(key in value)) || Object.keys(value).some(key => !allowed.has(key))) fail();
 }
 function target(value: unknown): asserts value is Schema<"HostingProxyRouteTarget"> {
   keys(value, ["route_id", "project_id", "resource_id", "binding_id", "release_operation_id", "hostname", "path_prefix", "host_port"]);

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // processGroupAlive ignores zombie-only groups. Containers commonly run under
@@ -35,8 +36,13 @@ func processGroupAlive(pgid int) (bool, error) {
 }
 
 func linuxProcessState(pid int) (state string, pgrp int, exists bool, err error) {
-	contents, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if errors.Is(err, os.ErrNotExist) {
+	return linuxProcessStateWithReader(pid, os.ReadFile)
+}
+
+func linuxProcessStateWithReader(pid int, readFile func(string) ([]byte, error)) (state string, pgrp int, exists bool, err error) {
+	contents, err := readFile(fmt.Sprintf("/proc/%d/stat", pid))
+	// The task can disappear after procfs opens stat but before it reads it.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return "", 0, false, nil
 	}
 	if err != nil {

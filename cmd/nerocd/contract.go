@@ -70,15 +70,15 @@ func validateContract(args []string) error {
 }
 
 type documentedOperation struct {
-	Method            string
-	Path              string
-	OperationID       bool
-	SecurityEmpty     bool
-	SecuritySchemes   map[string]bool
-	RequestBody       bool
-	JSONRequestBody   bool
-	Responses         map[string]bool
-	JSONResponseCodes map[string]bool
+	Method             string
+	Path               string
+	OperationID        bool
+	SecurityEmpty      bool
+	SecuritySchemes    map[string]bool
+	RequestBody        bool
+	RequestMediaTypes  map[string]bool
+	Responses          map[string]bool
+	ResponseMediaTypes map[string]map[string]bool
 }
 
 func loadOpenAPIContract(path string) (*openapi3.T, error) {
@@ -126,12 +126,13 @@ func readOpenAPIOperations(document *openapi3.T, path string) (map[string]docume
 
 func documentedOperationFromOperation(method string, path string, operation *openapi3.Operation) documentedOperation {
 	op := documentedOperation{
-		Method:            method,
-		Path:              path,
-		OperationID:       operation != nil && operation.OperationID != "",
-		Responses:         map[string]bool{},
-		JSONResponseCodes: map[string]bool{},
-		SecuritySchemes:   map[string]bool{},
+		Method:             method,
+		Path:               path,
+		OperationID:        operation != nil && operation.OperationID != "",
+		Responses:          map[string]bool{},
+		RequestMediaTypes:  map[string]bool{},
+		ResponseMediaTypes: map[string]map[string]bool{},
+		SecuritySchemes:    map[string]bool{},
 	}
 	if operation == nil {
 		return op
@@ -149,7 +150,9 @@ func documentedOperationFromOperation(method string, path string, operation *ope
 	if operation.RequestBody != nil {
 		op.RequestBody = true
 		if requestBody := operation.RequestBody.Value; requestBody != nil {
-			_, op.JSONRequestBody = requestBody.Content["application/json"]
+			for mediaType := range requestBody.Content {
+				op.RequestMediaTypes[mediaType] = true
+			}
 		}
 	}
 	if operation.Responses != nil {
@@ -159,8 +162,9 @@ func documentedOperationFromOperation(method string, path string, operation *ope
 			if responseRef == nil || responseRef.Value == nil {
 				continue
 			}
-			if _, ok := responseRef.Value.Content["application/json"]; ok {
-				op.JSONResponseCodes[code] = true
+			op.ResponseMediaTypes[code] = map[string]bool{}
+			for mediaType := range responseRef.Value.Content {
+				op.ResponseMediaTypes[code][mediaType] = true
 			}
 		}
 	}
@@ -185,8 +189,12 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 		if mutates(op.Method, op.Path) && !op.RequestBody {
 			return fmt.Errorf("%s mutates state but is missing requestBody", key)
 		}
-		if op.RequestBody && !op.JSONRequestBody {
-			return fmt.Errorf("%s requestBody does not document application/json", key)
+		requestMediaType := "application/json"
+		if op.Method == http.MethodPost && op.Path == "/api/v1/runners/hosting/storage-backup-download/stream" {
+			requestMediaType = "multipart/form-data"
+		}
+		if op.RequestBody && !op.RequestMediaTypes[requestMediaType] {
+			return fmt.Errorf("%s requestBody does not document %s", key, requestMediaType)
 		}
 		hasSuccess := false
 		for code := range op.Responses {
@@ -195,8 +203,12 @@ func validateOpenAPIOperations(documented map[string]documentedOperation) error 
 				if code == "204" {
 					continue
 				}
-				if !op.JSONResponseCodes[code] {
-					return fmt.Errorf("%s response %s does not document application/json content", key, code)
+				responseMediaType := "application/json"
+				if op.Method == http.MethodGet && op.Path == "/api/v1/storage-backups/{id}/archive" && code == "200" {
+					responseMediaType = "application/x-tar"
+				}
+				if !op.ResponseMediaTypes[code][responseMediaType] {
+					return fmt.Errorf("%s response %s does not document %s content", key, code, responseMediaType)
 				}
 			}
 		}

@@ -11,6 +11,7 @@ import { navigationForView, viewForPath } from "./router/metadata";
 import { retryRemote } from "./api/queries";
 import { PageUnavailable } from "./components/common/PageUnavailable";
 import { PageNotFound } from "./components/common/PageNotFound";
+import { SignOutRecovery } from "./components/common/SignOutRecovery";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: retryRemote }, mutations: { retry: false } } });
 const router = createRouter({ routeTree, defaultPreload: "intent", scrollRestoration: true, defaultErrorComponent: PageUnavailable, defaultNotFoundComponent: PageNotFound, context: { queryClient } });
@@ -24,6 +25,7 @@ function App() {
     return navigationForView(viewForPath(pathname)).label;
   } });
   useEffect(() => { document.title = `${pageTitle} · NeroCD`; }, [pageTitle]);
+  if (auth.signOutState !== "idle") return <SignOutRecovery pending={auth.signOutState === "pending"} onRetry={auth.signOut} />;
   return <AuthContext.Provider value={auth}><RouterProvider router={router} /></AuthContext.Provider>;
 }
 const root = document.querySelector<HTMLDivElement>("#app");

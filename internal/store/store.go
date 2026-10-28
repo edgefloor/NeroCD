@@ -247,6 +247,9 @@ func contains(values []string, needle string) bool {
 }
 
 func primitivePlanForRun(run domain.TaskRun) domain.RunnerPrimitivePlan {
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		return domain.RunnerPrimitivePlan{RunID: run.ID}
+	}
 	plan := domain.RunnerPrimitivePlan{RunID: run.ID, Process: run.RunSpec.Process, Artifacts: run.RunSpec.Artifacts, Secrets: run.RunSpec.Secrets}
 	if run.RunSpec.Repository != nil {
 		dest := run.RunSpec.Repository.Path

@@ -299,6 +299,9 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	if err != nil {
 		return err
 	}
+	if plan.DeploymentID != deploymentID || plan.RunID != claim.Run.ID || plan.LeaseID != claim.Lease.ID || plan.Attempt != claim.Lease.Attempt || plan.Fence != claim.Lease.Fence {
+		return errors.New("compose deployment plan authority does not match claim")
+	}
 	// A fixed, server-owned stage marker gives operators a minimal durable
 	// indication that a first fenced Compose owner started resolution.  It has
 	// no user-controlled identifiers, paths, URLs, or provenance values.  A
@@ -667,10 +670,11 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	// part in provenance resolution. This also lets a service expose the exact
 	// resolved immutable revision from a health endpoint without trusting a
 	// checkout-selected value.
-	emptyEnv := filepath.Join(workspace, ".nerocd-provenance.env")
-	if err := os.WriteFile(emptyEnv, []byte(deploymentRevisionEnv+"="+commit+"\n"), 0600); err != nil {
+	emptyEnv, cleanupEnv, err := writeComposeRevisionEnv(workspace, commit)
+	if err != nil {
 		return resolvedProvenance{}, err
 	}
+	defer cleanupEnv()
 	composeArgs := []string{"compose", "--project-name", plan.ComposeProject, "--env-file", emptyEnv, "--file", composePath}
 	if secretOverride != "" {
 		composeArgs = append(composeArgs, "--file", secretOverride)
@@ -707,46 +711,20 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	return resolved, nil
 }
 
-// controlledGitCheckout is the single Git acquisition path for Compose and hosting.
-// Transport credentials and policy-approved DNS pins are prepared by the caller.
+// controlledGitCheckout applies the shared transport used by every runner checkout.
 func controlledGitCheckout(ctx context.Context, command provenanceCommand, workspace string, repositoryURL *url.URL, pinnedIP netip.Addr, requestedRef string, gitEnvironment []string) (string, error) {
-	// Detached init/fetch avoids remote tracking refs and leaves no branch name
-	// that could move after the policy-checked fetch.
-	gitBase := []string{"-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "http.followRedirects=false"}
-	provenanceDiagnostic("git_init", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "init", "--quiet", workspace), "", gitEnvironment); err != nil {
-		return "", commandFailure("git init", err)
-	}
-	provenanceDiagnostic("git_remote", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "remote", "add", "origin", source.TransportURL(repositoryURL)), workspace, gitEnvironment); err != nil {
-		return "", commandFailure("git remote add", err)
-	}
-	fetchArgs := append(append([]string{}, gitBase...), "fetch", "--no-tags", "--depth=1", "origin", requestedRef)
-	if repositoryURL.Scheme != "ssh" {
-		resolveOption, err := gitCurlResolveOption(repositoryURL, pinnedIP)
-		if err != nil {
-			return "", err
+	return source.ControlledGitCheckout(ctx, workspace, repositoryURL, pinnedIP, requestedRef, func(ctx context.Context, stage string, args []string, dir string) ([]byte, error) {
+		marker := strings.NewReplacer(" ", "_", "-", "_").Replace(stage)
+		if stage == "git remote add" {
+			marker = "git_remote"
 		}
-		fetchArgs = append(append([]string{}, gitBase...), "-c", "http.curloptResolve="+resolveOption, "fetch", "--no-tags", "--depth=1", "origin", requestedRef)
-	}
-	provenanceDiagnostic("git_fetch", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", fetchArgs, workspace, gitEnvironment); err != nil {
-		return "", commandFailure("git fetch", err)
-	}
-	provenanceDiagnostic("git_checkout", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "checkout", "--detach", "--quiet", "FETCH_HEAD"), workspace, gitEnvironment); err != nil {
-		return "", commandFailure("git checkout", err)
-	}
-	provenanceDiagnostic("git_rev_parse", "start")
-	head, err := runProvenanceCommand(command, ctx, "git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, workspace, gitEnvironment)
-	if err != nil {
-		return "", commandFailure("git rev-parse", err)
-	}
-	commit := strings.TrimSpace(string(head))
-	if !isHexCommit(commit) {
-		return "", errors.New("checkout did not produce a full immutable commit")
-	}
-	return commit, nil
+		provenanceDiagnostic(marker, "start")
+		output, err := runProvenanceCommand(command, ctx, "git", args, dir, gitEnvironment)
+		if err != nil {
+			return nil, commandFailure(stage, err)
+		}
+		return output, nil
+	})
 }
 
 func netIPAddrs(values []netip.Addr) []net.IPAddr {
@@ -766,46 +744,12 @@ func selectPinnedAddress(policy source.RepositoryPolicy, values []netip.Addr) (n
 	return netip.Addr{}, errors.New("repository DNS policy rejected source")
 }
 
-// Git intentionally permits arbitrary config keys, so `git config --get` is
-// not a feature probe. `git help --config` is generated from this installed
-// Git's supported-variable table and lets us fail closed before any network
-// traffic on releases without the libcurl resolve bridge.
 func nativeGitCurlResolveAvailable(ctx context.Context) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	command := exec.CommandContext(probeCtx, "git", "help", "--config")
-	command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0")
-	output, err := command.Output()
-	return err == nil && bytes.Contains(output, []byte("http.curloptResolve\n"))
+	return source.GitCurlResolveAvailable(ctx)
 }
 
-// gitCurlResolveOption produces the libcurl CURLOPT_RESOLVE syntax accepted by
-// modern Git.  It connects to this literal IP while retaining the URL hostname
-// for TLS verification/SNI and HTTP Host.  The option is deliberately passed
-// only to fetch; no global config is mutated.
 func gitCurlResolveOption(repositoryURL *url.URL, address netip.Addr) (string, error) {
-	if repositoryURL == nil || repositoryURL.Hostname() == "" || !address.IsValid() {
-		return "", errors.New("controlled Git transport is unavailable")
-	}
-	port := 443
-	if repositoryURL.Scheme == "http" {
-		port = 80
-	}
-	if raw := repositoryURL.Port(); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 65535 {
-			return "", errors.New("repository port is invalid")
-		}
-		port = parsed
-	}
-	ip := address.String()
-	if address.Is6() {
-		ip = "[" + ip + "]"
-	}
-	// CURLOPT_RESOLVE must match the hostname spelling used by the fetch URL.
-	// A terminal DNS dot is significant to curl's lookup key even though policy
-	// host matching treats it as equivalent. Removing it bypasses this pin.
-	return repositoryURL.Hostname() + ":" + strconv.Itoa(port) + ":" + ip, nil
+	return source.GitCurlResolveOption(repositoryURL, address)
 }
 
 func prepareSSHTransport(ctx context.Context, command provenanceCommand, workspace, secretRoot string, plan domain.DeploymentPlan, policy source.RepositoryPolicy, repositoryURL *url.URL, pinnedIP netip.Addr, authorize runner.SecretAuthorizer) ([]string, func() error, error) {
@@ -1073,6 +1017,9 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 		}
 		delete(doc, "name")
 	}
+	if _, exists := doc["configs"]; exists {
+		return nil, nil, errors.New("compose uses forbidden configs")
+	}
 	if err := normalizeComposeSecretDescriptors(doc, serverProject, bindings, sources); err != nil {
 		return nil, nil, err
 	}
@@ -1089,7 +1036,7 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 		if !ok {
 			return nil, nil, errors.New("invalid compose service")
 		}
-		for _, forbidden := range []string{"build", "privileged", "devices", "cap_add", "network_mode", "pid", "ipc", "volumes", "volumes_from", "security_opt", "userns_mode", "extra_hosts", "links", "container_name"} {
+		for _, forbidden := range []string{"build", "privileged", "devices", "cap_add", "network_mode", "pid", "ipc", "volumes", "volumes_from", "security_opt", "userns_mode", "extra_hosts", "links", "container_name", "configs"} {
 			if _, exists := svc[forbidden]; exists {
 				return nil, nil, fmt.Errorf("compose uses forbidden %s", forbidden)
 			}

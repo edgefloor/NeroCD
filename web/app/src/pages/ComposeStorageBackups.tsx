@@ -1,28 +1,11 @@
-import { StorageArchiveDownload } from "@/components/hosting/StorageArchiveDownload";
-import {
-  BackupDestinationSelect,
-  useDatabaseBackupDestinations,
-  validSelectedBackupDestination,
-} from "./DatabaseBackupDestinations";
-import type { RemoteBackupTarget } from "@/api/hosting-database-backup-targets";
-import {
-  listStorageTransfers,
-  retryStorageTransfer,
-  type StorageBackupTransfer,
-} from "@/api/hosting-storage-backup-remote";
-import {
-  StorageArchiveTransfers,
-  type StorageTransferRetry,
-} from "@/components/hosting/StorageArchiveTransfers";
-import { useEffect, useId, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@/api/errors";
-import { storageRequestID } from "@/api/hosting-storage";
 import {
   getComposeBackupVolumes,
   requestComposeBackup,
   type ComposeBackupInput,
 } from "@/api/hosting-compose-storage-backups";
+import type { RemoteBackupTarget } from "@/api/hosting-database-backup-targets";
+import { storageRequestID } from "@/api/hosting-storage";
 import {
   getArchiveBackup,
   getArchiveOperation,
@@ -31,34 +14,261 @@ import {
   type ArchiveScope,
   type RecoveryInput,
 } from "@/api/hosting-storage-archives";
-import { StorageBackupSchedules } from "@/components/hosting/StorageBackupSchedules";
+import {
+  listStorageTransfers,
+  retryStorageTransfer,
+  type StorageBackupTransfer,
+} from "@/api/hosting-storage-backup-remote";
+import { readBackupMetadata } from "@/components/hosting/backup-access";
+import { BackupAccessBoundary } from "@/components/hosting/BackupAccessBoundary";
+import { StorageArchiveDownload } from "@/components/hosting/StorageArchiveDownload";
 import { OperationDetails } from "@/components/hosting/StorageArchives";
+import {
+  StorageArchiveTransfers,
+  type StorageTransferRetry,
+} from "@/components/hosting/StorageArchiveTransfers";
+import { StorageBackupSchedules } from "@/components/hosting/StorageBackupSchedules";
 import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useId, useRef, useState } from "react";
+import {
+  useDatabaseBackupDestinations,
+  validSelectedBackupDestination,
+} from "./database-backup-destinations";
+import { BackupDestinationSelect } from "./DatabaseBackupDestinations";
 
 const button = "h-auto max-w-full whitespace-normal break-all";
 const terminal = (state?: string) =>
   ["succeeded", "failed", "canceled"].includes(state ?? "");
 const denied = (e: unknown) =>
   e instanceof ApiError && [401, 403, 404].includes(e.status);
-export function ComposeStorageBackups({
-  scope,
-  generation,
-  owner,
-  blocked,
-  onDenied,
-}: {
+type ComposeStorageBackupsProps = {
   scope: ArchiveScope;
   generation: number;
   owner: boolean;
   blocked: boolean;
   onDenied: () => void;
-}) {
+};
+export function ComposeStorageBackups(props: ComposeStorageBackupsProps) {
+  return (
+    <BackupAccessBoundary
+      key={JSON.stringify([props.scope])}
+      onDenied={props.onDenied}
+      message="Compose backup access is unavailable. Refresh access before continuing."
+    >
+      {(onDenied) => (
+        <ComposeStorageBackupsSession {...props} onDenied={onDenied} />
+      )}
+    </BackupAccessBoundary>
+  );
+}
+function ComposeStorageBackupsSession(
+  props: Parameters<typeof useComposeArchive>[0],
+) {
+  const {
+    busy,
+    sent,
+    setReview,
+    setConflict,
+    choices,
+    history,
+    selected,
+    transfers,
+    id,
+    disabled,
+    review,
+    remoteRetry,
+    volume,
+    setVolume,
+    owner,
+    prepare,
+    remoteTarget,
+    setRemoteTarget,
+    destinations,
+    scope,
+    generation,
+    blocked,
+    scheduleRemoteTarget,
+    setScheduleRemoteTarget,
+    setSelected,
+    setRecovered,
+    lose,
+    ack,
+    setAck,
+    conflict,
+    submit,
+    setSent,
+    error,
+    recovery,
+    setRecovery,
+    setResumeAck,
+    offset,
+    setOffset,
+    backup,
+    detail,
+    retryRemote,
+    resumeAck,
+    resume,
+  } = useComposeArchive(props);
+
+  return (
+    <section
+      aria-label="Compose volume backups"
+      className="min-w-0 space-y-3 rounded-lg border p-3"
+    >
+      <h6 className="font-medium">Compose volume backups</h6>
+      <p>
+        Back up one local named volume. Its running writers stop while the
+        archive is created, then resume. This interrupts service. Other volumes
+        are excluded; this is not a coordinated database and uploads snapshot.
+        No automatic rollback runs.
+      </p>
+      <Button
+        className={button}
+        variant="outline"
+        disabled={busy}
+        onClick={() => {
+          if (!sent) {
+            setReview(undefined);
+            setConflict(false);
+          }
+          void choices.refetch();
+          void history.refetch();
+          if (selected) void transfers.refetch();
+        }}
+      >
+        Refresh Compose backup evidence and history
+      </Button>
+      {choices.isError ? (
+        <p role="alert">
+          Current volume evidence is unavailable. Backup history remains
+          accessible.
+        </p>
+      ) : null}
+      <ComposeVolumeSelection
+        choices={choices}
+        id={id}
+        disabled={disabled}
+        review={review}
+        remoteRetry={remoteRetry}
+        volume={volume}
+        setVolume={setVolume}
+        owner={owner}
+        sent={sent}
+        prepare={prepare}
+      />
+      {owner ? (
+        <>
+          <BackupDestinationSelect
+            label="Remote Compose backup target"
+            value={remoteTarget}
+            onChange={setRemoteTarget}
+            destinations={destinations}
+            disabled={disabled || !!review}
+          />
+          <Button
+            className={button}
+            type="button"
+            variant="outline"
+            disabled={busy || !!review}
+            onClick={() => void destinations.refresh()}
+          >
+            Refresh remote Compose backup targets
+          </Button>
+        </>
+      ) : null}
+      <StorageBackupSchedules
+        key={JSON.stringify([scope, generation, owner])}
+        scope={scope}
+        resource={{ id: scope.resource, generation }}
+        owner={owner}
+        blocked={blocked}
+        composeVolume={volume}
+        remoteTarget={scheduleRemoteTarget}
+        onRemoteTarget={setScheduleRemoteTarget}
+        remoteDestinations={destinations}
+        onSelectBackup={(value) => {
+          if (!remoteRetry) {
+            setSelected(value);
+            setRecovered("");
+          }
+        }}
+        onDenied={lose}
+      />
+      {review ? (
+        <ComposeArchiveReview
+          review={review}
+          ack={ack}
+          disabled={disabled}
+          sent={sent}
+          setAck={setAck}
+          owner={owner}
+          conflict={conflict}
+          submit={submit}
+          busy={busy}
+          setReview={setReview}
+          setSent={setSent}
+          setConflict={setConflict}
+        />
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+      {history.isError ? (
+        <p role="alert">Backup history is unavailable.</p>
+      ) : null}
+      <ComposeArchiveHistory
+        history={history}
+        busy={busy}
+        recovery={recovery}
+        remoteRetry={remoteRetry}
+        setSelected={setSelected}
+        setRecovered={setRecovered}
+        setRecovery={setRecovery}
+        setResumeAck={setResumeAck}
+      />
+      <ComposeArchivePagination
+        offset={offset}
+        history={history}
+        setOffset={setOffset}
+      />
+      <ComposeArchiveEvidence
+        selected={selected}
+        backup={backup}
+        detail={detail}
+        scope={scope}
+        owner={owner}
+        blocked={blocked}
+        lose={lose}
+        transfers={transfers}
+        remoteRetry={remoteRetry}
+        busy={busy}
+        retryRemote={retryRemote}
+      />
+      <ComposeArchiveRecoveryReview
+        owner={owner}
+        detail={detail}
+        resumeAck={resumeAck}
+        disabled={disabled}
+        recovery={recovery}
+        setResumeAck={setResumeAck}
+        resume={resume}
+      />
+    </section>
+  );
+}
+function useComposeArchive({
+  scope,
+  generation,
+  owner,
+  blocked,
+  onDenied,
+}: ComposeStorageBackupsProps) {
   const id = useId();
   const [offset, setOffset] = useState(0),
     [selected, setSelected] = useState(""),
     [volume, setVolume] = useState("");
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
-  const [scheduleRemoteTarget, setScheduleRemoteTarget] = useState<RemoteBackupTarget>();
+  const [scheduleRemoteTarget, setScheduleRemoteTarget] =
+    useState<RemoteBackupTarget>();
   const [remoteRetry, setRemoteRetry] = useState<StorageTransferRetry>();
   const [review, setReview] = useState<ComposeBackupInput>(),
     [sent, setSent] = useState(false),
@@ -72,7 +282,6 @@ export function ComposeStorageBackups({
     [recovered, setRecovered] = useState(""),
     [resumeAck, setResumeAck] = useState(false);
   const [busy, setBusy] = useState(false),
-    [lost, setLost] = useState(false),
     [error, setError] = useState("");
   const active = useRef(true),
     controller = useRef<AbortController | null>(null);
@@ -103,20 +312,38 @@ export function ComposeStorageBackups({
   const choices = useQuery({
     ...base,
     queryKey: [...key, "volumes"],
-    enabled: !lost,
-    queryFn: ({ signal }) => getComposeBackupVolumes(scope, signal),
+    enabled: true,
+    queryFn: ({ signal }) =>
+      readBackupMetadata(
+        signal,
+        () => getComposeBackupVolumes(scope, signal),
+        retireComposeAccess,
+        [401, 403, 404],
+      ),
   });
   const history = useQuery({
     ...base,
     queryKey: [...key, "history", offset],
-    enabled: !lost,
-    queryFn: ({ signal }) => listArchiveBackups(scope, offset, signal),
+    enabled: true,
+    queryFn: ({ signal }) =>
+      readBackupMetadata(
+        signal,
+        () => listArchiveBackups(scope, offset, signal),
+        retireComposeAccess,
+        [401, 403, 404],
+      ),
   });
   const backup = useQuery({
     ...base,
     queryKey: [...key, "backup", selected],
-    enabled: !!selected && !lost,
-    queryFn: ({ signal }) => getArchiveBackup(scope, selected, signal),
+    enabled: !!selected,
+    queryFn: ({ signal }) =>
+      readBackupMetadata(
+        signal,
+        () => getArchiveBackup(scope, selected, signal),
+        retireComposeAccess,
+        [401, 403, 404],
+      ),
     refetchInterval: (q) =>
       !q.state.error && !terminal(q.state.data?.state) ? 2000 : false,
   });
@@ -124,9 +351,14 @@ export function ComposeStorageBackups({
   const detail = useQuery({
     ...base,
     queryKey: [...key, "operation", operationID],
-    enabled: !!operationID && !lost,
+    enabled: !!operationID,
     queryFn: ({ signal }) =>
-      getArchiveOperation(scope, operationID!, selected, signal),
+      readBackupMetadata(
+        signal,
+        () => getArchiveOperation(scope, operationID!, selected, signal),
+        retireComposeAccess,
+        [401, 403, 404],
+      ),
     refetchInterval: (q) =>
       !q.state.error && !terminal(q.state.data?.state) ? 2000 : false,
   });
@@ -142,15 +374,20 @@ export function ComposeStorageBackups({
     },
     scope: targetScope,
     owner,
-    blocked: blocked || lost || !owner,
+    blocked: blocked || !owner,
     onDenied: lose,
   });
   const transfers = useQuery({
     ...base,
     queryKey: [...key, "transfers", selected],
-    enabled: !!selected && !lost,
+    enabled: !!selected,
     queryFn: ({ signal }) =>
-      listStorageTransfers(targetScope, selected, signal),
+      readBackupMetadata(
+        signal,
+        () => listStorageTransfers(targetScope, selected, signal),
+        retireComposeAccess,
+        [401, 403, 404],
+      ),
     refetchInterval: (q) =>
       !q.state.error &&
       (!terminal(backup.data?.state) ||
@@ -166,29 +403,14 @@ export function ComposeStorageBackups({
   });
   function lose() {
     controller.current?.abort();
-    setLost(true);
     onDenied();
   }
-  useEffect(() => {
-    if (
-      [
-        choices.error,
-        history.error,
-        backup.error,
-        detail.error,
-        transfers.error,
-      ].some(denied)
-    )
-      lose();
-  }, [
-    choices.error,
-    history.error,
-    backup.error,
-    detail.error,
-    transfers.error,
-  ]);
+  function retireComposeAccess() {
+    lose();
+  }
+
   async function run(work: (signal: AbortSignal) => Promise<void>) {
-    if (controller.current || lost || blocked) return;
+    if (controller.current || blocked) return;
     const c = new AbortController();
     controller.current = c;
     setBusy(true);
@@ -294,7 +516,6 @@ export function ComposeStorageBackups({
     if (
       !owner ||
       blocked ||
-      lost ||
       (!remoteRetry && !transfer) ||
       (remoteRetry &&
         (remoteRetry.backup !== selected ||
@@ -321,47 +542,213 @@ export function ComposeStorageBackups({
       await transfers.refetch();
     });
   }
-  const disabled = busy || blocked || lost;
-  if (lost)
-    return (
-      <p role="alert">
-        Compose backup access is unavailable. Reload to verify access.
-      </p>
-    );
+  const disabled = busy || blocked;
+  return {
+    busy,
+    sent,
+    setReview,
+    setConflict,
+    choices,
+    history,
+    selected,
+    transfers,
+    id,
+    disabled,
+    review,
+    remoteRetry,
+    volume,
+    setVolume,
+    owner,
+    prepare,
+    remoteTarget,
+    setRemoteTarget,
+    destinations,
+    scope,
+    generation,
+    blocked,
+    scheduleRemoteTarget,
+    setScheduleRemoteTarget,
+    setSelected,
+    setRecovered,
+    lose,
+    ack,
+    setAck,
+    conflict,
+    submit,
+    setSent,
+    error,
+    recovery,
+    setRecovery,
+    setResumeAck,
+    offset,
+    setOffset,
+    backup,
+    detail,
+    retryRemote,
+    resumeAck,
+    resume,
+  };
+}
+
+function ComposeArchiveReview({
+  review,
+  ack,
+  disabled,
+  sent,
+  setAck,
+  owner,
+  conflict,
+  submit,
+  busy,
+  setReview,
+  setSent,
+  setConflict,
+}: {
+  review: ComposeBackupInput;
+  ack: boolean;
+  disabled: boolean;
+  sent: boolean;
+  setAck: React.Dispatch<React.SetStateAction<boolean>>;
+  owner: boolean;
+  conflict: boolean;
+  submit: () => Promise<void>;
+  busy: boolean;
+  setReview: ReturnType<typeof useComposeArchive>["setReview"];
+  setSent: React.Dispatch<React.SetStateAction<boolean>>;
+  setConflict: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
   return (
     <section
-      aria-label="Compose volume backups"
-      className="min-w-0 space-y-3 rounded-lg border p-3"
+      aria-label="Reviewed Compose volume backup"
+      className="min-w-0 space-y-2 break-all"
     >
-      <h6 className="font-medium">Compose volume backups</h6>
       <p>
-        Back up one local named volume. Its running writers stop while the
-        archive is created, then resume. This interrupts service. Other volumes
-        are excluded; this is not a coordinated database and uploads snapshot.
-        No automatic rollback runs.
+        Volume {review.volume} · generation{" "}
+        {review.expected_resource_generation} · deployed operation{" "}
+        {review.expected_deployed_operation_id}
       </p>
+      <p>
+        Remote target for this immediate backup:{" "}
+        {review.remote_target
+          ? `${review.remote_target.target_id} revision ${review.remote_target.revision}`
+          : "local only"}
+        . Remote upload begins after the local archive completes and writers
+        resume. Local and remote outcomes are separate.
+      </p>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={ack}
+          disabled={disabled || sent}
+          onChange={(e) => setAck(e.target.checked)}
+        />
+        <span>
+          I acknowledge interruption of this volume's writers while the local
+          archive is created.
+        </span>
+      </label>
       <Button
         className={button}
-        variant="outline"
-        disabled={busy}
-        onClick={() => {
-          if (!sent) {
-            setReview(undefined);
-            setConflict(false);
-          }
-          void choices.refetch();
-          void history.refetch();
-          if (selected) void transfers.refetch();
-        }}
+        disabled={disabled || !owner || !ack || conflict}
+        onClick={() => void submit()}
       >
-        Refresh Compose backup evidence and history
+        {sent
+          ? "Retry identical Compose backup request"
+          : "Confirm Compose volume backup"}
       </Button>
-      {choices.isError ? (
-        <p role="alert">
-          Current volume evidence is unavailable. Backup history remains
-          accessible.
-        </p>
+      <p className="text-xs">Saved request {review.request_id}</p>
+      {!sent || conflict ? (
+        <Button
+          className={button}
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            setReview(undefined);
+            setSent(false);
+            setConflict(false);
+            setAck(false);
+          }}
+        >
+          Discard review for a separate request
+        </Button>
       ) : null}
+    </section>
+  );
+}
+
+function ComposeArchiveHistory({
+  history,
+  busy,
+  recovery,
+  remoteRetry,
+  setSelected,
+  setRecovered,
+  setRecovery,
+  setResumeAck,
+}: {
+  history: ReturnType<typeof useComposeArchive>["history"];
+  busy: boolean;
+  recovery: ReturnType<typeof useComposeArchive>["recovery"];
+  remoteRetry: ReturnType<typeof useComposeArchive>["remoteRetry"];
+  setSelected: React.Dispatch<React.SetStateAction<string>>;
+  setRecovered: React.Dispatch<React.SetStateAction<string>>;
+  setRecovery: ReturnType<typeof useComposeArchive>["setRecovery"];
+  setResumeAck: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  return (
+    <ol
+      aria-label="Compose volume backup history"
+      className="min-w-0 space-y-2 break-all"
+    >
+      {history.data?.items.map((b) => (
+        <li key={b.id}>
+          <p>
+            {b.volume || "Volume unavailable"} · {b.state} · {b.created_at}
+          </p>
+          <Button
+            className={button}
+            variant="outline"
+            disabled={busy || !!recovery || !!remoteRetry}
+            onClick={() => {
+              setSelected(b.id);
+              setRecovered("");
+              setRecovery(undefined);
+              setResumeAck(false);
+            }}
+          >
+            View volume backup {b.id}
+          </Button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ComposeVolumeSelection({
+  choices,
+  id,
+  disabled,
+  review,
+  remoteRetry,
+  volume,
+  setVolume,
+  owner,
+  sent,
+  prepare,
+}: {
+  choices: ReturnType<typeof useComposeArchive>["choices"];
+  id: string;
+  disabled: boolean;
+  review: ComposeBackupInput | undefined;
+  remoteRetry: ReturnType<typeof useComposeArchive>["remoteRetry"];
+  volume: string;
+  setVolume: React.Dispatch<React.SetStateAction<string>>;
+  owner: boolean;
+  sent: boolean;
+  prepare: () => Promise<void>;
+}) {
+  return (
+    <>
       {choices.data && !choices.isError ? (
         <>
           <p>
@@ -390,8 +777,10 @@ export function ComposeStorageBackups({
             {choices.data.volumes
               .filter((v) => v.volume === volume)
               .flatMap((v) =>
-                v.mounts.map((m, i) => (
-                  <li key={i}>
+                v.mounts.map((m) => (
+                  <li
+                    key={JSON.stringify([v.volume, m.component, m.mount_path])}
+                  >
                     {m.component} · {m.mount_path} ·{" "}
                     {m.read_only ? "read only" : "writer"}
                   </li>
@@ -422,152 +811,37 @@ export function ComposeStorageBackups({
           )}
         </>
       ) : null}
-      {owner ? (
-        <>
-          <BackupDestinationSelect
-            label="Remote Compose backup target"
-            value={remoteTarget}
-            onChange={setRemoteTarget}
-            destinations={destinations}
-            disabled={disabled || !!review}
-          />
-          <Button
-            className={button}
-            type="button"
-            variant="outline"
-            disabled={busy || !!review}
-            onClick={() => void destinations.refresh()}
-          >
-            Refresh remote Compose backup targets
-          </Button>
-        </>
-      ) : null}
-      <StorageBackupSchedules
-        key={JSON.stringify([scope, generation, owner])}
-        scope={scope}
-        resource={{ id: scope.resource, generation }}
-        owner={owner}
-        blocked={blocked}
-        composeVolume={volume}
-        remoteTarget={scheduleRemoteTarget}
-        onRemoteTarget={setScheduleRemoteTarget}
-        remoteDestinations={destinations}
-        onSelectBackup={(value) => {
-          if (!remoteRetry) {
-            setSelected(value);
-            setRecovered("");
-          }
-        }}
-        onDenied={lose}
-      />
-      {review ? (
-        <section
-          aria-label="Reviewed Compose volume backup"
-          className="min-w-0 space-y-2 break-all"
-        >
-          <p>
-            Volume {review.volume} · generation{" "}
-            {review.expected_resource_generation} · deployed operation{" "}
-            {review.expected_deployed_operation_id}
-          </p>
-          <p>
-            Remote target for this immediate backup:{" "}
-            {review.remote_target
-              ? `${review.remote_target.target_id} revision ${review.remote_target.revision}`
-              : "local only"}
-            . Remote upload begins after the local archive completes and writers
-            resume. Local and remote outcomes are separate.
-          </p>
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              checked={ack}
-              disabled={disabled || sent}
-              onChange={(e) => setAck(e.target.checked)}
-            />
-            <span>
-              I acknowledge interruption of this volume's writers while the
-              local archive is created.
-            </span>
-          </label>
-          <Button
-            className={button}
-            disabled={disabled || !owner || !ack || conflict}
-            onClick={() => void submit()}
-          >
-            {sent
-              ? "Retry identical Compose backup request"
-              : "Confirm Compose volume backup"}
-          </Button>
-          <p className="text-xs">Saved request {review.request_id}</p>
-          {!sent || conflict ? (
-            <Button
-              className={button}
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                setReview(undefined);
-                setSent(false);
-                setConflict(false);
-                setAck(false);
-              }}
-            >
-              Discard review for a separate request
-            </Button>
-          ) : null}
-        </section>
-      ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-      {history.isError ? (
-        <p role="alert">Backup history is unavailable.</p>
-      ) : null}
-      <ol
-        aria-label="Compose volume backup history"
-        className="min-w-0 space-y-2 break-all"
-      >
-        {history.data?.items.map((b) => (
-          <li key={b.id}>
-            <p>
-              {b.volume || "Volume unavailable"} · {b.state} · {b.created_at}
-            </p>
-            <Button
-              className={button}
-              variant="outline"
-              disabled={busy || !!recovery || !!remoteRetry}
-              onClick={() => {
-                setSelected(b.id);
-                setRecovered("");
-                setRecovery(undefined);
-                setResumeAck(false);
-              }}
-            >
-              View volume backup {b.id}
-            </Button>
-          </li>
-        ))}
-      </ol>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          className={button}
-          variant="outline"
-          disabled={!offset || history.isFetching}
-          onClick={() => setOffset(Math.max(0, offset - 20))}
-        >
-          Previous volume backups
-        </Button>
-        <Button
-          className={button}
-          variant="outline"
-          disabled={
-            !history.data ||
-            offset + history.data.count >= history.data.total ||
-            history.isFetching
-          }
-          onClick={() => setOffset(offset + 20)}
-        >
-          Next volume backups
-        </Button>
-      </div>
+    </>
+  );
+}
+
+function ComposeArchiveEvidence({
+  selected,
+  backup,
+  detail,
+  scope,
+  owner,
+  blocked,
+  lose,
+  transfers,
+  remoteRetry,
+  busy,
+  retryRemote,
+}: {
+  selected: string;
+  backup: ReturnType<typeof useComposeArchive>["backup"];
+  detail: ReturnType<typeof useComposeArchive>["detail"];
+  scope: ArchiveScope;
+  owner: boolean;
+  blocked: boolean;
+  lose: () => void;
+  transfers: ReturnType<typeof useComposeArchive>["transfers"];
+  remoteRetry: ReturnType<typeof useComposeArchive>["remoteRetry"];
+  busy: boolean;
+  retryRemote: ReturnType<typeof useComposeArchive>["retryRemote"];
+}) {
+  return (
+    <>
       {selected ? (
         <p role="status" className="break-all">
           Volume backup {selected}. Acceptance alone does not prove an archive
@@ -584,7 +858,7 @@ export function ComposeStorageBackups({
           scope={scope}
           backup={backup.data}
           owner={owner}
-          blocked={blocked || lost}
+          blocked={blocked}
           onDenied={lose}
         />
       ) : null}
@@ -615,7 +889,7 @@ export function ComposeStorageBackups({
           transfers={transfers.data}
           selected={selected}
           owner={owner}
-          blocked={blocked || lost}
+          blocked={blocked}
           remoteBusy={busy}
           remoteRetry={remoteRetry}
           onRetry={(v) => void retryRemote(v)}
@@ -625,6 +899,64 @@ export function ComposeStorageBackups({
       {detail.data && !detail.isError ? (
         <OperationDetails operation={detail.data} />
       ) : null}
+    </>
+  );
+}
+
+function ComposeArchivePagination({
+  offset,
+  history,
+  setOffset,
+}: {
+  offset: number;
+  history: ReturnType<typeof useComposeArchive>["history"];
+  setOffset: React.Dispatch<React.SetStateAction<number>>;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        className={button}
+        variant="outline"
+        disabled={!offset || history.isFetching}
+        onClick={() => setOffset(Math.max(0, offset - 20))}
+      >
+        Previous volume backups
+      </Button>
+      <Button
+        className={button}
+        variant="outline"
+        disabled={
+          !history.data ||
+          offset + history.data.count >= history.data.total ||
+          history.isFetching
+        }
+        onClick={() => setOffset(offset + 20)}
+      >
+        Next volume backups
+      </Button>
+    </div>
+  );
+}
+
+function ComposeArchiveRecoveryReview({
+  owner,
+  detail,
+  resumeAck,
+  disabled,
+  recovery,
+  setResumeAck,
+  resume,
+}: {
+  owner: boolean;
+  detail: ReturnType<typeof useComposeArchive>["detail"];
+  resumeAck: boolean;
+  disabled: boolean;
+  recovery: ReturnType<typeof useComposeArchive>["recovery"];
+  setResumeAck: React.Dispatch<React.SetStateAction<boolean>>;
+  resume: () => Promise<void>;
+}) {
+  return (
+    <>
       {owner &&
       detail.data &&
       !detail.isError &&
@@ -660,6 +992,6 @@ export function ComposeStorageBackups({
           </Button>
         </div>
       ) : null}
-    </section>
+    </>
   );
 }

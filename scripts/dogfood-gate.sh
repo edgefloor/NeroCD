@@ -9,7 +9,7 @@ set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mode=${1:---mode=local}
 phase=${NEROCD_DOGFOOD_PHASE:-all}
-evidence=/tmp/nerocd-dogfood.txt
+dogfood_evidence_output=${NEROCD_DOGFOOD_EVIDENCE:-/tmp/nerocd-dogfood.txt}
 case "$mode" in
   --mode=local|local) mode=local ;;
   --mode=external|external) mode=external ;;
@@ -40,19 +40,35 @@ if [[ "$phase" != all ]]; then
 fi
 dir=${state_dir:-$(mktemp -d /tmp/nerocd-dogfood.XXXXXXXX)}
 dogfood_dir=$dir
+dogfood_evidence_dir=$(mktemp -d /tmp/nerocd-dogfood-evidence.XXXXXXXX)
+evidence=$(mktemp "$dogfood_evidence_dir/evidence.XXXXXXXX")
 dogfood_evidence=$evidence
 target="nerocd-dogfood-restore-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
 backup_volume="nerocd-dogfood-backups-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
 target_server="${target}-server"
 pass=false retain_world=false
-: >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
 fail(){ trap - ERR; record "FAIL: $*"; printf 'dogfood: %s\n' "$*" >&2; exit 1; }
+publish_dogfood_evidence(){
+  # Replace the directory entry without opening an existing destination symlink.
+  if python3 - "$evidence" "$dogfood_evidence_output" <<'PYTHON'
+import os
+import sys
+os.replace(sys.argv[1], sys.argv[2])
+PYTHON
+  then
+    evidence=$dogfood_evidence_output
+    rmdir -- "$dogfood_evidence_dir"
+  else
+    printf 'dogfood: could not publish evidence; private evidence retained\n' >&2
+    return 1
+  fi
+}
 cleanup(){
   local code=$?
   trap - ERR
   set +e
-  if [[ "$retain_world" == true ]]; then record 'cleanup_deferred=true'; printf 'dogfood evidence: %s\n' "$evidence"; exit "$code"; fi
+  if [[ "$retain_world" == true ]]; then record 'cleanup_deferred=true'; publish_dogfood_evidence || code=1; printf 'dogfood evidence: %s\n' "$evidence"; exit "$code"; fi
   docker rm -f "$target_server" "$target" >/dev/null 2>&1 || true
   docker volume rm "$backup_volume" >/dev/null 2>&1 || true
   # `compose` is inherited from the sourced world; the paired runtime cleanup
@@ -62,6 +78,7 @@ cleanup(){
   if [[ "$phase" != after-reboot || $code -eq 0 ]]; then rm -rf -- "$dir" "${core_dir:-}"; else record 'state_retained_after_failure=true'; fi
   record "cleanup_complete=true"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: UNTRUSTED local single-world dogfood archive lifecycle'
+  publish_dogfood_evidence || code=1
   printf 'dogfood evidence: %s\n' "$evidence"
   exit "$code"
 }
@@ -75,7 +92,7 @@ dogfood_cleanup_fn=$(declare -f cleanup)
 dogfood_fail_fn=$(declare -f fail)
 dogfood_record_fn=$(declare -f record)
 
-for command in docker jq od sha256sum; do command -v "$command" >/dev/null || fail "missing $command"; done
+for command in docker jq od sha256sum python3; do command -v "$command" >/dev/null || fail "missing $command"; done
 docker info >/dev/null || fail 'Docker unavailable'
 
 if [[ "$phase" == after-reboot ]]; then

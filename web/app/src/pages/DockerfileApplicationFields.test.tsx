@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { dockerfileContentError } from "./DockerfileApplicationFields";
+import { dockerfileContentError } from "./dockerfileApplicationDraft";
 
 test("Dockerfile draft validation counts UTF-8 bytes and permits the exact server limit", () => {
  expect(dockerfileContentError(" \n\t")).toMatch(/required/);

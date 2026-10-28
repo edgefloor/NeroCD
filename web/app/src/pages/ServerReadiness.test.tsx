@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
 import { queryKeys } from "@/api";
-import { ServerReadiness, readinessReasons } from "./ServerReadiness";
+import { ServerReadiness } from "./ServerReadiness";
+import { readinessReasons } from "./serverReadinessReasons";
 const status = { server_id: "s", profile: "basic_image_hosting.v1", status: "unknown", reason: "no_sample" };
 const json = (value: unknown, code = 200) => new Response(JSON.stringify(value), { status: code });
 let client: QueryClient;

@@ -309,6 +309,12 @@ func (s *MemoryStore) deploymentBackedRunLocked(runID string) bool {
 
 // CreateDeploymentRequest implements the corresponding repository operation.
 func (s *MemoryStore) CreateDeploymentRequest(_ context.Context, v domain.Deployment, run domain.TaskRun, a domain.AuditEvent) (domain.Deployment, error) {
+	var err error
+	run, err = canonicalComposeDeploymentRun(v, run)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	v.FenceRequired = true
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if v.RollbackOfID != nil {

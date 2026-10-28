@@ -129,14 +129,17 @@ func TestBuildExecutorFailedBuildCompletionAfterCleanup(t *testing.T) {
 }
 func TestBuildExecutorOperationDeadlineNotExtended(t *testing.T) {
 	e, _, a, at := buildFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	var deadline time.Time
 	e.engine = buildEngineFunc(func(c context.Context, _ hostingbuild.Request) (hostingbuild.Result, error) {
 		deadline, _ = c.Deadline()
+		// Cancel after admission so fixture setup cannot consume a tiny deadline
+		// before the engine observes the context this test is checking.
+		cancel()
 		<-c.Done()
 		return hostingbuild.Result{}, c.Err()
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Millisecond)
-	defer cancel()
 	expected, _ := ctx.Deadline()
 	if e.Execute(ctx, a, at) == nil || !deadline.Equal(expected) {
 		t.Fatal("operation deadline changed")

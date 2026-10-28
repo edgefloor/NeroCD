@@ -89,8 +89,10 @@ const integer = (v: unknown, minimum = 0): v is number =>
   Number.isSafeInteger(v) && Number(v) >= minimum;
 const date = (v: unknown): v is string =>
   typeof v === "string" && Number.isFinite(Date.parse(v));
-const closed = (v: Record<string, unknown>, keys: string[]) =>
-  Object.keys(v).every((k) => keys.includes(k));
+const closed = (v: Record<string, unknown>, keys: string[]) => {
+  const allowed = new Set(keys);
+  return Object.keys(v).every((key) => allowed.has(key));
+};
 export function parseBackupRecoveryLocator(
   raw: Record<string, unknown>,
 ): BackupRecoveryLocator | undefined {

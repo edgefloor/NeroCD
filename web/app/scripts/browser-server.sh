@@ -145,7 +145,9 @@ done
 [ -s "$browser_runtime_dir/oidc-provider.json" ] || exit 1
 browser_oidc_issuer=$(node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")).issuer; if(typeof value!=="string") process.exit(2); process.stdout.write(value)' "$browser_runtime_dir/oidc-provider.json")
 browser_stage=build
-GOCACHE="$browser_runtime_dir/go-cache" go build -o "$browser_runtime_dir/nerocd" ./cmd/nerocd
+# Reuse the repository build cache while still compiling a fresh, fixture-owned
+# binary with the current embedded web assets. Match the regular build flags.
+GOCACHE="$browser_root/.cache/go-build" go build -trimpath -o "$browser_runtime_dir/nerocd" ./cmd/nerocd
 browser_stage=migrate
 NEROCD_DATABASE_URL="$browser_database_url" "$browser_runtime_dir/nerocd" migrate
 browser_stage=oidc-provision

@@ -367,6 +367,46 @@ test("private Git Compose requires explicit version and credential changes clear
   await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).checked).toBe(false));
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
 });
+test("returning to a registry version does not restore deployment acknowledgment", async () => {
+  composeBackend(registryMetadata); await setup(true, composeResource);
+  await chooseGitComposeRegistry();
+  const acknowledgment = () => screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/);
+  fireEvent.click(acknowledgment());
+  expect(acknowledgment().checked).toBe(true);
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "2" } });
+  await waitFor(() => expect(acknowledgment().checked).toBe(false));
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  await screen.findByText("Image access: Registry credential credential, version 1.");
+  expect(acknowledgment().checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+});
+
+test("returning to earlier deployment options does not restore acknowledgment", async () => {
+  let options = routedComposeOptions;
+  composeBackend(url => url.endsWith("/storage-deployment-options") ? json(options) : runningCompose(url));
+  await setup(true, composeResource);
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  const acknowledgment = () => screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/);
+  fireEvent.click(acknowledgment());
+  expect(acknowledgment().checked).toBe(true);
+  const refreshOptions = async () => {
+    await act(async () => { await client.invalidateQueries({ queryKey: ["storageDeploymentOptions"] }); });
+  };
+  options = {
+    ...routedComposeOptions,
+    routes: [{ ...routedComposeOptions.routes[0]!, version: 3 }],
+    storage_route_continuity: { ...routedComposeOptions.storage_route_continuity, expected_loaded_generation: 5, routes: [{ ...routedComposeOptions.storage_route_continuity.routes[0]!, expected_version: 3 }] },
+  };
+  await refreshOptions();
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 3.");
+  await waitFor(() => expect(acknowledgment().checked).toBe(false));
+  options = routedComposeOptions;
+  await refreshOptions();
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  expect(acknowledgment().checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+});
+
 test.each([undefined, { secret_id: "other", version: 1 }, { secret_id: "credential", version: 2 }])("Git Compose rejects substituted registry receipt %j", async (registry_credential) => {
   composeBackend(url => registryMetadata(url) ?? (url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, registry_credential } }, 202) : undefined));
   await setup(true, composeResource); await chooseGitComposeRegistry(); await composeSubmit();

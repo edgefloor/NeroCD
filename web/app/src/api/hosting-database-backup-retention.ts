@@ -46,6 +46,7 @@ export const protectedReasons = [
   "unavailable",
   "batch_limit",
 ] as const;
+const protectedReasonSet = new Set<string>(protectedReasons);
 export type RetentionCopy = {
   copy_id: string;
   backup_id: string;
@@ -127,9 +128,10 @@ const integer = (v: unknown, max: number, min = 0): v is number =>
 function document(raw: unknown, required: string[], optional: string[] = []) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
   const v = raw as Record<string, unknown>;
+  const allowed = new Set([...required, ...optional]);
   if (
     required.some((k) => !Object.hasOwn(v, k)) ||
-    Object.keys(v).some((k) => !required.includes(k) && !optional.includes(k))
+    Object.keys(v).some((k) => !allowed.has(k))
   )
     return fail();
   return v;
@@ -263,7 +265,7 @@ export function parseRetentionPreview(
         ) ||
         typeof c.selected !== "boolean" ||
         !Array.isArray(c.protected_reasons) ||
-        c.protected_reasons.some((r) => !protectedReasons.includes(r)) ||
+        c.protected_reasons.some((r) => !protectedReasonSet.has(r)) ||
         new Set(c.protected_reasons).size !== c.protected_reasons.length
       )
         return fail();

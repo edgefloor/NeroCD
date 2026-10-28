@@ -149,3 +149,18 @@ func TestHostingStackSourceUnionRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingStackInterpolationBoundsEveryAppend(t *testing.T) {
+	values := map[string]string{"FULL": strings.Repeat("x", 4096), "EMPTY": "", "LARGE": strings.Repeat("secret", 1<<18)}
+	for _, expression := range []string{"$FULL", "$FULL$EMPTY", strings.Repeat("x", 4096), strings.Repeat("$$", 4096)} {
+		if got, err := ExpandHostingStackValue(expression, values, true); err != nil || len(got) != 4096 {
+			t.Fatalf("exact limit: length=%d err=%v", len(got), err)
+		}
+	}
+	for _, expression := range []string{"${FULL}x", "$FULL$$", "x$FULL", "$FULL$FULL", strings.Repeat("x", 4097), strings.Repeat("$$", 4097), strings.Repeat("$LARGE", 1000) + "${UNSET:?}"} {
+		got, err := ExpandHostingStackValue(expression, values, true)
+		if got != "" || err == nil || err.Error() != "expanded Compose value exceeds limit" {
+			t.Fatalf("expected immediate size rejection, length=%d err=%v", len(got), err)
+		}
+	}
+}

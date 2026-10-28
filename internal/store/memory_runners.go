@@ -228,7 +228,7 @@ func (s *MemoryStore) ClaimRun(_ context.Context, runnerID string, now time.Time
 	for _, runIndex := range candidateIndexes[:examineCount] {
 		run := s.runs[runIndex]
 		cursor := memoryClaimCursor{claimOrderAt: s.claimOrderByRun[run.ID], runID: run.ID}
-		if domain.ContainsHostingExecution(run.RunSpec, run.Workflow) || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
+		if !s.claimDefinitionAllowed(run) || !covers(runner.Tags, run.RunnerTags) || !contains(runner.Capabilities, claimRunType(run)) {
 			storedCursor = cursor
 			continue
 		}
@@ -476,4 +476,30 @@ func (s *MemoryStore) AuthorizeSecretAccess(_ context.Context, request domain.Se
 		return secretAccessGrant(request, expected.CreatedAt), nil
 	}
 	return domain.SecretAccessGrant{}, ErrNotFound
+}
+
+// claimDefinitionAllowed runs while the store mutex protects task/deployment state.
+func (s *MemoryStore) claimDefinitionAllowed(run domain.TaskRun) bool {
+	if run.RunSpec.Type != domain.RunTypeComposeDeploy {
+		return domain.ValidateGenericRunDefinition(run.RunSpec, run.Workflow) == nil
+	}
+	if domain.ValidateComposeDeploymentTask(run) != nil {
+		return false
+	}
+	for _, deployment := range s.deployments {
+		if deployment.ID != run.RunSpec.Inputs["deployment_id"] || deployment.TaskRunID == nil || *deployment.TaskRunID != run.ID || !deployment.FenceRequired || domain.IsTerminalDeploymentStatus(deployment.Status) || deployment.Status == domain.DeploymentWaitingConfirmation {
+			continue
+		}
+		for _, environment := range s.environments {
+			if environment.ID != deployment.EnvironmentID {
+				continue
+			}
+			for _, service := range s.services {
+				if service.ID == environment.ServiceID {
+					return service.ProjectID == run.ProjectID
+				}
+			}
+		}
+	}
+	return false
 }

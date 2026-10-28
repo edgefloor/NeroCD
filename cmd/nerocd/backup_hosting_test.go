@@ -50,7 +50,9 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
-			cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			// DROP DATABASE checkpoints thousands of restored relation files. Allow
+			// slow container filesystems to finish while keeping cleanup bounded.
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 			defer stop()
 			if _, err := admin.Exec(cleanupCtx, "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
 				t.Error(err)
@@ -183,60 +185,32 @@ func TestRestoreCLIAtomicallyHoldsHostingBindingsWithoutStateRows(t *testing.T) 
 	}
 	previous := backupCommand
 	backupCommand = func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
-		inside := "/tmp/nerocd-hosting-backup-" + suffix + ".dump"
-		run := func(commandArgs ...string) bool {
-			output, err := exec.CommandContext(commandCtx, "docker", commandArgs...).CombinedOutput()
-			if err != nil {
-				t.Errorf("task-owned PostgreSQL tool: %v %s", err, output)
-				return false
-			}
-			return true
+		if name != "pg_dump" && name != "pg_restore" {
+			t.Fatalf("unexpected backup tool %q", name)
 		}
-		switch name {
-		case "pg_dump":
-			if !run("exec", "--user", "0", container, "rm", "-f", inside) {
-				return exec.CommandContext(commandCtx, "false")
-			}
-			var hostPath string
-			insideArgs := []string{"exec", container, "pg_dump"}
-			for _, arg := range args {
-				if strings.HasPrefix(arg, "--file=") {
-					hostPath = strings.TrimPrefix(arg, "--file=")
-					insideArgs = append(insideArgs, "--file="+inside)
-				} else if strings.HasPrefix(arg, "postgres") {
-					parsed, _ := url.Parse(arg)
-					parsed.Host = "127.0.0.1:5432"
-					insideArgs = append(insideArgs, parsed.String())
-				} else {
-					insideArgs = append(insideArgs, arg)
+		// Forward the command's file descriptors through docker exec. Local socket
+		// trust in this task-owned PostgreSQL container avoids copying a host passfile.
+		insideArgs := []string{"exec", "-i", container, name}
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--dbname=") {
+				parsed, err := url.Parse(strings.TrimPrefix(arg, "--dbname="))
+				if err != nil {
+					t.Fatal(err)
 				}
+				parsed.Host = ""
+				query := parsed.Query()
+				query.Set("host", "/var/run/postgresql")
+				query.Del("passfile")
+				query.Del("password")
+				parsed.RawQuery = query.Encode()
+				arg = "--dbname=" + parsed.String()
 			}
-			if run(insideArgs...) && run("cp", container+":"+inside, hostPath) {
-				return exec.CommandContext(commandCtx, "true")
-			}
-		case "pg_restore":
-			if !run("cp", args[len(args)-1], container+":"+inside) {
-				return exec.CommandContext(commandCtx, "false")
-			}
-			insideArgs := []string{"exec", container, "pg_restore"}
-			for _, arg := range args[:len(args)-1] {
-				if strings.HasPrefix(arg, "--dbname=") {
-					parsed, _ := url.Parse(strings.TrimPrefix(arg, "--dbname="))
-					parsed.Host = "127.0.0.1:5432"
-					arg = "--dbname=" + parsed.String()
-				}
-				insideArgs = append(insideArgs, arg)
-			}
-			return exec.CommandContext(commandCtx, "docker", append(insideArgs, inside)...)
+			insideArgs = append(insideArgs, arg)
 		}
-		return exec.CommandContext(commandCtx, "false")
+		return exec.CommandContext(commandCtx, "docker", insideArgs...)
 	}
-	t.Cleanup(func() {
-		backupCommand = previous
-		cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		_ = exec.CommandContext(cleanupCtx, "docker", "exec", "--user", "0", container, "rm", "-f", "/tmp/nerocd-hosting-backup-"+suffix+".dump").Run()
-	})
+	t.Cleanup(func() { backupCommand = previous })
+
 	for _, failure := range []string{"none", "binding", "proxy", "bootstrap"} {
 		failHold := failure != "none"
 		if failHold {

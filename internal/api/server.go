@@ -79,9 +79,15 @@ type PublicRoute struct {
 
 type metrics struct {
 	mu               sync.Mutex
-	requests         map[string]int64
+	requests         map[metricLabels]int64
 	totalLatencyMS   int64
 	loginRateLimited int64
+}
+
+type metricLabels struct {
+	method string
+	route  string
+	status string
 }
 
 const maxMetricSeries = 512
@@ -89,15 +95,16 @@ const maxMetricSeries = 512
 func (m *metrics) recordLoginRateLimit() { m.mu.Lock(); defer m.mu.Unlock(); m.loginRateLimited++ }
 
 func newMetrics() *metrics {
-	return &metrics{requests: map[string]int64{}}
+	return &metrics{requests: map[metricLabels]int64{}}
 }
 
 func (m *metrics) record(method string, path string, status int, duration time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := metricMethod(method) + "|" + metricRoute(path) + "|" + metricStatus(status)
-	if _, known := m.requests[key]; !known && len(m.requests) >= maxMetricSeries {
-		key = method + "|/other|" + strconv.Itoa(status)
+	key := metricLabels{method: metricMethod(method), route: metricRoute(path), status: metricStatus(status)}
+	// Reserve one series for overflow, with a fixed vocabulary and cardinality.
+	if _, known := m.requests[key]; !known && len(m.requests) >= maxMetricSeries-1 {
+		key = metricLabels{method: "other", route: "/other", status: "other"}
 	}
 	m.requests[key]++
 	m.totalLatencyMS += duration.Milliseconds()
@@ -150,13 +157,12 @@ func (m *metrics) render() string {
 	out.WriteString("# HELP nerocd_http_requests_total Total HTTP requests by method, path, and status.\n")
 	out.WriteString("# TYPE nerocd_http_requests_total counter\n")
 	for key, count := range m.requests {
-		parts := strings.Split(key, "|")
 		out.WriteString(`nerocd_http_requests_total{method="`)
-		out.WriteString(parts[0])
+		out.WriteString(key.method)
 		out.WriteString(`",path="`)
-		out.WriteString(parts[1])
+		out.WriteString(key.route)
 		out.WriteString(`",status="`)
-		out.WriteString(parts[2])
+		out.WriteString(key.status)
 		out.WriteString(`"} `)
 		out.WriteString(strconv.FormatInt(count, 10))
 		out.WriteString("\n")

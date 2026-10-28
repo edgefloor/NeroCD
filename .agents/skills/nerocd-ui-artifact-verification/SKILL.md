@@ -1,11 +1,15 @@
 ---
 name: nerocd-ui-artifact-verification
-description: Verify NeroCD WebUI changes across source tests, responsive browser behavior, the generated web/dist artifact, and Go embedding. Use when changing UI layout, navigation, frontend build output, or embedded static delivery.
+description: Verify NeroCD WebUI changes across workflow state, source tests, responsive browser behavior, the generated web/dist artifact, and Go embedding. Use when changing UI request hooks, authorization or confirmation state, layout, navigation, frontend build output, or embedded static delivery.
 ---
 
 # NeroCD UI artifact verification
 
 Treat the frontend source, the built `web/dist` tree, and the Go-served embedded UI as distinct verification layers.
+
+When changing request hooks, authorization, mutation retries, or destructive-action
+confirmation, read [Workflow state](references/workflow-state.md) before refactoring.
+A clean React Doctor scan verifies its diagnostics, not preservation of those behaviors.
 
 1. Identify the changed operator workflow and the viewport classes it affects. Preserve keyboard access, semantic roles, overflow containment, safe-area padding, and both mobile and desktop navigation behavior.
 2. Run focused Vitest coverage from `web/app`, then the frontend build. The Vite build writes to `web/dist`; do not assume source changes are present in a Go binary built before that output exists.

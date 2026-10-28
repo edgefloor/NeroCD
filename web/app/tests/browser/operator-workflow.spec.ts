@@ -32,6 +32,37 @@ function browserRuntimeDir(): string {
   return join("/tmp", `nerocd-browser-${runID}`);
 }
 
+test("failed sign-out remains locked after reload and offers a revocation retry", async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const width of [320, 390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/sign-in");
+    await signIn(page);
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+    await page.route("**/api/v1/browser-sessions", (route) => route.request().method() === "DELETE"
+      ? route.fulfill({ status: 503, json: { error: "temporarily unavailable" } }) : route.continue());
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Sign-out not confirmed" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Account", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
+    const privateRequests: string[] = [];
+    const capture = (request: import("@playwright/test").Request) => {
+      if (/\/api\/v1\/(me|projects|runs)(?:[/?]|$)/.test(request.url())) privateRequests.push(request.url());
+    };
+    page.on("request", capture);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Sign-out not confirmed" })).toBeVisible();
+    expect(privateRequests).toEqual([]);
+    page.off("request", capture);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.unroute("**/api/v1/browser-sessions");
+    await page.getByRole("button", { name: "Retry sign-out" }).click();
+    await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem("nerocd.sign-out-pending"))).toBeNull();
+  }
+});
+
 test("project hosting saves image configuration and recovers stale generations across responsive widths", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.goto("/projects");
@@ -4357,7 +4388,7 @@ test("audit deployment targets open details and preserve filtered history", asyn
     await page.goto(`/audit?q=${deploymentID}`);
     const target = page.getByRole("link", { name: deploymentID, exact: true });
     await expect(target).toBeVisible();
-    const metadata = JSON.parse(await target.locator('xpath=ancestor::*[@role="listitem"]').locator("pre").textContent() ?? "{}");
+    const metadata = JSON.parse(await page.getByRole("listitem").filter({ has: target }).locator("pre").textContent() ?? "{}");
     expect(metadata.request_id).toEqual(expect.any(String));
     expect(metadata.request_id).not.toBe("");
     await expect(target).toHaveAttribute("href", `/deployments/${deploymentID}?q=${deploymentID}`);

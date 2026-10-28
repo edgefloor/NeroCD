@@ -14,6 +14,7 @@ allowed-tools: Bash(bash:*)
 - `scripts/pre-review.sh` - Run `make fmt-check` and repository-pinned lint before manual review. Use `--base COMMIT` for changed-code lint and an optional local package pattern to scope lint. Formatting checks all product sources. Install missing lint with `make lint-install`.
 - `references/WEB-SERVER.md` - Read when reviewing an HTTP server that combines concurrency, context, logging, error handling, and shutdown behavior.
 - `references/FAILURE-BOUNDARIES.md` - Read when a diff changes execution admission, streamed or replayed results, reload readiness, per-run files, signal shutdown, or structured configuration input.
+- `../golang-security/references/checks-through-use.md` - Read when a diff changes checked paths or destinations, replay authorization, concurrent limits, secret representations, or input expansion. Verify the check still governs the eventual operation.
 
 ## Review Procedure
 

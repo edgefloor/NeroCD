@@ -17,13 +17,7 @@ function DeploymentsRoute() {
   const navigate = useNavigate();
   const { q, service_id: serviceID, environment_id: environmentID } = Route.useSearch();
   const page = usePage();
-  const deployments = useDeploymentsPollingQuery(environmentID ? { environment_id: environmentID, limit: page.limit, offset: page.offset } : undefined, Boolean(environmentID));
-  const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
-  const services = useQuery({ ...allServicesQuery(), retryOnMount: false });
-  const environments = useQuery({ ...allEnvironmentsQuery(), retryOnMount: false });
-  const revisions = useQuery({ ...allRevisionsQuery(serviceID ?? ""), enabled: Boolean(serviceID), retryOnMount: false });
-  const principal = useQuery({ ...principalQuery(), retryOnMount: false });
-  const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
+  const { deployments, projects, services, environments, revisions, principal, members } = useDeploymentInventory(serviceID, environmentID, page);
   const failed = [deployments, projects, services, environments, revisions, principal, members].filter((query) => query.isError);
   const recovery = failed.length ? <section className="space-y-3">
     <p role="alert">Unable to refresh deployment operations. Retry before requesting a deployment.</p>
@@ -34,4 +28,15 @@ function DeploymentsRoute() {
   const submitting = actions.busy === "create";
   const busy = failed.length > 0 || submitting;
   return <>{recovery}<DeploymentsView deployments={deployments.data?.items ?? []} projects={projects.data ?? []} services={services.data ?? []} environments={environments.data ?? []} revisions={revisions.data ?? []} q={q} selectedServiceID={serviceID} selectedEnvironmentID={environmentID} loading={[projects, services, environments, principal, members].some((query) => query.isPending) || Boolean(serviceID && revisions.isPending) || Boolean(environmentID && deployments.isPending)} canOperate={canOperate} busy={busy} submitting={submitting} submissionError={actions.creationError} onServiceChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, service_id: id || undefined, environment_id: undefined, offset: undefined }) })} onEnvironmentChange={(id) => void navigate({ to: "/deployments", search: (previous) => ({ ...previous, environment_id: id || undefined, offset: undefined }) })} onCreate={async (input) => { const deployment = await actions.create(input); if (!deployment) return; void navigate({ to: "/deployments/$deploymentId", params: { deploymentId: deployment.id }, search: (previous) => ({ ...previous, environment_id: input.environment_id, service_id: serviceID }) }); }} /><PageNavigation page={deployments.data ?? { count: 0, total: 0, limit: page.limit, offset: page.offset }} label="deployments" loading={deployments.isFetching} onFirst={page.first} onPrevious={page.previous} onNext={page.next} /></>;
+}
+
+function useDeploymentInventory(serviceID: string | undefined, environmentID: string | undefined, page: { limit: number; offset: number }) {
+  const deployments = useDeploymentsPollingQuery(environmentID ? { environment_id: environmentID, limit: page.limit, offset: page.offset } : undefined, Boolean(environmentID));
+  const projects = useQuery({ ...allProjectsQuery(), retryOnMount: false });
+  const services = useQuery({ ...allServicesQuery(), retryOnMount: false });
+  const environments = useQuery({ ...allEnvironmentsQuery(), retryOnMount: false });
+  const revisions = useQuery({ ...allRevisionsQuery(serviceID ?? ""), enabled: Boolean(serviceID), retryOnMount: false });
+  const principal = useQuery({ ...principalQuery(), retryOnMount: false });
+  const members = useQuery({ ...allProjectMembersQuery(), retryOnMount: false });
+  return { deployments, projects, services, environments, revisions, principal, members };
 }

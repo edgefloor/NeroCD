@@ -33,6 +33,12 @@ func CaptureArtifacts(baseDir string, artifacts []domain.ArtifactSpec, emit func
 		emit = func(ProcessEvent) {}
 	}
 
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
 	results := make([]ArtifactResult, 0, len(artifacts))
 	var missingRequired []string
 	for _, artifact := range artifacts {
@@ -45,8 +51,7 @@ func CaptureArtifacts(baseDir string, artifacts []domain.ArtifactSpec, emit func
 		if err != nil {
 			return results, err
 		}
-		absPath := filepath.Join(baseDir, cleanPath)
-		info, err := os.Stat(absPath)
+		info, err := root.Stat(cleanPath)
 		result := ArtifactResult{Name: name, Path: cleanPath, Required: artifact.Required}
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {

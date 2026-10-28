@@ -31,6 +31,7 @@ import (
 )
 
 const backupManifestVersion = 1
+const maxBackupMetadataBytes = 64 << 10
 
 // Persisted specifications are data supplied by prior versions of the API, not
 // trusted backup metadata. Bound both decoding and recursive traversal so a
@@ -95,33 +96,43 @@ func backupDatabaseContext(parent context.Context, args []string) error {
 	if strings.TrimSpace(*output) == "" {
 		return errors.New("backup requires --output-dir")
 	}
-	if err := ensureSecureBackupParent(*output); err != nil {
-		return err
+	outputDirectory, err := openSecureBackupDirectory(*output)
+	if err != nil {
+		return errors.New("backup output directory must already exist and be owner-only")
 	}
+	defer func() { _ = outputDirectory.Close() }()
 	random, err := randomRuntimeHex(6)
 	if err != nil {
 		return errors.New("backup name could not be created")
 	}
 	name := "backup-" + time.Now().UTC().Format("20060102T150405Z") + "-" + random
-	staging, err := os.MkdirTemp(*output, "."+name+"-")
+	stagingName := "." + name
+	staging, err := createBackupDirectoryAt(outputDirectory, stagingName)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(staging) }()
-	dumpPath := filepath.Join(staging, "database.dump")
+	published := false
+	defer func() {
+		if !published {
+			removeBackupStagingAt(outputDirectory, staging, stagingName)
+		}
+		_ = staging.Close()
+	}()
+	dump, err := createBackupFileAt(staging, "database.dump")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dump.Close() }()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 	backupReason = "dump"
-	if err := runBackupTool(ctx, "pg_dump", resolvedURL, "--format=custom", "--no-owner", "--no-acl", "--file="+dumpPath); err != nil {
+	if err := runBackupToolIO(ctx, "pg_dump", resolvedURL, nil, dump, "--format=custom", "--no-owner", "--no-acl"); err != nil {
 		return err
 	}
-	// pg_dump honours the process umask, which is not a backup security
-	// boundary. Force the staged artifact private before hashing or publishing
-	// it into the atomic backup directory.
-	if err := os.Chmod(dumpPath, 0600); err != nil {
-		return errors.New("backup dump permissions could not be secured")
+	if err := dump.Sync(); err != nil {
+		return errors.New("backup dump could not be synchronized")
 	}
-	file, err := checksumBackupFile(dumpPath)
+	file, err := checksumOpenBackupFile(dump, "database.dump")
 	if err != nil {
 		return err
 	}
@@ -151,20 +162,15 @@ func backupDatabaseContext(parent context.Context, args []string) error {
 		}
 		manifest.RunnerFiles = inventory
 	}
-	if err := writeAtomicJSON(filepath.Join(staging, "manifest.json"), manifest); err != nil {
+	if err := writeBackupManifestAt(staging, manifest); err != nil {
 		return err
 	}
 	final := filepath.Join(*output, name)
-	if _, err := os.Lstat(final); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return errors.New("backup destination already exists")
-	}
 	backupReason = "publish"
-	if err := os.Rename(staging, final); err != nil {
-		return err
-	}
-	if err := syncBackupDirectory(*output); err != nil {
+	if err := publishBackupDirectoryAt(outputDirectory, stagingName, name); err != nil {
 		return errors.New("backup directory could not be durably published")
 	}
+	published = true
 	backupOutcome, backupReason = "success", "none"
 	fmt.Println(final)
 	return nil
@@ -207,10 +213,11 @@ func restoreDatabase(args []string) error {
 	if err := validateRestoreConfirmation(*allowDisposableTarget, *confirmedTarget); err != nil {
 		return err
 	}
-	manifest, err := verifyBackupArchive(*input)
+	manifest, dump, err := openVerifiedBackupArchive(*input)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = dump.Close() }()
 	if err := validateBackupCompatibility(manifest); err != nil {
 		return err
 	}
@@ -223,7 +230,6 @@ func restoreDatabase(args []string) error {
 			return errors.New("recovered runner-file inventory does not match backup")
 		}
 	}
-	dumpPath := filepath.Join(*input, manifest.Files[0].Path)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, resolvedURL)
@@ -239,7 +245,7 @@ func restoreDatabase(args []string) error {
 		return err
 	}
 	defer releaseRestoreAdmission()
-	if err := runBackupTool(ctx, "pg_restore", resolvedURL, "--exit-on-error", "--single-transaction", "--no-owner", "--no-acl", dumpPath); err != nil {
+	if err := runBackupToolIO(ctx, "pg_restore", resolvedURL, dump, nil, "--exit-on-error", "--single-transaction", "--no-owner", "--no-acl"); err != nil {
 		return err
 	}
 	current, _, err := backupDatabaseState(ctx, resolvedURL)
@@ -289,7 +295,11 @@ func restoreDatabase(args []string) error {
 // runBackupTool supplies the database password through a private libpq passfile.
 // Neither argv nor the child's inherited environment contains the owner URL or
 // PGPASSWORD. Tool output may contain connection details, so errors stay bounded.
-func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string) (result error) {
+func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string) error {
+	return runBackupToolIO(ctx, tool, databaseURL, nil, nil, args...)
+}
+
+func runBackupToolIO(ctx context.Context, tool, databaseURL string, input io.Reader, output io.Writer, args ...string) (result error) {
 	connection, err := url.Parse(databaseURL)
 	if err != nil || connection.Host == "" || (connection.Scheme != "postgres" && connection.Scheme != "postgresql") {
 		return errors.New("backup tool database URL is invalid")
@@ -352,7 +362,10 @@ func runBackupTool(ctx context.Context, tool, databaseURL string, args ...string
 		}
 		command.Env = append(command.Env, entry)
 	}
-	if _, err := command.CombinedOutput(); err != nil {
+	command.Stdin = input
+	command.Stdout = output
+	command.Stderr = io.Discard
+	if err := command.Run(); err != nil {
 		return fmt.Errorf("%s failed", tool)
 	}
 	return nil
@@ -493,21 +506,16 @@ func ensureSecureBackupFile(path string) error {
 	return nil
 }
 
-func checksumBackupFile(path string) (backupFile, error) {
-	if err := ensureSecureBackupFile(path); err != nil {
+func checksumOpenBackupFile(file *os.File, name string) (backupFile, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return backupFile{}, err
 	}
-	file, err := openSecureBackupFile(path)
-	if err != nil {
-		return backupFile{}, err
-	}
-	defer func() { _ = file.Close() }()
 	h := sha256.New()
 	n, err := io.Copy(h, file)
 	if err != nil {
 		return backupFile{}, err
 	}
-	return backupFile{Path: filepath.Base(path), SHA256: hex.EncodeToString(h.Sum(nil)), Bytes: n}, nil
+	return backupFile{Path: name, SHA256: hex.EncodeToString(h.Sum(nil)), Bytes: n}, nil
 }
 
 func validateBackupCompatibility(manifest backupManifest) error {
@@ -543,42 +551,6 @@ func backupCompatibility() (string, string, []string, error) {
 		_, _ = io.WriteString(identity, entry+"\n")
 	}
 	return version, "sha256:" + hex.EncodeToString(identity.Sum(nil)), migrations, nil
-}
-func writeAtomicJSON(path string, value any) error {
-	raw, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp) }()
-	if _, err := file.Write(append(raw, '\n')); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	return syncBackupDirectory(filepath.Dir(path))
-}
-
-func syncBackupDirectory(path string) error {
-	parent, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = parent.Close() }()
-	return parent.Sync()
 }
 func backupDatabaseState(ctx context.Context, databaseURL string) ([]string, string, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)

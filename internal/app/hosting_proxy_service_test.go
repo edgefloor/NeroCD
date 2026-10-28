@@ -53,10 +53,6 @@ func TestProxyOperationProjectProjectionDoesNotExposeOtherProjects(t *testing.T)
 	if !ok || len(view.Routes) != 1 || view.Routes[0].ID != "route_own" || !view.MutationHold {
 		t.Fatalf("unexpected projection: %+v", result)
 	}
-	_, err = json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The ordinary project endpoint preserves the proxy's applied state while
 	// keeping the engine result private, even after successful completion.
 	repository.op.State = "applied"

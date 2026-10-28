@@ -4,7 +4,7 @@ import { runQuery, shouldPollRun } from "@/api";
 import { SkeletonCard } from "@/components/common/SkeletonCard";
 import { Button } from "@/components/ui/button";
 import { WorkflowDiagnostics } from "@/components/runs/WorkflowDiagnostics";
-import { RunsRoute } from "./_authenticated.runs.index";
+import { RunsRoute } from "@/components/runs/RunsRoute";
 import { validateSearch } from "@/router/search";
 
 export const Route = createFileRoute("/_authenticated/runs/$runId")({

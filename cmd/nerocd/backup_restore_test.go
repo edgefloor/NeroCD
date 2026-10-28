@@ -183,7 +183,7 @@ func TestVerifyBackupArchiveRejectsTamperingAndUnexpectedEntries(t *testing.T) {
 	}
 	sum := sha256.Sum256(dump)
 	manifest := backupManifest{Version: backupManifestVersion, CreatedAt: time.Now().UTC(), ApplicationVersion: "test", SchemaIdentity: "sha256:test", Database: "nerocd", Files: []backupFile{{Path: "database.dump", SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(dump))}}}
-	if err := writeAtomicJSON(filepath.Join(archive, "manifest.json"), manifest); err != nil {
+	if err := writeBackupTestManifest(archive, manifest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verifyBackupArchive(archive); err != nil {
@@ -219,7 +219,7 @@ func TestBackupExportPublishesPrivateVerifiedCopy(t *testing.T) {
 	}
 	sum := sha256.Sum256(dump)
 	manifest := backupManifest{Version: backupManifestVersion, CreatedAt: time.Now().UTC(), ApplicationVersion: "test", SchemaIdentity: "sha256:test", Database: "nerocd", Files: []backupFile{{Path: "database.dump", SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(dump))}}}
-	if err := writeAtomicJSON(filepath.Join(archive, "manifest.json"), manifest); err != nil {
+	if err := writeBackupTestManifest(archive, manifest); err != nil {
 		t.Fatal(err)
 	}
 	if err := backupExport([]string{"--input-dir", archive, "--output-dir", destination}); err != nil {
@@ -354,10 +354,11 @@ func TestSecureBackupParentAndRunnerInventory(t *testing.T) {
 	}
 }
 
-func TestWriteAtomicBackupManifest(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "manifest.json")
+func TestWriteBackupManifest(t *testing.T) {
+	directory := privateBackupTestDir(t)
+	path := filepath.Join(directory, "manifest.json")
 	manifest := backupManifest{Version: backupManifestVersion, Files: []backupFile{{Path: "database.dump", SHA256: "abc", Bytes: 7}}}
-	if err := writeAtomicJSON(path, manifest); err != nil {
+	if err := writeBackupTestManifest(directory, manifest); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -554,4 +555,13 @@ func TestBackupCompatibilityIncludesPinnedRiverAndRejectsOlderArchives(t *testin
 			}
 		})
 	}
+}
+
+func writeBackupTestManifest(path string, manifest backupManifest) error {
+	directory, err := openSecureBackupDirectory(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = directory.Close() }()
+	return writeBackupManifestAt(directory, manifest)
 }
