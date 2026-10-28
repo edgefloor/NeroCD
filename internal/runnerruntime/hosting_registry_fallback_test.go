@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,22 @@ import (
 )
 
 func TestRegistryPullConnectedRunnerOrdinaryFallback(t *testing.T) {
+	// This dispatcher test reaches Compose preflight before credential delivery.
+	// Supply only those read-only responses; never consult an ambient daemon.
+	bin := t.TempDir()
+	docker := `#!/bin/sh
+[ "$1" = "--host" ] && [ "$3" = "--config" ] || exit 97
+shift 4
+case "$*" in
+  'compose version --short') printf '2.39.4\n' ;;
+  'info --format {{json .ID}}') printf '"registry-fixture-daemon"\n' ;;
+  *) exit 97 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
 	for _, compose := range []bool{false, true} {
 		name := "image"
 		if compose {
