@@ -11,9 +11,9 @@ import { Input } from "@/components/ui/input";
 type Credential = NonNullable<HostingDeploymentInput["registry_credential"]>;
 export type ImageRegistrySelection = { credential?: Credential; valid: boolean };
 
-export function ImageRegistryCredential({ actor, project, image, compose = false, purpose = "deployment", initialCredential, disabled, onChange, onDenied }: {
+export function ImageRegistryCredential({ actor, project, image, compose = false, purpose = "deployment", initialCredential, disabled, onAccessRestored, onChange, onDenied }: {
   actor: string; project: string; image: string; compose?: boolean; purpose?: "deployment" | "build"; initialCredential?: Credential; disabled: boolean;
-  onChange: (selection: ImageRegistrySelection) => void; onDenied: () => void;
+  onChange: (selection: ImageRegistrySelection) => void; onDenied: () => void; onAccessRestored?: () => void;
 }) {
   const id = useId();
   const [privateImage, setPrivateImage] = useState(Boolean(initialCredential));
@@ -79,6 +79,14 @@ export function ImageRegistryCredential({ actor, project, image, compose = false
       if (active.current) { setPassword(""); setEntry((current) => current + 1); setBusy(false); }
     }
   }
+  async function refreshMetadata() {
+    if (busy || disabled && !onAccessRestored) return;
+    setBusy(true);
+    try {
+      const [secretResult, versionResult] = await Promise.all([secrets.refetch(), secret ? versions.refetch() : Promise.resolve(undefined)]);
+      if (active.current && secretResult.isSuccess && (!versionResult || versionResult.isSuccess)) onAccessRestored?.();
+    } finally { if (active.current) setBusy(false); }
+  }
   const locked = disabled || busy;
   return <section aria-label={purpose === "build" ? "Build registry credentials" : "Image registry credentials"} className="min-w-0 space-y-3 rounded-lg border p-3">
     <label htmlFor={`${id}-mode`}>{purpose === "build" ? "Build registry credential" : "Image access"}</label>
@@ -91,7 +99,7 @@ export function ImageRegistryCredential({ actor, project, image, compose = false
       <label htmlFor={`${id}-version`}>{purpose === "build" ? "Build registry credential version" : "Registry credential version"}</label>
       <select id={`${id}-version`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked || !selected} value={version} onChange={(event) => { if (purpose === "build") notify.current({ valid: false }); setVersion(event.target.value); }}><option value="">Choose an explicit version</option>{versions.data?.items.filter((item) => item.secret_id === secret && Number.isSafeInteger(item.version) && item.version > 0).map((item) => <option key={item.version} value={item.version}>Version {item.version}</option>)}</select>
       {secret ? <PageNavigation label="registry credential versions" page={versions.data} loading={locked || versions.isFetching} onFirst={() => { setVersionOffset(0); setVersion(""); }} onPrevious={() => { setVersionOffset(Math.max(0, versionOffset - 20)); setVersion(""); }} onNext={() => { setVersionOffset(versionOffset + 20); setVersion(""); }} /> : null}
-      <Button type="button" variant="outline" disabled={locked} onClick={() => { void secrets.refetch(); if (secret) void versions.refetch(); }}>Refresh registry credential metadata</Button>
+      <Button type="button" variant="outline" disabled={busy || disabled && !onAccessRestored} onClick={() => void refreshMetadata()}>Refresh registry credential metadata</Button>
       {secrets.isError || versions.isError ? <p role="alert">Credential metadata is unavailable. Refresh before selecting credentials.</p> : null}
       {purpose !== "build" ? <details className="min-w-0 space-y-2" onKeyDown={(event) => { if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); void create(); } }}><summary>Create a registry credential</summary>
         <label htmlFor={`${id}-name`}>Registry secret name</label><Input id={`${id}-name`} autoComplete="off" value={name} disabled={locked} onChange={(event) => setName(event.target.value)} />

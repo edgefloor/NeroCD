@@ -79,14 +79,14 @@ function BuildRegistryField({ value, projectID, disabled, onChange, onValidityCh
  const identity = useQuery({ ...principalQuery(), enabled: false });
  const [denied, setDenied] = useState(false);
  const supported = ["dockerfile", "compose"].includes(value.settings.strategy);
- const ready = Boolean(identity.data) && !identity.isPending && !identity.isFetching && !identity.isError && !denied;
+ const ready = Boolean(identity.data) && !identity.isPending && !identity.isFetching && !identity.isError;
  const actor = identity.data ? JSON.stringify([identity.data.provider, identity.data.id]) : "";
  useEffect(() => { if (!supported) onValidityChange?.(true); else if (!ready) onValidityChange?.(false); }, [supported, ready, onValidityChange]);
  if (!supported) return null;
  const selected = value.settings.build_registry_credential;
  return <>
-  {!ready ? <p role="alert">Build registry credential access is unavailable. Refresh access before saving this Git source.</p> : null}
-  {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID])} actor={actor} project={projectID} image="" purpose="build" initialCredential={selected ?? undefined} disabled={disabled} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={(selection: ImageRegistrySelection) => {
+  {!ready || denied ? <p role="alert">Build registry credential access is unavailable. {ready ? "Use Refresh registry credential metadata to recheck access" : "Refresh access"} before saving this Git source.</p> : null}
+  {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID])} actor={actor} project={projectID} image="" purpose="build" initialCredential={selected ?? undefined} disabled={disabled || denied} onAccessRestored={denied && !disabled ? () => setDenied(false) : undefined} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={(selection: ImageRegistrySelection) => {
    onValidityChange?.(selection.valid);
    if (!selection.valid) return;
    const next = { ...value.settings };

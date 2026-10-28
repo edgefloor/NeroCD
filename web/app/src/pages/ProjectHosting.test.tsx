@@ -609,3 +609,60 @@ test("build credential source conflicts retain the exact draft version and requi
  fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
  expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: saved.source.git.repository_url, requested_ref: saved.source.git.requested_ref, credential_kind: "public", settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 2 } } } } });
 });
+
+test("build credential denial recovers through metadata refresh while preserving the source draft", async () => {
+ let deniedAccess = true;
+ vi.mocked(request).mockImplementation(async url => {
+  if (deniedAccess) throw new ApiError(403, "denied", null);
+  return page(url.includes("/versions") ? [{ secret_id: "credential", version: 1 }] : [{ id: "credential", project_id: "one", name: "Build access", status: "active" }]);
+ });
+ setup(); await selectEnvironment();
+ const form = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+ fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Retained Git draft" } });
+ fireEvent.change(within(form).getByLabelText("Build registry credential", { exact: true }), { target: { value: "private" } });
+ await within(form).findByText(/Build registry credential access is unavailable/);
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save application" }).disabled).toBe(true);
+ const deniedReads = vi.mocked(request).mock.calls.length;
+ fireEvent.click(within(form).getByRole("button", { name: "Refresh registry credential metadata" }));
+ await waitFor(() => expect(vi.mocked(request).mock.calls.length).toBeGreaterThan(deniedReads));
+ await waitFor(() => expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Refresh registry credential metadata" }).disabled).toBe(false));
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save application" }).disabled).toBe(true);
+ fireEvent.submit(form); expect(api.createResource).not.toHaveBeenCalled();
+ deniedAccess = false;
+ fireEvent.click(within(form).getByRole("button", { name: "Refresh registry credential metadata" }));
+ await within(form).findByRole("option", { name: "Build access · credential" });
+ await waitFor(() => expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential secret").disabled).toBe(false));
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential", { exact: true }).value).toBe("private");
+ expect(within(form).getByLabelText<HTMLInputElement>("Application name").value).toBe("Retained Git draft");
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save application" }).disabled).toBe(true);
+ expect(api.createResource).not.toHaveBeenCalled();
+ await selectBuildRegistry(form);
+ vi.mocked(api.createResource).mockResolvedValueOnce(resource);
+ fireEvent.submit(form); await waitFor(() => expect(api.createResource).toHaveBeenCalledTimes(1));
+ expect(vi.mocked(api.createResource).mock.calls[0]![0].source).toMatchObject({ kind: "git", git: { settings: { build_registry_credential: { secret_id: "credential", version: 1 } } } });
+});
+
+test("saved build credential refresh preserves the explicit version until the operator saves", async () => {
+ if (gitResource.source.kind !== "git") throw new Error("Expected Git resource");
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...gitResource.source.git, settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 1 } } } } };
+ vi.mocked(api.listResources).mockResolvedValue(page([saved]));
+ let deniedAccess = true;
+ vi.mocked(request).mockImplementation(async url => {
+  if (deniedAccess) throw new ApiError(403, "denied", null);
+  return page(url.includes("/versions") ? [{ secret_id: "credential", version: 1 }, { secret_id: "credential", version: 2 }] : [{ id: "credential", project_id: "one", name: "Build access", status: "active" }]);
+ });
+ setup(); const form = await edit();
+ await within(form).findByText(/Build registry credential access is unavailable/);
+ fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "retained-branch" } });
+ deniedAccess = false;
+ fireEvent.click(within(form).getByRole("button", { name: "Refresh registry credential metadata" }));
+ await within(form).findByRole("option", { name: "Version 2" });
+ await waitFor(() => expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save configuration" }).disabled).toBe(false));
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential version").value).toBe("1");
+ expect(within(form).getByLabelText<HTMLInputElement>("Git branch, tag, or commit").value).toBe("retained-branch");
+ expect(api.updateResource).not.toHaveBeenCalled();
+ vi.mocked(api.updateResource).mockResolvedValue(saved);
+ fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(1));
+ expect(vi.mocked(api.updateResource).mock.calls[0]![1].source).toMatchObject({ kind: "git", git: { requested_ref: "retained-branch", settings: { build_registry_credential: { secret_id: "credential", version: 1 } } } });
+});
