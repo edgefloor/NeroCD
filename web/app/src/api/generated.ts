@@ -1642,6 +1642,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/builds/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver selected build secrets
+         * @description Live fenced building authority only. Snapshot-selected secrets, audit before decryption. No-store protected transport; never journal credential material.
+         */
+        post: operations["deliverHostingBuildSecrets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/builds/source-credential": {
         parameters: {
             query?: never;
@@ -8187,6 +8207,14 @@ export interface components {
             name: string;
             secret: components["schemas"]["HostingRegistryCredentialRef"];
         };
+        HostingBuildSecretsDelivery: {
+            /** Format: date-time */
+            use_until: string;
+            secrets: {
+                name: string;
+                value: string;
+            }[];
+        };
         HostingBuildSecretsRequest: {
             authority: components["schemas"]["HostingBuildAuthority"];
             delivery_id: string;
@@ -14441,6 +14469,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostingRegistryCredentialDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingBuildSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildSecretsRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded protected build secrets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildSecretsDelivery"];
                 };
             };
             400: components["responses"]["Error"];
