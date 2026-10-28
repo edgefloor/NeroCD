@@ -115,9 +115,10 @@ Enable the existing [build runtime](hosting-build-runtime.md) first. In the serv
 policy file selected by `NEROCD_HOSTING_BUILD_POLICY_FILE`, set `git_compose` to
 `true`. In the runner file passed to `--build-config-file`, set top-level `compose`
 to `true` and set `policy.git_compose` to `true`. The runner's complete policy must
-match the server policy. These settings advertise `hosting_git_compose_build_v1`
-alongside `hosting_build_v1`. Deployment also needs the managed Compose
-capabilities and `--hosting-runtime-env` described above. Use the same bound runner
+match the server policy. These settings advertise `hosting_git_compose_build_v1` and
+`hosting_git_compose_args_v1` alongside `hosting_build_v1`. New Compose builds
+require both Compose capabilities at admission and execution. Deployment also
+needs the managed Compose capabilities and `--hosting-runtime-env` described above. Use the same bound runner
 and Docker daemon for preparation and deployment.
 
 1. In **Git repository**, enter the HTTPS repository and **Git branch, tag, or
@@ -130,14 +131,18 @@ and Docker daemon for preparation and deployment.
      "context_dir": "apps/tasks",
      "compose_file": "deploy/compose.yaml",
      "public_component": "web",
-     "container_port": 8080
+     "container_port": 8080,
+     "build_variables": [{"name": "APP_EDITION", "value": "community"}]
    }
    ```
 
    The Compose file path is relative to the context directory. Each `build.context`
    is relative to the Compose file's directory and must stay inside the checkout.
    Its Dockerfile path is relative to that build context.
-2. Save referenced values in Runtime configuration. For private HTTPS Git, use the
+2. Under **Compose build variables**, choose **Add build variable** and enter
+   explicit public build-time names and values. The API saves them in
+   `settings.build_variables`. Save deployment-time values separately in Runtime
+   configuration. For private HTTPS Git, use the
    existing [source grant and explicit secret version](hosting-git-resources.md#request-a-private-https-git-build).
    Saving configuration does not fetch source or change a running stack.
 3. Request the existing public or private Git build. Wait for a succeeded build
@@ -158,7 +163,20 @@ and Docker daemon for preparation and deployment.
    changing a volume name does not delete the old volume.
 
 A Compose file can mix registry images with local Dockerfile builds. Build
-accepts a context string or a mapping with `context`, `dockerfile` and `target`.
+accepts a context string or a mapping with `context`, `dockerfile`, `target` and
+`args`. Arguments support mapping and list forms, including explicit empty values
+and unset bare/null entries. Configured build variables supply interpolation and
+override same-name Compose arguments. `${NAME:-default}`, required and alternate
+expressions and `$$` escaping use that explicit variable set; host and deployment
+runtime environments are not imported. Missing required values fail preparation
+before replacement. Dockerfile `ARG` defaults apply to omitted arguments.
+
+Build variables are literal public values, including multiline text, with at most
+64 unique names and 4096 UTF-8 bytes per value. NUL is rejected. Names controlling
+NeroCD, BuildKit, proxies or automatic platform arguments are reserved. Values can
+appear in image metadata and build output; this is not build-secret delivery.
+Change the saved source settings and request a new build to apply an edit.
+
 An image-only service that names a built service's image uses that same local
 artifact. Multiple build owners for one declared image are rejected. Local images
 must remain on the recorded daemon; a missing artifact never falls back to a
@@ -170,7 +188,7 @@ deployment require current resource and source generations. After changing the
 source, prepare a new eligible build before Start; a denied stale Start preserves
 the stopped receipt and volumes.
 
-This profile does not support build arguments, build secrets, SSH credential
+This profile does not support build secrets, SSH credential
 delivery, remote build contexts, repository file bind mounts, unrestricted raw
 Compose or cross-daemon artifact transfer. Other unsupported fields in the
 managed profile remain rejected. Private Git access uses source grants separately
@@ -182,8 +200,9 @@ login/logout or multiple selected private registries.
 
 The sequence follows pinned PHP
 [`ApplicationDeploymentJob::deploy_docker_compose_buildpack`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L751):
-clone the selected revision, load and validate the Compose file, prepare service
-images, then start services. Its
+clone the selected revision, load and validate the Compose file, save build-time
+variables and prepare service images, then save runtime values and start services.
+Its
 [`Application::loadComposeFile`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Models/Application.php#L2250)
 restores source settings on read failure. NeroCD retains that preparation-before-
 replacement order through its existing fenced build receipts and managed stack
@@ -225,6 +244,26 @@ The bounded evidence index records source hashes, checks, reviews, timing limits
 and the retained prerequisite failures without replacing earlier Git evidence:
 `~/.local/share/nerocd/acceptance/runtime-hosting-git-compose-registry-20261027/db58c6abc3b41948a66b3bc7bcf93b9748a6cc35/evidence-index.json`.
 The broader profile limits above still apply.
+
+
+### Compose build-argument qualification
+
+The existing Git Compose gate passed at
+`89e9bf70b9d2790642ad58a57fa273f51a335a92` on 2026-10-28. Actual image labels
+verified configured overrides, mapping/list arguments, interpolation/defaults,
+empty/unset values, numeric/boolean values and exact multiline bytes without
+implicit runtime-variable import. A missing required argument failed before
+replacement. HTTPS Vikunja/PostgreSQL retained records/uploads through changed
+builds and uncached Stop/Start; registry, route recovery and failed-readiness
+safeguards passed in the same run.
+
+Source hashes, independent full/delta reviews, checks, timing limits and exact
+41-container/236-volume/user-instance preservation are indexed at
+`~/.local/share/nerocd/acceptance/runtime-hosting-compose-build-arguments-20261028/89e9bf70b9d2790642ad58a57fa273f51a335a92/evidence-index.json`.
+The index retains the schema-description repair, the unchanged archive endpoint's
+previously masked contract-documentation failure and earlier evidence limits.
+It does not claim an aggregate `make test` or `make verify` pass. Build secrets,
+base-image authentication and the broader profile limits above remain open.
 
 
 ### Stack route-continuity recovery
