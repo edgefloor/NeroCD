@@ -1665,7 +1665,7 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 	t.Cleanup(tlsServer.Close)
 	client := runnerclient.New(tlsServer.URL, credential)
 	client.HTTP = tlsServer.Client()
-	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1"})
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1", RemoteDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1"})
 	if err != nil || id != enrolled.Runner.ID {
 		t.Fatal("real API/client rejected the enrolled database runtime identity")
 	}
