@@ -208,11 +208,14 @@ try {
     await variables.getByRole("button",{name:"Add build variable",exact:true}).click();
     await variables.getByLabel("Build variable name 1",{exact:true}).fill("CONFIGURED");
     await variables.getByLabel("Build variable value 1",{exact:true}).fill("operator-value");
+    await variables.getByRole("button",{name:"Add build variable",exact:true}).click();
+    await variables.getByLabel("Build variable name 2",{exact:true}).fill("MULTILINE");
+    await variables.getByLabel("Build variable value 2",{exact:true}).fill("first line\nsecond line");
     const saved=response(page,"/api/v1/resources");
     await form.getByRole("button",{name:"Save application",exact:true}).click();
     resource=await checkedResponse(saved,201);
     if(resource.source.git.settings.compose_file!=="deploy/compose.yaml"||resource.source.git.repository_url!==initial.git_repository)throw Error("saved Git Compose source mismatch");
-    if(resource.source.git.settings.build_variables?.length!==1||resource.source.git.settings.build_variables[0].name!=="CONFIGURED"||resource.source.git.settings.build_variables[0].value!=="operator-value")throw Error("saved literal build variables mismatch");
+    if(resource.source.git.settings.build_variables?.length!==2||resource.source.git.settings.build_variables[0].name!=="CONFIGURED"||resource.source.git.settings.build_variables[0].value!=="operator-value"||resource.source.git.settings.build_variables[1].name!=="MULTILINE"||resource.source.git.settings.build_variables[1].value!=="first line\nsecond line")throw Error("saved literal build variables mismatch");
     safe.browser_git_compose_build_variables=true;
     safe.browser_git_compose_create=true;
     safe.saved_compose_configuration=true;

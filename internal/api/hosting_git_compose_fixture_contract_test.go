@@ -20,6 +20,8 @@ const gitComposeRecoveryWriterRows = `SELECT jsonb_build_array((SELECT count(*) 
 
 const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
 
+const gitComposeFixtureMultiline = "first line\nsecond line"
+
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 
 func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage string) map[string]string {
@@ -34,8 +36,8 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage s
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
 	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
-		"ARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\nARG SERVICE_URL_VIKUNJA=runtime-not-imported\n" +
-		"LABEL nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\" nerocd.fixture.runtime=\"${SERVICE_URL_VIKUNJA}\"\n"
+		"ARG MULTILINE\nARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\nARG SERVICE_URL_VIKUNJA=runtime-not-imported\n" +
+		"LABEL nerocd.fixture.multiline=\"${MULTILINE}\" nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\" nerocd.fixture.runtime=\"${SERVICE_URL_VIKUNJA}\"\n"
 	if fail {
 		dockerfile += "RUN exit 9\n"
 	}
@@ -82,7 +84,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}}}
+	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}
 	for _, fixture := range []struct{ marker, registryImage string }{{"A", ""}, {"B", ""}, {"missing-registry", ""}, {"B", "127.0.0.1:25001/nerocd-fixture:b@sha256:" + strings.Repeat("a", 64)}} {
 		marker := fixture.marker
 		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false, fixture.registryImage)
@@ -122,7 +124,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 				t.Fatal("generated Git init command omitted required component log marker", marker)
 			}
 			if service.Name == "vikunja" && service.Build != nil {
-				want := map[string]string{"CONFIGURED": "operator-value", "COMPOSE_MARKER": marker, "INTERPOLATED": "operator-value", "DEFAULTED": "fallback", "ALTERNATE": "present", "ESCAPED": "$literal", "EMPTY": "", "NUMBER": "20", "FLAG": "true"}
+				want := map[string]string{"MULTILINE": gitComposeFixtureMultiline, "CONFIGURED": "operator-value", "COMPOSE_MARKER": marker, "INTERPOLATED": "operator-value", "DEFAULTED": "fallback", "ALTERNATE": "present", "ESCAPED": "$literal", "EMPTY": "", "NUMBER": "20", "FLAG": "true"}
 				if !reflect.DeepEqual(service.Build.Args, want) {
 					t.Fatal("generated Compose argument resolution changed", marker)
 				}

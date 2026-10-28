@@ -288,7 +288,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 				if json.Unmarshal(storageRuntimeDocker(t, "image", "inspect", ownerImage, "--format", "{{json .Config.Labels}}"), &labels) != nil {
 					t.Fatal("built argument label inspection")
 				}
-				for name, want := range map[string]string{"configured": "operator-value", "marker": strings.TrimSpace(expectedMarker), "interpolated": "operator-value", "defaulted": "fallback", "alternate": "present", "escaped": "$literal", "empty": "", "omitted": "docker-default", "bare": "docker-default", "number": "20", "flag": "true", "runtime": "runtime-not-imported"} {
+				for name, want := range map[string]string{"multiline": gitComposeFixtureMultiline, "configured": "operator-value", "marker": strings.TrimSpace(expectedMarker), "interpolated": "operator-value", "defaulted": "fallback", "alternate": "present", "escaped": "$literal", "empty": "", "omitted": "docker-default", "bare": "docker-default", "number": "20", "flag": "true", "runtime": "runtime-not-imported"} {
 					if got, ok := labels["nerocd.fixture."+name]; !ok || got != want {
 						t.Fatal("actual built image argument differs from configured/Compose resolution", name)
 					}
