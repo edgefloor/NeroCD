@@ -325,6 +325,10 @@ function useLocalDeployment({
       ? options
       : undefined;
   const reviewIdentity = JSON.stringify([registryIdentity, optionsIdentity]);
+  // Changed evidence retires consent even if an earlier selection returns.
+  // An attempted request keeps the acknowledgement for its frozen inputs.
+  if (!attempt && confirmation !== undefined && confirmation !== reviewIdentity)
+    setConfirmation(undefined);
   const confirmed =
     confirmation !== undefined &&
     (Boolean(attempt) || confirmation === reviewIdentity);
