@@ -286,7 +286,7 @@ func applicationDatabaseRouteDNSAnswer(raw []byte) []byte {
 	q := m.Questions[0]
 	m.Response, m.Authoritative = true, true
 	m.Answers, m.Authorities, m.Additionals = nil, nil, nil
-	if q.Class != dnsmessage.ClassINET || !strings.EqualFold(q.Name.String(), "connected-postgresql.example.test.") && !strings.EqualFold(q.Name.String(), "connected-redis.example.test.") && !strings.EqualFold(q.Name.String(), "connected-mysql.example.test.") && !strings.EqualFold(q.Name.String(), "unrelated.example.test.") {
+	if q.Class != dnsmessage.ClassINET || !strings.EqualFold(q.Name.String(), "connected-postgresql.example.test.") && !strings.EqualFold(q.Name.String(), "connected-redis.example.test.") && !strings.EqualFold(q.Name.String(), "connected-mysql.example.test.") && !strings.EqualFold(q.Name.String(), "unrelated.example.test.") && !strings.EqualFold(q.Name.String(), "restored-mysql.example.test.") {
 		m.RCode = dnsmessage.RCodeNameError
 	} else if q.Type == dnsmessage.TypeA {
 		m.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 1}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}}}
@@ -1677,7 +1677,7 @@ func TestApplicationDatabaseRouteRuntimeDeploymentPublicProjection(t *testing.T)
 }
 
 func TestApplicationDatabaseRouteRuntimeDNS(t *testing.T) {
-	for _, host := range []string{"connected-postgresql.example.test.", "connected-redis.example.test.", "connected-mysql.example.test.", "unrelated.example.test.", "public.example.org."} {
+	for _, host := range []string{"connected-postgresql.example.test.", "connected-redis.example.test.", "connected-mysql.example.test.", "unrelated.example.test.", "restored-mysql.example.test.", "public.example.org."} {
 		t.Run(host, func(t *testing.T) {
 			name, err := dnsmessage.NewName(host)
 			if err != nil {
