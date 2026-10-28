@@ -72,9 +72,18 @@ def check_lane(lane):
 def validate_workflow(root):
     """Fail closed if the fixed CI matrix or required aggregate is weakened."""
     source = (root / ".github/workflows/check.yml").read_text()
+    def step(name):
+        match = re.search(r"^      - name: " + re.escape(name) + r"\n(.*?)(?=^      - name:|^  \w+:|\Z)", source, re.M | re.S)
+        if not match:
+            raise ValueError(f"missing CI step: {name}")
+        return match[1]
+
     match = re.search(r"^        lane: (\[.*\])$", source, re.M)
     if not match or json.loads(match[1]) != LANES:
         raise ValueError("check matrix must include every CI lane exactly once")
+    bun = re.search(r"      - name: Set up Bun\n(.*?)(?=\n      - name:)", source, re.S)
+    if not bun or "if: matrix.lane == 'go' || matrix.lane == 'race' || matrix.lane == 'web'" not in bun[1]:
+        raise ValueError("Go and web lanes require pinned Bun for enrollment contract coverage")
     verify, aggregate = source.split("\n  check:\n", 1)
     for required in ["  verify:\n", "      fail-fast: false\n",
                      '        run: python3 -B scripts/ci-check.py "${{ matrix.lane }}"\n']:
@@ -82,6 +91,16 @@ def validate_workflow(root):
             raise ValueError("check matrix must execute all lanes without fail-fast")
     if re.search(r"^    (if:|continue-on-error:)", verify, re.M) or "continue-on-error:" in source:
         raise ValueError("check matrix cannot skip jobs or tolerate failure")
+    for name in ["Run checks", "Require every verification lane"]:
+        if re.search(r"^        if:", step(name), re.M):
+            raise ValueError(f"CI step must be unconditional: {name}")
+    for name, lane, command in [
+        ("Run PostgreSQL integration tests", "go", "make postgres-test"),
+        ("Generate release artifacts", "web", "make release-artifacts"),
+    ]:
+        block = step(name)
+        if f"        if: matrix.lane == '{lane}'\n" not in block or f"        run: {command}\n" not in block:
+            raise ValueError(f"CI step must retain its lane and command: {name}")
     for required in ["    needs: [verify]\n", "    if: ${{ always() }}\n",
                      "          VERIFY_RESULT: ${{ needs.verify.result }}\n",
                      '        run: test "$VERIFY_RESULT" = success\n']:

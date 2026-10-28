@@ -70,6 +70,11 @@ class CICheckTest(unittest.TestCase):
             ('run: test "$VERIFY_RESULT" = success', "run: true"),
             ("  verify:\n", "  verify:\n    continue-on-error: true\n"),
             ("  verify:\n", "  verify:\n    if: false\n"),
+            ("if: matrix.lane == 'go' || matrix.lane == 'race' || matrix.lane == 'web'", "if: matrix.lane == 'web'"),
+            ("      - name: Run checks\n", "      - name: Run checks\n        if: false\n"),
+            ("      - name: Require every verification lane\n", "      - name: Require every verification lane\n        if: false\n"),
+            ("run: make postgres-test", "run: true"),
+            ("run: make release-artifacts", "run: true"),
         ]:
             with self.subTest(mutation=old), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
