@@ -1228,29 +1228,25 @@ func applicationDatabaseUpload(ctx context.Context, roots *x509.CertPool, hostna
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return invalid
+		return errors.New("connected upload transport failed")
 	}
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, 65538))
 	defer clear(data)
 	closeErr := response.Body.Close()
-	if readErr != nil || closeErr != nil || response.Header.Get("X-NeroCD-Fixture-Instance") != op.Result.ContainerID[:12] {
-		return invalid
-	}
-	if roots != nil {
-		if response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || len(response.TLS.PeerCertificates) == 0 {
-			return invalid
-		}
+	readComplete := readErr == nil && closeErr == nil
+	instanceMatch := response.Header.Get("X-NeroCD-Fixture-Instance") == op.Result.ContainerID[:12]
+	tlsVerified, certificateMatch := roots == nil, roots == nil
+	if roots != nil && response.TLS != nil && len(response.TLS.VerifiedChains) > 0 && len(response.TLS.PeerCertificates) > 0 {
+		tlsVerified = true
 		hash := sha256.Sum256(response.TLS.PeerCertificates[0].Raw)
-		if hex.EncodeToString(hash[:]) != fingerprint {
-			return invalid
-		}
+		certificateMatch = hex.EncodeToString(hash[:]) == fingerprint
 	}
+	status, bodyMatch := http.StatusOK, len(data) == len(expected) && sha256.Sum256(data) == sha256.Sum256(expected)
 	if method == "PUT" {
-		if response.StatusCode != http.StatusCreated || len(data) != 0 {
-			return invalid
-		}
-	} else if response.StatusCode != http.StatusOK || len(data) != len(expected) || sha256.Sum256(data) != sha256.Sum256(expected) {
-		return invalid
+		status, bodyMatch = http.StatusCreated, len(data) == 0
+	}
+	if !readComplete || !instanceMatch || !tlsVerified || !certificateMatch || response.StatusCode != status || !bodyMatch {
+		return fmt.Errorf("connected upload response rejected status=%d read_complete=%t tls_verified=%t instance_match=%t certificate_match=%t body_match=%t", response.StatusCode, readComplete, tlsVerified, instanceMatch, certificateMatch, bodyMatch)
 	}
 	return nil
 }
@@ -1265,11 +1261,13 @@ func (s *applicationDatabaseStorageFixture) assertFiles(f *databaseRunnerFixture
 		f.t.Fatal("upload volume daemon metadata or original creation identity changed")
 	}
 	for key, value := range s.Files {
-		if applicationDatabaseUpload(f.t.Context(), nil, "", "", op, "GET", key, value, "") != nil {
-			f.t.Fatal("connected retained upload failed direct application read")
+		if err := applicationDatabaseUpload(f.t.Context(), nil, "", "", op, "GET", key, value, ""); err != nil {
+			f.t.Fatalf("connected retained upload failed direct application read: %v", err)
 		}
-		if f.routes != nil && applicationDatabaseUpload(f.t.Context(), f.routes.roots, f.routes.hostname, f.routes.route.Certificate.Fingerprint, op, "GET", key, value, "127.0.0.1:443") != nil {
-			f.t.Fatal("connected retained upload failed trusted HTTPS read")
+		if f.routes != nil {
+			if err := applicationDatabaseUpload(f.t.Context(), f.routes.roots, f.routes.hostname, f.routes.route.Certificate.Fingerprint, op, "GET", key, value, "127.0.0.1:443"); err != nil {
+				f.t.Fatalf("connected retained upload failed trusted HTTPS read: %v", err)
+			}
 		}
 	}
 	raw := f.docker("cp", op.Result.ContainerID+":/data/uploads/retained_a", "-")
@@ -1445,13 +1443,14 @@ func TestApplicationDatabaseStorageUploadArchive(t *testing.T) {
 
 func TestApplicationDatabaseStorageTrustedUpload(t *testing.T) {
 	data := applicationDatabaseStoragePayload(17)
-	for _, mode := range []string{"exact", "wrong_instance", "missing_instance", "untrusted", "wrong_hostname", "wrong_fingerprint", "wrong_digest", "oversized", "redirect"} {
+	for _, mode := range []string{"exact", "wrong_instance", "missing_instance", "untrusted", "wrong_hostname", "wrong_fingerprint", "wrong_digest", "oversized", "redirect", "unavailable"} {
 		t.Run(mode, func(t *testing.T) {
 			id := strings.Repeat("a", 64)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/uploads/retained_a" || r.Method != "GET" {
 					t.Error("upload probe changed target")
 				}
+				w.Header().Set("Set-Cookie", "SENSITIVE-UPLOAD-CANARY")
 				instance := id[:12]
 				if mode == "wrong_instance" {
 					instance = strings.Repeat("b", 12)
@@ -1462,6 +1461,11 @@ func TestApplicationDatabaseStorageTrustedUpload(t *testing.T) {
 				if mode == "redirect" {
 					w.Header().Set("Location", "https://public.example.org")
 					w.WriteHeader(302)
+					return
+				}
+				if mode == "unavailable" {
+					w.WriteHeader(503)
+					_, _ = w.Write([]byte("SENSITIVE-UPLOAD-CANARY"))
 					return
 				}
 				body := bytes.Clone(data)
@@ -1486,8 +1490,18 @@ func TestApplicationDatabaseStorageTrustedUpload(t *testing.T) {
 			if mode == "wrong_fingerprint" {
 				fingerprint = strings.Repeat("b", 64)
 			}
-			if (applicationDatabaseUpload(t.Context(), roots, host, fingerprint, domain.HostingOperation{Result: &domain.HostingResult{ContainerID: id}}, "GET", "retained_a", data, server.Listener.Addr().String()) == nil) != (mode == "exact") {
+			err := applicationDatabaseUpload(t.Context(), roots, host, fingerprint, domain.HostingOperation{Result: &domain.HostingResult{ContainerID: id}}, "GET", "retained_a", data, server.Listener.Addr().String())
+			if (err == nil) != (mode == "exact") {
 				t.Fatal("trusted upload accepted changed identity, trust or bytes")
+			}
+			if err != nil {
+				if strings.Contains(err.Error(), "SENSITIVE") {
+					t.Fatal("upload diagnostics reflected response material")
+				}
+				classification := map[string]string{"wrong_instance": "instance_match=false", "missing_instance": "instance_match=false", "untrusted": "transport failed", "wrong_hostname": "transport failed", "wrong_fingerprint": "certificate_match=false", "wrong_digest": "body_match=false", "oversized": "body_match=false", "redirect": "status=302", "unavailable": "status=503"}[mode]
+				if classification == "" || !strings.Contains(err.Error(), classification) {
+					t.Fatalf("upload diagnostic lost bounded %s classification", mode)
+				}
 			}
 		})
 	}
