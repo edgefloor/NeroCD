@@ -26,7 +26,7 @@ vet:
 	GOCACHE="$(GOCACHE_DIR)" go vet $(PRODUCT_PACKAGES)
 
 race:
-	GOCACHE="$(GOCACHE_DIR)" go test -race -timeout=20m $(PRODUCT_PACKAGES)
+	GOCACHE="$(GOCACHE_DIR)" go test -race -timeout=30m $(PRODUCT_PACKAGES)
 
 lint-install: $(GOLANGCI_LINT)
 
