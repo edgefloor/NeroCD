@@ -234,20 +234,22 @@ async function wordpressWorkflow(h, initial) {
   await state("app_create");step="wordpress_setup";
   appContext=await browser.newContext({baseURL:appOrigin,ignoreHTTPSErrors:true});
   let wp=await appContext.newPage();wp.setDefaultTimeout(30000);
-  await wp.goto("/wp-admin/install.php?language=en_US");
-  await wp.locator('#weblog_title').fill("NeroCD WordPress acceptance");
-  await wp.locator('#user_login').fill(username);
-  await wp.locator('#pass1').fill(password);
-  await wp.locator('#admin_email').fill("wordpress@example.test");
-  const weak=wp.locator('input[name="pw_weak"]');if(await weak.isVisible())await weak.check();
-  await wp.getByRole("button",{name:"Install WordPress",exact:true}).click();
-  await expect(wp.getByRole("heading",{name:"Success!",exact:true})).toBeVisible();
+  step="wordpress_setup_navigate";await wp.goto("/wp-admin/install.php?language=en_US");
+  step="wordpress_setup_site_title";await wp.locator('#weblog_title').fill("NeroCD WordPress acceptance");
+  step='wordpress_setup_username';await wp.locator('#user_login').fill(username);
+  step='wordpress_setup_password';await wp.locator('#pass1').fill(password);
+  step='wordpress_setup_email';await wp.locator('#admin_email').fill("wordpress@example.test");
+  step="wordpress_setup_password_strength";await expect(wp.locator('#pass-strength-result')).toHaveClass(/(?:^|\s)strong(?:\s|$)/);
+  if(await wp.locator('#pass1').inputValue()!==password)throw Error("WordPress chosen installer password changed");
+  step="wordpress_setup_submit_enabled";await expect(wp.getByRole("button",{name:"Install WordPress",exact:true})).toBeEnabled();
+  step="wordpress_install_submit";await wp.getByRole("button",{name:"Install WordPress",exact:true}).click();
+  step="wordpress_install_success";await expect(wp.getByRole("heading",{name:"Success!",exact:true})).toBeVisible();
   async function login(){
     if(freshAppContext)await freshAppContext.close();
     freshAppContext=await browser.newContext({baseURL:appOrigin,ignoreHTTPSErrors:true});
     wp=await freshAppContext.newPage();wp.setDefaultTimeout(30000);
-    await wp.goto('/wp-login.php');await wp.locator('#user_login').fill(username);await wp.locator('#user_pass').fill(password);await wp.locator('#wp-submit').click();
-    await expect(wp.locator('#wpadminbar')).toBeVisible();
+    step='wordpress_login_navigate';await wp.goto('/wp-login.php');step='wordpress_login_username';await wp.locator('#user_login').fill(username);step='wordpress_login_password';await wp.locator('#user_pass').fill(password);step='wordpress_login_submit';await wp.locator('#wp-submit').click();
+    step='wordpress_login_success';await expect(wp.locator('#wpadminbar')).toBeVisible();
   }
   await login();step="wordpress_create_post";
   // Dashboard Quick Draft and Posts Quick Edit use the real built-in editor,
@@ -255,7 +257,7 @@ async function wordpressWorkflow(h, initial) {
   await wp.goto('/wp-admin/index.php');
   await wp.locator('#title').fill("NeroCD persistent WordPress post");
   await wp.locator('#content').fill("NeroCD persistent WordPress body");
-  const draft=wp.waitForResponse(r=>r.request().method()==="POST"&&new URL(r.url()).pathname==='/wp-admin/post.php');
+  const draft=wp.waitForResponse(r=>r.request().method()==="POST"&&new URL(r.url()).pathname==='/wp-admin/post.php');void draft.catch(()=>{});
   await wp.locator('#save-post').click();if((await draft).status()!==200)throw Error('WordPress initial draft rejected');
   await wp.goto('/wp-admin/edit.php');
   const row=wp.locator('tr.type-post').filter({has:wp.getByRole('link',{name:"NeroCD persistent WordPress post",exact:true})});
@@ -268,12 +270,16 @@ async function wordpressWorkflow(h, initial) {
   step="wordpress_upload_media";
   await wp.goto('/wp-admin/media-new.php');
   const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','base64');
-  const uploading=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/async-upload.php');
-  await wp.locator('input[type=file]').setInputFiles({name:'nerocd-wordpress-persistence.png',mimeType:'image/png',buffer:png});
+  const uploading=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/async-upload.php');void uploading.catch(()=>{});
+  const choosing=wp.waitForEvent('filechooser');void choosing.catch(()=>{});
+  step='wordpress_media_choose';await wp.getByRole('button',{name:'Select Files',exact:true}).click();
+  step='wordpress_media_upload';await (await choosing).setFiles({name:'nerocd-wordpress-persistence.png',mimeType:'image/png',buffer:png});
   const uploaded=await uploading;if(uploaded.status()!==200)throw Error('WordPress upload rejected');
   const mediaID=(await uploaded.text()).trim();if(!/^[1-9][0-9]*$/.test(mediaID))throw Error('WordPress short upload receipt missing');
-  const copyURL=wp.locator(`#media-item-${mediaID} .copy-attachment-url`);
-  await expect(copyURL).toBeVisible();
+  const mediaItem=wp.locator('#media-items .media-item').filter({has:wp.locator(`a.edit-attachment[href*="post=${mediaID}&action=edit"]`)});
+  step='wordpress_media_attachment_identity';await expect(mediaItem).toHaveCount(1);
+  const copyURL=mediaItem.getByRole('button',{name:'Copy URL to clipboard',exact:true});
+  step='wordpress_media_copy_url';await expect(copyURL).toBeVisible();
   const mediaURL=new URL(await copyURL.getAttribute('data-clipboard-text'));if(mediaURL.origin!==appOrigin||!mediaURL.pathname.startsWith('/wp-content/uploads/'))throw Error('WordPress upload origin changed');
   const proof=postID+'|'+mediaURL.pathname;
   async function checkWordPress(stage){
@@ -283,7 +289,7 @@ async function wordpressWorkflow(h, initial) {
     const image=await freshAppContext.request.get(mediaURL.pathname);if(image.status()!==200||!(await image.body()).equals(png))throw Error('WordPress upload bytes changed');
     const title='New write after '+stage,body='Fresh authenticated write '+stage;
     await wp.goto('/wp-admin/index.php');await wp.locator('#title').fill(title);await wp.locator('#content').fill(body);
-    const written=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/post.php');
+    const written=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/post.php');void written.catch(()=>{});
     await wp.locator('#save-post').click();const saved=await written;
     if(saved.status()!==200)throw Error('WordPress fresh draft write rejected');
     await wp.goto('/wp-admin/edit.php');
