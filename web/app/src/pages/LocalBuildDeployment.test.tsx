@@ -436,3 +436,13 @@ test("editing only saved Compose build variables requires a new build before dep
  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
 });
+
+test("a Dockerfile variable or injection edit requires a new build before deployment", async () => {
+ const latest: Resource = { ...resource, generation: 3, source: { kind: "git", git: { ...source!, generation: 4, settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "changed" }] } } } };
+ const fetch = backend(); await setup(true, latest);
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+ expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+ expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});

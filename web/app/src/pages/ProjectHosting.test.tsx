@@ -494,3 +494,41 @@ test("invalid Compose build variables cannot leave the actual create form", asyn
  fireEvent.submit(form); await screen.findByText(/reserved for build execution/);
  expect(api.createResource).not.toHaveBeenCalled();
 });
+
+test("Dockerfile creation retains multiline public build variables and injection opt-out across response loss", async () => {
+ setup(); await selectEnvironment();
+ const form = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+ fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Dockerfile app" } });
+ fireEvent.change(within(form).getByLabelText("Git repository URL"), { target: { value: "https://github.com/team/app" } });
+ fireEvent.click(within(form).getByRole("button", { name: "Add build variable" }));
+ fireEvent.change(within(form).getByLabelText("Build variable name 1"), { target: { value: "MESSAGE" } });
+ fireEvent.change(within(form).getByLabelText("Build variable value 1"), { target: { value: "first line\nsecond line" } });
+ fireEvent.click(within(form).getByRole("checkbox", { name: "Inject build arguments into Dockerfile" }));
+ vi.mocked(api.createResource).mockRejectedValueOnce(new ApiError(503, "unavailable", null)).mockResolvedValueOnce(resource);
+ fireEvent.submit(form); await screen.findByRole("alert");
+ const original = vi.mocked(api.createResource).mock.calls[0]![0];
+ expect(original.source).toMatchObject({ kind: "git", git: { settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: false, build_variables: [{ name: "MESSAGE", value: "first line\nsecond line" }] } } });
+ fireEvent.submit(form); await screen.findByText("Application configuration saved. Deployment is a separate request.");
+ expect(vi.mocked(api.createResource).mock.calls[1]![0]).toEqual(original);
+});
+test("Dockerfile source conflict reviews current argument injection while preserving the draft", async () => {
+ if (gitResource.source.kind !== "git") throw new Error("Expected Git resource");
+ const current: api.Resource = { ...gitResource, generation: 2, source: { kind: "git", git: { ...gitResource.source.git, generation: 3, settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: true, build_variables: [{ name: "MODE", value: "current" }] } } } };
+ vi.mocked(api.listResources).mockResolvedValue(page([gitResource]));
+ vi.mocked(api.updateResource).mockRejectedValueOnce(new ApiError(409, "stale", null)).mockResolvedValueOnce(current);
+ vi.mocked(api.getResource).mockResolvedValue(current);
+ setup(); const form = await edit();
+ fireEvent.click(within(form).getByRole("button", { name: "Add build variable" }));
+ fireEvent.change(within(form).getByLabelText("Build variable name 1"), { target: { value: "MODE" } });
+ fireEvent.change(within(form).getByLabelText("Build variable value 1"), { target: { value: "draft" } });
+ fireEvent.click(within(form).getByRole("checkbox", { name: "Inject build arguments into Dockerfile" }));
+ fireEvent.submit(form); await screen.findByRole("button", { name: "Keep my draft with generation 2" });
+ const metadata = within(screen.getByRole("region", { name: "Current Git configuration" }));
+ expect(metadata.getByText("Current Dockerfile ARG injection").nextElementSibling?.textContent).toBe("Enabled");
+ expect(metadata.getByText("Current build variables").nextElementSibling?.textContent).toBe('MODE="current"');
+ expect(within(form).getByRole<HTMLInputElement>("checkbox", { name: "Inject build arguments into Dockerfile" }).checked).toBe(false);
+ fireEvent.click(screen.getByRole("button", { name: "Keep my draft with generation 2" }));
+ fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
+ expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "draft" }] } } } });
+});

@@ -127,6 +127,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
             <dt>Current Compose file</dt><dd>{latest.source.git.settings.compose_file || "Not applicable"}</dd>
             <dt>Current public Compose service</dt><dd>{latest.source.git.settings.public_component || "Not applicable"}</dd>
             <dt>Current public Compose service port</dt><dd>{latest.source.git.settings.container_port ?? "Not applicable"}</dd>
+            <dt>Current Dockerfile ARG injection</dt><dd>{latest.source.git.settings.strategy === "dockerfile" ? latest.source.git.settings.inject_build_args_to_dockerfile === false ? "Disabled; use source declarations" : "Enabled" : "Not applicable"}</dd>
             <dt>Current build variables</dt><dd>{latest.source.git.settings.build_variables?.map(variable => `${variable.name}=${JSON.stringify(variable.value)}`).join(", ") || "None"}</dd>
             <dt>Current publish directory</dt><dd>{latest.source.git.settings.publish_dir || (latest.source.git.settings.strategy === "static" ? "Selected context root (default)" : "Not applicable")}</dd>
             <dt>Current SPA fallback</dt><dd>{latest.source.git.settings.spa_fallback ? "Enabled" : "Disabled (default)"}</dd>

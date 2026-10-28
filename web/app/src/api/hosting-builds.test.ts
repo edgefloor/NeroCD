@@ -74,3 +74,11 @@ test("public build cache retains configured variables and resolved arguments whi
  expect(decoded.compose_result!.definition.services.find(service => service.build)?.build?.args).toEqual({ MODE: "release", EMPTY: "" });
  expect(JSON.stringify(decoded)).not.toContain("secret_reference");
 });
+
+test.each([undefined, null, true, false])("Dockerfile build cache preserves public variables and injection setting %j", async injection => {
+ const settings = { strategy: "dockerfile" as const, build_variables: [{ name: "MESSAGE", value: "first\nsecond" }], ...(injection !== undefined ? { inject_build_args_to_dockerfile: injection } : {}) };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_variables).toEqual(settings.build_variables);
+ expect(decoded.snapshot.source.settings.inject_build_args_to_dockerfile).toBe(injection);
+});

@@ -55,13 +55,17 @@ test("Compose build variable rows retain literal and empty values and omit an em
   fireEvent.click(screen.getByRole("button", { name: "Remove build variable 1" }));
   expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_variables");
 });
-test("build variables are Compose-only, bounded and disabled with the containing editor", () => {
+test("build variables survive supported builder switches and clear for unsupported builders", () => {
   const variables = Array.from({ length: 64 }, (_, index) => ({ name: `ARG_${index}`, value: "value" }));
   const view = render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: variables } }} />);
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add build variable" }).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "dockerfile" } });
   expect(screen.queryByRole("region", { name: "Compose build variables" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Dockerfile build variables" })).toBeTruthy();
+  expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_variables).toEqual(variables);
+  fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "railpack" } });
   expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_variables");
+  expect(screen.queryByRole("region", { name: "Dockerfile build variables" })).toBeNull();
   view.unmount(); render(<Editor disabled initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: [{ name: "MODE", value: "production" }] } }} />);
   expect(screen.getByLabelText("Build variable value 1").closest("fieldset")!.disabled).toBe(true);
 });
@@ -78,4 +82,16 @@ test("build variable validation preserves case-sensitive names, empty values and
  expect(gitBuildVariablesError({ strategy: "compose", build_variables: [{ name: "PUBLIC", value: "" }, { name: "public", value: "é".repeat(2048) }, { name: "MULTILINE", value: "line1\r\nline2\nline3" }] })).toBe("");
  expect(gitBuildVariablesError({ strategy: "compose", build_variables: [{ name: "PUBLIC", value: "" }, { name: "PUBLIC", value: "other" }] })).toMatch(/unique/);
  expect(gitBuildVariablesError({ strategy: "compose", build_variables: Array.from({ length: 65 }, (_, index) => ({ name: `ARG_${index}`, value: "" })) })).toMatch(/64/);
+});
+
+test.each([undefined, null, true, false])("Dockerfile injection setting %j preserves the enabled default and explicit opt-out", injection => {
+ render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "dockerfile", build_variables: [{ name: "MODE", value: "release" }], ...(injection !== undefined ? { inject_build_args_to_dockerfile: injection } : {}) } }} />);
+ const control = screen.getByRole<HTMLInputElement>("checkbox", { name: "Inject build arguments into Dockerfile" });
+ expect(control.checked).toBe(injection !== false);
+ fireEvent.click(control);
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings.inject_build_args_to_dockerfile).toBe(injection === false);
+ fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "compose" } });
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("inject_build_args_to_dockerfile");
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_variables).toEqual([{ name: "MODE", value: "release" }]);
+ expect(screen.queryByRole("checkbox", { name: "Inject build arguments into Dockerfile" })).toBeNull();
 });

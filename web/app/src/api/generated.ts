@@ -8159,7 +8159,9 @@ export interface components {
             value: string;
         };
         HostingBuildSettings: {
-            /** @description Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
+            /** @description Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source. */
+            inject_build_args_to_dockerfile?: boolean | null;
+            /** @description Compose or Dockerfile public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
             build_variables?: components["schemas"]["HostingBuildVariable"][];
             /** @enum {string} */
             strategy: "dockerfile" | "railpack" | "static" | "compose";

@@ -194,3 +194,15 @@ test("Git Compose build review shows configured variables and resolved per-servi
  await screen.findByText(/Recorded build variables: MODE="configured"/);
  await screen.findByText(/Resolved build arguments: FALLBACK="default", MODE="configured"/);
 });
+
+test("Dockerfile build review retains public arguments and explicit source declaration mode", async () => {
+ const settings = { strategy: "dockerfile" as const, inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "release" }] };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build variables: MODE="release"/);
+ expect(screen.getByText(/Reviewed Dockerfile ARG injection: Disabled; use source declarations/)).toBeTruthy();
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build variables: MODE="release"/);
+ expect(screen.getByText(/Recorded Dockerfile ARG injection: Disabled; use source declarations/)).toBeTruthy();
+});
