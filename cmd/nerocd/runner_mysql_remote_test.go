@@ -17,6 +17,9 @@ import (
 )
 
 func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root-owned persistent database directories")
+	}
 	for _, mode := range []string{"register", "enroll"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("NEROCD_MODE", "development")
@@ -24,7 +27,20 @@ func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
 			t.Setenv("NEROCD_RUNNER_CREDENTIAL_FILE", "")
 			t.Setenv("NEROCD_RUNNER_JOURNAL_DIR", "")
 			t.Setenv("NEROCD_RUNNER_SECRET_ROOT", "")
-			root := t.TempDir()
+			root, err := os.MkdirTemp("/var/lib", "nerocd-mysql-remote-cli-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.RemoveAll(root); err != nil {
+					t.Error(err)
+				}
+			})
+			for _, name := range []string{"state", "secrets"} {
+				if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
 			credential, enrollment := filepath.Join(root, "credential"), filepath.Join(root, "enrollment")
 			caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseMySQLCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability}
 			var mu sync.Mutex
@@ -67,7 +83,7 @@ func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
 				}
 				args = append(args, "--enrollment-file", enrollment, "--credential-file", credential)
 			}
-			err := runRunner(args)
+			err = runRunner(args)
 			mu.Lock()
 			defer mu.Unlock()
 			if err == nil || !claimed || mode == "register" && !registered || mode == "enroll" && !consumed {
