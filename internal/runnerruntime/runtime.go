@@ -570,6 +570,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	var supervisor *attemptSupervisor
 	var reporter *attemptReporter
 	var redactor *runner.Redactor
+	var logFramer processLogFramer
 	emitPersisted := func(stream string, message string) {
 		if message == "" {
 			return
@@ -589,13 +590,17 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		if redactor != nil {
 			message = redactor.RedactChunk(stream, message)
 		}
-		emitPersisted(stream, message)
+		for _, event := range logFramer.push(stream, message) {
+			emitPersisted(event.Stream, event.Message)
+		}
 	}
 	flushRedactor := func() {
-		if redactor == nil {
-			return
-		}
 		for _, event := range redactor.Flush() {
+			for _, framed := range logFramer.push(event.Stream, event.Message) {
+				emitPersisted(framed.Stream, framed.Message)
+			}
+		}
+		for _, event := range logFramer.flush() {
 			emitPersisted(event.Stream, event.Message)
 		}
 	}

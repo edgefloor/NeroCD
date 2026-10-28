@@ -4,11 +4,14 @@
 set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source "$root/scripts/local-image-registry.sh"
-file="$root/acceptance/runtime-compose/compose.yaml" evidence=/tmp/nerocd-compose-runtime.txt
+file="$root/acceptance/runtime-compose/compose.yaml"
+runtime_evidence_output=${NEROCD_RUNTIME_COMPOSE_EVIDENCE:-/tmp/nerocd-compose-runtime.txt}
 runtime_profile=${NEROCD_RUNTIME_PROFILE:-development}
 case "$runtime_profile" in development|production) ;; *) printf 'runtime-compose: invalid NEROCD_RUNTIME_PROFILE\n' >&2; exit 2 ;; esac
 if [[ "$runtime_profile" == production ]]; then file+=" $root/acceptance/runtime-compose/compose.production-dogfood.yaml"; fi
 dir=$(mktemp -d /tmp/nerocd-runtime-compose.XXXXXXXX)
+runtime_evidence_dir=$(mktemp -d /tmp/nerocd-compose-evidence.XXXXXXXX)
+evidence=$(mktemp "$runtime_evidence_dir/evidence.XXXXXXXX")
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 project="nerocd-compose-$suffix" compose_project="target_$suffix" image="nerocd-compose-runtime:$suffix" runner_image="nerocd-compose-runner:$suffix" git_image="nerocd-compose-git:$suffix"
 fixture_a="nerocd-compose-fixture-a:$suffix" fixture_b="nerocd-compose-fixture-b:$suffix" fixture_c="nerocd-compose-fixture-c:$suffix" pass=false
@@ -18,7 +21,21 @@ fixture_registry_container_id='' fixture_registry_port='' fixture_registry_diagn
 fixture_a_registry_tag='' fixture_b_registry_tag='' fixture_c_registry_tag=''
 cleanup_helper_image='alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412'
 runner_workdir="$dir/runner-workspace"; runner_secret_root="$dir/runner-secrets"; mkdir -m 0700 "$runner_workdir" "$runner_secret_root"; export NEROCD_RUNTIME_WORKDIR="$runner_workdir" NEROCD_RUNTIME_SECRET_ROOT="$runner_secret_root"
-: >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
+record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
+publish_runtime_evidence(){
+  if python3 - "$evidence" "$runtime_evidence_output" <<'PYTHON'
+import os
+import sys
+os.replace(sys.argv[1], sys.argv[2])
+PYTHON
+  then
+    evidence=$runtime_evidence_output
+    rmdir -- "$runtime_evidence_dir"
+  else
+    printf 'runtime-compose: could not publish evidence; private evidence retained\n' >&2
+    return 1
+  fi
+}
 # Docker Desktop can remap the host socket group inside containers. Derive the
 # effective mount GID in the same mount namespace the non-root runner uses.
 docker_gid(){ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412 sh -ec 'stat -c %g /var/run/docker.sock'; }
@@ -672,11 +689,12 @@ cleanup(){
   record "cleanup_complete=$cleanup_complete"
   if [[ "$cleanup_complete" != true && $original -eq 0 ]]; then final=1; fi
   if [[ "$pass" == true && $original -eq 0 && "$cleanup_complete" == true ]]; then record 'PASS: real typed Compose A/B/C rollback and restart gate'; fi
+  publish_runtime_evidence || final=1
   printf 'runtime compose evidence: %s\n' "$evidence"
   exit "$final"
 }
 trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
-for x in docker curl jq git od; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
+for x in docker curl jq git od python3; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
 socket_gid=$(docker_gid); [[ "$socket_gid" =~ ^[0-9]+$ ]] || fail 'Docker socket GID unavailable'; record "project=$project docker_gid=$socket_gid socket_root_equivalent=true"
 docker build --pull -t "$image" "$root" >"$dir/build.log" 2>&1 || fail 'fresh server image build failed'
 docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx unavailable'
@@ -960,6 +978,7 @@ compose logs --no-color >"$dir/logs.txt" || true; ! grep -Eiq 'BEGIN (OPENSSH|RS
 # independent cleanup and PASS contract.
 if [[ "${NEROCD_RUNTIME_COMPOSE_LIBRARY:-}" == 1 ]]; then
   record 'runtime_compose_library_handoff=true'
+  publish_runtime_evidence || fail 'could not publish library evidence'
   trap - EXIT ERR
   return 0
 fi

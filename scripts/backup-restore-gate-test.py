@@ -18,6 +18,9 @@ class EvidenceTest(unittest.TestCase):
     def test_dogfood_publication_replaces_symlink_without_touching_target(self):
         self.check_publication(GATE.with_name('dogfood-gate.sh'), 'NEROCD_DOGFOOD_EVIDENCE', 'dogfood')
 
+    def test_compose_publication_replaces_symlink_without_touching_target(self):
+        self.check_publication(GATE.parent.parent / 'acceptance/runtime-compose/gate.sh', 'NEROCD_RUNTIME_COMPOSE_EVIDENCE', 'runtime compose')
+
     def check_publication(self, gate, variable, label):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

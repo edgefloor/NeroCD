@@ -239,15 +239,18 @@ func TestExecuteClaimExactSecretsAreRedactedBeforeJournalAndTransport(t *testing
 	for _, tc := range []struct {
 		name, secret, prefix string
 		forbidden            []string
+		output               string
 	}{
-		{"multiline", "canary-first\ncanary-second\n", "", []string{"canary-first", "canary-second"}},
-		{"overlapping prefix", "canary-prefix-private-suffix", "canary-prefix", []string{"canary-prefix", "private-suffix"}},
+		{"multiline", "canary-first\ncanary-second\n", "", []string{"canary-first", "canary-second"}, ""},
+		{"overlapping prefix", "canary-prefix-private-suffix", "canary-prefix", []string{"canary-prefix", "private-suffix"}, ""},
+		{"UTF-8 chunk boundaries", "canary-secret", "", []string{"canary-secret"}, strings.Repeat("€", 20000)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("NEROCD_TEST_EXACT_SECRET", tc.secret)
 			t.Setenv("NEROCD_TEST_PREFIX_SECRET", tc.prefix)
 			claim := secretTestClaim("")
-			claim.PrimitivePlan.Process.Command = []string{"/bin/sh", "-c", `printf 'before:'; printf '%s' "$TOKEN"; printf ':after'`}
+			claim.PrimitivePlan.Process.Command = []string{"/bin/sh", "-c", `printf 'before:'; printf '%s' "$TOKEN"; printf ':after'; printf '%s' "$SAFE_OUTPUT"`}
+			claim.PrimitivePlan.Process.Environment = map[string]string{"SAFE_OUTPUT": tc.output}
 			claim.PrimitivePlan.Secrets = []domain.SecretBinding{{Name: "exact", Provider: domain.ProviderEnv, Reference: "NEROCD_TEST_EXACT_SECRET", Target: "env:TOKEN", Required: true, Classification: runner.SecretClassificationDevelopment}}
 			if tc.prefix != "" {
 				claim.PrimitivePlan.Secrets = append(claim.PrimitivePlan.Secrets, domain.SecretBinding{Name: "prefix", Provider: domain.ProviderEnv, Reference: "NEROCD_TEST_PREFIX_SECRET", Target: "env:PREFIX", Required: true, Classification: runner.SecretClassificationDevelopment})
@@ -310,7 +313,7 @@ func TestExecuteClaimExactSecretsAreRedactedBeforeJournalAndTransport(t *testing
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if !checkedDurable || stdout.String() != "before:"+runner.RedactionMarker+":after" || journal.Depth() != 0 {
+			if !checkedDurable || stdout.String() != "before:"+runner.RedactionMarker+":after"+tc.output || journal.Depth() != 0 {
 				t.Fatal("exact secret did not remain redacted through durable reporting")
 			}
 		})

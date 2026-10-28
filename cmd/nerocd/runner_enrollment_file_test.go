@@ -102,7 +102,7 @@ func TestEnrollmentRemovalRetainsConsumedFileAndParent(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(files.close)
-			movedPath := path
+			var movedPath string
 			switch replacement {
 			case "file", "file symlink":
 				movedPath = path + ".original"
@@ -179,7 +179,7 @@ func TestEnrollmentRejectsHardlinkedInput(t *testing.T) {
 	}
 	if files, err := prepareRunnerEnrollmentFiles(path, filepath.Join(root, "credential")); err == nil {
 		files.close()
-		t.Fatal("hardlinked enrollment was accepted")
+		t.Fatal("enrollment with multiple hard links was accepted")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil || string(raw) != "private enrollment" {
