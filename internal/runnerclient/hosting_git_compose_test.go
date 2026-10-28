@@ -16,11 +16,14 @@ func TestGitComposeIdentityRequiresExactExplicitOptIn(t *testing.T) {
 		options RuntimeExecutionOptions
 		ok      bool
 	}{
-		{"configured", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, true},
-		{"not configured", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability}, RuntimeExecutionOptions{Build: true}, false},
+		{"configured", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, true},
+		{"not configured", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}, RuntimeExecutionOptions{Build: true}, false},
+		{"args missing", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, false},
+		{"build profile missing", []string{domain.HostingBuildTaskType, domain.HostingGitComposeArgsCapability}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, false},
+		{"args not configured", []string{domain.HostingBuildTaskType, domain.HostingGitComposeArgsCapability}, RuntimeExecutionOptions{Build: true}, false},
 		{"capability missing", []string{domain.HostingBuildTaskType}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, false},
-		{"build missing", []string{domain.HostingGitComposeBuildCapability}, RuntimeExecutionOptions{ComposeBuild: true}, false},
-		{"shell forbidden", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability, "shell"}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, false},
+		{"build missing", []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}, RuntimeExecutionOptions{ComposeBuild: true}, false},
+		{"shell forbidden", []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, "shell"}, RuntimeExecutionOptions{Build: true, ComposeBuild: true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -106,6 +108,7 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 // BuildWithOutput builds synchronously and observes selected fresh build text.
 // Receipt replay emits no output. The sink is not part of immutable identity.
 func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputSink) (result Result, retErr error) {
+	r = ownedBuildRequest(r)
 	if err := r.validate(parent); err != nil {
 		return result, err
 	}
@@ -303,10 +306,7 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 		}
 	}
 	export := filepath.Join(dir, "image.oci.tar")
-	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=docker,oci-mediatypes=true,dest=" + export + ",compression=gzip,force-compression=true", source}
-	if r.BuildTarget != "" {
-		buildArgs = append(buildArgs[:len(buildArgs)-1], "--target", r.BuildTarget, source)
-	}
+	buildArgs := r.buildxArguments(builder, frontend, source, filename, export)
 	if err = e.observedCommand(ctx, dir, logs, observer, OutputBuildKit, false, e.config.BuildxBinary, buildArgs...); err != nil {
 		return result, err
 	}
@@ -509,4 +509,35 @@ func (e *Engine) admissionFree(ctx context.Context, dir string, l Limits) error 
 		}
 	}
 	return nil
+}
+
+// orderedBuildArguments keeps argument identity deterministic without shell or
+// process environment expansion. Values are one argv element, including spaces.
+func orderedBuildArguments(args map[string]string) []string {
+	names := make([]string, 0, len(args))
+	for name := range args {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name+"="+args[name])
+	}
+	return out
+}
+
+func ownedBuildRequest(r Request) Request {
+	r.BuildArgs = maps.Clone(r.BuildArgs)
+	return r
+}
+
+func (r Request) buildxArguments(builder, frontend, source, filename, export string) []string {
+	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=docker,oci-mediatypes=true,dest=" + export + ",compression=gzip,force-compression=true", source}
+	for _, argument := range orderedBuildArguments(r.BuildArgs) {
+		buildArgs = append(buildArgs[:len(buildArgs)-1], "--build-arg", argument, source)
+	}
+	if r.BuildTarget != "" {
+		buildArgs = append(buildArgs[:len(buildArgs)-1], "--target", r.BuildTarget, source)
+	}
+	return buildArgs
 }

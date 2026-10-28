@@ -139,7 +139,7 @@ func parseHostingComposeBuildArgs(node *yaml.Node, variables []HostingBuildVaria
 				}
 			}
 		default:
-			return nil, errors.New("Compose build args require a map or list")
+			return nil, errors.New("compose build args require a map or list")
 		}
 	}
 	// Configured build-time variables are CLI overrides, including variables not
@@ -159,7 +159,7 @@ func parseHostingComposeBuildArgs(node *yaml.Node, variables []HostingBuildVaria
 // Compose accepts scalar map values and normalizes numbers and booleans to text.
 func hostingComposeBuildArgScalar(node *yaml.Node) (string, error) {
 	if node.Kind != yaml.ScalarNode {
-		return "", errors.New("Compose build argument requires a scalar")
+		return "", errors.New("compose build argument requires a scalar")
 	}
 	switch node.Tag {
 	case "!!str":

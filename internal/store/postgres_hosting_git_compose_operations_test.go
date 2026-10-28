@@ -25,7 +25,7 @@ func settledGitComposeOperationsFixture(t *testing.T, customize ...func(*domain.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[] WHERE id=$2`, []string{domain.HostingGitComposeBuildCapability, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingStackLifecycleCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability, domain.HostingComposeStorageArchiveCapability, domain.HostingOwnedStorageCapability}, f.runner); err != nil {
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[] WHERE id=$2`, []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingStackLifecycleCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability, domain.HostingComposeStorageArchiveCapability, domain.HostingOwnedStorageCapability}, f.runner); err != nil {
 		t.Fatal(err)
 	}
 	resource, err := f.pg.GetResource(ctx, f.src.ResourceID)

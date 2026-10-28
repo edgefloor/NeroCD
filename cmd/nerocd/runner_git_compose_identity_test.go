@@ -42,13 +42,16 @@ func TestRunnerBuildCLIPropagatesComposeIdentityConfiguration(t *testing.T) {
 						t.Error("configured CLI registration changed")
 					}
 					capabilities = input.Capabilities
-					found := false
-					for _, capability := range capabilities {
-						found = found || capability == domain.HostingGitComposeBuildCapability
+					for _, needed := range []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability} {
+						found := false
+						for _, capability := range capabilities {
+							found = found || capability == needed
+						}
+						if found != compose {
+							t.Error("CLI did not advertise exact configured Compose capability", needed)
+						}
 					}
-					if found != compose {
-						t.Error("CLI did not advertise exact configured Compose capability")
-					}
+
 					_ = json.NewEncoder(w).Encode(runnerRegisterResponse{Token: "dedicated-fixture"})
 				case "/api/v1/runners/identity":
 					if r.Header.Get("Authorization") != "Bearer dedicated-fixture" {

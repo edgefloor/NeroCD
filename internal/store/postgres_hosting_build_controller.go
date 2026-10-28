@@ -176,6 +176,24 @@ func (s *PostgresStore) recoverBuildDispatch(ctx context.Context, tx pgx.Tx) err
 // currentBuildExecution checks current authority while destination/resource locks
 // serialize placement and source changes. The lease clock is checked separately last.
 func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) error {
+	if err := currentBuildIntent(ctx, tx, b); err != nil {
+		return err
+	}
+	if b.Snapshot.Source.Settings.Strategy == "compose" {
+		capable, e := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: b.Snapshot.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
+		if e != nil {
+			return e
+		}
+		if !capable {
+			return ErrConflict
+		}
+	}
+	return nil
+}
+
+// currentBuildIntent also supports metadata-only retries of private requests.
+// It cannot authorize source acquisition or another engine effect on its own.
+func currentBuildIntent(ctx context.Context, tx pgx.Tx, b domain.HostingBuild) error {
 	r, err := lockBuildResourceDestination(ctx, tx, b.ResourceID)
 	if err != nil {
 		return err

@@ -145,11 +145,12 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
 	}
-	composeCapable := false
+	composeCapable, argsCapable := false, false
 	for _, capability := range result.Capabilities {
 		composeCapable = composeCapable || capability == domain.HostingGitComposeBuildCapability
+		argsCapable = argsCapable || capability == domain.HostingGitComposeArgsCapability
 	}
-	if composeCapable != options.ComposeBuild || composeCapable && (!buildConfigured || !buildCapable || shellCapable) {
+	if composeCapable != options.ComposeBuild || argsCapable != options.ComposeBuild || composeCapable && (!buildConfigured || !buildCapable || shellCapable) {
 		return "", errors.New("git Compose build capability requires explicit configuration")
 	}
 	if verifiedSwitchCapable != options.ProxyVerifiedSwitch || verifiedSwitchCapable && !proxyConfigured {

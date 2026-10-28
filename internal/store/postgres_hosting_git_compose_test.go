@@ -18,13 +18,13 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 	ctx := t.Context()
 	src := f.src
 	src.Generation++
-	src.Settings = domain.HostingBuildSettings{Strategy: "compose", ComposeFile: "deploy/compose.yaml", PublicComponent: "web", ContainerPort: 8080}
+	src.Settings = domain.HostingBuildSettings{BuildVariables: []domain.HostingBuildVariable{{Name: "ARG", Value: "configured"}}, Strategy: "compose", ComposeFile: "deploy/compose.yaml", PublicComponent: "web", ContainerPort: 8080}
 	var err error
 	f.src, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", 1, src, destinationEvent("compose-source"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[] WHERE id=$2`, []string{domain.HostingGitComposeBuildCapability, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability}, f.runner); err != nil {
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=capabilities || $1::text[] WHERE id=$2`, []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingStackCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability}, f.runner); err != nil {
 		t.Fatal(err)
 	}
 	resource, err := f.pg.GetResource(ctx, f.src.ResourceID)
@@ -37,10 +37,58 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 		t.Fatal("disabled Compose build admitted", err)
 	}
 	policy.GitCompose = true
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pg.RequestHostingBuild(ctx, "old-runner-compose", f.src.ResourceID, "usr_bootstrap", input, policy, buildEnqueue, destinationEvent("old-runner-compose")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("runner without args capability admitted", err)
+	}
+	var rejectedCount int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM hosting_builds WHERE id='old-runner-compose'`).Scan(&rejectedCount); err != nil || rejectedCount != 0 {
+		t.Fatal("denied build persisted effects", err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = f.pg.RequestHostingBuild(ctx, "compose-build", f.src.ResourceID, "usr_bootstrap", input, policy, buildEnqueue, destinationEvent("compose-build")); err != nil {
 		t.Fatal(err)
 	}
-	b, a := f.activate(t, "compose-build")
+	b, err := f.pg.DispatchHostingBuild(ctx, "compose-build", buildDispatch, destinationEvent("dispatch-compose"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
+	denied, claimErr := f.pg.ClaimRun(ctx, f.runner, time.Now(), time.Minute)
+	if claimErr == nil && denied.Run.ID == b.RunID {
+		t.Fatal("queued Compose work reached args-incapable runner")
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
+	buildClaim, err := f.pg.ClaimRun(ctx, f.runner, time.Now(), time.Minute)
+	if err != nil || buildClaim.Run.ID != b.RunID {
+		t.Fatal("capable runner could not buildClaim Compose build", err)
+	}
+	a := domain.HostingBuildAuthority{BuildID: b.ID, RunID: b.RunID, LeaseID: buildClaim.Lease.ID, Attempt: buildClaim.Lease.Attempt, Fence: buildClaim.Lease.Fence}
+	b, err = f.pg.BeginHostingBuildSource(ctx, f.runner, a, b.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
+	status, statusErr := f.pg.HostingBuildStatus(ctx, f.runner, a)
+	if statusErr != nil || status.MayExecute {
+		t.Fatal("source authorization ignored removed args capability", statusErr)
+	}
+	if _, err = f.pg.CommitHostingBuildSource(ctx, f.runner, a, "denied-source", sourceBuildReceipt(b)); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("source effect accepted after args capability removal", err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
 	b, err = f.pg.CommitHostingBuildSource(ctx, f.runner, a, "compose-source-receipt", sourceBuildReceipt(b))
 	if err != nil {
 		t.Fatal(err)
@@ -50,9 +98,18 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := domain.HostingStackSource{Original: "services:\n  web:\n    build: ../app\n    image: local-app:v1\n    volumes: [uploads:/data]\n  worker:\n    image: local-app:v1\n  db:\n    image: postgres:17\nvolumes:\n  uploads: {}\n", PublicComponent: "web", ContainerPort: 8080}
+	source.Original = strings.Replace(source.Original, "    build: ../app\n", "    build:\n      context: ../app\n      args: {ARG: from-source, FROM: '${ARG:?required}'}\n", 1)
 	definition, err := domain.ParseHostingGitCompose(source, src.Settings)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if b.Snapshot.Source.Settings.BuildVariables[0].Value != "configured" {
+		t.Fatal("build variables snapshot changed")
+	}
+	for _, service := range definition.Services {
+		if service.Name == "web" && (service.Build.Args["ARG"] != "configured" || service.Build.Args["FROM"] != "configured") {
+			t.Fatal("configured CLI precedence was not persisted")
+		}
 	}
 	artifact := buildArtifact(b)
 	artifact.BuildID = domain.HostingComposeBuildID(b.ID, "web")
@@ -105,6 +162,16 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 	}
 	completed, err := f.pg.CompleteHostingBuild(ctx, f.runner, a, "compose-complete", b.Revision, store.HostingBuildCompletion{State: "succeeded", ComposeResult: &result})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
+		t.Fatal(err)
+	}
+	replayBuild, replayErr := f.pg.RequestHostingBuild(ctx, "ignored-retry-build", f.src.ResourceID, "usr_bootstrap", input, policy, buildEnqueue, destinationEvent("retry-with-old-runner"))
+	if replayErr != nil || replayBuild.ID != b.ID {
+		t.Fatal("authorized build retry lost immutable receipt", replayErr)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingGitComposeArgsCapability); err != nil {
 		t.Fatal(err)
 	}
 	replay, err := f.pg.CompleteHostingBuild(ctx, f.runner, a, "compose-complete", b.Revision, store.HostingBuildCompletion{State: "succeeded", ComposeResult: &result})
@@ -267,7 +334,8 @@ func TestPostgresGitComposeResultAndDeployment(t *testing.T) {
 	}
 	changedSource := f.src
 	changedSource.Generation++
-	changedSource.RequestedRef = "next-branch"
+	changedSource.Settings = changedSource.Settings.Clone()
+	changedSource.Settings.BuildVariables[0].Value = "next-build-value"
 	changedSource, err = configureBuildFixtureSource(f.pg, ctx, "usr_bootstrap", f.src.Generation, changedSource, destinationEvent("desired-source-edited"))
 	if err != nil {
 		t.Fatal(err)

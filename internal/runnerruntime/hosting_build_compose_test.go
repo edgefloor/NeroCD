@@ -61,6 +61,9 @@ func composeBuildFixture(t *testing.T) (*BuildExecutor, *buildFixtureClient, dom
 
 func TestGitComposeBuildExecutorMaterializesMixedSource(t *testing.T) {
 	e, client, a, at := composeBuildFixture(t)
+	client.build.Snapshot.Source.Settings.BuildVariables = []domain.HostingBuildVariable{{Name: "APP_VERSION", Value: "configured"}, {Name: "MULTILINE", Value: "first\nsecond"}}
+	client.build.Snapshot.InputID = ""
+	client.build.Snapshot.InputID = domain.HostingDocumentHash(client.build.Snapshot)
 	var requests []hostingbuild.Request
 	e.engine = buildEngineFunc(func(ctx context.Context, r hostingbuild.Request) (hostingbuild.Result, error) {
 		requests = append(requests, r)
@@ -77,6 +80,9 @@ func TestGitComposeBuildExecutorMaterializesMixedSource(t *testing.T) {
 	}
 	for i, owner := range []string{"jobs", "web"} {
 		request := requests[i]
+		if request.BuildArgs["APP_VERSION"] != "configured" || request.BuildArgs["MULTILINE"] != "first\nsecond" {
+			t.Fatal("configured public build args not delivered to each owner")
+		}
 		if request.BuildID != domain.HostingComposeBuildID(a.BuildID, owner) || request.SourceID != client.build.Snapshot.Source.ID || request.InputID != client.build.Snapshot.InputID || request.Strategy != hostingbuild.Dockerfile || request.DaemonID != "daemon" || request.Limits.ExportBytes != e.config.Policy.Limits.ExportBytes/2 {
 			t.Fatal("child build lost parent identity or budget")
 		}
@@ -98,7 +104,7 @@ func TestGitComposeBuildExecutorMaterializesMixedSource(t *testing.T) {
 }
 
 func TestGitComposeBuildExecutorFailureBoundaries(t *testing.T) {
-	for _, mode := range []string{"source_fetch", "missing_file", "invalid_source", "build_failed", "cleanup_unconfirmed", "runner_disabled", "policy_disabled"} {
+	for _, mode := range []string{"source_fetch", "missing_file", "invalid_source", "missing_argument", "build_failed", "cleanup_unconfirmed", "runner_disabled", "policy_disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			e, client, a, at := composeBuildFixture(t)
 			calls := 0
@@ -114,13 +120,18 @@ func TestGitComposeBuildExecutorFailureBoundaries(t *testing.T) {
 				e.checkout = func(context.Context, domain.HostingBuildSnapshot, string, string, func(context.Context, domain.HostingBuildSourceReceipt) error, func(context.Context, string) error) error {
 					return sourceError("fetch_failed")
 				}
-			case "missing_file", "invalid_source":
+			case "missing_file", "invalid_source", "missing_argument":
 				checkout := e.checkout
 				e.checkout = func(ctx context.Context, s domain.HostingBuildSnapshot, p, frozen string, accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
 					return checkout(ctx, s, p, frozen, accept, func(ctx context.Context, p string) error {
 						name := filepath.Join(p, s.Source.Settings.ContextDir, s.Source.Settings.ComposeFile)
 						if mode == "missing_file" {
 							if err := os.Remove(name); err != nil {
+								return err
+							}
+						} else if mode == "missing_argument" {
+							content := strings.Replace(composeBuildSource, "      target: runtime\n", "      target: runtime\n      args: {REQUIRED: '${MISSING:?must configure}'}\n", 1)
+							if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
 								return err
 							}
 						} else if err := os.WriteFile(name, []byte("services: [bad]"), 0o600); err != nil {
@@ -149,6 +160,9 @@ func TestGitComposeBuildExecutorFailureBoundaries(t *testing.T) {
 			}
 			if mode == "source_fetch" && (client.build.FailureCode != "source_failed" || calls != 0) {
 				t.Fatal("fetch failure entered engine or lost failure code")
+			}
+			if mode == "missing_argument" && (calls != 0 || client.build.FailureCode != "build_failed") {
+				t.Fatal("missing required variable reached engine or lost failure code")
 			}
 			if mode == "cleanup_unconfirmed" && len(e.journal.Snapshot().Build) == 0 {
 				t.Fatal("unconfirmed cleanup discarded intent")

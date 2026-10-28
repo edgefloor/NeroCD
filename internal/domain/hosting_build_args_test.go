@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -76,6 +77,17 @@ func TestHostingBuildVariablesBoundsAndIdentity(t *testing.T) {
 		if domain.ValidateHostingBuildSettings(settings) == nil {
 			t.Fatal("invalid build variables accepted")
 		}
+	}
+	settings.BuildVariables = nil
+	for i := range 65 {
+		settings.BuildVariables = append(settings.BuildVariables, domain.HostingBuildVariable{Name: fmt.Sprintf("ARG_%d", i), Value: ""})
+	}
+	if domain.ValidateHostingBuildSettings(settings) == nil {
+		t.Fatal("too many public build variables accepted")
+	}
+	settings.BuildVariables = settings.BuildVariables[:64]
+	if domain.ValidateHostingBuildSettings(settings) != nil {
+		t.Fatal("64 bounded public variables rejected")
 	}
 	settings.BuildVariables = []domain.HostingBuildVariable{{Name: "ARG", Value: "configured"}}
 	if domain.ValidateHostingBuildSettings(settings) != nil {

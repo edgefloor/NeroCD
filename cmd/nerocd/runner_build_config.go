@@ -146,7 +146,7 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		return nil, errors.New("git Compose requires matching explicit runner and operator policy")
 	}
 	for _, capability := range capabilities {
-		if capability == domain.HostingGitComposeBuildCapability && !compose {
+		if (capability == domain.HostingGitComposeBuildCapability || capability == domain.HostingGitComposeArgsCapability) && !compose {
 			return nil, errors.New("git Compose capability requires explicit configuration")
 		}
 	}
@@ -189,12 +189,14 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		}
 	}
 	if compose {
-		found := false
-		for _, capability := range capabilities {
-			found = found || capability == domain.HostingGitComposeBuildCapability
-		}
-		if !found {
-			capabilities = append(capabilities, domain.HostingGitComposeBuildCapability)
+		for _, needed := range []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability} {
+			found := false
+			for _, capability := range capabilities {
+				found = found || capability == needed
+			}
+			if !found {
+				capabilities = append(capabilities, needed)
+			}
 		}
 	}
 	if private {

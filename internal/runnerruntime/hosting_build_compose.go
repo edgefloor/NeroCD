@@ -3,6 +3,7 @@ package runnerruntime
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -57,6 +58,7 @@ func (e *BuildExecutor) buildCompose(ctx context.Context, b domain.HostingBuild,
 		request.ContextDir = service.Build.Context
 		request.DockerfilePath = service.Build.Dockerfile
 		request.BuildTarget = service.Build.Target
+		request.BuildArgs = maps.Clone(service.Build.Args)
 		// Sequential children may use the parent's peak CPU/memory, but their
 		// retained context/export/log budgets must not multiply its disk limit.
 		request.Limits.ContextBytes /= buildCount

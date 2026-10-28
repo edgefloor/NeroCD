@@ -121,7 +121,7 @@ func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
 			}
 			capabilities := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType}
 			if compose {
-				capabilities = append(capabilities, domain.HostingGitComposeBuildCapability)
+				capabilities = append(capabilities, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability)
 			}
 			enrollment, err := server.app.CreateRunnerEnrollment(admin, app.RunnerEnrollmentInput{RunnerID: "runner_build_api", RunnerName: "build", Capabilities: capabilities})
 			if err != nil {
@@ -177,6 +177,16 @@ func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
 					t.Fatalf("%s %s got%d want%d: %s", method, path, w.Code, want, w.Body.String())
 				}
 				return w.Body.Bytes()
+			}
+			if compose {
+				body := fmt.Sprintf(`{"project_id":%q,"project_environment_id":%q,"name":"Argument decoder","kind":"application","source":{"kind":"git","git":{"repository_url":"https://github.com/example/web","requested_ref":"main","credential_kind":"public","settings":{"strategy":"compose","compose_file":"compose.yaml","public_component":"web","container_port":8080,"build_variables":[{"name":"ARG","value":"public"}]}}}}`, env.ProjectID, env.ID)
+				var decoded domain.Resource
+				if err := json.Unmarshal(request("POST", "/api/v1/resources", session, body, 201), &decoded); err != nil || decoded.Source.Git == nil || len(decoded.Source.Git.Settings.BuildVariables) != 1 || decoded.Source.Git.Settings.BuildVariables[0].Value != "public" {
+					t.Fatal("real resource decoder lost public build variable", err)
+				}
+				for _, invalid := range []string{`{"name":"ARG"}`, `{"name":"ARG","value":null}`, `{"name":"ARG","value":1}`, `{"name":"ARG","value":"public","secret_id":"forbidden"}`, `{"name":"BUILDKIT_SYNTAX","value":"public"}`} {
+					request("POST", "/api/v1/resources", session, strings.Replace(body, `{"name":"ARG","value":"public"}`, invalid, 1), 400)
+				}
 			}
 			if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "member_build_api", ProjectID: resource.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
 				t.Fatal(err)

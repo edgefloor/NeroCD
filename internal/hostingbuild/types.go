@@ -78,14 +78,15 @@ type Limits struct {
 
 // Request names an immutable source and explicit resource budgets.
 type Request struct {
-	BuildID  string
-	Checkout string
-	SourceID string
-	InputID  string
-	DaemonID string
-	Strategy Strategy
-	Platform string
-	Limits   Limits
+	BuildArgs map[string]string `json:",omitempty"`
+	BuildID   string
+	Checkout  string
+	SourceID  string
+	InputID   string
+	DaemonID  string
+	Strategy  Strategy
+	Platform  string
+	Limits    Limits
 	// Optional paths are canonical relative slash paths. Empty selects the accepted default.
 	ContextDir     string `json:",omitempty"`
 	DockerfilePath string `json:",omitempty"`

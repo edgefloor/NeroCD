@@ -392,7 +392,7 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		// Configured private retries require current source intent and the same
 		// atomic grant evidence as admission. Replay never invokes the enqueuer.
 		if configured && original.Snapshot.Source.CredentialKind != "public" {
-			if err = currentBuildExecution(ctx, tx, original); err != nil {
+			if err = currentBuildIntent(ctx, tx, original); err != nil {
 				return original, err
 			}
 			if err = checkConfiguredSourceGrant(ctx, tx, original); err != nil {
@@ -423,6 +423,14 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 	target, daemon, err := lockBuildTarget(ctx, tx, src)
 	if err != nil {
 		return domain.HostingBuild{}, err
+	}
+	// Newly admitted Compose work must not reach an older runner that cannot
+	// understand argument intent. Historical receipt replay keeps its old gate.
+	if src.Settings.Strategy == "compose" {
+		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
+		if e != nil || !capable {
+			return domain.HostingBuild{}, ErrConflict
+		}
 	}
 	grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
 	if err != nil {

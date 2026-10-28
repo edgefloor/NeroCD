@@ -201,16 +201,22 @@ func TestRunnerGitComposeExplicitConfigurationAndCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, capability := range capabilities {
-		found = found || capability == domain.HostingGitComposeBuildCapability
-	}
-	if !found {
-		t.Fatal("configured Compose capability not advertised")
+	for _, needed := range []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability} {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == needed
+		}
+		if !found {
+			t.Fatal("configured Compose capability not advertised", needed)
+		}
 	}
 	for _, bad := range []*runnerruntime.BuildConfig{nil, {}, {Compose: true}, {Policy: domain.HostingBuildPolicy{GitCompose: true}}} {
-		if _, err := runnerBuildCapabilities(bad, false, true, []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability}); err == nil {
+		if _, err := runnerBuildCapabilities(bad, false, true, []string{domain.HostingBuildTaskType, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}); err == nil {
 			t.Fatal("unconfigured or mismatched Compose opt-in accepted")
 		}
 	}
+	if _, err := runnerBuildCapabilities(nil, false, true, []string{domain.HostingBuildTaskType, domain.HostingGitComposeArgsCapability}); err == nil {
+		t.Fatal("args-only explicit capability accepted without configuration")
+	}
+
 }

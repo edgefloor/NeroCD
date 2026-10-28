@@ -92,6 +92,11 @@ func (s *MemoryStore) CreateProjectEnvironment(_ context.Context, e domain.Proje
 }
 
 func copyHostingResource(item domain.Resource) domain.Resource {
+	if item.Source.Git != nil {
+		source := *item.Source.Git
+		source.Settings = source.Settings.Clone()
+		item.Source.Git = &source
+	}
 	if item.Source.Compose != nil {
 		source := *item.Source.Compose
 		item.Source.Compose = &source

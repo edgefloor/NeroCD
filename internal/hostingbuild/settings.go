@@ -8,13 +8,35 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const staticContextPolicy = "static-assets-v1"
 
+var buildArgNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+
 var targetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 func (r Request) validateSettings() error {
+	if len(r.BuildArgs) > 64 || len(r.BuildArgs) > 0 && r.Strategy != Dockerfile {
+		return errors.New("public build arguments require bounded Dockerfile strategy")
+	}
+	for name, value := range r.BuildArgs {
+		upper := strings.ToUpper(name)
+		if !buildArgNamePattern.MatchString(name) || len(value) > 4096 || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+			return errors.New("invalid public build argument")
+		}
+		for _, prefix := range []string{"NEROCD_", "BUILDKIT_", "BUILDX_"} {
+			if strings.HasPrefix(upper, prefix) {
+				return errors.New("reserved build argument")
+			}
+		}
+		switch upper {
+		case "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY", "BUILDPLATFORM", "BUILDOS", "BUILDARCH", "BUILDVARIANT", "TARGETPLATFORM", "TARGETOS", "TARGETARCH", "TARGETVARIANT":
+			return errors.New("reserved build argument")
+		}
+	}
+
 	for _, p := range []string{r.ContextDir, r.DockerfilePath, r.PublishDir} {
 		if !relativeSetting(p) {
 			return errors.New("settings require canonical relative paths within checkout")
