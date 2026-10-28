@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/errors";
 import {
   archiveDownloadPath,
@@ -6,6 +5,7 @@ import {
 } from "@/api/hosting-storage-archive-download";
 import type { ArchiveScope, Backup } from "@/api/hosting-storage-archives";
 import { Button } from "@/components/ui/button";
+import { useEffect, useEffectEvent, useState } from "react";
 
 const reasons: Record<string, string> = {
   disabled: "Archive downloads are disabled.",
@@ -34,6 +34,8 @@ export function StorageArchiveDownload(props: Props) {
     scope.destination,
     scope.binding,
     backup.id,
+    backup.project_id,
+    backup.resource_id,
     backup.state,
     backup.blob,
   ]);
@@ -47,6 +49,8 @@ function DownloadOptions({ scope, backup, onDenied }: Props) {
     scope.destination,
     scope.binding,
     backup.id,
+    backup.project_id,
+    backup.resource_id,
     backup.state,
     backup.blob,
   ]);
@@ -56,12 +60,17 @@ function DownloadOptions({ scope, backup, onDenied }: Props) {
     message: string;
   }>();
   const [refresh, setRefresh] = useState(0);
-  const deny = useRef(onDenied);
-  deny.current = onDenied;
+  const deny = useEffectEvent(onDenied);
+  // The keyed session pins the scope and archive evidence for this request.
+  const [request] = useState(() => ({ scope, backup }));
   useEffect(() => {
     const controller = new AbortController();
     setResult(undefined);
-    void getArchiveDownloadOptions(scope, backup, controller.signal)
+    void getArchiveDownloadOptions(
+      request.scope,
+      request.backup,
+      controller.signal,
+    )
       .then((value) => {
         if (!controller.signal.aborted)
           setResult({
@@ -73,7 +82,7 @@ function DownloadOptions({ scope, backup, onDenied }: Props) {
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         if (error instanceof ApiError && [401, 403].includes(error.status))
-          deny.current();
+          deny();
         const message =
           error instanceof ApiError && [401, 403].includes(error.status)
             ? "Archive download access is unavailable. Reload to verify access."
@@ -84,7 +93,7 @@ function DownloadOptions({ scope, backup, onDenied }: Props) {
       });
     return () => controller.abort();
     // Primitive identity includes every authority and archive field used by the request.
-  }, [identity, refresh]);
+  }, [identity, refresh, request]);
   const current = result?.identity === identity ? result : undefined;
   return (
     <div className="space-y-2 text-sm">

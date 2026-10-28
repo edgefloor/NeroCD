@@ -1,3 +1,4 @@
+import type { Backup } from "@/api/hosting-storage-archives";
 import {
   act,
   cleanup,
@@ -7,7 +8,6 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { StorageArchiveDownload } from "./StorageArchiveDownload";
-import type { Backup } from "@/api/hosting-storage-archives";
 const scope = {
   actor: "u",
   project: "p",
@@ -232,3 +232,21 @@ test("regaining owner access rechecks availability", async () => {
   await screen.findByText("The local archive copy is unavailable.");
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+test.each(["project_id", "resource_id"] as const)(
+  "changed backup %s retires cached availability even when its ID is unchanged",
+  async (field) => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify(options)));
+    const view = setup(fetch);
+    await screen.findByRole("link", { name: "Download archive" });
+    view.rerender(
+      <StorageArchiveDownload
+        {...view.values}
+        backup={{ ...backup, [field]: "other" }}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "Download archive" })).toBeNull();
+    await screen.findByText(/availability could not be verified/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);

@@ -1,3 +1,7 @@
+import { ApiError } from "@/api/errors";
+import type { Resource } from "@/api/hosting";
+import type { StorageDeploymentOptions } from "@/api/hosting-storage-deployment";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -5,11 +9,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import type { Resource } from "@/api/hosting";
-import { ApiError } from "@/api/errors";
-import type { StorageDeploymentOptions } from "@/api/hosting-storage-deployment";
 import {
   StorageContinuityDetail,
   StorageDeploymentReview,
@@ -503,7 +503,9 @@ test("retired scope cancels accepted-receipt refresh and ignores a late rejectio
   await screen.findByText(/Deployment request accepted: hop/);
   unmount();
   expect(signal?.aborted).toBe(true);
-  await act(async () => reject(new ApiError(403, "late old actor denial", null)));
+  await act(async () =>
+    reject(new ApiError(403, "late old actor denial", null)),
+  );
   expect(selected).toHaveBeenCalledExactlyOnceWith("hop");
   expect(denied).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -671,52 +673,186 @@ test.each([
 
 test("catalog first deployment prefills image settings and pins saved runtime generation", async () => {
   const { fetch, selected } = setup((url, init) => {
-    if (url.endsWith("/catalog-installation")) return json({
-      id: "resource", resource: { id: "resource", project_id: "project" },
-      binding: { resource_id: "resource" },
-      template: { definition: { container_port: 9090, readiness: { path: "/health", timeout_seconds: 120 } } },
-    });
-    if (url.endsWith("/runtime-configuration")) return json({ runtime_configuration: {
-      project_id: "project", resource_id: "resource", runtime_generation: 1,
-    } });
+    if (url.endsWith("/catalog-installation"))
+      return json({
+        id: "resource",
+        resource: { id: "resource", project_id: "project" },
+        binding: { resource_id: "resource" },
+        template: {
+          definition: {
+            container_port: 9090,
+            readiness: { path: "/health", timeout_seconds: 120 },
+          },
+        },
+      });
+    if (url.endsWith("/runtime-configuration"))
+      return json({
+        runtime_configuration: {
+          project_id: "project",
+          resource_id: "resource",
+          runtime_generation: 1,
+        },
+      });
     if (url.endsWith("/deployments") && init.method === "POST") {
-      const input=JSON.parse(init.body as string);
-      return json({id:"hop",binding_id:"binding",project_id:"project",resource_id:"resource",snapshot:{resource_generation:1,host_port:input.host_port,container_port:input.container_port,readiness:input.readiness,storage:options.storage_ref,runtime_configuration:{generation:1,hash:"runtime"}}},202);
+      const input = JSON.parse(init.body as string);
+      return json(
+        {
+          id: "hop",
+          binding_id: "binding",
+          project_id: "project",
+          resource_id: "resource",
+          snapshot: {
+            resource_generation: 1,
+            host_port: input.host_port,
+            container_port: input.container_port,
+            readiness: input.readiness,
+            storage: options.storage_ref,
+            runtime_configuration: { generation: 1, hash: "runtime" },
+          },
+        },
+        202,
+      );
     }
     return undefined;
   }, initialOptions);
-  await vi.waitFor(() => expect(screen.getByLabelText<HTMLInputElement>("Container port").value).toBe("9090"));
-  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/health");
-  expect(screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds").value).toBe("120");
-  fireEvent.change(screen.getByLabelText("Runner-local host port"),{target:{value:"20101"}});
-  fireEvent.submit(screen.getByRole("form",{name:"Configure first storage deployment"}));
-  await screen.findByRole("button",{name:"Deploy reviewed image with uploads"});
+  await vi.waitFor(() =>
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Container port").value,
+    ).toBe("9090"),
+  );
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe(
+    "/health",
+  );
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds")
+      .value,
+  ).toBe("120");
+  fireEvent.change(screen.getByLabelText("Runner-local host port"), {
+    target: { value: "20101" },
+  });
+  fireEvent.submit(
+    screen.getByRole("form", { name: "Configure first storage deployment" }),
+  );
+  await screen.findByRole("button", {
+    name: "Deploy reviewed image with uploads",
+  });
   fireEvent.click(screen.getByLabelText(/I reviewed this exact image/));
-  fireEvent.click(screen.getByRole("button",{name:"Deploy reviewed image with uploads"}));
-  await vi.waitFor(()=>expect(selected).toHaveBeenCalledWith("hop"));
-  const body=JSON.parse(fetch.mock.calls.find(([,init])=>init.method==="POST")![1].body as string);
-  expect(body).toMatchObject({expected_runtime_configuration_generation:1,container_port:9090,host_port:20101,readiness:{path:"/health",timeout_seconds:120}});
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  await vi.waitFor(() => expect(selected).toHaveBeenCalledWith("hop"));
+  const body = JSON.parse(
+    fetch.mock.calls.find(([, init]) => init.method === "POST")![1]
+      .body as string,
+  );
+  expect(body).toMatchObject({
+    expected_runtime_configuration_generation: 1,
+    container_port: 9090,
+    host_port: 20101,
+    readiness: { path: "/health", timeout_seconds: 120 },
+  });
 });
 
 test("stored image review and identical retry pin the selected registry credential version", async () => {
   let count = 0;
   const { fetch, selected } = setup((url) => {
-    if (url.includes("managed-secrets")) return json({ items: url.includes("versions") ? [{ secret_id: "credential", version: 1 }] : [{ id: "credential", name: "Private registry", project_id: "project", status: "active" }], limit: 20, offset: 0, count: 1, total: 1 });
-    if (url.endsWith("deployments") && ++count === 1) throw new TypeError("lost");
+    if (url.includes("managed-secrets"))
+      return json({
+        items: url.includes("versions")
+          ? [{ secret_id: "credential", version: 1 }]
+          : [
+              {
+                id: "credential",
+                name: "Private registry",
+                project_id: "project",
+                status: "active",
+              },
+            ],
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+      });
+    if (url.endsWith("deployments") && ++count === 1)
+      throw new TypeError("lost");
   });
-  fireEvent.change(screen.getByLabelText("Image access"), { target: { value: "private" } });
+  fireEvent.change(screen.getByLabelText("Image access"), {
+    target: { value: "private" },
+  });
   await screen.findByRole("option", { name: "Private registry · credential" });
-  fireEvent.change(screen.getByLabelText("Registry credential secret"), { target: { value: "credential" } });
+  fireEvent.change(screen.getByLabelText("Registry credential secret"), {
+    target: { value: "credential" },
+  });
   await screen.findByRole("option", { name: "Version 1" });
-  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Registry credential version"), {
+    target: { value: "1" },
+  });
   await review();
-  expect(screen.getByLabelText<HTMLSelectElement>("Image access").disabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed image with uploads" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Retry identical storage deployment request" }));
+  expect(
+    screen.getByLabelText<HTMLSelectElement>("Image access").disabled,
+  ).toBe(true);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Deploy reviewed image with uploads" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Retry identical storage deployment request",
+    }),
+  );
   await vi.waitFor(() => expect(selected).toHaveBeenCalledWith("hop"));
   const calls = fetch.mock.calls.filter(([, init]) => init.method === "POST");
   expect(calls).toHaveLength(2);
   expect(calls[0]![1].body).toBe(calls[1]![1].body);
-  expect(JSON.parse(calls[0]![1].body as string).registry_credential).toEqual({ secret_id: "credential", version: 1 });
+  expect(JSON.parse(calls[0]![1].body as string).registry_credential).toEqual({
+    secret_id: "credential",
+    version: 1,
+  });
   expect(fetch.mock.calls.some(([url]) => url.includes("reveal"))).toBe(false);
+});
+
+test("late catalog defaults preserve an in-progress readiness draft", async () => {
+  let resolve!: (response: Response) => void;
+  setup(
+    (url) =>
+      url.endsWith("/catalog-installation")
+        ? new Promise<Response>((done) => {
+            resolve = done;
+          })
+        : undefined,
+    initialOptions,
+  );
+  fireEvent.change(screen.getByLabelText("Container port"), {
+    target: { value: "7000" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness path"), {
+    target: { value: "/custom" },
+  });
+  fireEvent.change(screen.getByLabelText("Readiness timeout in seconds"), {
+    target: { value: "60" },
+  });
+  await act(async () =>
+    resolve(
+      json({
+        id: "resource",
+        resource: { id: "resource", project_id: "project" },
+        binding: { resource_id: "resource" },
+        template: {
+          definition: {
+            container_port: 9090,
+            readiness: { path: "/health", timeout_seconds: 120 },
+          },
+        },
+      }),
+    ),
+  );
+  expect(screen.getByLabelText<HTMLInputElement>("Container port").value).toBe(
+    "7000",
+  );
+  expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe(
+    "/custom",
+  );
+  expect(
+    screen.getByLabelText<HTMLInputElement>("Readiness timeout in seconds")
+      .value,
+  ).toBe("60");
 });
