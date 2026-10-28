@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
+import { GitApplicationFields, emptyGitDraft, gitBuildVariablesError, type GitApplicationDraft } from "./GitApplicationFields";
 afterEach(cleanup);
 function Editor({ initial = emptyGitDraft(), disabled = false }: { initial?: GitApplicationDraft; disabled?: boolean } = {}) { const [value, setValue] = useState<GitApplicationDraft>(initial); return <><GitApplicationFields value={value} onChange={setValue} disabled={disabled} /><output>{JSON.stringify(value)}</output></>; }
 test("public is explicit by default and private access survives all builder switches", () => { render(<Editor />); expect(screen.getByLabelText<HTMLSelectElement>("Git source access").value).toBe("public"); fireEvent.change(screen.getByLabelText("Git source access"), { target: { value: "https_basic" } }); for (const strategy of ["dockerfile", "railpack", "static", "compose"]) { fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } }); expect(screen.getByLabelText<HTMLSelectElement>("Git source access").value).toBe("https_basic"); expect(screen.getByRole("status").textContent).toContain(`"credential_kind":"https_basic"`); } expect(screen.queryByLabelText(/password|secret value/i)).toBeNull(); });
@@ -41,4 +41,41 @@ test("switching static to Compose removes publish and SPA settings", () => {
 test("saved Compose settings remain readable and locked while source writes are disabled", () => {
   render(<Editor disabled initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 8080 } }} />);
   for (const label of ["Compose file", "Public Compose service", "Public Compose service port", "Git branch, tag, or commit", "Context directory"]) expect(screen.getByLabelText<HTMLInputElement>(label).disabled).toBe(true);
+});
+
+test("Compose build variable rows retain literal and empty values and omit an empty collection", () => {
+  render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80 } }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Add build variable" }));
+  fireEvent.change(screen.getByLabelText("Build variable name 1"), { target: { value: "APP_MODE" } });
+  fireEvent.change(screen.getByLabelText("Build variable value 1"), { target: { value: "  ${LITERAL}\nsecond line  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Add build variable" }));
+  fireEvent.change(screen.getByLabelText("Build variable name 2"), { target: { value: "EMPTY" } });
+  expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_variables).toEqual([{ name: "APP_MODE", value: "  ${LITERAL}\nsecond line  " }, { name: "EMPTY", value: "" }]);
+  fireEvent.click(screen.getByRole("button", { name: "Remove build variable 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove build variable 1" }));
+  expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_variables");
+});
+test("build variables are Compose-only, bounded and disabled with the containing editor", () => {
+  const variables = Array.from({ length: 64 }, (_, index) => ({ name: `ARG_${index}`, value: "value" }));
+  const view = render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: variables } }} />);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add build variable" }).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "dockerfile" } });
+  expect(screen.queryByRole("region", { name: "Compose build variables" })).toBeNull();
+  expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_variables");
+  view.unmount(); render(<Editor disabled initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: [{ name: "MODE", value: "production" }] } }} />);
+  expect(screen.getByLabelText("Build variable value 1").closest("fieldset")!.disabled).toBe(true);
+});
+
+test.each([
+ { name: "bad-name", value: "value" }, { name: "HTTP_PROXY", value: "value" }, { name: "https_proxy", value: "value" },
+ { name: "NeRoCd_config", value: "value" }, { name: "BUILDKIT_SYNTAX", value: "value" }, { name: "buildx_config", value: "value" },
+ { name: "TARGETPLATFORM", value: "value" }, { name: "A", value: "\0" },
+ { name: "A", value: "é".repeat(2049) },
+])("build variables reject invalid or reserved public argument %#", variable => {
+ expect(gitBuildVariablesError({ strategy: "compose", build_variables: [variable] })).not.toBe("");
+});
+test("build variable validation preserves case-sensitive names, empty values and byte limits", () => {
+ expect(gitBuildVariablesError({ strategy: "compose", build_variables: [{ name: "PUBLIC", value: "" }, { name: "public", value: "é".repeat(2048) }, { name: "MULTILINE", value: "line1\r\nline2\nline3" }] })).toBe("");
+ expect(gitBuildVariablesError({ strategy: "compose", build_variables: [{ name: "PUBLIC", value: "" }, { name: "PUBLIC", value: "other" }] })).toMatch(/unique/);
+ expect(gitBuildVariablesError({ strategy: "compose", build_variables: Array.from({ length: 65 }, (_, index) => ({ name: `ARG_${index}`, value: "" })) })).toMatch(/64/);
 });

@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { buildsQuery, buildQuery, getHostingBuildLogs, cancelHostingBuild, requestHostingBuild, type HostingBuild } from "./hosting-builds";
+import { buildsQuery, buildQuery, getHostingBuild, getHostingBuildLogs, cancelHostingBuild, requestHostingBuild, type HostingBuild } from "./hosting-builds";
 const build: HostingBuild = { id: "build-one", project_id: "project", resource_id: "resource", state: "queued", revision: 1, created_by: "user", created_at: "", updated_at: "", snapshot: { resource_generation: 2, source: { source_id: "source", generation: 3, repository_url: "https://github.com/example/web.git", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } }, target: { binding_id: "binding", destination_id: "dest", server_id: "server", runner_id: "runner" } } };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 afterEach(() => vi.unstubAllGlobals());
@@ -63,4 +63,14 @@ test.each([
 ])("invalid or substituted Compose result is rejected before display/deployment", async raw => {
   vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
   await expect(buildQuery("actor", "project", "resource", build.id).queryFn!({ signal: new AbortController().signal } as never)).rejects.toThrow();
+});
+
+test("public build cache retains configured variables and resolved arguments while dropping unrelated metadata", async () => {
+ const result = { ...composeResult, definition: { ...composeResult.definition, services: composeResult.definition.services.map(service => service.build ? { ...service, build: { ...service.build, args: { MODE: "release", EMPTY: "" } } } : service) } };
+ const raw = { ...composeBuild, snapshot: { ...composeBuild.snapshot, source: { ...composeBuild.snapshot.source, settings: { ...composeSettings, build_variables: [{ name: "MODE", value: "release", secret_reference: "private" }] } } }, compose_result: result };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_variables).toEqual([{ name: "MODE", value: "release" }]);
+ expect(decoded.compose_result!.definition.services.find(service => service.build)?.build?.args).toEqual({ MODE: "release", EMPTY: "" });
+ expect(JSON.stringify(decoded)).not.toContain("secret_reference");
 });

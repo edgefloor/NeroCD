@@ -8152,7 +8152,15 @@ export interface components {
                 container_port: number;
             };
         };
+        HostingBuildVariable: {
+            /** @description Unique argument name. NEROCD_/BUILDKIT_/BUILDX_ prefixes and proxy or automatic platform control arguments are reserved. */
+            name: string;
+            /** @description Public nonsecret literal */
+            value: string;
+        };
         HostingBuildSettings: {
+            /** @description Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
+            build_variables?: components["schemas"]["HostingBuildVariable"][];
             /** @enum {string} */
             strategy: "dockerfile" | "railpack" | "static" | "compose";
             context_dir?: string;
@@ -10424,6 +10432,10 @@ export interface components {
         };
         HostingStackSource: components["schemas"]["ComposeResourceSource"]["compose"];
         HostingStackBuild: {
+            /** @description Resolved public build arguments pinned by the prepared result. Unset bare or null arguments are omitted. */
+            args?: {
+                [key: string]: string;
+            };
             context: string;
             dockerfile: string;
             target?: string;

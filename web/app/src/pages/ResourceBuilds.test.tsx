@@ -12,7 +12,7 @@ const pushPolicy = { id: "", can_manage: false, resource_id: "resource", project
 const pushMetadata = (url: string) => url.includes("/github-push-policy/deliveries?") ? json({ items: [], next_cursor: "", has_more: false }) : url.endsWith("/github-push-policy") ? json(pushPolicy) : undefined;
 let client: QueryClient;
 afterEach(() => { cleanup(); client?.clear(); vi.unstubAllGlobals(); });
-function setup(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "user", role: "maintainer" }]); return render(<QueryClientProvider client={client}><ResourceBuilds resource={resource} writable={writable} blocked={false} /></QueryClientProvider>); }
+function setup(writable = true, currentResource = resource) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); client.setQueryData(queryKeys.allProjectMembers, [{ project_id: "project", user_id: "user", role: "maintainer" }]); return render(<QueryClientProvider client={client}><ResourceBuilds resource={currentResource} writable={writable} blocked={false} /></QueryClientProvider>); }
 function backend(handler?: (url: string, options: RequestInit) => Response | Promise<Response | undefined> | undefined) {
   const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? pushMetadata(url) ?? (url.endsWith("/binding") ? json({ id: "binding", resource_id: "resource" }) : url.includes("/builds?") ? json({ items: [build], limit: 20, offset: Number(new URL(url, "http://local").searchParams.get("offset")), count: 1, total: 21 }) : url.includes("/hosting-builds/") || options.method === "POST" ? json({ build }) : json({ ...resource, generation: 4, source: { ...resource.source, git: { ...(resource.source.kind === "git" ? resource.source.git : {}), generation: 5, requested_ref: "next" } } })));
   vi.stubGlobal("fetch", fetch); return fetch;
@@ -182,4 +182,15 @@ test("failed Git Compose build shows its exact path/ref/commit without presentin
   expect(screen.getByText(/deployment history for the last recorded release/)).toBeTruthy();
   expect(screen.queryByRole("form", { name: "Deploy selected build" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Prepared Compose result" })).toBeNull();
+});
+
+test("Git Compose build review shows configured variables and resolved per-service arguments", async () => {
+ const settings = { strategy: "compose" as const, compose_file: "compose.yaml", public_component: "web", container_port: 3000, build_variables: [{ name: "MODE", value: "configured" }] };
+ const composed = { ...build, state: "succeeded" as const, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } }, compose_result: { source: { original: "services: {}", public_component: "web", container_port: 3000 }, hash: `sha256:${"a".repeat(64)}`, definition: { version: "git-compose.v1", original_hash: "original", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:local", build: { context: ".", dockerfile: "Dockerfile", args: { MODE: "configured", FALLBACK: "default" } } }] }, services: [{ component: "web", artifact: { origin: "local_build", image_id: "sha256:local", index_digest: "index", manifest_digest: "manifest", config_digest: "config", platform: "linux/amd64" } }] } };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: composed }) : undefined);
+ setup(true, { ...resource, source: { kind: "git", git: { ...build.snapshot.source, credential_kind: "public" as const, settings } } });
+ await screen.findByText(/Reviewed build variables: MODE="configured"/);
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build variables: MODE="configured"/);
+ await screen.findByText(/Resolved build arguments: FALLBACK="default", MODE="configured"/);
 });

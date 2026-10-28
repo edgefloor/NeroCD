@@ -57,6 +57,7 @@ export function BuildComposeSummary({ build }: { build: HostingBuild }) {
                     : ""}
                 </p>
               ) : null}
+              {service.build?.args && Object.keys(service.build.args).length ? <p>Resolved build arguments: {Object.entries(service.build.args).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join(", ")}</p> : null}
               {built ? <p>Platform: {built.artifact.platform}</p> : null}
               {service.mounts?.length ? (
                 <p>

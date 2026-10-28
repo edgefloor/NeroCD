@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { maximumPageOffset } from "@/router/search";
 import { ResourceDestination } from "./ResourceDestination";
 import { ResourceRoutes } from "./ResourceRoutes";
-import { GitApplicationFields, emptyGitDraft, type GitApplicationDraft } from "./GitApplicationFields";
+import { GitApplicationFields, emptyGitDraft, gitBuildVariablesError, type GitApplicationDraft } from "./GitApplicationFields";
 import { ResourceBuilds } from "./ResourceBuilds";
 import { ResourceDatabaseConnections } from "./ResourceDatabaseConnections";
 import { ResourceRuntimeConfiguration } from "./ResourceRuntimeConfiguration";
@@ -79,6 +79,8 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   async function save(event: FormEvent) {
     event.preventDefault();
     if (busy || !writable || conflict || !changed) return;
+    const problem = base.source.kind === "git" ? gitBuildVariablesError(git.settings) : "";
+    if (problem) { setError(problem); return; }
     setBusy(true);
     setError("");
     try {
@@ -125,6 +127,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
             <dt>Current Compose file</dt><dd>{latest.source.git.settings.compose_file || "Not applicable"}</dd>
             <dt>Current public Compose service</dt><dd>{latest.source.git.settings.public_component || "Not applicable"}</dd>
             <dt>Current public Compose service port</dt><dd>{latest.source.git.settings.container_port ?? "Not applicable"}</dd>
+            <dt>Current build variables</dt><dd>{latest.source.git.settings.build_variables?.map(variable => `${variable.name}=${JSON.stringify(variable.value)}`).join(", ") || "None"}</dd>
             <dt>Current publish directory</dt><dd>{latest.source.git.settings.publish_dir || (latest.source.git.settings.strategy === "static" ? "Selected context root (default)" : "Not applicable")}</dd>
             <dt>Current SPA fallback</dt><dd>{latest.source.git.settings.spa_fallback ? "Enabled" : "Disabled (default)"}</dd>
           </dl>
@@ -159,6 +162,8 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!canWrite || busy || editing) return;
+    const problem = sourceKind === "git" ? gitBuildVariablesError(git.settings) : "";
+    if (problem) { setError(problem); return; }
     setBusy(true); setError(""); setNotice("");
     try {
       await createResource({ ...(sourceKind === "compose" ? {request_id: composeRequestID} : {}), project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : sourceKind === "compose" ? { kind: "compose", compose } : { kind: "git", git } });

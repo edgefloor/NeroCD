@@ -1,12 +1,31 @@
 import { useId } from "react";
 import type { components } from "@/api/generated";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 
 export type GitApplicationDraft = components["schemas"]["GitResourceInput"];
 export const emptyGitDraft = (): GitApplicationDraft => ({ repository_url: "", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile" } });
+export function gitBuildVariablesError(settings: GitApplicationDraft["settings"]): string {
+ const rows = settings.build_variables ?? [];
+ if (rows.length > 64) return "At most 64 build variables are allowed.";
+ const names = new Set<string>();
+ const reserved = new Set(["HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY", "BUILDPLATFORM", "BUILDOS", "BUILDARCH", "BUILDVARIANT", "TARGETPLATFORM", "TARGETOS", "TARGETARCH", "TARGETVARIANT"]);
+ for (const row of rows) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(row.name)) return "Build variable names must use ASCII letters, numbers or underscores and start with a letter or underscore, with at most 128 characters.";
+  if (/^(NEROCD_|BUILDKIT_|BUILDX_)/i.test(row.name) || reserved.has(row.name.toUpperCase())) return "This build variable name is reserved for build execution.";
+  if (names.has(row.name)) return "Build variable names must be unique.";
+  names.add(row.name);
+  if (new TextEncoder().encode(row.value).length > 4096 || /\0/.test(row.value)) return "Build variable values allow at most 4096 UTF-8 bytes and no NUL.";
+ }
+ return "";
+}
 export function GitApplicationFields({ value, onChange, disabled }: { value: GitApplicationDraft; onChange: (value: GitApplicationDraft) => void; disabled: boolean }) {
  const id = useId();
  const settings = value.settings;
+ const setBuildVariables = (rows: NonNullable<GitApplicationDraft["settings"]["build_variables"]>) => {
+  const next = { ...settings }; if (rows.length) next.build_variables = rows; else delete next.build_variables; onChange({ ...value, settings: next });
+ };
  const setSetting = (key: "context_dir" | "dockerfile_path" | "build_target" | "publish_dir" | "compose_file" | "public_component", text: string) => {
   const next = { ...settings }; if (text) next[key] = text; else delete next[key]; onChange({ ...value, settings: next });
  };
@@ -23,6 +42,16 @@ export function GitApplicationFields({ value, onChange, disabled }: { value: Git
    <p className="break-words text-xs [overflow-wrap:anywhere]">Compose path in repository: <code>{[settings.context_dir, settings.compose_file].filter(Boolean).join("/") || "No Compose file selected"}</code></p>
    <div className="space-y-1.5"><label htmlFor={`${id}-compose-service`}>Public Compose service</label><Input id={`${id}-compose-service`} value={settings.public_component ?? ""} onChange={event => setSetting("public_component", event.target.value)} disabled={disabled} required placeholder="web" spellCheck={false} /></div>
    <div className="space-y-1.5"><label htmlFor={`${id}-compose-port`}>Public Compose service port</label><Input id={`${id}-compose-port`} type="number" min={1} max={65535} value={settings.container_port ?? ""} onChange={event => onChange({ ...value, settings: { ...settings, container_port: Number(event.target.value) } })} disabled={disabled} required /></div>
+   <section className="min-w-0 space-y-3 rounded-lg border p-3" aria-label="Compose build variables">
+    <h6 className="font-medium">Build variables</h6>
+    <p className="text-xs text-muted-foreground">Use nonsecret values. Build arguments can appear in image metadata and build output. These variables are available only during builds; runtime variables are configured separately.</p>
+    {(settings.build_variables ?? []).map((variable, index) => <fieldset key={index} disabled={disabled} className="min-w-0 space-y-2"><legend>Build variable {index + 1}</legend>
+     <label htmlFor={`${id}-build-name-${index}`}>Build variable name {index + 1}</label><Input id={`${id}-build-name-${index}`} value={variable.name} required pattern="[A-Za-z_][A-Za-z0-9_]{0,127}" maxLength={128} spellCheck={false} onChange={event => setBuildVariables(settings.build_variables!.map((row, i) => i === index ? { ...row, name: event.target.value } : row))} />
+     <label htmlFor={`${id}-build-value-${index}`}>Build variable value {index + 1}</label><Textarea id={`${id}-build-value-${index}`} className="min-h-20 w-full min-w-0" value={variable.value} spellCheck={false} autoComplete="off" onChange={event => setBuildVariables(settings.build_variables!.map((row, i) => i === index ? { ...row, value: event.target.value } : row))} />
+     <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" onClick={() => setBuildVariables(settings.build_variables!.filter((_, i) => i !== index))}>Remove build variable {index + 1}</Button>
+    </fieldset>)}
+    <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={disabled || (settings.build_variables?.length ?? 0) >= 64} onClick={() => setBuildVariables([...(settings.build_variables ?? []), { name: "", value: "" }])}>Add build variable</Button>
+   </section>
    <p className="text-xs text-muted-foreground">Choose the service and container port that will receive application traffic. Domains and routes are configured separately.</p>
   </> : null}
   {settings.strategy === "dockerfile" ? <>

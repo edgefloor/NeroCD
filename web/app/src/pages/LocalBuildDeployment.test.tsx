@@ -426,3 +426,13 @@ test("mounting routed operation continuity observes parent authority without ret
   expect(screen.getByRole("button", { name: "Refresh operation" })).toBeTruthy();
   expect(fetch.mock.calls.filter(([url]) => url.endsWith("/from-build"))).toHaveLength(1);
 });
+
+test("editing only saved Compose build variables requires a new build before deployment", async () => {
+ const latest: Resource = { ...composeResource, generation: 3, source: { kind: "git", git: { ...composeSource, generation: 4, settings: { ...composeSource.settings, build_variables: [{ name: "MODE", value: "changed" }] } } } };
+ const fetch = composeBackend(); await setup(true, latest);
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact successful Compose build/));
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+ expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+ expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
