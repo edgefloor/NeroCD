@@ -145,6 +145,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		localBuildCapable = localBuildCapable || capability == domain.RunTypeLocalBuildDeploy
 		shellCapable = shellCapable || capability == "shell"
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingDockerfileArgsCapability && (!buildConfigured || !buildCapable || shellCapable) {
+			return "", errors.New("dockerfile argument capability requires explicit build configuration")
+		}
+	}
 	composeCapable, argsCapable := false, false
 	for _, capability := range result.Capabilities {
 		composeCapable = composeCapable || capability == domain.HostingGitComposeBuildCapability

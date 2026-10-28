@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuildprotocol"
 	"nerocd/internal/hostingjobs"
+	"nerocd/internal/secretcrypto"
 	"nerocd/internal/store"
 	"nerocd/web"
 	"net/http/httptest"
@@ -111,7 +113,7 @@ func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			settings := domain.HostingBuildSettings{Strategy: "dockerfile"}
+			settings := domain.HostingBuildSettings{Strategy: "dockerfile", BuildVariables: []domain.HostingBuildVariable{{Name: "APP_VERSION", Value: "public"}}}
 			if compose {
 				settings = domain.HostingBuildSettings{Strategy: "compose", ComposeFile: "compose.yaml", PublicComponent: "web", ContainerPort: 8080}
 			}
@@ -119,7 +121,7 @@ func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			capabilities := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType}
+			capabilities := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingDockerfileArgsCapability}
 			if compose {
 				capabilities = append(capabilities, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability)
 			}
@@ -186,6 +188,22 @@ func TestHostingBuildAPIPublicGitRiverAndRunnerPhases(t *testing.T) {
 				}
 				for _, invalid := range []string{`{"name":"ARG"}`, `{"name":"ARG","value":null}`, `{"name":"ARG","value":1}`, `{"name":"ARG","value":"public","secret_id":"forbidden"}`, `{"name":"BUILDKIT_SYNTAX","value":"public"}`} {
 					request("POST", "/api/v1/resources", session, strings.Replace(body, `{"name":"ARG","value":"public"}`, invalid, 1), 400)
+				}
+			}
+			if !compose {
+				for _, choice := range []string{"true", "false", "null"} {
+					body := fmt.Sprintf(`{"project_id":%q,"project_environment_id":%q,"name":"Dockerfile %s","kind":"application","source":{"kind":"git","git":{"repository_url":"https://github.com/example/web","requested_ref":"main","credential_kind":"public","settings":{"strategy":"dockerfile","build_variables":[{"name":"APP","value":"public"}],"inject_build_args_to_dockerfile":%s}}}}`, env.ProjectID, env.ID, choice, choice)
+					var decoded domain.Resource
+					if err := json.Unmarshal(request("POST", "/api/v1/resources", session, body, 201), &decoded); err != nil || decoded.Source.Git == nil {
+						t.Fatal("Dockerfile resource decode failed", err)
+					}
+					setting := decoded.Source.Git.Settings.InjectBuildArgsToDockerfile
+					if choice == "null" && setting != nil || choice != "null" && (setting == nil || *setting != (choice == "true")) {
+						t.Fatal("nullable injection selection changed")
+					}
+					for _, invalid := range []string{`"false"`, `1`, `{}`} {
+						request("POST", "/api/v1/resources", session, strings.Replace(body, `"inject_build_args_to_dockerfile":`+choice, `"inject_build_args_to_dockerfile":`+invalid, 1), 400)
+					}
 				}
 			}
 			if _, err = pg.UpsertProjectMember(ctx, domain.ProjectMember{ID: "member_build_api", ProjectID: resource.ProjectID, UserID: "usr_viewer", Role: domain.RoleViewer}); err != nil {
@@ -353,5 +371,142 @@ func TestPublicAPIsRejectBuildTaskAndAuthorityAtEveryWorkflowShape(t *testing.T)
 				t.Fatalf("%s %s accepted internal task: %d %s", endpoint.method, endpoint.path, w.Code, w.Body.String())
 			}
 		}
+	}
+}
+
+func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
+	server, pg, database := newHostingBuildAPIFixture(t)
+	ring, err := secretcrypto.New("args-fixture", map[string][]byte{"args-fixture": bytes.Repeat([]byte{8}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: pg, Sessions: pg, APITokens: pg, ServiceAccounts: pg, OIDC: pg, Hosting: pg, Destinations: pg, ManagedSecrets: pg, SecretKeyring: ring, Projects: pg, Members: pg, Templates: pg, Sources: pg, Runs: pg, Runners: pg, Approvals: pg, Audit: pg, Deployments: pg, Observability: pg, ObservationWriter: pg, ObservationReader: pg, Retention: pg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
+	env, err := service.CreateProjectEnvironment(ctx, app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Dockerfile private argument generations"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := service.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_argument_grants", RunnerName: "Argument grants", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingDockerfileArgsCapability}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte("argument-grants-fixture")))
+	enrolled, err := service.ConsumeRunnerEnrollment(t.Context(), enrollment.Token, app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("c", 32), CredentialHash: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.CreateServer(ctx, app.ServerInput{Name: "Argument grants", RunnerID: enrolled.Runner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.GrantDestinationProject(ctx, target.Destination.ID, app.DestinationProjectInput{ProjectID: env.ProjectID}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		tx, e := database.Begin(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		changed, e := hostingjobs.MigrateNextTx(ctx, tx)
+		if e != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(e)
+		}
+		if e = tx.Commit(ctx); e != nil {
+			t.Fatal(e)
+		}
+		if !changed {
+			break
+		}
+	}
+	policy := domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: "sha256:" + strings.Repeat("a", 64), Protocol: domain.HostingBuildProtocol, Platform: "linux/amd64", SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 1 << 20, MaxWorkspaceBytes: 10 << 20, MinFreeBytes: 1 << 20, MaxEntries: 100, MaxDepth: 32, PollInterval: time.Second}, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 512 << 20, Deadline: time.Minute, ContextBytes: 1 << 20, ContextFiles: 100, PlanBytes: 1 << 20, LogBytes: 1 << 20, ExportBytes: 10 << 20, UnpackedBytes: 10 << 20, UsageBytes: 20 << 20, ReserveBytes: 10 << 20, PollInterval: time.Second, DiskMode: "monitored"}}
+	if err = pg.ConfigureHostingBuild(&policy); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := pg.StartHostingExecution(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := stop(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
+	token := createTestSession(t, server)
+	call := func(method, path string, body any, want int, result any) {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("%s %s: got %d want %d: %s", method, path, response.Code, want, response.Body.String())
+		}
+		if result != nil {
+			if err = json.Unmarshal(response.Body.Bytes(), result); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	configuration := domain.GitResourceConfiguration{RepositoryURL: "https://github.com/example/private-args", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+	source := func() any { return map[string]any{"kind": "git", "git": configuration} }
+	var resource domain.Resource
+	call("POST", "/api/v1/resources", map[string]any{"project_id": env.ProjectID, "project_environment_id": env.ID, "name": "Private argument generations", "kind": "application", "source": source()}, 201, &resource)
+	if resource.Generation != 1 || resource.Source.Git.Generation != 1 {
+		t.Fatal("initial source generation changed")
+	}
+	call("POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: target.Destination.ID}, 201, nil)
+	var secret domain.ManagedSecret
+	call("POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Argument source credential", Value: `{"username":"fixture","password":"fixture"}`}, 201, &secret)
+	previousGrant := ""
+	for generation := int64(2); generation <= 4; generation++ {
+		switch generation {
+		case 2:
+			configuration.RequestedRef = "argument-branch"
+			configuration.Settings.BuildVariables = []domain.HostingBuildVariable{{Name: "APP", Value: "A"}}
+		case 3:
+			configuration.Settings.BuildVariables = []domain.HostingBuildVariable{{Name: "APP", Value: "B"}}
+		case 4:
+			disabled := false
+			configuration.Settings.InjectBuildArgsToDockerfile = &disabled
+		}
+		call("PATCH", "/api/v1/resources/"+resource.ID, map[string]any{"expected_generation": resource.Generation, "source": source()}, 200, &resource)
+		if resource.Generation != generation || resource.Source.Git.Generation != generation {
+			t.Fatal("source-only edit did not advance exact generations")
+		}
+		path := "/api/v1/resources/" + resource.ID
+		if previousGrant != "" {
+			call("POST", path+"/builds", domain.HostingBuildRequest{ExpectedResourceGeneration: generation, ExpectedSourceGeneration: generation, GrantID: previousGrant, IdempotencyKey: fmt.Sprintf("stale-grant-%d", generation)}, 409, nil)
+		}
+		var granted struct {
+			Grant domain.PublicHostingSourceGrant `json:"grant"`
+		}
+		call("POST", path+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: generation, ExpectedSourceGeneration: generation, SecretID: secret.ID, SecretVersion: 1, RequestID: fmt.Sprintf("%032x", generation)}, 201, &granted)
+		if granted.Grant.SourceGeneration != generation {
+			t.Fatal("grant did not pin selected generation")
+		}
+		var response struct {
+			Build domain.PublicHostingBuild `json:"build"`
+		}
+		call("POST", path+"/builds", domain.HostingBuildRequest{ExpectedResourceGeneration: generation, ExpectedSourceGeneration: generation, GrantID: granted.Grant.ID, IdempotencyKey: fmt.Sprintf("current-grant-%d", generation)}, 202, &response)
+		persisted, err := pg.GetHostingBuild(t.Context(), "usr_bootstrap", response.Build.ID)
+		if err != nil || persisted.Snapshot.Grant == nil || persisted.Snapshot.Grant.ID != granted.Grant.ID || persisted.Snapshot.Source.Generation != generation {
+			t.Fatal("build lost exact source or grant proof", err)
+		}
+		if generation == 4 && (persisted.Snapshot.Source.Settings.InjectBuildArgsToDockerfile == nil || *persisted.Snapshot.Source.Settings.InjectBuildArgsToDockerfile) {
+			t.Fatal("disabled injection lost in private build snapshot")
+		}
+		previousGrant = granted.Grant.ID
 	}
 }

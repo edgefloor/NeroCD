@@ -424,13 +424,8 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 	if err != nil {
 		return domain.HostingBuild{}, err
 	}
-	// Newly admitted Compose work must not reach an older runner that cannot
-	// understand argument intent. Historical receipt replay keeps its old gate.
-	if src.Settings.Strategy == "compose" {
-		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
-		if e != nil || !capable {
-			return domain.HostingBuild{}, ErrConflict
-		}
+	if err = requireBuildArgumentCapability(ctx, tx, target.RunnerID, src.Settings); err != nil {
+		return domain.HostingBuild{}, err
 	}
 	grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
 	if err != nil {
@@ -554,6 +549,30 @@ func (s *PostgresStore) DispatchHostingBuild(ctx context.Context, id string, dis
 		return readBuild(ctx, q, id)
 	})
 }
+
+// New admission and current execution require support for selected argument
+// semantics. Historical metadata replay retains its established placement gate.
+func requireBuildArgumentCapability(ctx context.Context, tx pgx.Tx, runner string, settings domain.HostingBuildSettings) error {
+	capability := ""
+	if settings.Strategy == "compose" {
+		capability = domain.HostingGitComposeArgsCapability
+	}
+	if settings.Strategy == "dockerfile" && len(settings.BuildVariables) > 0 {
+		capability = domain.HostingDockerfileArgsCapability
+	}
+	if capability == "" {
+		return nil
+	}
+	capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runner, Capability: capability})
+	if err != nil {
+		return err
+	}
+	if !capable {
+		return ErrConflict
+	}
+	return nil
+}
+
 func checkBuildPlacement(ctx context.Context, tx pgx.Tx, b domain.HostingBuild, credentials bool) error {
 	target, daemon, err := lockBuildTarget(ctx, tx, b.Snapshot.Source)
 	if err != nil {

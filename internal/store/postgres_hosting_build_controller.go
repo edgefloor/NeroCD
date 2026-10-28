@@ -179,16 +179,7 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 	if err := currentBuildIntent(ctx, tx, b); err != nil {
 		return err
 	}
-	if b.Snapshot.Source.Settings.Strategy == "compose" {
-		capable, e := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: b.Snapshot.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
-		if e != nil {
-			return e
-		}
-		if !capable {
-			return ErrConflict
-		}
-	}
-	return nil
+	return requireBuildArgumentCapability(ctx, tx, b.Snapshot.RunnerID, b.Snapshot.Source.Settings)
 }
 
 // currentBuildIntent also supports metadata-only retries of private requests.

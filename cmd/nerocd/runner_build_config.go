@@ -146,6 +146,11 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		return nil, errors.New("git Compose requires matching explicit runner and operator policy")
 	}
 	for _, capability := range capabilities {
+		if capability == domain.HostingDockerfileArgsCapability && c == nil {
+			return nil, errors.New("dockerfile argument capability requires explicit build configuration")
+		}
+	}
+	for _, capability := range capabilities {
 		if (capability == domain.HostingGitComposeBuildCapability || capability == domain.HostingGitComposeArgsCapability) && !compose {
 			return nil, errors.New("git Compose capability requires explicit configuration")
 		}
@@ -186,6 +191,15 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		}
 		if !found {
 			capabilities = append(capabilities, domain.HostingBuildTriggerRevisionCapability)
+		}
+	}
+	if c != nil {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == domain.HostingDockerfileArgsCapability
+		}
+		if !found {
+			capabilities = append(capabilities, domain.HostingDockerfileArgsCapability)
 		}
 	}
 	if compose {

@@ -602,7 +602,15 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 func buildEngineRequest(s domain.HostingBuildSnapshot, path, daemon string) hostingbuild.Request {
 	l := s.Policy.Limits
 	settings := s.Source.Settings
-	return hostingbuild.Request{BuildID: s.BuildID, Checkout: path, SourceID: s.Source.ID, InputID: s.InputID, DaemonID: daemon, Strategy: hostingbuild.Strategy(settings.Strategy), Platform: s.Policy.Platform, ContextDir: settings.ContextDir, DockerfilePath: settings.DockerfilePath, BuildTarget: settings.BuildTarget, PublishDir: settings.PublishDir, SPAFallback: settings.SPAFallback, Limits: hostingbuild.Limits(l)}
+	request := hostingbuild.Request{BuildID: s.BuildID, Checkout: path, SourceID: s.Source.ID, InputID: s.InputID, DaemonID: daemon, Strategy: hostingbuild.Strategy(settings.Strategy), Platform: s.Policy.Platform, ContextDir: settings.ContextDir, DockerfilePath: settings.DockerfilePath, BuildTarget: settings.BuildTarget, PublishDir: settings.PublishDir, SPAFallback: settings.SPAFallback, Limits: hostingbuild.Limits(l)}
+	if settings.Strategy == "dockerfile" && len(settings.BuildVariables) > 0 {
+		request.BuildArgs = make(map[string]string, len(settings.BuildVariables))
+		for _, variable := range settings.BuildVariables {
+			request.BuildArgs[variable.Name] = variable.Value
+		}
+		request.InjectBuildArgs = settings.InjectBuildArgsToDockerfile == nil || *settings.InjectBuildArgsToDockerfile
+	}
+	return request
 }
 func buildArtifact(r hostingbuild.Result, b domain.HostingBuild) domain.HostingBuildArtifact {
 	return domain.HostingBuildArtifact{Origin: r.Origin, BuildID: r.BuildID, SourceID: r.SourceID, InputID: r.InputID, SourceReceiptHash: domain.HostingDocumentHash(b.SourceReceipt), ContextDigest: r.ContextDigest, RequestDigest: r.RequestDigest, DaemonID: r.DaemonID, ImageID: r.ImageID, IndexDigest: r.IndexDigest, ManifestDigest: r.ManifestDigest, ConfigDigest: r.ConfigDigest, Platform: r.Platform, ContextPolicy: r.ContextPolicy}

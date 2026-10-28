@@ -174,6 +174,11 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 	if err != nil {
 		return result, err
 	}
+	if r.InjectBuildArgs {
+		if err = injectDockerfileBuildArgs(ctx, r, source); err != nil {
+			return result, err
+		}
+	}
 	var tokenBytes [16]byte
 	if _, err = rand.Read(tokenBytes[:]); err != nil {
 		return result, err
@@ -528,6 +533,9 @@ func orderedBuildArguments(args map[string]string) []string {
 
 func ownedBuildRequest(r Request) Request {
 	r.BuildArgs = maps.Clone(r.BuildArgs)
+	if len(r.BuildArgs) == 0 {
+		r.InjectBuildArgs = false
+	}
 	return r
 }
 
