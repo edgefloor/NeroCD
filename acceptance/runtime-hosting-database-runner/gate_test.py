@@ -39,13 +39,14 @@ def storage_selection_output(selection="selected", outcome="success"):
     root = Path(__file__).resolve().parents[2]
     source = (root / "internal/api/hosting_application_database_route_runtime_integration_test.go").read_text()
     function = source.split("func testHostingApplicationDatabaseRouteFailuresCompiledRunner(", 1)[1]
-    loop = function[function.index('\tfor _, engine := range []string{"postgresql", "redis"}') :]
+    loop = function[function.index('\tfor _, engine := range applicationDatabaseFixtureEngines(t)') :]
     before, body = loop.split('\t\t\t\tapplicationDatabaseRouteCapacity(t)', 1)
     _, after = body.rsplit('\n\t\t\t}) {', 1)
     # Keep the real t.Run name, completion guard, capacity check and marker
     # emission. Replace only the privileged callback body with harmless work.
     code = 'package selection\nimport ("fmt"; "testing")\n'
     code += 'func applicationDatabaseRouteCapacity(t *testing.T) {}\n'
+    code += 'func applicationDatabaseFixtureEngines(t *testing.T) []string { return []string{"postgresql", "redis"} }\n'
     code += 'func TestHostingApplicationDatabaseStorageFailuresCompiledRunner(t *testing.T) {\nstorage := true\n'
     code += before
     if outcome == "skip":
@@ -1146,6 +1147,39 @@ class OuterPublicationTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):namespace['verified_outer'](IDENTITY)
 
 
+class MySQLQualificationTest(unittest.TestCase):
+    def test_mysql_mode_keeps_old_backup_and_partial_profiles_closed(self):
+        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
+        main = next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name == "main")
+        guard = main.body[1]
+        self.assertIsInstance(guard,ast.If)
+        statement = compile(ast.Module(body=[guard],type_ignores=[]),"gate.sh","exec")
+        valid = dict(mysql_mode="1", backup_mode="0",storage_mode="1",routes_mode="1",browser_mode="1",gate_mode="full",Failure=RuntimeError)
+        exec(statement,valid.copy())
+        for field,value in (("mysql_mode","foreign"),("backup_mode","1"),("storage_mode","0"),("routes_mode","0"),("browser_mode","0"),("gate_mode","storage-cutover-diagnostic")):
+            with self.subTest(field=field),self.assertRaises(RuntimeError):exec(statement,dict(valid,**{field:value}))
+
+    def test_real_output_verifier_requires_every_workflow_proof(self):
+        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
+        function = next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name == "verify_mysql_runtime_output")
+        namespace = dict(re=__import__("re"), Failure=RuntimeError)
+        exec(compile(ast.Module(body=[function],type_ignores=[]),"gate.sh","exec"),namespace)
+        verify = namespace["verify_mysql_runtime_output"]
+        markers = ["DATABASE_CONNECTION_STORAGE_PASS mysql", "DATABASE_CONNECTION_STORAGE_BROWSER_PASS mysql", "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS mysql success", "DATABASE_BACKUP_RESTORE_APP_PASS mysql", "DATABASE_BACKUP_BROWSER_PASS mysql"]
+        for case in ("readiness", "cutover"):
+            markers += ["DATABASE_CONNECTION_STORAGE_RECOVERY_PASS mysql " + case, "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS mysql " + case]
+        names = ["TestHostingApplicationDatabaseStorageCompiledRunner", "TestHostingApplicationDatabaseStorageFailuresCompiledRunner"]
+        output = "\n".join(markers + ["--- PASS: " + name + " (1.00s)" for name in names])
+        verify(output)
+        for marker in markers:
+            with self.subTest(missing=marker), self.assertRaises(RuntimeError): verify(output.replace(marker,""))
+            with self.subTest(repeated=marker), self.assertRaises(RuntimeError): verify(output+"\n"+marker)
+        for tail in ("--- SKIP: mysql (0.00s)", "--- FAIL: mysql (0.00s)", "DATABASE_BACKUP_RESTORE_APP_PASS postgresql"):
+            with self.subTest(tail=tail), self.assertRaises(RuntimeError): verify(output+"\n"+tail)
+        for name in names:
+            with self.subTest(missing=name), self.assertRaises(RuntimeError): verify(output.replace("--- PASS: " + name, "--- SKIP: " + name))
+
+
 class BackupScheduleSelectionTest(unittest.TestCase):
     def functions(self):
         source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
@@ -1269,6 +1303,7 @@ def stop(*_):
 signal.signal(signal.SIGTERM,stop)
 try:
  profiles = ([('backup_notifications','postgresql')] if case.startswith('backup_notifications') else [])+([('backup_remote','postgresql')] if case.startswith(('backup_remote','backup_retention','backup_notifications')) else [])+([('backup_retention','postgresql'),('backup_retention_recovery','postgresql')] if case.startswith('backup_retention') else [])+[('backup','postgresql')]+([('backup_schedule','postgresql')] if case.startswith('backup_schedule') else []) if case.startswith('backup_') else [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else [])
+ if case.startswith('mysql_'):profiles=[('storage','mysql'),('backup','mysql')]
  for profile,engine in profiles:
   meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
   if profile!='base':meta['profile']=profile
@@ -1284,10 +1319,13 @@ try:
   if profile=='storage' and case=='storage_unknown_profile':meta['profile']='foreign'
   if case=='foreign_origin':meta['origin']='http://127.0.0.1:35003'
   if case=='metadata_secret':meta['password']='SENSITIVE-CANARY'
-  print(('DATABASE_BACKUP_BROWSER_READY ' if case.startswith('backup_') else 'DATABASE_CONNECTION_BROWSER_READY ')+json.dumps(meta),flush=True)
+  if profile=='backup' and case=='mysql_unknown':meta['profile']='backup_remote'
+  print(('DATABASE_BACKUP_BROWSER_READY ' if profile.startswith('backup') else 'DATABASE_CONNECTION_BROWSER_READY ')+json.dumps(meta),flush=True)
+  if case=='mysql_duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   if case=='duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   if profile=='storage' and case=='storage_duplicate':print('DATABASE_CONNECTION_BROWSER_READY '+json.dumps(meta),flush=True)
   while not (root/('done-'+profile+'-'+engine)).exists():time.sleep(.01)
+  if case=='mysql_missing':break
   if case in ('missing_second','backup_schedule_missing','backup_remote_missing','backup_notifications_missing') or case=='backup_retention_missing' and profile=='backup_remote' or case=='backup_retention_recovery_missing' and profile=='backup_retention':break
 finally:
  child.terminate();child.wait(timeout=2)
@@ -1350,7 +1388,8 @@ class BrowserDriverTest(unittest.TestCase):
             (root/'bin').mkdir();browser=root/'bin/bun'
             browser.write_text('#!'+sys.executable+'\n'+DRIVER_BROWSER);browser.chmod(0o700)
             environment=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],NEROCD_TEST_DATABASE_URL='SENSITIVE-CANARY')
-            environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith('storage_') else '0'
+            environment['NEROCD_DATABASE_MYSQL_RUNTIME']='1' if case.startswith('mysql_') else '0'
+            environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith(('storage_','mysql_')) else '0'
             environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith('backup_') else '0'
             environment['NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME']='1' if case.startswith('backup_schedule') else '0'
             environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications')) else '0'
@@ -1368,7 +1407,10 @@ class BrowserDriverTest(unittest.TestCase):
                 self.assertEqual(process.returncode,expected,output)
                 self.assertNotIn('SENSITIVE-CANARY',output)
                 if expected==0:
-                    if case.startswith('backup_'):
+                    if case.startswith('mysql_'):
+                        self.assertEqual(output.count('DATABASE_CONNECTION_STORAGE_BROWSER_PASS mysql'),1)
+                        self.assertEqual(output.count('DATABASE_BACKUP_BROWSER_PASS mysql'),1)
+                    elif case.startswith('backup_'):
                         self.assertEqual(output.count('DATABASE_BACKUP_BROWSER_PASS postgresql'),1)
                         self.assertEqual(output.count('DATABASE_BACKUP_SCHEDULE_BROWSER_PASS postgresql'),1 if case.startswith('backup_schedule') else 0)
                         self.assertEqual(output.count('DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS postgresql'),1 if case.startswith('backup_notifications') else 0)
@@ -1415,6 +1457,11 @@ class BrowserDriverTest(unittest.TestCase):
         self.run_driver('backup_retention_success',0)
         self.run_driver('backup_notifications_success',0)
         for case in ('backup_notifications_bad_pin','backup_notifications_http','backup_notifications_missing','backup_notifications_unknown','backup_schedule_missing','backup_schedule_unknown','backup_remote_missing','backup_remote_unknown','backup_retention_missing','backup_retention_unknown','backup_retention_recovery_missing','backup_retention_recovery_unknown'):
+            with self.subTest(case=case):self.run_driver(case,1)
+
+    def test_mysql_storage_then_backup_reuses_existing_browser_driver(self):
+        self.run_driver('mysql_success',0)
+        for case in ('mysql_missing','mysql_duplicate','mysql_unknown'):
             with self.subTest(case=case):self.run_driver(case,1)
 
     def test_successful_two_engine_driver(self):

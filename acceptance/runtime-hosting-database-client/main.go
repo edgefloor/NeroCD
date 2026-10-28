@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"nerocd/internal/domain"
 )
@@ -77,6 +79,8 @@ func run() error {
 	switch in.Engine {
 	case "postgresql":
 		return postgres(ctx, in)
+	case "mysql":
+		return mysqlMarker(ctx, in)
 	case "redis":
 		return redis(ctx, in)
 	default:
@@ -138,6 +142,46 @@ func postgres(ctx context.Context, in input) (err error) {
 	}
 	var got string
 	if conn.QueryRow(ctx, `SELECT value FROM public.nerocd_fixture_marker WHERE id=1`).Scan(&got) != nil || got != in.Marker {
+		return errors.New("marker read failed")
+	}
+	return nil
+}
+
+func mysqlDatabase(host, username, password string) (*sql.DB, error) {
+	cfg := mysqlDriver.NewConfig()
+	cfg.Net, cfg.Addr, cfg.User, cfg.Passwd, cfg.DBName = "tcp", net.JoinHostPort(host, "3306"), username, password, "app"
+	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 2*time.Second, 3*time.Second, 3*time.Second
+	cfg.MaxAllowedPacket = 1 << 20
+	connector, err := mysqlDriver.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.New("client configuration failed")
+	}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(0)
+	return db, nil
+}
+
+func mysqlMarker(ctx context.Context, in input) (err error) {
+	db, err := mysqlDatabase(in.Host, in.Username, string(in.Password))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if db.Close() != nil {
+			err = errors.Join(err, errors.New("client connection cleanup failed"))
+		}
+	}()
+	if in.Write {
+		if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS nerocd_fixture_marker(id integer PRIMARY KEY,value text NOT NULL) ENGINE=InnoDB"); err != nil {
+			return errors.New("marker table failed")
+		}
+		if _, err = db.ExecContext(ctx, "INSERT INTO nerocd_fixture_marker(id,value) VALUES(1,?) ON DUPLICATE KEY UPDATE value=?", in.Marker, in.Marker); err != nil {
+			return errors.New("marker write failed")
+		}
+	}
+	var got string
+	if db.QueryRowContext(ctx, "SELECT value FROM nerocd_fixture_marker WHERE id=1").Scan(&got) != nil || got != in.Marker {
 		return errors.New("marker read failed")
 	}
 	return nil
@@ -215,6 +259,11 @@ func httpDatabaseEnvironment(env func(string) string) (httpDatabase, error) {
 		if env("PGPORT") != "5432" || env("PGDATABASE") != "app" {
 			return c, invalid
 		}
+	case "mysql":
+		c.host, c.username, c.password = env("MYSQL_HOST"), env("MYSQL_USER"), env("MYSQL_PASSWORD")
+		if env("MYSQL_PORT") != "3306" || env("MYSQL_DATABASE") != "app" {
+			return c, invalid
+		}
 	case "redis":
 		c.host, c.username, c.password = env("REDIS_HOST"), env("REDIS_USERNAME"), env("REDIS_PASSWORD")
 		if env("REDIS_PORT") != "6379" {
@@ -241,10 +290,14 @@ func (c httpDatabase) record(ctx context.Context, action, key, value string) (st
 	if err != nil {
 		return "", errors.New("HTTP database unavailable")
 	}
-	if c.engine == "postgresql" {
+	switch c.engine {
+	case "postgresql":
 		return c.postgresRecord(ctx, host, action, key, value)
+	case "mysql":
+		return c.mysqlRecord(ctx, host, action, key, value)
+	default:
+		return c.redisRecord(ctx, host, action, key, value)
 	}
-	return c.redisRecord(ctx, host, action, key, value)
 }
 
 func (c httpDatabase) postgresRecord(ctx context.Context, host, action, key, value string) (string, error) {
@@ -281,6 +334,37 @@ func (c httpDatabase) postgresRecord(ctx context.Context, host, action, key, val
 	}
 	var result string
 	if err = conn.QueryRow(ctx, "SELECT value FROM public.nerocd_fixture_http WHERE namespace=$1 AND key=$2", c.namespace, key).Scan(&result); err != nil || len(result) > 4096 {
+		return "", invalid
+	}
+	return result, nil
+}
+
+func (c httpDatabase) mysqlRecord(ctx context.Context, host, action, key, value string) (result string, err error) {
+	invalid := errors.New("HTTP database unavailable")
+	db, err := mysqlDatabase(host, c.username, c.password)
+	if err != nil {
+		return "", invalid
+	}
+	defer func() {
+		if db.Close() != nil {
+			result, err = "", invalid
+		}
+	}()
+	if action == "ready" {
+		if db.PingContext(ctx) != nil {
+			return "", invalid
+		}
+		return "ready", nil
+	}
+	if action == "put" {
+		if _, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS nerocd_fixture_http(namespace varchar(64) NOT NULL,record_key varchar(64) NOT NULL,value text NOT NULL,PRIMARY KEY(namespace,record_key)) ENGINE=InnoDB"); err != nil {
+			return "", invalid
+		}
+		if _, err = db.ExecContext(ctx, "INSERT INTO nerocd_fixture_http(namespace,record_key,value) VALUES(?,?,?) ON DUPLICATE KEY UPDATE value=?", c.namespace, key, value, value); err != nil {
+			return "", invalid
+		}
+	}
+	if db.QueryRowContext(ctx, "SELECT value FROM nerocd_fixture_http WHERE namespace=? AND record_key=?", c.namespace, key).Scan(&result) != nil || len(result) > 4096 {
 		return "", invalid
 	}
 	return result, nil

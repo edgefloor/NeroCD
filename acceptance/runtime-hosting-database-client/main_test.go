@@ -18,15 +18,16 @@ import (
 const testAlias = "ncdb-0123456789abcdef0123456789abcdef"
 
 func TestHTTPDatabaseEnvironmentProfiles(t *testing.T) {
-	for _, engine := range []string{"postgresql", "redis"} {
+	for _, engine := range []string{"postgresql", "redis", "mysql"} {
 		t.Run(engine, func(t *testing.T) {
-			env := map[string]string{"FIXTURE_DATABASE_ENGINE": engine, "FIXTURE_DATABASE_NAMESPACE": "isolated_a", "PGHOST": testAlias, "PGPORT": "5432", "PGDATABASE": "app", "PGUSER": "ncd_app", "PGPASSWORD": strings.Repeat("a", 43), "REDIS_HOST": testAlias, "REDIS_PORT": "6379", "REDIS_USERNAME": "ncd_app", "REDIS_PASSWORD": strings.Repeat("a", 43)}
+			env := map[string]string{"FIXTURE_DATABASE_ENGINE": engine, "FIXTURE_DATABASE_NAMESPACE": "isolated_a", "PGHOST": testAlias, "PGPORT": "5432", "PGDATABASE": "app", "PGUSER": "ncd_app", "PGPASSWORD": strings.Repeat("a", 43), "REDIS_HOST": testAlias, "REDIS_PORT": "6379", "REDIS_USERNAME": "ncd_app", "REDIS_PASSWORD": strings.Repeat("a", 43), "MYSQL_HOST": testAlias, "MYSQL_PORT": "3306", "MYSQL_DATABASE": "app", "MYSQL_USER": "ncd_app", "MYSQL_PASSWORD": strings.Repeat("a", 43)}
 			// A canonical 32-byte credential, delivered through runtime configuration.
+			env["MYSQL_PASSWORD"] = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 			env["PGPASSWORD"], env["REDIS_PASSWORD"] = base64.RawURLEncoding.EncodeToString(make([]byte, 32)), base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 			if _, err := httpDatabaseEnvironment(func(k string) string { return env[k] }); err != nil {
 				t.Fatal(err)
 			}
-			for _, key := range []string{"FIXTURE_DATABASE_NAMESPACE", "FIXTURE_DATABASE_ENGINE", map[string]string{"postgresql": "PGHOST", "redis": "REDIS_HOST"}[engine], map[string]string{"postgresql": "PGPASSWORD", "redis": "REDIS_PASSWORD"}[engine]} {
+			for _, key := range []string{"FIXTURE_DATABASE_NAMESPACE", "FIXTURE_DATABASE_ENGINE", map[string]string{"postgresql": "PGHOST", "redis": "REDIS_HOST", "mysql": "MYSQL_HOST"}[engine], map[string]string{"postgresql": "PGPASSWORD", "redis": "REDIS_PASSWORD", "mysql": "MYSQL_PASSWORD"}[engine]} {
 				saved := env[key]
 				env[key] = "SENSITIVE-invalid"
 				if _, err := httpDatabaseEnvironment(func(k string) string { return env[k] }); err == nil || strings.Contains(err.Error(), "SENSITIVE") {
@@ -35,6 +36,18 @@ func TestHTTPDatabaseEnvironmentProfiles(t *testing.T) {
 				env[key] = saved
 			}
 		})
+	}
+}
+
+func TestMySQLHTTPEnvironmentRequiresExactBindingProfile(t *testing.T) {
+	env := map[string]string{"FIXTURE_DATABASE_ENGINE": "mysql", "FIXTURE_DATABASE_NAMESPACE": "connected_mysql", "MYSQL_HOST": testAlias, "MYSQL_PORT": "3306", "MYSQL_DATABASE": "app", "MYSQL_USER": "ncd_app", "MYSQL_PASSWORD": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}
+	for _, key := range []string{"MYSQL_PORT", "MYSQL_DATABASE", "MYSQL_USER"} {
+		saved := env[key]
+		env[key] = "unexpected"
+		if _, err := httpDatabaseEnvironment(func(key string) string { return env[key] }); err == nil {
+			t.Fatal("unexpected MySQL binding profile accepted")
+		}
+		env[key] = saved
 	}
 }
 

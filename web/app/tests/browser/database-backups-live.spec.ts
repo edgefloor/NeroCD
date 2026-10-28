@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-// Real cookie API, embedded UI, River, pinned PostgreSQL and compiled runner.
+// Real cookie API, embedded UI, River, pinned database and compiled runner.
 // No API interception or fabricated completion is permitted in this profile.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
@@ -14,7 +14,7 @@ const meta = raw
       profile: string;
     })
   : undefined;
-test("real hosted PostgreSQL backup and new-database restore through embedded UI", async ({
+test("real hosted database backup and new-database restore through embedded UI", async ({
   page,
 }) => {
   test.skip(

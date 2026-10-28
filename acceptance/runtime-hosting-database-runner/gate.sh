@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 
+mysql_mode = os.environ.get("NEROCD_DATABASE_MYSQL_RUNTIME", "0")
 backup_mode = os.environ.get("NEROCD_DATABASE_BACKUP_RUNTIME", "0")
 schedule_mode = os.environ.get("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME", "0")
 remote_mode = os.environ.get("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME", "0")
@@ -493,8 +494,27 @@ def verify_retention_failure_diagnostic_output(output):
         raise Failure("retention failure diagnostic contains unrelated qualification markers")
 
 
+def verify_mysql_runtime_output(output):
+    names = ["TestHostingApplicationDatabaseStorageCompiledRunner", "TestHostingApplicationDatabaseStorageFailuresCompiledRunner"]
+    markers = ["DATABASE_CONNECTION_STORAGE_PASS mysql", "DATABASE_CONNECTION_STORAGE_BROWSER_PASS mysql", "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS mysql success", "DATABASE_BACKUP_RESTORE_APP_PASS mysql", "DATABASE_BACKUP_BROWSER_PASS mysql"]
+    for case in ("readiness", "cutover"):
+        markers += ["DATABASE_CONNECTION_STORAGE_RECOVERY_PASS mysql " + case, "DATABASE_CONNECTION_STORAGE_CAPACITY_PASS mysql " + case]
+    for marker in markers:
+        if output.splitlines().count(marker) != 1:
+            raise Failure("required MySQL storage/backup proof missing or repeated: " + marker)
+    for name in names:
+        if not re.search(r"^--- PASS: " + name + r" ", output, re.MULTILINE):
+            raise Failure("required MySQL physical test did not pass")
+    if re.search(r"^\s*--- (?:SKIP|FAIL): ", output, re.MULTILINE):
+        raise Failure("MySQL qualification contains a skipped or failed case")
+    if any(re.match(r"^DATABASE_[A-Z_]+_PASS ", line) and line not in markers for line in output.splitlines()):
+        raise Failure("MySQL qualification contains unrelated proof markers")
+
+
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
+    if mysql_mode not in ("0", "1") or mysql_mode == "1" and (backup_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
+        raise Failure("MySQL requires exact connected storage/browser profile with appended local backup")
     if notifications_mode not in ("0", "1") or notifications_mode == "1" and (remote_mode != "1" or browser_mode != "1" or gate_mode != "full"):
         raise Failure("notifications mode requires exact full remote backup/browser profile")
     if retention_mode not in ("0", "1") or retention_mode == "1" and remote_mode != "1":
@@ -752,6 +772,8 @@ def main():
                "--env", "NEROCD_HOSTING_DATABASE_RUNNER_RUNTIME=disposable-dind",
                "--env", "NEROCD_DATABASE_HTTP_APP_IMAGE=" + app_image,
                "--env", "NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_database_runner?sslmode=disable"]
+    if mysql_mode == "1":
+        runtime_args += ["--env", "NEROCD_DATABASE_MYSQL_RUNTIME=1"]
     if backup_mode == "1":
         runtime_args += ["--env", "NEROCD_DATABASE_BACKUP_RUNTIME=1"]
         if notifications_mode == "1":
@@ -782,6 +804,8 @@ def main():
         pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode, retention_mode, notifications_mode)
     if gate_mode == "retention-failures-diagnostic":
         pattern, _, _ = retention_failure_diagnostic_profile(backup_mode, remote_mode, retention_mode, schedule_mode, browser_mode, routes_mode, storage_mode)
+    if mysql_mode == "1":
+        pattern = "^TestHostingApplicationDatabaseStorage(CompiledRunner|FailuresCompiledRunner)$"
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
         runtime_args += ["-test.failfast"]
@@ -800,6 +824,11 @@ def main():
         verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode, notifications_mode)
         full_workflow_pass = True
         say("hosted PostgreSQL logical backup and new-database restore fixture passed")
+        return
+    if mysql_mode == "1":
+        verify_mysql_runtime_output(runtime_output)
+        full_workflow_pass = True
+        say("native MySQL connected application, uploads, replacement, trusted routing and local backup/restore passed")
         return
     if gate_mode == "storage-cutover-diagnostic":
         required = {"TestHostingApplicationDatabaseStorageFailuresCompiledRunner",

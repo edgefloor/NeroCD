@@ -390,8 +390,12 @@ func newDatabaseRunnerFixtureConfigured(t *testing.T, capture, upgrade bool, con
 		t.Fatal("connected fixture requires automatic capture and upgrade")
 	}
 	_, pg, database := newHostingBuildAPIFixture(t)
-	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
-		if pg.ConfigureDatabaseBackupLimits(domain.HostingDatabaseBackupLimits{MaxBytes: 1 << 30, TimeoutSeconds: 10}) != nil {
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+		timeout := 10
+		if os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+			timeout = 60
+		}
+		if pg.ConfigureDatabaseBackupLimits(domain.HostingDatabaseBackupLimits{MaxBytes: 1 << 30, TimeoutSeconds: timeout}) != nil {
 			t.Fatal("protected backup fixture policy failed")
 		}
 	}
@@ -519,7 +523,10 @@ func newDatabaseRunnerFixtureConfigured(t *testing.T, capture, upgrade bool, con
 	f.token = login.Token
 	f.adminToken = login.Token
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
-	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+	if os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+		caps = append(caps, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability)
+	}
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
@@ -620,7 +627,7 @@ func (f *databaseRunnerFixture) start() {
 
 func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	args := []string{"runner", "--server", f.server.URL, "--credential-file", filepath.Join(f.root, "credential"), "--hosting-database", "--execute", "--database-state-root", filepath.Join(f.root, "state"), "--database-secret-root", filepath.Join(f.root, "secrets"), "--journal-dir", filepath.Join(f.root, "journal"), "--work-dir", filepath.Join(f.root, "work"), "--image-docker-endpoint", "unix:///var/run/docker.sock", "--poll-interval", "100ms", "--cancel-poll-interval", "100ms"}
-	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
 		args = append(args, "--hosting-database-backups")
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			args = append(args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000")
@@ -1630,7 +1637,10 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 		return rec
 	}
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
-	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" {
+	if os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+		caps = append(caps, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability)
+	}
+	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
 		caps = append(caps, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1")
@@ -1655,7 +1665,7 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 	t.Cleanup(tlsServer.Close)
 	client := runnerclient.New(tlsServer.URL, credential)
 	client.HTTP = tlsServer.Client()
-	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true})
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1"})
 	if err != nil || id != enrolled.Runner.ID {
 		t.Fatal("real API/client rejected the enrolled database runtime identity")
 	}

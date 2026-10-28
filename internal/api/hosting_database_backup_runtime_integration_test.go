@@ -246,7 +246,7 @@ func backupRuntimeWaitApplicationReady(parent context.Context, op domain.Hosting
 	}
 }
 
-func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.HostingDatabase, suffix string, observe func(string, string)) domain.HostingOperation {
+func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.HostingDatabase, suffix string, observe func(string, string), namespaces ...string) domain.HostingOperation {
 	f.t.Helper()
 	progress := func(stage, connection string) {
 		if observe != nil {
@@ -261,8 +261,15 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 	progress("application_created", "")
 	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destination}, 201)
 	progress("application_bound", "")
+	namespace := "backup_restored"
+	if len(namespaces) > 1 {
+		f.t.Fatal("one application namespace required")
+	}
+	if len(namespaces) == 1 {
+		namespace = namespaces[0]
+	}
 	entries := []domain.HostingRuntimeEntry{}
-	for _, v := range [][2]string{{"FIXTURE_DATABASE_ENGINE", "postgresql"}, {"FIXTURE_DATABASE_NAMESPACE", "backup_restored"}} {
+	for _, v := range [][2]string{{"FIXTURE_DATABASE_ENGINE", db.Engine}, {"FIXTURE_DATABASE_NAMESPACE", namespace}} {
 		value := v[1]
 		entries = append(entries, domain.HostingRuntimeEntry{Name: v[0], Kind: "literal", Value: &value})
 	}
@@ -280,6 +287,101 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 	op := f.awaitConnectionOperation(connected.ApplicationOperationID)
 	progress("application_settled", connected.ID)
 	return op
+}
+
+// qualifyMySQLConnectedBackup extends the connected storage workflow in place.
+// The client reads both snapshots through independently admitted bindings.
+func (f *databaseRunnerFixture) qualifyMySQLConnectedBackup(source domain.HostingDatabase, sourceOp, application domain.HostingOperation) {
+	f.t.Helper()
+	diagnosticID := ""
+	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
+	f.start()
+	wire := &databaseBackupRuntimeWire{mode: "backup", entered: make(chan struct{}), release: make(chan struct{})}
+	f.backupWire.Store(wire)
+	browser := startDatabaseBackupBrowser(f, source)
+	diagnosticID = browser.await("backup")
+	select {
+	case <-wire.entered:
+	case <-time.After(90 * time.Second):
+		f.t.Fatal("MySQL backup receipt loss not reached")
+	}
+	f.stop()
+	close(wire.release)
+	f.start()
+	backupRuntimeWaitReplay(f, wire)
+	backup := backupRuntimeAwait(f, diagnosticID)
+	f.backupWire.Store(nil)
+	if backup.Version != domain.HostingDatabaseMySQLBackupVersion || backup.Blob.Format != "mysql_sql" || backup.Consistency != "logical_snapshot_source_writable" {
+		f.t.Fatal("MySQL backup public contract differs")
+	}
+	f.appRecord(application, "PUT", "source_only", "after_snapshot")
+	f.docker("container", "stop", sourceOp.Result.ContainerID)
+	backupRuntimeRegisterSourceRestartCleanup(f.t, sourceOp.Result.ContainerID, func(ctx context.Context, id string) error {
+		raw, err := databaseRunnerDocker(ctx, nil, "container", "start", id)
+		clear(raw)
+		return err
+	})
+	wire = &databaseBackupRuntimeWire{mode: "restore", entered: make(chan struct{}), release: make(chan struct{})}
+	f.backupWire.Store(wire)
+	browser.setPhase("restore", backup.ID)
+	diagnosticID = browser.await("restore")
+	select {
+	case <-wire.entered:
+	case <-time.After(90 * time.Second):
+		f.t.Fatal("MySQL restore receipt loss not reached")
+	}
+	f.stop()
+	close(wire.release)
+	f.start()
+	backupRuntimeWaitReplay(f, wire)
+	f.backupWire.Store(nil)
+	restored := backupRuntimeAwait(f, diagnosticID)
+	if restored.TargetResourceID == source.Resource.ID || restored.BackupID != backup.ID || restored.Blob.Digest != backup.Blob.Digest {
+		f.t.Fatal("MySQL restore changed source/target archive identity")
+	}
+	target := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
+	f.registerRouteDatabaseCleanup(target.Resource.ID)
+	if target.Engine != "mysql" || target.RecipeVersion != source.RecipeVersion || target.Binding.ID == source.Binding.ID || target.StorageRef == source.StorageRef || target.Credentials[0].SecretID == source.Credentials[0].SecretID {
+		f.t.Fatal("MySQL restore reused source identity")
+	}
+	b := backupRuntimeApplicationObserved(f, target, "mysql_restored", browser.recordProgress, "connected_mysql")
+	if b.ApplicationDatabase == nil {
+		f.t.Fatal("restored app lacks admitted database snapshot")
+	}
+	binding := b.ApplicationDatabase.Binding
+	credential := target.Credentials[0]
+	for _, candidate := range target.Credentials {
+		if candidate.Role == "app" {
+			credential = candidate
+		}
+	}
+	if binding.DatabaseResourceID != target.Resource.ID || binding.DatabaseBindingID != target.Binding.ID || binding.Alias != domain.HostingDatabaseBindingAlias(target.Binding.ID) || binding.Credential.SecretID != credential.SecretID || binding.Credential.Version != credential.Version || binding.Database.Engine != "mysql" {
+		f.t.Fatal("restored app did not pin exact target alias and credential version")
+	}
+	f.appRecord(b, "GET", "a", "retained_a")
+	// The original server remains stopped. Reading a source record proves this
+	// application uses the restored archive rather than the original endpoint.
+	if applicationDatabaseHTTPRecord(f.t.Context(), b, "GET", "source_only", "after_snapshot") == nil {
+		f.t.Fatal("restore included a post-backup source-only record")
+	}
+	f.appRecord(b, "PUT", "restored_only", "restored_new_write")
+	f.appRecord(b, "GET", "restored_only", "restored_new_write")
+	f.docker("container", "start", sourceOp.Result.ContainerID)
+	if backupRuntimeWaitApplicationReady(f.t.Context(), application) != nil {
+		f.t.Fatal("MySQL source did not regain exact-instance readiness")
+	}
+	f.appRecord(application, "GET", "a", "retained_a")
+	f.appRecord(application, "GET", "source_only", "after_snapshot")
+	if applicationDatabaseHTTPRecord(f.t.Context(), application, "GET", "restored_only", "restored_new_write") == nil {
+		f.t.Fatal("restore writes reached original source")
+	}
+	f.storage.assertFiles(f, application)
+	f.routes.assertSelected(application)
+	f.routes.record(f.t.Context(), application, "GET", "source_only", "after_snapshot")
+	browser.setPhase("complete", restored.ID)
+	browser.finished()
+	f.stop()
+	fmt.Println("DATABASE_BACKUP_RESTORE_APP_PASS mysql")
 }
 
 func TestHostingDatabaseBackupCompiledRunner(t *testing.T) {
@@ -1150,16 +1252,27 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 	if !applicationDatabaseBrowserOrigin(origin) {
 		f.t.Fatal("owned browser origin required")
 	}
-	_, err := f.service.BootstrapAdmin(f.t.Context(), app.BootstrapAdminInput{Email: "backup-bootstrap@example.local", Name: "Backup bootstrap", Password: "backup-bootstrap-private-only"})
-	if err != nil {
-		f.t.Fatal("browser bootstrap failed")
-	}
-	for _, member := range []app.ProjectMemberInput{{ProjectID: source.Resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: source.Resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
-		databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", member, 200)
-	}
-	changed, err := f.database.Exec(f.t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`)
-	if err != nil || changed.RowsAffected() != 1 {
-		f.t.Fatal("browser owner demotion failed")
+	if source.Engine == "mysql" {
+		// The immediately preceding storage browser prepared this same owner.
+		var owner, viewer, admins int
+		if f.database.QueryRow(f.t.Context(), `SELECT
+   (SELECT count(*) FROM users u JOIN project_members m ON m.user_id=u.id WHERE u.id='usr_bootstrap' AND u.global_role='user' AND u.status='active' AND m.project_id=$1 AND m.role='owner'),
+   (SELECT count(*) FROM users u JOIN project_members m ON m.user_id=u.id WHERE u.id='usr_viewer' AND u.global_role='user' AND u.status='active' AND m.project_id=$1 AND m.role='viewer'),
+   (SELECT count(*) FROM users WHERE global_role='system_admin' AND status='active')`, source.Resource.ProjectID).Scan(&owner, &viewer, &admins) != nil || owner != 1 || viewer != 1 || admins < 1 {
+			f.t.Fatal("prepared backup browser lacks ordinary owner/viewer and retained administrator")
+		}
+	} else {
+		_, err := f.service.BootstrapAdmin(f.t.Context(), app.BootstrapAdminInput{Email: "backup-bootstrap@example.local", Name: "Backup bootstrap", Password: "backup-bootstrap-private-only"})
+		if err != nil {
+			f.t.Fatal("browser bootstrap failed")
+		}
+		for _, member := range []app.ProjectMemberInput{{ProjectID: source.Resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: source.Resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
+			databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", member, 200)
+		}
+		changed, err := f.database.Exec(f.t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`)
+		if err != nil || changed.RowsAffected() != 1 {
+			f.t.Fatal("browser owner demotion failed")
+		}
 	}
 	api := NewServerWithConfig(f.service, slog.New(slog.NewTextHandler(f.logs, nil)), web.Static(), ServerConfig{AllowInsecureCookies: true, PublicOrigin: origin})
 	b := &databaseBackupBrowserFixture{f: f, phase: "backup", admitted: make(chan domain.HostingDatabaseBackupOperation, 2), done: make(chan struct{}), schedules: make(chan domain.HostingDatabaseBackupSchedule, 4), scheduleSeen: make(map[string]bool), retentionPreviews: make(chan databaseRetentionPreview, 1), retentions: make(chan databaseRetentionExecution, 1)}
@@ -1304,7 +1417,7 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 			f.t.Error("browser server did not join")
 		}
 	})
-	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": "postgresql", "profile": profile, "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
+	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": source.Engine, "profile": profile, "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
 	raw, _ := json.Marshal(meta)
 	fmt.Println("DATABASE_BACKUP_BROWSER_READY " + string(raw))
 	return b

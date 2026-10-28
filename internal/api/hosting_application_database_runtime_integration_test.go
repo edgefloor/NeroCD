@@ -43,11 +43,71 @@ func applicationDatabaseFixtureImage(reference string) error {
 	return nil
 }
 
+func applicationDatabaseFixtureEngines(t *testing.T) []string {
+	t.Helper()
+	switch os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") {
+	case "", "0":
+		return []string{"postgresql", "redis"}
+	case "1":
+		return []string{"mysql"}
+	default:
+		t.Fatal("invalid MySQL runtime profile")
+		return nil
+	}
+}
+
+func TestApplicationDatabaseMySQLFixtureContracts(t *testing.T) {
+	in := applicationDatabaseRouteFailureCreateInput("mysql", "storage_success", "penv_fixture", "dest_fixture")
+	raw, err := json.Marshal(in)
+	var decoded domain.HostingDatabaseCreateInput
+	if err != nil || json.Unmarshal(raw, &decoded) != nil || decoded.Validate() != nil || decoded.Engine != "mysql" || decoded.RecipeVersion != domain.HostingDatabaseMySQLRecipe {
+		t.Fatal("MySQL fixture rejected by actual create decoder")
+	}
+	decoded.RequestID = "bad id"
+	if decoded.Validate() == nil {
+		t.Fatal("invalid fixture identity accepted")
+	}
+	for _, mode := range []string{"0", "1"} {
+		t.Setenv("NEROCD_DATABASE_MYSQL_RUNTIME", mode)
+		got := applicationDatabaseFixtureEngines(t)
+		want := []string{"postgresql", "redis"}
+		if mode == "1" {
+			want = []string{"mysql"}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatal("fixture engine selection changed")
+		}
+	}
+	var restore domain.HostingDatabaseBackupRestoreInput
+	if domain.DecodeHostingDatabaseBackupJSON([]byte(`{"request_id":"restore-fixture","name":"restored mysql"}`), &restore) != nil || restore.Validate() != nil {
+		t.Fatal("fixture restore request rejected by real decoder")
+	}
+	restore.RequestID = ""
+	if restore.Validate() == nil {
+		t.Fatal("invalid restore request identity accepted")
+	}
+	for _, body := range []string{`{"request_id":"backup-fixture","expected_resource_generation":1}`, `{"request_id":"backup-fixture","expected_resource_generation":1,"unknown":true}`} {
+		var input domain.HostingDatabaseBackupInput
+		err := domain.DecodeHostingDatabaseBackupJSON([]byte(body), &input)
+		if strings.Contains(body, "unknown") {
+			if err == nil {
+				t.Fatal("backup decoder accepted unknown field")
+			}
+		} else if err != nil || input.Validate() != nil {
+			t.Fatal("fixture backup request rejected by real decoder")
+		}
+	}
+}
+
 func applicationDatabaseCreateInput(engine, environment, destination string) domain.HostingDatabaseCreateInput {
 	input := databaseUpgradeCreateInput(engine, environment, destination)
 	input.RequestID = strings.Repeat("01", 16)
 	if engine == "redis" {
 		input.RequestID = strings.Repeat("02", 16)
+	}
+	if engine == "mysql" {
+		input.RecipeVersion = domain.HostingDatabaseMySQLRecipe
+		input.RequestID = strings.Repeat("03", 16)
 	}
 	input.Name = "connected physical " + engine
 	return input
@@ -350,7 +410,7 @@ func testHostingApplicationDatabaseCompiledRunner(t *testing.T, storage bool) {
 	if applicationDatabaseFixtureImage(image) != nil {
 		t.Fatal("owned registry HTTP image digest required")
 	}
-	for i, engine := range []string{"postgresql", "redis"} {
+	for i, engine := range applicationDatabaseFixtureEngines(t) {
 		if !t.Run(engine, func(t *testing.T) {
 			var routeTrust *applicationDatabaseRouteFixture
 			if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
@@ -664,6 +724,10 @@ func testHostingApplicationDatabaseCompiledRunner(t *testing.T, storage bool) {
 			if browser != nil {
 				browser.advance("finish", finalConnection.MembershipRevision, c, map[string]string{"a": "retained_a", "b": "retained_b", "db_replaced": "retained_database_replacement", "c": "retained_c"})
 				browser.awaitFinished()
+			}
+			if engine == "mysql" && storage {
+				browser.close()
+				f.qualifyMySQLConnectedBackup(view, maintained, c)
 			}
 			if f.process != nil {
 				t.Fatal("final fixture cleanup requires joined runner")
@@ -1020,6 +1084,7 @@ type applicationDatabaseBrowser struct {
 	proofs              map[string]applicationDatabaseBrowserProof
 	admissions          chan applicationDatabaseBrowserAdmission
 	finished            chan struct{}
+	close               func()
 	failed              chan struct{}
 	fail                sync.Once
 	finish              sync.Once
@@ -1421,17 +1486,21 @@ func (f *databaseRunnerFixture) startApplicationDatabaseBrowser(resource domain.
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
 	joined := make(chan error, 1)
 	go func() { joined <- server.Serve(listener) }()
-	f.t.Cleanup(func() {
-		cancel()
-		shutdown, stop := context.WithTimeout(context.Background(), 3*time.Second)
-		defer stop()
-		if server.Shutdown(shutdown) != nil {
-			_ = server.Close()
-		}
-		if e := <-joined; !errors.Is(e, http.ErrServerClosed) {
-			f.t.Error("browser listener did not join")
-		}
-	})
+	var closeOnce sync.Once
+	b.close = func() {
+		closeOnce.Do(func() {
+			cancel()
+			shutdown, stop := context.WithTimeout(context.Background(), 3*time.Second)
+			defer stop()
+			if server.Shutdown(shutdown) != nil {
+				_ = server.Close()
+			}
+			if e := <-joined; !errors.Is(e, http.ErrServerClosed) {
+				f.t.Error("browser listener did not join")
+			}
+		})
+	}
+	f.t.Cleanup(b.close)
 	f.t.Cleanup(func() {
 		if f.t.Failed() {
 			b.reportFailure("go_failure")

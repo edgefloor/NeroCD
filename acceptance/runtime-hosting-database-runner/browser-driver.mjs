@@ -3,17 +3,19 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const mysqlMode = process.env.NEROCD_DATABASE_MYSQL_RUNTIME === "1";
 const backupMode = process.env.NEROCD_DATABASE_BACKUP_RUNTIME === "1";
 const prefix = backupMode ? "DATABASE_BACKUP_BROWSER_READY " : "DATABASE_CONNECTION_BROWSER_READY ";
 const metadataKeys = ["origin", "engine", "project_id", "environment", "application_resource_id", "application_name", "database_resource_id", "foreign_resource_id", "control_path"].sort();
 export function validateMetadata(value, origin) {
   const notification = value?.profile === "backup_notifications";
   const keys = notification ? [...metadataKeys, "profile", "tls_spki"].sort() : ["storage", "storage_resume", "storage_complete", "backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery", "backup_notifications"].includes(value?.profile) ? [...metadataKeys, "profile"].sort() : metadataKeys;
-  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535 || Number(new URL(origin).port) < 1024 || !value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) || value.origin !== (notification ? origin.replace("http://", "https://") : origin) || !["postgresql", "redis"].includes(value.engine)) throw Error("invalid browser fixture metadata");
+  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535 || Number(new URL(origin).port) < 1024 || !value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys) || value.origin !== (notification ? origin.replace("http://", "https://") : origin) || !["postgresql", "redis", "mysql"].includes(value.engine)) throw Error("invalid browser fixture metadata");
   if (notification && (value.engine !== "postgresql" || typeof value.tls_spki !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(value.tls_spki) || Buffer.from(value.tls_spki, "base64").toString("base64") !== value.tls_spki)) throw Error("invalid notification TLS pin");
   for (const name of ["project_id", "application_resource_id", "database_resource_id", "foreign_resource_id"]) if (typeof value[name] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value[name])) throw Error("invalid browser fixture identity");
   for (const name of ["environment", "application_name"]) if (typeof value[name] !== "string" || !value[name] || value[name].length > 255 || /[\x00-\x1f\x7f]/.test(value[name])) throw Error("invalid browser fixture label");
   if (!(["backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery", "backup_notifications"].includes(value.profile) ? /^\/api\/v1\/fixture\/database-backup\/[a-f0-9]{32}$/ : /^\/api\/v1\/fixture\/database-connection\/[a-f0-9]{32}$/).test(value.control_path)) throw Error("invalid browser fixture controls");
+  if (value.engine === "mysql" && !["storage", "backup"].includes(value.profile)) throw Error("invalid MySQL browser profile");
   return value;
 }
 
@@ -57,7 +59,7 @@ export async function drive(origin, evidence, command) {
   const notifications = process.env.NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME ?? "0";
   if (!["0", "1"].includes(notifications) || notifications === "1" && remote !== "1") throw Error("invalid browser notifications profile");
   // Go registers backup_remote_runtime before backup_runtime in lexical file order.
-  const expected = backupMode ? [...(notifications === "1" ? ["backup_notifications:postgresql"] : []), ...(remote === "1" ? ["backup_remote:postgresql"] : []), ...(retention === "1" ? ["backup_retention:postgresql", "backup_retention_recovery:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
+  const expected = mysqlMode ? ["storage:mysql", "backup:mysql"] : backupMode ? [...(notifications === "1" ? ["backup_notifications:postgresql"] : []), ...(remote === "1" ? ["backup_remote:postgresql"] : []), ...(retention === "1" ? ["backup_retention:postgresql", "backup_retention_recovery:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
   let active, fixture, failed = false, fixtureDone = false, browserPasses = 0, outputBytes = 0, buffer = "";
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
@@ -76,7 +78,7 @@ export async function drive(origin, evidence, command) {
     if (failed || active || !queue.length) return;
     const meta = queue.shift();
     const env = Object.fromEntries(["PATH", "HOME", "TMPDIR", "NODE_PATH", "PLAYWRIGHT_BROWSERS_PATH", "CI"].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
-    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", meta.profile === "backup_notifications" ? "backup-notifications-live.spec.ts" : ["backup_retention", "backup_retention_recovery"].includes(meta.profile) ? "database-backup-retention-live.spec.ts" : meta.profile === "backup_remote" ? "database-remote-backups-live.spec.ts" : meta.profile === "backup_schedule" ? "database-backup-schedules-live.spec.ts" : backupMode ? "database-backups-live.spec.ts" : "database-connection-live.spec.ts", ...(meta.profile === "backup_notifications" ? ["--config", "playwright.notifications.config.ts"] : []), "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.profile ?? "base", meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: meta.origin, ...(meta.profile === "backup_notifications" ? { NEROCD_NOTIFICATION_BROWSER_SPKI: meta.tls_spki } : {}), NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
+    active = start("bun", ["run", "--cwd", "web/app", "smoke:browser", meta.profile === "backup_notifications" ? "backup-notifications-live.spec.ts" : ["backup_retention", "backup_retention_recovery"].includes(meta.profile) ? "database-backup-retention-live.spec.ts" : meta.profile === "backup_remote" ? "database-remote-backups-live.spec.ts" : meta.profile === "backup_schedule" ? "database-backup-schedules-live.spec.ts" : meta.profile === "backup" ? "database-backups-live.spec.ts" : "database-connection-live.spec.ts", ...(meta.profile === "backup_notifications" ? ["--config", "playwright.notifications.config.ts"] : []), "--project", "chromium", "--no-deps", "--workers", "1", "--output", resolve(evidence, meta.profile ?? "base", meta.engine)], { ...env, PLAYWRIGHT_BASE_URL: meta.origin, ...(meta.profile === "backup_notifications" ? { NEROCD_NOTIFICATION_BROWSER_SPKI: meta.tls_spki } : {}), NEROCD_DATABASE_CONNECTION_BROWSER_META: JSON.stringify(meta) }, true);
     active.stdout.on("data", (chunk) => { outputBytes += chunk.length; if (outputBytes > 1 << 20) abort(); else process.stdout.write(chunk); });
     const current = active;
     current.joined.then(async (code) => {
@@ -88,7 +90,7 @@ export async function drive(origin, evidence, command) {
       else if (meta.profile === "backup_retention") process.stdout.write("DATABASE_BACKUP_RETENTION_BROWSER_PASS postgresql\n");
       else if (meta.profile === "backup_remote") process.stdout.write("DATABASE_BACKUP_REMOTE_BROWSER_PASS postgresql\n");
       else if (meta.profile === "backup_schedule") process.stdout.write("DATABASE_BACKUP_SCHEDULE_BROWSER_PASS postgresql\n");
-      else if (meta.profile === "backup") process.stdout.write("DATABASE_BACKUP_BROWSER_PASS postgresql\n");
+      else if (meta.profile === "backup") process.stdout.write(`DATABASE_BACKUP_BROWSER_PASS ${meta.engine}\n`);
       else if (["storage_resume", "storage_complete"].includes(meta.profile)) process.stdout.write(`DATABASE_CONNECTION_STORAGE_RECOVERY_BROWSER_PASS ${meta.engine} ${meta.profile === "storage_resume" ? "resume_predecessor" : "complete_replacement"}\n`);
       else process.stdout.write(`DATABASE_CONNECTION_${meta.profile === "storage" ? "STORAGE_" : ""}BROWSER_PASS ${meta.engine}\n`);
       active = undefined; nextBrowser();
@@ -107,9 +109,10 @@ export async function drive(origin, evidence, command) {
       let newline;
       while ((newline = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        if (!line.startsWith(prefix)) { process.stdout.write(line + "\n"); continue; }
+        const marker = mysqlMode ? ["DATABASE_CONNECTION_BROWSER_READY ", "DATABASE_BACKUP_BROWSER_READY "].find((value) => line.startsWith(value)) : line.startsWith(prefix) ? prefix : undefined;
+        if (!marker) { process.stdout.write(line + "\n"); continue; }
         try {
-          const meta = validateMetadata(JSON.parse(line.slice(prefix.length)), origin);
+          const meta = validateMetadata(JSON.parse(line.slice(marker.length)), origin);
           const identity = `${meta.profile ?? "base"}:${meta.engine}`;
           if (engines.has(identity) || identity !== expected[engines.size]) throw Error("duplicate or out-of-order fixture");
           engines.add(identity); queue.push(meta); nextBrowser();
