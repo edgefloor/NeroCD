@@ -143,9 +143,9 @@ function DatabaseBackupsPanel({
             : false,
       })),
   });
-  const recentUploads = transfers
-    .flatMap((v) => v.data ?? [])
-    .filter((v) => v.mode === "upload");
+  const recordedTransfers = transfers.flatMap((v) => v.data ?? []);
+  const recentUploads = recordedTransfers.filter((v) => v.mode === "upload");
+  const downloads = recordedTransfers.filter((v) => v.mode === "download");
   const uploads = recoveryTransfer && !recentUploads.some(v => v.id === recoveryTransfer.id)
     ? [recoveryTransfer, ...recentUploads]
     : recentUploads;
@@ -243,7 +243,7 @@ function DatabaseBackupsPanel({
       <p>
         A backup captures a consistent logical snapshot of the app database
         while source writes continue. The operator sets byte and execution
-        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate or scheduled local backups and restore into a separate new database. Select a validated remote destination for an additional copy. Upload status is separate from dump completion. Remote-only restore and retention are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
+        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate or scheduled local backups and restore into a separate new database. Select a validated remote destination for an additional copy. Upload status is separate from dump completion. Remote restore requires hosting_mysql_remote_restore_v1. Retention is not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
       </p>
       <p>
         Restore creates a new private database with distinct credentials and
@@ -306,7 +306,7 @@ function DatabaseBackupsPanel({
                 ))}
               </select>
             </label>
-            {database.engine === "postgresql" ? <><label className="block">
+            <label className="block">
               Restore archive source
               <select
                 aria-label="Restore archive source"
@@ -332,7 +332,7 @@ function DatabaseBackupsPanel({
               Remote restore uses only a successfully uploaded, recorded object
               at its saved destination revision. It downloads and verifies the
               archive before importing into a new database.
-            </p></> : null}
+            </p>
             {!restoreSource ? (
               <p>
                 Local restore requires the archive to remain available on the
@@ -441,6 +441,7 @@ function DatabaseBackupsPanel({
                 {v.blob.digest}
               </p>
             ) : null}
+            {v.mode === "restore" ? downloads.filter(download => download.restore_operation_id === v.id).map(download => <p key={download.id} className="break-all">Remote archive download: {download.state} · {download.id}. Download success does not prove import completion. Review the restore operation state separately.</p>) : null}
             {v.target_resource_id ? (
               <p>Target resource: {v.target_resource_id}</p>
             ) : null}

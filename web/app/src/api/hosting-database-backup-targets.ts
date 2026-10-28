@@ -209,7 +209,7 @@ export function parseDatabaseBackupTransfer(
           : v.restore_operation_id !== undefined)
   )
     return fail();
-  if (v.version === "mysql.logical-s3-transfer.v1" && v.mode !== "upload") return fail();
+  if (v.version === "mysql.logical-s3-transfer.v1" && v.mode === "validate") return fail();
   if (v.blob !== undefined) {
     const b = document(v.blob, ["digest", "bytes", "format"]);
     if (

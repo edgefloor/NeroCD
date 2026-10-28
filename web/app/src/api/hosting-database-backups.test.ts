@@ -167,8 +167,14 @@ test("MySQL history binds SQL format to its engine and rejects cross-engine meta
 });
 
 
-test("MySQL does not submit a remote-only restore request", async () => {
- vi.mocked(request).mockClear();
- await expect(restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", { request_id: "stable", name: "Restored", remote_source: { transfer_id: "upload", expected_target_revision: 1 } }, new AbortController().signal)).rejects.toThrow();
- expect(request).not.toHaveBeenCalled();
+test("MySQL remote restore preserves the exact uploaded artifact reference and request on replay", async () => {
+ const input = { request_id: "stable", name: "Restored", remote_source: { transfer_id: "upload", expected_target_revision: 1 } };
+ const restored = { ...operation, id: "restore", backup_id: "backup", mode: "restore", target_resource_id: "target", version: "mysql.logical-local.v1", blob: { ...operation.blob, format: "mysql_sql" } };
+ vi.mocked(request).mockResolvedValue(restored);
+ await restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", input, new AbortController().signal);
+ await restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", input, new AbortController().signal);
+ expect(vi.mocked(request).mock.calls[0]![1]).toMatchObject({ method: "POST", body: input, requestID: "stable" });
+ expect(vi.mocked(request).mock.calls[1]![1]).toMatchObject({ body: input });
+ vi.mocked(request).mockResolvedValue({ ...restored, backup_id: "foreign" });
+ await expect(restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", input, new AbortController().signal)).rejects.toThrow();
 });

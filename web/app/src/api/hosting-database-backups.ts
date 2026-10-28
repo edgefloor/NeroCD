@@ -223,7 +223,6 @@ export async function restoreDatabaseBackup(
   input: DatabaseRestoreInput,
   signal: AbortSignal,
 ) {
-  if (database.engine === "mysql" && input.remote_source !== undefined) return fail();
   if (
     input.remote_source !== undefined &&
     (!id(input.remote_source.transfer_id) ||

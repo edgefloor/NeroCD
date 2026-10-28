@@ -364,7 +364,7 @@ test.each(["postgresql", "mysql"] as const)("%s successful dump and failed uploa
   expect(first.expected_transfer_id).toBe("upload");
   expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
 });
-test("restore requires an explicit saved remote object choice and sends no arbitrary URL or key", async () => {
+test.each(["postgresql", "mysql"] as const)("%s restore requires an explicit saved remote object choice and sends no arbitrary URL or key", async (engine) => {
   remoteFixture();
   vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([
     { ...target, revision: 3 },
@@ -373,7 +373,7 @@ test("restore requires an explicit saved remote object choice and sends no arbit
     upload,
     { ...upload, id: "failed", state: "failed" },
   ]);
-  mount();
+  mount(true, false, { ...database, engine });
   await selectRestore();
   await screen.findByRole("option", { name: /Saved remote object/ });
   expect(
@@ -561,7 +561,7 @@ test.each([200,403])("Git database controls fail closed without current stack pr
 });
 
 
-test("MySQL exposes immediate local backup and a separate new-resource restore without remote-only restore controls", async () => {
+test("MySQL exposes immediate local backup and a separate new-resource restore with an explicit archive source choice", async () => {
  const mysql = { ...database, engine: "mysql" as const };
  const backup: DatabaseBackup = { ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } };
  vi.mocked(api.listDatabaseBackups).mockResolvedValue([backup]);
@@ -571,7 +571,7 @@ test("MySQL exposes immediate local backup and a separate new-resource restore w
  await screen.findByText("MySQL logical backups");
  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Back up now" }).disabled).toBe(false));
  expect(screen.getByLabelText("Immediate backup destination")).toBeTruthy();
- expect(screen.queryByLabelText("Restore archive source")).toBeNull();
+ expect(screen.getByLabelText("Restore archive source")).toBeTruthy();
  expect(screen.getByText(/bytes · MySQL SQL dump/)).toBeTruthy();
  fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
  await waitFor(() => expect(api.requestDatabaseBackup).toHaveBeenCalledOnce());
@@ -581,4 +581,16 @@ test("MySQL exposes immediate local backup and a separate new-resource restore w
  await waitFor(() => expect(api.restoreDatabaseBackup).toHaveBeenCalledOnce());
  expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3]).toMatchObject({ name: "Restored data" });
  expect(remote.listDatabaseBackupTransfers).toHaveBeenCalled();
+});
+
+
+test.each(["failed", "waiting_target", "uncertain"] as const)("MySQL download success is shown separately from %s restore import", async (state) => {
+ const backup: DatabaseBackup = { ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } };
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([backup, { ...backup, id: "restore", mode: "restore", target_resource_id: "target", state, ownership_held: true, failure_code: "execution_failed" }]);
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([{ ...upload, id: "download", mode: "download", version: "mysql.logical-s3-transfer.v1", blob: backup.blob, restore_operation_id: "restore", state: "succeeded" }]);
+ mount(true, false, { ...database, engine: "mysql" });
+ await screen.findByText(/Remote archive download: succeeded/);
+ expect(screen.getByText(/Download success does not prove import completion/)).toBeTruthy();
+ expect(screen.getByText(new RegExp(`New-database restore · ${state} · restore`))).toBeTruthy();
+ expect(screen.queryByText(/Import and readiness succeeded/)).toBeNull();
 });

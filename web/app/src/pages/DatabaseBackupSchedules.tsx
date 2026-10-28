@@ -194,7 +194,7 @@ function DatabaseBackupSchedulePanel({
         Disable stops future discovery. Accepted work keeps its original
         identity and authority checks. Overlapping backups of the same source
         are skipped. Missed, denied and failed occurrences remain in history.
-        External notifications are not available. {database.engine === "mysql" ? "MySQL schedules create local logical backups with an optional validated remote copy. Upload status is separate from dump completion. Retention and remote-only restore are not available for MySQL." : "Retention is configured in the backup retention section. Remote uploads have separate transfer status in backup history."}
+        External notifications are not available. {database.engine === "mysql" ? "MySQL schedules create local logical backups with an optional validated remote copy. Upload status is separate from dump completion. Retention is not available for MySQL. Remote restore uses a separate reviewed request." : "Retention is configured in the backup retention section. Remote uploads have separate transfer status in backup history."}
       </p>
       {!owner ? (
         <p>
