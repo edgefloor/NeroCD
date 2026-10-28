@@ -2033,6 +2033,9 @@ paths:
               }
             }
           },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
           "403": {
             "description": "Current viewer or destination authority is absent"
           },
@@ -2192,6 +2195,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostingStorageBackupDownloadPlan'
+        '401':
+          $ref: '#/components/responses/Error'
         '403': {description: Authority denied}
         '503': {description: Controller rendezvous unavailable}
   /api/v1/runners/hosting/storage-backup-download/stream:
@@ -2225,6 +2230,8 @@ paths:
                 properties:
                   session_id: {type: string}
                   plan_hash: {type: string}
+        '401':
+          $ref: '#/components/responses/Error'
         '403': {description: Authority denied}
         '409': {description: Stream identity or framing mismatch}
         '503': {description: Controller rendezvous unavailable}
@@ -2244,6 +2251,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostingStorageBackupDownloadOptions'
+        '401':
+          $ref: '#/components/responses/Error'
         '403':
           description: Current owner or destination access denied
   /api/v1/storage-backups/{id}/archive:
