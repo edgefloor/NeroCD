@@ -1,6 +1,6 @@
 # Build execution in the Go agent
 
-The normal `nerocd runner` can execute stored Dockerfile, public HTTPS Git, and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
+The normal `nerocd runner` can execute stored Dockerfile, public HTTPS Git, and explicitly enabled private HTTPS or SSH Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT and SSH deploy-key delivery are connected to the checkout path under the configuration below.
 
 Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode-0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
 
@@ -180,10 +180,38 @@ typed output and CLI output, and checkout cleanup is checked.
 
 This bounded qualification uses seeded accounts, existing secret metadata,
 trusted Linux/Docker placement and a local test CA. It does not establish arbitrary
-Railpack language providers, Nixpacks, hostile-input isolation, SSH/provider
-adapters, complete onboarding, universal redaction, or production ACME. See the
+Railpack language providers, Nixpacks, hostile-input isolation, SSH or provider
+adapters, complete onboarding, universal redaction, or production ACME. SSH has a
+[separate deploy-key qualification](hosting-git-resources.md#ssh-deploy-key-qualification). See the
 [fixture instructions](../acceptance/runtime-hosting-local-build/README.md) and
 [support limits](compatibility.md).
+
+## Enable private SSH Git
+
+Use the same top-level `private_git` configuration and protected controller
+transport described [above](#enable-private-https-git). No separate SSH enable
+flag or key belongs in the runner configuration. Private Git configuration adds
+`hosting_git_ssh_private_key_v1` alongside `hosting_git_https_basic_v1` and
+`hosting_build_v1`. Review persisted enrollment capabilities before restarting an
+upgraded runner. SSH admission, claim, and live execution require the SSH
+capability and the current source grant.
+
+Install `git`, `ssh`, `ssh-keyscan`, and `ssh-keygen` on the build runner. The
+operator's allowed Git hosts apply to SSH too. Each saved SSH source supplies an
+explicit username and verified host fingerprints. The runner checks the resolved
+address against repository policy and connects to that pinned address. It scans
+host keys and accepts only keys matching the configured SHA256 fingerprints.
+Strict host checking remains enabled with an isolated `known_hosts` file.
+Ambient SSH agents and user SSH configuration do not authorize checkout.
+
+A project owner grants an exact managed-secret version containing a raw,
+unencrypted PEM or OpenSSH private key, at most 65,536 bytes. The protected
+credential endpoint rechecks full live attempt authority before delivery. The
+runner writes an owner-only key file outside the checkout and removes credential
+material and Git metadata before build-engine use. Existing deadline,
+cancellation, journal replay, and uncertain-cleanup rules still apply. Follow the
+[SSH deploy-key workflow](hosting-git-resources.md#build-a-private-git-repository-with-an-ssh-deploy-key)
+to save the source, select its key version, build, deploy, and route it.
 
 ## Placement, lifecycle and replay
 

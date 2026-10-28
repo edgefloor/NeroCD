@@ -1,15 +1,16 @@
 # Git application configuration
 
-Project hosting saves public and private HTTPS Git applications alongside image
-applications. Choose a shared environment and **Git repository**. In **Git source
-access**, choose **Public HTTPS** or **Private HTTPS with a source grant**, then
-enter the URL, branch/tag/full commit and build settings. A maintainer or owner
-can save configuration. A viewer can read it. Review current settings when the
+Project hosting saves public HTTPS, private HTTPS, and SSH deploy-key Git
+applications alongside image applications. Choose a shared environment and
+**Git repository**. In **Git source access**, choose **Public HTTPS**, **Private
+HTTPS with a source grant**, or **Private SSH with a deploy key**. Enter the URL,
+branch, tag, or full commit and build settings. A maintainer or owner can save
+configuration. A viewer can read it. Review current settings when the
 saved generation changes; editing retains your draft for an explicit decision.
 
 Saving configuration does not fetch Git, build an image or deploy an application.
-**Public Git builds** and **Private HTTPS Git builds** provide separate requests
-and retained history when the operator enables admission. Build detail offers
+**Public Git builds**, **Private HTTPS Git builds**, and **Private SSH Git builds**
+provide separate requests and retained history when the operator enables admission. Build detail offers
 opt-in [typed build output](hosting-build-logs.md#resource-build-output-viewer)
 and [deployment of a selected local artifact](hosting-build-deployments.md#deploy-through-the-resource-ui).
 Build success is distinct from deployment, readiness and route selection.
@@ -33,7 +34,7 @@ absent, `null`, or `true` enables it when variables exist. Both modes pass the
 configured values as build arguments.
 
 Editing variables advances the saved source generation. Request a new build
-and, for private HTTPS sources, create a grant for that generation. Existing
+and, for private sources, create a grant for that generation. Existing
 builds and grants remain tied to their original source. Nonempty Dockerfile
 variables require the runner capability `hosting_dockerfile_args_v1` in addition
 to the existing build and source-access capabilities.
@@ -56,7 +57,7 @@ Use up to 64 unique names, separate from public build-variable names. Selected
 values are literal UTF-8, at most 64 KiB each; NUL is rejected. They are separate
 from Git source grants, build-registry credentials and deployment runtime secrets.
 Rotation does not retarget a saved version. Select the new version, save, and
-request a new build. Private HTTPS Git needs a new source grant for that generation.
+request a new build. Private Git needs a new source grant for that generation.
 
 The runner automatically mounts each selected name as a BuildKit secret environment
 variable in `RUN` instructions without an existing secret mount. A `RUN` that
@@ -94,7 +95,7 @@ The build credential is independent of the Git source grant and deployment
 **Image access** selection. It authorizes one exact registry host for private
 `FROM` images. Other registries remain anonymous. Rotating a secret does not
 retarget saved settings or existing builds. Select the new explicit version,
-save the source, and request a new build. Private HTTPS Git also needs a fresh
+save the source, and request a new build. Private Git also needs a fresh
 source grant for the changed generation. Railpack does not accept this setting.
 The runner requires `hosting_build_registry_v1`; private CA configuration is
 [operator controlled](hosting-build-runtime.md#trust-a-private-build-registry-ca).
@@ -189,10 +190,74 @@ delivered to Git transport. Secret rotation does not retarget an existing grant.
 Create a new grant for the intended explicit version. Revocation does not delete
 a successful artifact or an already serving application.
 
+## Build a private Git repository with an SSH deploy key
+
+The bound runner needs `hosting_build_v1` and
+`hosting_git_ssh_private_key_v1`. The operator enables private Git execution and
+protected credential delivery in the [runner configuration](hosting-build-runtime.md#enable-private-ssh-git).
+
+1. Add the deploy key's public key to the repository with the required read access.
+   In **Project secrets**, save its raw, unencrypted PEM or OpenSSH private key.
+   Select an exact version when creating a grant. The key is not a JSON object.
+2. Choose **Git repository** and **Private SSH with a deploy key**. Enter the
+   repository and requested branch, tag, or commit. These repository forms are
+   supported:
+
+   - `git@github.com:team/application.git` for a path relative to the SSH user's home.
+   - `git@git.example.com:/srv/application.git` for an absolute path.
+   - `ssh://git@git.example.com:2222/srv/application.git` for an explicit port.
+
+   An explicit SSH username is required. The saved response uses a canonical
+   `ssh://` URL. Relative SCP paths become `/~/team/application.git` in that URL.
+3. In **SSH host fingerprints**, enter one verified `SHA256:` fingerprint per
+   line. Use 1 to 32 distinct fingerprints from the Git provider or administrator.
+   Each fingerprint has 43 canonical base64 characters after `SHA256:`. Save the
+   source and existing build settings, then save its desired destination.
+4. Under **Private SSH source grants**, a project owner selects **Existing managed
+   secret** and **Explicit secret version**. Review the exact source and resource
+   generations, acknowledge the decision, and select **Create source grant**.
+5. In **Private SSH Git builds**, select the eligible **Private source grant**.
+   Review the saved repository, fingerprints, and generations. Acknowledge them
+   and select **Request private Git build**.
+6. After the build succeeds, select its recorded artifact for the existing
+   [deployment and route workflow](hosting-build-deployments.md#deploy-through-the-resource-ui).
+
+SSH grants use the same owner, maintainer, retry, and revocation controls as
+private HTTPS grants. Rotating the key creates another secret version. Create a
+new grant for that version, select the grant, and request a separate build.
+Changing the repository, fingerprints, or build settings advances the source
+generation and requires a new grant. Existing grants never follow changes.
+
+A denied key or host fingerprint fails source acquisition before deployment.
+A failed build cannot replace the serving artifact. Review the failed build's
+output and keep the existing application and route until a separate successful
+deployment is ready. Key or grant revocation denies further authorized delivery
+but cannot recall key bytes already delivered to a live attempt.
+
+### SSH deploy-key qualification
+
+At `b3c4fdb8` on 2026-10-28, the resource UI saved an SSH Git source, selected an
+exact managed-key version grant, and built and deployed version A over managed
+HTTPS. After key rotation, a new grant selected the new key version and deployed
+version B. The runtime verified each successful checkout's commit and artifact.
+A wrong key failed SSH authentication. A wrong host fingerprint failed host-key
+verification. Revoking the selected secret denied build admission with HTTP 409.
+Version B's deployment and routed HTTPS response remained unchanged after each
+failure.
+
+This qualification uses a generic SSH server, same-host local artifacts, and a
+test CA. It does not establish provider installation, OAuth, cross-host artifact
+delivery, or production ACME. A focused real-Git checkout test covers SCP relative
+path normalization separately from the browser's explicit SSH URL.
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-ssh-deploy-key-20261028/b3c4fdb8400a0ce5f03ec54c33aa0c1d7b761b71/evidence-index.json)
+records the source and artifact checks, responsive browser assertions at 320, 390,
+430, and 1440 pixels, credential scans, and verified fixture cleanup.
+
 ## Operator repository policy
 
-The server defaults to HTTPS repositories on `github.com`, with public access unless
-private access and a source grant are selected. Set
+The server defaults to repositories on `github.com`. HTTPS uses public access
+unless private access and a source grant are selected. SSH requires a deploy-key
+source grant and explicit host fingerprints. Set
 `NEROCD_HOSTING_GIT_ALLOWED_HOSTS=github.com,gitlab.com` before starting
 `nerocd server` to replace the allowlist. This follows the server's existing
 environment configuration convention. Up to 32 exact DNS hostnames are accepted.
@@ -201,10 +266,12 @@ are rejected as host configuration. The list never enables internal network
 access. The accepted source transport still validates every resolved address and
 redirect at execution time. Configuration writes do not perform network IO.
 
-The configuration API accepts `credential_kind: public` or `https_basic`. Private
-credentials are never part of resource configuration. An owner-created source
-grant selects a managed-secret version separately. SSH, provider installation integrations, and internal-LAN repository
-configuration are unsupported here. Configure [GitHub push webhooks](hosting-github-push.md)
+The configuration API accepts `credential_kind: public`, `https_basic`, or
+`ssh_private_key`. SSH source configuration also requires
+`ssh_host_fingerprints`. Private credentials are never part of resource
+configuration. An owner-created source grant selects a managed-secret version
+separately. Provider installation integrations and internal-LAN repository
+configuration remain unsupported here. Configure [GitHub push webhooks](hosting-github-push.md)
 separately. The operator allowlist applies to both public and private sources.
 
 ## API and persistence
@@ -231,10 +298,11 @@ generations, policy, credential IDs, and grant IDs. Image source input/output
 remains `{kind: image, image: {reference: ...}}`.
 
 Git output includes `source_id` and source `generation` alongside the nonsecret
-URL, ref, credential kind, and settings. It never exposes repository policy,
-internal CIDRs, SSH fingerprints, or credential values. List and detail use the
-exact referenced immutable version, rather than whichever version is current
-when a second read happens.
+URL, ref, credential kind, SSH host fingerprints when configured, and settings.
+It never exposes repository policy, internal CIDRs, or credential values. Public
+build snapshots omit fingerprints; the internal frozen source policy binds them.
+List and detail use the exact referenced immutable version, rather than whichever
+version is current when a second read happens.
 
 Migration 0049 changes `resources.source` to contain only
 `{kind: git, git: {source_id, generation}}` for Git resources. Actual configuration

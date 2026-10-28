@@ -98,6 +98,20 @@ and commits the audit before returning plaintext. Audit or commit failure return
 plaintext. Reveal and revoke use the same row lock. Historical versions can be revealed
 only while the secret remains active.
 
+## SSH Git deploy keys
+
+For an SSH Git source, save the raw, unencrypted PEM or OpenSSH private key as a
+managed-secret value, at most 65,536 bytes. JSON wrappers, encrypted keys, and
+SSH-agent references are not accepted. Add the corresponding public key as a
+deploy key on the repository.
+
+An owner creates a source grant selecting the exact secret version and saved
+source generation. Rotation creates another version without changing existing
+grants. Create a new grant to use the rotated key. The Git source stores the
+repository username and verified host fingerprints separately from the key.
+The UI's grant controls read metadata and submit references without revealing
+plaintext. See the [SSH deploy-key workflow](hosting-git-resources.md#build-a-private-git-repository-with-an-ssh-deploy-key).
+
 ## Private HTTPS Git source credentials
 
 In **Project secrets**, create or rotate an existing secret with this JSON shape:
