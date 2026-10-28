@@ -35,6 +35,7 @@ const allowedGoDirectDependencies = new Set([
   "github.com/getkin/kin-openapi",
   "github.com/go-jose/go-jose/v4",
   "github.com/jackc/pgx/v5",
+  "github.com/moby/buildkit",
   "github.com/riverqueue/river",
   "github.com/riverqueue/river/riverdriver/riverpgxv5",
   "github.com/riverqueue/river/rivertype",
@@ -44,6 +45,7 @@ const allowedGoDirectDependencies = new Set([
   "golang.org/x/net",
   "golang.org/x/oauth2",
   "golang.org/x/sys",
+  "gopkg.in/yaml.v3",
 ]);
 const requiredLockfiles = ["go.sum", "web/app/bun.lock"];
 const cdnPattern = /https?:\/\/(?:cdn|unpkg|esm\.sh|jsdelivr|cdnjs)\./i;
