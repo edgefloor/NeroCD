@@ -12,6 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// HostingDockerfileArgsCapability gates public Dockerfile arguments and optional
+// automatic stage declarations independently from historical args-free builds.
+const HostingDockerfileArgsCapability = "hosting_dockerfile_args_v1"
+
 // HostingBuildVariable is a public build-time value. ARG values can be retained
 // in image metadata and output; managed secrets use a separate delivery contract.
 type HostingBuildVariable struct {

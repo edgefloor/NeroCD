@@ -16856,10 +16856,14 @@ components:
       additionalProperties: false
       required: [strategy]
       properties:
+        inject_build_args_to_dockerfile:
+          type: boolean
+          nullable: true
+          description: Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source.
         build_variables:
           type: array
           maxItems: 64
-          description: Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings.
+          description: Compose or Dockerfile public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings.
           items: {$ref: "#/components/schemas/HostingBuildVariable"}
         strategy: {type: string, enum: [dockerfile, railpack, static, compose]}
         context_dir: {type: string, maxLength: 512}
