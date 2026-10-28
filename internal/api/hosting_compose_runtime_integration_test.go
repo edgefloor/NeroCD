@@ -58,7 +58,8 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	gitPassword := hostingStorageRemoteRuntimeRandom(t)
 	registryPassword := hostingStorageRemoteRuntimeRandom(t)
 	buildPasswordA, buildPasswordB := hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t)
-	var buildRegistryHost, privateBase string
+	var buildRegistryHost, privateBase, preparedRegistry string
+	var protectedImage, replacementImage, registryImageID string
 	var rotateBuildRegistry func()
 	if gitCompose {
 		host, ca, rotate := gitComposeRuntimeRegistryTLS(t, registryPassword, buildPasswordA, buildPasswordB)
@@ -66,45 +67,50 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		rotateBuildRegistry = rotate
 		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_HOST", host)
 		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_CA", ca)
+		// Only Docker seeding needs this value. Prepare Git's CA/PATH before the
+		// real constructor starts the compiled runner and snapshots its environment.
+		seed := &storageRuntimeFixture{t: t, root: t.TempDir(), client: &http.Client{Timeout: 30 * time.Second}}
+		storageRuntimeDocker(t, "pull", publicImage)
+		storageRuntimeDocker(t, "pull", gitComposeFixturePostgres)
+		registryImageID = strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", gitComposeFixturePostgres, "--format", "{{.Id}}")))
+		preparedRegistry = registryRuntimeProtectedImages(t, seed, registryPassword, gitComposeFixturePostgres, publicImage)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/b", nil)
+		req.SetBasicAuth("fixture", registryPassword)
+		req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+		res, err := seed.client.Do(req)
+		if err != nil {
+			t.Fatal("private base manifest lookup")
+		}
+		_ = res.Body.Close()
+		digest := res.Header.Get("Docker-Content-Digest")
+		if res.StatusCode != 200 || len(digest) != 71 {
+			t.Fatal("private base manifest missing")
+		}
+		privateBase = buildRegistryHost + "/" + storageRuntimeOwner + "@" + digest
+		raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository, updateRepository, unavailableRepository, expectedCommitA = gitComposeRuntimeRepository(t, string(raw), publicImage, privateBase, gitPassword)
 	}
 
 	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
+	b.gitRepository = repository
 	var gitGrant string
 	var sourceSecret domain.ManagedSecret
 	var selectedBuild domain.PublicHostingBuild
-	storageRuntimeDocker(t, "pull", publicImage)
+	if !gitCompose {
+		storageRuntimeDocker(t, "pull", publicImage)
+	}
 	pinnedImageID := strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}")))
-	var protectedImage, replacementImage, registryImageID string
 	var registrySecrets map[string]domain.ManagedSecret
 	var registryRef domain.HostingRegistryCredentialRef
 	var assertReferenceAbsent func(string)
 	{
-		protectedSource := publicImage
-		if gitCompose {
-			protectedSource = gitComposeFixturePostgres
-			storageRuntimeDocker(t, "pull", protectedSource)
-			registryImageID = strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", protectedSource, "--format", "{{.Id}}")))
-		}
-		sources := []string{protectedSource}
-		if gitCompose {
-			sources = append(sources, publicImage)
-		}
-		protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, sources...)
-		if gitCompose {
-			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/b", nil)
-			req.SetBasicAuth("fixture", registryPassword)
-			req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
-			res, err := f.client.Do(req)
-			if err != nil {
-				t.Fatal("private base manifest lookup")
-			}
-			_ = res.Body.Close()
-			digest := res.Header.Get("Docker-Content-Digest")
-			if res.StatusCode != 200 || len(digest) != 71 {
-				t.Fatal("private base manifest missing")
-			}
-			privateBase = buildRegistryHost + "/" + storageRuntimeOwner + "@" + digest
+		protectedRepository := preparedRegistry
+		if !gitCompose {
+			protectedRepository = registryRuntimeProtectedImages(t, f, registryPassword, publicImage)
 		}
 		manifestRequest, _ := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
 		manifestRequest.SetBasicAuth("fixture", registryPassword)
@@ -192,12 +198,6 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets/"+buildSecret.ID+"/versions", app.ManagedSecretRotateInput{ExpectedVersion: 1, Value: value(buildPasswordB)}, 201)
 		buildWrong = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Compose build registry wrong", Value: value("incorrect")}, 201)
 		buildRef = domain.HostingRegistryCredentialRef{SecretID: buildSecret.ID, Version: 1}
-		raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		repository, updateRepository, unavailableRepository, expectedCommitA = gitComposeRuntimeRepository(t, string(raw), publicImage, privateBase, gitPassword)
-		b.gitRepository = repository
 	}
 
 	b.set("install", f.destinationID)
