@@ -121,6 +121,16 @@ func ComputeBuildToolchainIdentity(ctx context.Context, c hostingbuild.Config, p
 	inventory := struct{ Version, Protocol, Platform, DockerSHA256, BuildxSHA256, BuildKit, Dockerfile, Railpack, Static, Planner string }{
 		"hosting-executor-toolchain.v1", domain.HostingBuildProtocol, platform, "sha256:" + hex.EncodeToString(h.Sum(nil)), c.BuildxSHA256, hostingbuild.BuildKitImage, hostingbuild.DockerfileFrontend, hostingbuild.RailpackFrontend, hostingbuild.StaticImage, c.PlannerImage,
 	}
+	caIdentity, err := hostingbuild.RegistryCADigests(c.RegistryCACertificates)
+	if err != nil {
+		return "", err
+	}
+	if len(caIdentity) > 0 {
+		return domain.HostingDocumentHash(struct {
+			Inventory   any
+			RegistryCAs map[string]string
+		}{inventory, caIdentity}), nil
+	}
 	return domain.HostingDocumentHash(inventory), nil
 }
 
@@ -489,12 +499,14 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 		var buildErr error
 		if s.Source.Settings.Strategy == "compose" {
 			var prepared domain.HostingBuildComposeResult
-			prepared, buildErr = e.buildCompose(c, current, path, output.Sink)
+			prepared, buildErr = e.buildComposeWithEngine(c, current, path, output.Sink, func(child context.Context, request hostingbuild.Request) (hostingbuild.Result, error) {
+				return e.runBuildEngine(child, current, a, intentID, request, output)
+			})
 			if buildErr == nil {
 				composed = &prepared
 			}
 		} else {
-			result, buildErr = e.engine.(buildOutputEngine).BuildWithOutput(c, buildEngineRequest(s, path, daemon), output.Sink)
+			result, buildErr = e.runBuildEngine(c, current, a, intentID, buildEngineRequest(s, path, daemon), output)
 		}
 		if buildErr != nil {
 			if errors.Is(buildErr, hostingbuild.ErrOutputSink) || output.failed {
@@ -609,6 +621,9 @@ func buildEngineRequest(s domain.HostingBuildSnapshot, path, daemon string) host
 			request.BuildArgs[variable.Name] = variable.Value
 		}
 		request.InjectBuildArgs = settings.InjectBuildArgsToDockerfile == nil || *settings.InjectBuildArgsToDockerfile
+	}
+	if ref := s.Source.Settings.BuildRegistryCredential; ref != nil {
+		request.BuildRegistry = &hostingbuild.RegistryReference{SecretID: ref.SecretID, Version: ref.Version}
 	}
 	return request
 }

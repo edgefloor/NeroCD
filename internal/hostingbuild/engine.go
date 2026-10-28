@@ -108,6 +108,12 @@ func (e *Engine) Build(parent context.Context, r Request) (result Result, retErr
 // BuildWithOutput builds synchronously and observes selected fresh build text.
 // Receipt replay emits no output. The sink is not part of immutable identity.
 func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputSink) (result Result, retErr error) {
+	return e.BuildWithRegistryCredential(parent, r, sink, nil)
+}
+
+// BuildWithRegistryCredential supplies fresh authentication separately from immutable request identity.
+// Retained receipt replay never invokes provider.
+func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, sink OutputSink, provider RegistryCredentialProvider) (result Result, retErr error) {
 	r = ownedBuildRequest(r)
 	if err := r.validate(parent); err != nil {
 		return result, err
@@ -138,6 +144,9 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 	} else if !os.IsNotExist(err) {
 		return result, err
 	}
+	if err = ScrubRegistryCredentials(e.config.StateDir); err != nil {
+		return result, err
+	}
 	ctx, cancel := context.WithTimeout(parent, r.Limits.Deadline)
 	defer cancel()
 	dir := filepath.Join(e.config.StateDir, r.BuildID)
@@ -159,6 +168,35 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 	}
 	if err = os.WriteFile(filepath.Join(dir, "docker", "config.json"), []byte("{}"), 0600); err != nil {
 		return result, err
+	}
+	if r.BuildRegistry != nil {
+		// Installed immediately after config creation, before any material is delivered.
+		defer func() {
+			if cleanupErr := removeBuildRegistryConfig(dir); cleanupErr != nil {
+				retErr = errors.Join(ErrCleanupUnconfirmed, errors.New("build registry config cleanup failed"))
+			}
+			if retErr != nil {
+				held := errors.Is(retErr, ErrCleanupUnconfirmed)
+				cancelled := errors.Is(retErr, context.Canceled)
+				deadline := errors.Is(retErr, context.DeadlineExceeded)
+				retErr = errors.New("authenticated build failed")
+				if held {
+					retErr = errors.Join(retErr, ErrCleanupUnconfirmed)
+				}
+				if cancelled {
+					retErr = errors.Join(retErr, context.Canceled)
+				}
+				if deadline {
+					retErr = errors.Join(retErr, context.DeadlineExceeded)
+				}
+			}
+		}()
+		if provider == nil {
+			return result, errors.New("build registry provider unavailable")
+		}
+		if err = writeBuildRegistryConfig(ctx, dir, provider); err != nil {
+			return result, err
+		}
 	}
 	if err = e.daemon(ctx, dir, r.DaemonID); err != nil {
 		return result, err
@@ -211,8 +249,12 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 	if _, err = e.docker(ctx, dir, "volume", "create", "--label", "io.nerocd.hostingbuild.owner="+token, resources.Volume); err != nil {
 		return result, err
 	}
+	caTOML, caMounts, err := e.stageRegistryCAs(dir)
+	if err != nil {
+		return result, err
+	}
 	config := filepath.Join(dir, "buildkitd.toml")
-	if err = os.WriteFile(config, []byte("insecure-entitlements = []\n[worker.oci]\n  enabled = true\n  max-parallelism = 2\n  defaultCgroupParent = "+strconv.Quote(groupRelative(resources.Group))+"\n[worker.containerd]\n  enabled = false\n"), 0600); err != nil {
+	if err = os.WriteFile(config, []byte("insecure-entitlements = []\n[worker.oci]\n  enabled = true\n  max-parallelism = 2\n  defaultCgroupParent = "+strconv.Quote(groupRelative(resources.Group))+"\n[worker.containerd]\n  enabled = false\n"+caTOML), 0600); err != nil {
 		return result, err
 	}
 	l := r.Limits
@@ -223,6 +265,10 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 		builderSwap /= 2
 	}
 	args := []string{"create", "--pull=never", "--name", resources.Builder, "--label", "io.nerocd.hostingbuild.owner=" + token, "--privileged", "--cgroupns=host", "--cgroup-parent", groupRelative(resources.Group), "--cpu-period", "100000", "--cpu-quota", strconv.FormatInt(builderQuota, 10), "--memory", strconv.FormatInt(builderMemory, 10), "--memory-swap", strconv.FormatInt(builderMemory+builderSwap, 10), "--log-driver", "none", "--mount", "type=volume,src=" + resources.Volume + ",dst=/var/lib/buildkit", "--mount", "type=bind,src=" + config + ",dst=/etc/buildkit/buildkitd.toml,readonly", BuildKitImage, "--config", "/etc/buildkit/buildkitd.toml", "--oci-worker-net=bridge"}
+	if len(caMounts) > 0 {
+		at := len(args) - 4
+		args = append(args[:at], append(caMounts, args[at:]...)...)
+	}
 	if _, err = e.docker(ctx, dir, args...); err != nil {
 		return result, err
 	}
@@ -532,6 +578,10 @@ func orderedBuildArguments(args map[string]string) []string {
 }
 
 func ownedBuildRequest(r Request) Request {
+	if r.BuildRegistry != nil {
+		ref := *r.BuildRegistry
+		r.BuildRegistry = &ref
+	}
 	r.BuildArgs = maps.Clone(r.BuildArgs)
 	if len(r.BuildArgs) == 0 {
 		r.InjectBuildArgs = false
