@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
 import { GitApplicationFields, emptyGitDraft, gitBuildVariablesError, type GitApplicationDraft } from "./GitApplicationFields";
 afterEach(cleanup);
 function Editor({ initial = emptyGitDraft(), disabled = false }: { initial?: GitApplicationDraft; disabled?: boolean } = {}) { const [value, setValue] = useState<GitApplicationDraft>(initial); return <><GitApplicationFields value={value} onChange={setValue} disabled={disabled} /><output>{JSON.stringify(value)}</output></>; }
@@ -123,4 +123,63 @@ test.each(["railpack", "static"])("build secrets survive Dockerfile and Compose 
  expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_secrets).toEqual(refs);
  fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } });
  expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_secrets");
+});
+
+
+vi.mock("@/api/managed-secrets", () => ({ listManagedSecrets: vi.fn(), listManagedSecretVersions: vi.fn(), createManagedSecret: vi.fn() }));
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { queryKeys } from "@/api";
+import * as secretAPI from "@/api/managed-secrets";
+const metadataPage = <T,>(items: T[], offset = 0, total = items.length) => ({ items, offset, limit: 20, count: items.length, total });
+function SecretEditor({ initial }: { initial: GitApplicationDraft }) {
+ const [value, setValue] = useState(initial);
+ const [valid, setValid] = useState(false);
+ const [project, setProject] = useState("project");
+ return <><GitApplicationFields value={value} onChange={setValue} disabled={false} projectID={project} onSecretsValidityChange={setValid} /><output data-testid="secret-valid">{String(valid)}</output><output data-testid="secret-draft">{JSON.stringify(value)}</output><button onClick={() => setValue({ ...initial, settings: { strategy: "dockerfile", build_secrets: [{ name: "RESET", secret: { secret_id: "first", version: 1 } }] } })}>Reset draft</button><button onClick={() => setProject("other")}>Switch project</button></>;
+}
+function setupSecrets(initial: GitApplicationDraft) {
+ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+ client.setQueryData(queryKeys.principal, { id: "operator", provider: "oidc", roles: [] });
+ const view = render(<QueryClientProvider client={client}><SecretEditor initial={initial} /></QueryClientProvider>);
+ return { ...view, client };
+}
+function pagedSecretMetadata() {
+ vi.mocked(secretAPI.listManagedSecrets).mockImplementation(async ({ offset = 0, project_id }) => metadataPage([{ id: offset ? "later" : "first", project_id: project_id!, name: offset ? "Later secret" : "First secret", status: "active", current_version: 21, created_by: "operator", created_at: "", updated_at: "" }], offset, 21));
+ vi.mocked(secretAPI.listManagedSecretVersions).mockImplementation(async (secret_id, { offset = 0 }) => metadataPage([{ secret_id, version: offset ? 21 : 1, created_by: "operator", created_at: "" }], offset, 21));
+}
+test("build secret selections retain page two metadata and survive removing an earlier row", async () => {
+ pagedSecretMetadata();
+ const { client, unmount } = setupSecrets({ ...emptyGitDraft(), settings: { strategy: "dockerfile", build_secrets: [{ name: "FIRST", secret: { secret_id: "first", version: 1 } }, { name: "LATER", secret: { secret_id: "", version: 0 } }] } });
+ const region = screen.getByRole("region", { name: "Build secret 2" });
+ await within(region).findByRole("option", { name: "First secret · first" });
+ fireEvent.click(within(region).getByRole("button", { name: "Next Build secret 2 secrets" }));
+ await within(region).findByRole("option", { name: "Later secret · later" });
+ fireEvent.change(within(region).getByLabelText("Build secret 2 secret"), { target: { value: "later" } });
+ await within(region).findByRole("option", { name: "Version 1" });
+ fireEvent.click(within(region).getByRole("button", { name: "Next Build secret 2 versions" }));
+ await within(region).findByRole("option", { name: "Version 21" });
+ fireEvent.change(within(region).getByLabelText("Build secret 2 version"), { target: { value: "21" } });
+ await waitFor(() => expect(screen.getByTestId("secret-valid").textContent).toBe("true"));
+ expect(screen.getByLabelText<HTMLSelectElement>("Build secret 2 secret").value).toBe("later");
+ expect(screen.getByLabelText<HTMLSelectElement>("Build secret 2 version").value).toBe("21");
+ fireEvent.click(screen.getByRole("button", { name: "Remove build secret 1" }));
+ await waitFor(() => expect(screen.getByTestId("secret-valid").textContent).toBe("true"));
+ expect(screen.getByLabelText<HTMLSelectElement>("Build secret 1 secret").value).toBe("later");
+ expect(screen.getByLabelText<HTMLSelectElement>("Build secret 1 version").value).toBe("21");
+ expect(JSON.parse(screen.getByTestId("secret-draft").textContent!).settings.build_secrets).toEqual([{ name: "LATER", secret: { secret_id: "later", version: 21 } }]);
+ fireEvent.click(screen.getByRole("button", { name: "Reset draft" }));
+ await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Build secret 1 secret").value).toBe("first"));
+ expect(screen.getByLabelText<HTMLSelectElement>("Build secret 1 version").value).toBe("1");
+ await waitFor(() => expect(screen.getByTestId("secret-valid").textContent).toBe("true"));
+ fireEvent.click(screen.getByRole("button", { name: "Switch project" }));
+ await waitFor(() => expect(secretAPI.listManagedSecrets).toHaveBeenCalledWith(expect.objectContaining({ project_id: "other" }), expect.anything()));
+ await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Build secret 1 secret").value).toBe("first"));
+ await waitFor(() => expect(screen.getByTestId("secret-valid").textContent).toBe("true"));
+ const calls = vi.mocked(secretAPI.listManagedSecrets).mock.calls.length;
+ vi.mocked(secretAPI.listManagedSecrets).mockResolvedValue(metadataPage([]));
+ act(() => client.setQueryData(queryKeys.principal, { id: "different-operator", provider: "oidc", roles: [] }));
+ await waitFor(() => expect(vi.mocked(secretAPI.listManagedSecrets).mock.calls.length).toBeGreaterThan(calls));
+ await waitFor(() => expect(screen.getByTestId("secret-valid").textContent).toBe("false"));
+ expect(screen.queryByRole("option", { name: "First secret · first" })).toBeNull();
+ unmount(); client.clear();
 });

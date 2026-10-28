@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { principalQuery } from "@/api";
 import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
@@ -118,25 +118,39 @@ function BuildSecretsField({ value, projectID, disabled, onChange, onValidityCha
  const rows = value.settings.build_secrets ?? [];
  const ready = Boolean(identity.data) && !identity.isPending && !identity.isFetching && !identity.isError;
  const actor = identity.data ? JSON.stringify([identity.data.provider, identity.data.id]) : "";
- const keyFor = (index: number) => JSON.stringify([actor, projectID, index, rows[index]?.secret]);
- const valid = !supported || !rows.length || ready && !denied && rows.every((_, index) => validated[keyFor(index)]);
+ // Keep an edited row's picker mounted. New external draft objects get new identities.
+ const rowIDs = useRef(new WeakMap<object, number>());
+ const nextRowID = useRef(0);
+ const rowID = (row: typeof rows[number]) => {
+  let key = rowIDs.current.get(row);
+  if (key === undefined) { key = nextRowID.current++; rowIDs.current.set(row, key); }
+  return key;
+ };
+ const keyFor = (row: typeof rows[number]) => JSON.stringify([actor, projectID, rowID(row), row.secret]);
+ const valid = !supported || !rows.length || ready && !denied && rows.every(row => validated[keyFor(row)]);
  useEffect(() => { onValidityChange?.(Boolean(valid)); }, [valid, onValidityChange]);
  const update = (nextRows: typeof rows) => {
   const settings = { ...value.settings };
   if (nextRows.length) settings.build_secrets = nextRows; else delete settings.build_secrets;
   onChange({ ...value, settings });
  };
+ const updateRow = (index: number, next: typeof rows[number]) => {
+  rowIDs.current.set(next, rowID(rows[index]!));
+  update(rows.map((entry, i) => i === index ? next : entry));
+ };
  if (!supported) return null;
  return <section aria-label="Build secrets" className="min-w-0 space-y-3 rounded-lg border p-3">
   <h6 className="font-medium">Build secrets</h6>
   <p className="text-xs text-muted-foreground">Choose existing managed secret versions for private build dependencies. Selected names are available as environment variables in build RUN commands. Commands with existing secret mounts keep their explicit configuration. Runtime secrets are configured separately.</p>
   {rows.length && (!ready || denied) ? <p role="alert">Build secret access is unavailable. Refresh build secret metadata to recheck access before saving this Git source.</p> : null}
-  {rows.map((row, index) => <div key={index} className="min-w-0 space-y-2">
-   <label htmlFor={`${id}-build-secret-name-${index}`}>Build secret name {index + 1}</label><Input id={`${id}-build-secret-name-${index}`} value={row.name} required pattern="[A-Za-z_][A-Za-z0-9_]{0,127}" maxLength={128} disabled={disabled} spellCheck={false} onChange={event => update(rows.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} />
-   {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID, index, row.secret])} actor={actor} project={projectID} image="" purpose="build-secret" secretLabel={`Build secret ${index + 1}`} initialCredential={row.secret.secret_id ? row.secret : undefined} disabled={disabled || denied} onAccessRestored={denied && !disabled ? () => setDenied(false) : undefined} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={selection => {
-    const key = keyFor(index);
+  {rows.map((row, index) => <div key={JSON.stringify([actor, projectID, rowID(row)])} className="min-w-0 space-y-2">
+   <label htmlFor={`${id}-build-secret-name-${index}`}>Build secret name {index + 1}</label><Input id={`${id}-build-secret-name-${index}`} value={row.name} required pattern="[A-Za-z_][A-Za-z0-9_]{0,127}" maxLength={128} disabled={disabled} spellCheck={false} onChange={event => updateRow(index, { ...row, name: event.target.value })} />
+   {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID, rowID(row)])} actor={actor} project={projectID} image="" purpose="build-secret" secretLabel={`Build secret ${index + 1}`} initialCredential={row.secret.secret_id ? row.secret : undefined} disabled={disabled || denied} onAccessRestored={denied && !disabled ? () => setDenied(false) : undefined} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={selection => {
+    const next = selection.valid && selection.credential ? { ...row, secret: { ...selection.credential } } : row;
+    rowIDs.current.set(next, rowID(row));
+    const key = keyFor(next);
     setValidated(previous => previous[key] === selection.valid ? previous : { ...previous, [key]: selection.valid });
-    if (selection.valid && selection.credential && JSON.stringify(selection.credential) !== JSON.stringify(row.secret)) update(rows.map((entry, i) => i === index ? { ...entry, secret: { ...selection.credential! } } : entry));
+    if (JSON.stringify(next.secret) !== JSON.stringify(row.secret)) updateRow(index, next);
    }} /> : null}
    <Button type="button" variant="outline" disabled={disabled} onClick={() => update(rows.filter((_, i) => i !== index))}>Remove build secret {index + 1}</Button>
   </div>)}
