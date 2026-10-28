@@ -85,8 +85,8 @@ func TestPostgresMySQLRemoteBackupRetryKeepsLocalArtifact(t *testing.T) {
 	if err = f.db.QueryRow(f.ctx, `SELECT event,source_id,source_state FROM hosting_notification_events`).Scan(&event, &source, &state); err != nil || event != "upload_failed" || source != failed.ID || state != "failed" {
 		t.Fatal("retry changed the immutable failed-upload notification source", err)
 	}
-	if _, err = f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("remote MySQL gained retention", err)
+	if policy, e := f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); e != nil || policy != nil {
+		t.Fatal("remote backup implicitly configured MySQL retention", e)
 	}
 	// This fixture intentionally has only the accepted upload capability. Older
 	// runners must still be denied remote restore before a new target is retained.

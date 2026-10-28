@@ -27,7 +27,7 @@ func validateJournalDatabaseBackupRetention(e JournalDatabaseBackupRetention) er
 		if copy.Item.CopyID == e.Request.CopyID {
 			found = true
 			if e.Request.ProbeOnly {
-				prefix := "nerocd/postgresql/retention-probes/" + e.Plan.Operation.ID + "/"
+				prefix := domain.HostingDatabaseBackupRetentionProbeNamespace(e.Plan.Operation.Version) + e.Plan.Operation.ID + "/"
 				if !strings.HasPrefix(e.ProbeKey, prefix) || len(e.ProbeKey) != len(prefix)+32 {
 					return errors.New("invalid retention probe identity")
 				}

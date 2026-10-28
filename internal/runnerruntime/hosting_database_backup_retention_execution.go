@@ -53,6 +53,9 @@ func retentionRemote(ctx context.Context, c runnerclient.Client, config Database
 		return nil, err
 	}
 	defer credentials.Close()
+	if credentials.Metadata().Purpose != domain.HostingDatabaseBackupRetentionPurposeFor(p.Operation.Version) {
+		return nil, errBackupRetentionHeld
+	}
 	sequence := 0
 	grant := backupRemoteGrant{useUntil: credentials.Metadata().UseUntil}
 	grant.refresh = func(refreshCtx context.Context, access, secret []byte) (time.Time, error) {
@@ -67,6 +70,9 @@ func retentionRemote(ctx context.Context, c runnerclient.Client, config Database
 			return time.Time{}, err
 		}
 		defer fresh.Close()
+		if fresh.Metadata().Purpose != domain.HostingDatabaseBackupRetentionPurposeFor(p.Operation.Version) {
+			return time.Time{}, errBackupRetentionHeld
+		}
 		if err = fresh.Use(func(a, b []byte) error {
 			if subtle.ConstantTimeCompare(access, a) != 1 || subtle.ConstantTimeCompare(secret, b) != 1 {
 				return errBackupRetentionHeld
@@ -175,7 +181,10 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 				return err
 			}
 		}
-		_, err := c.HostingDatabaseBackupRetentionMutation(transport, entry.Request)
+		out, err := c.HostingDatabaseBackupRetentionMutation(transport, entry.Request)
+		if err == nil && out.Version != entry.Plan.Operation.Version {
+			return domain.ErrInvalidDatabaseBackupRetention
+		}
 		return err
 	}
 	retireOld := func(copyID string, probes bool) error {
@@ -232,7 +241,7 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 			if copy.Local != nil {
 				absent, err = e.store.ObserveOwned(ctx, strings.TrimPrefix(copy.Item.Digest, "sha256:"), retentionArtifactProof(copy), before)
 			} else {
-				absent, err = remotes[i].retentionHead(ctx, copy.Target.Target.Bucket, copy.ObjectKey, *copy.Remote, domain.HostingDatabaseBackupBlob{Digest: copy.Item.Digest, Bytes: copy.Item.Bytes, Format: "postgresql_custom"})
+				absent, err = remotes[i].retentionHead(ctx, copy.Target.Target.Bucket, copy.ObjectKey, *copy.Remote, domain.HostingDatabaseBackupBlob{Digest: copy.Item.Digest, Bytes: copy.Item.Bytes, Format: domain.HostingDatabaseBackupRetentionFormat(p.Operation.Version)})
 			}
 			if err == nil && absent {
 				completed[i] = "absent"
@@ -266,7 +275,7 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 			if !paired {
 				return errBackupRetentionHeld
 			}
-			absent, err := remotes[i].retentionProbeAbsent(ctx, copy.Target.Target.Bucket, v.ProbeKey)
+			absent, err := remotes[i].retentionProbeAbsent(ctx, copy.Target.Target.Bucket, v.ProbeKey, p.Operation.Version)
 			if err != nil || !absent {
 				return errBackupRetentionHeld
 			}
@@ -289,7 +298,7 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 		if _, err = rand.Read(nonce[:]); err != nil {
 			return err
 		}
-		key := "nerocd/postgresql/retention-probes/" + p.Operation.ID + "/" + hex.EncodeToString(nonce[:])
+		key := domain.HostingDatabaseBackupRetentionProbeNamespace(p.Operation.Version) + p.Operation.ID + "/" + hex.EncodeToString(nonce[:])
 		intent, err := record(i, "intent", "", key, true)
 		if err != nil {
 			return err
@@ -297,7 +306,7 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 		if err = send(intent, false); err != nil {
 			return err
 		}
-		effectErr := remotes[i].qualifyRetention(ctx, copy.Target.Target.Bucket, key)
+		effectErr := remotes[i].qualifyRetention(ctx, copy.Target.Target.Bucket, key, p.Operation.Version)
 		phase, failure := "deleted", ""
 		if effectErr != nil {
 			phase, failure = "uncertain", retentionFailure(effectErr)
@@ -339,7 +348,7 @@ func executeDatabaseBackupRetentionClaim(s *attemptSupervisor, j *runner.Attempt
 				if copy.Local != nil {
 					absent, err = e.store.RemoveOwnedWithAuthority(ctx, strings.TrimPrefix(copy.Item.Digest, "sha256:"), retentionArtifactProof(copy), before)
 				} else {
-					absent, err = remotes[i].deleteRetentionCopy(ctx, copy)
+					absent, err = remotes[i].deleteRetentionCopy(ctx, copy, p.Operation.Version)
 				}
 				phase = "deleted"
 				if absent {
@@ -391,7 +400,7 @@ func reconcileDatabaseBackupRetentionJournal(ctx context.Context, config Config,
 		if entry.Request.Phase == "intent" {
 			continue
 		}
-		if _, err := c.HostingDatabaseBackupRetentionMutation(ctx, entry.Request); err == nil {
+		if out, err := c.HostingDatabaseBackupRetentionMutation(ctx, entry.Request); err == nil && out.Version == entry.Plan.Operation.Version {
 			if entry.Request.ProbeOnly && entry.Request.Phase == "uncertain" {
 				continue
 			}

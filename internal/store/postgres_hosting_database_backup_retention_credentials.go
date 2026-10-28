@@ -63,11 +63,11 @@ func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context,
 		var raw []byte
 		raw, e = sqlcgen.New(tx).ReadDatabaseBackupRetentionDelivery(ctx, in.DeliveryID)
 		if e == nil {
-			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in || out.Metadata.Validate() != nil {
+			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in || out.Metadata.Validate() != nil || out.Metadata.Purpose != domain.HostingDatabaseBackupRetentionPurposeFor(r.view.Version) {
 				return out, ErrConflict
 			}
 		} else if errors.Is(e, pgx.ErrNoRows) {
-			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRetentionCredentialPurpose, Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
+			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRetentionPurposeFor(r.view.Version), Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
 			if e = sqlcgen.New(tx).CreateDatabaseBackupRetentionDelivery(ctx, sqlcgen.CreateDatabaseBackupRetentionDeliveryParams{DeliveryID: in.DeliveryID, ExecutionID: in.Authority.OperationID, CopyID: in.RetentionCopyID, Metadata: buildJSON(out.Metadata), UseUntil: expiry}); e != nil {
 				return out, e
 			}
@@ -99,7 +99,7 @@ func (s *PostgresStore) AuthorizeBackupRetentionCredentials(ctx context.Context,
 // before use.
 func (s *PostgresStore) RevalidateBackupRetentionCredentials(ctx context.Context, runner, token string, in domain.BackupRemoteCredentialRequest, m domain.BackupRemoteCredentialMetadata) error {
 	_, e := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		_, _, expiry, e := backupRetentionDeliveryAuthority(ctx, tx, runner, token, in)
+		operation, _, expiry, e := backupRetentionDeliveryAuthority(ctx, tx, runner, token, in)
 		if e != nil {
 			return false, e
 		}
@@ -109,7 +109,7 @@ func (s *PostgresStore) RevalidateBackupRetentionCredentials(ctx context.Context
 			return false, hostingError(e)
 		}
 		var saved domain.BackupRemoteCredentialMetadata
-		if json.Unmarshal(raw, &saved) != nil || m.Validate() != nil {
+		if json.Unmarshal(raw, &saved) != nil || m.Validate() != nil || m.Purpose != domain.HostingDatabaseBackupRetentionPurposeFor(operation.view.Version) {
 			return false, ErrConflict
 		}
 		comp := saved

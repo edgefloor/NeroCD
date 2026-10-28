@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -152,6 +153,9 @@ func (s *PostgresStore) DatabaseBackupRetentionMutation(ctx context.Context, run
 		r, e := backupRetentionAuthority(ctx, tx, runner, in.HostingAuthority, false)
 		if e != nil {
 			return zero, e
+		}
+		if in.ProbeOnly && !strings.HasPrefix(in.ProbeKey, domain.HostingDatabaseBackupRetentionProbeNamespace(r.plan.Operation.Version)+in.OperationID+"/") {
+			return zero, ErrConflict
 		}
 		phaseKey := in.Phase
 		if in.ProbeOnly {

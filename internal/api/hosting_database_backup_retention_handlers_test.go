@@ -21,6 +21,7 @@ type retentionHTTPRepository struct {
 	store.HostingDatabaseRepository
 	store.HostingDatabaseBackupRetentionRepository
 	calls         int
+	version       string
 	mutationError error
 }
 
@@ -36,7 +37,11 @@ func (r *retentionHTTPRepository) GetDatabaseBackupRetention(ctx context.Context
 }
 func (r *retentionHTTPRepository) SaveDatabaseBackupRetention(ctx context.Context, actor, resource string, in domain.HostingDatabaseBackupRetentionInput) (domain.HostingDatabaseBackupRetentionPolicy, error) {
 	r.calls++
-	return domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersion, ResourceID: resource}, r.authorize(ctx, actor, domain.RoleOwner)
+	version := r.version
+	if version == "" {
+		version = domain.HostingDatabaseBackupRetentionVersion
+	}
+	return domain.HostingDatabaseBackupRetentionPolicy{Version: version, ResourceID: resource}, r.authorize(ctx, actor, domain.RoleOwner)
 }
 func (r *retentionHTTPRepository) PreviewDatabaseBackupRetention(ctx context.Context, id, actor, resource string, in domain.HostingDatabaseBackupRetentionPreviewInput) (domain.HostingDatabaseBackupRetentionPreview, error) {
 	r.calls++
@@ -111,9 +116,16 @@ func TestBackupRetentionMutationHTTPAuthorityStatus(t *testing.T) {
 }
 
 func TestBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T) {
+	testBackupRetentionHTTPPermissionsAndClosedInputs(t, domain.HostingDatabaseBackupRetentionVersion)
+}
+func TestMySQLBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T) {
+	testBackupRetentionHTTPPermissionsAndClosedInputs(t, domain.HostingDatabaseMySQLBackupRetentionVersion)
+}
+func testBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T, version string) {
+	t.Helper()
 	server, original, owner, viewer, runner := archiveHTTPFixture(t)
 	original.resource.Kind = "database"
-	repo := &retentionHTTPRepository{archiveHTTPRepository: original}
+	repo := &retentionHTTPRepository{archiveHTTPRepository: original, version: version}
 	mem := repo.MemoryStore
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
@@ -133,7 +145,11 @@ func TestBackupRetentionHTTPPermissionsAndClosedInputs(t *testing.T) {
 	if repo.calls != before {
 		t.Fatal("malformed input reached repository")
 	}
-	archiveHTTPCall(t, server, "PUT", path, owner, body, "application/json", 200)
+	saved := archiveHTTPCall(t, server, "PUT", path, owner, body, "application/json", 200)
+	var policy domain.HostingDatabaseBackupRetentionPolicy
+	if json.Unmarshal(saved.Body.Bytes(), &policy) != nil || policy.Version != version {
+		t.Fatal("engine response version lost")
+	}
 	archiveHTTPCall(t, server, "GET", path, viewer, "", "", 200)
 	for _, x := range []struct{ suffix, body string }{{"/previews", `{"request_id":"preview","expected_policy_revision":1}`}, {"/executions", `{"request_id":"execute","preview_id":"preview","expected_policy_revision":1,"expected_plan_hash":"sha256:` + strings.Repeat("a", 64) + `"}`}} {
 		archiveHTTPCall(t, server, "POST", path+x.suffix, viewer, x.body, "application/json", 403)
@@ -274,5 +290,25 @@ func TestBackupRetentionProofSchemasRejectInvalidIdentity(t *testing.T) {
 				t.Fatal("invalid proof accepted by schema")
 			}
 		})
+	}
+}
+
+func TestMySQLBackupRetentionResponseVersionsRemainClosed(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"HostingDatabaseBackupRetentionPolicy", "HostingDatabaseBackupRetentionPreview", "HostingDatabaseBackupRetentionExecution"} {
+		version := doc.Components.Schemas[name].Value.Properties["version"].Value
+		for _, known := range []string{domain.HostingDatabaseBackupRetentionVersion, domain.HostingDatabaseMySQLBackupRetentionVersion} {
+			if err = version.VisitJSON(known); err != nil {
+				t.Fatal(name, err)
+			}
+		}
+		for _, unknown := range []string{"mysql.component.backup-retention.v1", "unknown"} {
+			if version.VisitJSON(unknown) == nil {
+				t.Fatal("unsupported response protocol", name)
+			}
+		}
 	}
 }

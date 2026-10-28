@@ -47,13 +47,16 @@ func (c *backupRemoteS3) retentionHead(ctx context.Context, bucket, key string, 
 
 // Qualification touches only the fresh owned probe. Failure or an ambiguous
 // response cannot authorize deletion of any selected recovery copy.
-func (c *backupRemoteS3) qualifyRetention(ctx context.Context, bucket, key string) error {
-	if !strings.HasPrefix(key, "nerocd/postgresql/retention-probes/") {
+func (c *backupRemoteS3) qualifyRetention(ctx context.Context, bucket, key, version string) error {
+	if namespace := domain.HostingDatabaseBackupRetentionProbeNamespace(version); namespace == "" || !strings.HasPrefix(key, namespace) {
 		return errBackupRetentionConditional
 	}
 	body := []byte("PGDMP nerocd retention conditional probe " + key)
+	if version == domain.HostingDatabaseMySQLBackupRetentionVersion {
+		body = []byte("-- nerocd retention conditional probe " + key)
+	}
 	digest := sha256.Sum256(body)
-	blob := domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(digest[:]), Bytes: int64(len(body)), Format: "postgresql_custom"}
+	blob := domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(digest[:]), Bytes: int64(len(body)), Format: domain.HostingDatabaseBackupRetentionFormat(version)}
 	ctx, cancel := c.requestContext(ctx)
 	defer cancel()
 	created, err := c.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: bytes.NewReader(body), ContentLength: aws.Int64(blob.Bytes), IfNoneMatch: aws.String("*")})
@@ -104,11 +107,11 @@ func (c *backupRemoteS3) qualifyRetention(ctx context.Context, bucket, key strin
 	}
 	return nil
 }
-func (c *backupRemoteS3) deleteRetentionCopy(ctx context.Context, copy domain.BackupRetentionCopy) (bool, error) {
+func (c *backupRemoteS3) deleteRetentionCopy(ctx context.Context, copy domain.BackupRetentionCopy, version string) (bool, error) {
 	if copy.Remote == nil || !copy.Remote.Created || copy.Remote.Validate() != nil || copy.Target == nil {
 		return false, errBackupRetentionObjectChanged
 	}
-	blob := domain.HostingDatabaseBackupBlob{Digest: copy.Item.Digest, Bytes: copy.Item.Bytes, Format: "postgresql_custom"}
+	blob := domain.HostingDatabaseBackupBlob{Digest: copy.Item.Digest, Bytes: copy.Item.Bytes, Format: domain.HostingDatabaseBackupRetentionFormat(version)}
 	bucket := copy.Target.Target.Bucket
 	absent, err := c.retentionHead(ctx, bucket, copy.ObjectKey, *copy.Remote, blob)
 	if err != nil || absent {
@@ -149,8 +152,8 @@ func (c *backupRemoteS3) deleteRetentionCopy(ctx context.Context, copy domain.Ba
 	return false, nil
 }
 
-func (c *backupRemoteS3) retentionProbeAbsent(ctx context.Context, bucket, key string) (bool, error) {
-	if !strings.HasPrefix(key, "nerocd/postgresql/retention-probes/") {
+func (c *backupRemoteS3) retentionProbeAbsent(ctx context.Context, bucket, key, version string) (bool, error) {
+	if namespace := domain.HostingDatabaseBackupRetentionProbeNamespace(version); namespace == "" || !strings.HasPrefix(key, namespace) {
 		return false, errBackupRetentionConditional
 	}
 	ctx, cancel := c.requestContext(ctx)

@@ -275,7 +275,7 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	retentionCap, retentionTask := false, false
 	for _, capability := range result.Capabilities {
-		retentionCap = retentionCap || capability == domain.HostingDatabaseBackupRetentionCapability
+		retentionCap = retentionCap || capability == domain.HostingDatabaseBackupRetentionCapability || capability == domain.HostingDatabaseMySQLBackupRetentionCapability
 		retentionTask = retentionTask || capability == domain.RunTypeDatabaseBackupRetention
 	}
 	if retentionCap != options.DatabaseBackupRetention || retentionTask != options.DatabaseBackupRetention || retentionCap && (!options.RemoteDatabaseBackups || !options.LogicalDatabaseBackups || !options.Database || shellCapable) {
@@ -290,6 +290,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
 	for _, capability := range result.Capabilities {
+		if capability == domain.HostingDatabaseMySQLBackupRetentionCapability && (!options.DatabaseBackupRetention || !options.RemoteDatabaseBackups || !options.LogicalDatabaseBackups || !options.Database || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLCapability) || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLBackupCapability) || shellCapable) {
+			return "", errors.New("authenticated MySQL retention capability requires explicit database configuration")
+		}
 		if capability == domain.HostingDatabaseMySQLRemoteRestoreCapability && (!options.Database || !options.LogicalDatabaseBackups || !options.RemoteDatabaseBackups || !remoteCap || !remoteTask || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLCapability) || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLBackupCapability) || shellCapable) {
 			return "", errors.New("authenticated MySQL remote restore capability requires explicit database configuration")
 		}

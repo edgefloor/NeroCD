@@ -34,6 +34,17 @@ func (q *Queries) ListDatabaseBackupRetentionExecutions(ctx context.Context, res
 	return items, nil
 }
 
+const mySQLBackupRetentionSchemaPresent = `-- name: MySQLBackupRetentionSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_backup_retention_schema_compatible()') IS NOT NULL)::boolean
+`
+
+func (q *Queries) MySQLBackupRetentionSchemaPresent(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, mySQLBackupRetentionSchemaPresent)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const readDatabaseBackupRetentionCopy = `-- name: ReadDatabaseBackupRetentionCopy :one
 SELECT body,availability,identity_hash,location_hash FROM hosting_database_backup_copies WHERE id=$1 FOR SHARE
 `

@@ -10071,8 +10071,8 @@ export interface components {
             remote: components["schemas"]["BackupRetentionLimits"];
         };
         HostingDatabaseBackupRetentionPolicy: {
-            /** @constant */
-            version: "postgresql.backup-retention.v1";
+            /** @enum {string} */
+            version: "postgresql.backup-retention.v1" | "mysql.backup-retention.v1";
             project_id: string;
             resource_id: string;
             /** Format: int64 */
@@ -10111,8 +10111,8 @@ export interface components {
         };
         HostingDatabaseBackupRetentionPreview: {
             id: string;
-            /** @constant */
-            version: "postgresql.backup-retention.v1";
+            /** @enum {string} */
+            version: "postgresql.backup-retention.v1" | "mysql.backup-retention.v1";
             project_id: string;
             resource_id: string;
             /** Format: int64 */
@@ -10145,8 +10145,8 @@ export interface components {
         };
         HostingDatabaseBackupRetentionExecution: {
             id: string;
-            /** @constant */
-            version: "postgresql.backup-retention.v1";
+            /** @enum {string} */
+            version: "postgresql.backup-retention.v1" | "mysql.backup-retention.v1";
             project_id: string;
             resource_id: string;
             preview_id: string;

@@ -15,6 +15,13 @@ import (
 )
 
 func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T) {
+	testBackupRetentionS3ConditionalQualificationAndExactDeletion(t, domain.HostingDatabaseBackupRetentionVersion)
+}
+func TestMySQLBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T) {
+	testBackupRetentionS3ConditionalQualificationAndExactDeletion(t, domain.HostingDatabaseMySQLBackupRetentionVersion)
+}
+func testBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T, version string) {
+	t.Helper()
 	for _, mode := range []string{"qualified", "nonversioned", "ignores_condition", "denied", "changed", "uncertain"} {
 		t.Run(mode, func(t *testing.T) {
 			var mu sync.Mutex
@@ -92,8 +99,11 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 				}
 			})
 			data := []byte("PGDMP saved database copy")
+			if version == domain.HostingDatabaseMySQLBackupRetentionVersion {
+				data = []byte("CREATE TABLE retained (id INT);")
+			}
 			sum := sha256.Sum256(data)
-			blob := domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%x", sum), Bytes: int64(len(data)), Format: "postgresql_custom"}
+			blob := domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%x", sum), Bytes: int64(len(data)), Format: domain.HostingDatabaseBackupRetentionFormat(version)}
 			key := domain.BackupRemoteObjectKey("backup", blob)
 			if e := client.upload(t.Context(), target.Bucket, key, blob, bytes.NewReader(data)); e != nil {
 				t.Fatal(e)
@@ -102,8 +112,8 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 				t.Fatal("new creation proof absent")
 			}
 			proof := *client.ownership
-			probe := "nerocd/postgresql/retention-probes/execution/0123456789abcdef0123456789abcdef"
-			err := client.qualifyRetention(t.Context(), target.Bucket, probe)
+			probe := domain.HostingDatabaseBackupRetentionProbeNamespace(version) + "execution/0123456789abcdef0123456789abcdef"
+			err := client.qualifyRetention(t.Context(), target.Bucket, probe, version)
 			if mode == "ignores_condition" || mode == "denied" {
 				if err == nil {
 					t.Fatal("unsupported conditional delete accepted")
@@ -122,7 +132,7 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 				etags["/"+target.Bucket+"/"+key] = `"foreign"`
 				mu.Unlock()
 			}
-			absent, err := client.deleteRetentionCopy(t.Context(), copy)
+			absent, err := client.deleteRetentionCopy(t.Context(), copy, version)
 			if mode == "changed" {
 				if err == nil || backupDeletes != 0 {
 					t.Fatal("changed object deleted")
@@ -141,7 +151,7 @@ func TestBackupRetentionS3ConditionalQualificationAndExactDeletion(t *testing.T)
 			if err != nil || absent || backupDeletes != 1 {
 				t.Fatalf("deletion: absent=%v deletes=%d err=%v", absent, backupDeletes, err)
 			}
-			if absent, err = client.deleteRetentionCopy(t.Context(), copy); err != nil || !absent || backupDeletes != 1 {
+			if absent, err = client.deleteRetentionCopy(t.Context(), copy, version); err != nil || !absent || backupDeletes != 1 {
 				t.Fatal("replay did not observe exact absence", err)
 			}
 		})
@@ -174,7 +184,7 @@ func TestBackupRetentionS3AdoptionDoesNotGrantDeletion(t *testing.T) {
 	if client.ownership != nil {
 		t.Fatal("adopted remote acquired creation proof")
 	}
-	if _, err := client.deleteRetentionCopy(t.Context(), domain.BackupRetentionCopy{Item: domain.BackupRetentionItem{Digest: blob.Digest, Bytes: blob.Bytes}, Target: &domain.HostingDatabaseBackupTargetSnapshot{Target: target}, ObjectKey: key}); err == nil || deletes != 0 {
+	if _, err := client.deleteRetentionCopy(t.Context(), domain.BackupRetentionCopy{Item: domain.BackupRetentionItem{Digest: blob.Digest, Bytes: blob.Bytes}, Target: &domain.HostingDatabaseBackupTargetSnapshot{Target: target}, ObjectKey: key}, domain.HostingDatabaseBackupRetentionVersion); err == nil || deletes != 0 {
 		t.Fatal("unproven deletion")
 	}
 }

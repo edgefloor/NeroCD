@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"nerocd/internal/domain"
-	"nerocd/internal/store"
 )
 
 func TestPostgresMySQLUploadNotificationPreservesBackupAndReceipt(t *testing.T) {
@@ -153,8 +151,8 @@ func TestPostgresMySQLUploadNotificationPreservesBackupAndReceipt(t *testing.T) 
 			if err != nil || local.State != "succeeded" || !reflect.DeepEqual(local.Blob, backup.Blob) {
 				t.Fatal("upload or notification failure changed successful local backup", err)
 			}
-			if _, err = f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); !errors.Is(err, store.ErrConflict) {
-				t.Fatal("notifications enabled MySQL retention", err)
+			if policy, e := f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); e != nil || policy != nil {
+				t.Fatal("notifications implicitly configured MySQL retention", e)
 			}
 		})
 	}

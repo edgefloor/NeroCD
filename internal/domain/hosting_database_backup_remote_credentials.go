@@ -21,6 +21,9 @@ const HostingStorageBackupRetentionCredentialPurpose = "hosting_storage_backup_r
 // backup retention.
 const HostingDatabaseBackupRetentionCredentialPurpose = "hosting_postgresql_backup_retention_credentials.v1"
 
+// HostingDatabaseMySQLBackupRetentionCredentialPurpose identifies native MySQL retention credentials.
+const HostingDatabaseMySQLBackupRetentionCredentialPurpose = "hosting_mysql_backup_retention_credentials.v1"
+
 // BackupRemoteCredentialRequest binds a credential delivery to a runner lease, target, and plan.
 type BackupRemoteCredentialRequest struct {
 	RetentionCopyID string           `json:"retention_copy_id,omitempty"`
@@ -78,6 +81,9 @@ func (m BackupRemoteCredentialMetadata) Validate() error {
 	}
 	if m.Request.RetentionCopyID != "" {
 		expected = HostingDatabaseBackupRetentionCredentialPurpose
+		if m.Request.Authority.RunID == "db_retention_"+m.Request.Authority.OperationID && m.Purpose == HostingDatabaseMySQLBackupRetentionCredentialPurpose {
+			expected = HostingDatabaseMySQLBackupRetentionCredentialPurpose
+		}
 		if m.Request.Authority.RunID == "storage_retention_"+m.Request.Authority.OperationID {
 			expected = HostingStorageBackupRetentionCredentialPurpose
 		}

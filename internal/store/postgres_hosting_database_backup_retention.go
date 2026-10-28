@@ -16,15 +16,23 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
-// Retention remains PostgreSQL-only even though schedule admission also supports
-// native MySQL. Keep every policy, inventory and execution entrypoint fenced.
+// Every retention boundary derives its engine from the actual eligible source.
 func databaseBackupRetentionAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (databaseBackupScheduleSource, error) {
 	value, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, role)
 	if err != nil {
 		return value, err
 	}
-	if value.Version != domain.HostingDatabaseBackupScheduleVersion && value.Version != domain.HostingDatabaseBackupComponentScheduleVersion {
+	if domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version) == "" {
 		return databaseBackupScheduleSource{}, ErrConflict
+	}
+	if value.Version == domain.HostingDatabaseMySQLBackupScheduleVersion {
+		present, e := sqlcgen.New(tx).MySQLBackupRetentionSchemaPresent(ctx)
+		if e != nil {
+			return value, e
+		}
+		if !present {
+			return databaseBackupScheduleSource{}, ErrConflict
+		}
 	}
 	return value, nil
 }
@@ -33,7 +41,7 @@ func backupRetentionLock(ctx context.Context, tx pgx.Tx) error {
 	e := sqlcgen.New(tx).LockDatabaseBackupCopyAdmission(ctx)
 	return e
 }
-func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
+func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource, version string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 	var raw []byte
 	raw, err := sqlcgen.New(tx).LockDatabaseBackupRetentionPolicy(ctx, resource)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -43,7 +51,7 @@ func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource string) (*do
 		return nil, err
 	}
 	var p domain.HostingDatabaseBackupRetentionPolicy
-	if json.Unmarshal(raw, &p) != nil || p.Version != domain.HostingDatabaseBackupRetentionVersion || p.ResourceID != resource {
+	if json.Unmarshal(raw, &p) != nil || p.Version != version || p.ResourceID != resource {
 		return nil, ErrConflict
 	}
 	return &p, nil
@@ -74,10 +82,11 @@ func backupRetentionSaveRequest(ctx context.Context, tx pgx.Tx, resource, actor,
 // GetDatabaseBackupRetention returns the authorized database backup retention policy.
 func (s *PostgresStore) GetDatabaseBackupRetention(ctx context.Context, actor, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
-		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
+		value, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleViewer)
+		if e != nil {
 			return nil, e
 		}
-		return backupRetentionPolicy(ctx, tx, resource)
+		return backupRetentionPolicy(ctx, tx, resource, domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version))
 	})
 }
 
@@ -99,7 +108,7 @@ func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, 
 		if replay, e := backupRetentionReplay(ctx, tx, resource, actor, "policy", in.RequestID, hash, &zero); replay || e != nil {
 			return zero, e
 		}
-		old, e := backupRetentionPolicy(ctx, tx, resource)
+		old, e := backupRetentionPolicy(ctx, tx, resource, domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version))
 		if e != nil {
 			return zero, e
 		}
@@ -113,7 +122,7 @@ func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, 
 		if revision != in.ExpectedRevision || value.Resource.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
-		out := domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersion, ProjectID: value.Resource.ProjectID, ResourceID: resource, Revision: revision + 1, ResourceGeneration: value.Resource.Generation, Enabled: in.Enabled, Automatic: in.Automatic, Local: in.Local, Remote: in.Remote, CreatedAt: created, UpdatedAt: now}
+		out := domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version), ProjectID: value.Resource.ProjectID, ResourceID: resource, Revision: revision + 1, ResourceGeneration: value.Resource.Generation, Enabled: in.Enabled, Automatic: in.Automatic, Local: in.Local, Remote: in.Remote, CreatedAt: created, UpdatedAt: now}
 		e = sqlcgen.New(tx).SaveDatabaseBackupRetentionPolicy(ctx, sqlcgen.SaveDatabaseBackupRetentionPolicyParams{ResourceID: resource, ProjectID: out.ProjectID, ActorID: actor, Revision: int64(out.Revision), Body: buildJSON(out)})
 		if e != nil {
 			return zero, e
@@ -362,7 +371,7 @@ func backupRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, acto
 		byID[c.Item.CopyID] = c
 	}
 	items, local, remote, truncated := domain.SelectBackupRetention(p, visible)
-	out := domain.HostingDatabaseBackupRetentionPreview{ID: id, Version: domain.HostingDatabaseBackupRetentionVersion, ProjectID: p.ProjectID, ResourceID: resource, PolicyRevision: p.Revision, LocalReferenceAt: local, RemoteReferenceAt: remote, SelectionTruncated: truncated, Items: items, CreatedAt: time.Now().UTC()}
+	out := domain.HostingDatabaseBackupRetentionPreview{ID: id, Version: p.Version, ProjectID: p.ProjectID, ResourceID: resource, PolicyRevision: p.Revision, LocalReferenceAt: local, RemoteReferenceAt: remote, SelectionTruncated: truncated, Items: items, CreatedAt: time.Now().UTC()}
 	chosen := []domain.BackupRetentionCopy{}
 	for _, item := range items {
 		if item.Selected {
@@ -386,7 +395,8 @@ func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, 
 		return zero, domain.ErrInvalidDatabaseBackupRetention
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionPreview, error) {
-		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
+		value, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner)
+		if e != nil {
 			return zero, e
 		}
 		if e := backupRetentionLock(ctx, tx); e != nil {
@@ -396,7 +406,7 @@ func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, 
 		if replay, e := backupRetentionReplay(ctx, tx, resource, actor, "preview", in.RequestID, hash, &zero); replay || e != nil {
 			return zero, e
 		}
-		p, e := backupRetentionPolicy(ctx, tx, resource)
+		p, e := backupRetentionPolicy(ctx, tx, resource, domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version))
 		if e != nil {
 			return zero, e
 		}
@@ -463,7 +473,8 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		return zero, domain.ErrInvalidDatabaseBackupRetention
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionExecution, error) {
-		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
+		value, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner)
+		if e != nil {
 			return zero, e
 		}
 		if e := backupRetentionLock(ctx, tx); e != nil {
@@ -481,7 +492,7 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		if !errors.Is(lookup, pgx.ErrNoRows) {
 			return zero, lookup
 		}
-		p, e := backupRetentionPolicy(ctx, tx, resource)
+		p, e := backupRetentionPolicy(ctx, tx, resource, domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version))
 		if e != nil {
 			return zero, e
 		}
@@ -523,7 +534,7 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		}
 		runnerID := chosen[0].RunnerID
 		now := time.Now().UTC()
-		out := domain.HostingDatabaseBackupRetentionExecution{ID: id, Version: domain.HostingDatabaseBackupRetentionVersion, ProjectID: p.ProjectID, ResourceID: resource, PreviewID: preview.ID, PolicyRevision: p.Revision, PlanHash: preview.PlanHash, State: "queued", ReservationHeld: true, LocalState: "not_selected", RemoteState: "not_selected", Items: []domain.BackupRetentionExecutionItem{}, CreatedAt: now, UpdatedAt: now}
+		out := domain.HostingDatabaseBackupRetentionExecution{ID: id, Version: p.Version, ProjectID: p.ProjectID, ResourceID: resource, PreviewID: preview.ID, PolicyRevision: p.Revision, PlanHash: preview.PlanHash, State: "queued", ReservationHeld: true, LocalState: "not_selected", RemoteState: "not_selected", Items: []domain.BackupRetentionExecutionItem{}, CreatedAt: now, UpdatedAt: now}
 		for _, c := range chosen {
 			fresh, ok := byID[c.Item.CopyID]
 			if !ok || !eligible[c.Item.CopyID] || c.RunnerID != runnerID || fresh.IdentityHash != c.IdentityHash || fresh.Item.Availability != "available" {
@@ -592,11 +603,25 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 	if e != nil {
 		return e
 	}
-	_, e = sqlcgen.New(tx).LockDatabaseBackupRetentionRunner(ctx, sqlcgen.LockDatabaseBackupRetentionRunnerParams{ID: p.RunnerID, Column2: domain.HostingDatabaseBackupRetentionCapability, Column3: domain.RunTypeDatabaseBackupRetention})
+	if p.Operation.Version != domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version) {
+		return ErrConflict
+	}
+	_, e = sqlcgen.New(tx).LockDatabaseBackupRetentionRunner(ctx, sqlcgen.LockDatabaseBackupRetentionRunnerParams{ID: p.RunnerID, Column2: domain.HostingDatabaseBackupRetentionCapabilityFor(p.Operation.Version), Column3: domain.RunTypeDatabaseBackupRetention})
 	if e != nil {
 		return hostingError(e)
 	}
 	for _, c := range p.Copies {
+		original, e := sqlcgen.New(tx).ReadDatabaseBackup(ctx, c.Item.BackupID)
+		if e != nil {
+			return hostingError(e)
+		}
+		originalPlan, e := databaseBackupPlan(original)
+		if e != nil {
+			return e
+		}
+		if domain.HostingDatabaseBackupRetentionVersionForBackup(originalPlan.Operation.Version) != p.Operation.Version {
+			return ErrConflict
+		}
 		if c.DestinationID != value.Binding.DestinationID {
 			return ErrConflict
 		}

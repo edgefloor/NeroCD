@@ -49,8 +49,14 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		if e != nil || identity.RunnerID != principal.ID || !slices.Contains(identity.Capabilities, capability) || !slices.Contains(identity.Capabilities, kind) {
 			return false
 		}
-		if retention && !storageRetention && (!slices.Contains(identity.Capabilities, domain.HostingDatabaseBackupRetentionCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupRetention)) {
-			return false
+		if retention && !storageRetention {
+			retentionCapability := domain.HostingDatabaseBackupRetentionCapability
+			if purpose == domain.HostingDatabaseMySQLBackupRetentionCredentialPurpose || purpose == "" && !slices.Contains(identity.Capabilities, retentionCapability) {
+				retentionCapability = domain.HostingDatabaseMySQLBackupRetentionCapability
+			}
+			if !slices.Contains(identity.Capabilities, retentionCapability) || !slices.Contains(identity.Capabilities, domain.RunTypeDatabaseBackupRetention) {
+				return false
+			}
 		}
 		p, e := s.AuthenticateRunnerToken(ctx, token)
 		return e == nil && p.ID == principal.ID && p.Provider == domain.PrincipalRunner

@@ -28,9 +28,20 @@ func retentionReplayEntry(t *testing.T) runner.JournalDatabaseBackupRetention {
 }
 
 func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
-	for _, mode := range []string{"committed_result", "unpaired_without_resume", "unpaired_with_resume"} {
+	testBackupRetentionStartupLostAcknowledgmentAndSupersession(t, domain.HostingDatabaseBackupRetentionVersion)
+}
+func TestMySQLBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
+	testBackupRetentionStartupLostAcknowledgmentAndSupersession(t, domain.HostingDatabaseMySQLBackupRetentionVersion)
+}
+func testBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T, version string) {
+	t.Helper()
+	for _, mode := range []string{"committed_result", "unpaired_without_resume", "unpaired_with_resume", "foreign_engine_response"} {
 		t.Run(mode, func(t *testing.T) {
 			entry := retentionReplayEntry(t)
+			entry.Plan.Operation.Version = version
+			entry.Plan.Hash = ""
+			entry.Plan.Hash = domain.HostingDocumentHash(entry.Plan)
+			entry.Request.PlanHash = entry.Plan.Hash
 			path := filepath.Join(t.TempDir(), "journal")
 			j, err := runner.OpenAttemptJournal(path)
 			if err != nil {
@@ -43,7 +54,7 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 			result.ID = "deleted"
 			result.Request.ReceiptID = "deleted"
 			result.Request.Phase = "deleted"
-			if mode == "committed_result" {
+			if mode == "committed_result" || mode == "foreign_engine_response" {
 				if _, err = j.AppendDatabaseBackupRetention(result); err != nil {
 					t.Fatal(err)
 				}
@@ -72,6 +83,13 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 						return
 					}
 					out := entry.Plan.Operation
+					if mode == "foreign_engine_response" {
+						if version == domain.HostingDatabaseMySQLBackupRetentionVersion {
+							out.Version = domain.HostingDatabaseBackupRetentionVersion
+						} else {
+							out.Version = domain.HostingDatabaseMySQLBackupRetentionVersion
+						}
+					}
 					out.State = "succeeded"
 					out.ReservationHeld = false
 					out.LocalState = "succeeded"
@@ -105,6 +123,10 @@ func TestBackupRetentionStartupLostAcknowledgmentAndSupersession(t *testing.T) {
 			if mode == "committed_result" {
 				if err != nil || mutations != 1 || retirements != 0 || j.Depth() != 0 {
 					t.Fatalf("committed replay: mutation=%d retirement=%d depth=%d err=%v", mutations, retirements, j.Depth(), err)
+				}
+			} else if mode == "foreign_engine_response" {
+				if err == nil || mutations != 1 || j.Depth() != 2 {
+					t.Fatal("foreign engine response retired exact journal evidence")
 				}
 			} else {
 				if mutations != 0 || retirements != 1 || j.Depth() != 1 {

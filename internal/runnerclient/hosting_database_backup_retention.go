@@ -59,7 +59,7 @@ func (c Client) HostingDatabaseBackupRetentionMutation(ctx context.Context, in d
 		}
 		return r.value, errors.New("backup retention receipt unavailable")
 	}
-	if r.value.ID != in.OperationID || r.value.Version != domain.HostingDatabaseBackupRetentionVersion {
+	if r.value.ID != in.OperationID || domain.HostingDatabaseBackupRetentionFormat(r.value.Version) == "" {
 		return r.value, domain.ErrInvalidDatabaseBackupRetention
 	}
 	matched := false

@@ -19986,7 +19986,7 @@ components:
         "properties": {
           "version": {
             "type": "string",
-            "const": "postgresql.backup-retention.v1"
+            "enum": ["postgresql.backup-retention.v1", "mysql.backup-retention.v1"]
           },
           "project_id": {
             "type": "string",
@@ -20156,7 +20156,7 @@ components:
           },
           "version": {
             "type": "string",
-            "const": "postgresql.backup-retention.v1"
+            "enum": ["postgresql.backup-retention.v1", "mysql.backup-retention.v1"]
           },
           "project_id": {
             "type": "string",
@@ -20326,7 +20326,7 @@ components:
           },
           "version": {
             "type": "string",
-            "const": "postgresql.backup-retention.v1"
+            "enum": ["postgresql.backup-retention.v1", "mysql.backup-retention.v1"]
           },
           "project_id": {
             "type": "string",

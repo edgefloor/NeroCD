@@ -84,3 +84,22 @@ func TestBackupRetentionRegistryOnlyIDAndProgressDoesNotAlterPlan(t *testing.T) 
 		t.Fatal("foreign progress accepted")
 	}
 }
+
+func TestMySQLBackupRetentionJournalExactProbeNamespace(t *testing.T) {
+	entry := retentionJournalEntry()
+	entry.Plan.Operation.Version = domain.HostingDatabaseMySQLBackupRetentionVersion
+	entry.Plan.Hash = ""
+	entry.Plan.Hash = domain.HostingDocumentHash(entry.Plan)
+	entry.Request.PlanHash = entry.Plan.Hash
+	entry.ProbeKey = domain.HostingDatabaseBackupRetentionProbeNamespace(entry.Plan.Operation.Version) + entry.Plan.Operation.ID + "/" + strings.Repeat("a", 32)
+	entry.Request.ProbeKey = entry.ProbeKey
+	entry.Request.ProbeOnly = true
+	if validateJournalDatabaseBackupRetention(entry) != nil {
+		t.Fatal("exact MySQL probe rejected")
+	}
+	entry.ProbeKey = strings.Replace(entry.ProbeKey, "mysql/", "postgresql/", 1)
+	entry.Request.ProbeKey = entry.ProbeKey
+	if validateJournalDatabaseBackupRetention(entry) == nil {
+		t.Fatal("foreign probe namespace acquired journal authority")
+	}
+}

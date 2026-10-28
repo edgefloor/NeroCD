@@ -11,12 +11,80 @@ import (
 
 // HostingDatabaseBackupRetentionVersion and related constants identify database backup retention documents and capabilities.
 const (
-	HostingDatabaseBackupRetentionVersion    = "postgresql.backup-retention.v1"
-	HostingDatabaseBackupRetentionCapability = "hosting_postgresql_backup_retention_v1"
-	RunTypeDatabaseBackupRetention           = "database_backup_retention"
-	BackupRetentionInventoryLimit            = 1000
-	BackupRetentionBatchLimit                = 100
+	HostingDatabaseBackupRetentionVersion         = "postgresql.backup-retention.v1"
+	HostingDatabaseBackupRetentionCapability      = "hosting_postgresql_backup_retention_v1"
+	HostingDatabaseMySQLBackupRetentionVersion    = "mysql.backup-retention.v1"
+	HostingDatabaseMySQLBackupRetentionCapability = "hosting_mysql_backup_retention_v1"
+	RunTypeDatabaseBackupRetention                = "database_backup_retention"
+	BackupRetentionInventoryLimit                 = 1000
+	BackupRetentionBatchLimit                     = 100
 )
+
+// HostingDatabaseBackupRetentionVersionForSchedule binds retention to an eligible source.
+func HostingDatabaseBackupRetentionVersionForSchedule(version string) string {
+	switch version {
+	case HostingDatabaseBackupScheduleVersion, HostingDatabaseBackupComponentScheduleVersion:
+		return HostingDatabaseBackupRetentionVersion
+	case HostingDatabaseMySQLBackupScheduleVersion:
+		return HostingDatabaseMySQLBackupRetentionVersion
+	}
+	return ""
+}
+
+// HostingDatabaseBackupRetentionVersionForBackup binds each copy to its source protocol.
+func HostingDatabaseBackupRetentionVersionForBackup(version string) string {
+	switch version {
+	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
+		return HostingDatabaseBackupRetentionVersion
+	case HostingDatabaseMySQLBackupVersion:
+		return HostingDatabaseMySQLBackupRetentionVersion
+	}
+	return ""
+}
+
+// HostingDatabaseBackupRetentionFormat selects the immutable archive format.
+func HostingDatabaseBackupRetentionFormat(version string) string {
+	switch version {
+	case HostingDatabaseBackupRetentionVersion:
+		return "postgresql_custom"
+	case HostingDatabaseMySQLBackupRetentionVersion:
+		return "mysql_sql"
+	}
+	return ""
+}
+
+// HostingDatabaseBackupRetentionCapabilityFor selects the exact engine adapter.
+func HostingDatabaseBackupRetentionCapabilityFor(version string) string {
+	switch version {
+	case HostingDatabaseBackupRetentionVersion:
+		return HostingDatabaseBackupRetentionCapability
+	case HostingDatabaseMySQLBackupRetentionVersion:
+		return HostingDatabaseMySQLBackupRetentionCapability
+	}
+	return ""
+}
+
+// HostingDatabaseBackupRetentionPurposeFor separates engine-bound credential use.
+func HostingDatabaseBackupRetentionPurposeFor(version string) string {
+	switch version {
+	case HostingDatabaseBackupRetentionVersion:
+		return HostingDatabaseBackupRetentionCredentialPurpose
+	case HostingDatabaseMySQLBackupRetentionVersion:
+		return HostingDatabaseMySQLBackupRetentionCredentialPurpose
+	}
+	return ""
+}
+
+// HostingDatabaseBackupRetentionProbeNamespace confines conditional-delete probes.
+func HostingDatabaseBackupRetentionProbeNamespace(version string) string {
+	switch version {
+	case HostingDatabaseBackupRetentionVersion:
+		return "nerocd/postgresql/retention-probes/"
+	case HostingDatabaseMySQLBackupRetentionVersion:
+		return "nerocd/mysql/retention-probes/"
+	}
+	return ""
+}
 
 // ErrInvalidDatabaseBackupRetention reports invalid database backup retention input.
 var ErrInvalidDatabaseBackupRetention = errors.New("invalid database backup retention request")
@@ -374,7 +442,7 @@ func (p HostingDatabaseBackupRetentionPlan) Validate() error {
 	h := p.Hash
 	p.Progress = nil
 	p.Hash = ""
-	if h != HostingDocumentHash(p) || p.Operation.Version != HostingDatabaseBackupRetentionVersion || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.RunnerID) || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || len(p.Copies) == 0 || len(p.Copies) > BackupRetentionBatchLimit || len(p.Copies) != len(p.Operation.Items) {
+	if h != HostingDocumentHash(p) || HostingDatabaseBackupRetentionFormat(p.Operation.Version) == "" || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || !validRuntimeReferenceID(p.RunnerID) || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || len(p.Copies) == 0 || len(p.Copies) > BackupRetentionBatchLimit || len(p.Copies) != len(p.Operation.Items) {
 		return ErrInvalidDatabaseBackupRetention
 	}
 	seen := map[string]bool{}
@@ -389,7 +457,7 @@ func (p HostingDatabaseBackupRetentionPlan) Validate() error {
 				return ErrInvalidDatabaseBackupRetention
 			}
 		case "remote":
-			if c.Remote == nil || c.Remote.Validate() != nil || !c.Remote.Created || c.Local != nil || c.Target == nil || c.Target.Validate() != nil || c.ObjectKey != BackupRemoteObjectKey(c.Item.BackupID, HostingDatabaseBackupBlob{Digest: c.Item.Digest, Bytes: c.Item.Bytes, Format: "postgresql_custom"}) {
+			if c.Remote == nil || c.Remote.Validate() != nil || !c.Remote.Created || c.Local != nil || c.Target == nil || c.Target.Validate() != nil || c.ObjectKey != BackupRemoteObjectKey(c.Item.BackupID, HostingDatabaseBackupBlob{Digest: c.Item.Digest, Bytes: c.Item.Bytes, Format: HostingDatabaseBackupRetentionFormat(p.Operation.Version)}) {
 				return ErrInvalidDatabaseBackupRetention
 			}
 		default:
@@ -415,7 +483,10 @@ type HostingDatabaseBackupRetentionMutation struct {
 // Validate checks the database backup retention mutation fields and invariants.
 func (in HostingDatabaseBackupRetentionMutation) Validate() error {
 	if in.ProbeOnly {
-		prefix := "nerocd/postgresql/retention-probes/" + in.OperationID + "/"
+		prefix := HostingDatabaseBackupRetentionProbeNamespace(HostingDatabaseBackupRetentionVersion) + in.OperationID + "/"
+		if mysqlPrefix := HostingDatabaseBackupRetentionProbeNamespace(HostingDatabaseMySQLBackupRetentionVersion) + in.OperationID + "/"; strings.HasPrefix(in.ProbeKey, mysqlPrefix) {
+			prefix = mysqlPrefix
+		}
 		if !strings.HasPrefix(in.ProbeKey, prefix) || len(in.ProbeKey) != len(prefix)+32 {
 			return ErrInvalidDatabaseBackupRetention
 		}

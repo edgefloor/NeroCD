@@ -6,3 +6,6 @@ SELECT body,availability,identity_hash,location_hash FROM hosting_database_backu
 
 -- name: ListDatabaseBackupRetentionExecutions :many
 SELECT body FROM hosting_database_backup_retention_executions WHERE resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100;
+
+-- name: MySQLBackupRetentionSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_backup_retention_schema_compatible()') IS NOT NULL)::boolean;

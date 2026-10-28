@@ -39,7 +39,7 @@ func ownedRetentionBackupTarget(t *testing.T, f networkCaptureFixture, index int
 	}
 	in.Phase = "complete"
 	in.ReceiptID = "retention_complete_" + v.ID
-	in.Blob = &domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%064x", index+1), Bytes: 65537, Format: "postgresql_custom"}
+	in.Blob = &domain.HostingDatabaseBackupBlob{Digest: fmt.Sprintf("sha256:%064x", index+1), Bytes: 65537, Format: domain.HostingDatabaseBackupFormatFor(p.Operation.Version)}
 	in.LocalCopy = &domain.BackupLocalCopyProof{PoolID: "sha256:" + strings.Repeat("a", 64), Device: 1, Inode: uint64(index + 1), Bytes: 65537, Created: true}
 	out, e := f.pg.DatabaseBackupMutation(f.ctx, f.runner, in)
 	if e != nil {
@@ -52,14 +52,18 @@ func ownedRetentionBackupTarget(t *testing.T, f networkCaptureFixture, index int
 	return out
 }
 func TestPostgresBackupRetentionPolicyPreviewExecutionReplay(t *testing.T) {
-	f := retentionFixture(t)
+	testBackupRetentionPolicyPreviewExecutionReplay(t, retentionFixture(t), domain.HostingDatabaseBackupRetentionVersion)
+}
+
+func testBackupRetentionPolicyPreviewExecutionReplay(t *testing.T, f networkCaptureFixture, version string) {
+	t.Helper()
 	backups := []domain.HostingDatabaseBackupOperation{}
 	for i := range 3 {
 		backups = append(backups, ownedRetentionBackup(t, f, i))
 	}
 	in := domain.HostingDatabaseBackupRetentionInput{RequestID: "policy", ExpectedResourceGeneration: f.resource.Generation, Enabled: true, Local: domain.BackupRetentionLimits{KeepCount: 1}}
 	policy, e := f.service.SaveDatabaseBackupRetention(f.ctx, f.resource.ID, in)
-	if e != nil {
+	if e != nil || policy.Version != version {
 		t.Fatal("policy", e)
 	}
 	again, e := f.service.SaveDatabaseBackupRetention(f.ctx, f.resource.ID, in)
@@ -158,7 +162,10 @@ func TestPostgresBackupRetentionPolicyPreviewExecutionReplay(t *testing.T) {
 }
 
 func TestPostgresBackupRetentionInterruptedBatchFreshFence(t *testing.T) {
-	f := retentionFixture(t)
+	testBackupRetentionInterruptedBatchFreshFence(t, retentionFixture(t))
+}
+func testBackupRetentionInterruptedBatchFreshFence(t *testing.T, f networkCaptureFixture) {
+	t.Helper()
 	for i := range 3 {
 		ownedRetentionBackup(t, f, i)
 	}
@@ -295,8 +302,20 @@ func completeOwnedRetentionUpload(t *testing.T, f networkCaptureFixture, backup 
 	}
 }
 func TestPostgresBackupRetentionAutomaticPublicationOrdering(t *testing.T) {
-	f, target := remoteBackupFixture(t)
-	if _, e := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability); e != nil {
+	testBackupRetentionAutomaticPublicationOrdering(t, false)
+}
+func testBackupRetentionAutomaticPublicationOrdering(t *testing.T, mysql bool) {
+	t.Helper()
+	var f networkCaptureFixture
+	var target domain.HostingDatabaseBackupTarget
+	capability := domain.HostingDatabaseBackupRetentionCapability
+	if mysql {
+		f, target = mysqlRemoteFixture(t)
+		capability = domain.HostingDatabaseMySQLBackupRetentionCapability
+	} else {
+		f, target = remoteBackupFixture(t)
+	}
+	if _, e := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupRetention, capability); e != nil {
 		t.Fatal(e)
 	}
 	selection := &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}
@@ -434,8 +453,21 @@ func TestPostgresBackupRetentionCurrentAuthorityAndAuditRollback(t *testing.T) {
 
 func remoteRetentionBatch(t *testing.T) (networkCaptureFixture, domain.HostingDatabaseBackupRetentionExecution, domain.HostingAuthority, domain.HostingDatabaseBackupRetentionPlan) {
 	t.Helper()
-	f, target := remoteBackupFixture(t)
-	if _, e := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseBackupRetentionCapability); e != nil {
+	return remoteRetentionBatchFor(t, false)
+}
+
+func remoteRetentionBatchFor(t *testing.T, mysql bool) (networkCaptureFixture, domain.HostingDatabaseBackupRetentionExecution, domain.HostingAuthority, domain.HostingDatabaseBackupRetentionPlan) {
+	t.Helper()
+	var f networkCaptureFixture
+	var target domain.HostingDatabaseBackupTarget
+	capability := domain.HostingDatabaseBackupRetentionCapability
+	if mysql {
+		f, target = mysqlRemoteFixture(t)
+		capability = domain.HostingDatabaseMySQLBackupRetentionCapability
+	} else {
+		f, target = remoteBackupFixture(t)
+	}
+	if _, e := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupRetention, capability); e != nil {
 		t.Fatal(e)
 	}
 	for i := range 3 {
@@ -498,7 +530,12 @@ func TestPostgresBackupRetentionScopedCredentialDelivery(t *testing.T) {
 	}
 }
 func TestPostgresBackupRetentionUnknownNonversionedDeleteRemainsReserved(t *testing.T) {
-	f, v, a, p := remoteRetentionBatch(t)
+	testBackupRetentionUnknownNonversionedDeleteRemainsReserved(t, false)
+}
+
+func testBackupRetentionUnknownNonversionedDeleteRemainsReserved(t *testing.T, mysql bool) {
+	t.Helper()
+	f, v, a, p := remoteRetentionBatchFor(t, mysql)
 	for i, c := range p.Copies {
 		in := domain.HostingDatabaseBackupRetentionMutation{HostingAuthority: a, ReceiptID: fmt.Sprintf("intent_%d", i), PlanHash: p.Hash, CopyID: c.Item.CopyID, Phase: "intent"}
 		if _, e := f.pg.DatabaseBackupRetentionMutation(f.ctx, f.runner, in); e != nil {
