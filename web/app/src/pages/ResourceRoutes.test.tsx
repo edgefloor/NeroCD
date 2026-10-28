@@ -68,10 +68,10 @@ test("successful route create clears its attempt before refresh and exact-versio
     return undefined;
   });
   setup(); await draft(); fireEvent.submit(screen.getByRole("form"));
-  await screen.findByRole("button", { name: "Edit route route_one", exact: true });
-  fireEvent.click(screen.getByRole("button", { name: "Refresh resource routes", exact: true }));
-  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request", exact: true })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Edit route route_one", exact: true }));
+  await screen.findByRole("button", { name: "Edit route route_one" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh resource routes" }));
+  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Edit route route_one" }));
   fireEvent.change(screen.getByLabelText("Expected settled healthy deployment"), { target: { value: "hop_build_B" } });
   fireEvent.submit(screen.getByRole("form"));
   await waitFor(() => expect(fetch.mock.calls.filter(([, options]) => options.method === "PATCH")).toHaveLength(1));
@@ -82,6 +82,6 @@ test("successful route create clears its attempt before refresh and exact-versio
   expect(replacement).toMatchObject({ expected_route_version: 1, expected_healthy_operation_id: "hop_build_B", hostname: "new.example.test", path_prefix: "/" });
   expect(replacement.idempotency_key).toEqual(expect.any(String));
   expect(Object.keys(replacement).sort()).toEqual(["expected_healthy_operation_id", "expected_route_version", "hostname", "idempotency_key", "path_prefix"]);
-  await screen.findByRole("button", { name: "Edit route route_one", exact: true });
-  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request", exact: true })).toBeNull();
+  await screen.findByRole("button", { name: "Edit route route_one" });
+  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request" })).toBeNull();
 });
