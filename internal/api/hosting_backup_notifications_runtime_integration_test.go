@@ -1053,6 +1053,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	if mysql {
 		resource := databaseRunnerJSON[domain.Resource](f, f.token, "GET", "/api/v1/resources/"+application.ResourceID, nil, 200)
 		application = f.storage.bootstrap(f, resource, application, domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}})
+		f.appRecord(application, "PUT", "a", "retained_a")
 		roots, public := newApplicationDatabaseRouteTrust(t)
 		f.initialApplicationDatabaseRoute(application, "mysql", roots, public)
 		f.storage.write(f, application, "retained_notification", 0x41)
@@ -1512,5 +1513,50 @@ func TestBackupNotificationBrowserPreservesObservedDumpOutcome(t *testing.T) {
 		if json.Unmarshal(raw, &value) != nil || value["failed_backup_id"] != "dbb_observed" || value["failed_backup_state"] != state || value["backup_id"] != "dbb_restored" || value["phase"] != "complete" {
 			t.Fatal("browser state replaced the observed dump identity or outcome")
 		}
+	}
+}
+
+// The shared initial route helper reads this exact seed before its HTTPS writes.
+func TestBackupNotificationInitialRouteRequiresSeededRecord(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	var mu sync.Mutex
+	records := map[string]string{}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-NeroCD-Fixture-Instance", id[:12])
+		if r.URL.Path != "/records/a" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPut {
+			raw, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+			if err != nil || len(raw) > 4096 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			records["a"] = string(raw)
+		}
+		value, ok := records["a"]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, value)
+	}))
+	defer server.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	hash := sha256.Sum256(server.Certificate().Raw)
+	fingerprint := hex.EncodeToString(hash[:])
+	op := domain.HostingOperation{Result: &domain.HostingResult{ContainerID: id}}
+	request := func(method string) error {
+		return applicationDatabaseRouteHTTPRecordAt(t.Context(), roots, "example.com", fingerprint, op, method, "a", "retained_a", server.Listener.Addr().String())
+	}
+	if request(http.MethodGet) == nil {
+		t.Fatal("unseeded route record incorrectly passed")
+	}
+	if request(http.MethodPut) != nil || request(http.MethodGet) != nil {
+		t.Fatal("exact seeded route record failed trusted identity/readback")
 	}
 }
