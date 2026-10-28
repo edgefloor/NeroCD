@@ -488,6 +488,7 @@ function mountComposeBackupPanel(sourceKind: "compose"|"git"="compose",targetKin
  vi.mocked(hosting.listResources).mockResolvedValue({items:[{...database.resource,id:"target",name:"Distinct target",source:source(targetKind)}],total:1,limit:100,offset:0} as Awaited<ReturnType<typeof hosting.listResources>>);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
  render(<QueryClientProvider client={client}><ResourceComposeDatabaseBackups resource={{...database.resource,source:source(sourceKind)} as hosting.Resource} blocked={false}/></QueryClientProvider>);
+ return client;
 }
 
 test("Compose selection creates no demand and import carries exact distinct settled target",async()=>{
@@ -643,4 +644,48 @@ test.each(["postgresql", "mysql"] as const)("Compose %s target A to B to A retir
  expect((consent as HTMLInputElement).checked).toBe(false);
  expect((restore as HTMLButtonElement).disabled).toBe(true);
  expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});
+
+
+test.each(["postgresql", "mysql"] as const)("Compose %s metadata refresh retires consent across deployment A to B to A", async engine => {
+ const client = mountComposeBackupPanel("compose", "compose", engine);
+ await screen.findByRole("option", {name:/ · backup$/});
+ fireEvent.change(screen.getByLabelText("Backup to restore"), {target:{value:"backup"}});
+ fireEvent.change(screen.getByLabelText("Restore target application"), {target:{value:"target"}});
+ const selector=screen.getByLabelText("Restore target database component");
+ await waitFor(()=>expect(selector.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(selector, {target:{value:engine}});
+ const consent=screen.getByRole("checkbox", {name:"Replace target database and interrupt its writers"});
+ fireEvent.click(consent);
+ const restore=screen.getByRole("button", {name:"Restore database backup"});
+ await waitFor(()=>expect((restore as HTMLButtonElement).disabled).toBe(false));
+ const actualKey=client.getQueryCache().getAll().find(q=>q.queryKey[0]==="database-backup-components" && q.queryKey[2]==="target")!.queryKey;
+ const original=client.getQueryData<api.DatabaseBackupComponents>(actualKey)!;
+ let resolve!: (value: api.DatabaseBackupComponents)=>void;
+ vi.mocked(api.getDatabaseBackupComponents).mockImplementationOnce(()=>new Promise(done=>{resolve=done}));
+ let refresh!: Promise<void>;
+ act(()=>{refresh=client.refetchQueries({queryKey:actualKey,exact:true});});
+ await waitFor(()=>expect((restore as HTMLButtonElement).disabled).toBe(true));
+ await act(async()=>{resolve({...original,operation_id:"deployment_B",resource_generation:original.resource_generation+1});await refresh;});
+ await screen.findByText(/Reviewed target deployment deployment_B/);
+ expect((consent as HTMLInputElement).checked).toBe(false);
+ expect((restore as HTMLButtonElement).disabled).toBe(true);
+ vi.mocked(api.getDatabaseBackupComponents).mockResolvedValueOnce(original);
+ await act(async()=>{await client.refetchQueries({queryKey:actualKey,exact:true});});
+ await screen.findByText(/Reviewed target deployment hop_target/);
+ expect((consent as HTMLInputElement).checked).toBe(false);
+ expect((restore as HTMLButtonElement).disabled).toBe(true);
+ expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+ fireEvent.change(selector, {target:{value:engine}});
+ fireEvent.click(consent);
+ await waitFor(()=>expect((restore as HTMLButtonElement).disabled).toBe(false));
+ vi.mocked(api.restoreDatabaseBackup).mockRejectedValueOnce(new Error("response lost"));
+ fireEvent.click(restore);
+ const retry=await screen.findByRole("button", {name:"Retry exact database request"});
+ const first=vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3];
+ act(()=>client.setQueryData(actualKey,{...original,operation_id:"deployment_C",resource_generation:original.resource_generation+2}));
+ fireEvent.click(retry);
+ await waitFor(()=>expect(api.restoreDatabaseBackup).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[1]![3]).toBe(first);
+ expect(first.component_target).toMatchObject({expected_deployed_operation_id:original.operation_id,expected_resource_generation:original.resource_generation});
 });

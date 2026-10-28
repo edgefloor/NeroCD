@@ -810,7 +810,7 @@ function useComposeDatabaseBackups({
   const [backup, setBackup] = useState("");
   const [target, setTarget] = useState("");
   const [targetComponent, setTargetComponent] = useState("");
-  const [ack, setAck] = useState(false);
+  const [confirmation, setConfirmation] = useState({ identity: "", accepted: false });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
   const [denied, setDenied] = useState(false);
@@ -918,6 +918,29 @@ function useComposeDatabaseBackups({
       v.blob &&
       (v.version === "postgresql.compose-logical-local.v1" || v.version === "mysql.compose-logical-local.v1"),
   );
+  const confirmationIdentity = JSON.stringify([
+    selected?.id,
+    selected?.version,
+    selected?.blob?.digest,
+    chosen?.id,
+    targetComponent,
+    targetEvidence.data?.operation_id,
+    targetEvidence.data?.resource_generation,
+  ]);
+  // Retire unsubmitted consent, rather than hiding it until old evidence returns.
+  // An attempted request retains its own immutable target and retry authority.
+  if (!attempt && confirmation.identity !== confirmationIdentity) {
+    setConfirmation({ identity: confirmationIdentity, accepted: false });
+  }
+  const ack = confirmation.identity === confirmationIdentity && confirmation.accepted;
+  const setAck: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
+    setConfirmation(current => ({
+      identity: confirmationIdentity,
+      accepted: typeof value === "function"
+        ? value(current.identity === confirmationIdentity && current.accepted)
+        : value,
+    }));
+  };
   async function submit(next: Attempt) {
     const c = lifetime.current;
     if (
@@ -1590,6 +1613,7 @@ function ComposeDatabaseRestore({
             ))}
         </select>
       </label>
+      {destination ? <p>Reviewed target deployment {destination.operation_id}, generation {destination.resource_generation}.</p> : null}
       <label className="block">
         <input
           type="checkbox"
