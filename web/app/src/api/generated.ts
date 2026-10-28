@@ -5464,13 +5464,23 @@ export interface components {
         HostingDatabaseBackupComponent: {
             component: string;
             /** @enum {string} */
-            engine: "postgresql";
+            engine: "postgresql" | "mysql";
             /** @enum {integer} */
-            major_version: 16;
+            major_version: 16 | 8;
             running: boolean;
             eligible: boolean;
             reason: string;
-        };
+        } & ({
+            /** @constant */
+            engine?: "postgresql";
+            /** @constant */
+            major_version?: 16;
+        } | {
+            /** @constant */
+            engine?: "mysql";
+            /** @constant */
+            major_version?: 8;
+        });
         HostingDatabaseBackupComponents: {
             resource_id: string;
             resource_generation: number;
@@ -5503,7 +5513,7 @@ export interface components {
             timeout_seconds: number;
             id: string;
             /** @enum {string} */
-            version: "postgresql.logical-local.v1" | "mysql.logical-local.v1" | "postgresql.compose-logical-local.v1";
+            version: "postgresql.logical-local.v1" | "mysql.logical-local.v1" | "postgresql.compose-logical-local.v1" | "mysql.compose-logical-local.v1";
             project_id: string;
             source_resource_id: string;
             source_generation: number;
@@ -5553,7 +5563,7 @@ export interface components {
         } | {
             operation?: {
                 /** @enum {unknown} */
-                version?: "postgresql.compose-logical-local.v1";
+                version?: "postgresql.compose-logical-local.v1" | "mysql.compose-logical-local.v1";
             };
         });
         HostingDatabaseBackupMutation: {
@@ -5571,7 +5581,7 @@ export interface components {
             failure_code?: "execution_failed" | "publication_failed" | "interrupted";
             local_copy?: components["schemas"]["BackupLocalCopyProof"];
             /** @enum {string} */
-            component_version?: "postgresql.compose-logical-local.v1";
+            component_version?: "postgresql.compose-logical-local.v1" | "mysql.compose-logical-local.v1";
             writers?: components["schemas"]["HostingStorageArchiveWriterState"][];
             writers_resumed?: boolean;
         };

@@ -10941,6 +10941,7 @@ components:
           "eligible",
           "reason"
         ],
+        "oneOf": [{"properties":{"engine":{"const":"postgresql"},"major_version":{"const":16}}},{"properties":{"engine":{"const":"mysql"},"major_version":{"const":8}}}],
         "properties": {
           "component": {
             "type": "string",
@@ -10949,13 +10950,15 @@ components:
           "engine": {
             "type": "string",
             "enum": [
-              "postgresql"
+              "postgresql",
+              "mysql"
             ]
           },
           "major_version": {
             "type": "integer",
             "enum": [
-              16
+              16,
+              8
             ]
           },
           "running": {
@@ -11175,7 +11178,8 @@ components:
             "type": "string",
             "enum": [
               "postgresql.logical-local.v1", "mysql.logical-local.v1",
-              "postgresql.compose-logical-local.v1"
+              "postgresql.compose-logical-local.v1",
+              "mysql.compose-logical-local.v1"
             ]
           },
           "project_id": {
@@ -11385,7 +11389,8 @@ components:
                 "properties": {
                   "version": {
                     "enum": [
-                      "postgresql.compose-logical-local.v1"
+                      "postgresql.compose-logical-local.v1",
+                      "mysql.compose-logical-local.v1"
                     ]
                   }
                 }
@@ -11462,7 +11467,8 @@ components:
           "component_version": {
             "type": "string",
             "enum": [
-              "postgresql.compose-logical-local.v1"
+              "postgresql.compose-logical-local.v1",
+              "mysql.compose-logical-local.v1"
             ]
           },
           "writers": {
