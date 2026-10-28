@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Locator } from "@playwright/test";
 
 // Real private Git/runner/daemon fixture only. No secret values enter browser metadata.
 test.use({ trace: "off", screenshot: "off" });
@@ -11,7 +11,19 @@ async function signIn(page: Page, viewer = false) {
 }
 test("owner configures private Git strategy, builds and deploys exact artifact, then preserves HTTPS after genuine failure", async ({ page, browser }, info) => {
  test.skip(!process.env.NEROCD_PRIVATE_GIT_BROWSER_META, "requires NEROCD_PRIVATE_GIT_BROWSER=1 acceptance fixture"); test.setTimeout(480_000);
- const meta = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string; secret_id: string; secret_version: number; source_repository_url: string; strategy: "dockerfile" | "railpack"; destination_id: string; failure_path: string; compiled_vite?: boolean; compiled_diagnostic?: boolean; compiled_probe_path: string; application_origin: string; compiled_port_path: string };
+ const meta = JSON.parse(process.env.NEROCD_PRIVATE_GIT_BROWSER_META!) as { origin: string; project_id: string; resource_id: string; environment: string; complete_path: string; secret_id: string; secret_version: number; source_repository_url: string; strategy: "dockerfile" | "railpack"; destination_id: string; failure_path: string; dockerfile_arguments?: boolean; compiled_vite?: boolean; compiled_diagnostic?: boolean; compiled_probe_path: string; application_origin: string; compiled_port_path: string };
+ const dockerfileArguments=meta.strategy==="dockerfile" && meta.dockerfile_arguments===true;
+ async function configureArguments(scope: Locator, marker: string, disabled=false) {
+  const region=scope.getByRole("region",{name:"Dockerfile build variables",exact:true});
+  const values=[["BUILD_MARKER",marker],["MULTILINE","first line\nsecond line"],["EMPTY",""]];
+  for(let i=0;i<values.length;i++) {
+   if(await region.getByLabel(`Build variable name ${i+1}`,{exact:true}).count()===0)await region.getByRole("button",{name:"Add build variable",exact:true}).click();
+   await region.getByLabel(`Build variable name ${i+1}`,{exact:true}).fill(values[i][0]);
+   await region.getByLabel(`Build variable value ${i+1}`,{exact:true}).fill(values[i][1]);
+  }
+  const injection=scope.getByRole("checkbox",{name:"Inject build arguments into Dockerfile",exact:true});
+  if(disabled)await injection.uncheck();else await expect(injection).toBeChecked();
+ }
  type CompiledEvidence = { html_sha256: string; bundle_path: string; bundle_sha256: string; missing_asset_status: number };
  let compiledBaseline: CompiledEvidence | undefined;
  async function compiledApplication() {
@@ -52,9 +64,11 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  await hosting.getByRole("combobox", { name: "Hosting project", exact: true }).selectOption(meta.project_id); await hosting.getByRole("button", { name: meta.environment, exact: true }).click();
  const create = hosting.getByRole("form", { name: "Create application", exact: true });
  await create.getByLabel("Application name", { exact: true }).fill("Browser private source"); await create.getByLabel("Application source", { exact: true }).selectOption("git"); await create.getByLabel("Git repository URL", { exact: true }).fill(meta.source_repository_url); await create.getByLabel("Git source access", { exact: true }).selectOption("https_basic"); await create.getByLabel("Build strategy", { exact: true }).selectOption(meta.strategy);
+ if(dockerfileArguments)await configureArguments(create,"local-A");
  const creation = page.waitForResponse(r => new URL(r.url()).pathname === "/api/v1/resources" && r.request().method() === "POST");
  await create.getByRole("button", { name: "Save application", exact: true }).focus(); await page.keyboard.press("Enter"); const createdResponse = await creation; expect(createdResponse.status()).toBe(201); const created = await createdResponse.json(); meta.resource_id = created.id;
  expect(created).toMatchObject({ generation: 1, source: { kind: "git", git: { generation: 1, credential_kind: "https_basic", settings: { strategy: meta.strategy } } } });
+ if(dockerfileArguments)expect(created.source.git.settings).toMatchObject({build_variables:[{name:"BUILD_MARKER",value:"local-A"},{name:"MULTILINE",value:"first line\nsecond line"},{name:"EMPTY",value:""}]});
  async function openResource(target: Page) {
   await target.goto("/projects"); const region = target.getByRole("region", { name: "Project hosting", exact: true });
   await region.getByRole("combobox", { name: "Hosting project", exact: true }).selectOption(meta.project_id); await region.getByRole("button", { name: meta.environment, exact: true }).click();
@@ -64,6 +78,7 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  await article.getByRole("button", { name: "Edit configuration", exact: true }).click(); const editor = article.getByRole("form", { name: "Edit Browser private source", exact: true });
  await editor.getByLabel("Git branch, tag, or commit", { exact: true }).fill("refs/heads/main");
  await editor.getByLabel("Build strategy", { exact: true }).selectOption(meta.strategy === "railpack" ? "dockerfile" : "railpack"); await editor.getByLabel("Build strategy", { exact: true }).selectOption(meta.strategy); await expect(editor.getByLabel("Git source access", { exact: true })).toHaveValue("https_basic");
+ if(dockerfileArguments)await configureArguments(editor,"local-A");
  const editResponse = page.waitForResponse(r => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}` && r.request().method() === "PATCH");
  await editor.getByRole("button", { name: "Save configuration", exact: true }).focus(); await page.keyboard.press("Enter"); const editedResponse = await editResponse; expect(editedResponse.status()).toBe(200); const edited = await editedResponse.json(); expect(editedResponse.request().postDataJSON().expected_generation).toBe(1);
  expect(edited).toMatchObject({ generation: 2, source: { kind: "git", git: { generation: 2, credential_kind: "https_basic", requested_ref: "refs/heads/main", settings: { strategy: meta.strategy } } } });
@@ -85,7 +100,8 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  const grantReplay = page.waitForResponse((response) => new URL(response.url()).pathname === grantPath && response.request().method() === "POST");
  await grantForm.getByRole("button", { name: "Retry identical source grant request", exact: true }).focus(); await page.keyboard.press("Enter");
  const grantResponse = await grantReplay; expect(grantResponse.status()).toBe(201); expect(grantResponse.request().postDataJSON()).toEqual(frozenGrantBody);
- const createdGrant = (await grantResponse.json() as { grant: { id: string } }).grant; expect(createdGrant.id).toBe(firstGrant?.id);
+ const createdGrant = (await grantResponse.json() as { grant: { id: string } }).grant;
+ let latestGrant=createdGrant.id; expect(createdGrant.id).toBe(firstGrant?.id);
  expect(grantResponse.request().postDataJSON()).toMatchObject({ secret_id: meta.secret_id, secret_version: meta.secret_version, expected_resource_generation: 2, expected_source_generation: 2, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
  expect(Object.keys(grantResponse.request().postDataJSON()).sort()).toEqual(["expected_resource_generation", "expected_source_generation", "request_id", "secret_id", "secret_version"]);
  const buildForm = article.getByRole("region", { name: "Request private Git build", exact: true });
@@ -125,10 +141,64 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
  for (const width of [320, 390, 430, 1440]) { await page.setViewportSize({ width, height: 1000 }); await expect(rows).toBeVisible(); await expect(route.getByText("local.example.test/", { exact: true })).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await operationDetail.getByRole("button", { name: "Refresh operation", exact: true }).focus(); await page.keyboard.press("Enter"); await detail.evaluate(node => { node.scrollIntoView({ block: "start" }); window.scrollBy(0,-80); }); await page.screenshot({ path: info.outputPath(`private-${meta.strategy}-${width}.png`), animations: "disabled" }); }
  const context = await browser.newContext({ baseURL: meta.origin, viewport: { width: 390, height: 1000 } });
  try { const viewer = await context.newPage(); await signIn(viewer, true); const read = await openResource(viewer); await read.getByRole("button", { name: `View build ${build.id}`, exact: true }).click(); await expect(read.getByRole("button", { name: "Create source grant", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Request private Git build", exact: true })).toHaveCount(0); await expect(read.getByRole("button", { name: "Deploy selected build", exact: true })).toHaveCount(0); const denied = await viewer.request.post(grantPath, { headers: { Origin: meta.origin, "X-NeroCD-CSRF": "1" }, data: frozenGrantBody }); expect(denied.status()).toBe(403); expect((await viewer.request.post(meta.failure_path, { headers: { Origin: meta.origin } })).status()).toBe(403); } finally { await context.close(); }
+ if(dockerfileArguments) {
+  await detail.getByRole("button",{name:"Close build output",exact:true}).click();
+  let previousImage=operation.snapshot.local_build.artifact.image_id;
+  let generation=2;
+  for(const disabled of [false,true]) {
+   await test.step(disabled?"Disable injection with declared source ARGs":"Edit build variables and redeploy changed artifact",async()=>{
+    if(disabled)expect((await page.request.post(meta.failure_path,{headers:{Origin:meta.origin}})).status()).toBe(204);
+    await article.getByRole("button",{name:"Edit configuration",exact:true}).click();
+    const edit=article.getByRole("form",{name:"Edit Browser private source",exact:true});
+    await configureArguments(edit,"local-B",disabled);
+    const saved=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/v1/resources/${meta.resource_id}`&&r.request().method()==="PATCH");
+    await edit.getByRole("button",{name:"Save configuration",exact:true}).click();
+    const savedResponse=await saved;expect(savedResponse.status()).toBe(200);expect(savedResponse.request().postDataJSON().expected_generation).toBe(generation);
+    const current=await savedResponse.json();generation++;
+    expect(current.generation).toBe(generation);expect(current.source.git.generation).toBe(generation);
+    expect(current.source.git.settings.build_variables).toEqual([{name:"BUILD_MARKER",value:"local-B"},{name:"MULTILINE",value:"first line\nsecond line"},{name:"EMPTY",value:""}]);
+    expect(current.source.git.settings.inject_build_args_to_dockerfile).toBe(disabled?false:undefined);
+    await grantForm.getByRole("combobox",{name:"Existing managed secret",exact:true}).selectOption(meta.secret_id);
+    await grantForm.getByRole("combobox",{name:"Explicit secret version",exact:true}).selectOption(String(meta.secret_version));
+    await grantForm.getByLabel(/I reviewed this exact source generation/).check();
+    const granted=page.waitForResponse(r=>new URL(r.url()).pathname===grantPath&&r.request().method()==="POST");
+    await grantForm.getByRole("button",{name:"Create source grant",exact:true}).click();
+    const grantResult=await granted;expect(grantResult.status()).toBe(201);latestGrant=(await grantResult.json()).grant.id;
+    expect(grantResult.request().postDataJSON()).toMatchObject({expected_resource_generation:generation,expected_source_generation:generation});
+    await buildForm.getByRole("button",{name:"Refresh current build source",exact:true}).click();
+    await expect(buildForm.getByRole("region",{name:"Current build source",exact:true})).toContainText(`resource generation ${generation}`);
+    await buildForm.getByRole("button",{name:"Use reviewed source for a separate build",exact:true}).click();
+    await buildForm.getByRole("combobox",{name:"Private source grant",exact:true}).selectOption(latestGrant);
+    await buildForm.getByLabel(/I reviewed this exact private HTTPS Git source/).check();
+    const admitted=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/v1/resources/${meta.resource_id}/builds`&&r.request().method()==="POST");
+    await buildForm.getByRole("button",{name:"Request private Git build",exact:true}).click();
+    const admittedResponse=await admitted;expect(admittedResponse.status()).toBe(202);const nextBuild=(await admittedResponse.json()).build;
+    await expect(detail).toContainText(nextBuild.id);await expect(detail.getByText("Succeeded",{exact:true})).toBeVisible({timeout:180_000});
+    const deploy=detail.getByRole("form",{name:"Deploy selected build",exact:true});
+    await deploy.getByLabel("Build readiness timeout in seconds",{exact:true}).fill("10");await deploy.getByLabel(/I reviewed this exact successful build/).check();
+    const requested=page.waitForResponse(r=>new URL(r.url()).pathname===deployPath&&r.request().method()==="POST");
+    await deploy.getByRole("button",{name:"Deploy selected build",exact:true}).click();
+    const result=await requested;expect(result.status()).toBe(202);const next=await result.json();
+    expect(next.snapshot.local_build.artifact.build_id).toBe(nextBuild.id);
+    if(!disabled)expect(next.snapshot.local_build.artifact.image_id).not.toBe(previousImage);
+    previousImage=next.snapshot.local_build.artifact.image_id;
+    await expect(detail.getByRole("region",{name:"Deployment operation detail",exact:true}).getByText("Readiness recorded at completion: passed.",{exact:true})).toBeVisible({timeout:120_000});
+    await routes.getByRole("button",{name:"Refresh resource routes",exact:true}).click();
+    await routes.getByRole("button",{name:/^Edit route /}).click();
+    await routes.getByRole("combobox",{name:"Expected settled healthy deployment",exact:true}).selectOption(next.id);
+    const switched=page.waitForResponse(r=>new URL(r.url()).pathname.startsWith("/api/v1/routes/")&&r.request().method()==="PATCH");
+    await routes.getByRole("button",{name:"Save desired route",exact:true}).click();expect((await switched).status()).toBe(202);
+    await expect(route.getByText("Selected healthy release",{exact:true}).locator("+ dd")).toHaveText(next.id);
+    await expect(route.getByText("Trusted HTTPS readiness recorded",{exact:true}).locator("+ dd")).toHaveText("ready",{timeout:120_000});
+   });
+  }
+ } else {
   await detail.getByRole("button", { name: "Close build output", exact: true }).focus(); await page.keyboard.press("Enter");
+ }
+
  expect((await page.request.post(meta.failure_path, { headers: { Origin: "http://127.0.0.1:1" } })).status()).toBe(403);
  expect((await page.request.post(meta.failure_path, { headers: { Origin: meta.origin } })).status()).toBe(204);
- await buildForm.getByRole("combobox", { name: "Private source grant", exact: true }).selectOption(createdGrant.id); await buildForm.getByLabel(/I reviewed this exact private HTTPS Git source/).check();
+ await buildForm.getByRole("combobox", { name: "Private source grant", exact: true }).selectOption(latestGrant); await buildForm.getByLabel(/I reviewed this exact private HTTPS Git source/).check();
  const failedAdmission = page.waitForResponse(r => new URL(r.url()).pathname === `/api/v1/resources/${meta.resource_id}/builds` && r.request().method() === "POST");
  await expect(buildForm.getByRole("button", { name: "Request private Git build", exact: true })).toBeEnabled(); await buildForm.getByRole("button", { name: "Request private Git build", exact: true }).focus(); await page.keyboard.press("Enter"); const failedResponse = await failedAdmission; expect(failedResponse.status()).toBe(202); const failedID = (await failedResponse.json()).build.id;
  await expect(detail.getByText("Failed", { exact: true })).toBeVisible({ timeout: 180_000 });

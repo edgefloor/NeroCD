@@ -32,6 +32,9 @@ compiled_diagnostic=${NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC:-0}
 case "$compiled_diagnostic:$compiled_vite" in 0:0|0:1|1:1) ;; *) echo 'invalid compiled diagnostic option' >&2;exit 1;;esac
 export NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC="$compiled_diagnostic"
 printf 'source HEAD=%s tree=%s compiled_vite=%s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$compiled_vite"
+if [[ "$private_browser_mode:$private_strategy" == 1:dockerfile ]]; then
+ go test -count=1 ./internal/runnerruntime -run '^TestPrivateDockerfileArgumentFixtureContracts$'
+fi
 if [[ "$private_browser_mode" == 1 ]]; then
  bun run --cwd web/app build
  asset_manifest=${NEROCD_PRIVATE_GIT_BROWSER_MANIFEST:-/tmp/nerocd-private-git-browser-assets.json}
@@ -73,7 +76,13 @@ cleanup() {
     else result=1; fi
    fi
    if ! docker exec "$container_id" sh -ec 'if [ -d "$1" ]; then rmdir "$1"; fi' sh "/sys/fs/cgroup/$owner"; then result=1; fi
+   # Capture direct container-to-volume ownership before removing the container.
+   owned_volumes=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Name}}{{end}}{{end}}' "$container_id") || result=1
+   printf 'owned container mounts: %s\n' "$(docker inspect --format '{{json .Mounts}}' "$container_id")"
    if ! docker rm --force --volumes "$container_id" >/dev/null; then result=1; fi
+   for owned_volume in $owned_volumes; do
+    if docker volume inspect "$owned_volume" >/dev/null 2>&1; then result=1; else printf 'owned volume removed: %s\n' "$owned_volume"; fi
+   done
    if docker inspect "$container_id" >/dev/null 2>&1; then result=1; else printf 'owned container removed: %s\n' "$container_id"; fi
   else printf 'owned container identity unavailable: %s\n' "$container_id" >&2; result=1; fi
  fi
@@ -107,7 +116,7 @@ docker build --label "io.nerocd.runtime-hosting-local-build.owner=$owner" -t "$i
 image_id=$(docker image inspect --format '{{.Id}}' "$image")
 run_fixture_container() {
  # Nonempty positional arguments also work with Bash 3.2 and nounset enabled.
- set -- --detach --privileged --pid=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
+ set -- --detach --privileged --pid=host --cgroupns=host --mount "type=bind,src=$repo_root/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly" --add-host example.com:127.0.0.1 --name "$name" --label "io.nerocd.runtime-hosting-local-build.owner=$owner" --env DOCKER_TLS_CERTDIR= "$image" dockerd --host=unix:///var/run/docker.sock
  if [[ "$browser_mode" == 1 ]]; then set -- --publish 127.0.0.1::18080 "$@"; fi
  if [[ "$compiled_vite" == 1 ]];then set -- --publish 127.0.0.1::18081 "$@";fi
  docker run "$@"

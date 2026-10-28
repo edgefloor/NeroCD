@@ -396,6 +396,9 @@ func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string,
 		if fail {
 			dockerfile += "RUN exit 9\n"
 		}
+		if len(compiled) > 1 && compiled[1] {
+			dockerfile = privateDockerfileArgumentSource(body == "declared-args", fail)
+		}
 		files := map[string]string{"Dockerfile": dockerfile, "index.html": body}
 		if len(compiled) > 0 && compiled[0] {
 			files = compiledViteSource(fail)
@@ -1183,7 +1186,12 @@ func TestPrivateGitBrowser(t *testing.T) {
 		t.Fatal("compiled Vite requires Railpack")
 	}
 	privateRuntimeDatabase(t)
-	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
+	dockerfileArguments := strategy == "dockerfile"
+	capabilities := []string{domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability}
+	if dockerfileArguments {
+		capabilities = append(capabilities, domain.HostingDockerfileArgsCapability)
+	}
+	f := newControllerBuildFixture(t, capabilities...)
 	root, err := os.MkdirTemp("/var/lib", "nerocd-browser-proxy-")
 	if err != nil {
 		t.Fatal(err)
@@ -1203,7 +1211,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
-	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy, compiledVite)
+	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy, compiledVite, dockerfileArguments)
 	secret := privateRuntimeSecret(t, f, domain.Resource{ProjectID: f.environment.ProjectID}, username, password)
 	var ownerID string
 	if err := f.db.QueryRow(t.Context(), `SELECT id FROM users WHERE email='browser-bootstrap@example.local'`).Scan(&ownerID); err != nil {
@@ -1211,6 +1219,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 	}
 	patterns := []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), url.QueryEscape(password), url.PathEscape(password), f.credential, f.admin}
 	var failureEnabled atomic.Bool
+	var declaredArguments atomic.Bool
 	var diagnosticOnce sync.Once
 	var recordsMu sync.Mutex
 	var buildIDs []string
@@ -1315,7 +1324,18 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		defer func() { _ = response.Body.Close() }()
 		body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
-		if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
+		want := "local-A\n"
+		if dockerfileArguments {
+			recordsMu.Lock()
+			deployed := len(deploymentIDs)
+			recordsMu.Unlock()
+			marker := "local-A"
+			if deployed > 1 {
+				marker = "local-B"
+			}
+			want = privateDockerfileArgumentBody(marker)
+		}
+		if err != nil || response.StatusCode != 200 || string(body) != want {
 			t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
 		}
 	}
@@ -1462,7 +1482,8 @@ func TestPrivateGitBrowser(t *testing.T) {
 			finish.Do(func() { close(done) })
 			return
 		}
-		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/builds") && !strings.HasSuffix(r.URL.Path, "/deployments/from-build") && !strings.HasSuffix(r.URL.Path, "/routes") {
+		routeUpdate := dockerfileArguments && r.Method == "PATCH" && strings.HasPrefix(r.URL.Path, "/api/v1/routes/")
+		if !routeUpdate && (r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/builds") && !strings.HasSuffix(r.URL.Path, "/deployments/from-build") && !strings.HasSuffix(r.URL.Path, "/routes")) {
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -1647,7 +1668,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-workerDone })
-	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath, "compiled_vite": compiledVite, "compiled_diagnostic": compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1", "compiled_probe_path": compiledProbePath, "application_origin": appOrigin, "compiled_port_path": compiledPortPath})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath, "dockerfile_arguments": dockerfileArguments, "compiled_vite": compiledVite, "compiled_diagnostic": compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1", "compiled_probe_path": compiledProbePath, "application_origin": appOrigin, "compiled_port_path": compiledPortPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1663,12 +1684,28 @@ journey:
 			recordsMu.Lock()
 			count := len(buildIDs)
 			recordsMu.Unlock()
-			if failureEnabled.Load() || count != 1 {
+			expected := 1
+			if dockerfileArguments {
+				expected = 2
+				if declaredArguments.Load() {
+					expected = 3
+				}
+			}
+			if failureEnabled.Load() || count != expected {
 				t.Fatal("unexpected private fixture stage order")
 			}
 			probe()
-			updateGit("local-B\n", true)
-			failureEnabled.Store(true)
+			if dockerfileArguments && !declaredArguments.Load() {
+				updateGit("declared-args", false)
+				declaredArguments.Store(true)
+			} else {
+				body := "local-B\n"
+				if dockerfileArguments {
+					body = "declared-args"
+				}
+				updateGit(body, true)
+				failureEnabled.Store(true)
+			}
 			close(ack)
 		case <-done:
 			break journey
@@ -1681,9 +1718,14 @@ journey:
 	ids := append([]string(nil), buildIDs...)
 	output := append([]byte(nil), cliOutput...)
 	recordsMu.Unlock()
-	if len(ids) != 2 || !failureEnabled.Load() {
+	successes := 1
+	if dockerfileArguments {
+		successes = 3
+	}
+	if len(ids) != successes+1 || !failureEnabled.Load() || dockerfileArguments && len(deploymentIDs) != successes {
 		t.Fatal("browser did not complete success and genuine failure builds")
 	}
+	var previousImage string
 	for i, id := range ids {
 		full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", id)
 		if err != nil {
@@ -1699,11 +1741,33 @@ journey:
 			}
 			t.Logf("compiled artifact image=%s daemon=%s platform=%s exact_release=true application_port=%d", full.Artifact.ImageID, full.Artifact.DaemonID, full.Artifact.Platform, effectivePort.Load())
 		}
-		if i == 0 && (full.State != "succeeded" || full.Artifact == nil) {
+		if i < successes && (full.State != "succeeded" || full.Artifact == nil) {
 			t.Fatal("browser success artifact missing")
 		}
-		if i == 1 && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
+		if i == successes && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
 			t.Fatal("genuine failed build published an artifact or unexpected status")
+		}
+		if dockerfileArguments && i < successes {
+			marker := "local-A"
+			if i > 0 {
+				marker = "local-B"
+			}
+			var labels map[string]string
+			if json.Unmarshal(controlDocker(t, "image", "inspect", full.Artifact.ImageID, "--format", "{{json .Config.Labels}}"), &labels) != nil || labels["nerocd.fixture.marker"] != marker || labels["nerocd.fixture.multiline"] != privateDockerfileMultiline || labels["nerocd.fixture.empty"] != "" {
+				t.Fatal("actual per-stage argument image effects differ")
+			}
+			if _, ok := labels["nerocd.fixture.empty"]; !ok {
+				t.Fatal("empty argument label absent")
+			}
+			choice := full.Snapshot.Source.Settings.InjectBuildArgsToDockerfile
+			if i == 2 && (choice == nil || *choice) || i < 2 && choice != nil {
+				t.Fatal("saved injection choice changed")
+			}
+			if i == 1 && previousImage == full.Artifact.ImageID {
+				t.Fatal("changed argument reused prior image identity")
+			}
+			previousImage = full.Artifact.ImageID
+			t.Logf("Dockerfile arguments build=%d exact_image_effects=true injection_enabled=%t", i+1, i < 2)
 		}
 		privateRuntimeNoSecrets(t, f, id, patterns...)
 		if i == 1 && compiledVite {
