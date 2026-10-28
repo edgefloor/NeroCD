@@ -26,6 +26,11 @@ Before writing or reviewing code, ask three questions:
 2. **What can an attacker control?** — Which inputs flow into sensitive operations? (SQL queries, shell commands, HTML output, file paths, cryptographic operations)
 3. **What is the blast radius?** — If this defense fails, what's the worst outcome? (Data leak, RCE, privilege escalation, denial of service)
 
+For changes involving mutable paths or destinations, replay, concurrent admission,
+secret transport, or input expansion, read [Checks through use](./references/checks-through-use.md).
+Trace what was checked through the actual side effect, including subprocess and
+retry paths. An earlier check is evidence only while its identity and assumptions hold.
+
 ## Severity Levels
 
 | Level | DREAD | Meaning |
@@ -62,7 +67,7 @@ For the full methodology with Go examples, DFD trust boundaries, DREAD scoring, 
 | --- | --- | --- | --- |
 | Critical | SQL Injection | Parameterized queries separate data from code | `database/sql` with `?` placeholders |
 | Critical | Command Injection | Pass args separately, never via shell concatenation | `exec.Command` with separate args |
-| High | XSS | Auto-escaping renders user data as text, not HTML/JS | `html/template`, `text/template` |
+| High | XSS | Context-aware escaping renders untrusted values safely in HTML | `html/template`; `text/template` does not HTML-escape |
 | High | Path Traversal | Scope untrusted file access to an allowed root | Go 1.24+: use `os.Root`. Pre-Go 1.24: use `filepath.IsLocal` + `filepath.Rel` + separator-aware checks; never rely on `filepath.Clean` + `strings.HasPrefix` alone. |
 | Medium | Timing Attacks | Constant-time comparison avoids byte-by-byte leaks | `crypto/subtle.ConstantTimeCompare` |
 | High | Crypto Issues | Use vetted algorithms; never roll your own | `crypto/aes`, `crypto/rand` |
