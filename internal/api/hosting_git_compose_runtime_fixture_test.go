@@ -127,6 +127,73 @@ func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, 
 	return net.JoinHostPort(gateway, "25002"), path
 }
 
+// This bounded probe uses the production builder, authentication callback and
+// operator CA map without starting an application, browser or API controller.
+func TestGitComposePrivateBaseEngine(t *testing.T) {
+	if os.Getenv("NEROCD_GIT_COMPOSE_BASE_PROBE") != "disposable-dind" {
+		t.Skip("requires owned private base probe")
+	}
+	root := t.TempDir()
+	f := &storageRuntimeFixture{t: t, root: root}
+	backendPassword, firstPassword, secondPassword := hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t)
+	registry, ca := gitComposeRuntimeRegistryTLS(t, backendPassword, firstPassword, secondPassword)
+	repository := registryRuntimeProtectedImages(t, f, backendPassword, gitComposeFixtureBase)
+	repository = strings.Replace(repository, "127.0.0.1:25001", registry, 1)
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "Dockerfile"), []byte("FROM "+repository+":a\nLABEL nerocd.fixture.privatebase=verified\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := hostingbuild.Config{DockerBinary: "/usr/local/bin/docker", Socket: "/var/run/docker.sock", BuildxBinary: "/fixture/buildx", BuildxSHA256: os.Getenv("NEROCD_BUILDX_SHA256"), PlannerImage: hostingbuild.BuildKitImage, StateDir: filepath.Join(root, "state"), CgroupRoot: os.Getenv("NEROCD_CGROUP_ROOT"), RegistryCACertificates: map[string]string{registry: ca}}
+	engine, err := hostingbuild.New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon := strings.TrimSpace(string(storageRuntimeDocker(t, "info", "--format", "{{.ID}}")))
+	request := hostingbuild.Request{BuildID: "private-base-probe", Checkout: checkout, SourceID: "fixture-source", InputID: "fixture-input", DaemonID: daemon, Strategy: hostingbuild.Dockerfile, Platform: "linux/" + runtime.GOARCH, BuildRegistry: &hostingbuild.RegistryReference{SecretID: "fixture-build-registry", Version: 1}, Limits: hostingbuild.Limits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 2 * time.Minute, ContextBytes: 1 << 20, ContextFiles: 10, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}}
+	deliveries := 0
+	provider := func(context.Context) (hostingbuild.RegistryCredential, error) {
+		deliveries++
+		return hostingbuild.RegistryCredential{Registry: registry, Username: "build-fixture", Password: firstPassword}, nil
+	}
+	result, err := engine.BuildWithRegistryCredential(t.Context(), request, nil, provider)
+	if err != nil {
+		t.Fatal("actual private TLS base build", err)
+	}
+	if result.ImageID == "" || deliveries != 1 {
+		t.Fatal("private base receipt or one-use delivery missing")
+	}
+	replay, err := engine.BuildWithRegistryCredential(t.Context(), request, nil, provider)
+	if err != nil || replay != result || deliveries != 1 {
+		t.Fatal("receipt replay reacquired credential or changed result", err)
+	}
+	request.BuildID = "private-base-pre-builder"
+	request.DaemonID = "wrong-daemon"
+	if _, err := engine.BuildWithRegistryCredential(t.Context(), request, nil, provider); err == nil {
+		t.Fatal("wrong daemon accepted")
+	}
+	if _, err := os.Lstat(filepath.Join(config.StateDir, request.BuildID, "docker", "config.json")); !os.IsNotExist(err) {
+		t.Fatal("early failure retained registry config", err)
+	}
+	request.DaemonID = daemon
+	request.BuildID = "private-base-denied"
+	request.BuildRegistry = &hostingbuild.RegistryReference{SecretID: "fixture-wrong-registry", Version: 1}
+	denied, err := engine.BuildWithRegistryCredential(t.Context(), request, nil, func(context.Context) (hostingbuild.RegistryCredential, error) {
+		return hostingbuild.RegistryCredential{Registry: registry, Username: "build-fixture", Password: "incorrect"}, nil
+	})
+	if err == nil || denied.ImageID != "" {
+		t.Fatal("incorrect private base credential produced an image")
+	}
+	for _, id := range []string{"private-base-probe", "private-base-denied"} {
+		if _, err := os.Lstat(filepath.Join(config.StateDir, id, "docker", "config.json")); !os.IsNotExist(err) {
+			t.Fatal("build registry material retained", err)
+		}
+	}
+	t.Log("actual pinned builder verified private TLS FROM, exact operator CA, isolated auth, metadata-only replay and denied fresh replacement")
+}
+
 func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *store.PostgresStore) {
 	t.Helper()
 	sources := filepath.Join(f.root, "sources")
@@ -134,6 +201,9 @@ func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *stor
 		t.Fatal(err)
 	}
 	engine := hostingbuild.Config{DockerBinary: "/usr/local/bin/docker", Socket: "/var/run/docker.sock", BuildxBinary: "/fixture/buildx", BuildxSHA256: os.Getenv("NEROCD_BUILDX_SHA256"), PlannerImage: os.Getenv("NEROCD_PLANNER_IMAGE"), StateDir: filepath.Join(f.root, "build-state"), CgroupRoot: os.Getenv("NEROCD_CGROUP_ROOT")}
+	if host := os.Getenv("NEROCD_GIT_COMPOSE_REGISTRY_HOST"); host != "" {
+		engine.RegistryCACertificates = map[string]string{host: os.Getenv("NEROCD_GIT_COMPOSE_REGISTRY_CA")}
+	}
 	identity, err := runnerruntime.ComputeBuildToolchainIdentity(t.Context(), engine, "linux/"+runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +212,7 @@ func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *stor
 	if err = pg.ConfigureHostingBuild(&policy); err != nil {
 		t.Fatal(err)
 	}
-	cfg := map[string]any{"version": 1, "compose": true, "private_git": runnerruntime.PrivateGitConfig{}, "source_root": sources, "engine": map[string]string{"docker_binary": engine.DockerBinary, "socket": engine.Socket, "buildx_binary": engine.BuildxBinary, "buildx_sha256": engine.BuildxSHA256, "planner_image": engine.PlannerImage, "state_dir": engine.StateDir, "cgroup_root": engine.CgroupRoot}, "target": map[string]string{"runner_id": "runner_storage_runtime_fixture", "server_id": f.serverID, "destination_id": f.destinationID}, "policy": policy, "status_interval_ns": 200 * time.Millisecond, "request_timeout_ns": 5 * time.Second}
+	cfg := map[string]any{"version": 1, "compose": true, "private_git": runnerruntime.PrivateGitConfig{}, "source_root": sources, "engine": map[string]any{"registry_ca_certificates": engine.RegistryCACertificates, "docker_binary": engine.DockerBinary, "socket": engine.Socket, "buildx_binary": engine.BuildxBinary, "buildx_sha256": engine.BuildxSHA256, "planner_image": engine.PlannerImage, "state_dir": engine.StateDir, "cgroup_root": engine.CgroupRoot}, "target": map[string]string{"runner_id": "runner_storage_runtime_fixture", "server_id": f.serverID, "destination_id": f.destinationID}, "policy": policy, "status_interval_ns": 200 * time.Millisecond, "request_timeout_ns": 5 * time.Second}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -156,10 +226,10 @@ func gitComposeRuntimeBuildPolicy(identity string) domain.HostingBuildPolicy {
 	return domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: identity, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, GitCompose: true, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 4 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 256 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
 }
 
-func gitComposeRuntimeRepository(t *testing.T, raw, base, password string) (string, func(string, bool, string) string, func(bool), string) {
+func gitComposeRuntimeRepository(t *testing.T, raw, base, buildBase, password string) (string, func(string, bool, string) string, func(bool), string) {
 	t.Helper()
 	files := func(marker string, fail bool, registryImage string) map[string]string {
-		return gitComposeFixtureFiles(raw, base, marker, fail, registryImage)
+		return gitComposeFixtureFiles(raw, base, buildBase, marker, fail, registryImage)
 	}
 	url, update, unavailable := hostingfixture.GitHTTPS(t, files("A", false, ""), "fixture-user", password)
 	return strings.Replace(url, "127.0.0.1", "example.com", 1), func(marker string, fail bool, registryImage string) string {
@@ -224,7 +294,7 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Compose Vikunja acceptance", Kind: "application", Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}}}}, 201)
 	// Keep the fixture's current credential-file capability profile. Trigger
 	// revision support remains optional for existing registered build runners.
-	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability}
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
 	credential := "ncr_git_compose_startup_fixture"
 	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("e", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}, 200)
@@ -365,7 +435,7 @@ func TestGitComposeFixtureCompiledRunnerPrivateBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	password := hostingStorageRemoteRuntimeRandom(t)
-	repository, _, _, commit := gitComposeRuntimeRepository(t, string(raw), gitComposeFixtureBase, password)
+	repository, _, _, commit := gitComposeRuntimeRepository(t, string(raw), gitComposeFixtureBase, gitComposeFixtureBase, password)
 	f := newStorageRuntimeFixture(t, true)
 	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{
 		ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, Name: "Git Compose build prerequisite", Kind: "application",

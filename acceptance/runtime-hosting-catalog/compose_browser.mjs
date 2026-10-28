@@ -211,11 +211,20 @@ try {
     await variables.getByRole("button",{name:"Add build variable",exact:true}).click();
     await variables.getByLabel("Build variable name 2",{exact:true}).fill("MULTILINE");
     await variables.getByLabel("Build variable value 2",{exact:true}).fill("first line\nsecond line");
+    const buildRegistry=form.getByRole("region",{name:"Build registry credentials",exact:true});
+    await buildRegistry.getByLabel("Build registry credential",{exact:true}).selectOption("private");
+    const buildSecrets=buildRegistry.getByLabel("Build registry credential secret",{exact:true});
+    const buildSecret=buildSecrets.getByRole("option").filter({hasText:"Compose build registry · "});
+    await expect(buildSecret).toHaveCount(1);
+    const selectedBuildSecret=await buildSecret.getAttribute("value");
+    await buildSecrets.selectOption(selectedBuildSecret);
+    await buildRegistry.getByLabel("Build registry credential version",{exact:true}).selectOption("1");
     const saved=response(page,"/api/v1/resources");
     await form.getByRole("button",{name:"Save application",exact:true}).click();
     resource=await checkedResponse(saved,201);
     if(resource.source.git.settings.compose_file!=="deploy/compose.yaml"||resource.source.git.repository_url!==initial.git_repository)throw Error("saved Git Compose source mismatch");
     if(resource.source.git.settings.build_variables?.length!==2||resource.source.git.settings.build_variables[0].name!=="CONFIGURED"||resource.source.git.settings.build_variables[0].value!=="operator-value"||resource.source.git.settings.build_variables[1].name!=="MULTILINE"||resource.source.git.settings.build_variables[1].value!=="first line\nsecond line")throw Error("saved literal build variables mismatch");
+    if(resource.source.git.settings.build_registry_credential?.secret_id!==selectedBuildSecret||resource.source.git.settings.build_registry_credential?.version!==1)throw Error("saved build registry ref mismatch");
     safe.browser_git_compose_build_variables=true;
     safe.browser_git_compose_create=true;
     safe.saved_compose_configuration=true;
@@ -302,6 +311,9 @@ try {
       safe.git_build_compose_result_present=Boolean(built?.compose_result?.hash);
       safe.git_build_image_artifact_present=Boolean(built?.artifact);
       if(built?.state!=="succeeded"||!built.compose_result?.hash||!built.source_receipt?.commit||built.artifact)throw Error("Git Compose build did not produce immutable result");
+      const buildRegistryRef=built.snapshot?.source?.settings?.build_registry_credential;
+      if(!buildRegistryRef?.secret_id||buildRegistryRef.version!==(replacement?2:1))throw Error("build receipt registry version mismatch");
+      safe.browser_git_compose_build_registry_selection=true;
       safe.browser_git_compose_build_receipt=true;
     }
     step="git_compose_refresh_completed_build";

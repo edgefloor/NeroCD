@@ -315,7 +315,7 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		caps = append(caps, "hosting_registry_pull_v1", domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability, domain.HostingApplicationDatabaseCapability)
 	}
 	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
-		caps = append(caps, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability)
+		caps = append(caps, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability)
 	}
 	f.capabilities = append([]string(nil), caps...)
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, http.MethodPost, "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)

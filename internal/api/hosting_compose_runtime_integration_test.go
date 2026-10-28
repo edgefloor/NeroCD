@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,19 +56,21 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	var unavailableRepository func(bool)
 	var expectedCommitA, expectedCommitB string
 	gitPassword := hostingStorageRemoteRuntimeRandom(t)
+	registryPassword := hostingStorageRemoteRuntimeRandom(t)
+	buildPasswordA, buildPasswordB := hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t)
+	var buildRegistryHost, privateBase string
 	if gitCompose {
-		raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		repository, updateRepository, unavailableRepository, expectedCommitA = gitComposeRuntimeRepository(t, string(raw), publicImage, gitPassword)
+		host, ca := gitComposeRuntimeRegistryTLS(t, registryPassword, buildPasswordA, buildPasswordB)
+		buildRegistryHost = host
+		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_HOST", host)
+		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_CA", ca)
 	}
+
 	f := newStorageRuntimeFixture(t, true)
 	b := f.catalogBrowser
-	b.gitRepository = repository
 	var gitGrant string
+	var sourceSecret domain.ManagedSecret
 	var selectedBuild domain.PublicHostingBuild
-	registryPassword := hostingStorageRemoteRuntimeRandom(t)
 	storageRuntimeDocker(t, "pull", publicImage)
 	pinnedImageID := strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", publicImage, "--format", "{{.Id}}")))
 	var protectedImage, replacementImage, registryImageID string
@@ -81,7 +84,26 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 			storageRuntimeDocker(t, "pull", protectedSource)
 			registryImageID = strings.TrimSpace(string(storageRuntimeDocker(t, "image", "inspect", protectedSource, "--format", "{{.Id}}")))
 		}
-		protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, protectedSource)
+		sources := []string{protectedSource}
+		if gitCompose {
+			sources = append(sources, publicImage)
+		}
+		protectedRepository := registryRuntimeProtectedImages(t, f, registryPassword, sources...)
+		if gitCompose {
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/b", nil)
+			req.SetBasicAuth("fixture", registryPassword)
+			req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+			res, err := f.client.Do(req)
+			if err != nil {
+				t.Fatal("private base manifest lookup")
+			}
+			_ = res.Body.Close()
+			digest := res.Header.Get("Docker-Content-Digest")
+			if res.StatusCode != 200 || len(digest) != 71 {
+				t.Fatal("private base manifest missing")
+			}
+			privateBase = buildRegistryHost + "/" + storageRuntimeOwner + "@" + digest
+		}
 		manifestRequest, _ := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:25001/v2/"+storageRuntimeOwner+"/manifests/a", nil)
 		manifestRequest.SetBasicAuth("fixture", registryPassword)
 		manifestRequest.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
@@ -156,6 +178,26 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		registryRef = domain.HostingRegistryCredentialRef{SecretID: registrySecrets["correct"].ID, Version: 1}
 
 	}
+	var buildSecret domain.ManagedSecret
+	var buildWrong domain.ManagedSecret
+	var buildRef domain.HostingRegistryCredentialRef
+	if gitCompose {
+		value := func(password string) string {
+			raw, _ := json.Marshal(map[string]string{"registry": buildRegistryHost, "username": "build-fixture", "password": password})
+			return string(raw)
+		}
+		buildSecret = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Compose build registry", Value: value(buildPasswordA)}, 201)
+		storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets/"+buildSecret.ID+"/versions", app.ManagedSecretRotateInput{ExpectedVersion: 1, Value: value(buildPasswordB)}, 201)
+		buildWrong = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Compose build registry wrong", Value: value("incorrect")}, 201)
+		buildRef = domain.HostingRegistryCredentialRef{SecretID: buildSecret.ID, Version: 1}
+		raw, err := os.ReadFile("../../examples/compose/vikunja-postgresql.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository, updateRepository, unavailableRepository, expectedCommitA = gitComposeRuntimeRepository(t, string(raw), publicImage, privateBase, gitPassword)
+		b.gitRepository = repository
+	}
+
 	b.set("install", f.destinationID)
 	resourceID := b.await(t, "installed")
 	resource := storageRuntimeJSON[domain.Resource](f, "GET", "/api/v1/resources/"+resourceID, nil, 200)
@@ -166,12 +208,15 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if resource.Generation != 1 || resource.Source.Git == nil || resource.Source.Git.Settings.Strategy != "compose" || resource.Source.Git.RepositoryURL != repository {
 			t.Fatal("saved Git Compose source changed")
 		}
+		if resource.Source.Git.Settings.BuildRegistryCredential == nil || *resource.Source.Git.Settings.BuildRegistryCredential != buildRef {
+			t.Fatal("UI did not pin independent build credential v1")
+		}
 		gitComposeRuntimeInstall(f, resource)
 		raw, _ := json.Marshal(map[string]string{"username": "fixture-user", "password": gitPassword})
-		secret := storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Git Compose HTTPS source", Value: string(raw)}, 201)
+		sourceSecret = storageRuntimeJSON[domain.ManagedSecret](f, "POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Git Compose HTTPS source", Value: string(raw)}, 201)
 		grant := storageRuntimeJSON[struct {
 			Grant domain.PublicHostingSourceGrant `json:"grant"`
-		}](f, "POST", "/api/v1/resources/"+resourceID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, SecretID: secret.ID, SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, 201)
+		}](f, "POST", "/api/v1/resources/"+resourceID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, SecretID: sourceSecret.ID, SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, 201)
 		gitGrant = grant.Grant.ID
 	} else {
 		installation = storageRuntimeJSON[domain.HostingCatalogInstallation](f, "GET", "/api/v1/resources/"+resourceID+"/catalog-installation", nil, 200)
@@ -242,6 +287,9 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		}](f, "GET", "/api/v1/hosting-builds/"+first.Snapshot.GitCompose.BuildID, nil, 200).Build
 		if selectedBuild.ComposeResult == nil || selectedBuild.SourceReceipt == nil || first.ComposeResult == nil || first.Snapshot.GitCompose.ResultHash != selectedBuild.ComposeResult.Hash || selectedBuild.SourceReceipt.Commit != expectedCommitA {
 			t.Fatal("Git build receipt/result linkage missing")
+		}
+		if selectedBuild.Snapshot.Source.Settings.BuildRegistryCredential == nil || *selectedBuild.Snapshot.Source.Settings.BuildRegistryCredential != buildRef {
+			t.Fatal("initial build receipt lost credential v1")
 		}
 		definition = first.ComposeResult.Definition
 	}
@@ -431,6 +479,22 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	proxyBefore := storageRuntimeJSON[domain.HostingProxy](f, "GET", "/api/v1/servers/"+f.serverID+"/proxy", nil, 200)
 	var denied domain.HostingOperation
 	if gitCompose {
+		selectBuildCredential := func(ref domain.HostingRegistryCredentialRef) {
+			config := resource.Source.Git.GitResourceConfiguration
+			config.Settings.BuildRegistryCredential = &ref
+			resource = storageRuntimeJSON[domain.Resource](f, "PATCH", "/api/v1/resources/"+resourceID, map[string]any{"expected_generation": resource.Generation, "source": gitComposeFixtureSource{Kind: "git", Git: &config}}, 200)
+			grant := storageRuntimeJSON[struct {
+				Grant domain.PublicHostingSourceGrant `json:"grant"`
+			}](f, "POST", "/api/v1/resources/"+resourceID+"/source-grants", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: resource.Generation, ExpectedSourceGeneration: resource.Source.Git.Generation, SecretID: sourceSecret.ID, SecretVersion: 1, RequestID: fmt.Sprintf("%032x", resource.Source.Git.Generation)}, 201)
+			gitGrant = grant.Grant.ID
+		}
+		selectBuildCredential(domain.HostingRegistryCredentialRef{SecretID: buildWrong.ID, Version: 1})
+		wrongBase := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-private-base-wrong", "failed")
+		if wrongBase.FailureCode != "build_failed" || wrongBase.ComposeResult != nil || wrongBase.Artifact != nil {
+			t.Fatal("denied private base produced result")
+		}
+		buildRef.Version = 2
+		selectBuildCredential(buildRef)
 		unavailableRepository(true)
 		failedSource := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-fetch-failed", "failed")
 		unavailableRepository(false)
@@ -460,6 +524,10 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		}
 		expectedCommitB = updateRepository("B", false, replacementImage)
 		privateBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-private-registry-build", "succeeded")
+		if privateBuild.Snapshot.Source.Settings.BuildRegistryCredential == nil || *privateBuild.Snapshot.Source.Settings.BuildRegistryCredential != buildRef || buildRef.Version != 2 || buildRef.SecretID == registryRef.SecretID {
+			t.Fatal("rebuilt private base did not pin changed build credential independently of deployment credential")
+		}
+
 		protectedImage = replacementImage
 		assertReferenceAbsent(protectedImage)
 		privateOptions := storageRuntimeJSON[domain.HostingStorageDeploymentOptions](f, "GET", "/api/v1/resources/"+resourceID+"/storage-deployment-options", nil, 200)
@@ -857,9 +925,22 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		t.Fatal(err)
 	}
 	ordinary, _ := json.Marshal([]any{installation, resource, runtime, first, second, stopped, started, held, denied})
-	for _, value := range []string{password, jwt, gitPassword} {
+	for _, value := range []string{password, jwt, gitPassword, buildPasswordA, buildPasswordB, base64.StdEncoding.EncodeToString([]byte("build-fixture:" + buildPasswordA)), base64.StdEncoding.EncodeToString([]byte("build-fixture:" + buildPasswordB))} {
 		if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
 			t.Fatal("managed credential entered ordinary operation/journal/log output")
+		}
+	}
+	if gitCompose {
+		if err := filepath.WalkDir(filepath.Join(f.root, "build-state"), func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.Name() == "config.json" && filepath.Base(filepath.Dir(path)) == "docker" {
+				return fmt.Errorf("build registry credential file retained")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
 		}
 	}
 	registryRuntimeArtifactSecrecy(t, f, ordinary, registryPassword)

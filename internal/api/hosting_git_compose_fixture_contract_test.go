@@ -24,7 +24,7 @@ const gitComposeFixtureMultiline = "first line\nsecond line"
 
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 
-func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage string) map[string]string {
+func gitComposeFixtureFiles(raw, base, buildBase, marker string, fail bool, registryImage string) map[string]string {
 	compose := strings.Replace(raw, "    image: "+base, "    build:\n      context: ../app\n"+gitComposeFixtureArgs(marker)+"    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
 	compose = strings.Replace(compose, "\n  postgresql:\n", "\n  version:\n    image: nerocd-vikunja:prepared\n    command: [version]\n\n  postgresql:\n", 1)
@@ -35,7 +35,7 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage s
 	if marker == "missing-registry" {
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
-	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
+	dockerfile := "FROM " + buildBase + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
 		"ARG MULTILINE\nARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\nARG SERVICE_URL_VIKUNJA=runtime-not-imported\n" +
 		"LABEL nerocd.fixture.multiline=\"${MULTILINE}\" nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\" nerocd.fixture.runtime=\"${SERVICE_URL_VIKUNJA}\"\n"
 	if fail {
@@ -85,9 +85,15 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}
+	settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_build_registry", Version: 1}
+	privateBase := "172.17.0.1:25002/private/base@sha256:" + strings.Repeat("b", 64)
+	privateFiles := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, privateBase, "A", false, "")
+	if !strings.HasPrefix(privateFiles["project/app/Dockerfile"], "FROM "+privateBase+"\n") || strings.Contains(privateFiles["project/deploy/compose.yaml"], privateBase) {
+		t.Fatal("private build base leaked into deployment registry services or alias")
+	}
 	for _, fixture := range []struct{ marker, registryImage string }{{"A", ""}, {"B", ""}, {"missing-registry", ""}, {"B", "127.0.0.1:25001/nerocd-fixture:b@sha256:" + strings.Repeat("a", 64)}} {
 		marker := fixture.marker
-		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false, fixture.registryImage)
+		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, gitComposeFixtureBase, marker, false, fixture.registryImage)
 		definition, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: files["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings)
 		if err != nil {
 			t.Fatal("actual Git Compose fixture parser", err)
@@ -134,7 +140,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			}
 		}
 	}
-	missing := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, "missing-argument", false, "")
+	missing := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, gitComposeFixtureBase, "missing-argument", false, "")
 	if _, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: missing["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings); err == nil {
 		t.Fatal("missing required argument must fail before engine execution")
 	}
@@ -147,6 +153,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"binding", app.ResourceBindingInput{DestinationID: "dst_fixture"}, new(app.ResourceBindingInput)},
 		{"source_secret", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Git Compose HTTPS source", Value: `{"username":"fixture-user","password":"fixture-value"}`}, new(app.ManagedSecretInput)},
 		{"grant", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: "secret_fixture", SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, new(domain.HostingSourceGrantRequest)},
+		{"build_registry_delivery", domain.HostingBuildRegistryCredentialRequest{Authority: domain.HostingBuildAuthority{BuildID: "build_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "fence_fixture"}, DeliveryID: "delivery_fixture"}, new(domain.HostingBuildRegistryCredentialRequest)},
 		{"build", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: "source-grant-fixture", IdempotencyKey: "git-compose-build"}, new(domain.HostingBuildRequest)},
 		{"runtime", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("c", 32), Entries: []domain.HostingRuntimeEntry{}}, new(domain.HostingRuntimeConfigurationInput)},
 		{"from_build", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-deploy", ContainerPort: 3456, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, new(domain.HostingBuildDeploymentInput)},
