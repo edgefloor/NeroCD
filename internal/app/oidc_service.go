@@ -64,10 +64,11 @@ func (s *Service) StartOIDCLogin(ctx context.Context, redirectPath, source strin
 		return OIDCLoginStart{}, ErrOIDCDisabled
 	}
 	limiterKey := strings.TrimSpace(source)
-	if allowed, _ := s.oidcLimiter.Allow(limiterKey, limiterKey); !allowed {
+	reservation, _ := s.oidcLimiter.Reserve(limiterKey, limiterKey)
+	if reservation == nil {
 		return OIDCLoginStart{}, ErrOIDCRateLimited
 	}
-	s.oidcLimiter.Failed(limiterKey, limiterKey)
+	reservation.Failed()
 	state, err := randomHex(32)
 	if err != nil {
 		return OIDCLoginStart{}, err
