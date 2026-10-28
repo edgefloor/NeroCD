@@ -11961,8 +11961,10 @@ components:
     "HostingBuildSourceReceipt":
       "type": "object"
       "additionalProperties": false
-      "required": ["build_id", "source_id", "input_id", "commit", "policy_hash", "tree_digest"]
+      "required": ["build_id", "source_id", "input_id", "tree_digest"]
       "properties":
+        kind: {type: string, enum: [dockerfile]}
+        content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         "build_id":
           "type": "string"
         "source_id":
@@ -12158,23 +12160,26 @@ components:
           "items":
             "$ref": "#/components/schemas/HostingBuildReceiptAcknowledgment"
     "PublicHostingBuildSource":
-      "type": "object"
-      "additionalProperties": false
-      "required": ["source_id", "repository_url", "requested_ref", "credential_kind", "generation", "settings"]
-      "properties":
-        "source_id":
-          "type": "string"
-        "repository_url":
-          "type": "string"
-        "requested_ref":
-          "type": "string"
-        "credential_kind":
-          "type": "string"
-        "generation":
-          "type": "integer"
-          "format": "int64"
-        "settings":
-          "$ref": "#/components/schemas/HostingBuildSettings"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [source_id, generation, repository_url, requested_ref, credential_kind, settings]
+          properties:
+            source_id: {type: string}
+            generation: {type: integer, format: int64}
+            repository_url: {type: string}
+            requested_ref: {type: string}
+            credential_kind: {type: string}
+            settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+        - type: object
+          additionalProperties: false
+          required: [kind, source_id, generation, content_hash, settings]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            source_id: {type: string}
+            generation: {type: integer, format: int64}
+            content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+            settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     "PublicHostingBuildTarget":
       "type": "object"
       "additionalProperties": false
@@ -12215,14 +12220,20 @@ components:
         "trigger_revision":
           "$ref": "#/components/schemas/HostingBuildTriggerRevision"
     "PublicHostingBuildSourceReceipt":
-      "type": "object"
-      "additionalProperties": false
-      "required": ["commit", "tree_digest"]
-      "properties":
-        "commit":
-          "type": "string"
-        "tree_digest":
-          "type": "string"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [commit, tree_digest]
+          properties:
+            commit: {type: string}
+            tree_digest: {type: string}
+        - type: object
+          additionalProperties: false
+          required: [kind, content_hash, tree_digest]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+            tree_digest: {type: string}
     "PublicHostingBuildArtifact":
       "type": "object"
       "additionalProperties": false
@@ -16944,8 +16955,31 @@ components:
         requested_ref: {type: string}
         credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    DockerfileResourceInput:
+      type: object
+      additionalProperties: false
+      required: [content, settings]
+      properties:
+        content: {type: string, minLength: 1, maxLength: 1048576, description: Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile.}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    DockerfileResourceSource:
+      type: object
+      additionalProperties: false
+      required: [source_id, generation, content_hash, content, settings]
+      properties:
+        source_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content: {type: string, minLength: 1, maxLength: 1048576}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     ResourceSourceInput:
       oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, dockerfile]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            dockerfile: {$ref: "#/components/schemas/DockerfileResourceInput"}
         - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object
@@ -16956,6 +16990,12 @@ components:
             git: {$ref: "#/components/schemas/GitResourceInput"}
     ResourceSource:
       oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, dockerfile]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            dockerfile: {$ref: "#/components/schemas/DockerfileResourceSource"}
         - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object

@@ -6359,11 +6359,14 @@ export interface components {
             fence: string;
         };
         HostingBuildSourceReceipt: {
+            /** @enum {string} */
+            kind?: "dockerfile";
+            content_hash?: string;
             build_id: string;
             source_id: string;
             input_id: string;
-            commit: string;
-            policy_hash: string;
+            commit?: string;
+            policy_hash?: string;
             tree_digest: string;
         };
         HostingBuildArtifact: {
@@ -6458,11 +6461,19 @@ export interface components {
         };
         PublicHostingBuildSource: {
             source_id: string;
+            /** Format: int64 */
+            generation: number;
             repository_url: string;
             requested_ref: string;
             credential_kind: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        } | {
+            /** @enum {string} */
+            kind: "dockerfile";
+            source_id: string;
             /** Format: int64 */
             generation: number;
+            content_hash: string;
             settings: components["schemas"]["HostingBuildSettings"];
         };
         PublicHostingBuildTarget: {
@@ -6486,6 +6497,11 @@ export interface components {
         };
         PublicHostingBuildSourceReceipt: {
             commit: string;
+            tree_digest: string;
+        } | {
+            /** @enum {string} */
+            kind: "dockerfile";
+            content_hash: string;
             tree_digest: string;
         };
         PublicHostingBuildArtifact: {
@@ -8260,12 +8276,33 @@ export interface components {
             credential_kind: "public" | "https_basic" | "ssh_private_key";
             settings: components["schemas"]["HostingBuildSettings"];
         };
-        ResourceSourceInput: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
+        DockerfileResourceInput: {
+            /** @description Exact UTF-8 Dockerfile content */
+            content: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        DockerfileResourceSource: {
+            source_id: string;
+            /** Format: int64 */
+            generation: number;
+            content_hash: string;
+            content: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        ResourceSourceInput: {
+            /** @enum {string} */
+            kind: "dockerfile";
+            dockerfile: components["schemas"]["DockerfileResourceInput"];
+        } | components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceInput"];
         };
-        ResourceSource: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
+        ResourceSource: {
+            /** @enum {string} */
+            kind: "dockerfile";
+            dockerfile: components["schemas"]["DockerfileResourceSource"];
+        } | components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceSource"];

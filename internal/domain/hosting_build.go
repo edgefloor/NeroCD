@@ -63,6 +63,9 @@ func (s HostingBuildSettings) Clone() HostingBuildSettings {
 
 // HostingGitSource is an immutable trusted source version referenced by a Git resource.
 type HostingGitSource struct {
+	Kind           string                  `json:"kind,omitempty"`
+	Content        string                  `json:"content,omitempty"`
+	ContentHash    string                  `json:"content_hash,omitempty"`
 	ID             string                  `json:"id"`
 	ResourceID     string                  `json:"resource_id"`
 	ProjectID      string                  `json:"project_id"`
@@ -174,12 +177,14 @@ type HostingBuildAuthority struct {
 
 // HostingBuildSourceReceipt freezes the resolved commit before build effects.
 type HostingBuildSourceReceipt struct {
-	BuildID    string `json:"build_id"`
-	SourceID   string `json:"source_id"`
-	InputID    string `json:"input_id"`
-	Commit     string `json:"commit"`
-	PolicyHash string `json:"policy_hash"`
-	TreeDigest string `json:"tree_digest"`
+	Kind        string `json:"kind,omitempty"`
+	ContentHash string `json:"content_hash,omitempty"`
+	BuildID     string `json:"build_id"`
+	SourceID    string `json:"source_id"`
+	InputID     string `json:"input_id"`
+	Commit      string `json:"commit,omitempty"`
+	PolicyHash  string `json:"policy_hash,omitempty"`
+	TreeDigest  string `json:"tree_digest"`
 }
 
 // HostingBuildArtifact retains local identity, never a fabricated repository digest.
