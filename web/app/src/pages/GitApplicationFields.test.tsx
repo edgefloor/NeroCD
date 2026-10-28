@@ -58,9 +58,8 @@ test("Compose build variable rows retain literal and empty values and omit an em
   expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_variables");
 });
 test("build variables survive supported builder switches and clear for unsupported builders", () => {
-  const variables = Array.from({ length: 64 }, (_, index) => ({ name: `ARG_${index}`, value: "value" }));
+  const variables = [{ name: "MODE", value: "release" }, { name: "EMPTY", value: "" }];
   const view = render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: variables } }} />);
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add build variable" }).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: "dockerfile" } });
   expect(screen.queryByRole("region", { name: "Compose build variables" })).toBeNull();
   expect(screen.getByRole("region", { name: "Dockerfile build variables" })).toBeTruthy();
@@ -70,6 +69,20 @@ test("build variables survive supported builder switches and clear for unsupport
   expect(screen.queryByRole("region", { name: "Dockerfile build variables" })).toBeNull();
   view.unmount(); render(<Editor disabled initial={{ ...emptyGitDraft(), settings: { strategy: "compose", compose_file: "compose.yaml", public_component: "web", container_port: 80, build_variables: [{ name: "MODE", value: "production" }] } }} />);
   expect(screen.getByLabelText("Build variable value 1").closest("fieldset")!.disabled).toBe(true);
+});
+
+test("build variable additions stop at 64 rows", () => {
+  render(<Editor />);
+  // Keep the same controls while the rows grow; avoid rescanning every row's
+  // accessible name on every addition in jsdom.
+  const add = screen.getByRole<HTMLButtonElement>("button", { name: "Add build variable" });
+  const draft = screen.getByRole("status");
+  for (let index = 0; index < 63; index++) fireEvent.click(add);
+  expect(add.disabled).toBe(false);
+  fireEvent.click(add);
+  expect(add.disabled).toBe(true);
+  fireEvent.click(add);
+  expect(JSON.parse(draft.textContent!).settings.build_variables).toHaveLength(64);
 });
 
 test.each([

@@ -116,9 +116,14 @@ test("literal byte limit is checked as UTF-8 and line breaks are rejected", asyn
 
 test("duplicate variable names cannot submit and the 64-variable limit stops additions", async () => {
   const fetch = backend(); setup(); await add("DUPLICATE");
-  fireEvent.click(screen.getByRole("button", { name: "Add runtime variable" })); fireEvent.change(screen.getByLabelText("Variable name 2"), { target: { value: "DUPLICATE" } }); save(); await screen.findByText("Runtime variable names must be unique.");
-  for (let index = 2; index < 64; index++) fireEvent.click(screen.getByRole("button", { name: "Add runtime variable" }));
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Add runtime variable" }).disabled).toBe(true); expect(screen.getAllByRole("group")).toHaveLength(64); expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(false);
+  const addVariable = screen.getByRole<HTMLButtonElement>("button", { name: "Add runtime variable" });
+  fireEvent.click(addVariable); fireEvent.change(screen.getByLabelText("Variable name 2"), { target: { value: "DUPLICATE" } }); save(); await screen.findByText("Runtime variable names must be unique.");
+  for (let index = 2; index < 63; index++) fireEvent.click(addVariable);
+  expect(addVariable.disabled).toBe(false);
+  fireEvent.click(addVariable);
+  expect(addVariable.disabled).toBe(true);
+  fireEvent.click(addVariable);
+  expect(screen.getAllByRole("group")).toHaveLength(64); expect(fetch.mock.calls.some(([, options]) => options.method === "PUT")).toBe(false);
 });
 test.each(["project", "resource", "blocked"])("%s scope loss aborts pending runtime save and clears metadata and draft", async (scope) => {
   let resolve!: (value: Response) => void; const fetch = backend("owner", (_url, options) => options.method === "PUT" ? new Promise<Response>((done) => { resolve = done; }) : undefined);
