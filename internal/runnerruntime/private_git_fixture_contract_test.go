@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/frontend/dockerfile/parser"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 )
@@ -36,6 +38,19 @@ func privateDockerfileArgumentSettings(marker string, inject *bool) domain.Hosti
 
 func privateDockerfileArgumentBody(marker string) string {
 	return marker + "\n" + privateDockerfileMultiline + "\n"
+}
+
+// Stored sources have no repository or extra context files. Both stages use the
+// existing pinned image and create the complete served artifact from the content.
+func storedDockerfileFixtureSource(marker string, fail bool) string {
+	source := "FROM " + hostingbuild.StaticImage + " AS prepared\n" +
+		"RUN printf '%s\\n' '" + marker + "' > /tmp/index.html\n" +
+		"FROM " + hostingbuild.StaticImage + "\n" +
+		"COPY --from=prepared --chmod=0644 /tmp/index.html /usr/share/nginx/html/index.html\n"
+	if fail {
+		source += "RUN exit 9\n"
+	}
+	return source
 }
 
 func TestPrivateDockerfileArgumentFixtureContracts(t *testing.T) {
@@ -77,5 +92,65 @@ func TestPrivateDockerfileArgumentFixtureContracts(t *testing.T) {
 	}
 	if privateDockerfileArgumentBody("local-A") == privateDockerfileArgumentBody("local-B") {
 		t.Fatal("edited variable must change served content")
+	}
+}
+
+func TestStoredDockerfileFixtureContracts(t *testing.T) {
+	seen := make(map[string]bool)
+	for _, fixture := range []struct {
+		marker string
+		fail   bool
+	}{{"stored-A", false}, {"stored-B", false}, {"stored-failed", true}} {
+		t.Run(fixture.marker, func(t *testing.T) {
+			content := storedDockerfileFixtureSource(fixture.marker, fixture.fail)
+			input := domain.ResourceSourceInput{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceConfiguration{Content: content, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}
+			raw, err := json.Marshal(map[string]any{"kind": input.Kind, "dockerfile": input.Dockerfile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded domain.ResourceSourceInput
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&decoded); err != nil {
+				t.Fatal(err)
+			}
+			if err := domain.ValidateResourceSource(decoded.Source()); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Dockerfile == nil || decoded.Dockerfile.Content != content || decoded.Git != nil {
+				t.Fatal("stored source decoder changed content or invented Git configuration")
+			}
+			digest := domain.HostingDockerfileContentHash(content)
+			if seen[digest] {
+				t.Fatal("distinct source edits must change frozen content identity")
+			}
+			seen[digest] = true
+			parsed, err := parser.Parse(strings.NewReader(content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stages, copies, failures := 0, 0, 0
+			for _, node := range parsed.AST.Children {
+				switch strings.ToLower(node.Value) {
+				case "from":
+					stages++
+					if node.Next == nil || node.Next.Value != hostingbuild.StaticImage {
+						t.Fatal("fixture changed pinned image")
+					}
+				case "copy":
+					copies++
+					if !strings.Contains(node.Original, "--from=prepared") {
+						t.Fatal("stored source unexpectedly requires external context")
+					}
+				case "run":
+					if node.Next != nil && node.Next.Value == "exit 9" {
+						failures++
+					}
+				}
+			}
+			if stages != 2 || copies != 1 || failures != map[bool]int{false: 0, true: 1}[fixture.fail] {
+				t.Fatal("fixture lost multistage served content or genuine failure")
+			}
+		})
 	}
 }
