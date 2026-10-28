@@ -78,6 +78,7 @@ func (s *buildOutputAdapter) addBuildSecrets(ctx context.Context, values []domai
 	if len(values) > 64 {
 		return errors.New("too many build secrets")
 	}
+	changed := false
 	known := make(map[string]int, len(s.secrets))
 	for i, material := range s.secrets {
 		known[material.Value] = i
@@ -89,6 +90,7 @@ func (s *buildOutputAdapter) addBuildSecrets(ctx context.Context, values []domai
 		if i, exists := known[value]; exists {
 			if encoded && len(s.secrets[i].Encodings) == 0 {
 				s.secrets[i].Encodings = []string{"base64", "base64url", "hex"}
+				changed = true
 			}
 			return
 		}
@@ -98,6 +100,7 @@ func (s *buildOutputAdapter) addBuildSecrets(ctx context.Context, values []domai
 			material.Encodings = []string{"base64", "base64url", "hex"}
 		}
 		s.secrets = append(s.secrets, material)
+		changed = true
 	}
 	for _, value := range values {
 		if !domain.ValidHostingBuildSecretValue(value.Value) {
@@ -114,6 +117,8 @@ func (s *buildOutputAdapter) addBuildSecrets(ctx context.Context, values []domai
 			add(strings.TrimSuffix(line, "\r"), false)
 		}
 	}
-	s.redactor = runner.NewRedactor(s.secrets)
+	if changed {
+		s.redactor = runner.NewRedactor(s.secrets)
+	}
 	return nil
 }

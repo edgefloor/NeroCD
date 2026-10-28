@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -218,10 +221,15 @@ func TestBuildSecretsMultilinePatternsRemainDeduplicatedAtMaximumInput(t *testin
 	for i := range values {
 		values[i] = domain.HostingBuildSecretValue{Name: fmt.Sprintf("SECRET_%d", i), Value: value}
 	}
+	var retained *runner.Redactor
 	for range 2 {
 		if err = adapter.addBuildSecrets(t.Context(), values); err != nil {
 			t.Fatal(err)
 		}
+		if retained != nil && adapter.redactor != retained {
+			t.Fatal("unchanged materials rebuilt matcher")
+		}
+		retained = adapter.redactor
 		if len(adapter.secrets) != 3 {
 			t.Fatalf("maximum multiline input produced %d materials, want3", len(adapter.secrets))
 		}
@@ -230,5 +238,89 @@ func TestBuildSecretsMultilinePatternsRemainDeduplicatedAtMaximumInput(t *testin
 				t.Fatal("line fragment expansion changed whole-value encodings")
 			}
 		}
+	}
+}
+
+// TestBuildSecretsDiverseMaximumScaleProbe is opt-in because it constructs the
+// full managed-value bound and its encoded matcher index in one process.
+func TestBuildSecretsDiverseMaximumScaleProbe(t *testing.T) {
+	if os.Getenv("NEROCD_REDACTION_SCALE_PROBE") != "1" {
+		t.Skip("set NEROCD_REDACTION_SCALE_PROBE=1 for maximum diverse matcher allocation probe")
+	}
+	e, _, a, at := buildFixture(t)
+	adapter, err := newBuildOutputAdapter(e, a, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alphabet := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+	values := make([]domain.HostingBuildSecretValue, 64)
+	sequence := 0
+	for i := range values {
+		var value strings.Builder
+		value.Grow(65536)
+		for range 13107 {
+			value.WriteByte(alphabet[(sequence>>18)&63])
+			value.WriteByte(alphabet[(sequence>>12)&63])
+			value.WriteByte(alphabet[(sequence>>6)&63])
+			value.WriteByte(alphabet[sequence&63])
+			value.WriteByte('\n')
+			sequence++
+		}
+		value.WriteByte('!')
+		values[i] = domain.HostingBuildSecretValue{Name: fmt.Sprintf("SECRET_%d", i), Value: value.String()}
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	started := time.Now()
+	if err = adapter.addBuildSecrets(t.Context(), values); err != nil {
+		t.Fatal(err)
+	}
+	construction := time.Since(started)
+	runtime.ReadMemStats(&after)
+	input := strings.Repeat("?", 16384)
+	started = time.Now()
+	got := adapter.redactor.RedactChunk("buildkit/stdout", input)
+	for _, event := range adapter.redactor.Flush() {
+		got += event.Message
+	}
+	matching := time.Since(started)
+	if got != input || len(adapter.secrets) != 838913 {
+		t.Fatal("diverse maximum matcher lost values or changed ordinary output")
+	}
+	var usage syscall.Rusage
+	if err = syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		t.Fatal(err)
+	}
+	peakBytes := usage.Maxrss
+	if runtime.GOOS != "darwin" {
+		peakBytes *= 1024
+	}
+	t.Logf("managed_bytes=%d distinct_fragments=%d material_count=%d construction=%s matching_16k=%s allocated_bytes=%d live_heap_bytes=%d peak_rss_bytes=%d", 64*65536, sequence, len(adapter.secrets), construction, matching, after.TotalAlloc-before.TotalAlloc, after.HeapAlloc, peakBytes)
+}
+
+func TestBuildMaterialsKeepIndexWhenRegistryAndSecretsAreUnchanged(t *testing.T) {
+	e, _, a, at := buildFixture(t)
+	adapter, err := newBuildOutputAdapter(e, a, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := domain.HostingRegistryCredential{Registry: "registry.example", Username: "build-user", Password: "protected-registry"}
+	values := []domain.HostingBuildSecretValue{{Name: "TOKEN", Value: "first-line\nsecond-line"}}
+	if err = adapter.addRegistrySecrets(t.Context(), registry); err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.addBuildSecrets(t.Context(), values); err != nil {
+		t.Fatal(err)
+	}
+	retained := adapter.redactor
+	if err = adapter.addRegistrySecrets(t.Context(), registry); err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.addBuildSecrets(t.Context(), values); err != nil {
+		t.Fatal(err)
+	}
+	if adapter.redactor != retained {
+		t.Fatal("unchanged combined material rebuilt matcher index")
 	}
 }

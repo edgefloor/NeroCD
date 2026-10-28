@@ -94,6 +94,7 @@ func (s *buildOutputAdapter) addRegistrySecrets(ctx context.Context, c domain.Ho
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	changed := false
 	for _, value := range []string{c.Username, c.Password, c.Username + ":" + c.Password} {
 		if value == "" || len(value) > 20256 {
 			return errors.New("build registry redaction exceeds bound")
@@ -104,8 +105,11 @@ func (s *buildOutputAdapter) addRegistrySecrets(ctx context.Context, c domain.Ho
 		}
 		if !found {
 			s.secrets = append(s.secrets, runner.SecretMaterial{Value: strings.Clone(value), Encodings: []string{"base64", "base64url", "hex"}})
+			changed = true
 		}
 	}
-	s.redactor = runner.NewRedactor(s.secrets)
+	if changed {
+		s.redactor = runner.NewRedactor(s.secrets)
+	}
 	return nil
 }
