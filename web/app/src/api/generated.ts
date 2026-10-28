@@ -12632,6 +12632,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupVolumes"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Current viewer or destination authority is absent */
             403: {
                 headers: {
@@ -12741,6 +12742,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupDownloadPlan"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Authority denied */
             403: {
                 headers: {
@@ -12786,6 +12788,7 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Authority denied */
             403: {
                 headers: {
@@ -12829,6 +12832,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupDownloadOptions"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Current owner or destination access denied */
             403: {
                 headers: {
