@@ -79,7 +79,7 @@ func TestApplicationDatabaseMySQLFixtureContracts(t *testing.T) {
 		}
 	}
 	var restore domain.HostingDatabaseBackupRestoreInput
-	if domain.DecodeHostingDatabaseBackupJSON([]byte(`{"request_id":"restore-fixture","name":"restored mysql"}`), &restore) != nil || restore.Validate() != nil {
+	if domain.DecodeHostingStorageProtocolJSON([]byte(`{"request_id":"restore-fixture","name":"restored mysql"}`), &restore) != nil || restore.Validate() != nil {
 		t.Fatal("fixture restore request rejected by real decoder")
 	}
 	restore.RequestID = ""
@@ -88,7 +88,7 @@ func TestApplicationDatabaseMySQLFixtureContracts(t *testing.T) {
 	}
 	for _, body := range []string{`{"request_id":"backup-fixture","expected_resource_generation":1}`, `{"request_id":"backup-fixture","expected_resource_generation":1,"unknown":true}`} {
 		var input domain.HostingDatabaseBackupInput
-		err := domain.DecodeHostingDatabaseBackupJSON([]byte(body), &input)
+		err := domain.DecodeHostingStorageProtocolJSON([]byte(body), &input)
 		if strings.Contains(body, "unknown") {
 			if err == nil {
 				t.Fatal("backup decoder accepted unknown field")
