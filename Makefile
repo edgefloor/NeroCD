@@ -109,6 +109,7 @@ production-compose-policy-gate:
 	bash scripts/production-compose-policy-gate-test.sh
 
 local-image-registry-gate:
+	bash scripts/local-image-registry-state-test.sh
 	bash scripts/local-image-registry-gate.sh
 
 image-hosting-gate:
