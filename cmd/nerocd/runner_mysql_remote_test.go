@@ -62,6 +62,10 @@ func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
 				case "/api/v1/runners/identity":
 					// No PostgreSQL local-backup engine capability is needed.
 					_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "mysql_remote", "capabilities": caps})
+				case "/api/v1/runners/heartbeat":
+					_ = json.NewEncoder(w).Encode(domain.Runner{ID: "mysql_remote", Status: domain.RunnerActive, Capabilities: caps})
+				case "/api/v1/runners/hosting/observation-targets":
+					w.WriteHeader(http.StatusNotFound)
 				case "/api/v1/runners/claim":
 					claimed = true
 					w.WriteHeader(http.StatusUnauthorized)
