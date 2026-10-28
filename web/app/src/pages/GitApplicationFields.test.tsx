@@ -183,3 +183,24 @@ test("build secret selections retain page two metadata and survive removing an e
  expect(screen.queryByRole("option", { name: "First secret · first" })).toBeNull();
  unmount(); client.clear();
 });
+
+
+test("SSH deploy-key fields retain repository syntax and fingerprints across builders and omit pins for HTTPS", () => {
+ render(<Editor />);
+ fireEvent.change(screen.getByLabelText("Git source access"), { target: { value: "ssh_private_key" } });
+ const repository = screen.getByLabelText<HTMLInputElement>("Git repository URL");
+ expect(repository.type).toBe("text");
+ fireEvent.change(repository, { target: { value: "git@git.example:team/application.git" } });
+ const fingerprints = ["SHA256:" + "A".repeat(43), "SHA256:" + "B".repeat(43)];
+ fireEvent.change(screen.getByLabelText("SSH host fingerprints"), { target: { value: fingerprints.join("\n") } });
+ for (const strategy of ["dockerfile", "railpack", "static", "compose"]) {
+  fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } });
+  expect(JSON.parse(screen.getByRole("status").textContent!)).toMatchObject({ repository_url: "git@git.example:team/application.git", credential_kind: "ssh_private_key", ssh_host_fingerprints: fingerprints });
+ }
+ expect(screen.getByText(/raw, unencrypted PEM or OpenSSH private key/)).toBeTruthy();
+ expect(screen.queryByLabelText(/private key value/i)).toBeNull();
+ fireEvent.change(screen.getByLabelText("Git source access"), { target: { value: "https_basic" } });
+ expect(screen.queryByLabelText("SSH host fingerprints")).toBeNull();
+ expect(JSON.parse(screen.getByRole("status").textContent!)).not.toHaveProperty("ssh_host_fingerprints");
+ expect(repository.type).toBe("url");
+});

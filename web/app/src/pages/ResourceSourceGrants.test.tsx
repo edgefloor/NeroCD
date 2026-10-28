@@ -15,7 +15,7 @@ function backend(role = "owner", handler?: (url: string, options: RequestInit) =
  const fetch = vi.fn(async (url: string, options: RequestInit) => await handler?.(url, options) ?? (url.startsWith("/api/v1/project-members") ? json(page([{ project_id: "project", user_id: "user", role }])) : url.includes("/managed-secrets/secret/versions") ? json({ ...page([{ secret_id: "secret", version: 4, value: "must-not-cache" }]), value: "must-not-cache" }) : url.includes("/managed-secrets?") ? json({ ...page([{ id: "secret", project_id: "project", name: "Git credentials", status: "active", current_version: 4, value: "must-not-cache" }]), value: "must-not-cache" }) : url.endsWith("/revoke") ? json({ revoked: true }) : url.includes("/source-grants") ? options.method === "POST" ? json({ grant }, 201) : json(page([grant])) : json(resource)));
  vi.stubGlobal("fetch", fetch); return fetch;
 }
-function setup() { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); const denied = vi.fn(); return { denied, ...render(<QueryClientProvider client={client}><ResourceSourceGrants actor={actor} resource={resource} blocked={false} onDenied={denied} /></QueryClientProvider>) }; }
+function setup(savedResource = resource) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); const denied = vi.fn(); return { denied, ...render(<QueryClientProvider client={client}><ResourceSourceGrants actor={actor} resource={savedResource} blocked={false} onDenied={denied} /></QueryClientProvider>) }; }
 async function review() { await screen.findByRole("option", { name: "Git credentials · secret" }); fireEvent.change(screen.getByLabelText("Existing managed secret"), { target: { value: "secret" } }); await screen.findByRole("option", { name: "Version 4" }); fireEvent.change(screen.getByLabelText("Explicit secret version"), { target: { value: "4" } }); fireEvent.click(screen.getByLabelText(/I reviewed this exact source generation/)); }
 test("owner grants only explicit existing references without reveal or value caching", async () => { const fetch = backend(); setup(); await review(); fireEvent.click(screen.getByRole("button", { name: "Create source grant" })); await screen.findByText(/Source grant grant recorded/); const body = JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "POST")![1].body as string); expect(body).toEqual({ expected_resource_generation: 2, expected_source_generation: 3, secret_id: "secret", secret_version: 4, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) }); expect(JSON.stringify(client.getQueryCache().getAll().map((query) => query.state.data))).not.toContain("must-not-cache"); expect(fetch.mock.calls.some(([url]) => url.includes("/reveal"))).toBe(false); expect(screen.queryByLabelText(/value/i)).toBeNull(); });
 test.each(["maintainer", "viewer"])("%s has only its authorized grant controls", async (role) => { const fetch = backend(role); setup(); if (role === "maintainer") { await screen.findByText(/Grant grant · v1/); await screen.findByText(/Project owner access is required/); } else { await screen.findByText(/Project maintainer access is required/); expect(fetch.mock.calls.some(([url]) => url.includes("/source-grants"))).toBe(false); } expect(screen.queryByRole("form")).toBeNull(); expect(screen.queryByRole("button", { name: "Revoke source grant grant" })).toBeNull(); expect(fetch.mock.calls.some(([url]) => url.includes("/managed-secrets"))).toBe(false); });
@@ -60,4 +60,20 @@ test("cached owner membership does not authorize grant refresh after access veri
  const count = () => fetch.mock.calls.filter(([url]) => url.includes("/source-grants?")).length;
  const before = count(); const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "Refresh source grants" }); expect(refresh.disabled).toBe(true); fireEvent.click(refresh); expect(count()).toBe(before);
  fail = false; fireEvent.click(screen.getByRole("button", { name: "Refresh source grant access" })); await waitFor(() => expect(refresh.disabled).toBe(false)); fireEvent.click(refresh); await waitFor(() => expect(count()).toBe(before + 1));
+});
+
+
+test("SSH owner grants select a raw deploy-key version without revealing or caching its value", async () => {
+ const ssh: Resource = { ...resource, source: { kind: "git", git: { ...(resource.source.kind === "git" ? resource.source.git : {}), credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/application.git", ssh_host_fingerprints: ["SHA256:" + "A".repeat(43)] } } } as Resource;
+ const sshGrant = { ...grant, kind: "ssh_private_key" };
+ const fetch = backend("owner", (url, options) => url.includes("/source-grants") ? options.method === "POST" ? json({ grant: sshGrant }, 201) : json(page([sshGrant])) : undefined);
+ setup(ssh);
+ await screen.findByRole("region", { name: "Private SSH source grants" });
+ expect(screen.getByText(/raw, unencrypted PEM or OpenSSH private key/)).toBeTruthy();
+ await review();
+ fireEvent.click(screen.getByRole("button", { name: "Create source grant" }));
+ await screen.findByText(/Source grant grant recorded/);
+ expect(JSON.parse(fetch.mock.calls.find(([, options]) => options.method === "POST")![1].body as string)).toEqual({ expected_resource_generation: 2, expected_source_generation: 3, secret_id: "secret", secret_version: 4, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
+ expect(JSON.stringify(client.getQueryCache().getAll().map(query => query.state.data))).not.toContain("must-not-cache");
+ expect(fetch.mock.calls.some(([url]) => url.includes("/reveal"))).toBe(false);
 });

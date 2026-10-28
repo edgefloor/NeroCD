@@ -51,8 +51,8 @@ function publicBuild(b: HostingBuild): HostingBuild {
     ...(b.artifact ? { artifact: publicArtifact(b.artifact) } : {}),
     ...(b.compose_result ? { compose_result: publicCompose(b.compose_result, settings) } : {}) };
 }
-export async function requestHostingBuild(resourceID: string, input: HostingBuildInput, options?: Options & { credentialKind?: "public" | "https_basic" }): Promise<HostingBuild> {
-  const body = { expected_resource_generation: input.expected_resource_generation, expected_source_generation: input.expected_source_generation, idempotency_key: input.idempotency_key, ...(options?.credentialKind === "https_basic" && input.grant_id ? { grant_id: input.grant_id } : {}) };
+export async function requestHostingBuild(resourceID: string, input: HostingBuildInput, options?: Options & { credentialKind?: "public" | "https_basic" | "ssh_private_key" }): Promise<HostingBuild> {
+  const body = { expected_resource_generation: input.expected_resource_generation, expected_source_generation: input.expected_source_generation, idempotency_key: input.idempotency_key, ...(["https_basic", "ssh_private_key"].includes(options?.credentialKind ?? "") && input.grant_id ? { grant_id: input.grant_id } : {}) };
   const response = await request<{ build: HostingBuild }>(historyPath(resourceID), { signal: options?.signal, method: "POST", body }); return publicBuild(response.build);
 }
 export async function getHostingBuild(id: string, options?: Options): Promise<HostingBuild> { const response = await request<{ build: HostingBuild }>(detailPath(id), options); return publicBuild(response.build); }

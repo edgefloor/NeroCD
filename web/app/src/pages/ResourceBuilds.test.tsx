@@ -53,7 +53,7 @@ const privateGrant = { id: "grant-one", resource_id: "resource", source_id: "sou
 function privateBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response | undefined> | undefined) {
  return backend(async (url, options) => await handler?.(url, options) ?? (url.includes("/source-grants?") ? json({ items: [privateGrant, { ...privateGrant, id: "legacy", source_generation: 0 }, { ...privateGrant, id: "revoked", revoked: true }], count: 3, total: 3, limit: 20, offset: 0 }) : url.includes("/project-members?") ? json({ items: [{ project_id: "project", user_id: "user", role: "maintainer" }], count: 1, total: 1, limit: 100, offset: 0 }) : undefined));
 }
-function setupPrivate(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={privateResource} writable={writable} blocked={false} /></QueryClientProvider>); }
+function setupPrivate(writable = true, savedResource = privateResource) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={savedResource} writable={writable} blocked={false} /></QueryClientProvider>); }
 async function privateReview() { await screen.findByRole("option", { name: "grant-one · source 3 · eligible" }); fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } }); fireEvent.click(screen.getByLabelText(/I reviewed this exact private HTTPS Git source/)); }
 test.each(["pending", "ready"])("external private grant becomes selectable after history refresh with %s access", async (access) => {
  let available = false;
@@ -243,4 +243,22 @@ test("stored Dockerfile builds use saved generations and hash provenance without
  const writes=fetch.mock.calls.filter(([,o])=>o.method==="POST"); expect(writes).toHaveLength(1);
  expect(JSON.parse(writes[0]![1].body as string)).toEqual({expected_resource_generation:2,expected_source_generation:3,idempotency_key:expect.any(String)});
  expect(fetch.mock.calls.some(([url])=>url.includes("source-grants") || url.includes("github"))).toBe(false);
+});
+
+
+test("SSH builds review host fingerprints and send an explicit matching grant", async () => {
+ const fingerprints = ["SHA256:" + "A".repeat(43)];
+ const ssh: Resource = { ...privateResource, source: { kind: "git", git: { ...(privateResource.source.kind === "git" ? privateResource.source.git : {}), credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: fingerprints } } } as Resource;
+ const fetch = privateBackend(url => url.includes("/source-grants?") ? json({ items: [{ ...privateGrant, kind: "ssh_private_key" }, { ...privateGrant, id: "https-grant" }], count: 2, total: 2, limit: 20, offset: 0 }) : undefined);
+ setupPrivate(true, ssh);
+ await screen.findByText("Private SSH Git builds");
+ expect(screen.getByText(/Reviewed SSH host fingerprints:/).textContent).toContain(fingerprints[0]);
+ await screen.findByRole("option", { name: "grant-one · source 3 · eligible" });
+ fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } });
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact private SSH Git source, host fingerprints, grant/));
+ fireEvent.click(screen.getByRole("button", { name: "Request private Git build" }));
+ await waitFor(() => expect(fetch.mock.calls.some(([url, options]) => url.endsWith("/builds") && options.method === "POST")).toBe(true));
+ const body = fetch.mock.calls.find(([url, options]) => url.endsWith("/builds") && options.method === "POST")![1].body;
+ expect(JSON.parse(body as string)).toMatchObject({ expected_resource_generation: 2, expected_source_generation: 3, grant_id: "grant-one" });
+ expect(JSON.parse(body as string)).not.toHaveProperty("ssh_host_fingerprints");
 });

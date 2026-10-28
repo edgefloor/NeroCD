@@ -779,3 +779,21 @@ test("stored Dockerfile conflict shows saved content while retaining and explici
  await screen.findByText("Application configuration updated. Deployment is a separate request.");
  expect(api.updateResource).toHaveBeenLastCalledWith("app",{expected_generation:3,source:{kind:"dockerfile",dockerfile:{content:"FROM nginx\nEXPOSE 9000\n",settings:{strategy:"dockerfile"}}}});
 });
+
+
+test("SSH editor preserves saved host fingerprints for source edits and sends a rename alone", async () => {
+ const fingerprints = ["SHA256:" + "A".repeat(43)];
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...(gitResource.source.kind === "git" ? gitResource.source.git : {}), credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: fingerprints } } } as api.Resource;
+ vi.mocked(api.listResources).mockResolvedValue(page([saved]));
+ vi.mocked(api.updateResource).mockRejectedValue(new ApiError(400, "invalid", "request"));
+ setup(); const form = await edit();
+ expect(within(form).getByLabelText<HTMLTextAreaElement>("SSH host fingerprints").value).toBe(fingerprints[0]);
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save configuration" }).disabled).toBe(true);
+ fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Renamed" } });
+ fireEvent.submit(form); await screen.findByRole("alert");
+ expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 1, name: "Renamed" });
+ fireEvent.change(within(form).getByLabelText("Git branch, tag, or commit"), { target: { value: "release" } });
+ fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
+ expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 1, name: "Renamed", source: { kind: "git", git: { repository_url: "ssh://git@git.example/team/app.git", requested_ref: "release", credential_kind: "ssh_private_key", ssh_host_fingerprints: fingerprints, settings: { strategy: "dockerfile" } } } });
+ expect(within(form).getByLabelText<HTMLTextAreaElement>("SSH host fingerprints").value).toBe(fingerprints[0]);
+});

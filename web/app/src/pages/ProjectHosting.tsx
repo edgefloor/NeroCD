@@ -63,13 +63,13 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   const [name, setName] = useState(resource.name);
   const [compose, setCompose] = useState<ComposeApplicationDraft>(resource.source.kind === "compose" ? resource.source.compose : emptyComposeDraft());
   const [image, setImage] = useState(resource.source.kind === "image" ? resource.source.image.reference : "");
-  const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: resource.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: resource.source.git.settings } : emptyGitDraft());
+  const [git, setGit] = useState<GitApplicationDraft>(resource.source.kind === "git" ? { repository_url: resource.source.git.repository_url, requested_ref: resource.source.git.requested_ref, credential_kind: resource.source.git.credential_kind as GitApplicationDraft["credential_kind"], ...(resource.source.git.ssh_host_fingerprints ? { ssh_host_fingerprints: resource.source.git.ssh_host_fingerprints } : {}), settings: resource.source.git.settings } : emptyGitDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Resource>();
   const [refreshError, setRefreshError] = useState("");
-  const baseInput: ResourceSourceInput = base.source.kind === "dockerfile" ? {kind:"dockerfile",dockerfile:{content:base.source.dockerfile.content,settings:base.source.dockerfile.settings}} : base.source.kind !== "git" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
+  const baseInput: ResourceSourceInput = base.source.kind === "dockerfile" ? {kind:"dockerfile",dockerfile:{content:base.source.dockerfile.content,settings:base.source.dockerfile.settings}} : base.source.kind !== "git" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], ...(base.source.git.ssh_host_fingerprints ? { ssh_host_fingerprints: base.source.git.ssh_host_fingerprints } : {}), settings: base.source.git.settings } };
   const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : base.source.kind === "compose" ? {kind: "compose", compose} : base.source.kind === "dockerfile" ? {kind:"dockerfile",dockerfile} : { kind: "git", git };
   const sourceChanged = JSON.stringify(source) !== JSON.stringify(baseInput);
   const changed = name !== base.name || sourceChanged;
@@ -126,7 +126,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
           <dl className="min-w-0 space-y-1 break-words text-sm [overflow-wrap:anywhere]">
             <dt>Current repository URL</dt><dd>{latest.source.git.repository_url}</dd>
             <dt>Current requested ref</dt><dd>{latest.source.git.requested_ref}</dd>
-            <dt>Current credential kind</dt><dd>{latest.source.git.credential_kind}</dd>
+            <dt>Current credential kind</dt><dd>{latest.source.git.credential_kind}</dd>{latest.source.git.credential_kind === "ssh_private_key" ? <><dt>Current SSH host fingerprints</dt><dd>{latest.source.git.ssh_host_fingerprints?.join(", ")}</dd></> : null}
             <dt>Current source ID</dt><dd>{latest.source.git.source_id}</dd>
             <dt>Current source generation</dt><dd>{latest.source.git.generation}</dd>
             <dt>Current build strategy</dt><dd>{latest.source.git.settings.strategy}</dd>
@@ -199,7 +199,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <h4 className="break-words font-medium [overflow-wrap:anywhere]">{resource.name}</h4>
       <p className="break-words font-mono text-xs [overflow-wrap:anywhere]">{sourceDescription(resource)}</p>
       <p className="text-xs text-muted-foreground">Saved configuration · Generation {resource.generation}</p>
-      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; {resource.source.git.settings.strategy === "compose" ? "prepared Compose deployment" : "artifact deployment"} is separate</p> : null}
+      {resource.source.kind === "git" ? <p className="text-xs text-muted-foreground">Git source generation {resource.source.git.generation} · {resource.source.git.settings.strategy} · {resource.source.git.credential_kind === "ssh_private_key" ? "Private SSH" : resource.source.git.credential_kind === "https_basic" ? "Private HTTPS" : "Public Git"} build operations available; {resource.source.git.settings.strategy === "compose" ? "prepared Compose deployment" : "artifact deployment"} is separate</p> : null}
       <ResourceDestination resource={resource} writable={writable} blocked={blocked || resources.isError} />
       <ResourceBuilds resource={resource} writable={writable} blocked={blocked || resources.isError} />
       {/* Status verifies its own viewer authority and does not depend on legacy task reads. */}

@@ -18,3 +18,14 @@ test("grant pages retain only reference metadata and reject foreign resource sco
  vi.stubGlobal("fetch", vi.fn(async () => json({ items: [{ ...grant, resource_id: "foreign" }] }))); await expect(listHostingSourceGrants("resource", 0)).rejects.toThrow("scope mismatch");
 });
 test.each([{ source_generation: 0 }, { source_generation: 2 }, { source_id: "old" }, { resource_id: "other" }, { version: 2 }, { revoked: true }])("only exact nonrevoked v1 grants with generation evidence are eligible: %j", (change) => { expect(eligibleSourceGrant(grant, resource)).toBe(true); expect(eligibleSourceGrant({ ...grant, ...change }, resource)).toBe(false); });
+
+
+test("SSH grants require matching credential kind and current source generation", () => {
+ const ssh: Resource = { ...resource, source: { kind: "git", git: { ...(resource.source.kind === "git" ? resource.source.git : {}), credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: ["SHA256:" + "A".repeat(43)] } } } as Resource;
+ const sshGrant = { ...grant, kind: "ssh_private_key" as const };
+ expect(eligibleSourceGrant(sshGrant, ssh)).toBe(true);
+ expect(eligibleSourceGrant(grant, ssh)).toBe(false);
+ expect(eligibleSourceGrant(sshGrant, resource)).toBe(false);
+ expect(eligibleSourceGrant({ ...sshGrant, source_generation: 2 }, ssh)).toBe(false);
+ expect(eligibleSourceGrant({ ...sshGrant, revoked: true }, ssh)).toBe(false);
+});

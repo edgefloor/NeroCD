@@ -20,7 +20,7 @@ function dockerfilePort(content: string): number {
 }
 function matchesBuildGenerations(resource: Resource, build: HostingBuild): boolean {
   const source = resource.source.kind === "git" ? resource.source.git : resource.source.kind === "dockerfile" ? resource.source.dockerfile : undefined;
-  const kindMatches = resource.source.kind === "dockerfile" ? "kind" in build.snapshot.source && resource.source.dockerfile.content_hash === build.snapshot.source.content_hash : resource.source.kind === "git" && !("kind" in build.snapshot.source) && ["public", "https_basic"].includes(resource.source.git.credential_kind) && resource.source.git.credential_kind === build.snapshot.source.credential_kind;
+  const kindMatches = resource.source.kind === "dockerfile" ? "kind" in build.snapshot.source && resource.source.dockerfile.content_hash === build.snapshot.source.content_hash : resource.source.kind === "git" && !("kind" in build.snapshot.source) && ["public", "https_basic", "ssh_private_key"].includes(resource.source.git.credential_kind) && resource.source.git.credential_kind === build.snapshot.source.credential_kind;
   return Boolean(source && kindMatches && resource.generation === build.snapshot.resource_generation && source.source_id === build.snapshot.source.source_id && source.generation === build.snapshot.source.generation);
 }
 

@@ -112,3 +112,12 @@ test.each(["Git receipt", "wrong hash"])("stored Dockerfile rejects %s provenanc
  vi.stubGlobal("fetch",vi.fn(async ()=>json({build:{...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"}}},source_receipt:mode==="Git receipt" ? {commit:"invented",tree_digest:"tree"} : {kind:"dockerfile",content_hash:`sha256:${"b".repeat(64)}`,tree_digest:"tree"}}})));
  await expect(getHostingBuild("build-one")).rejects.toThrow("receipt does not match");
 });
+
+
+test("SSH build requests send only the reviewed grant reference and generations", async () => {
+ const fetch = vi.fn(async (_url: string, _options: RequestInit) => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, credential_kind: "ssh_private_key", private_key: "must-not-cache", ssh_host_fingerprints: ["must-not-cache"] } } } }));
+ vi.stubGlobal("fetch", fetch);
+ const result = await requestHostingBuild("resource", { expected_resource_generation: 2, expected_source_generation: 3, idempotency_key: "key", grant_id: "ssh-grant" }, { credentialKind: "ssh_private_key" });
+ expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toEqual({ expected_resource_generation: 2, expected_source_generation: 3, idempotency_key: "key", grant_id: "ssh-grant" });
+ expect(JSON.stringify(result)).not.toContain("must-not-cache");
+});

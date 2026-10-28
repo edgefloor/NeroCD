@@ -11,7 +11,7 @@ const path = (id: string) => `/api/v1/resources/${encodeURIComponent(id)}/source
 const publicGrant = ({ id, version, source_id, source_generation, resource_id, kind, revoked }: HostingSourceGrant): HostingSourceGrant => ({ id, version, source_id, source_generation, resource_id, kind, revoked });
 export const sourceGrantKeys = { resource: (actor: string, project: string, resource: string) => ["hostingSourceGrants", actor, project, resource] as const };
 export function eligibleSourceGrant(grant: HostingSourceGrant, resource: Resource) {
-  return resource.source.kind === "git" && resource.source.git.credential_kind === "https_basic" && grant.resource_id === resource.id && grant.source_id === resource.source.git.source_id && grant.source_generation > 0 && grant.source_generation === resource.source.git.generation && grant.version === 1 && grant.kind === "https_basic" && grant.revoked === false;
+  return resource.source.kind === "git" && ["https_basic", "ssh_private_key"].includes(resource.source.git.credential_kind) && grant.resource_id === resource.id && grant.source_id === resource.source.git.source_id && grant.source_generation > 0 && grant.source_generation === resource.source.git.generation && grant.version === 1 && grant.kind === resource.source.git.credential_kind && grant.revoked === false;
 }
 export function newSourceGrantRequestID(): string { const bytes = crypto.getRandomValues(new Uint8Array(16)); return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join(""); }
 export async function listHostingSourceGrants(resource: string, offset: number, options?: Options): Promise<HostingSourceGrantPage> {

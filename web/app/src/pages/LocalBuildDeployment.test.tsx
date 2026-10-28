@@ -465,3 +465,13 @@ test.each(["current", "changed hash", "Git build"])("stored Dockerfile %s deploy
  const writes=fetch.mock.calls.filter(([url])=>url.endsWith("/from-build"));
  expect(writes).toHaveLength(1); expect(JSON.parse(writes[0]![1].body as string)).toMatchObject({expected_generation:2,expected_source_generation:3,container_port:9090});
 });
+
+
+test("an SSH build artifact deploys through the existing generation-fenced request", async () => {
+ const ssh: Resource = { ...privateResource, source: { kind: "git", git: { ...source!, credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: ["SHA256:" + "A".repeat(43)] } } };
+ const sshBuild: HostingBuild = { ...privateBuild, snapshot: { ...privateBuild.snapshot, source: { ...privateBuild.snapshot.source, credential_kind: "ssh_private_key" } } };
+ const fetch = privateBackend(sshBuild);
+ await setup(true, ssh); await submit();
+ await screen.findByRole("region", { name: "Deployment operation detail" });
+ expect(JSON.parse(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body as string)).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3 });
+});
