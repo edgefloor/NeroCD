@@ -11906,9 +11906,9 @@ components:
     HostingRuntimeEnvironmentRequest: {"type": "object", "additionalProperties": false, "required": ["authority", "plan_hash", "runtime_configuration", "delivery_id"], "properties": {"authority": {"$ref": "#/components/schemas/HostingAuthority"}, "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "runtime_configuration": {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}, "delivery_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}}
     HostingRuntimeEnvironment: {"type": "object", "additionalProperties": false, "required": ["authority", "plan_hash", "runtime_configuration", "delivery_id", "request_hash", "purpose", "use_until", "entries"], "properties": {"authority": {"$ref": "#/components/schemas/HostingAuthority"}, "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "runtime_configuration": {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}, "delivery_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "purpose": {"type": "string", "enum": ["hosting_container_environment"]}, "use_until": {"type": "string", "format": "date-time"}, "entries": {"type": "array", "maxItems": 64, "items": {"type": "object", "additionalProperties": false, "required": ["name", "value"], "properties": {"name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}, "value": {"type": "string", "format": "byte", "description": "Base64 UTF-8 environment bytes, decoded size at most 4096. Empty is valid; no NUL, CR or LF. Entire NAME=value newline encoding is at most 256 KiB."}}}}}}
     "HostingSourceGrantRequest": {"type": "object", "additionalProperties": false, "required": ["expected_resource_generation", "expected_source_generation", "secret_id", "secret_version", "request_id"], "properties": {"expected_resource_generation": {"type": "integer", "format": "int64", "minimum": 1}, "expected_source_generation": {"type": "integer", "format": "int64", "minimum": 1}, "secret_id": {"type": "string", "minLength": 1, "maxLength": 128}, "secret_version": {"type": "integer", "format": "int64", "minimum": 1}, "request_id": {"type": "string", "pattern": "^([0-9a-f]{32}|[0-9a-f]{64})$"}}}
-    "HostingSourceGrant": {"type": "object", "additionalProperties": false, "required": ["id", "version", "source_id", "source_generation", "resource_id", "kind", "revoked"], "properties": {"id": {"type": "string"}, "version": {"type": "integer", "format": "int64", "minimum": 1}, "source_id": {"type": "string"}, "source_generation": {"type": "integer", "format": "int64", "minimum": 0, "description": "Zero denotes legacy grants with no generation evidence; these cannot be selected for configured builds."}, "resource_id": {"type": "string"}, "kind": {"type": "string", "enum": ["https_basic"]}, "revoked": {"type": "boolean"}}}
+    "HostingSourceGrant": {"type": "object", "additionalProperties": false, "required": ["id", "version", "source_id", "source_generation", "resource_id", "kind", "revoked"], "properties": {"id": {"type": "string"}, "version": {"type": "integer", "format": "int64", "minimum": 1}, "source_id": {"type": "string"}, "source_generation": {"type": "integer", "format": "int64", "minimum": 0, "description": "Zero denotes legacy grants with no generation evidence; these cannot be selected for configured builds."}, "resource_id": {"type": "string"}, "kind": {"type": "string", "enum": ["https_basic", "ssh_private_key"]}, "revoked": {"type": "boolean"}}}
     "HostingSourceCredentialRequest": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string", "pattern": "^([0-9a-f]{32}|[0-9a-f]{64})$"}}}
-    "HostingSourceCredential": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id", "request_hash", "credential_kind", "username", "credential", "use_until"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "credential_kind": {"type": "string", "enum": ["https_basic"]}, "username": {"type": "string", "minLength": 1, "maxLength": 256}, "credential": {"type": "string", "format": "byte", "description": "Base64 UTF-8 password. Combined username, colon and decoded password must fit 4096 bytes."}, "use_until": {"type": "string", "format": "date-time"}}}
+    "HostingSourceCredential": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id", "request_hash", "credential_kind", "username", "credential", "use_until"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "credential_kind": {"type": "string", "enum": ["https_basic", "ssh_private_key"]}, "username": {"type": "string", "maxLength": 256, "description": "Nonempty for HTTPS Basic; empty for SSH, whose username is in the repository URL."}, "credential": {"type": "string", "format": "byte", "description": "Base64 UTF-8 password or raw unencrypted SSH private key. Basic username, colon and password must fit 4096 bytes. SSH keys are limited to 65536 decoded bytes. The complete response is limited to 98304 bytes."}, "use_until": {"type": "string", "format": "date-time"}}}
     "HostingBuildLogEvent": {"type": "object", "additionalProperties": false, "required": ["event_key", "sequence", "component", "stream", "message"], "properties": {"event_key": {"type": "string", "minLength": 1, "maxLength": 128}, "sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "component": {"type": "string", "enum": ["build", "buildkit", "railpack"]}, "stream": {"type": "string", "enum": ["system", "stdout", "stderr"]}, "message": {"type": "string", "maxLength": 16384}, "source_timestamp": {"type": "string", "format": "date-time"}}}
     "HostingBuildLogBatch": {"type": "object", "additionalProperties": false, "required": ["authority", "events"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "events": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/components/schemas/HostingBuildLogEvent"}}}}
     "HostingBuildLogReceipt": {"type": "object", "additionalProperties": false, "required": ["event_key", "requested_sequence", "sequence", "body_hash"], "properties": {"event_key": {"type": "string"}, "requested_sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "body_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}
@@ -11932,7 +11932,7 @@ components:
           "type": "string"
           "minLength": 1
           "maxLength": 128
-        "grant_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Required for https_basic; forbidden for public."}
+        "grant_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Required for https_basic and ssh_private_key; forbidden for public."}
     "HostingBuildCancelInput":
       "type": "object"
       "additionalProperties": false
@@ -16940,9 +16940,16 @@ components:
       additionalProperties: false
       required: [repository_url, requested_ref, credential_kind, settings]
       properties:
-        repository_url: {type: string, minLength: 1, maxLength: 8192, description: HTTPS URL allowed by the server operator. No credentials or query/fragment components.}
+        repository_url: {type: string, minLength: 1, maxLength: 8192, description: Operator-allowed HTTPS URL or SSH repository URL. SSH supports ssh://user@host with an optional port and SCP user@host:path. No passwords or query/fragment components.}
         requested_ref: {type: string, minLength: 1, maxLength: 512}
-        credential_kind: {type: string, enum: [public, https_basic]}
+        credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
+        ssh_host_fingerprints:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          description: Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition.
+          items: {type: string, pattern: "^SHA256:[A-Za-z0-9+/]{43}$"}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     GitResourceSource:
       type: object
@@ -16954,6 +16961,13 @@ components:
         repository_url: {type: string}
         requested_ref: {type: string}
         credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
+        ssh_host_fingerprints:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          description: Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition.
+          items: {type: string, pattern: "^SHA256:[A-Za-z0-9+/]{43}$"}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     DockerfileResourceInput:
       type: object

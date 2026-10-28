@@ -25,6 +25,9 @@ const HostingBuildTriggerRevisionCapability = "hosting_build_trigger_revision_v1
 // does not advertise this feature.
 const HostingPrivateGitCapability = "hosting_git_https_basic_v1"
 
+// HostingSSHGitCapability identifies connected pinned-host SSH deploy-key checkout.
+const HostingSSHGitCapability = "hosting_git_ssh_private_key_v1"
+
 // HostingBuildProtocol identifies the immutable local source/build persistence contract.
 const HostingBuildProtocol = "local-build.v1"
 

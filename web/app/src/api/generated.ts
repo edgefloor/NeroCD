@@ -6268,7 +6268,7 @@ export interface components {
             source_generation: number;
             resource_id: string;
             /** @enum {string} */
-            kind: "https_basic";
+            kind: "https_basic" | "ssh_private_key";
             revoked: boolean;
         };
         HostingSourceCredentialRequest: {
@@ -6280,11 +6280,12 @@ export interface components {
             delivery_id: string;
             request_hash: string;
             /** @enum {string} */
-            credential_kind: "https_basic";
+            credential_kind: "https_basic" | "ssh_private_key";
+            /** @description Nonempty for HTTPS Basic; empty for SSH, whose username is in the repository URL. */
             username: string;
             /**
              * Format: byte
-             * @description Base64 UTF-8 password. Combined username, colon and decoded password must fit 4096 bytes.
+             * @description Base64 UTF-8 password or raw unencrypted SSH private key. Basic username, colon and password must fit 4096 bytes. SSH keys are limited to 65536 decoded bytes. The complete response is limited to 98304 bytes.
              */
             credential: string;
             /** Format: date-time */
@@ -6343,7 +6344,7 @@ export interface components {
             /** Format: int64 */
             expected_source_generation: number;
             idempotency_key: string;
-            /** @description Required for https_basic; forbidden for public. */
+            /** @description Required for https_basic and ssh_private_key; forbidden for public. */
             grant_id?: string;
         };
         HostingBuildCancelInput: {
@@ -8259,11 +8260,13 @@ export interface components {
             container_port?: number;
         };
         GitResourceInput: {
-            /** @description HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
+            /** @description Operator-allowed HTTPS URL or SSH repository URL. SSH supports ssh://user@host with an optional port and SCP user@host:path. No passwords or query/fragment components. */
             repository_url: string;
             requested_ref: string;
             /** @enum {string} */
-            credential_kind: "public" | "https_basic";
+            credential_kind: "public" | "https_basic" | "ssh_private_key";
+            /** @description Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition. */
+            ssh_host_fingerprints?: string[];
             settings: components["schemas"]["HostingBuildSettings"];
         };
         GitResourceSource: {
@@ -8274,6 +8277,8 @@ export interface components {
             requested_ref: string;
             /** @enum {string} */
             credential_kind: "public" | "https_basic" | "ssh_private_key";
+            /** @description Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition. */
+            ssh_host_fingerprints?: string[];
             settings: components["schemas"]["HostingBuildSettings"];
         };
         DockerfileResourceInput: {

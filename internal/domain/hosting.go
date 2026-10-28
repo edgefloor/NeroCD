@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,10 +61,11 @@ type DockerfileResourceSource struct {
 
 // GitResourceConfiguration is public, nonsecret desired build configuration.
 type GitResourceConfiguration struct {
-	RepositoryURL  string               `json:"repository_url"`
-	RequestedRef   string               `json:"requested_ref"`
-	CredentialKind string               `json:"credential_kind"`
-	Settings       HostingBuildSettings `json:"settings"`
+	SSHHostFingerprints []string             `json:"ssh_host_fingerprints,omitempty"`
+	RepositoryURL       string               `json:"repository_url"`
+	RequestedRef        string               `json:"requested_ref"`
+	CredentialKind      string               `json:"credential_kind"`
+	Settings            HostingBuildSettings `json:"settings"`
 }
 
 // GitResourceSource expands one exact immutable persisted source version.
@@ -245,6 +247,7 @@ func (s ResourceSourceInput) Source() ResourceSource {
 	if s.Git != nil {
 		out.Git = &GitResourceSource{GitResourceConfiguration: *s.Git}
 		out.Git.Settings = out.Git.Settings.Clone()
+		out.Git.SSHHostFingerprints = slices.Clone(out.Git.SSHHostFingerprints)
 	}
 	return out
 }
