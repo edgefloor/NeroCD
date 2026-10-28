@@ -31,7 +31,7 @@ export type DatabaseBackupTargetInput = {
 };
 export type DatabaseBackupTransfer = {
   id: string;
-  version: "postgresql.logical-s3-transfer.v1";
+  version: "postgresql.logical-s3-transfer.v1" | "mysql.logical-s3-transfer.v1";
   project_id: string;
   target_id: string;
   target_revision: number;
@@ -170,7 +170,7 @@ export function parseDatabaseBackupTransfer(
   );
   if (
     !identifier(v.id) ||
-    v.version !== "postgresql.logical-s3-transfer.v1" ||
+    !["postgresql.logical-s3-transfer.v1", "mysql.logical-s3-transfer.v1"].includes(String(v.version)) ||
     v.project_id !== scope.project ||
     !identifier(v.target_id) ||
     !positive(v.target_revision) ||
@@ -209,6 +209,7 @@ export function parseDatabaseBackupTransfer(
           : v.restore_operation_id !== undefined)
   )
     return fail();
+  if (v.version === "mysql.logical-s3-transfer.v1" && v.mode !== "upload") return fail();
   if (v.blob !== undefined) {
     const b = document(v.blob, ["digest", "bytes", "format"]);
     if (
@@ -217,14 +218,14 @@ export function parseDatabaseBackupTransfer(
       !Number.isSafeInteger(b.bytes) ||
       Number(b.bytes) < 5 ||
       Number(b.bytes) > 1073741824 ||
-      b.format !== "postgresql_custom"
+      b.format !== (v.version === "mysql.logical-s3-transfer.v1" ? "mysql_sql" : "postgresql_custom")
     )
       return fail();
   }
   if (v.mode !== "validate" && !v.blob) return fail();
   return {
     id: v.id,
-    version: "postgresql.logical-s3-transfer.v1",
+    version: v.version as DatabaseBackupTransfer["version"],
     project_id: scope.project,
     target_id: v.target_id,
     target_revision: v.target_revision,

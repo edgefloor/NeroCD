@@ -302,9 +302,10 @@ function remoteFixture() {
     validation,
   ]);
 }
-test("only current runner validation enables immediate remote choice and freezes the selected revision", async () => {
+test.each(["postgresql", "mysql"] as const)("%s current runner validation enables immediate remote choice and freezes the selected revision", async (engine) => {
   remoteFixture();
-  mount();
+  if (engine === "mysql") vi.mocked(api.listDatabaseBackups).mockResolvedValue([{ ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } }]);
+  mount(true, false, { ...database, engine });
   await screen.findAllByRole("option", { name: "Daily archive · revision 2" });
   fireEvent.change(screen.getByLabelText("Immediate backup destination"), {
     target: { value: "storage:2" },
@@ -329,15 +330,17 @@ test("wrong runner, stale revision and disabled targets cannot be selected", asy
     screen.queryAllByRole("option", { name: "Daily archive · revision 2" }),
   ).toHaveLength(0);
 });
-test("successful dump and failed upload persist as separate outcomes and retry replays the same archive fence", async () => {
+test.each(["postgresql", "mysql"] as const)("%s successful dump and failed upload persist as separate outcomes and retry replays the same archive fence", async (engine) => {
   remoteFixture();
+  if (engine === "mysql") vi.mocked(api.listDatabaseBackups).mockResolvedValue([{ ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } }]);
+  const engineUpload = engine === "mysql" ? { ...upload, version: "mysql.logical-s3-transfer.v1" as const, blob: { ...completed.blob!, format: "mysql_sql" as const } } : upload;
   vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([
-    { ...upload, state: "failed", failure_code: "access_denied" },
+    { ...engineUpload, state: "failed", failure_code: "access_denied" },
   ]);
   vi.mocked(remote.retryDatabaseBackupUpload)
     .mockRejectedValueOnce(new TypeError("network"))
-    .mockResolvedValueOnce({ ...upload, id: "upload_retry", state: "queued" });
-  mount();
+    .mockResolvedValueOnce({ ...engineUpload, id: "upload_retry", state: "queued" });
+  mount(true, false, { ...database, engine });
   expect(
     await screen.findByText(
       /Local dump: succeeded. Latest remote upload: failed/,
@@ -558,7 +561,7 @@ test.each([200,403])("Git database controls fail closed without current stack pr
 });
 
 
-test("MySQL exposes immediate local backup and a separate new-resource restore without PG remote controls", async () => {
+test("MySQL exposes immediate local backup and a separate new-resource restore without remote-only restore controls", async () => {
  const mysql = { ...database, engine: "mysql" as const };
  const backup: DatabaseBackup = { ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } };
  vi.mocked(api.listDatabaseBackups).mockResolvedValue([backup]);
@@ -567,7 +570,7 @@ test("MySQL exposes immediate local backup and a separate new-resource restore w
  mount(true, false, mysql);
  await screen.findByText("MySQL logical backups");
  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Back up now" }).disabled).toBe(false));
- expect(screen.queryByLabelText("Immediate backup destination")).toBeNull();
+ expect(screen.getByLabelText("Immediate backup destination")).toBeTruthy();
  expect(screen.queryByLabelText("Restore archive source")).toBeNull();
  expect(screen.getByText(/bytes · MySQL SQL dump/)).toBeTruthy();
  fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
@@ -577,5 +580,5 @@ test("MySQL exposes immediate local backup and a separate new-resource restore w
  fireEvent.click(screen.getByRole("button", { name: "Restore into new database" }));
  await waitFor(() => expect(api.restoreDatabaseBackup).toHaveBeenCalledOnce());
  expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3]).toMatchObject({ name: "Restored data" });
- expect(remote.listDatabaseBackupTransfers).not.toHaveBeenCalled();
+ expect(remote.listDatabaseBackupTransfers).toHaveBeenCalled();
 });

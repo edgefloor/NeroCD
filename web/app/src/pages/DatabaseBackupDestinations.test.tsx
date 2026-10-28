@@ -86,7 +86,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
-function mount(owner = true) {
+function mount(owner = true, engine: HostingDatabase["engine"] = "postgresql") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -95,7 +95,7 @@ function mount(owner = true) {
     <StrictMode>
       <QueryClientProvider client={client}>
         <DatabaseBackupDestinations
-          database={database}
+          database={{ ...database, engine }}
           scope={scope}
           owner={owner}
           blocked={false}
@@ -121,8 +121,8 @@ async function fill() {
   ])
     fireEvent.change(screen.getByLabelText(label!), { target: { value } });
 }
-test("owner creates with write-only keys, clears accepted keys, then omits credentials on edit", async () => {
-  const view = mount();
+test.each(["postgresql", "mysql"] as const)("%s owner creates with write-only keys, clears accepted keys, then omits credentials on edit", async (engine) => {
+  const view = mount(true, engine);
   await fill();
   expect(screen.queryByText(/Replacing keys revokes/)).toBeNull();
   fireEvent.click(

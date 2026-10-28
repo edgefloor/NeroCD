@@ -123,7 +123,6 @@ export function parseDatabaseBackup(
     )
       return fail();
   }
-  if (v.version === "mysql.logical-local.v1" && v.remote_target !== undefined) return fail();
   if (
     v.failure_code !== undefined &&
     !["execution_failed", "publication_failed", "interrupted"].includes(
@@ -224,6 +223,7 @@ export async function restoreDatabaseBackup(
   input: DatabaseRestoreInput,
   signal: AbortSignal,
 ) {
+  if (database.engine === "mysql" && input.remote_source !== undefined) return fail();
   if (
     input.remote_source !== undefined &&
     (!id(input.remote_source.transfer_id) ||

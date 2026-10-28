@@ -156,11 +156,19 @@ test("component discovery rejects foreign resource and Docker identity fields",a
 });
 
 
-test("MySQL history binds SQL format to its engine and rejects cross-engine or remote metadata", () => {
+test("MySQL history binds SQL format to its engine and rejects cross-engine metadata", () => {
  const mysql = { ...db, engine: "mysql" as const };
  const backup = { ...operation, version: "mysql.logical-local.v1", blob: { ...operation.blob, format: "mysql_sql" } };
  expect(parseDatabaseBackup(backup, scope, mysql)).toEqual(backup);
- for (const invalid of [operation, { ...backup, blob: operation.blob }, { ...backup, remote_target: { target_id: "target", revision: 1 } }]) expect(() => parseDatabaseBackup(invalid, scope, mysql)).toThrow();
+ expect(parseDatabaseBackup({ ...backup, remote_target: { target_id: "target", revision: 1 } }, scope, mysql).remote_target).toEqual({ target_id: "target", revision: 1 });
+ for (const invalid of [operation, { ...backup, blob: operation.blob }]) expect(() => parseDatabaseBackup(invalid, scope, mysql)).toThrow();
  expect(() => parseDatabaseBackup(backup, scope, { ...db, engine: "postgresql" })).toThrow();
  expect(() => parseDatabaseBackup(backup, scope, { ...db, engine: "redis" })).toThrow();
+});
+
+
+test("MySQL does not submit a remote-only restore request", async () => {
+ vi.mocked(request).mockClear();
+ await expect(restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", { request_id: "stable", name: "Restored", remote_source: { transfer_id: "upload", expected_target_revision: 1 } }, new AbortController().signal)).rejects.toThrow();
+ expect(request).not.toHaveBeenCalled();
 });

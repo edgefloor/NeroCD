@@ -122,7 +122,7 @@ function DatabaseBackupsPanel({
     : history.data ?? [];
   const transfers = useQueries({
     queries: records
-      .filter((v) => v.mode === "backup" && database.engine === "postgresql")
+      .filter((v) => v.mode === "backup")
       .map((v) => ({
         queryKey: databaseBackupTransfersKey(scope, v.id),
         queryFn: ({ signal }: { signal: AbortSignal }) =>
@@ -243,7 +243,7 @@ function DatabaseBackupsPanel({
       <p>
         A backup captures a consistent logical snapshot of the app database
         while source writes continue. The operator sets byte and execution
-        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate or scheduled local backups and restore into a separate new database. Retention and remote copies are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
+        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate or scheduled local backups and restore into a separate new database. Select a validated remote destination for an additional copy. Upload status is separate from dump completion. Remote-only restore and retention are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
       </p>
       <p>
         Restore creates a new private database with distinct credentials and
@@ -257,13 +257,13 @@ function DatabaseBackupsPanel({
         </p>
       ) : (
         <div className="space-y-3">
-          {database.engine === "postgresql" ? <BackupDestinationSelect
+          <BackupDestinationSelect
             label="Immediate backup destination"
             value={remoteTarget}
             onChange={setRemoteTarget}
             destinations={destinations}
             disabled={disabled || Boolean(attempt)}
-          /> : null}
+          />
           <Button
             type="button"
             className="h-auto max-w-full whitespace-normal"
@@ -459,7 +459,7 @@ function DatabaseBackupsPanel({
               </p>
             ) : null}
             {v.failure_code ? <p>Recorded reason: {v.failure_code}</p> : null}
-            {v.mode === "backup" && database.engine === "postgresql" ? (
+            {v.mode === "backup" ? (
               <BackupUploadStatus
                 database={database}
                 scope={scope}

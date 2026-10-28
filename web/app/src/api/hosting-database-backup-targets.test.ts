@@ -237,3 +237,14 @@ test("upload retry uses the existing backup and exact failed attempt fence", asy
   vi.mocked(request).mockResolvedValue([{ ...upload, backup_id: "foreign" }]);
   await expect(listDatabaseBackupTransfers(scope, "backup")).rejects.toThrow();
 });
+
+
+test("MySQL upload transfers bind their version to SQL format and exclude remote download", async () => {
+ const mysql = { ...transfer, version: "mysql.logical-s3-transfer.v1", mode: "upload", backup_id: "backup", blob: { ...blob, format: "mysql_sql" } };
+ expect(parseDatabaseBackupTransfer(mysql, scope)).toEqual(mysql);
+ for (const invalid of [{ ...mysql, blob }, { ...mysql, version: transfer.version }, { ...mysql, mode: "validate", backup_id: undefined, blob: undefined }, { ...mysql, mode: "download", restore_operation_id: "restore" }]) expect(() => parseDatabaseBackupTransfer(invalid, scope)).toThrow();
+ vi.mocked(request).mockResolvedValue(mysql);
+ const input = { request_id: "stable", expected_transfer_id: "previous" };
+ expect((await retryDatabaseBackupUpload(scope, "backup", input, new AbortController().signal)).blob).toEqual(mysql.blob);
+ expect(vi.mocked(request).mock.calls.at(-1)![1]).toMatchObject({ method: "POST", body: input });
+});

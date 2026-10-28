@@ -122,7 +122,7 @@ async function enabledButton(name = "Create backup schedule") {
 }
 test.each(["postgresql", "mysql"] as const)("%s StrictMode owner creates, edits and disables with exact reviewed revisions", async (engine) => {
   mount(true, true, { ...database, engine });
-  if (engine === "mysql") expect(screen.queryByLabelText("Scheduled backup destination")).toBeNull();
+  if (engine === "mysql") expect(screen.getByLabelText("Scheduled backup destination")).toBeTruthy();
   await enabledButton();
   fireEvent.change(screen.getByLabelText("Backup frequency"), {
     target: { value: "every_minute" },
@@ -314,7 +314,7 @@ test("denial removes scoped cached metadata and hides owner actions", async () =
   ).toBeNull();
 });
 
-test("schedule creation, editing and disable preserve the explicit remote target revision", async () => {
+test.each(["postgresql", "mysql"] as const)("%s schedule creation, editing and disable preserve the explicit remote target revision", async (engine) => {
   const target: remote.DatabaseBackupTarget = {
     id: "storage",
     project_id: "project",
@@ -344,7 +344,7 @@ test("schedule creation, editing and disable preserve the explicit remote target
       updated_at: saved.updated_at,
     },
   ]);
-  mount();
+  mount(true, false, { ...database, engine });
   await enabledButton();
   await screen.findByRole("option", { name: "Daily archive · revision 2" });
   fireEvent.change(screen.getByLabelText("Scheduled backup destination"), {

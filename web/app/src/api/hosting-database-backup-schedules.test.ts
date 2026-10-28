@@ -312,16 +312,17 @@ test("Compose create requires deployment, disable omits it, replies retain compo
 });
 
 
-test("MySQL schedules require native engine evidence and reject PostgreSQL, component, and remote metadata", () => {
+test("MySQL schedules require native engine evidence and reject PostgreSQL and component metadata", () => {
  const mysql = { ...db, engine: "mysql" as const };
  const local = { ...schedule, version: "mysql.logical-local.schedule.v1" };
  expect(parseDatabaseBackupSchedule(local, scope, mysql)).toEqual(local);
+ expect(parseDatabaseBackupSchedule({ ...local, remote_target: { target_id: "remote", revision: 1 } }, scope, mysql).remote_target).toEqual({ target_id: "remote", revision: 1 });
  for (const context of [db, { ...db, engine: "postgresql" as const }]) expect(() => parseDatabaseBackupSchedule(local, scope, context)).toThrow();
- for (const invalid of [schedule, { ...local, component: "mysql" }, { ...local, remote_target: { target_id: "remote", revision: 1 } }]) expect(() => parseDatabaseBackupSchedule(invalid, scope, mysql)).toThrow();
+ for (const invalid of [schedule, { ...local, component: "mysql" }]) expect(() => parseDatabaseBackupSchedule(invalid, scope, mysql)).toThrow();
  expect(parseDatabaseBackupOccurrence(occurrence, scope, mysql, "schedule")).toEqual(occurrence);
  expect(() => parseDatabaseBackupOccurrence({ ...occurrence, component: "mysql" }, scope, mysql, "schedule")).toThrow();
 });
-test("MySQL schedule transport keeps the native local payload and rejects remote or component requests before sending", async () => {
+test("MySQL schedule transport keeps the native payload and rejects component requests before sending", async () => {
  const mysql = { ...db, engine: "mysql" as const };
  const local = { ...schedule, version: "mysql.logical-local.schedule.v1" };
  const input = { request_id: "stable_request", expected_resource_generation: 2, expected_version: 0, frequency: "daily", timezone: "UTC", enabled: true };
@@ -330,6 +331,17 @@ test("MySQL schedule transport keeps the native local payload and rejects remote
  expect(await saveDatabaseBackupSchedule(scope, mysql, "", input, new AbortController().signal)).toEqual(local);
  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
  fetch.mockClear();
- for (const change of [{ remote_target: { target_id: "remote", revision: 1 } }, { component: "mysql", expected_deployed_operation_id: "operation" }, { expected_deployed_operation_id: "operation" }]) await expect(saveDatabaseBackupSchedule(scope, mysql, "", { ...input, ...change }, new AbortController().signal)).rejects.toThrow();
+ for (const change of [{ component: "mysql", expected_deployed_operation_id: "operation" }, { expected_deployed_operation_id: "operation" }]) await expect(saveDatabaseBackupSchedule(scope, mysql, "", { ...input, ...change }, new AbortController().signal)).rejects.toThrow();
  expect(fetch).not.toHaveBeenCalled();
+});
+
+
+test("MySQL remote schedules preserve the selected target revision in requests and responses", async () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const remote_target = { target_id: "remote", revision: 3 };
+ const input = { request_id: "stable", expected_resource_generation: 2, expected_version: 0, frequency: "hourly", timezone: "UTC", enabled: true, remote_target };
+ const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...schedule, version: "mysql.logical-local.schedule.v1", frequency: "hourly", remote_target })));
+ vi.stubGlobal("fetch", fetch);
+ expect((await saveDatabaseBackupSchedule(scope, mysql, "", input, new AbortController().signal)).remote_target).toEqual(remote_target);
+ expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
 });

@@ -194,7 +194,7 @@ function DatabaseBackupSchedulePanel({
         Disable stops future discovery. Accepted work keeps its original
         identity and authority checks. Overlapping backups of the same source
         are skipped. Missed, denied and failed occurrences remain in history.
-        External notifications are not available. {database.engine === "mysql" ? "MySQL schedules create local logical backups only. Remote copies and retention controls are not available for MySQL." : "Retention is configured in the backup retention section. Remote uploads have separate transfer status in backup history."}
+        External notifications are not available. {database.engine === "mysql" ? "MySQL schedules create local logical backups with an optional validated remote copy. Upload status is separate from dump completion. Retention and remote-only restore are not available for MySQL." : "Retention is configured in the backup retention section. Remote uploads have separate transfer status in backup history."}
       </p>
       {!owner ? (
         <p>
@@ -230,13 +230,13 @@ function DatabaseBackupSchedulePanel({
               onChange={(e) => setTimezone(e.target.value)}
             />
           </label>
-          {database.engine === "postgresql" ? <BackupDestinationSelect
+          <BackupDestinationSelect
             label="Scheduled backup destination"
             value={remoteTarget}
             onChange={setRemoteTarget}
             destinations={destinations}
             disabled={unavailable}
-          /> : null}
+          />
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -266,7 +266,7 @@ function DatabaseBackupSchedulePanel({
                     frequency,
                     timezone,
                     enabled,
-                    ...(database.engine === "postgresql" && remoteTarget ? { remote_target: remoteTarget } : {}),
+                    ...(remoteTarget ? { remote_target: remoteTarget } : {}),
                   },
                 })
               }
@@ -380,7 +380,7 @@ function DatabaseBackupSchedulePanel({
                           frequency: s.frequency,
                           timezone: s.timezone,
                           enabled: !s.enabled,
-                          ...(database.engine === "postgresql" && s.remote_target
+                          ...(s.remote_target
                             ? { remote_target: s.remote_target }
                             : {}),
                         },

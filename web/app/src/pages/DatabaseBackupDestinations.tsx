@@ -53,7 +53,7 @@ export function useDatabaseBackupDestinations({
     enabled:
       !blocked &&
       !accessRevoked &&
-      (!!storage || database?.engine === "postgresql"),
+      (!!storage || (database?.engine === "postgresql" || database?.engine === "mysql")),
     retry: false,
   });
   const validations = useQueries({
@@ -257,7 +257,7 @@ function DestinationPanel(props: Props) {
       onDenied();
     }
   }, [denied]);
-  if (!storage && database?.engine !== "postgresql") return null;
+  if (!storage && database?.engine !== "postgresql" && database?.engine !== "mysql") return null;
   if (denied)
     return <p role="alert">Backup destination access is unavailable.</p>;
   const unavailable =
