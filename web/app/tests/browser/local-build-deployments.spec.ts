@@ -186,7 +186,6 @@ test("actual source build to local deployment and settled HTTPS route is availab
     await expect(operationDetail.getByText("Readiness recorded at completion: passed.", { exact: true })).toBeVisible({ timeout: 120_000 });
     await probe("stored-A");
     await routes.getByRole("button", { name: "Refresh resource routes", exact: true }).click();
-    await routes.getByRole("button", { name: "Review refreshed routes for a separate request", exact: true }).click();
     await routeArticle.getByRole("button", { name: /^Edit route / }).click();
     await routes.getByLabel("Expected settled healthy deployment", { exact: true }).selectOption(operationB.id);
     const routeChange = page.waitForResponse(r => r.request().method() === "PATCH" && new URL(r.url()).pathname.startsWith("/api/v1/routes/"));
