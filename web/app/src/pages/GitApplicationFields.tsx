@@ -1,4 +1,7 @@
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { principalQuery } from "@/api";
+import { ImageRegistryCredential, type ImageRegistrySelection } from "@/components/hosting/ImageRegistryCredential";
 import type { components } from "@/api/generated";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,7 +23,7 @@ export function gitBuildVariablesError(settings: GitApplicationDraft["settings"]
  }
  return "";
 }
-export function GitApplicationFields({ value, onChange, disabled }: { value: GitApplicationDraft; onChange: (value: GitApplicationDraft) => void; disabled: boolean }) {
+export function GitApplicationFields({ value, onChange, disabled, projectID, onRegistryValidityChange }: { value: GitApplicationDraft; onChange: (value: GitApplicationDraft) => void; disabled: boolean; projectID?: string; onRegistryValidityChange?: (valid: boolean) => void }) {
  const id = useId();
  const settings = value.settings;
  const setBuildVariables = (rows: NonNullable<GitApplicationDraft["settings"]["build_variables"]>) => {
@@ -34,7 +37,7 @@ export function GitApplicationFields({ value, onChange, disabled }: { value: Git
   <div className="space-y-1.5"><label htmlFor={`${id}-ref`}>Git branch, tag, or commit</label><Input id={`${id}-ref`} required value={value.requested_ref} onChange={(event) => onChange({ ...value, requested_ref: event.target.value })} disabled={disabled} spellCheck={false} /></div>
   <div className="space-y-1.5"><label htmlFor={`${id}-credentials`}>Git source access</label><select id={`${id}-credentials`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={value.credential_kind} disabled={disabled} onChange={(event) => onChange({ ...value, credential_kind: event.target.value as GitApplicationDraft["credential_kind"] })}>{!["public", "https_basic"].includes(value.credential_kind) ? <option value={value.credential_kind} disabled>Unsupported saved credential kind</option> : null}<option value="public">Public HTTPS</option><option value="https_basic">Private HTTPS with a source grant</option></select></div>
   <p className="text-xs text-muted-foreground">The server controls allowed HTTPS hosts. Private HTTPS builds require an owner-created source grant referencing an existing managed secret version. SSH is not supported in this editor.</p>
-  <div className="space-y-1.5"><label htmlFor={`${id}-strategy`}>Build strategy</label><select id={`${id}-strategy`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={settings.strategy} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { strategy: event.target.value as GitApplicationDraft["settings"]["strategy"], ...(settings.context_dir ? { context_dir: settings.context_dir } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_variables?.length ? { build_variables: settings.build_variables } : {}), ...(event.target.value === "compose" ? { compose_file: "docker-compose.yaml", public_component: "", container_port: 80 } : {}) } })}><option value="dockerfile">Dockerfile</option><option value="railpack">Railpack</option><option value="static">Static assets</option><option value="compose">Docker Compose</option></select></div>
+  <div className="space-y-1.5"><label htmlFor={`${id}-strategy`}>Build strategy</label><select id={`${id}-strategy`} className="h-10 w-full min-w-0 rounded-xl border border-border bg-card px-2 text-sm" value={settings.strategy} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { strategy: event.target.value as GitApplicationDraft["settings"]["strategy"], ...(settings.context_dir ? { context_dir: settings.context_dir } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_registry_credential ? { build_registry_credential: { ...settings.build_registry_credential } } : {}), ...(["compose", "dockerfile"].includes(event.target.value) && settings.build_variables?.length ? { build_variables: settings.build_variables } : {}), ...(event.target.value === "compose" ? { compose_file: "docker-compose.yaml", public_component: "", container_port: 80 } : {}) } })}><option value="dockerfile">Dockerfile</option><option value="railpack">Railpack</option><option value="static">Static assets</option><option value="compose">Docker Compose</option></select></div>
   <div className="space-y-1.5"><label htmlFor={`${id}-context`}>Context directory</label><Input id={`${id}-context`} value={settings.context_dir ?? ""} onChange={(event) => setSetting("context_dir", event.target.value)} disabled={disabled} placeholder="Repository root when empty" spellCheck={false} /></div>
   {settings.strategy === "compose" ? <>
    <div className="space-y-1.5"><label htmlFor={`${id}-compose-file`}>Compose file</label><Input id={`${id}-compose-file`} value={settings.compose_file ?? ""} onChange={event => setSetting("compose_file", event.target.value)} disabled={disabled} required placeholder="docker-compose.yaml" spellCheck={false} aria-describedby={`${id}-compose-path-help`} /></div>
@@ -62,10 +65,34 @@ export function GitApplicationFields({ value, onChange, disabled }: { value: Git
     <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" disabled={disabled || (settings.build_variables?.length ?? 0) >= 64} onClick={() => setBuildVariables([...(settings.build_variables ?? []), { name: "", value: "" }])}>Add build variable</Button>
    </section>
   </> : null}
+  {projectID ? <BuildRegistryField value={value} projectID={projectID} disabled={disabled} onChange={onChange} onValidityChange={onRegistryValidityChange} /> : null}
   {settings.strategy === "static" ? <>
    <div className="space-y-1.5"><label htmlFor={`${id}-publish`}>Publish directory</label><Input id={`${id}-publish`} value={settings.publish_dir ?? ""} onChange={(event) => setSetting("publish_dir", event.target.value)} disabled={disabled} placeholder="Prepared assets in repository root when empty" spellCheck={false} /></div>
    <label className="flex items-center gap-2"><input type="checkbox" checked={settings.spa_fallback ?? false} disabled={disabled} onChange={(event) => onChange({ ...value, settings: { ...settings, spa_fallback: event.target.checked } })} />SPA fallback</label>
   </> : null}
   <p className="text-xs text-muted-foreground">Saving records configuration only. Request builds separately when enabled by your operator. Select a successful build to request deployment of its recorded artifact. Static assets must already be prepared.</p>
  </div>;
+}
+
+function BuildRegistryField({ value, projectID, disabled, onChange, onValidityChange }: { value: GitApplicationDraft; projectID: string; disabled: boolean; onChange: (value: GitApplicationDraft) => void; onValidityChange?: (valid: boolean) => void }) {
+ // The hosting page owns identity refresh. Observe it without starting a fetch.
+ const identity = useQuery({ ...principalQuery(), enabled: false });
+ const [denied, setDenied] = useState(false);
+ const supported = ["dockerfile", "compose"].includes(value.settings.strategy);
+ const ready = Boolean(identity.data) && !identity.isPending && !identity.isFetching && !identity.isError && !denied;
+ const actor = identity.data ? JSON.stringify([identity.data.provider, identity.data.id]) : "";
+ useEffect(() => { if (!supported) onValidityChange?.(true); else if (!ready) onValidityChange?.(false); }, [supported, ready, onValidityChange]);
+ if (!supported) return null;
+ const selected = value.settings.build_registry_credential;
+ return <>
+  {!ready ? <p role="alert">Build registry credential access is unavailable. Refresh access before saving this Git source.</p> : null}
+  {ready ? <ImageRegistryCredential key={JSON.stringify([actor, projectID])} actor={actor} project={projectID} image="" purpose="build" initialCredential={selected ?? undefined} disabled={disabled} onDenied={() => { setDenied(true); onValidityChange?.(false); }} onChange={(selection: ImageRegistrySelection) => {
+   onValidityChange?.(selection.valid);
+   if (!selection.valid) return;
+   const next = { ...value.settings };
+   if (selection.credential) next.build_registry_credential = { ...selection.credential }; else delete next.build_registry_credential;
+   if (JSON.stringify(next) !== JSON.stringify(value.settings)) onChange({ ...value, settings: next });
+  }} /> : null}
+  <p className="break-all text-sm">Selected build registry credential: {selected ? `${selected.secret_id}, version ${selected.version}` : "None"}. This does not select deployment registry credentials or a Git source grant.</p>
+ </>;
 }

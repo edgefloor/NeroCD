@@ -1622,6 +1622,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/builds/registry-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver selected build registry credential
+         * @description Live fenced building authority only. Snapshot-selected secret, audit before decryption. No-store protected transport; never journal credential material.
+         */
+        post: operations["deliverHostingBuildRegistryCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/builds/source-credential": {
         parameters: {
             query?: never;
@@ -8158,7 +8178,13 @@ export interface components {
             /** @description Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed. */
             value: string;
         };
+        HostingBuildRegistryCredentialRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+        };
         HostingBuildSettings: {
+            /** @description Explicit build registry credential for Dockerfile or Compose base images. Omitted or null clears the selection. Separate from Git source and deployment image credentials. Only the immutable secret reference is stored in build metadata. */
+            build_registry_credential?: components["schemas"]["HostingRegistryCredentialRef"] | null;
             /** @description Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source. */
             inject_build_args_to_dockerfile?: boolean | null;
             /** @description Compose or Dockerfile public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
@@ -14380,6 +14406,35 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingBuildRegistryCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildRegistryCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded protected registry credential */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRegistryCredentialDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };

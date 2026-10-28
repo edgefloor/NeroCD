@@ -13,7 +13,7 @@ vi.mock("@/api/hosting-database-backup-retention", async original => ({ ...await
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { ApiError } from "@/api";
+import { ApiError, queryKeys } from "@/api";
 import * as api from "@/api/hosting";
 import { ProjectHosting } from "./ProjectHosting";
 vi.mock("./DatabaseCreateForm", () => ({ DatabaseCreateForm: ({ projectID, environmentID }: { projectID: string; environmentID: string }) => <div>Database creation for {projectID}/{environmentID}</div> }));
@@ -46,6 +46,7 @@ afterEach(() => { cleanup(); for (const client of clients) client.clear(); clien
 function setup(writable = true, unavailable = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
+  client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] });
   const view = render(<QueryClientProvider client={client}><ProjectHosting projects={projects} canOperateProject={() => writable} unavailable={unavailable} /></QueryClientProvider>);
   fireEvent.change(screen.getByLabelText("Hosting project"), { target: { value: "one" } });
   return { client, ...view };
@@ -95,7 +96,7 @@ test.each([400, 401, 403, 404, 409, 500])("create failure %s keeps the submitted
   fireEvent.change(within(form).getByLabelText("Application name"), { target: { value: "Draft" } });
   fireEvent.change(within(form).getByLabelText("Image reference"), { target: { value: "team/app:2" } });
   fireEvent.submit(form);
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("req-hosting"));
+  expect(await within(form).findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("req-hosting"));
   expect(within(form).getByLabelText<HTMLInputElement>("Application name").value).toBe("Draft");
   expect(within(form).getByLabelText<HTMLInputElement>("Image reference").value).toBe("team/app:2");
 });
@@ -531,4 +532,80 @@ test("Dockerfile source conflict reviews current argument injection while preser
  fireEvent.click(screen.getByRole("button", { name: "Keep my draft with generation 2" }));
  fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
  expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: "https://github.com/acme/web", requested_ref: "main", credential_kind: "public", settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "draft" }] } } } });
+});
+
+function registryMetadata() {
+ vi.mocked(request).mockImplementation(async (url) => page(url.includes("/versions") ? [{ secret_id: "credential", version: 1 }, { secret_id: "credential", version: 2 }] : [{ id: "credential", project_id: "one", name: "Build access", status: "active" }, { id: "foreign", project_id: "other", name: "Foreign", status: "active" }]));
+}
+async function selectBuildRegistry(form: HTMLElement) {
+ fireEvent.change(within(form).getByLabelText("Build registry credential", { exact: true }), { target: { value: "private" } });
+ await within(form).findByRole("option", { name: "Build access · credential" });
+ expect(within(form).queryByRole("option", { name: "Foreign · foreign" })).toBeNull();
+ fireEvent.change(within(form).getByLabelText("Build registry credential secret"), { target: { value: "credential" } });
+ await within(form).findByRole("option", { name: "Version 1" });
+ fireEvent.change(within(form).getByLabelText("Build registry credential version"), { target: { value: "1" } });
+ await within(form).findByText(/Selected build registry credential: credential, version 1/);
+}
+test.each(["dockerfile", "compose"])("%s source creation requires an explicit build registry version and retains it through retry", async strategy => {
+ registryMetadata(); setup(); await selectEnvironment();
+ const form = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+ fireEvent.change(within(form).getByLabelText("Build strategy"), { target: { value: strategy } });
+ fireEvent.change(within(form).getByLabelText("Build registry credential", { exact: true }), { target: { value: "private" } });
+ fireEvent.submit(form); expect(api.createResource).not.toHaveBeenCalled();
+ await selectBuildRegistry(form);
+ vi.mocked(api.createResource).mockRejectedValueOnce(new ApiError(503, "unavailable", null)).mockResolvedValueOnce(resource);
+ fireEvent.submit(form); await within(form).findByRole("alert");
+ const original = vi.mocked(api.createResource).mock.calls[0]![0];
+ expect(original.source).toMatchObject({ kind: "git", git: { settings: { strategy, build_registry_credential: { secret_id: "credential", version: 1 } } } });
+ expect(JSON.stringify(original)).not.toContain('"registry_credential"');
+ fireEvent.submit(form); await screen.findByText("Application configuration saved. Deployment is a separate request.");
+ expect(vi.mocked(api.createResource).mock.calls[1]![0]).toEqual(original);
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential", { exact: true }).value).toBe("public");
+ expect(vi.mocked(request).mock.calls.some(([url, options]) => url.includes("reveal") || options?.method === "POST")).toBe(false);
+});
+test("saved build credential hydrates without substitution and can be explicitly cleared", async () => {
+ if (gitResource.source.kind !== "git") throw new Error("Expected Git resource");
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...gitResource.source.git, settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 1 } } } } };
+ vi.mocked(api.listResources).mockResolvedValue(page([saved])); registryMetadata(); setup();
+ const form = await edit(); await within(form).findByRole("option", { name: "Version 1" });
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential version").value).toBe("1");
+ expect(within(form).queryByLabelText("Registry password or token")).toBeNull();
+ fireEvent.change(within(form).getByLabelText("Build strategy"), { target: { value: "compose" } });
+ await within(form).findByText(/Selected build registry credential: credential, version 1/);
+ fireEvent.change(within(form).getByLabelText("Build registry credential", { exact: true }), { target: { value: "public" } });
+ await within(form).findByText(/Selected build registry credential: None/);
+ vi.mocked(api.updateResource).mockResolvedValue(saved);
+ fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(1));
+ const body = vi.mocked(api.updateResource).mock.calls[0]![1];
+ expect(body.source?.kind === "git" && body.source.git.settings).not.toHaveProperty("build_registry_credential");
+});
+test("build credential metadata denial blocks saving the source without falling back to public", async () => {
+ vi.mocked(request).mockRejectedValue(new ApiError(403, "denied", null)); setup(); await selectEnvironment();
+ const form = screen.getByRole("form", { name: "Create application" });
+ fireEvent.change(within(form).getByLabelText("Application source"), { target: { value: "git" } });
+ fireEvent.change(within(form).getByLabelText("Build registry credential", { exact: true }), { target: { value: "private" } });
+ await within(form).findByText(/Build registry credential access is unavailable/);
+ fireEvent.submit(form); expect(api.createResource).not.toHaveBeenCalled();
+ expect(within(form).getByRole<HTMLButtonElement>("button", { name: "Save application" }).disabled).toBe(true);
+});
+
+test("build credential source conflicts retain the exact draft version and require explicit generation review", async () => {
+ if (gitResource.source.kind !== "git") throw new Error("Expected Git resource");
+ const saved: api.Resource = { ...gitResource, source: { kind: "git", git: { ...gitResource.source.git, settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 1 } } } } };
+ if (saved.source.kind !== "git") throw new Error("Expected Git source");
+ const current: api.Resource = { ...saved, generation: 2, source: { kind: "git", git: { ...saved.source.git, generation: 3, settings: { ...saved.source.git.settings, build_registry_credential: { secret_id: "credential", version: 3 } } } } };
+ vi.mocked(api.listResources).mockResolvedValue(page([saved])); registryMetadata();
+ vi.mocked(api.updateResource).mockRejectedValueOnce(new ApiError(409, "stale", null)).mockResolvedValueOnce(current);
+ vi.mocked(api.getResource).mockResolvedValue(current); setup();
+ const form = await edit(); await within(form).findByRole("option", { name: "Version 2" });
+ fireEvent.change(within(form).getByLabelText("Build registry credential version"), { target: { value: "2" } });
+ fireEvent.submit(form); await screen.findByRole("button", { name: "Keep my draft with generation 2" });
+ const metadata = within(screen.getByRole("region", { name: "Current Git configuration" }));
+ expect(metadata.getByText("Current build registry credential").nextElementSibling?.textContent).toBe("credential, version 3");
+ expect(within(form).getByLabelText<HTMLSelectElement>("Build registry credential version").value).toBe("2");
+ expect(api.updateResource).toHaveBeenCalledTimes(1);
+ fireEvent.click(screen.getByRole("button", { name: "Keep my draft with generation 2" }));
+ fireEvent.submit(form); await waitFor(() => expect(api.updateResource).toHaveBeenCalledTimes(2));
+ expect(api.updateResource).toHaveBeenLastCalledWith("app", { expected_generation: 2, source: { kind: "git", git: { repository_url: saved.source.git.repository_url, requested_ref: saved.source.git.requested_ref, credential_kind: "public", settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 2 } } } } });
 });

@@ -53,6 +53,7 @@ function ApplicationFields({ name, image, setName, setImage, disabled, showImage
 
 function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource: Resource; writable: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [base, setBase] = useState(resource);
+  const [gitRegistryValid, setGitRegistryValid] = useState(resource.source.kind !== "git" || !resource.source.git.settings.build_registry_credential);
   const [name, setName] = useState(resource.name);
   const [compose, setCompose] = useState<ComposeApplicationDraft>(resource.source.kind === "compose" ? resource.source.compose : emptyComposeDraft());
   const [image, setImage] = useState(resource.source.kind === "image" ? resource.source.image.reference : "");
@@ -78,7 +79,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   }
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (busy || !writable || conflict || !changed) return;
+    if (busy || !writable || conflict || !changed || base.source.kind === "git" && !gitRegistryValid) return;
     const problem = base.source.kind === "git" ? gitBuildVariablesError(git.settings) : "";
     if (problem) { setError(problem); return; }
     setBusy(true);
@@ -107,7 +108,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
     <h4 className="font-medium">Edit application configuration</h4>
     <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy || !writable} showImage={base.source.kind === "image"} />
     {base.source.kind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy || !writable} /> : null}
-    {base.source.kind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy || !writable} /> : null}
+    {base.source.kind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy || !writable} projectID={resource.project_id} onRegistryValidityChange={setGitRegistryValid} /> : null}
     {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to save application. {error}</p> : null}
     {conflict ? <section className="space-y-2 rounded-lg border p-3" aria-label="Generation conflict">
       <p role="status">The saved configuration changed. Your draft is preserved. Review the current values before saving again.</p>
@@ -128,6 +129,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
             <dt>Current public Compose service</dt><dd>{latest.source.git.settings.public_component || "Not applicable"}</dd>
             <dt>Current public Compose service port</dt><dd>{latest.source.git.settings.container_port ?? "Not applicable"}</dd>
             <dt>Current Dockerfile ARG injection</dt><dd>{latest.source.git.settings.strategy === "dockerfile" ? latest.source.git.settings.inject_build_args_to_dockerfile === false ? "Disabled; use source declarations" : "Enabled" : "Not applicable"}</dd>
+            <dt>Current build registry credential</dt><dd>{latest.source.git.settings.build_registry_credential ? `${latest.source.git.settings.build_registry_credential.secret_id}, version ${latest.source.git.settings.build_registry_credential.version}` : "None"}</dd>
             <dt>Current build variables</dt><dd>{latest.source.git.settings.build_variables?.map(variable => `${variable.name}=${JSON.stringify(variable.value)}`).join(", ") || "None"}</dd>
             <dt>Current publish directory</dt><dd>{latest.source.git.settings.publish_dir || (latest.source.git.settings.strategy === "static" ? "Selected context root (default)" : "Not applicable")}</dd>
             <dt>Current SPA fallback</dt><dd>{latest.source.git.settings.spa_fallback ? "Enabled" : "Disabled (default)"}</dd>
@@ -139,7 +141,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
       {refreshError ? <p role="alert">Unable to load current configuration. {refreshError}</p> : null}
       <Button type="button" variant="outline" disabled={busy} onClick={() => void loadLatest()}>Reload current configuration</Button>
     </section> : null}
-    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy || !writable || conflict || !changed}>{busy ? "Saving configuration..." : "Save configuration"}</Button><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel edit</Button></div>
+    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy || !writable || conflict || !changed || base.source.kind === "git" && !gitRegistryValid}>{busy ? "Saving configuration..." : "Save configuration"}</Button><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel edit</Button></div>
   </form>;
 }
 
@@ -150,6 +152,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const [image, setImage] = useState("");
   const [compose, setCompose] = useState<ComposeApplicationDraft>(emptyComposeDraft());
   const [composeRequestID, setComposeRequestID] = useState(() => crypto.randomUUID().replaceAll("-", ""));
+  const [gitRegistryValid, setGitRegistryValid] = useState(true);
   const [sourceKind, setSourceKind] = useState<"image" | "git" | "compose">("image");
   const [git, setGit] = useState<GitApplicationDraft>(emptyGitDraft());
   const sourceSelectID = useId();
@@ -162,7 +165,7 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const refresh = async () => { await client.invalidateQueries({ queryKey: resourceKey(projectID) }); };
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (!canWrite || busy || editing) return;
+    if (!canWrite || busy || editing || sourceKind === "git" && !gitRegistryValid) return;
     const problem = sourceKind === "git" ? gitBuildVariablesError(git.settings) : "";
     if (problem) { setError(problem); return; }
     setBusy(true); setError(""); setNotice("");
@@ -203,8 +206,8 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
       <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git" | "compose")}><option value="image">Container image</option><option value="git">Git repository</option><option value="compose">Compose stack</option></select></div>
       <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} showImage={sourceKind === "image"} />
       {sourceKind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy} /> : null}
-      {sourceKind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy} /> : null}
-      <Button type="submit" disabled={!canWrite || busy || Boolean(editing)}>{busy ? "Saving application..." : "Save application"}</Button>
+      {sourceKind === "git" ? <GitApplicationFields key={composeRequestID} value={git} onChange={setGit} disabled={busy} projectID={projectID} onRegistryValidityChange={setGitRegistryValid} /> : null}
+      <Button type="submit" disabled={!canWrite || busy || Boolean(editing) || sourceKind === "git" && !gitRegistryValid}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}
     </form> : null}
     <HostingCatalog projectID={projectID} environmentID={environment.id} blocked={blocked || resources.isError || resources.isPending} />

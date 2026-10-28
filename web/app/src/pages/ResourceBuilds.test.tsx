@@ -206,3 +206,14 @@ test("Dockerfile build review retains public arguments and explicit source decla
  await screen.findByText(/Recorded build variables: MODE="release"/);
  expect(screen.getByText(/Recorded Dockerfile ARG injection: Disabled; use source declarations/)).toBeTruthy();
 });
+
+test("reviewed and recorded build registry references remain independent of source grants", async () => {
+ const settings = { strategy: "dockerfile" as const, build_registry_credential: { secret_id: "build-registry", version: 2 } };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build registry credential: build-registry, version 2/);
+ expect(screen.getByText(/Requires hosting_build_registry_v1/)).toBeTruthy();
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build registry credential: build-registry, version 2/);
+});

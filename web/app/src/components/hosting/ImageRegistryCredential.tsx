@@ -11,14 +11,14 @@ import { Input } from "@/components/ui/input";
 type Credential = NonNullable<HostingDeploymentInput["registry_credential"]>;
 export type ImageRegistrySelection = { credential?: Credential; valid: boolean };
 
-export function ImageRegistryCredential({ actor, project, image, compose = false, disabled, onChange, onDenied }: {
-  actor: string; project: string; image: string; compose?: boolean; disabled: boolean;
+export function ImageRegistryCredential({ actor, project, image, compose = false, purpose = "deployment", initialCredential, disabled, onChange, onDenied }: {
+  actor: string; project: string; image: string; compose?: boolean; purpose?: "deployment" | "build"; initialCredential?: Credential; disabled: boolean;
   onChange: (selection: ImageRegistrySelection) => void; onDenied: () => void;
 }) {
   const id = useId();
-  const [privateImage, setPrivateImage] = useState(false);
-  const [secret, setSecret] = useState("");
-  const [version, setVersion] = useState("");
+  const [privateImage, setPrivateImage] = useState(Boolean(initialCredential));
+  const [secret, setSecret] = useState(initialCredential?.secret_id ?? "");
+  const [version, setVersion] = useState(initialCredential ? String(initialCredential.version) : "");
   const [offset, setOffset] = useState(0);
   const [versionOffset, setVersionOffset] = useState(0);
   const [name, setName] = useState("");
@@ -80,27 +80,27 @@ export function ImageRegistryCredential({ actor, project, image, compose = false
     }
   }
   const locked = disabled || busy;
-  return <section aria-label="Image registry credentials" className="min-w-0 space-y-3 rounded-lg border p-3">
-    <label htmlFor={`${id}-mode`}>Image access</label>
-    <select id={`${id}-mode`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked} value={privateImage ? "private" : "public"} onChange={(event) => { setPrivateImage(event.target.value === "private"); clearSelection(); setPassword(""); setEntry((value) => value + 1); }}><option value="public">Public image</option><option value="private">Private registry</option></select>
+  return <section aria-label={purpose === "build" ? "Build registry credentials" : "Image registry credentials"} className="min-w-0 space-y-3 rounded-lg border p-3">
+    <label htmlFor={`${id}-mode`}>{purpose === "build" ? "Build registry credential" : "Image access"}</label>
+    <select id={`${id}-mode`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked} value={privateImage ? "private" : "public"} onChange={(event) => { if (purpose === "build") notify.current({ valid: event.target.value !== "private" }); setPrivateImage(event.target.value === "private"); clearSelection(); setPassword(""); setEntry((value) => value + 1); }}><option value="public">{purpose === "build" ? "No build registry credential" : "Public image"}</option><option value="private">{purpose === "build" ? "Select build registry credential" : "Private registry"}</option></select>
     {privateImage ? <>
-      <p className="break-all text-sm">{compose ? "Choose one registry credential for matching images pulled from registries. Images from other registries are pulled anonymously." : <>Choose credentials for the registry hosting {image}. The saved registry host must match the image registry, including its port.</>} Use docker.io for Docker Hub.</p>
-      <label htmlFor={`${id}-secret`}>Registry credential secret</label>
-      <select id={`${id}-secret`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked} value={secret} onChange={(event) => { setSecret(event.target.value); setVersion(""); setVersionOffset(0); }}><option value="">Choose an active project secret</option>{secrets.data?.items.filter((item) => item.project_id === project && item.status === "active").map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select>
+      <p className="break-all text-sm">{purpose === "build" ? "Choose one credential for matching registries used by Dockerfile FROM stages. Deployment registry access and Git source grants are selected separately." : compose ? "Choose one registry credential for matching images pulled from registries. Images from other registries are pulled anonymously." : <>Choose credentials for the registry hosting {image}. The saved registry host must match the image registry, including its port.</>} Use docker.io for Docker Hub.</p>
+      <label htmlFor={`${id}-secret`}>{purpose === "build" ? "Build registry credential secret" : "Registry credential secret"}</label>
+      <select id={`${id}-secret`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked} value={secret} onChange={(event) => { if (purpose === "build") notify.current({ valid: false }); setSecret(event.target.value); setVersion(""); setVersionOffset(0); }}><option value="">Choose an active project secret</option>{secrets.data?.items.filter((item) => item.project_id === project && item.status === "active").map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select>
       <PageNavigation label="registry secrets" page={secrets.data} loading={locked || secrets.isFetching} onFirst={() => { setOffset(0); clearSelection(); }} onPrevious={() => { setOffset(Math.max(0, offset - 20)); clearSelection(); }} onNext={() => { setOffset(offset + 20); clearSelection(); }} />
-      <label htmlFor={`${id}-version`}>Registry credential version</label>
-      <select id={`${id}-version`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked || !selected} value={version} onChange={(event) => setVersion(event.target.value)}><option value="">Choose an explicit version</option>{versions.data?.items.filter((item) => item.secret_id === secret && Number.isSafeInteger(item.version) && item.version > 0).map((item) => <option key={item.version} value={item.version}>Version {item.version}</option>)}</select>
+      <label htmlFor={`${id}-version`}>{purpose === "build" ? "Build registry credential version" : "Registry credential version"}</label>
+      <select id={`${id}-version`} className="w-full min-w-0 rounded border bg-card p-2" disabled={locked || !selected} value={version} onChange={(event) => { if (purpose === "build") notify.current({ valid: false }); setVersion(event.target.value); }}><option value="">Choose an explicit version</option>{versions.data?.items.filter((item) => item.secret_id === secret && Number.isSafeInteger(item.version) && item.version > 0).map((item) => <option key={item.version} value={item.version}>Version {item.version}</option>)}</select>
       {secret ? <PageNavigation label="registry credential versions" page={versions.data} loading={locked || versions.isFetching} onFirst={() => { setVersionOffset(0); setVersion(""); }} onPrevious={() => { setVersionOffset(Math.max(0, versionOffset - 20)); setVersion(""); }} onNext={() => { setVersionOffset(versionOffset + 20); setVersion(""); }} /> : null}
       <Button type="button" variant="outline" disabled={locked} onClick={() => { void secrets.refetch(); if (secret) void versions.refetch(); }}>Refresh registry credential metadata</Button>
       {secrets.isError || versions.isError ? <p role="alert">Credential metadata is unavailable. Refresh before selecting credentials.</p> : null}
-      <details className="min-w-0 space-y-2" onKeyDown={(event) => { if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); void create(); } }}><summary>Create a registry credential</summary>
+      {purpose !== "build" ? <details className="min-w-0 space-y-2" onKeyDown={(event) => { if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); void create(); } }}><summary>Create a registry credential</summary>
         <label htmlFor={`${id}-name`}>Registry secret name</label><Input id={`${id}-name`} autoComplete="off" value={name} disabled={locked} onChange={(event) => setName(event.target.value)} />
         <label htmlFor={`${id}-registry`}>Registry host</label><Input id={`${id}-registry`} placeholder="ghcr.io or registry.example.com:5000" autoComplete="off" value={registry} disabled={locked} onChange={(event) => setRegistry(event.target.value)} />
         <label htmlFor={`${id}-username`}>Registry username</label><Input id={`${id}-username`} autoComplete="off" value={username} disabled={locked} onChange={(event) => setUsername(event.target.value)} />
         <ProtectedSecretValue key={entry} id={`${id}-password`} label="Registry password or token" value={password} onChange={setPassword} disabled={locked} />
         <Button type="button" disabled={locked || !name.trim() || !registry.trim() || !username || !password} onClick={() => void create()}>Save registry credential</Button>
         {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
-      </details>
+      </details> : null}
     </> : null}
   </section>;
 }

@@ -82,3 +82,11 @@ test.each([undefined, null, true, false])("Dockerfile build cache preserves publ
  expect(decoded.snapshot.source.settings.build_variables).toEqual(settings.build_variables);
  expect(decoded.snapshot.source.settings.inject_build_args_to_dockerfile).toBe(injection);
 });
+
+test("public build cache keeps only the explicit build registry reference", async () => {
+ const raw = { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 2, password: "never-public" } } } } };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_registry_credential).toEqual({ secret_id: "credential", version: 2 });
+ expect(JSON.stringify(decoded)).not.toContain("never-public");
+});

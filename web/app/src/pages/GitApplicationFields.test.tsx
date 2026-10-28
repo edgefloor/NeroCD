@@ -95,3 +95,9 @@ test.each([undefined, null, true, false])("Dockerfile injection setting %j prese
  expect(JSON.parse(screen.getByRole("status").textContent!).settings.build_variables).toEqual([{ name: "MODE", value: "release" }]);
  expect(screen.queryByRole("checkbox", { name: "Inject build arguments into Dockerfile" })).toBeNull();
 });
+
+test.each(["railpack", "static"])("switching to %s clears the build registry credential", strategy => {
+ render(<Editor initial={{ ...emptyGitDraft(), settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 2 } } }} />);
+ fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } });
+ expect(JSON.parse(screen.getByRole("status").textContent!).settings).not.toHaveProperty("build_registry_credential");
+});
