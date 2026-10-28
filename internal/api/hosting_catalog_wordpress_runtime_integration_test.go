@@ -593,7 +593,7 @@ func TestWordPressComponentBackupEnrollment(t *testing.T) {
 	t.Cleanup(control.Close)
 	f := &storageRuntimeFixture{t: t, control: control, client: control.Client()}
 	f.token = createTestSession(t, server)
-	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.HostingDatabaseBackupComponentCapability, "hosting_compose_mysql_backup_v1", domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.RunTypeComposeDeploy}
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupComponentCapability}
 	created := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_wordpress_backup", RunnerName: "WordPress component backup", Capabilities: caps}, 201)
 	credential := "ncr_wordpress_component_backup_fixture"
 	consume := databaseRunnerEnrollmentConsumeInput(credential)
@@ -605,7 +605,7 @@ func TestWordPressComponentBackupEnrollment(t *testing.T) {
 	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, created.Token, "POST", "/api/v1/runner-enrollments/consume", decoded, 200)
 	client := runnerclient.New(control.URL, credential)
 	client.HTTP = control.Client()
-	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: true, RuntimeEnvironment: true})
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: true, RuntimeEnvironment: true, Proxy: true, ProxyVerifiedSwitch: true, RegistryPull: true, RuntimeLogs: true})
 	if err != nil || id != enrolled.Runner.ID {
 		t.Fatal("actual WordPress backup enrollment/profile rejected")
 	}
