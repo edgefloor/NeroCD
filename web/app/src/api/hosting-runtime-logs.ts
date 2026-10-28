@@ -12,7 +12,8 @@ const encoder = new TextEncoder();
 function fail(): never { throw new Error("Runtime log response is malformed or belongs to another scope"); }
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 function keys(value: unknown, required: string[], optional: string[] = []): asserts value is Record<string, unknown> {
-  if (!object(value) || required.some((key) => !(key in value)) || Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key))) fail();
+  const allowed = new Set([...required, ...optional]);
+  if (!object(value) || required.some((key) => !(key in value)) || Object.keys(value).some((key) => !allowed.has(key))) fail();
 }
 const id = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 256 && /^[\x21-\x7e]+$/.test(value);
 const random = (value: unknown) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);

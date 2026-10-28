@@ -234,3 +234,88 @@ func secretTestPhysicalTemp(t *testing.T) string {
 	}
 	return resolved
 }
+
+func TestExecuteClaimExactSecretsAreRedactedBeforeJournalAndTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name, secret, prefix string
+		forbidden            []string
+		output               string
+	}{
+		{"multiline", "canary-first\ncanary-second\n", "", []string{"canary-first", "canary-second"}, ""},
+		{"overlapping prefix", "canary-prefix-private-suffix", "canary-prefix", []string{"canary-prefix", "private-suffix"}, ""},
+		{"UTF-8 chunk boundaries", "canary-secret", "", []string{"canary-secret"}, strings.Repeat("€", 20000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NEROCD_TEST_EXACT_SECRET", tc.secret)
+			t.Setenv("NEROCD_TEST_PREFIX_SECRET", tc.prefix)
+			claim := secretTestClaim("")
+			claim.PrimitivePlan.Process.Command = []string{"/bin/sh", "-c", `printf 'before:'; printf '%s' "$TOKEN"; printf ':after'; printf '%s' "$SAFE_OUTPUT"`}
+			claim.PrimitivePlan.Process.Environment = map[string]string{"SAFE_OUTPUT": tc.output}
+			claim.PrimitivePlan.Secrets = []domain.SecretBinding{{Name: "exact", Provider: domain.ProviderEnv, Reference: "NEROCD_TEST_EXACT_SECRET", Target: "env:TOKEN", Required: true, Classification: runner.SecretClassificationDevelopment}}
+			if tc.prefix != "" {
+				claim.PrimitivePlan.Secrets = append(claim.PrimitivePlan.Secrets, domain.SecretBinding{Name: "prefix", Provider: domain.ProviderEnv, Reference: "NEROCD_TEST_PREFIX_SECRET", Target: "env:PREFIX", Required: true, Classification: runner.SecretClassificationDevelopment})
+			}
+			journal := openReplayTestJournal(t)
+			defer func() { _ = journal.Close() }()
+			var mu sync.Mutex
+			var stdout strings.Builder
+			checkedDurable := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/runners/renew", "/api/v1/runners/lease":
+					_ = json.NewEncoder(w).Encode(claim.Lease)
+				case "/api/v1/runners/secrets/access":
+					var input struct {
+						AccessID string `json:"access_id"`
+						Binding  string `json:"binding"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+						t.Error(err)
+					}
+					_ = json.NewEncoder(w).Encode(domain.SecretAccessGrant{AccessID: input.AccessID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Binding: input.Binding, Provider: domain.ProviderEnv})
+				case "/api/v1/runners/events/batch":
+					batch := decodeRunnerEventBatch(t, r)
+					mu.Lock()
+					for _, event := range journal.Snapshot().Events {
+						if event.Stream == domain.LogStdout {
+							checkedDurable = true
+						}
+						for _, fragment := range tc.forbidden {
+							if strings.Contains(event.Message, fragment) {
+								t.Error("secret bytes reached durable journal")
+							}
+						}
+					}
+					for _, event := range batch.Events {
+						for _, fragment := range tc.forbidden {
+							if strings.Contains(event.Message, fragment) {
+								t.Error("secret bytes reached event transport")
+							}
+						}
+						if event.Stream == domain.LogStdout {
+							stdout.WriteString(event.Message)
+						}
+					}
+					mu.Unlock()
+					writeRunnerEventBatchAck(t, w, batch)
+				case "/api/v1/runners/complete":
+					lease := claim.Lease
+					lease.Status = domain.RunSucceeded
+					_ = json.NewEncoder(w).Encode(lease)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					w.WriteHeader(500)
+				}
+			}))
+			defer server.Close()
+			if err := executeClaimWithJournalAndSecretRoot(server.URL, "token", claim, t.TempDir(), time.Hour, journal, ""); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !checkedDurable || stdout.String() != "before:"+runner.RedactionMarker+":after"+tc.output || journal.Depth() != 0 {
+				t.Fatal("exact secret did not remain redacted through durable reporting")
+			}
+		})
+	}
+}

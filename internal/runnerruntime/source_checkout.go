@@ -457,6 +457,11 @@ func scanSource(ctx context.Context, root string, l SourceCheckoutLimits, strict
 					}
 				}
 			}
+			// Git and transport cleanup can remove an already-open directory.
+			// Only the live workspace scan tolerates that deletion race.
+			if os.IsNotExist(readErr) && !strict {
+				return nil
+			}
 			if errors.Is(readErr, io.EOF) {
 				return nil
 			}

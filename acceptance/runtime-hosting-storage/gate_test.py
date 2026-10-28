@@ -1210,7 +1210,7 @@ class GitComposeContractTests(unittest.TestCase):
 
     def test_git_requests_are_checked_before_build_and_guest_setup(self):
         source = GATE.read_text()
-        command = "go test -count=1 ./internal/api -run '^TestGitComposeFixtureSourceAndRequestContracts$'"
+        command = "go test -count=1 ./internal/api -run '^TestGitCompose(FixtureSourceAndRequestContracts|BuildRegistryCredentialRotation|BuildSecretDependency)$'"
         self.assertIn('if [[ "$git_compose" == true ]]; then\n ' + command, source)
         position = source.index(command)
         for later in ['bun run --cwd web/app build', 'GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test', 'curl --fail', 'returned_outer=$(outer_run']:
@@ -1229,6 +1229,8 @@ class GitComposeContractTests(unittest.TestCase):
         self.assertIn("browser_git_compose_route_recovery", required)
         self.assertIn("browser_git_compose_registry_selection", required)
         self.assertIn("browser_git_compose_build_variables", required)
+        self.assertIn("browser_git_compose_build_registry_selection", required)
+        self.assertIn("browser_git_compose_build_secret_selection", required)
         for missing in [None, *required, "skip", "runtime"]:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

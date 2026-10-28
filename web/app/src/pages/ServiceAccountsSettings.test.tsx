@@ -376,3 +376,19 @@ test("StrictMode retires a missing account before commit and does not reopen it 
   expect(serviceAccountsAPI.revoke).not.toHaveBeenCalled();
   client.clear();
 });
+
+test("removing a project retires its credential and selection before that project returns", async () => {
+  serviceAccountsAPI.list.mockResolvedValue({ items: [], count: 0, limit: 10, offset: 0, total: 0 });
+  serviceAccountsAPI.create.mockResolvedValue({ service_account: account, credential: { expires_at: "2026-12-04T10:00:00Z" }, token: "nca_removed_project_secret" });
+  const view = renderPanel();
+  await screen.findByText("No service accounts on this page.");
+  fireEvent.change(screen.getByLabelText("Service account name"), { target: { value: "Build bot" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await screen.findByDisplayValue("nca_removed_project_secret");
+  view.rerender(<QueryClientProvider client={view.client}><ServiceAccountsSettingsPanel projects={projects.slice(1)} /></QueryClientProvider>);
+  expect(screen.queryByDisplayValue("nca_removed_project_secret")).toBeNull();
+  expect(screen.getByLabelText<HTMLSelectElement>("Service account project").value).toBe("proj_two");
+  view.rerender(<QueryClientProvider client={view.client}><ServiceAccountsSettingsPanel projects={projects} /></QueryClientProvider>);
+  expect(screen.queryByDisplayValue("nca_removed_project_secret")).toBeNull();
+  expect(screen.getByLabelText<HTMLSelectElement>("Service account project").value).toBe("proj_two");
+});

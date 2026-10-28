@@ -17,14 +17,34 @@ type SecretMaterial struct {
 	Encodings []string
 }
 
-// Redactor is an exact, streaming redactor. It retains only a suffix that is a
-// possible sensitive-pattern prefix, so values split across callbacks cannot
-// be persisted before their continuation is observed.
+// Redactor indexes immutable byte patterns in a failure-linked trie. Each stream
+// retains at most the longest pattern minus one bytes before emitting safe text.
+// Sparse children have at most 256 entries, independent of the pattern count.
 type Redactor struct {
-	mu       sync.Mutex
-	patterns []string
-	pending  map[string]string
-	order    []string
+	mu      sync.Mutex
+	nodes   []redactionNode
+	longest int
+	pending map[string]*redactionStream
+	order   []string
+}
+
+type redactionNode struct {
+	child     int32
+	sibling   int32
+	failure   int32
+	match     int32
+	lookahead int32
+	label     byte
+}
+
+type redactionInterval struct{ start, end int64 }
+
+type redactionStream struct {
+	state             int32
+	position, emitted int64
+	ring              []byte
+	matches           []redactionInterval
+	head              int
 }
 
 // NewRedactor constructs a streaming redactor for materials.
@@ -55,58 +75,170 @@ func NewRedactor(materials []SecretMaterial) *Redactor {
 			patterns = append(patterns, pattern)
 		}
 	}
-	sort.Slice(patterns, func(i, j int) bool {
-		if len(patterns[i]) == len(patterns[j]) {
-			return patterns[i] < patterns[j]
+	sort.Strings(patterns)
+	longest, count := 0, 1
+	previous := ""
+	for _, pattern := range patterns {
+		common := commonRedactionPrefix(previous, pattern)
+		count += len(pattern) - common
+		longest = max(longest, len(pattern))
+		previous = pattern
+	}
+	r := &Redactor{nodes: make([]redactionNode, count), longest: longest, pending: map[string]*redactionStream{}}
+	path := make([]int32, longest+1)
+	previous = ""
+	next := int32(1)
+	for _, pattern := range patterns {
+		common := commonRedactionPrefix(previous, pattern)
+		for depth := common; depth < len(pattern); depth++ {
+			parent := path[depth]
+			r.nodes[next] = redactionNode{label: pattern[depth], sibling: r.nodes[parent].child, lookahead: int32(depth + 1)}
+			r.nodes[parent].child = next
+			path[depth+1] = next
+			next++
 		}
-		return len(patterns[i]) > len(patterns[j])
-	})
-	return &Redactor{patterns: patterns, pending: map[string]string{}}
+		r.nodes[path[len(pattern)]].match = int32(len(pattern))
+		previous = pattern
+	}
+	r.linkFailures()
+	return r
 }
 
-// Redact removes known secret material from text.
+func commonRedactionPrefix(a, b string) int {
+	n := 0
+	for n < min(len(a), len(b)) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
+func (r *Redactor) child(state int32, label byte) int32 {
+	for child := r.nodes[state].child; child != 0; child = r.nodes[child].sibling {
+		if r.nodes[child].label == label {
+			return child
+		}
+	}
+	return 0
+}
+
+func (r *Redactor) advance(state int32, label byte) int32 {
+	for {
+		if child := r.child(state, label); child != 0 {
+			return child
+		}
+		if state == 0 {
+			return 0
+		}
+		state = r.nodes[state].failure
+	}
+}
+
+func (r *Redactor) linkFailures() {
+	// Keep only the two breadth frontiers, rather than a queue of every node.
+	var current, next []int32
+	for child := r.nodes[0].child; child != 0; child = r.nodes[child].sibling {
+		if r.nodes[child].child == 0 {
+			r.nodes[child].lookahead = 0
+		}
+		current = append(current, child)
+	}
+	for len(current) > 0 {
+		next = next[:0]
+		for _, parent := range current {
+			for child := r.nodes[parent].child; child != 0; child = r.nodes[child].sibling {
+				failure := r.advance(r.nodes[parent].failure, r.nodes[child].label)
+				r.nodes[child].failure = failure
+				r.nodes[child].match = max(r.nodes[child].match, r.nodes[failure].match)
+				if r.nodes[child].child == 0 {
+					r.nodes[child].lookahead = r.nodes[failure].lookahead
+				}
+				next = append(next, child)
+			}
+		}
+		current, next = next, current
+	}
+}
+
+// Redact removes protected spans without rescanning replacement markers.
 func (r *Redactor) Redact(text string) string {
-	if r == nil {
+	if r == nil || r.longest == 0 {
 		return text
 	}
-	for _, pattern := range r.patterns {
-		text = strings.ReplaceAll(text, pattern, RedactionMarker)
-	}
-	return text
+	stream := &redactionStream{ring: make([]byte, r.longest)}
+	var safe strings.Builder
+	r.writeChunk(stream, text, &safe)
+	stream.emit(&safe, stream.position)
+	clear(stream.ring)
+	return safe.String()
 }
 
 // RedactChunk redacts one output chunk while preserving stream boundaries.
-func (r *Redactor) RedactChunk(stream, chunk string) string {
-	if r == nil || len(r.patterns) == 0 {
+func (r *Redactor) RedactChunk(name, chunk string) string {
+	if r == nil || r.longest == 0 {
 		return chunk
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.pending[stream]; !exists {
-		r.order = append(r.order, stream)
+	stream := r.pending[name]
+	if stream == nil {
+		stream = &redactionStream{ring: make([]byte, r.longest)}
+		r.pending[name] = stream
+		r.order = append(r.order, name)
 	}
-	pending := r.pending[stream]
 	var safe strings.Builder
-	for index := 0; index < len(chunk); index++ {
-		pending += chunk[index : index+1]
-		for len(pending) > 0 {
-			if r.isPattern(pending) {
-				safe.WriteString(RedactionMarker)
-				pending = ""
-				break
-			}
-			if r.isPatternPrefix(pending) {
-				break
-			}
-			safe.WriteByte(pending[0])
-			pending = pending[1:]
-		}
-	}
-	r.pending[stream] = pending
+	r.writeChunk(stream, chunk, &safe)
 	return safe.String()
 }
 
-// Flush returns any buffered redacted output.
+func (r *Redactor) writeChunk(stream *redactionStream, chunk string, safe *strings.Builder) {
+	for i := 0; i < len(chunk); i++ {
+		stream.ring[stream.position%int64(len(stream.ring))] = chunk[i]
+		stream.position++
+		stream.state = r.advance(stream.state, chunk[i])
+		if size := r.nodes[stream.state].match; size > 0 {
+			stream.protect(redactionInterval{start: stream.position - int64(size), end: stream.position})
+		}
+		stream.emit(safe, stream.position-int64(r.nodes[stream.state].lookahead))
+	}
+}
+
+func (s *redactionStream) protect(span redactionInterval) {
+	// End positions increase. Merge only overlapping spans; adjacent secrets
+	// retain separate replacement markers. Every interval is inserted once.
+	for len(s.matches) > s.head && span.start < s.matches[len(s.matches)-1].end {
+		last := s.matches[len(s.matches)-1]
+		span.start = min(span.start, last.start)
+		s.matches = s.matches[:len(s.matches)-1]
+	}
+	if s.head > 0 && len(s.matches) == cap(s.matches) {
+		copy(s.matches, s.matches[s.head:])
+		s.matches = s.matches[:len(s.matches)-s.head]
+		s.head = 0
+	}
+	s.matches = append(s.matches, span)
+}
+
+func (s *redactionStream) emit(safe *strings.Builder, until int64) {
+	for s.emitted < until {
+		for s.head < len(s.matches) && s.matches[s.head].end <= s.emitted {
+			s.head++
+		}
+		if s.head < len(s.matches) && s.matches[s.head].start <= s.emitted {
+			if s.matches[s.head].start == s.emitted {
+				safe.WriteString(RedactionMarker)
+			}
+		} else {
+			safe.WriteByte(s.ring[s.emitted%int64(len(s.ring))])
+		}
+		s.emitted++
+	}
+	if s.head == len(s.matches) {
+		s.matches = s.matches[:0]
+		s.head = 0
+	}
+}
+
+// Flush returns remaining protected stream text and releases all stream buffers.
 func (r *Redactor) Flush() []ProcessEvent {
 	if r == nil {
 		return nil
@@ -114,37 +246,16 @@ func (r *Redactor) Flush() []ProcessEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	events := make([]ProcessEvent, 0, len(r.order))
-	for _, stream := range r.order {
-		if pending := r.pending[stream]; pending != "" {
-			events = append(events, ProcessEvent{Stream: stream, Message: r.redactLocked(pending)})
+	for _, name := range r.order {
+		stream := r.pending[name]
+		var safe strings.Builder
+		stream.emit(&safe, stream.position)
+		if safe.Len() > 0 {
+			events = append(events, ProcessEvent{Stream: name, Message: safe.String()})
 		}
-		delete(r.pending, stream)
+		clear(stream.ring)
+		delete(r.pending, name)
 	}
 	r.order = nil
 	return events
-}
-
-func (r *Redactor) isPattern(value string) bool {
-	for _, pattern := range r.patterns {
-		if value == pattern {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *Redactor) isPatternPrefix(value string) bool {
-	for _, pattern := range r.patterns {
-		if len(value) < len(pattern) && strings.HasPrefix(pattern, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *Redactor) redactLocked(text string) string {
-	for _, pattern := range r.patterns {
-		text = strings.ReplaceAll(text, pattern, RedactionMarker)
-	}
-	return text
 }

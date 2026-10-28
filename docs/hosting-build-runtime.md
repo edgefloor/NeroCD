@@ -1,6 +1,6 @@
 # Build execution in the Go agent
 
-The normal `nerocd runner` can execute public and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
+The normal `nerocd runner` can execute stored Dockerfile, public HTTPS Git, and explicitly enabled private HTTPS or SSH Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT and SSH deploy-key delivery are connected to the checkout path under the configuration below.
 
 Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode-0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
 
@@ -61,7 +61,61 @@ The shape below illustrates the fields; replace identifiers, digests, paths and 
 
 All duration integers are nanoseconds: `100000000` is 100 ms, `5000000000` is 5 seconds and `600000000000` is 10 minutes. `ComputeBuildToolchainIdentity` computes the canonical inventory identity from fixed pins and the bounded actual Docker binary hash. Local paths are not published as identity data. See [the engine prerequisites](hosting-build-engine.md) for delegated cgroup ownership, trusted privileged BuildKit, fixed toolchain pins and monitored disk overshoot. These settings provide no hard disk quota or hostile-fork isolation.
 
-The runner advertises `hosting_build_v1` only with validated execution configuration. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
+The runner advertises `hosting_build_v1` only with validated execution configuration. It also advertises `hosting_dockerfile_args_v1`, required for nonempty Dockerfile build variables at admission, claim and current execution. Legacy builds without variables and Railpack retain their existing capability requirements. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
+
+## Enable stored Dockerfile builds
+
+Validated build configuration advertises `hosting_stored_dockerfile_v1` alongside
+`hosting_build_v1`. Admission, claim, and live execution require both for a
+stored source. No private Git configuration or source grant is needed. Review
+persisted enrollment capabilities before restarting an upgraded runner, as with
+other capability changes.
+
+The runner writes the exact saved content into an owned Dockerfile-only context,
+records the acquired content hash and tree digest, then uses the existing build
+engine and local artifact lifecycle. It preserves uncertain cleanup and retained
+journal evidence. Follow the [stored Dockerfile workflow](hosting-build-deployments.md#build-a-stored-dockerfile)
+to save, build, deploy, and route an application.
+
+## Enable managed build-secret delivery
+
+Validated build configuration advertises `hosting_build_secrets_v1`. Dockerfile
+and Compose builds selecting `settings.build_secrets` require that capability at
+admission, claim and execution. Delivery uses protected controller HTTPS and the
+full live build authority. A fresh attempt stages owner-only secret files outside
+the checkout, passes their paths through BuildKit `--secret`, and removes them
+after execution. Values are excluded from saved configuration, request identities
+and durable journals. Authorized metadata replay does not reacquire secret values.
+
+The existing indexed output redactor covers configured raw values, supported
+encodings and multiline fragments before durable output. This is not a sandbox
+against malicious build instructions. See [selection and qualification](hosting-git-resources.md#select-managed-build-secrets).
+
+## Trust a private build-registry CA
+
+Validated build configuration advertises `hosting_build_registry_v1`. Selected
+Dockerfile and Compose build credentials require that capability at admission,
+claim and current execution. Existing authorized metadata replay retains its
+original identity. Credentials are delivered only for a fresh build into an
+isolated exact-host Docker config, then removed; they are not stored in the
+engine request or retained journal.
+
+For a registry outside normal public trust, add an operator-controlled map under
+`engine` in the runner build configuration:
+
+```json
+"registry_ca_certificates": {
+  "registry.example.test:5443": "/etc/nerocd/registry-ca.pem"
+}
+```
+
+Keys are canonical exact registry hosts with optional ports. Up to eight absolute
+regular PEM files are accepted, each at most 256 KiB and containing only valid CA
+certificates. No path component may be a symlink. BuildKit receives scoped CA
+configuration and read-only copies. CA content digests, rather than local paths,
+bind the toolchain and build identities. Configure trust before computing the
+operator toolchain identity and matching policy. The application API and UI cannot
+change this trust configuration; TLS verification remains enabled.
 
 ## Enable private HTTPS Git
 
@@ -126,10 +180,38 @@ typed output and CLI output, and checkout cleanup is checked.
 
 This bounded qualification uses seeded accounts, existing secret metadata,
 trusted Linux/Docker placement and a local test CA. It does not establish arbitrary
-Railpack language providers, Nixpacks, hostile-input isolation, SSH/provider
-adapters, complete onboarding, universal redaction, or production ACME. See the
+Railpack language providers, Nixpacks, hostile-input isolation, SSH or provider
+adapters, complete onboarding, universal redaction, or production ACME. SSH has a
+[separate deploy-key qualification](hosting-git-resources.md#ssh-deploy-key-qualification). See the
 [fixture instructions](../acceptance/runtime-hosting-local-build/README.md) and
 [support limits](compatibility.md).
+
+## Enable private SSH Git
+
+Use the same top-level `private_git` configuration and protected controller
+transport described [above](#enable-private-https-git). No separate SSH enable
+flag or key belongs in the runner configuration. Private Git configuration adds
+`hosting_git_ssh_private_key_v1` alongside `hosting_git_https_basic_v1` and
+`hosting_build_v1`. Review persisted enrollment capabilities before restarting an
+upgraded runner. SSH admission, claim, and live execution require the SSH
+capability and the current source grant.
+
+Install `git`, `ssh`, `ssh-keyscan`, and `ssh-keygen` on the build runner. The
+operator's allowed Git hosts apply to SSH too. Each saved SSH source supplies an
+explicit username and verified host fingerprints. The runner checks the resolved
+address against repository policy and connects to that pinned address. It scans
+host keys and accepts only keys matching the configured SHA256 fingerprints.
+Strict host checking remains enabled with an isolated `known_hosts` file.
+Ambient SSH agents and user SSH configuration do not authorize checkout.
+
+A project owner grants an exact managed-secret version containing a raw,
+unencrypted PEM or OpenSSH private key, at most 65,536 bytes. The protected
+credential endpoint rechecks full live attempt authority before delivery. The
+runner writes an owner-only key file outside the checkout and removes credential
+material and Git metadata before build-engine use. Existing deadline,
+cancellation, journal replay, and uncertain-cleanup rules still apply. Follow the
+[SSH deploy-key workflow](hosting-git-resources.md#build-a-private-git-repository-with-an-ssh-deploy-key)
+to save the source, select its key version, build, deploy, and route it.
 
 ## Placement, lifecycle and replay
 

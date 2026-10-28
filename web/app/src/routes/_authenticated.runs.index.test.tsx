@@ -1,7 +1,7 @@
 import { Profiler, StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { RunsRoute } from "./_authenticated.runs.index";
+import { RunsRoute } from "@/components/runs/RunsRoute";
 
 const navigate = vi.hoisted(() => vi.fn());
 const cancellation = vi.hoisted(() => ({ isPending: false, mutate: vi.fn() }));

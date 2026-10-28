@@ -441,12 +441,18 @@ func ExpandHostingStackValue(expression string, values map[string]string, requir
 	var out strings.Builder
 	for i := 0; i < len(expression); {
 		if expression[i] != '$' {
+			if out.Len() == 4096 {
+				return "", errors.New("expanded Compose value exceeds limit")
+			}
 			out.WriteByte(expression[i])
 			i++
 			continue
 		}
 		i++
 		if i < len(expression) && expression[i] == '$' {
+			if out.Len() == 4096 {
+				return "", errors.New("expanded Compose value exceeds limit")
+			}
 			out.WriteByte('$')
 			i++
 			continue
@@ -520,10 +526,10 @@ func ExpandHostingStackValue(expression string, values map[string]string, requir
 				return "", fmt.Errorf("compose variable %s is required and nonempty", name)
 			}
 		}
+		if len(value) > 4096-out.Len() {
+			return "", errors.New("expanded Compose value exceeds limit")
+		}
 		out.WriteString(value)
-	}
-	if out.Len() > 4096 {
-		return "", errors.New("expanded Compose value exceeds limit")
 	}
 	return out.String(), nil
 }

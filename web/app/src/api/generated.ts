@@ -1622,6 +1622,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/builds/registry-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver selected build registry credential
+         * @description Live fenced building authority only. Snapshot-selected secret, audit before decryption. No-store protected transport; never journal credential material.
+         */
+        post: operations["deliverHostingBuildRegistryCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/builds/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver selected build secrets
+         * @description Live fenced building authority only. Snapshot-selected secrets, audit before decryption. No-store protected transport; never journal credential material.
+         */
+        post: operations["deliverHostingBuildSecrets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/builds/source-credential": {
         parameters: {
             query?: never;
@@ -6228,7 +6268,7 @@ export interface components {
             source_generation: number;
             resource_id: string;
             /** @enum {string} */
-            kind: "https_basic";
+            kind: "https_basic" | "ssh_private_key";
             revoked: boolean;
         };
         HostingSourceCredentialRequest: {
@@ -6240,11 +6280,12 @@ export interface components {
             delivery_id: string;
             request_hash: string;
             /** @enum {string} */
-            credential_kind: "https_basic";
+            credential_kind: "https_basic" | "ssh_private_key";
+            /** @description Nonempty for HTTPS Basic; empty for SSH, whose username is in the repository URL. */
             username: string;
             /**
              * Format: byte
-             * @description Base64 UTF-8 password. Combined username, colon and decoded password must fit 4096 bytes.
+             * @description Base64 UTF-8 password or raw unencrypted SSH private key. Basic username, colon and password must fit 4096 bytes. SSH keys are limited to 65536 decoded bytes. The complete response is limited to 98304 bytes.
              */
             credential: string;
             /** Format: date-time */
@@ -6303,7 +6344,7 @@ export interface components {
             /** Format: int64 */
             expected_source_generation: number;
             idempotency_key: string;
-            /** @description Required for https_basic; forbidden for public. */
+            /** @description Required for https_basic and ssh_private_key; forbidden for public. */
             grant_id?: string;
         };
         HostingBuildCancelInput: {
@@ -6319,11 +6360,14 @@ export interface components {
             fence: string;
         };
         HostingBuildSourceReceipt: {
+            /** @enum {string} */
+            kind?: "dockerfile";
+            content_hash?: string;
             build_id: string;
             source_id: string;
             input_id: string;
-            commit: string;
-            policy_hash: string;
+            commit?: string;
+            policy_hash?: string;
             tree_digest: string;
         };
         HostingBuildArtifact: {
@@ -6418,11 +6462,19 @@ export interface components {
         };
         PublicHostingBuildSource: {
             source_id: string;
+            /** Format: int64 */
+            generation: number;
             repository_url: string;
             requested_ref: string;
             credential_kind: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        } | {
+            /** @enum {string} */
+            kind: "dockerfile";
+            source_id: string;
             /** Format: int64 */
             generation: number;
+            content_hash: string;
             settings: components["schemas"]["HostingBuildSettings"];
         };
         PublicHostingBuildTarget: {
@@ -6446,6 +6498,11 @@ export interface components {
         };
         PublicHostingBuildSourceReceipt: {
             commit: string;
+            tree_digest: string;
+        } | {
+            /** @enum {string} */
+            kind: "dockerfile";
+            content_hash: string;
             tree_digest: string;
         };
         PublicHostingBuildArtifact: {
@@ -8158,8 +8215,35 @@ export interface components {
             /** @description Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed. */
             value: string;
         };
+        HostingBuildRegistryCredentialRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+        };
+        HostingBuildSecretReference: {
+            /** @description Unique RUN environment name. Same reserved names as public build variables. Cannot collide with build_variables. */
+            name: string;
+            secret: components["schemas"]["HostingRegistryCredentialRef"];
+        };
+        HostingBuildSecretsDelivery: {
+            /** Format: date-time */
+            use_until: string;
+            secrets: {
+                name: string;
+                value: string;
+            }[];
+        };
+        HostingBuildSecretsRequest: {
+            authority: components["schemas"]["HostingBuildAuthority"];
+            delivery_id: string;
+        };
         HostingBuildSettings: {
-            /** @description Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
+            /** @description Explicit managed secret versions for Dockerfile or Compose RUN environments. Only references enter immutable metadata. Values are delivered for live fresh builds and staged outside the source context. */
+            build_secrets?: components["schemas"]["HostingBuildSecretReference"][];
+            /** @description Explicit build registry credential for Dockerfile or Compose base images. Omitted or null clears the selection. Separate from Git source and deployment image credentials. Only the immutable secret reference is stored in build metadata. */
+            build_registry_credential?: components["schemas"]["HostingRegistryCredentialRef"] | null;
+            /** @description Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source. */
+            inject_build_args_to_dockerfile?: boolean | null;
+            /** @description Compose or Dockerfile public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings. */
             build_variables?: components["schemas"]["HostingBuildVariable"][];
             /** @enum {string} */
             strategy: "dockerfile" | "railpack" | "static" | "compose";
@@ -8176,11 +8260,13 @@ export interface components {
             container_port?: number;
         };
         GitResourceInput: {
-            /** @description HTTPS URL allowed by the server operator. No credentials or query/fragment components. */
+            /** @description Operator-allowed HTTPS URL or SSH repository URL. SSH supports ssh://user@host with an optional port and SCP user@host:path. No passwords or query/fragment components. */
             repository_url: string;
             requested_ref: string;
             /** @enum {string} */
-            credential_kind: "public" | "https_basic";
+            credential_kind: "public" | "https_basic" | "ssh_private_key";
+            /** @description Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition. */
+            ssh_host_fingerprints?: string[];
             settings: components["schemas"]["HostingBuildSettings"];
         };
         GitResourceSource: {
@@ -8191,14 +8277,37 @@ export interface components {
             requested_ref: string;
             /** @enum {string} */
             credential_kind: "public" | "https_basic" | "ssh_private_key";
+            /** @description Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition. */
+            ssh_host_fingerprints?: string[];
             settings: components["schemas"]["HostingBuildSettings"];
         };
-        ResourceSourceInput: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
+        DockerfileResourceInput: {
+            /** @description Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile. */
+            content: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        DockerfileResourceSource: {
+            source_id: string;
+            /** Format: int64 */
+            generation: number;
+            content_hash: string;
+            content: string;
+            settings: components["schemas"]["HostingBuildSettings"];
+        };
+        ResourceSourceInput: {
+            /** @enum {string} */
+            kind: "dockerfile";
+            dockerfile: components["schemas"]["DockerfileResourceInput"];
+        } | components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceInput"];
         };
-        ResourceSource: components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
+        ResourceSource: {
+            /** @enum {string} */
+            kind: "dockerfile";
+            dockerfile: components["schemas"]["DockerfileResourceSource"];
+        } | components["schemas"]["ComposeResourceSource"] | components["schemas"]["ImageResourceSource"] | {
             /** @enum {string} */
             kind: "git";
             git: components["schemas"]["GitResourceSource"];
@@ -12523,6 +12632,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupVolumes"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Current viewer or destination authority is absent */
             403: {
                 headers: {
@@ -12632,6 +12742,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupDownloadPlan"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Authority denied */
             403: {
                 headers: {
@@ -12677,6 +12788,7 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Authority denied */
             403: {
                 headers: {
@@ -12720,6 +12832,7 @@ export interface operations {
                     "application/json": components["schemas"]["HostingStorageBackupDownloadOptions"];
                 };
             };
+            401: components["responses"]["Error"];
             /** @description Current owner or destination access denied */
             403: {
                 headers: {
@@ -12748,6 +12861,13 @@ export interface operations {
                 content: {
                     "application/x-tar": string;
                 };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Authority revoked */
             403: {
@@ -14371,6 +14491,64 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingBuildRegistryCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildRegistryCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded protected registry credential */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingRegistryCredentialDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deliverHostingBuildSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingBuildSecretsRequest"];
+            };
+        };
+        responses: {
+            /** @description Bounded protected build secrets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingBuildSecretsDelivery"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };

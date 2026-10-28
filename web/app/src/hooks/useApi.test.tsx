@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { useAuth } from "./useApi";
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; localStorage.clear(); });
+afterEach(() => { globalThis.fetch = originalFetch; localStorage.clear(); sessionStorage.clear(); });
 function wrapper({ children }: { children: ReactNode }) { return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>; }
 
 test("startup uses cookie-backed /me and recognizes authentication state", async () => {
@@ -123,4 +123,42 @@ test("unauthorized startup clears cached queries before exposing sign-in", async
   await waitFor(() => expect(result.current.authenticated).toBe(false));
   expect(signedOutCacheStates.length).toBeGreaterThan(0);
   expect(signedOutCacheStates.every((value) => value === undefined)).toBe(true);
+});
+
+test.each(["network", "server", "forbidden"])("failed %s sign-out stays locked across reload until retry confirms revocation", async (failure) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const localWrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ id: "usr_1", roles: [] }), { headers: { "Content-Type": "application/json" } }));
+  if (failure === "network") fetchMock.mockRejectedValueOnce(new TypeError("network offline"));
+  else fetchMock.mockResolvedValueOnce(new Response(null, { status: failure === "server" ? 503 : 403 }));
+  globalThis.fetch = fetchMock;
+  const first = renderHook(() => useAuth(), { wrapper: localWrapper });
+  await waitFor(() => expect(first.result.current.authenticated).toBe(true));
+  client.setQueryData(["projects"], [{ id: "private-project" }]);
+  await act(() => first.result.current.signOut());
+  expect(first.result.current.authenticated).toBeNull();
+  expect(first.result.current.authError).toMatch(/sign.out.*not confirmed/i);
+  expect(client.getQueryData(["projects"])).toBeUndefined();
+  first.unmount();
+
+  const reloaded = renderHook(() => useAuth(), { wrapper });
+  expect(reloaded.result.current.authenticated).toBeNull();
+  expect(reloaded.result.current.authError).toMatch(/sign.out.*not confirmed/i);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await act(() => reloaded.result.current.signOut());
+  expect(reloaded.result.current.authenticated).toBe(false);
+  expect(reloaded.result.current.authError).toBe("");
+  expect(sessionStorage).toHaveLength(0);
+});
+
+test("sign-out treats an already unauthenticated session as confirmed", async () => {
+  globalThis.fetch = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "usr_1", roles: [] }), { headers: { "Content-Type": "application/json" } }))
+    .mockResolvedValueOnce(new Response(null, { status: 401 }));
+  const { result } = renderHook(() => useAuth(), { wrapper });
+  await waitFor(() => expect(result.current.authenticated).toBe(true));
+  await act(() => result.current.signOut());
+  expect(result.current.authenticated).toBe(false);
+  expect(result.current.authError).toBe("");
 });

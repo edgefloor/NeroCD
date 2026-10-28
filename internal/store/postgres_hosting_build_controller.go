@@ -144,7 +144,7 @@ func (s *PostgresStore) PrepareBuild(ctx context.Context, id string) error {
 }
 
 func configuredBuildSource(b domain.HostingBuild) bool {
-	return b.Snapshot.Source.CredentialKind == "public" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "https_basic" && b.Snapshot.Grant != nil && b.Snapshot.Grant.Kind == "https_basic"
+	return b.Snapshot.Source.Kind == "dockerfile" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "public" && b.Snapshot.Grant == nil || (b.Snapshot.Source.CredentialKind == "https_basic" || b.Snapshot.Source.CredentialKind == "ssh_private_key") && b.Snapshot.Grant != nil && b.Snapshot.Grant.Kind == b.Snapshot.Source.CredentialKind
 }
 func (s *PostgresStore) buildCreator(ctx context.Context, id string) string {
 	b, err := readBuild(ctx, s.queries, id)
@@ -179,16 +179,13 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 	if err := currentBuildIntent(ctx, tx, b); err != nil {
 		return err
 	}
-	if b.Snapshot.Source.Settings.Strategy == "compose" {
-		capable, e := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: b.Snapshot.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
-		if e != nil {
-			return e
-		}
-		if !capable {
-			return ErrConflict
-		}
+	if err := requireBuildArgumentCapability(ctx, tx, b.Snapshot.RunnerID, b.Snapshot.Source.Settings); err != nil {
+		return err
 	}
-	return nil
+	if err := validateBuildSecrets(ctx, tx, b.ProjectID, b.Snapshot.Source.Settings); err != nil {
+		return err
+	}
+	return validateBuildRegistrySecret(ctx, tx, b.ProjectID, b.Snapshot.Source.Settings)
 }
 
 // currentBuildIntent also supports metadata-only retries of private requests.

@@ -310,6 +310,7 @@ func TestPostgresCatalogArchiveReplayRechecksOwnerAndDestination(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			wantErr := auth.ErrForbidden
 			actor := f.owner
 			if scenario == "viewer" {
 				// The replay uses the same original actor. Remove its system role and
@@ -324,12 +325,18 @@ func TestPostgresCatalogArchiveReplayRechecksOwnerAndDestination(t *testing.T) {
 				// Keep the original principal, including its stale system-admin role.
 				// The database must deny replay under current stored authority.
 			} else {
+				// A revoked destination grant conflicts with the pinned placement.
+				wantErr = store.ErrConflict
 				if _, err := f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp()`); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.service.RequestStorageRestore(actor, backup.ID, in); !errors.Is(err, auth.ErrForbidden) {
+			denied, err := f.service.RequestStorageRestore(actor, backup.ID, in)
+			if !errors.Is(err, wantErr) {
 				t.Fatal("identical restore replay retained lost authority", err)
+			}
+			if denied.Resource.ID != "" || denied.Operation.ID != "" {
+				t.Fatal("denied replay disclosed the original restore")
 			}
 			var targets int
 			if err := f.db.QueryRow(f.ctx, `SELECT count(*) FROM resources WHERE name=$1`, restored.Resource.Name).Scan(&targets); err != nil || targets != 1 {

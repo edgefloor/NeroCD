@@ -26,7 +26,7 @@ vet:
 	GOCACHE="$(GOCACHE_DIR)" go vet $(PRODUCT_PACKAGES)
 
 race:
-	GOCACHE="$(GOCACHE_DIR)" go test -race -timeout=20m $(PRODUCT_PACKAGES)
+	GOCACHE="$(GOCACHE_DIR)" go test -race -timeout=30m $(PRODUCT_PACKAGES)
 
 lint-install: $(GOLANGCI_LINT)
 
@@ -109,6 +109,7 @@ production-compose-policy-gate:
 	bash scripts/production-compose-policy-gate-test.sh
 
 local-image-registry-gate:
+	bash scripts/local-image-registry-state-test.sh
 	bash scripts/local-image-registry-gate.sh
 
 image-hosting-gate:
@@ -169,6 +170,7 @@ release-evidence-post-gate-check:
 # Static CI/release orchestration checks only. This target intentionally never
 # calls GitHub, GHCR, a signer, or any publication endpoint.
 ci-release-policy-gate:
+	python3 -B scripts/ci-check-test.py
 	python3 -B scripts/release-candidate-test.py
 	bash scripts/ci-release-policy-gate.sh .
 	bash scripts/ci-release-policy-gate-test.sh

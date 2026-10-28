@@ -52,3 +52,55 @@ test("settled local build route candidate displays recorded source and artifact 
   backend((url) => url.includes("/deployments") ? json({ items: [{ ...healthy, snapshot: { image_reference: "", local_build: { source_generation: 3, artifact: { build_id: "build-exact", image_id: "sha256:exact" } } } }], limit: 20, offset: 0, count: 1, total: 1 }) : undefined);
   setup(); await screen.findByRole("option", { name: "hop_healthy · Local build build-exact · source generation 3 · sha256:exact" });
 });
+
+test("successful route create clears its attempt before refresh and exact-version edit to build B", async () => {
+  const buildB = { ...healthy, id: "hop_build_B", snapshot: { image_reference: "", local_build: { source_generation: 2, artifact: { build_id: "build_B", image_id: "sha256:build_B" } } } };
+  let saved: typeof route[] = [];
+  const fetch = backend((url, options) => {
+    if (url === "/api/v1/resources/resource/deployments?limit=20&offset=0") return json({ items: [healthy, buildB], limit: 20, offset: 0, count: 2, total: 2 });
+    if (url === "/api/v1/resources/resource/routes" && options.method === "POST") { const body = JSON.parse(options.body as string); saved = [{ ...route, hostname: body.hostname }]; return json(saved[0], 202); }
+    if (url === "/api/v1/resources/resource/routes") return json(saved);
+    if (url === "/api/v1/routes/route_one" && options.method === "PATCH") {
+      const body = JSON.parse(options.body as string);
+      saved = [{ ...route, version: 2, selected_release_operation_id: body.expected_healthy_operation_id }];
+      return json(saved[0], 202);
+    }
+    return undefined;
+  });
+  setup(); await draft(); fireEvent.submit(screen.getByRole("form"));
+  await screen.findByRole("button", { name: "Edit route route_one" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh resource routes" }));
+  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Edit route route_one" }));
+  fireEvent.change(screen.getByLabelText("Expected settled healthy deployment"), { target: { value: "hop_build_B" } });
+  fireEvent.submit(screen.getByRole("form"));
+  await waitFor(() => expect(fetch.mock.calls.filter(([, options]) => options.method === "PATCH")).toHaveLength(1));
+  const writes = fetch.mock.calls.filter(([, options]) => options.method === "POST" || options.method === "PATCH");
+  expect(writes).toHaveLength(2);
+  expect(JSON.parse(writes[0]![1].body as string)).toMatchObject({ expected_route_version: 0, expected_healthy_operation_id: "hop_healthy" });
+  const replacement = JSON.parse(writes[1]![1].body as string);
+  expect(replacement).toMatchObject({ expected_route_version: 1, expected_healthy_operation_id: "hop_build_B", hostname: "new.example.test", path_prefix: "/" });
+  expect(replacement.idempotency_key).toEqual(expect.any(String));
+  expect(Object.keys(replacement).sort()).toEqual(["expected_healthy_operation_id", "expected_route_version", "hostname", "idempotency_key", "path_prefix"]);
+  await screen.findByRole("button", { name: "Edit route route_one" });
+  expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request" })).toBeNull();
+});
+
+
+test("recorded HTTPS readiness can remain ready while the exact replacement proxy operation is queued", async () => {
+  let applied = false;
+  const replacement = { ...route, version: 2, selected_release_operation_id: "hop_B", operation_id: "pop_B", http_ready: true, https_ready: true };
+  backend((url) => url.includes("/proxy-operations/") ? json({ id: "pop_B", state: applied ? "applied" : "queued", mutation_hold: false, restore_ownership_held: false, routes: [replacement] }) : url.includes("/routes") ? json([replacement]) : undefined);
+  setup(false);
+  await screen.findByRole("button", { name: "View route operation pop_B" });
+  expect(screen.getAllByText("ready")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "View route operation pop_B" }));
+  await screen.findByText("Proxy operation pop_B");
+  await screen.findByText("Operation state: queued");
+  expect(screen.queryByText("Operation state: applied")).toBeNull();
+  expect(screen.queryByText("Historical engine outcome: applied")).toBeNull();
+  applied = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh route operation" }));
+  await screen.findByText("Operation state: applied");
+  expect(screen.queryByText("Historical engine outcome: applied")).toBeNull();
+});

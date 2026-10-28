@@ -1,5 +1,9 @@
-import { StrictMode } from "react";
+import type { Principal, ProjectMember } from "@/api";
+import { ApiError } from "@/api/errors";
+import * as api from "@/api/hosting-backup-notifications";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,12 +11,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { webcrypto } from "node:crypto";
-import type { Principal, ProjectMember } from "@/api";
-import { ApiError } from "@/api/errors";
-import * as api from "@/api/hosting-backup-notifications";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ProjectNotifications } from "./ProjectNotifications";
 vi.mock("@/api/hosting-backup-notifications", async (importOriginal) => ({
   ...(await importOriginal<typeof api>()),
@@ -359,17 +360,65 @@ test("uncertain source outcome is attention rather than definite backup failure"
 test.each([
   "backup_notifications_unavailable",
   "backup notifications require NEROCD_PUBLIC_ORIGIN as an HTTPS origin and configured managed secrets",
-])("known unavailable setup has an actionable fixed prerequisite: %s", async message => {
-  vi.mocked(api.saveNotificationChannel).mockRejectedValue(new ApiError(503, message, null));
-  setup(); const form = await newWebhook(); fireEvent.submit(form);
-  expect(await screen.findByText(/set NEROCD_PUBLIC_ORIGIN to an absolute HTTPS origin/)).toBeTruthy();
-  expect(screen.getByText(/configure managed secrets and the notification sender/)).toBeTruthy();
-  expect(within(form).getByLabelText<HTMLInputElement>("Webhook URL").value).toBe("");
-});
+])(
+  "known unavailable setup has an actionable fixed prerequisite: %s",
+  async (message) => {
+    vi.mocked(api.saveNotificationChannel).mockRejectedValue(
+      new ApiError(503, message, null),
+    );
+    setup();
+    const form = await newWebhook();
+    fireEvent.submit(form);
+    expect(
+      await screen.findByText(
+        /set NEROCD_PUBLIC_ORIGIN to an absolute HTTPS origin/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/configure managed secrets and the notification sender/),
+    ).toBeTruthy();
+    expect(
+      within(form).getByLabelText<HTMLInputElement>("Webhook URL").value,
+    ).toBe("");
+  },
+);
 test("unknown unavailable response keeps generic uncertain retry guidance and never renders its body", async () => {
-  vi.mocked(api.saveNotificationChannel).mockRejectedValue(new ApiError(503, "private unknown backend body", null));
-  setup(); const form = await newWebhook(); fireEvent.submit(form);
+  vi.mocked(api.saveNotificationChannel).mockRejectedValue(
+    new ApiError(503, "private unknown backend body", null),
+  );
+  setup();
+  const form = await newWebhook();
+  fireEvent.submit(form);
   expect(await screen.findByText(/Response unconfirmed/)).toBeTruthy();
   expect(screen.queryByText(/private unknown backend body/)).toBeNull();
   expect(screen.queryByText(/set NEROCD_PUBLIC_ORIGIN/)).toBeNull();
+});
+
+test("refreshing channel authority clears credentials while preserving the public draft", async () => {
+  setup();
+  await newWebhook();
+  let resolve!: (value: api.NotificationChannel[]) => void;
+  vi.mocked(api.listNotificationChannels).mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Refresh notification history" }),
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText<HTMLInputElement>("Webhook URL").value).toBe(
+      "",
+    ),
+  );
+  expect(screen.getByLabelText<HTMLInputElement>("Channel name").value).toBe(
+    "Ops",
+  );
+  await act(async () => resolve([channel]));
+  expect(screen.getByLabelText<HTMLInputElement>("Webhook URL").value).toBe("");
+  expect(screen.getByLabelText<HTMLInputElement>("Channel name").value).toBe(
+    "Ops",
+  );
+  expect(api.saveNotificationChannel).not.toHaveBeenCalled();
 });

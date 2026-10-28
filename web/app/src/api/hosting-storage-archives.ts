@@ -51,7 +51,7 @@ const states = [
   "cancel_requested",
   "reconciliation_required",
 ];
-const phases = [
+const phases = new Set([
   "writer_snapshot",
   "stop_intent",
   "stopped",
@@ -61,7 +61,7 @@ const phases = [
   "restore_verified",
   "resume_intent",
   "resumed",
-];
+]);
 function fail(): never {
   throw new Error("Archive scope or public evidence mismatch");
 }
@@ -70,12 +70,13 @@ function keys(
   required: string[],
   optional: string[] = [],
 ): boolean {
+  const allowed = new Set([...required, ...optional]);
   return (
     !!value &&
     typeof value === "object" &&
     !Array.isArray(value) &&
     required.every((key) => Object.hasOwn(value, key)) &&
-    Object.keys(value).every((key) => [...required, ...optional].includes(key))
+    Object.keys(value).every((key) => allowed.has(key))
   );
 }
 function blob(value: Backup["blob"], scope: ArchiveScope, backup: string) {
@@ -359,7 +360,7 @@ export function archiveOperation(
         ["writers", "helper_container_id", "blob"],
       ) ||
       evidence.plan_hash !== p.hash ||
-      !phases.includes(evidence.phase) ||
+      !phases.has(evidence.phase) ||
       typeof evidence.restore_verified !== "boolean" ||
       !keys(evidence.receipt, ["id", "body_hash", "created_at"]) ||
       !id(evidence.receipt.id) ||

@@ -1,6 +1,13 @@
 vi.mock("./StorageBackupRetention", () => ({
   StorageBackupRetention: () => null,
 }));
+import { ApiError } from "@/api/errors";
+import type { Resource } from "@/api/hosting";
+import * as targets from "@/api/hosting-database-backup-targets";
+import type { HostingStorage } from "@/api/hosting-storage";
+import * as api from "@/api/hosting-storage-archives";
+import * as remote from "@/api/hosting-storage-backup-remote";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -10,14 +17,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { ApiError } from "@/api/errors";
-import * as remote from "@/api/hosting-storage-backup-remote";
-import * as targets from "@/api/hosting-database-backup-targets";
-import * as api from "@/api/hosting-storage-archives";
-import type { HostingStorage } from "@/api/hosting-storage";
-import type { Resource } from "@/api/hosting";
 import { StorageArchives } from "./StorageArchives";
 vi.mock("@/api/hosting-storage-archives", () => ({
   archiveBackupEligible: vi.fn(),
@@ -401,6 +401,95 @@ test("uncertain resume and held mutation require explicit exact-plan recovery", 
     },
   ]);
 });
+test("reloading a held operation requires a fresh recovery confirmation", async () => {
+  const held: api.ArchiveOperation = {
+    ...operation,
+    state: "reconciliation_required",
+    mutationHold: true,
+  };
+  vi.mocked(api.getArchiveOperation).mockResolvedValue(held);
+  setup();
+  await loaded();
+  click("Backup backup");
+  const confirmation = await screen.findByLabelText<HTMLInputElement>(
+    /I reviewed this operation/,
+  );
+  await loaded();
+  fireEvent.click(confirmation);
+  expect(confirmation.checked).toBe(true);
+  vi.mocked(api.getArchiveOperation).mockRejectedValueOnce(
+    new ApiError(503, "unavailable", null),
+  );
+  click("Refresh archive status");
+  await waitFor(() =>
+    expect(screen.queryByLabelText(/I reviewed this operation/)).toBeNull(),
+  );
+  await loaded();
+  click("Refresh archive status");
+  const renewed = await screen.findByLabelText<HTMLInputElement>(
+    /I reviewed this operation/,
+  );
+  expect(renewed.checked).toBe(false);
+  expect(
+    screen
+      .getByRole("button", { name: "Request archive recovery" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  expect(api.requestArchiveRecovery).not.toHaveBeenCalled();
+});
+
+test("returning to a backup does not revive its remote restore choice", async () => {
+  const another = { ...backup, id: "another", operation_id: "another-op" };
+  vi.mocked(api.listArchiveBackups).mockResolvedValue({
+    items: [backup, another],
+    limit: 20,
+    offset: 0,
+    count: 2,
+    total: 2,
+  });
+  vi.mocked(api.getArchiveBackup).mockImplementation(async (_scope, id) =>
+    id === another.id ? another : backup,
+  );
+  vi.mocked(api.getArchiveOperation).mockImplementation(async (_scope, id) => ({
+    ...operation,
+    id,
+  }));
+  vi.mocked(remote.listStorageTransfers).mockImplementation(
+    async (_scope, id) => [
+      {
+        id: `upload-${id}`,
+        mode: "upload",
+        state: "succeeded",
+        target_revision: 1,
+      } as remote.StorageBackupTransfer,
+    ],
+  );
+  setup();
+  await loaded();
+  click("Backup backup");
+  const choice = await screen.findByLabelText<HTMLInputElement>(
+    /Download and verify the remote archive/,
+  );
+  await loaded();
+  fireEvent.click(choice);
+  expect(choice.checked).toBe(true);
+  click("Backup another");
+  await waitFor(() =>
+    expect(api.getArchiveBackup).toHaveBeenCalledWith(
+      expect.anything(),
+      "another",
+      expect.any(AbortSignal),
+    ),
+  );
+  await loaded();
+  click("Backup backup");
+  const returned = await screen.findByLabelText<HTMLInputElement>(
+    /Download and verify the remote archive/,
+  );
+  expect(returned.checked).toBe(false);
+  expect(api.requestArchiveRestore).not.toHaveBeenCalled();
+});
+
 test.each([503, 409, 403])(
   "read status %i suppresses stale history and pauses writes",
   async (status) => {
@@ -582,4 +671,55 @@ test("selected ordinary backup exposes authoritative native archive download", a
   expect(fetch.mock.calls[0]![0]).toBe(
     "/api/v1/storage-backups/backup/archive-options",
   );
+});
+
+test("changing actors aborts a remote retry and ignores its late denial", async () => {
+  const failed = {
+    id: "transfer",
+    version: "owned-upload.s3-transfer.v1",
+    project_id: "p",
+    target_id: "target",
+    target_revision: 1,
+    destination_id: "d",
+    mode: "upload",
+    backup_id: "backup",
+    state: "failed",
+    failure_code: "access_denied",
+    created_at: "2026-10-26",
+    updated_at: "2026-10-26",
+  } as remote.StorageBackupTransfer;
+  vi.mocked(remote.listStorageTransfers).mockResolvedValue([failed]);
+  let reject!: (error: unknown) => void;
+  vi.mocked(remote.retryStorageTransfer).mockImplementationOnce(
+    () =>
+      new Promise((_, no) => {
+        reject = no;
+      }),
+  );
+  const view = setup();
+  await loaded();
+  click("Backup backup");
+  const retry = await screen.findByRole<HTMLButtonElement>("button", {
+    name: "Retry remote upload of the same archive",
+  });
+  await waitFor(() => expect(retry.disabled).toBe(false));
+  fireEvent.click(retry);
+  const signal = vi.mocked(remote.retryStorageTransfer).mock.calls[0]![3]!;
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <StorageArchives
+        actor="other"
+        resource={resource}
+        storage={storage}
+        owner
+        paused={false}
+      />
+    </QueryClientProvider>,
+  );
+  expect(signal.aborted).toBe(true);
+  await act(async () => reject(new ApiError(403, "old actor denied", null)));
+  await loaded();
+  expect(screen.queryByText(/Archive access is unavailable/)).toBeNull();
+  expect(screen.queryByText(/Saved remote retry/)).toBeNull();
+  expect(remote.retryStorageTransfer).toHaveBeenCalledTimes(1);
 });

@@ -13,7 +13,7 @@ func (s *Service) RequestHostingBuildDeployment(ctx context.Context, resourceID 
 	if err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if resource.Source.Kind != "git" {
+	if resource.Source.Kind != "git" && resource.Source.Kind != "dockerfile" {
 		return domain.HostingOperation{}, InvalidInput(errors.New("build deployment requires a Git resource"))
 	}
 	if err = validateDestinationID(in.BuildID, "build_id"); err != nil {

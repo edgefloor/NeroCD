@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ClipboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,11 +15,21 @@ function rawOffset(value: string, position: number): number {
   return raw;
 }
 
-export function ProtectedSecretValue({ id, label, value, onChange, disabled = false }: { id: string; label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  const [shown, setShown] = useState(false);
-  const visible = shown && !disabled;
+type SecretValueProps = { id: string; label: string; value: string; onChange: (value: string) => void; disabled?: boolean };
+
+export function ProtectedSecretValue(props: SecretValueProps) {
+  // A disabled editor ends its reveal session and invalidates pending file reads
+  // before a later enabled editor can receive them.
+  return <SecretValueInput key={`${props.id}:${Boolean(props.disabled)}`} {...props} />;
+}
+
+function SecretValueInput({ id, label, value, onChange, disabled = false }: SecretValueProps) {
+  const [editor, setEditor] = useState<"hidden" | "empty" | "value">("hidden");
+  const visible = editor !== "hidden" && !disabled;
+  if (editor === "value" && !value) setEditor("hidden");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [fileRead, setFileRead] = useState<number | null>(null);
+  const loading = fileRead !== null;
   const active = useRef(true);
   const revision = useRef(0);
   const picker = useRef<HTMLInputElement>(null);
@@ -27,38 +37,36 @@ export function ProtectedSecretValue({ id, label, value, onChange, disabled = fa
   const edit = useRef<{ start: number; end: number; kind: string; data: string | null } | undefined>(undefined);
   const caret = useRef<number | undefined>(undefined);
   useEffect(() => { active.current = true; return () => { active.current = false; revision.current++; }; }, []);
-  useEffect(() => {
-    if (!value || disabled) { setShown(false); if (picker.current) picker.current.value = ""; }
-    if (disabled) { revision.current++; setLoading(false); }
-  }, [value, disabled]);
+  const beforeInput = useEffectEvent((element: HTMLTextAreaElement, event: Event) => {
+    const input = event as InputEvent;
+    if (!visible || disabled) return;
+    // Native undo retains only textarea-normalized text. Refuse it rather
+    // than silently restoring a CRLF value with different bytes.
+    if (input.inputType.startsWith("history")) { event.preventDefault(); setError("Use Clear value or paste a replacement. Native undo cannot preserve exact line endings."); return; }
+    if (input.inputType === "insertLineBreak" || input.inputType === "insertParagraph") {
+      event.preventDefault(); edit.current = undefined;
+      commit(value.slice(0, rawOffset(value, element.selectionStart)) + "\n" + value.slice(rawOffset(value, element.selectionEnd)), element.selectionStart + 1);
+      return;
+    }
+    edit.current = { start: element.selectionStart, end: element.selectionEnd, kind: input.inputType, data: input.data };
+  });
   useEffect(() => {
     const element = textarea.current;
     if (!element) return;
-    function beforeInput(event: Event) {
-      const input = event as InputEvent;
-      if (!visible || disabled) return;
-      // Native undo retains only textarea-normalized text. Refuse it rather
-      // than silently restoring a CRLF value with different bytes.
-      if (input.inputType.startsWith("history")) { event.preventDefault(); setError("Use Clear value or paste a replacement. Native undo cannot preserve exact line endings."); return; }
-      if (input.inputType === "insertLineBreak" || input.inputType === "insertParagraph") {
-        event.preventDefault(); edit.current = undefined;
-        commit(value.slice(0, rawOffset(value, element!.selectionStart)) + "\n" + value.slice(rawOffset(value, element!.selectionEnd)), element!.selectionStart + 1);
-        return;
-      }
-      edit.current = { start: element!.selectionStart, end: element!.selectionEnd, kind: input.inputType, data: input.data };
-    }
-    element.addEventListener("beforeinput", beforeInput);
-    return () => element.removeEventListener("beforeinput", beforeInput);
-  }, [value, visible, disabled, onChange]);
+    const listener = (event: Event) => beforeInput(element, event);
+    element.addEventListener("beforeinput", listener);
+    return () => element.removeEventListener("beforeinput", listener);
+  }, []);
   useEffect(() => {
     if (visible && caret.current !== undefined) { textarea.current?.setSelectionRange(caret.current, caret.current); caret.current = undefined; }
   }, [value, visible]);
   function commit(next: string, selection?: number) {
-    revision.current++; setLoading(false); setError("");
+    revision.current++; setFileRead(null); setError("");
     caret.current = selection;
     if (new TextEncoder().encode(next).byteLength > maximumBytes) {
-      onChange(""); setShown(false); setError("Value cleared. Secret values must not exceed 65536 UTF-8 bytes."); return;
+      onChange(""); setEditor("hidden"); setError("Value cleared. Secret values must not exceed 65536 UTF-8 bytes."); return;
     }
+    setEditor((current) => current === "hidden" ? current : next ? "value" : "hidden");
     onChange(next);
   }
   function change(next: string, selection: number) {
@@ -100,22 +108,25 @@ export function ProtectedSecretValue({ id, label, value, onChange, disabled = fa
   }
   async function loadFile(file: File) {
     const current = ++revision.current;
-    onChange(""); setShown(false); setError(""); setLoading(true);
-    if (file.size > maximumBytes) { setLoading(false); setError("Value cleared. Secret files must not exceed 65536 bytes."); return; }
+    onChange(""); setEditor("hidden"); setError("");
     try {
+      setFileRead(current);
+      if (file.size > maximumBytes) { setError("Value cleared. Secret files must not exceed 65536 bytes."); return; }
       // ignoreBOM preserves a leading UTF-8 BOM as part of the secret value.
       const next = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
       if (!active.current || revision.current !== current) return;
       commit(next);
     } catch {
-      if (active.current && revision.current === current) { setLoading(false); setError("Value cleared. The file must contain valid UTF-8 text."); }
+      if (active.current && revision.current === current) setError("Value cleared. The file must contain valid UTF-8 text.");
+    } finally {
+      setFileRead((pending) => pending === current ? null : pending);
     }
   }
   return <div className="min-w-0 space-y-2" role="group" aria-label={`${label} entry`}>
     <label htmlFor={id}>{label}</label>
     <Textarea ref={textarea} id={id} value={visible ? displayed(value) : value ? "••••••••" : ""} readOnly={!visible} disabled={disabled} aria-required="true" aria-describedby={`${id}-help`} autoComplete="off" spellCheck={false} className="max-h-64 min-h-24 overflow-auto font-mono" placeholder={visible ? "Type or paste a secret value" : "Paste to replace the value, or show to type"} onChange={(event) => { if (visible) change(event.target.value, event.target.selectionStart); }} onPaste={paste} onCopy={(event) => copy(event)} onCut={(event) => copy(event, true)} onDrop={(event) => { event.preventDefault(); setError("Paste or load a UTF-8 file to preserve exact line endings."); }} />
     <p id={`${id}-help`} className="text-xs text-muted-foreground">Hidden paste replaces the whole value. Show to type or edit. Clipboard and file line endings are preserved; typed Enter inserts LF.</p>
-    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={disabled || loading} aria-pressed={visible} onClick={() => setShown(!visible)}>{visible ? "Hide value" : "Show value to edit"}</Button><Button type="button" variant="outline" disabled={disabled || (!value && !loading)} onClick={() => { commit(""); setShown(false); if (picker.current) picker.current.value = ""; }}>Clear value</Button></div>
+    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={disabled || loading} aria-pressed={visible} onClick={() => setEditor(visible ? "hidden" : value ? "value" : "empty")}>{visible ? "Hide value" : "Show value to edit"}</Button><Button type="button" variant="outline" disabled={disabled || (!value && !loading)} onClick={() => { commit(""); setEditor("hidden"); if (picker.current) picker.current.value = ""; }}>Clear value</Button></div>
     <label className="block text-sm" htmlFor={`${id}-file`}>Load UTF-8 file</label><Input ref={picker} id={`${id}-file`} aria-label={`Load ${label.toLowerCase()} from UTF-8 file`} type="file" disabled={disabled} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void loadFile(file); }} />
     {loading ? <p role="status">Reading secret file...</p> : null}
     {error ? <p role="alert">{error}</p> : null}

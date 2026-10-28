@@ -25,6 +25,10 @@ func TestContextBoundaries(t *testing.T) {
 			l := testLimits()
 			writeTestFile(t, filepath.Join(src, "hello"), []byte("hello"))
 			writeTestFile(t, filepath.Join(src, ".env"), []byte("SECRET"))
+			// Public fixture trust belongs in .crt; .pem exclusion still protects
+			// credential material regardless of its contents.
+			writeTestFile(t, filepath.Join(src, "dependency-ca.crt"), []byte("public CA bytes"))
+			writeTestFile(t, filepath.Join(src, "dependency-ca.pem"), []byte("excluded PEM bytes"))
 			if err := os.Mkdir(filepath.Join(src, ".git"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -53,10 +57,14 @@ func TestContextBoundaries(t *testing.T) {
 			if err != nil || !digestPattern.MatchString(digest) {
 				t.Fatalf("stage: %s %v", digest, err)
 			}
-			for _, name := range []string{".env", ".git"} {
+			for _, name := range []string{".env", ".git", "dependency-ca.pem"} {
 				if _, err = os.Stat(filepath.Join(dst, name)); !os.IsNotExist(err) {
 					t.Fatalf("excluded file copied: %s", name)
 				}
+			}
+			ca, err := os.ReadFile(filepath.Join(dst, "dependency-ca.crt"))
+			if err != nil || string(ca) != "public CA bytes" {
+				t.Fatal("public dependency CA missing or changed after staging")
 			}
 			writeTestFile(t, filepath.Join(src, "hello"), []byte("changed"))
 			next, err := stageContext(context.Background(), src, filepath.Join(t.TempDir(), "context"), l)

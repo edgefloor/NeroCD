@@ -167,6 +167,49 @@ func TestOpenAPIContractLoadsAndMatchesImplementedRoutes(t *testing.T) {
 			t.Fatalf("%s is implemented but missing from OpenAPI contract", key)
 		}
 	}
+	if err := validateOpenAPIOperations(documented); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenAPIArchiveMediaTypesRemainRouteSpecific(t *testing.T) {
+	document, err := loadOpenAPIContract("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	documented, err := readOpenAPIOperations(document, "../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, route, requestMedia, responseCode, responseMedia string
+		wantError                                              bool
+	}{
+		{name: "archive upload", route: "POST /api/v1/runners/hosting/storage-backup-download/stream"},
+		{name: "archive download", route: "GET /api/v1/storage-backups/{id}/archive"},
+		{name: "upload requires multipart", route: "POST /api/v1/runners/hosting/storage-backup-download/stream", requestMedia: "application/json", wantError: true},
+		{name: "upload acknowledgement requires JSON", route: "POST /api/v1/runners/hosting/storage-backup-download/stream", responseCode: "200", responseMedia: "application/x-tar", wantError: true},
+		{name: "download requires tar", route: "GET /api/v1/storage-backups/{id}/archive", responseCode: "200", responseMedia: "application/json", wantError: true},
+		{name: "ordinary request requires JSON", route: "POST /api/v1/sessions", requestMedia: "multipart/form-data", wantError: true},
+		{name: "ordinary response requires JSON", route: "GET /api/v1/projects", responseCode: "200", responseMedia: "application/x-tar", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			op, ok := documented[tc.route]
+			if !ok {
+				t.Fatal("missing route", tc.route)
+			}
+			if tc.requestMedia != "" {
+				op.RequestMediaTypes = map[string]bool{tc.requestMedia: true}
+			}
+			if tc.responseCode != "" {
+				op.ResponseMediaTypes = map[string]map[string]bool{tc.responseCode: {tc.responseMedia: true}}
+			}
+			err := validateOpenAPIOperations(map[string]documentedOperation{tc.route: op})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("validateOpenAPIOperations error = %v, want error = %t", err, tc.wantError)
+			}
+		})
+	}
 }
 
 func TestRuntimeConfigValidation(t *testing.T) {
@@ -237,10 +280,10 @@ func TestDocumentedOperationMetadataComesFromOpenAPIModel(t *testing.T) {
 	if !session.SecurityEmpty {
 		t.Fatal("POST /api/v1/sessions should document security: []")
 	}
-	if !session.RequestBody || !session.JSONRequestBody {
+	if !session.RequestBody || !session.RequestMediaTypes["application/json"] {
 		t.Fatal("POST /api/v1/sessions should document a JSON request body")
 	}
-	if !session.JSONResponseCodes["201"] {
+	if !session.ResponseMediaTypes["201"]["application/json"] {
 		t.Fatal("POST /api/v1/sessions should document a JSON 201 response")
 	}
 

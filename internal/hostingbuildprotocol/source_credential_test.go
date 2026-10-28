@@ -2,8 +2,13 @@ package hostingbuildprotocol
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"golang.org/x/crypto/ssh"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +70,43 @@ func TestBasicCredentialCombinedBudget(t *testing.T) {
 	for _, p := range [][]byte{nil, []byte("p\r"), {255}} {
 		if ValidBasicCredential("u", p) {
 			t.Fatal("invalid password accepted")
+		}
+	}
+}
+
+func TestSSHSourceCredentialWireBudgetAndKind(t *testing.T) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := pem.EncodeToMemory(block)
+	raw = append(raw, bytes.Repeat([]byte(" "), 65536-len(raw))...)
+	defer clear(raw)
+	c := SourceCredential{Authority: domain.HostingBuildAuthority{BuildID: "test", RunID: "build_run_test", LeaseID: "lease", Attempt: 1, Fence: "fence"}, DeliveryID: strings.Repeat("a", 32), RequestHash: "sha256:" + strings.Repeat("b", 64), Kind: "ssh_private_key", Bytes: raw, UseUntil: time.Now().Add(time.Minute)}
+	var wire bytes.Buffer
+	if err = WriteSourceCredential(&wire, c); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Len() <= 16<<10 || wire.Len() > MaxSourceCredentialWireBytes {
+		t.Fatal("maximum key did not exercise bounded wire", wire.Len())
+	}
+	out, err := ReadSourceCredential(&wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if out.Kind != c.Kind || out.Username != "" || !bytes.Equal(out.Bytes, raw) {
+		t.Fatal("SSH roundtrip changed material")
+	}
+	for _, mutate := range []func(*SourceCredential){func(v *SourceCredential) { v.Username = "git" }, func(v *SourceCredential) { v.Kind = "https_basic" }, func(v *SourceCredential) { v.Bytes = append(bytes.Clone(raw), ' ') }, func(v *SourceCredential) { v.Bytes = []byte("invalid key") }} {
+		invalid := c
+		mutate(&invalid)
+		if WriteSourceCredential(io.Discard, invalid) == nil {
+			t.Fatal("invalid SSH material accepted")
 		}
 	}
 }

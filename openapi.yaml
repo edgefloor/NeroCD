@@ -2033,6 +2033,9 @@ paths:
               }
             }
           },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
           "403": {
             "description": "Current viewer or destination authority is absent"
           },
@@ -2192,6 +2195,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostingStorageBackupDownloadPlan'
+        '401':
+          $ref: '#/components/responses/Error'
         '403': {description: Authority denied}
         '503': {description: Controller rendezvous unavailable}
   /api/v1/runners/hosting/storage-backup-download/stream:
@@ -2225,6 +2230,8 @@ paths:
                 properties:
                   session_id: {type: string}
                   plan_hash: {type: string}
+        '401':
+          $ref: '#/components/responses/Error'
         '403': {description: Authority denied}
         '409': {description: Stream identity or framing mismatch}
         '503': {description: Controller rendezvous unavailable}
@@ -2244,6 +2251,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostingStorageBackupDownloadOptions'
+        '401':
+          $ref: '#/components/responses/Error'
         '403':
           description: Current owner or destination access denied
   /api/v1/storage-backups/{id}/archive:
@@ -2261,6 +2270,7 @@ paths:
           content:
             application/x-tar:
               schema: {type: string, format: binary}
+        '401': {description: Authentication required}
         '403': {description: Authority revoked}
         '404': {description: Local copy missing}
         '409': {description: Backup state or copy reservation changed}
@@ -3468,6 +3478,8 @@ paths:
         '409': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/Error'}
   "/api/v1/runners/hosting/runtime-environment": {"post": {"operationId": "deliverHostingRuntimeEnvironment", "summary": "Deliver a prepared hosting runtime environment", "description": "Prepared deploy authority only. Current actor, runner, lease, destination, configuration and active pinned secret references are rechecked for each request. Audit metadata commits before decryption. The original delivery deadline is at most 60 seconds and capped by lease expiry; retries never extend it. Cache-Control: no-store on every response. Direct TLS or trusted immediate TLS termination required. Values go only through the protected codec. Docker administrators can inspect resulting Config.Env; delivered bytes cannot be instantly revoked.", "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeEnvironmentRequest"}}}}, "responses": {"200": {"description": "Protected environment, at most 512 KiB encoded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRuntimeEnvironment"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}}}
+  "/api/v1/runners/builds/registry-credential": {"post": {"operationId": "deliverHostingBuildRegistryCredential", "summary": "Deliver selected build registry credential", "description": "Live fenced building authority only. Snapshot-selected secret, audit before decryption. No-store protected transport; never journal credential material.", "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildRegistryCredentialRequest"}}}}, "responses": {"200": {"description": "Bounded protected registry credential", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingRegistryCredentialDelivery"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}}}
+  "/api/v1/runners/builds/secrets": {"post": {"operationId": "deliverHostingBuildSecrets", "summary": "Deliver selected build secrets", "description": "Live fenced building authority only. Snapshot-selected secrets, audit before decryption. No-store protected transport; never journal credential material.", "security": [{"bearerAuth": []}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildSecretsRequest"}}}}, "responses": {"200": {"description": "Bounded protected build secrets", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingBuildSecretsDelivery"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}}}
   "/api/v1/runners/builds/source-credential": {"post": {"operationId": "deliverHostingSourceCredential", "summary": "deliverHostingSourceCredential", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceCredential"}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceCredentialRequest"}}}}, "security": [{"bearerAuth": []}], "description": "Live sourcing authority only. Cache-Control: no-store on every response. Direct TLS required, or an immediate configured TrustedProxyCIDRs peer asserting exactly one X-Forwarded-Proto value https. Trusted proxies must strip and replace client forwarding headers. No redirects or insecure remote transport."}}
   "/api/v1/resources/{id}/source-grants": {"post": {"operationId": "requestHostingSourceGrant", "summary": "requestHostingSourceGrant", "responses": {"201": {"description": "Bounded result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["grant"], "properties": {"grant": {"$ref": "#/components/schemas/HostingSourceGrant"}}}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HostingSourceGrantRequest"}}}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}]}, "get": {"operationId": "listHostingSourceGrants", "summary": "listHostingSourceGrants", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["items", "limit", "offset", "count", "total"], "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/HostingSourceGrant"}}, "limit": {"type": "integer"}, "offset": {"type": "integer"}, "count": {"type": "integer"}, "total": {"type": "integer"}}}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}}, {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "maximum": 100000}}]}}
   "/api/v1/resources/{id}/source-grants/{grant_id}/revoke": {"post": {"operationId": "revokeHostingSourceGrant", "summary": "revokeHostingSourceGrant", "responses": {"200": {"description": "Bounded result", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": ["revoked"], "properties": {"revoked": {"type": "boolean"}}}}}}, "400": {"$ref": "#/components/responses/Error"}, "401": {"$ref": "#/components/responses/Error"}, "403": {"$ref": "#/components/responses/Error"}, "404": {"$ref": "#/components/responses/Error"}, "409": {"$ref": "#/components/responses/Error"}, "503": {"$ref": "#/components/responses/Error"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "required": [], "properties": {}}}}}, "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "grant_id", "in": "path", "required": true, "schema": {"type": "string"}}]}}
@@ -11903,9 +11915,9 @@ components:
     HostingRuntimeEnvironmentRequest: {"type": "object", "additionalProperties": false, "required": ["authority", "plan_hash", "runtime_configuration", "delivery_id"], "properties": {"authority": {"$ref": "#/components/schemas/HostingAuthority"}, "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "runtime_configuration": {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}, "delivery_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}}
     HostingRuntimeEnvironment: {"type": "object", "additionalProperties": false, "required": ["authority", "plan_hash", "runtime_configuration", "delivery_id", "request_hash", "purpose", "use_until", "entries"], "properties": {"authority": {"$ref": "#/components/schemas/HostingAuthority"}, "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "runtime_configuration": {"$ref": "#/components/schemas/HostingRuntimeConfigurationRef"}, "delivery_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "purpose": {"type": "string", "enum": ["hosting_container_environment"]}, "use_until": {"type": "string", "format": "date-time"}, "entries": {"type": "array", "maxItems": 64, "items": {"type": "object", "additionalProperties": false, "required": ["name", "value"], "properties": {"name": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}, "value": {"type": "string", "format": "byte", "description": "Base64 UTF-8 environment bytes, decoded size at most 4096. Empty is valid; no NUL, CR or LF. Entire NAME=value newline encoding is at most 256 KiB."}}}}}}
     "HostingSourceGrantRequest": {"type": "object", "additionalProperties": false, "required": ["expected_resource_generation", "expected_source_generation", "secret_id", "secret_version", "request_id"], "properties": {"expected_resource_generation": {"type": "integer", "format": "int64", "minimum": 1}, "expected_source_generation": {"type": "integer", "format": "int64", "minimum": 1}, "secret_id": {"type": "string", "minLength": 1, "maxLength": 128}, "secret_version": {"type": "integer", "format": "int64", "minimum": 1}, "request_id": {"type": "string", "pattern": "^([0-9a-f]{32}|[0-9a-f]{64})$"}}}
-    "HostingSourceGrant": {"type": "object", "additionalProperties": false, "required": ["id", "version", "source_id", "source_generation", "resource_id", "kind", "revoked"], "properties": {"id": {"type": "string"}, "version": {"type": "integer", "format": "int64", "minimum": 1}, "source_id": {"type": "string"}, "source_generation": {"type": "integer", "format": "int64", "minimum": 0, "description": "Zero denotes legacy grants with no generation evidence; these cannot be selected for configured builds."}, "resource_id": {"type": "string"}, "kind": {"type": "string", "enum": ["https_basic"]}, "revoked": {"type": "boolean"}}}
+    "HostingSourceGrant": {"type": "object", "additionalProperties": false, "required": ["id", "version", "source_id", "source_generation", "resource_id", "kind", "revoked"], "properties": {"id": {"type": "string"}, "version": {"type": "integer", "format": "int64", "minimum": 1}, "source_id": {"type": "string"}, "source_generation": {"type": "integer", "format": "int64", "minimum": 0, "description": "Zero denotes legacy grants with no generation evidence; these cannot be selected for configured builds."}, "resource_id": {"type": "string"}, "kind": {"type": "string", "enum": ["https_basic", "ssh_private_key"]}, "revoked": {"type": "boolean"}}}
     "HostingSourceCredentialRequest": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string", "pattern": "^([0-9a-f]{32}|[0-9a-f]{64})$"}}}
-    "HostingSourceCredential": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id", "request_hash", "credential_kind", "username", "credential", "use_until"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "credential_kind": {"type": "string", "enum": ["https_basic"]}, "username": {"type": "string", "minLength": 1, "maxLength": 256}, "credential": {"type": "string", "format": "byte", "description": "Base64 UTF-8 password. Combined username, colon and decoded password must fit 4096 bytes."}, "use_until": {"type": "string", "format": "date-time"}}}
+    "HostingSourceCredential": {"type": "object", "additionalProperties": false, "required": ["authority", "delivery_id", "request_hash", "credential_kind", "username", "credential", "use_until"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "delivery_id": {"type": "string"}, "request_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "credential_kind": {"type": "string", "enum": ["https_basic", "ssh_private_key"]}, "username": {"type": "string", "maxLength": 256, "description": "Nonempty for HTTPS Basic; empty for SSH, whose username is in the repository URL."}, "credential": {"type": "string", "format": "byte", "description": "Base64 UTF-8 password or raw unencrypted SSH private key. Basic username, colon and password must fit 4096 bytes. SSH keys are limited to 65536 decoded bytes. The complete response is limited to 98304 bytes."}, "use_until": {"type": "string", "format": "date-time"}}}
     "HostingBuildLogEvent": {"type": "object", "additionalProperties": false, "required": ["event_key", "sequence", "component", "stream", "message"], "properties": {"event_key": {"type": "string", "minLength": 1, "maxLength": 128}, "sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "component": {"type": "string", "enum": ["build", "buildkit", "railpack"]}, "stream": {"type": "string", "enum": ["system", "stdout", "stderr"]}, "message": {"type": "string", "maxLength": 16384}, "source_timestamp": {"type": "string", "format": "date-time"}}}
     "HostingBuildLogBatch": {"type": "object", "additionalProperties": false, "required": ["authority", "events"], "properties": {"authority": {"$ref": "#/components/schemas/HostingBuildAuthority"}, "events": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/components/schemas/HostingBuildLogEvent"}}}}
     "HostingBuildLogReceipt": {"type": "object", "additionalProperties": false, "required": ["event_key", "requested_sequence", "sequence", "body_hash"], "properties": {"event_key": {"type": "string"}, "requested_sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647}, "body_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}}
@@ -11929,7 +11941,7 @@ components:
           "type": "string"
           "minLength": 1
           "maxLength": 128
-        "grant_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Required for https_basic; forbidden for public."}
+        "grant_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Required for https_basic and ssh_private_key; forbidden for public."}
     "HostingBuildCancelInput":
       "type": "object"
       "additionalProperties": false
@@ -11958,8 +11970,10 @@ components:
     "HostingBuildSourceReceipt":
       "type": "object"
       "additionalProperties": false
-      "required": ["build_id", "source_id", "input_id", "commit", "policy_hash", "tree_digest"]
+      "required": ["build_id", "source_id", "input_id", "tree_digest"]
       "properties":
+        kind: {type: string, enum: [dockerfile]}
+        content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         "build_id":
           "type": "string"
         "source_id":
@@ -12155,23 +12169,26 @@ components:
           "items":
             "$ref": "#/components/schemas/HostingBuildReceiptAcknowledgment"
     "PublicHostingBuildSource":
-      "type": "object"
-      "additionalProperties": false
-      "required": ["source_id", "repository_url", "requested_ref", "credential_kind", "generation", "settings"]
-      "properties":
-        "source_id":
-          "type": "string"
-        "repository_url":
-          "type": "string"
-        "requested_ref":
-          "type": "string"
-        "credential_kind":
-          "type": "string"
-        "generation":
-          "type": "integer"
-          "format": "int64"
-        "settings":
-          "$ref": "#/components/schemas/HostingBuildSettings"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [source_id, generation, repository_url, requested_ref, credential_kind, settings]
+          properties:
+            source_id: {type: string}
+            generation: {type: integer, format: int64}
+            repository_url: {type: string}
+            requested_ref: {type: string}
+            credential_kind: {type: string}
+            settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+        - type: object
+          additionalProperties: false
+          required: [kind, source_id, generation, content_hash, settings]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            source_id: {type: string}
+            generation: {type: integer, format: int64}
+            content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+            settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     "PublicHostingBuildTarget":
       "type": "object"
       "additionalProperties": false
@@ -12212,14 +12229,20 @@ components:
         "trigger_revision":
           "$ref": "#/components/schemas/HostingBuildTriggerRevision"
     "PublicHostingBuildSourceReceipt":
-      "type": "object"
-      "additionalProperties": false
-      "required": ["commit", "tree_digest"]
-      "properties":
-        "commit":
-          "type": "string"
-        "tree_digest":
-          "type": "string"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [commit, tree_digest]
+          properties:
+            commit: {type: string}
+            tree_digest: {type: string}
+        - type: object
+          additionalProperties: false
+          required: [kind, content_hash, tree_digest]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+            tree_digest: {type: string}
     "PublicHostingBuildArtifact":
       "type": "object"
       "additionalProperties": false
@@ -16851,15 +16874,66 @@ components:
           type: string
           maxLength: 4096
           description: Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed.
+    HostingBuildRegistryCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [authority, delivery_id]
+      properties:
+        authority: {$ref: "#/components/schemas/HostingBuildAuthority"}
+        delivery_id: {type: string, pattern: '^(?:[0-9a-f]{32}|[0-9a-f]{64})$'}
+    HostingBuildSecretReference:
+      type: object
+      additionalProperties: false
+      required: [name, secret]
+      properties:
+        name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: Unique RUN environment name. Same reserved names as public build variables. Cannot collide with build_variables.}
+        secret: {$ref: "#/components/schemas/HostingRegistryCredentialRef"}
+    HostingBuildSecretsDelivery:
+      type: object
+      additionalProperties: false
+      required: [secrets, use_until]
+      properties:
+        use_until: {type: string, format: date-time}
+        secrets:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, value]
+            properties:
+              name: {type: string}
+              value: {type: string, maxLength: 65536}
+    HostingBuildSecretsRequest:
+      type: object
+      additionalProperties: false
+      required: [authority, delivery_id]
+      properties:
+        authority: {$ref: "#/components/schemas/HostingBuildAuthority"}
+        delivery_id: {type: string, pattern: '^(?:[0-9a-f]{32}|[0-9a-f]{64})$'}
     HostingBuildSettings:
       type: object
       additionalProperties: false
       required: [strategy]
       properties:
+        build_secrets:
+          type: array
+          maxItems: 64
+          description: Explicit managed secret versions for Dockerfile or Compose RUN environments. Only references enter immutable metadata. Values are delivered for live fresh builds and staged outside the source context.
+          items: {$ref: "#/components/schemas/HostingBuildSecretReference"}
+        build_registry_credential:
+          allOf: [{$ref: "#/components/schemas/HostingRegistryCredentialRef"}]
+          nullable: true
+          description: Explicit build registry credential for Dockerfile or Compose base images. Omitted or null clears the selection. Separate from Git source and deployment image credentials. Only the immutable secret reference is stored in build metadata.
+        inject_build_args_to_dockerfile:
+          type: boolean
+          nullable: true
+          description: Dockerfile-only. Omitted or null enables ARG name declarations after every stage when build_variables is nonempty. False passes values without generated declarations. No values are inserted into source.
         build_variables:
           type: array
           maxItems: 64
-          description: Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings.
+          description: Compose or Dockerfile public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings.
           items: {$ref: "#/components/schemas/HostingBuildVariable"}
         strategy: {type: string, enum: [dockerfile, railpack, static, compose]}
         context_dir: {type: string, maxLength: 512}
@@ -16875,9 +16949,16 @@ components:
       additionalProperties: false
       required: [repository_url, requested_ref, credential_kind, settings]
       properties:
-        repository_url: {type: string, minLength: 1, maxLength: 8192, description: HTTPS URL allowed by the server operator. No credentials or query/fragment components.}
+        repository_url: {type: string, minLength: 1, maxLength: 8192, description: Operator-allowed HTTPS URL or SSH repository URL. SSH supports ssh://user@host with an optional port and SCP user@host:path. No passwords or query/fragment components.}
         requested_ref: {type: string, minLength: 1, maxLength: 512}
-        credential_kind: {type: string, enum: [public, https_basic]}
+        credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
+        ssh_host_fingerprints:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          description: Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition.
+          items: {type: string, pattern: "^SHA256:[A-Za-z0-9+/]{43}$"}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     GitResourceSource:
       type: object
@@ -16889,9 +16970,39 @@ components:
         repository_url: {type: string}
         requested_ref: {type: string}
         credential_kind: {type: string, enum: [public, https_basic, ssh_private_key]}
+        ssh_host_fingerprints:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          description: Required only for SSH. Canonical SHA256 host-key fingerprints pinned before source acquisition.
+          items: {type: string, pattern: "^SHA256:[A-Za-z0-9+/]{43}$"}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    DockerfileResourceInput:
+      type: object
+      additionalProperties: false
+      required: [content, settings]
+      properties:
+        content: {type: string, minLength: 1, maxLength: 1048576, description: "Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile."}
+        settings: {$ref: "#/components/schemas/HostingBuildSettings"}
+    DockerfileResourceSource:
+      type: object
+      additionalProperties: false
+      required: [source_id, generation, content_hash, content, settings]
+      properties:
+        source_id: {type: string}
+        generation: {type: integer, format: int64, minimum: 1}
+        content_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content: {type: string, minLength: 1, maxLength: 1048576}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     ResourceSourceInput:
       oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, dockerfile]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            dockerfile: {$ref: "#/components/schemas/DockerfileResourceInput"}
         - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object
@@ -16902,6 +17013,12 @@ components:
             git: {$ref: "#/components/schemas/GitResourceInput"}
     ResourceSource:
       oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, dockerfile]
+          properties:
+            kind: {type: string, enum: [dockerfile]}
+            dockerfile: {$ref: "#/components/schemas/DockerfileResourceSource"}
         - {$ref: "#/components/schemas/ComposeResourceSource"}
         - {$ref: "#/components/schemas/ImageResourceSource"}
         - type: object

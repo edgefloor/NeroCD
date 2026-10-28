@@ -79,9 +79,15 @@ type PublicRoute struct {
 
 type metrics struct {
 	mu               sync.Mutex
-	requests         map[string]int64
+	requests         map[metricLabels]int64
 	totalLatencyMS   int64
 	loginRateLimited int64
+}
+
+type metricLabels struct {
+	method string
+	route  string
+	status string
 }
 
 const maxMetricSeries = 512
@@ -89,15 +95,16 @@ const maxMetricSeries = 512
 func (m *metrics) recordLoginRateLimit() { m.mu.Lock(); defer m.mu.Unlock(); m.loginRateLimited++ }
 
 func newMetrics() *metrics {
-	return &metrics{requests: map[string]int64{}}
+	return &metrics{requests: map[metricLabels]int64{}}
 }
 
 func (m *metrics) record(method string, path string, status int, duration time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := metricMethod(method) + "|" + metricRoute(path) + "|" + metricStatus(status)
-	if _, known := m.requests[key]; !known && len(m.requests) >= maxMetricSeries {
-		key = method + "|/other|" + strconv.Itoa(status)
+	key := metricLabels{method: metricMethod(method), route: metricRoute(path), status: metricStatus(status)}
+	// Reserve one series for overflow, with a fixed vocabulary and cardinality.
+	if _, known := m.requests[key]; !known && len(m.requests) >= maxMetricSeries-1 {
+		key = metricLabels{method: "other", route: "/other", status: "other"}
 	}
 	m.requests[key]++
 	m.totalLatencyMS += duration.Milliseconds()
@@ -150,13 +157,12 @@ func (m *metrics) render() string {
 	out.WriteString("# HELP nerocd_http_requests_total Total HTTP requests by method, path, and status.\n")
 	out.WriteString("# TYPE nerocd_http_requests_total counter\n")
 	for key, count := range m.requests {
-		parts := strings.Split(key, "|")
 		out.WriteString(`nerocd_http_requests_total{method="`)
-		out.WriteString(parts[0])
+		out.WriteString(key.method)
 		out.WriteString(`",path="`)
-		out.WriteString(parts[1])
+		out.WriteString(key.route)
 		out.WriteString(`",status="`)
-		out.WriteString(parts[2])
+		out.WriteString(key.status)
 		out.WriteString(`"} `)
 		out.WriteString(strconv.FormatInt(count, 10))
 		out.WriteString("\n")
@@ -270,7 +276,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" || r.URL.Path == "/api/v1/runners/hosting/database-credentials" || r.URL.Path == "/api/v1/runners/hosting/registry-credential" {
+	if (r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/builds/registry-credential" || r.URL.Path == "/api/v1/runners/builds/secrets") || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" || r.URL.Path == "/api/v1/runners/hosting/database-credentials" || r.URL.Path == "/api/v1/runners/hosting/registry-credential" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
@@ -355,7 +361,7 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		writeErrorEnvelope(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "application/json is required")
 		return false
 	}
-	limit := maxJSONBodyBytes
+	limit := requestJSONBodyLimit(r)
 	if databaseConnectionPath(r.URL.Path) {
 		limit = domain.HostingDatabaseConnectionJSONLimit
 	}
@@ -490,7 +496,7 @@ func requiresRunnerAuth(path string) bool {
 		return true
 	case "/api/v1/runners/hosting-observations/targets", "/api/v1/runners/hosting-observations/report":
 		return true
-	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment", "/api/v1/runners/hosting/database-credentials", "/api/v1/runners/hosting/registry-credential":
+	case "/api/v1/runners/builds/secrets", "/api/v1/runners/builds/registry-credential", "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment", "/api/v1/runners/hosting/database-credentials", "/api/v1/runners/hosting/registry-credential":
 		return true
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true
@@ -640,7 +646,7 @@ func parseNonNegativeInt(value string, fallback int) int {
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, value any) bool {
-	if err := decodeJSONDocument(io.LimitReader(r.Body, maxJSONBodyBytes+1), value); err != nil {
+	if err := decodeJSONDocument(io.LimitReader(r.Body, int64(requestJSONBodyLimit(r))+1), value); err != nil {
 		writeErrorEnvelope(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return false
 	}
@@ -702,7 +708,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, hostingjobs.ErrUnavailable), errors.Is(err, store.ErrHostingBuildUnavailable), errors.Is(err, store.ErrHostingRuntimeConfigurationUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "hosting_unavailable"
-	case errors.Is(err, app.ErrHostingRegistryCredentialUnavailable), errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable), errors.Is(err, app.ErrHostingDatabaseCredentialsUnavailable):
+	case errors.Is(err, app.ErrHostingBuildSecretsUnavailable), errors.Is(err, app.ErrHostingRegistryCredentialUnavailable), errors.Is(err, app.ErrManagedSecretsUnavailable), errors.Is(err, app.ErrHostingSourceCredentialUnavailable), errors.Is(err, app.ErrHostingRuntimeEnvironmentUnavailable), errors.Is(err, app.ErrHostingDatabaseCredentialsUnavailable):
 		status = http.StatusServiceUnavailable
 		code = "unavailable"
 	case errors.Is(err, auth.ErrUnauthenticated):
@@ -828,3 +834,11 @@ func (r *statusRecorder) Write(value []byte) (int, error) {
 
 // Unwrap permits narrow streaming handlers to set connection deadlines.
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// requestJSONBodyLimit reserves worst-case escaping only for resource source mutations.
+func requestJSONBodyLimit(r *http.Request) int {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources" || r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/resources/"), "/") {
+		return domain.HostingDockerfileResourceJSONLimit
+	}
+	return maxJSONBodyBytes
+}

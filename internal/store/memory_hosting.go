@@ -95,6 +95,7 @@ func copyHostingResource(item domain.Resource) domain.Resource {
 	if item.Source.Git != nil {
 		source := *item.Source.Git
 		source.Settings = source.Settings.Clone()
+		source.SSHHostFingerprints = append([]string(nil), source.SSHHostFingerprints...)
 		item.Source.Git = &source
 	}
 	if item.Source.Compose != nil {
@@ -137,7 +138,7 @@ func (s *MemoryStore) GetResource(_ context.Context, id string) (domain.Resource
 
 // CreateResource enforces scope, uniqueness, and creator existence atomically.
 func (s *MemoryStore) CreateResource(_ context.Context, item domain.Resource, opts ...MutationOption) (domain.Resource, error) {
-	if item.Source.Kind == "git" || resourceMutationOptions(opts).gitSource != nil {
+	if (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") || resourceMutationOptions(opts).gitSource != nil {
 		return domain.Resource{}, ErrGitResourceUnavailable
 	}
 	audit := resolveMutationOptions(opts)
@@ -191,7 +192,7 @@ func (s *MemoryStore) CreateResource(_ context.Context, item domain.Resource, op
 
 // UpdateResource performs compare-and-swap and audit insertion under one lock.
 func (s *MemoryStore) UpdateResource(_ context.Context, item domain.Resource, expectedGeneration int64, opts ...MutationOption) (domain.Resource, error) {
-	if item.Source.Kind == "git" || resourceMutationOptions(opts).gitSource != nil {
+	if (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") || resourceMutationOptions(opts).gitSource != nil {
 		return domain.Resource{}, ErrGitResourceUnavailable
 	}
 	audit := resolveMutationOptions(opts)

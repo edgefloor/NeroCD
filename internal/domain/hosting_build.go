@@ -25,32 +25,50 @@ const HostingBuildTriggerRevisionCapability = "hosting_build_trigger_revision_v1
 // does not advertise this feature.
 const HostingPrivateGitCapability = "hosting_git_https_basic_v1"
 
+// HostingSSHGitCapability identifies connected pinned-host SSH deploy-key checkout.
+const HostingSSHGitCapability = "hosting_git_ssh_private_key_v1"
+
 // HostingBuildProtocol identifies the immutable local source/build persistence contract.
 const HostingBuildProtocol = "local-build.v1"
 
 // HostingBuildSettings mirrors the accepted local engine's non-secret settings.
 // Build variables are explicit public values, never runtime or credential inputs.
 type HostingBuildSettings struct {
-	BuildVariables  []HostingBuildVariable `json:"build_variables,omitempty"`
-	Strategy        string                 `json:"strategy"`
-	ContextDir      string                 `json:"context_dir,omitempty"`
-	DockerfilePath  string                 `json:"dockerfile_path,omitempty"`
-	BuildTarget     string                 `json:"build_target,omitempty"`
-	PublishDir      string                 `json:"publish_dir,omitempty"`
-	SPAFallback     bool                   `json:"spa_fallback,omitempty"`
-	ComposeFile     string                 `json:"compose_file,omitempty"`
-	PublicComponent string                 `json:"public_component,omitempty"`
-	ContainerPort   int                    `json:"container_port,omitempty"`
+	BuildSecrets                []HostingBuildSecretReference `json:"build_secrets,omitempty"`
+	BuildRegistryCredential     *HostingRegistryCredentialRef `json:"build_registry_credential,omitempty"`
+	InjectBuildArgsToDockerfile *bool                         `json:"inject_build_args_to_dockerfile,omitempty"`
+	BuildVariables              []HostingBuildVariable        `json:"build_variables,omitempty"`
+	Strategy                    string                        `json:"strategy"`
+	ContextDir                  string                        `json:"context_dir,omitempty"`
+	DockerfilePath              string                        `json:"dockerfile_path,omitempty"`
+	BuildTarget                 string                        `json:"build_target,omitempty"`
+	PublishDir                  string                        `json:"publish_dir,omitempty"`
+	SPAFallback                 bool                          `json:"spa_fallback,omitempty"`
+	ComposeFile                 string                        `json:"compose_file,omitempty"`
+	PublicComponent             string                        `json:"public_component,omitempty"`
+	ContainerPort               int                           `json:"container_port,omitempty"`
 }
 
 // Clone gives mutable variable storage to the receiving settings owner.
 func (s HostingBuildSettings) Clone() HostingBuildSettings {
 	s.BuildVariables = slices.Clone(s.BuildVariables)
+	s.BuildSecrets = slices.Clone(s.BuildSecrets)
+	if s.BuildRegistryCredential != nil {
+		ref := *s.BuildRegistryCredential
+		s.BuildRegistryCredential = &ref
+	}
+	if s.InjectBuildArgsToDockerfile != nil {
+		enabled := *s.InjectBuildArgsToDockerfile
+		s.InjectBuildArgsToDockerfile = &enabled
+	}
 	return s
 }
 
 // HostingGitSource is an immutable trusted source version referenced by a Git resource.
 type HostingGitSource struct {
+	Kind           string                  `json:"kind,omitempty"`
+	Content        string                  `json:"content,omitempty"`
+	ContentHash    string                  `json:"content_hash,omitempty"`
 	ID             string                  `json:"id"`
 	ResourceID     string                  `json:"resource_id"`
 	ProjectID      string                  `json:"project_id"`
@@ -162,12 +180,14 @@ type HostingBuildAuthority struct {
 
 // HostingBuildSourceReceipt freezes the resolved commit before build effects.
 type HostingBuildSourceReceipt struct {
-	BuildID    string `json:"build_id"`
-	SourceID   string `json:"source_id"`
-	InputID    string `json:"input_id"`
-	Commit     string `json:"commit"`
-	PolicyHash string `json:"policy_hash"`
-	TreeDigest string `json:"tree_digest"`
+	Kind        string `json:"kind,omitempty"`
+	ContentHash string `json:"content_hash,omitempty"`
+	BuildID     string `json:"build_id"`
+	SourceID    string `json:"source_id"`
+	InputID     string `json:"input_id"`
+	Commit      string `json:"commit"`
+	PolicyHash  string `json:"policy_hash"`
+	TreeDigest  string `json:"tree_digest"`
 }
 
 // HostingBuildArtifact retains local identity, never a fabricated repository digest.
@@ -213,11 +233,20 @@ var buildCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ValidateHostingBuildSettings checks canonical settings before any database mutation.
 func ValidateHostingBuildSettings(s HostingBuildSettings) error {
+	if err := validateHostingBuildSecrets(s); err != nil {
+		return err
+	}
+	if s.BuildRegistryCredential != nil && (s.BuildRegistryCredential.Validate() != nil || s.Strategy != "dockerfile" && s.Strategy != "compose") {
+		return errors.New("build registry credential requires Dockerfile or Compose strategy")
+	}
 	if err := validateHostingBuildVariables(s.BuildVariables); err != nil {
 		return err
 	}
-	if s.Strategy != "compose" && len(s.BuildVariables) != 0 {
-		return errors.New("build variables require compose strategy")
+	if s.Strategy != "compose" && s.Strategy != "dockerfile" && len(s.BuildVariables) != 0 {
+		return errors.New("build variables require compose or dockerfile strategy")
+	}
+	if s.Strategy != "dockerfile" && s.InjectBuildArgsToDockerfile != nil {
+		return errors.New("ARG injection setting requires dockerfile strategy")
 	}
 	if s.Strategy != "dockerfile" && s.Strategy != "railpack" && s.Strategy != "static" && s.Strategy != "compose" {
 		return errors.New("unsupported build strategy")
@@ -262,6 +291,15 @@ func ValidateHostingBuildSettings(s HostingBuildSettings) error {
 
 // ValidateHostingGitSource admits explicit policy-controlled Git source configuration.
 func ValidateHostingGitSource(s HostingGitSource) error {
+	if s.Kind == "dockerfile" {
+		if !buildID(s.ID) || !buildID(s.ResourceID) || !buildID(s.ProjectID) || s.Generation < 1 || s.RepositoryURL != "" || s.RequestedRef != "" || s.CredentialKind != "" || HostingDocumentHash(s.Policy) != HostingDocumentHash(source.RepositoryPolicy{}) || s.ContentHash != HostingDockerfileContentHash(s.Content) {
+			return errors.New("invalid stored Dockerfile source identity")
+		}
+		return ValidateDockerfileResourceConfiguration(DockerfileResourceConfiguration{Content: s.Content, Settings: s.Settings})
+	}
+	if s.Kind != "" || s.Content != "" || s.ContentHash != "" {
+		return errors.New("invalid Git source variant")
+	}
 	if !buildID(s.ID) || !buildID(s.ResourceID) || !buildID(s.ProjectID) || s.Generation < 1 {
 		return errors.New("invalid source identity")
 	}
@@ -317,6 +355,9 @@ func ValidateHostingBuildPolicy(p HostingBuildPolicy) error {
 // ValidateHostingBuildTriggerRevision checks optional trusted intent without
 // changing historical nil-revision source semantics.
 func ValidateHostingBuildTriggerRevision(s HostingBuildSnapshot) error {
+	if s.Source.Kind == "dockerfile" && (s.TriggerRevision != nil || s.Grant != nil) {
+		return errors.New("stored Dockerfile cannot select Git authority")
+	}
 	r := s.TriggerRevision
 	if r == nil {
 		return nil
@@ -333,6 +374,15 @@ func ValidateHostingBuildTriggerRevision(s HostingBuildSnapshot) error {
 
 // ValidateHostingBuildSourceReceipt binds a full commit and tree to the frozen source input.
 func ValidateHostingBuildSourceReceipt(r HostingBuildSourceReceipt, s HostingBuildSnapshot) error {
+	if s.Source.Kind == "dockerfile" {
+		if ValidateHostingGitSource(s.Source) != nil || ValidateHostingBuildTriggerRevision(s) != nil || r.Kind != "dockerfile" || r.ContentHash != s.Source.ContentHash || r.Commit != "" || r.PolicyHash != "" || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildDigest.MatchString(r.TreeDigest) {
+			return errors.New("stored Dockerfile receipt identity mismatch")
+		}
+		return nil
+	}
+	if r.Kind != "" || r.ContentHash != "" {
+		return errors.New("invalid Git receipt variant")
+	}
 	if ValidateHostingBuildTriggerRevision(s) != nil || s.TriggerRevision != nil && r.Commit != s.TriggerRevision.ExpectedCommit || (buildCommit.MatchString(s.Source.RequestedRef) && r.Commit != s.Source.RequestedRef) || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildCommit.MatchString(r.Commit) || r.PolicyHash != HostingDocumentHash(s.Source.Policy) || !buildDigest.MatchString(r.TreeDigest) {
 		return errors.New("source receipt identity mismatch")
 	}

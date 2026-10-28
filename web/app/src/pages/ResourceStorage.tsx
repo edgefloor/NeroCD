@@ -1,8 +1,6 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, listProjectMembers, principalQuery } from "@/api";
-import { getResource, type Resource } from "@/api/hosting";
 import { getResourceBinding } from "@/api/destinations";
+import { getResource, type Resource } from "@/api/hosting";
 import {
   createHostingStorage,
   scopedStorage,
@@ -11,10 +9,12 @@ import {
   storageRequestID,
   type HostingStorageInput,
 } from "@/api/hosting-storage";
-import { canOwnProject } from "@/lib/permissions";
+import { StorageArchives } from "@/components/hosting/StorageArchives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StorageArchives } from "@/components/hosting/StorageArchives";
+import { canOwnProject } from "@/lib/permissions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 const button = "h-auto max-w-full whitespace-normal";
 const denied = (error: unknown) =>
@@ -167,7 +167,84 @@ function StorageAccess({
     </section>
   );
 }
-function StorageValues({
+function StorageValues(props: {
+  actor: string;
+  resource: Resource;
+  owner: boolean;
+  paused: boolean;
+  recoveryBackup?: string;
+}) {
+  const viewModel = useStorageValues(props);
+  const {
+    owner,
+    storage,
+    binding,
+    busy,
+    error,
+    accessDenied,
+    failed,
+    refreshConfigured,
+  } = viewModel;
+  if (accessDenied || [storage.error, binding.error].some(denied))
+    return (
+      <p role="alert">
+        Storage access is unavailable. Refresh access before continuing.
+      </p>
+    );
+  return (
+    <>
+      {storage.isPending || binding.isPending ? (
+        <p role="status">Loading configured storage...</p>
+      ) : null}
+      {failed ? (
+        <p role="alert">
+          Unable to read storage or placement. Changes are paused.
+        </p>
+      ) : null}
+      <Button
+        type="button"
+        variant="outline"
+        className={button}
+        disabled={busy || storage.isFetching || binding.isFetching}
+        onClick={() => void refreshConfigured()}
+      >
+        Refresh configured storage
+      </Button>
+      {!storage.isError && storage.data ? (
+        <dl
+          className="min-w-0 space-y-1 break-all text-sm"
+          aria-label="Configured storage metadata"
+        >
+          <dt>Configured volume</dt>
+          <dd>{storage.data.volume_name}</dd>
+          <dt>Destination</dt>
+          <dd>{storage.data.destination_id}</dd>
+          <dt>Immutable mount path</dt>
+          <dd>{storage.data.mount_path}</dd>
+          <dt>Retention</dt>
+          <dd>{storage.data.retention}</dd>
+          <dt>Access</dt>
+          <dd>Single writer · read/write</dd>
+          <dt>Materialization</dt>
+          <dd>Unknown; configured metadata only</dd>
+        </dl>
+      ) : null}
+      {storage.data === null ? <p>No configured persistent storage.</p> : null}
+      {binding.data === null ? (
+        <p>Save a desired destination above before configuring storage.</p>
+      ) : null}
+      {!owner ? (
+        <p>Project owner access is required to configure persistent storage.</p>
+      ) : !storage.data ? (
+        <StorageConfigurationForm {...viewModel} />
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <ConfiguredStorageArchives {...viewModel} />
+    </>
+  );
+}
+
+function useStorageValues({
   actor,
   resource,
   owner,
@@ -213,7 +290,10 @@ function StorageValues({
   const [mount, setMount] = useState("/app/uploads");
   const [confirmed, setConfirmed] = useState(false);
   const [attempt, setAttempt] = useState<HostingStorageInput>();
-  const [generation, setGeneration] = useState(resource.generation);
+  const generation = useRef(resource.generation);
+  const setGeneration = (value: number) => {
+    generation.current = value;
+  };
   const [reviewedGeneration, setReviewedGeneration] = useState<number>();
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -333,7 +413,7 @@ function StorageValues({
       return;
     const body = attempt ?? {
       request_id: storageRequestID(),
-      expected_resource_generation: generation,
+      expected_resource_generation: generation.current,
       mount_path: mount,
     };
     setAttempt(body);
@@ -444,164 +524,235 @@ function StorageValues({
       request.finish();
     }
   }
+  return {
+    actor,
+    resource,
+    owner,
+    paused,
+    recoveryBackup,
+    id,
+    storage,
+    binding,
+    mount,
+    setMount,
+    confirmed,
+    setConfirmed,
+    attempt,
+    setAttempt,
+    generation,
+    setGeneration,
+    reviewedGeneration,
+    conflict,
+    setConflict,
+    busy,
+    error,
+    setError,
+    accessDenied,
+    failed,
+    blocked,
+    save,
+    refreshConfigured,
+    refreshGeneration,
+  };
+}
 
-  if (accessDenied || denied(storage.error) || denied(binding.error))
-    return (
-      <p role="alert">
-        Storage access is unavailable. Refresh access before continuing.
-      </p>
-    );
+type StorageConfigurationFormModel = Pick<
+  ReturnType<typeof useStorageValues>,
+  | "save"
+  | "busy"
+  | "id"
+  | "mount"
+  | "paused"
+  | "setMount"
+  | "setAttempt"
+  | "setConfirmed"
+  | "confirmed"
+  | "blocked"
+  | "conflict"
+  | "binding"
+  | "attempt"
+  | "refreshGeneration"
+  | "reviewedGeneration"
+  | "setGeneration"
+  | "setConflict"
+  | "setError"
+>;
+function StorageConfigurationForm(viewModel: StorageConfigurationFormModel) {
+  const {
+    save,
+    busy,
+    id,
+    mount,
+    paused,
+    setMount,
+    setAttempt,
+    setConfirmed,
+    confirmed,
+    blocked,
+    conflict,
+    binding,
+    attempt,
+  } = viewModel;
+
   return (
-    <>
-      {storage.isPending || binding.isPending ? (
-        <p role="status">Loading configured storage...</p>
-      ) : null}
-      {failed ? (
-        <p role="alert">
-          Unable to read storage or placement. Changes are paused.
-        </p>
-      ) : null}
+    <form
+      aria-label="Configure persistent storage"
+      onSubmit={(event) => void save(event)}
+      className="min-w-0 space-y-3"
+      aria-busy={busy}
+    >
+      <label htmlFor={`${id}-mount`}>Container mount path</label>
+      <Input
+        id={`${id}-mount`}
+        value={mount}
+        required
+        maxLength={512}
+        disabled={busy || paused}
+        onChange={(event) => {
+          setMount(event.target.value);
+          setAttempt(undefined);
+          setConfirmed(false);
+        }}
+      />
+      <p className="text-xs">
+        Use a canonical absolute container directory, such as /app/uploads.
+        Root, /proc, /sys and /dev paths are unsupported. The mount cannot be
+        edited after saving in this version.
+      </p>
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          disabled={busy || paused}
+          onChange={(event) => setConfirmed(event.target.checked)}
+        />
+        <span>
+          I understand this saves immutable desired storage metadata only and
+          neither creates a volume nor deploys the application.
+        </span>
+      </label>
+      <Button
+        type="submit"
+        className={button}
+        disabled={blocked || conflict || !confirmed || !binding.data}
+      >
+        {busy
+          ? "Saving storage..."
+          : attempt
+            ? "Retry identical storage request"
+            : "Save desired storage"}
+      </Button>
+      {conflict ? <StorageConflictReview {...viewModel} /> : null}
+    </form>
+  );
+}
+
+type StorageConflictReviewModel = Pick<
+  ReturnType<typeof useStorageValues>,
+  | "busy"
+  | "paused"
+  | "refreshGeneration"
+  | "reviewedGeneration"
+  | "blocked"
+  | "setGeneration"
+  | "setAttempt"
+  | "setConflict"
+  | "setConfirmed"
+  | "setError"
+>;
+function StorageConflictReview(viewModel: StorageConflictReviewModel) {
+  const {
+    busy,
+    paused,
+    refreshGeneration,
+    reviewedGeneration,
+    blocked,
+    setGeneration,
+    setAttempt,
+    setConflict,
+    setConfirmed,
+    setError,
+  } = viewModel;
+
+  return (
+    <section className="space-y-2" aria-label="Storage configuration conflict">
       <Button
         type="button"
         variant="outline"
         className={button}
-        disabled={busy || storage.isFetching || binding.isFetching}
-        onClick={() => void refreshConfigured()}
+        disabled={busy || paused}
+        onClick={() => void refreshGeneration()}
       >
-        Refresh configured storage
+        Refresh storage configuration for review
       </Button>
-      {!storage.isError && storage.data ? (
-        <dl
-          className="min-w-0 space-y-1 break-all text-sm"
-          aria-label="Configured storage metadata"
-        >
-          <dt>Configured volume</dt>
-          <dd>{storage.data.volume_name}</dd>
-          <dt>Destination</dt>
-          <dd>{storage.data.destination_id}</dd>
-          <dt>Immutable mount path</dt>
-          <dd>{storage.data.mount_path}</dd>
-          <dt>Retention</dt>
-          <dd>{storage.data.retention}</dd>
-          <dt>Access</dt>
-          <dd>Single writer · read/write</dd>
-          <dt>Materialization</dt>
-          <dd>Unknown; configured metadata only</dd>
-        </dl>
-      ) : null}
-      {storage.data === null ? <p>No configured persistent storage.</p> : null}
-      {binding.data === null ? (
-        <p>Save a desired destination above before configuring storage.</p>
-      ) : null}
-      {!owner ? (
-        <p>Project owner access is required to configure persistent storage.</p>
-      ) : !storage.data ? (
-        <form
-          aria-label="Configure persistent storage"
-          onSubmit={(event) => void save(event)}
-          className="min-w-0 space-y-3"
-          aria-busy={busy}
-        >
-          <label htmlFor={`${id}-mount`}>Container mount path</label>
-          <Input
-            id={`${id}-mount`}
-            value={mount}
-            required
-            maxLength={512}
-            disabled={busy || paused}
-            onChange={(event) => {
-              setMount(event.target.value);
-              setAttempt(undefined);
-              setConfirmed(false);
-            }}
-          />
-          <p className="text-xs">
-            Use a canonical absolute container directory, such as /app/uploads.
-            Root, /proc, /sys and /dev paths are unsupported. The mount cannot
-            be edited after saving in this version.
-          </p>
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              disabled={busy || paused}
-              onChange={(event) => setConfirmed(event.target.checked)}
-            />
-            <span>
-              I understand this saves immutable desired storage metadata only
-              and neither creates a volume nor deploys the application.
-            </span>
-          </label>
+      {reviewedGeneration ? (
+        <>
+          <p>Current resource generation {reviewedGeneration}</p>
           <Button
-            type="submit"
+            type="button"
             className={button}
-            disabled={blocked || conflict || !confirmed || !binding.data}
+            disabled={blocked}
+            onClick={() => {
+              setGeneration(reviewedGeneration);
+              setAttempt(undefined);
+              setConflict(false);
+              setConfirmed(false);
+              setError("");
+            }}
           >
-            {busy
-              ? "Saving storage..."
-              : attempt
-                ? "Retry identical storage request"
-                : "Save desired storage"}
+            Keep mount with reviewed generation for a separate save
           </Button>
-          {conflict ? (
-            <section
-              className="space-y-2"
-              aria-label="Storage configuration conflict"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                className={button}
-                disabled={busy || paused}
-                onClick={() => void refreshGeneration()}
-              >
-                Refresh storage configuration for review
-              </Button>
-              {reviewedGeneration ? (
-                <>
-                  <p>Current resource generation {reviewedGeneration}</p>
-                  <Button
-                    type="button"
-                    className={button}
-                    disabled={blocked}
-                    onClick={() => {
-                      setGeneration(reviewedGeneration);
-                      setAttempt(undefined);
-                      setConflict(false);
-                      setConfirmed(false);
-                      setError("");
-                    }}
-                  >
-                    Keep mount with reviewed generation for a separate save
-                  </Button>
-                </>
-              ) : null}
-            </section>
-          ) : null}
-        </form>
+        </>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-      {!failed &&
+    </section>
+  );
+}
+
+type ConfiguredStorageArchivesModel = Pick<
+  ReturnType<typeof useStorageValues>,
+  | "failed"
+  | "storage"
+  | "binding"
+  | "actor"
+  | "resource"
+  | "owner"
+  | "recoveryBackup"
+  | "blocked"
+  | "accessDenied"
+>;
+function ConfiguredStorageArchives(viewModel: ConfiguredStorageArchivesModel) {
+  const {
+    failed,
+    storage,
+    binding,
+    actor,
+    resource,
+    owner,
+    recoveryBackup,
+    blocked,
+    accessDenied,
+  } = viewModel;
+
+  if (
+    !(
+      !failed &&
       storage.data?.kind === "platform_managed" &&
       storage.data.driver === "local" &&
       binding.data &&
       storage.data.binding_id === binding.data.id &&
-      storage.data.destination_id === binding.data.destination_id ? (
-        <StorageArchives
-          key={JSON.stringify([
-            actor,
-            resource.id,
-            storage.data.hash,
-            owner,
-          ])}
-          actor={actor}
-          resource={resource}
-          storage={storage.data}
-          owner={owner}
-          recoveryBackup={recoveryBackup}
-          paused={blocked || accessDenied}
-        />
-      ) : null}
-    </>
+      storage.data.destination_id === binding.data.destination_id
+    )
+  )
+    return null;
+  return (
+    <StorageArchives
+      key={JSON.stringify([actor, resource.id, storage.data.hash, owner])}
+      actor={actor}
+      resource={resource}
+      storage={storage.data}
+      owner={owner}
+      recoveryBackup={recoveryBackup}
+      paused={blocked || accessDenied}
+    />
   );
 }

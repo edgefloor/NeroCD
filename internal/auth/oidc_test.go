@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,5 +175,60 @@ func TestOIDCProviderOutageIsSanitized(t *testing.T) {
 	_, err = client.AuthorizationURL(t.Context(), "state", "nonce", "verifier")
 	if err == nil || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("provider outage error was not sanitized: %v", err)
+	}
+}
+
+func TestOIDCRejectsHTTPSDowngradeBeforeSendingRequest(t *testing.T) {
+	for _, endpoint := range []string{"/.well-known/openid-configuration", "/token", "/jwks"} {
+		t.Run(endpoint, func(t *testing.T) {
+			var plaintextRequests atomic.Int32
+			plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				plaintextRequests.Add(1)
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			t.Cleanup(plaintext.Close)
+			fixture := newOIDCTestProvider(t)
+			secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == endpoint {
+					http.Redirect(w, r, plaintext.URL+endpoint, http.StatusTemporaryRedirect)
+					return
+				}
+				fixture.serveHTTP(w, r)
+			}))
+			t.Cleanup(secure.Close)
+			fixture.server = secure
+			client, err := NewOIDCClient(OIDCConfig{IssuerURL: secure.URL, ClientID: "client-1", ClientSecret: "secret", RedirectURL: "http://localhost/callback", AllowLoopbackHTTP: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.httpClient.Transport = boundedOIDCTransport{base: secure.Client().Transport, maxBytes: maxOIDCResponse}
+			if _, err := client.Exchange(t.Context(), "good", "fixture-verifier"); err == nil {
+				t.Fatal("accepted HTTPS downgrade")
+			}
+			if got := plaintextRequests.Load(); got != 0 {
+				t.Fatalf("sent %d plaintext requests", got)
+			}
+		})
+	}
+}
+
+func TestOIDCLoopbackDevelopmentRedirectCannotDowngradeAfterHTTPSHop(t *testing.T) {
+	var plaintextRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { plaintextRequests.Add(1) }))
+	t.Cleanup(target.Close)
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
+	t.Cleanup(secure.Close)
+	initial := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, secure.URL, http.StatusFound) }))
+	t.Cleanup(initial.Close)
+	client, err := NewOIDCClient(OIDCConfig{IssuerURL: initial.URL, ClientID: "client", ClientSecret: "secret", RedirectURL: "http://localhost/callback", AllowLoopbackHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.httpClient.Transport = boundedOIDCTransport{base: secure.Client().Transport, maxBytes: maxOIDCResponse}
+	if _, err := client.AuthorizationURL(t.Context(), "state", "nonce", "verifier"); err == nil {
+		t.Fatal("accepted downgrade after HTTPS hop")
+	}
+	if plaintextRequests.Load() != 0 {
+		t.Fatal("redirect reached plaintext target")
 	}
 }

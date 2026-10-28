@@ -15,7 +15,7 @@ func runtimeResourceSupported(kind string, source json.RawMessage) bool {
 	var src struct {
 		Kind string `json:"kind"`
 	}
-	return kind == "application" && json.Unmarshal(source, &src) == nil && (src.Kind == "image" || src.Kind == "git" || src.Kind == "compose")
+	return kind == "application" && json.Unmarshal(source, &src) == nil && (src.Kind == "image" || src.Kind == "git" || src.Kind == "compose" || src.Kind == "dockerfile")
 }
 
 func runtimeVersion(row sqlcgen.HostingRuntimeConfigurationVersion, resourceGeneration int64) (domain.HostingRuntimeConfiguration, error) {

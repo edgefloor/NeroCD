@@ -4,11 +4,14 @@
 set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source "$root/scripts/local-image-registry.sh"
-file="$root/acceptance/runtime-compose/compose.yaml" evidence=/tmp/nerocd-compose-runtime.txt
+file="$root/acceptance/runtime-compose/compose.yaml"
+runtime_evidence_output=${NEROCD_RUNTIME_COMPOSE_EVIDENCE:-/tmp/nerocd-compose-runtime.txt}
 runtime_profile=${NEROCD_RUNTIME_PROFILE:-development}
 case "$runtime_profile" in development|production) ;; *) printf 'runtime-compose: invalid NEROCD_RUNTIME_PROFILE\n' >&2; exit 2 ;; esac
 if [[ "$runtime_profile" == production ]]; then file+=" $root/acceptance/runtime-compose/compose.production-dogfood.yaml"; fi
 dir=$(mktemp -d /tmp/nerocd-runtime-compose.XXXXXXXX)
+runtime_evidence_dir=$(mktemp -d /tmp/nerocd-compose-evidence.XXXXXXXX)
+evidence=$(mktemp "$runtime_evidence_dir/evidence.XXXXXXXX")
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 project="nerocd-compose-$suffix" compose_project="target_$suffix" image="nerocd-compose-runtime:$suffix" runner_image="nerocd-compose-runner:$suffix" git_image="nerocd-compose-git:$suffix"
 fixture_a="nerocd-compose-fixture-a:$suffix" fixture_b="nerocd-compose-fixture-b:$suffix" fixture_c="nerocd-compose-fixture-c:$suffix" pass=false
@@ -18,7 +21,21 @@ fixture_registry_container_id='' fixture_registry_port='' fixture_registry_diagn
 fixture_a_registry_tag='' fixture_b_registry_tag='' fixture_c_registry_tag=''
 cleanup_helper_image='alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412'
 runner_workdir="$dir/runner-workspace"; runner_secret_root="$dir/runner-secrets"; mkdir -m 0700 "$runner_workdir" "$runner_secret_root"; export NEROCD_RUNTIME_WORKDIR="$runner_workdir" NEROCD_RUNTIME_SECRET_ROOT="$runner_secret_root"
-: >"$evidence"; record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
+record(){ printf '%s\n' "$*" >>"$evidence"; }; fail(){ trap - ERR; record "FAIL: $*"; printf 'runtime-compose: %s\n' "$*" >&2; exit 1; }
+publish_runtime_evidence(){
+  if python3 - "$evidence" "$runtime_evidence_output" <<'PYTHON'
+import os
+import sys
+os.replace(sys.argv[1], sys.argv[2])
+PYTHON
+  then
+    evidence=$runtime_evidence_output
+    rmdir -- "$runtime_evidence_dir"
+  else
+    printf 'runtime-compose: could not publish evidence; private evidence retained\n' >&2
+    return 1
+  fi
+}
 # Docker Desktop can remap the host socket group inside containers. Derive the
 # effective mount GID in the same mount namespace the non-root runner uses.
 docker_gid(){ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412 sh -ec 'stat -c %g /var/run/docker.sock'; }
@@ -672,11 +689,12 @@ cleanup(){
   record "cleanup_complete=$cleanup_complete"
   if [[ "$cleanup_complete" != true && $original -eq 0 ]]; then final=1; fi
   if [[ "$pass" == true && $original -eq 0 && "$cleanup_complete" == true ]]; then record 'PASS: real typed Compose A/B/C rollback and restart gate'; fi
+  publish_runtime_evidence || final=1
   printf 'runtime compose evidence: %s\n' "$evidence"
   exit "$final"
 }
 trap cleanup EXIT; trap 'fail "unexpected command failure line $LINENO"' ERR
-for x in docker curl jq git od; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
+for x in docker curl jq git od python3; do command -v "$x" >/dev/null || fail "missing $x"; done; docker info >/dev/null || fail 'Docker unavailable'; [[ -S /var/run/docker.sock ]] || fail 'Docker socket unavailable'
 socket_gid=$(docker_gid); [[ "$socket_gid" =~ ^[0-9]+$ ]] || fail 'Docker socket GID unavailable'; record "project=$project docker_gid=$socket_gid socket_root_equivalent=true"
 docker build --pull -t "$image" "$root" >"$dir/build.log" 2>&1 || fail 'fresh server image build failed'
 docker buildx version >/dev/null 2>&1 || fail 'Docker Buildx unavailable'
@@ -724,13 +742,32 @@ fi
 compose run --rm --no-deps git_init >"$dir/git-init.log" 2>&1 || fail 'git fixture initialization failed'
 compose up -d --wait postgres server git proxy >"$dir/up.log" 2>&1 || fail 'control stack failed'
 server_port=$(compose port server 8080 | tail -1); base="http://127.0.0.1:${server_port##*:}"
-http(){ local method=$1 url=$2 token=$3 body=$4 out=$5; local -a args=(-sS --max-time 15 -o "$out" -w '%{http_code}' -X "$method" -H 'Content-Type: application/json'); [[ -z "$token" ]] || args+=(-H "Authorization: Bearer $token"); args+=(--data "$body" "$url"); curl "${args[@]}"; }
+# Only curl's private input files carry request bodies and bearer headers.
+http(){
+  local method=$1 url=$2 token=$3 body=$4 out=$5 request rc
+  request=$(mktemp -d "$dir/http.XXXXXXXX") || return 1
+  printf '%s' "$body" >"$request/body"
+  printf 'Content-Type: application/json\n' >"$request/headers"
+  [[ -z "$token" ]] || printf 'Authorization: Bearer %s\n' "$token" >>"$request/headers"
+  rc=0
+  curl -sS --max-time 15 -o "$out" -w '%{http_code}' -X "$method" --header "@$request/headers" --data-binary "@$request/body" "$url" || rc=$?
+  rm -rf -- "$request"
+  return "$rc"
+}
+session_body(){ printf '%s' "$admin_password" | jq -Rsc --arg email "$admin_email" '{email:$email,password:.}'; }
+metrics(){
+  local code
+  code=$(http GET "$base/metrics" "$admin" '' "$dir/metrics-current.txt") || return
+  [[ "$code" == 200 ]] || return 1
+  cat "$dir/metrics-current.txt"
+}
+
 proxy_status(){ compose exec -T proxy curl -fsS --max-time 5 http://127.0.0.1:8081/__control/status; }
 proxy_post(){ compose exec -T proxy curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:8081/__control/$1"; }
 if [[ "$runtime_profile" == production ]]; then
   printf '%s\n' "$admin_password" | compose run --rm --no-deps --entrypoint nerocd server bootstrap-admin --email "$admin_email" --name 'Dogfood Admin' --password-stdin >"$dir/bootstrap.log" 2>&1 || fail 'production bootstrap-admin failed'
 fi
-code=$(http POST "$base/api/v1/sessions" '' "$(jq -cn --arg email "$admin_email" --arg password "$admin_password" '{email:$email,password:$password}')" "$dir/session.json"); [[ "$code" == 201 ]] || fail 'admin session failed'; admin=$(jq -er .token "$dir/session.json")
+code=$(http POST "$base/api/v1/sessions" '' "$(session_body)" "$dir/session.json"); [[ "$code" == 201 ]] || fail 'admin session failed'; admin=$(jq -er .token "$dir/session.json")
 code=$(http POST "$base/api/v1/projects" "$admin" "$(jq -cn --arg n "compose-$suffix" '{name:$n,description:"ephemeral compose acceptance"}')" "$dir/project.json"); [[ "$code" == 201 ]] || fail 'project create failed'; project_id=$(jq -er .id "$dir/project.json")
 code=$(http POST "$base/api/v1/runners/register" "$admin" '{"id":"runner_compose","name":"runner_compose","tags":["compose-runtime"],"capabilities":["compose-deploy"]}' "$dir/runner.json"); [[ "$code" == 201 ]] || fail 'runner registration failed'; token=$(jq -er .token "$dir/runner.json")
 printf '%s\n' "$token" | compose run --rm --no-deps credential_init >"$dir/credential.log" 2>&1 || fail 'runner credential initialization failed'
@@ -813,7 +850,7 @@ runner.deployment.transition:$child_during
 runner.deployment.transition:$child_during"; [[ "$during_audits" == "$expected_during_audits" ]] || fail "during-cancel audit order=$during_audits"; during_writes_before=$(psql_query "select (select count(*)::text from audit_events where target_id in ('$dep_during','$child_during'))||(select count(*)::text from deployment_transitions where deployment_id in ('$dep_during','$child_during'))||(select count(*)::text from run_logs where run_id in (select task_run_id from deployments where id in ('$dep_during','$child_during')))||(select count(*)::text from run_artifacts where run_id in (select task_run_id from deployments where id in ('$dep_during','$child_during')))"); sleep 2; during_writes_after=$(psql_query "select (select count(*)::text from audit_events where target_id in ('$dep_during','$child_during'))||(select count(*)::text from deployment_transitions where deployment_id in ('$dep_during','$child_during'))||(select count(*)::text from run_logs where run_id in (select task_run_id from deployments where id in ('$dep_during','$child_during')))||(select count(*)::text from run_artifacts where run_id in (select task_run_id from deployments where id in ('$dep_during','$child_during')))"); [[ "$during_writes_before" == "$during_writes_after" ]] || fail 'during-cancel produced late writes'; runner_live=$(compose ps -q runner); [[ -n "$runner_live" && "$(docker inspect -f '{{.State.Running}}' "$runner_live")" == true ]] || fail 'runner did not survive during-cancel'; record "during_apply_cancel deployment=$dep_during child=$child_during applying_observed=true group_terminated=true source_child=rolled_back pointer=B no_late_writes=true"
 trace_before=$(compose_trace_lines); compose run --rm --no-deps git_advance_c >"$dir/advance-c.log"; read -r rev_c dep_c <<<"$(deploy_existing c "$rev_during")"; wait_public_status "$dep_c" verifying; attempt1=$(psql_query "select attempt||':'||status from deployment_attempts where deployment_id='$dep_c' order by attempt"); [[ "$attempt1" == '1:active' ]] || fail "C attempt1 was not active at verify=$attempt1"; target_before=$(docker ps -q --filter "ancestor=$fixture_c" --filter "label=com.docker.compose.project=$compose_project" --filter 'label=com.docker.compose.service=fixture'); [[ -n "$target_before" ]] || fail 'C verify had no C target'; created_before=$(docker inspect -f '{{.Created}}' "$target_before"); labels_before=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.config-hash"}}' "$target_before"); trace_before_kill=$(compose_trace "$trace_before"); [[ $(awk '$3=="action=compose_up" {n++} END {print n+0}' <<<"$trace_before_kill") == 1 ]] || fail "C baseline must contain exactly one compose up trace=[$trace_before_kill]"; awk 'BEGIN {want[1]="compose_config"; want[2]="image_inspect"; want[3]="compose_up"; n=0} {sub(/^action=/,"",$3); if ($3==want[n+1]) n++} END {exit n==3 ? 0 : 1}' <<<"$trace_before_kill" || fail "C baseline trace lacks ordered config/inspect/up trace=[$trace_before_kill]"; record "C_before_kill public_status=verifying attempt=$attempt1 container=$target_before created=$created_before labels=$labels_before trace=$(tr '\n' ';' <<<\"$trace_before_kill\")"; docker kill "$runner_cid" >/dev/null || fail 'runner kill after apply failed'; compose up -d runner >/dev/null; runner_cid=$(compose ps -q runner); sleep 2; [[ "$(public_status "$dep_c")" == verifying ]] || fail 'C restart did not remain verifying before health'; target_after=$(docker ps -aq --filter "label=com.docker.compose.project=$compose_project" --filter 'label=com.docker.compose.service=fixture'); created_after=$(docker inspect -f '{{.Created}}' "$target_after"); labels_after=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.config-hash"}}' "$target_after"); trace_after_restart=$(compose_trace "$trace_before"); [[ "$target_before" == "$target_after" && "$created_before" == "$created_after" && "$labels_before" == "$labels_after" ]] || fail 'restart reconciliation mutated C target before verification'; [[ $(awk '$3=="action=compose_up" {n++} END {print n+0}' <<<"$trace_after_restart") == 1 ]] || fail "restart added compose mutation trace=[$trace_after_restart]"; [[ "$trace_after_restart" == "$trace_before_kill" || "$trace_after_restart" == "$trace_before_kill"$'\n'* ]] || fail "restart trace did not preserve C baseline trace=[$trace_after_restart]"; record "C_after_restart public_status=verifying same_container=true no_second_up=true trace=$(tr '\n' ';' <<<\"$trace_after_restart\")"
 wait_status "$dep_c" rolled_back; revision_observation "$rev_c" "$c_commit" "$c_hash" "$fixture_c_ref"; provenance_receipt "$dep_c" "$rev_c" "$c_commit" "$c_hash" "$fixture_c_ref" 2; [[ "$(fixture_health_body)" == B ]] || fail 'C rollback did not restore B health'; child_c=$(psql_query "select id from deployments where rollback_of_id='$dep_c'"); [[ -n "$child_c" && "$(status "$child_c")" == rolled_back ]] || fail 'C rollback child did not settle'; rollback_lifecycle "$dep_c" "$child_c" rolled_back rolled_back 2; child_c_rev=$(psql_query "select desired_revision_id from deployments where id='$child_c'"); [[ "$child_c_rev" == "$rev_b" ]] || fail 'C rollback child did not use B revision'; revision_observation "$child_c_rev" "$b_commit" "$b_hash" "$fixture_b_ref"; provenance_receipt "$child_c" "$child_c_rev" "$b_commit" "$b_hash" "$fixture_b_ref" 1; pointer=$(psql_query "select current_healthy_revision_id from environments where id='$env_id'"); [[ "$pointer" == "$rev_b" ]] || fail 'C rollback changed B pointer'; record "C=$rev_c deployment=$dep_c child=$child_c source_child=rolled_back pointer=B reconcile_container_unchanged=true"
-metrics_before=$(curl -fsS --max-time 10 -H "Authorization: Bearer $admin" "$base/metrics")
+metrics_before=$(metrics)
 retry_before=$(awk '$1=="nerocd_runner_retry_count" {print $2}' <<<"$metrics_before"); renew_before=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' <<<"$metrics_before"); [[ "$retry_before" =~ ^[0-9]+$ && "$renew_before" =~ ^[0-9]+$ ]] || fail 'missing pre-failure runner counters'
 compose exec -T runner sh -ec 'rm -f /journal/compose-barrier-up-entered /journal/compose-barrier-up-descendant.pid; : >/journal/compose-barrier-up'
 read -r rev_metric dep_metric <<<"$(deploy_existing telemetry "$rev_during")"; wait_runner_barrier up; wait_public_status "$dep_metric" applying
@@ -829,7 +866,7 @@ deadline=$((SECONDS+20)); failed_renewals=$failed_before; while ((SECONDS<deadli
   sleep .2
 done; [[ "$failed_renewals" == $((failed_before+1)) && "$renew_requests" -ge $((renew_requests_before+2)) ]] || fail "renewal transient failure/recovery was not observed failed=$failed_renewals requests=$renew_requests"
 cancel_deployment "$dep_metric" telemetry-renewal-receipt; wait_status "$dep_metric" rolled_back
-deadline=$((SECONDS+15)); retry_reported=''; renew_reported=''; while ((SECONDS<deadline)); do metrics_now=$(curl -fsS --max-time 10 -H "Authorization: Bearer $admin" "$base/metrics"); retry_reported=$(awk '$1=="nerocd_runner_retry_count" {print $2}' <<<"$metrics_now"); renew_reported=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' <<<"$metrics_now"); [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] && break; sleep .2; done; [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] || fail "runner counter telemetry deltas retry=$retry_before->$retry_reported renew=$renew_before->$renew_reported want=+1/+1"
+deadline=$((SECONDS+15)); retry_reported=''; renew_reported=''; while ((SECONDS<deadline)); do metrics_now=$(metrics); retry_reported=$(awk '$1=="nerocd_runner_retry_count" {print $2}' <<<"$metrics_now"); renew_reported=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' <<<"$metrics_now"); [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] && break; sleep .2; done; [[ "$retry_reported" == $((retry_before+1)) && "$renew_reported" == $((renew_before+1)) ]] || fail "runner counter telemetry deltas retry=$retry_before->$retry_reported renew=$renew_before->$renew_reported want=+1/+1"
 record "runner_counter_fault transient_renew_failure=1 retry_recovery=1 telemetry_delta=1/1"
 # Partition only the runner's API path while retaining the operator's direct
 # HTTP view and PostgreSQL's DB-clock view.  The compose-up barrier makes the
@@ -913,7 +950,7 @@ ids=$(docker ps -aq --filter "ancestor=$fixture_b"); [[ -z "$ids" ]] || docker r
 compose run --rm --no-deps git_advance_d >"$dir/advance-d.log"; read -r rev_d dep_d <<<"$(deploy d)"; wait_status "$dep_d" rollback_failed; revision_observation "$rev_d" "$d_commit" "$d_hash" "$fixture_c_ref"; provenance_receipt "$dep_d" "$rev_d" "$d_commit" "$d_hash" "$fixture_c_ref" 1; child_d=$(psql_query "select id from deployments where rollback_of_id='$dep_d'"); child_d_count=$(psql_query "select count(*) from deployments where rollback_of_id='$dep_d'"); [[ "$child_d_count" == 1 && -n "$child_d" && "$(status "$child_d")" == rollback_failed ]] || fail 'forced rollback failure did not have exactly one loud child'; rollback_lifecycle "$dep_d" "$child_d" rollback_failed rollback_failed 1; child_d_rev=$(psql_query "select desired_revision_id from deployments where id='$child_d'"); [[ "$child_d_rev" == "$rev_b" ]] || fail 'forced rollback failure child did not retain B provenance'; revision_observation "$child_d_rev" "$b_commit" "$b_hash" "$fixture_b_ref"; provenance_receipt "$child_d" "$child_d_rev" "$b_commit" "$b_hash" "$fixture_b_ref" 1; pointer=$(psql_query "select current_healthy_revision_id from environments where id='$env_id'"); [[ "$pointer" == "$rev_b" ]] || fail 'rollback failure changed healthy pointer'; record "rollback_failure source=$dep_d child=$child_d pointer=B operator_visible=true immutable_provenance=true"
 anonymous_metrics=$(curl -sS --max-time 10 -o "$dir/metrics-anonymous.txt" -w '%{http_code}' "$base/metrics")
 [[ "$anonymous_metrics" == 401 ]] || fail "anonymous metrics status=$anonymous_metrics want=401"
-metrics_status=$(curl -sS --max-time 10 -H "Authorization: Bearer $admin" -o "$dir/metrics.txt" -w '%{http_code}' "$base/metrics")
+metrics_status=$(http GET "$base/metrics" "$admin" '' "$dir/metrics.txt")
 [[ "$metrics_status" == 200 ]] || fail "authenticated metrics status=$metrics_status want=200"
 retry_after=$(awk '$1=="nerocd_runner_retry_count" {print $2}' "$dir/metrics.txt"); renew_after=$(awk '$1=="nerocd_runner_renew_failures" {print $2}' "$dir/metrics.txt")
 # The exact +1/+1 transient-retry observation above occurs before the
@@ -941,6 +978,7 @@ compose logs --no-color >"$dir/logs.txt" || true; ! grep -Eiq 'BEGIN (OPENSSH|RS
 # independent cleanup and PASS contract.
 if [[ "${NEROCD_RUNTIME_COMPOSE_LIBRARY:-}" == 1 ]]; then
   record 'runtime_compose_library_handoff=true'
+  publish_runtime_evidence || fail 'could not publish library evidence'
   trap - EXIT ERR
   return 0
 fi

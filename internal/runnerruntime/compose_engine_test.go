@@ -421,3 +421,40 @@ func TestComposeHealthBoundsResponseBody(t *testing.T) {
 		t.Fatalf("read body exceeded bound: %d bytes", n)
 	}
 }
+
+func TestComposeGeneratedEnvironmentIgnoresRepositoryCollisions(t *testing.T) {
+	for _, name := range []string{".nerocd-compose-empty.env", ".nerocd-provenance.env"} {
+		t.Run(name, func(t *testing.T) {
+			workspace := t.TempDir()
+			target := filepath.Join(t.TempDir(), "untouched")
+			if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(workspace, name)); err != nil {
+				t.Fatal(err)
+			}
+			args, cleanup, err := composeInvocation(composeTestPlan(), workspace, composeTestResolved().GitCommit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(cleanup)
+			envPath := args[slices.Index(args, "--env-file")+1]
+			rel, err := filepath.Rel(workspace, envPath)
+			if err != nil || filepath.IsLocal(rel) || !filepath.IsAbs(envPath) {
+				t.Fatalf("generated env is not outside checkout: %s, %v", envPath, err)
+			}
+			raw, err := os.ReadFile(envPath)
+			if err != nil || string(raw) != deploymentRevisionEnv+"="+composeTestResolved().GitCommit+"\n" {
+				t.Fatal("generated revision environment is wrong")
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || string(got) != "keep" {
+				t.Fatal("repository symlink redirected generated-file write")
+			}
+			cleanup()
+			if _, err := os.Stat(envPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("generated environment survived cleanup: %v", err)
+			}
+		})
+	}
+}

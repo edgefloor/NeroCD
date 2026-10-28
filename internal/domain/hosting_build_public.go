@@ -38,6 +38,8 @@ type PublicHostingBuildSnapshot struct {
 
 // PublicHostingBuildSource excludes source transport policy and grants.
 type PublicHostingBuildSource struct {
+	Kind           string               `json:"kind,omitempty"`
+	ContentHash    string               `json:"content_hash,omitempty"`
 	SourceID       string               `json:"source_id"`
 	Generation     int64                `json:"generation"`
 	RepositoryURL  string               `json:"repository_url"`
@@ -56,8 +58,10 @@ type PublicHostingBuildTarget struct {
 
 // PublicHostingBuildSourceReceipt omits internal policy/input fingerprints.
 type PublicHostingBuildSourceReceipt struct {
-	Commit     string `json:"commit"`
-	TreeDigest string `json:"tree_digest"`
+	Kind        string `json:"kind,omitempty"`
+	ContentHash string `json:"content_hash,omitempty"`
+	Commit      string `json:"commit"`
+	TreeDigest  string `json:"tree_digest"`
 }
 
 // PublicHostingBuildArtifact exposes content identity without internal policy or request hashes.
@@ -73,13 +77,13 @@ type PublicHostingBuildArtifact struct {
 // PublicBuild projects retained metadata without serializing a trusted snapshot.
 func PublicBuild(b HostingBuild) PublicHostingBuild {
 	s := b.Snapshot
-	p := PublicHostingBuild{ID: b.ID, ProjectID: b.ProjectID, ResourceID: b.ResourceID, State: b.State, Revision: b.Revision, RunID: b.RunID, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt, FailureCode: b.FailureCode, Snapshot: PublicHostingBuildSnapshot{ResourceGeneration: s.ResourceGeneration, Source: PublicHostingBuildSource{SourceID: s.Source.ID, Generation: s.Source.Generation, RepositoryURL: s.Source.RepositoryURL, RequestedRef: s.Source.RequestedRef, CredentialKind: s.Source.CredentialKind, Settings: s.Source.Settings.Clone()}, Target: PublicHostingBuildTarget{BindingID: s.BindingID, DestinationID: s.DestinationID, ServerID: s.ServerID, RunnerID: s.RunnerID}}}
+	p := PublicHostingBuild{ID: b.ID, ProjectID: b.ProjectID, ResourceID: b.ResourceID, State: b.State, Revision: b.Revision, RunID: b.RunID, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt, FailureCode: b.FailureCode, Snapshot: PublicHostingBuildSnapshot{ResourceGeneration: s.ResourceGeneration, Source: PublicHostingBuildSource{Kind: s.Source.Kind, ContentHash: s.Source.ContentHash, SourceID: s.Source.ID, Generation: s.Source.Generation, RepositoryURL: s.Source.RepositoryURL, RequestedRef: s.Source.RequestedRef, CredentialKind: s.Source.CredentialKind, Settings: s.Source.Settings.Clone()}, Target: PublicHostingBuildTarget{BindingID: s.BindingID, DestinationID: s.DestinationID, ServerID: s.ServerID, RunnerID: s.RunnerID}}}
 	if s.TriggerRevision != nil {
 		revision := *s.TriggerRevision
 		p.Snapshot.TriggerRevision = &revision
 	}
 	if b.SourceReceipt != nil {
-		p.SourceReceipt = &PublicHostingBuildSourceReceipt{Commit: b.SourceReceipt.Commit, TreeDigest: b.SourceReceipt.TreeDigest}
+		p.SourceReceipt = &PublicHostingBuildSourceReceipt{Kind: b.SourceReceipt.Kind, ContentHash: b.SourceReceipt.ContentHash, Commit: b.SourceReceipt.Commit, TreeDigest: b.SourceReceipt.TreeDigest}
 	}
 	if a := b.Artifact; a != nil {
 		p.Artifact = &PublicHostingBuildArtifact{Origin: a.Origin, ImageID: a.ImageID, IndexDigest: a.IndexDigest, ManifestDigest: a.ManifestDigest, ConfigDigest: a.ConfigDigest, Platform: a.Platform}

@@ -33,7 +33,7 @@ func (s *PostgresStore) RequestHostingSourceGrant(ctx context.Context, actor, re
 		if err != nil {
 			return zero, err
 		}
-		if r.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration || src.CredentialKind != "https_basic" {
+		if r.Generation != in.ExpectedResourceGeneration || src.Generation != in.ExpectedSourceGeneration || (src.CredentialKind != "https_basic" && src.CredentialKind != "ssh_private_key") {
 			return zero, ErrConflict
 		}
 		if _, err = q.LockHostingBuildSecretVersion(ctx, sqlcgen.LockHostingBuildSecretVersionParams{ID: in.SecretID, ProjectID: r.ProjectID, Version: in.SecretVersion}); err != nil {

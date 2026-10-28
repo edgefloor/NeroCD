@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -22,13 +23,14 @@ type runnerBuildConfigFile struct {
 	Version    int                             `json:"version"`
 	SourceRoot string                          `json:"source_root"`
 	Engine     struct {
-		DockerBinary string `json:"docker_binary"`
-		Socket       string `json:"socket"`
-		BuildxBinary string `json:"buildx_binary"`
-		BuildxSHA256 string `json:"buildx_sha256"`
-		PlannerImage string `json:"planner_image"`
-		StateDir     string `json:"state_dir"`
-		CgroupRoot   string `json:"cgroup_root"`
+		RegistryCACertificates map[string]string `json:"registry_ca_certificates,omitempty"`
+		DockerBinary           string            `json:"docker_binary"`
+		Socket                 string            `json:"socket"`
+		BuildxBinary           string            `json:"buildx_binary"`
+		BuildxSHA256           string            `json:"buildx_sha256"`
+		PlannerImage           string            `json:"planner_image"`
+		StateDir               string            `json:"state_dir"`
+		CgroupRoot             string            `json:"cgroup_root"`
 	} `json:"engine"`
 	Target struct {
 		RunnerID      string `json:"runner_id"`
@@ -86,7 +88,7 @@ func decodeRunnerBuildConfig(raw []byte) (*runnerruntime.BuildConfig, error) {
 	if d.Decode(&f) != nil || f.Version != 1 {
 		return nil, invalid
 	}
-	return &runnerruntime.BuildConfig{Compose: f.Compose, PrivateGit: f.PrivateGit, SourceRoot: f.SourceRoot, Engine: hostingbuild.Config{DockerBinary: f.Engine.DockerBinary, Socket: f.Engine.Socket, BuildxBinary: f.Engine.BuildxBinary, BuildxSHA256: f.Engine.BuildxSHA256, PlannerImage: f.Engine.PlannerImage, StateDir: f.Engine.StateDir, CgroupRoot: f.Engine.CgroupRoot}, Target: runnerruntime.BuildTarget{RunnerID: f.Target.RunnerID, ServerID: f.Target.ServerID, DestinationID: f.Target.DestinationID, BindingID: f.Target.BindingID}, Policy: f.Policy, StatusInterval: f.StatusInterval, RequestTimeout: f.RequestTimeout}, nil
+	return &runnerruntime.BuildConfig{Compose: f.Compose, PrivateGit: f.PrivateGit, SourceRoot: f.SourceRoot, Engine: hostingbuild.Config{RegistryCACertificates: f.Engine.RegistryCACertificates, DockerBinary: f.Engine.DockerBinary, Socket: f.Engine.Socket, BuildxBinary: f.Engine.BuildxBinary, BuildxSHA256: f.Engine.BuildxSHA256, PlannerImage: f.Engine.PlannerImage, StateDir: f.Engine.StateDir, CgroupRoot: f.Engine.CgroupRoot}, Target: runnerruntime.BuildTarget{RunnerID: f.Target.RunnerID, ServerID: f.Target.ServerID, DestinationID: f.Target.DestinationID, BindingID: f.Target.BindingID}, Policy: f.Policy, StatusInterval: f.StatusInterval, RequestTimeout: f.RequestTimeout}, nil
 }
 func checkRunnerBuildJSON(d *json.Decoder, depth int) error {
 	if depth > 32 {
@@ -146,6 +148,11 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		return nil, errors.New("git Compose requires matching explicit runner and operator policy")
 	}
 	for _, capability := range capabilities {
+		if (capability == domain.HostingDockerfileArgsCapability || capability == domain.HostingBuildRegistryCapability || capability == domain.HostingBuildSecretsCapability || capability == domain.HostingStoredDockerfileCapability) && c == nil {
+			return nil, errors.New("dockerfile argument capability requires explicit build configuration")
+		}
+	}
+	for _, capability := range capabilities {
 		if (capability == domain.HostingGitComposeBuildCapability || capability == domain.HostingGitComposeArgsCapability) && !compose {
 			return nil, errors.New("git Compose capability requires explicit configuration")
 		}
@@ -155,7 +162,7 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		if capability == domain.HostingBuildTriggerRevisionCapability && c == nil {
 			return nil, errors.New("trigger revision capability requires explicit build configuration")
 		}
-		if capability == domain.HostingPrivateGitCapability && !private {
+		if (capability == domain.HostingPrivateGitCapability || capability == domain.HostingSSHGitCapability) && !private {
 			return nil, errors.New("private Git capability requires explicit configuration")
 		}
 	}
@@ -188,6 +195,32 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 			capabilities = append(capabilities, domain.HostingBuildTriggerRevisionCapability)
 		}
 	}
+	if c != nil {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == domain.HostingDockerfileArgsCapability
+		}
+		if !found {
+			capabilities = append(capabilities, domain.HostingDockerfileArgsCapability)
+		}
+	}
+	if c != nil {
+		found := false
+		for _, capability := range capabilities {
+			found = found || capability == domain.HostingBuildRegistryCapability
+		}
+		if !found {
+			capabilities = append(capabilities, domain.HostingBuildRegistryCapability)
+		}
+	}
+
+	if c != nil && !slices.Contains(capabilities, domain.HostingStoredDockerfileCapability) {
+		capabilities = append(capabilities, domain.HostingStoredDockerfileCapability)
+	}
+	if c != nil && !slices.Contains(capabilities, domain.HostingBuildSecretsCapability) {
+		capabilities = append(capabilities, domain.HostingBuildSecretsCapability)
+	}
+
 	if compose {
 		for _, needed := range []string{domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability} {
 			found := false
@@ -198,6 +231,9 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 				capabilities = append(capabilities, needed)
 			}
 		}
+	}
+	if private && !slices.Contains(capabilities, domain.HostingSSHGitCapability) {
+		capabilities = append(capabilities, domain.HostingSSHGitCapability)
 	}
 	if private {
 		found := false

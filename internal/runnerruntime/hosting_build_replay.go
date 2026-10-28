@@ -47,6 +47,11 @@ func buildStatusProof(status hostingbuildprotocol.StatusResponse, a domain.Hosti
 // calls the engine. Historical acknowledgments settle matching bodies only;
 // unresolved intent, missing local result or cleanup uncertainty blocks startup.
 func (e *BuildExecutor) Reconcile(ctx context.Context) error {
+	if engine, ok := e.engine.(interface{ ScrubRegistryCredentials() error }); ok {
+		if err := engine.ScrubRegistryCredentials(); err != nil {
+			return err
+		}
+	}
 	seen := map[domain.HostingBuildAuthority]bool{}
 	for _, entry := range e.journal.Snapshot().BuildLogs {
 		a := entry.Batch.Authority

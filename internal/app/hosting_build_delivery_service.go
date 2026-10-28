@@ -216,11 +216,15 @@ func (s *Service) RunnerHostingSourceCredential(ctx context.Context, in domain.H
 	defer delivery.Close()
 	material := delivery.Take()
 	defer material.Close()
-	if material.Kind != "https_basic" || !hostingbuildprotocol.ValidBasicCredential(material.Username, material.Bytes) {
+	if !hostingbuildprotocol.ValidSourceCredential(material.Kind, material.Username, material.Bytes) {
 		return zero, ErrHostingSourceCredentialUnavailable
 	}
+	capability := domain.HostingPrivateGitCapability
+	if material.Kind == "ssh_private_key" {
+		capability = domain.HostingSSHGitCapability
+	}
 	identity, err := s.CurrentRunnerIdentity(ctx)
-	if err != nil || !slices.Contains(identity.Capabilities, domain.HostingPrivateGitCapability) || ctx.Err() != nil || !s.clock().Before(material.UseUntil) {
+	if err != nil || !slices.Contains(identity.Capabilities, capability) || ctx.Err() != nil || !s.clock().Before(material.UseUntil) {
 		return zero, ErrHostingSourceCredentialUnavailable
 	}
 	return hostingbuildprotocol.SourceCredential{Authority: in.Authority, DeliveryID: in.DeliveryID, RequestHash: hostingbuildprotocol.SourceCredentialRequestHash(identity.RunnerID, in), Kind: material.Kind, Username: material.Username, Bytes: bytes.Clone(material.Bytes), UseUntil: material.UseUntil}, nil

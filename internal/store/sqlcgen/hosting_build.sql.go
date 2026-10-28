@@ -154,7 +154,7 @@ func (q *Queries) CountHostingBuilds(ctx context.Context, resourceID string) (in
 }
 
 const countResourceHostingSourceGrants = `-- name: CountResourceHostingSourceGrants :one
-SELECT count(*) FROM hosting_source_grants WHERE resource_id=$1 AND kind='https_basic'
+SELECT count(*) FROM hosting_source_grants g WHERE resource_id=$1 AND (kind='https_basic' OR (kind='ssh_private_key' AND EXISTS(SELECT 1 FROM audit_events a WHERE a.id='aud_'||g.id AND a.action='hosting.source_grant.created' AND (a.metadata->>'source_generation')::bigint>0)))
 `
 
 func (q *Queries) CountResourceHostingSourceGrants(ctx context.Context, resourceID string) (int64, error) {
@@ -547,7 +547,7 @@ func (q *Queries) ListHostingBuildIDs(ctx context.Context, arg ListHostingBuildI
 const listResourceHostingSourceGrants = `-- name: ListResourceHostingSourceGrants :many
 SELECT jsonb_build_object('id',g.id,'version',g.version,'source_id',g.source_id,'source_generation',coalesce((a.metadata->>'source_generation')::bigint,0),'resource_id',g.resource_id,'kind',g.kind,'revoked',g.revoked_at IS NOT NULL)
 FROM hosting_source_grants g LEFT JOIN audit_events a ON a.id='aud_'||g.id AND a.action='hosting.source_grant.created'
-WHERE g.resource_id=$1 AND g.kind='https_basic' ORDER BY g.created_at DESC,g.id DESC LIMIT $3 OFFSET $2
+WHERE g.resource_id=$1 AND (g.kind='https_basic' OR (g.kind='ssh_private_key' AND (a.metadata->>'source_generation')::bigint>0)) ORDER BY g.created_at DESC,g.id DESC LIMIT $3 OFFSET $2
 `
 
 type ListResourceHostingSourceGrantsParams struct {
@@ -630,17 +630,23 @@ func (q *Queries) LockHostingBuildResource(ctx context.Context, id string) (Lock
 }
 
 const lockHostingBuildRunner = `-- name: LockHostingBuildRunner :one
-SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT $2::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND (NOT $3::boolean OR 'hosting_build_trigger_revision_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
+SELECT r.id FROM runners r WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND 'hosting_build_v1'=ANY(r.capabilities) AND (NOT $2::boolean OR 'hosting_git_https_basic_v1'=ANY(r.capabilities)) AND (NOT $3::boolean OR 'hosting_git_ssh_private_key_v1'=ANY(r.capabilities)) AND (NOT $4::boolean OR 'hosting_build_trigger_revision_v1'=ANY(r.capabilities)) AND NOT('shell'=ANY(r.capabilities)) AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=r.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=r.token_hash) FOR SHARE OF r
 `
 
 type LockHostingBuildRunnerParams struct {
 	RunnerID               string `json:"runner_id"`
 	RequirePrivateGit      bool   `json:"require_private_git"`
+	RequireSshGit          bool   `json:"require_ssh_git"`
 	RequireTriggerRevision bool   `json:"require_trigger_revision"`
 }
 
 func (q *Queries) LockHostingBuildRunner(ctx context.Context, arg LockHostingBuildRunnerParams) (string, error) {
-	row := q.db.QueryRow(ctx, lockHostingBuildRunner, arg.RunnerID, arg.RequirePrivateGit, arg.RequireTriggerRevision)
+	row := q.db.QueryRow(ctx, lockHostingBuildRunner,
+		arg.RunnerID,
+		arg.RequirePrivateGit,
+		arg.RequireSshGit,
+		arg.RequireTriggerRevision,
+	)
 	var id string
 	err := row.Scan(&id)
 	return id, err

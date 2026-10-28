@@ -1,11 +1,16 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,5 +261,130 @@ func TestPrivateBuildTriggerRevisionPinsFirstCheckout(t *testing.T) {
 	defer cancel()
 	if err := e.Execute(ctx, a, at); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSSHBuildReplayNeverRefetchesKeyAndRedactsLines(t *testing.T) {
+	e, f, a, at := privateBuildFixture(t)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := pem.EncodeToMemory(block)
+	raw = append(raw, bytes.Repeat([]byte(" "), 65536-len(raw))...)
+	defer clear(raw)
+	s := &f.build.Snapshot
+	s.Source.RepositoryURL = "ssh://git@git.example.test/~/team/repo.git"
+	s.Source.CredentialKind = "ssh_private_key"
+	s.Source.Policy.AllowedSchemes = []string{"ssh"}
+	s.Source.Policy.SSHHostFingerprints = []string{"SHA256:" + strings.Repeat("A", 43)}
+	s.Grant.Kind = "ssh_private_key"
+	s.Grant.RepositoryURL = s.Source.RepositoryURL
+	s.Grant.PolicyHash = domain.HostingDocumentHash(s.Source.Policy)
+	s.InputID = ""
+	s.InputID = domain.HostingDocumentHash(*s)
+	f.deliver = func(_ context.Context, in domain.HostingSourceCredentialRequest) (hostingbuildprotocol.SourceCredential, error) {
+		return hostingbuildprotocol.SourceCredential{Authority: a, DeliveryID: in.DeliveryID, RequestHash: hostingbuildprotocol.SourceCredentialRequestHash("runner", in), Kind: "ssh_private_key", Bytes: bytes.Clone(raw), UseUntil: time.Now().Add(30 * time.Second)}, nil
+	}
+	e.privateCheckout = func(ctx context.Context, s domain.HostingBuildSnapshot, p, frozen string, credential func(context.Context) (SourceCredential, error), accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+		material, err := credential(ctx)
+		if err != nil {
+			return err
+		}
+		if material.Kind != "ssh_private_key" || len(material.Bytes) != 65536 {
+			t.Fatal("key transfer changed")
+		}
+		clear(material.Bytes)
+		return e.checkout(ctx, s, p, frozen, accept, use)
+	}
+	lines := strings.Split(string(pem.EncodeToMemory(block)), "\n")
+	secretLine := lines[1]
+	original := e.engine
+	e.engine = observedBuildEngine{buildEngineFunc: original.Build, output: func(ctx context.Context, sink hostingbuild.OutputSink) error {
+		return sink(ctx, hostingbuild.Output{Component: hostingbuild.OutputBuildKit, Stream: hostingbuild.OutputStdout, Data: []byte("key line " + secretLine + "\n")})
+	}}
+	f.beforeLogs = func(batch domain.HostingBuildLogBatch) error {
+		journal, _ := json.Marshal(e.journal.Snapshot())
+		transport, _ := json.Marshal(batch)
+		if bytes.Contains(journal, []byte(secretLine)) || bytes.Contains(transport, []byte(secretLine)) {
+			t.Error("SSH key line crossed persistence boundary")
+		}
+		return nil
+	}
+	f.loseComplete = true
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	if err := e.Execute(ctx, a, at); err == nil {
+		t.Fatal("lost completion accepted")
+	} else {
+		t.Log("expected interrupted completion:", err)
+	}
+	if len(f.requests) != 1 {
+		t.Fatal("unexpected key deliveries", len(f.requests))
+	}
+	f.deliver = func(context.Context, domain.HostingSourceCredentialRequest) (hostingbuildprotocol.SourceCredential, error) {
+		t.Fatal("replay refetched key")
+		return hostingbuildprotocol.SourceCredential{}, nil
+	}
+	e.privateCheckout = func(context.Context, domain.HostingBuildSnapshot, string, string, func(context.Context) (SourceCredential, error), func(context.Context, domain.HostingBuildSourceReceipt) error, func(context.Context, string) error) error {
+		t.Fatal("replay repeated checkout")
+		return nil
+	}
+	if err := e.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.journal.Snapshot().Build) != 0 {
+		t.Fatal("completion not acknowledged")
+	}
+	combined, _ := json.Marshal(f.logs)
+	if bytes.Contains(combined, []byte(secretLine)) || !bytes.Contains(combined, []byte(runner.RedactionMarker)) {
+		t.Fatal("SSH output was not redacted")
+	}
+}
+
+func TestSSHSourceFailureSettlesOnlyAfterConfirmedCleanup(t *testing.T) {
+	for _, code := range []string{"host_key", "fetch_failed", "credential_denied", "cleanup_unconfirmed", "receipt_rejected", "canceled", "receipt_retained"} {
+		t.Run(code, func(t *testing.T) {
+			e, f, a, at := privateBuildFixture(t)
+			s := &f.build.Snapshot
+			s.Source.RepositoryURL = "ssh://git@git.example.test/repo.git"
+			s.Source.CredentialKind = "ssh_private_key"
+			s.Source.Policy.AllowedSchemes = []string{"ssh"}
+			s.Source.Policy.SSHHostFingerprints = []string{"SHA256:" + strings.Repeat("A", 43)}
+			s.Grant.Kind = "ssh_private_key"
+			s.Grant.RepositoryURL = s.Source.RepositoryURL
+			s.Grant.PolicyHash = domain.HostingDocumentHash(s.Source.Policy)
+			s.InputID = ""
+			s.InputID = domain.HostingDocumentHash(*s)
+			e.privateCheckout = func(ctx context.Context, snapshot domain.HostingBuildSnapshot, path, frozen string, credential func(context.Context) (SourceCredential, error), accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+				if code == "receipt_retained" {
+					receipt := domain.HostingBuildSourceReceipt{BuildID: snapshot.BuildID, SourceID: snapshot.Source.ID, InputID: snapshot.InputID, Commit: strings.Repeat("a", 40), PolicyHash: domain.HostingDocumentHash(snapshot.Source.Policy), TreeDigest: "sha256:" + strings.Repeat("b", 64)}
+					if err := accept(ctx, receipt); err != nil {
+						return err
+					}
+					return sourceError("host_key")
+				}
+				return sourceError(code)
+			}
+			e.engine = buildEngineFunc(func(context.Context, hostingbuild.Request) (hostingbuild.Result, error) {
+				t.Fatal("failed source reached engine")
+				return hostingbuild.Result{}, nil
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			err := e.Execute(ctx, a, at)
+			settled := code == "host_key" || code == "fetch_failed" || code == "credential_denied"
+			if settled {
+				if !errors.Is(err, errSettledBuildFailure) || f.build.State != "failed" || f.build.FailureCode != "source_failed" || len(e.journal.Snapshot().Build) != 0 {
+					t.Fatal("clean source failure not settled", err, f.build.State)
+				}
+			} else if err == nil || len(f.completeRequests) != 0 || len(e.journal.Snapshot().Build) != 1 {
+				t.Fatal("uncertain source failure settled", err)
+			}
+		})
 	}
 }

@@ -1,107 +1,1073 @@
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, listProjectMembers, principalQuery } from "@/api";
 import { getResource, type Resource } from "@/api/hosting";
-import { listManagedSecrets, listManagedSecretVersions } from "@/api/managed-secrets";
-import { eligibleSourceGrant, newSourceGrantRequestID, requestHostingSourceGrant, revokeHostingSourceGrant, sourceGrantKeys, sourceGrantsQuery, type HostingSourceGrantRequest } from "@/api/hosting-source-grants";
-import { canOwnProject, canMaintainProject } from "@/lib/permissions";
-import { Button } from "@/components/ui/button";
+import {
+  eligibleSourceGrant,
+  newSourceGrantRequestID,
+  requestHostingSourceGrant,
+  revokeHostingSourceGrant,
+  sourceGrantKeys,
+  sourceGrantsQuery,
+  type HostingSourceGrantRequest,
+} from "@/api/hosting-source-grants";
+import {
+  listManagedSecrets,
+  listManagedSecretVersions,
+} from "@/api/managed-secrets";
 import { PageNavigation } from "@/components/common/PageNavigation";
+import { Button } from "@/components/ui/button";
+import { canMaintainProject, canOwnProject } from "@/lib/permissions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useQueryAccessDenial } from "./useQueryAccessDenial";
 const button = "h-auto max-w-full whitespace-normal break-all";
-const select = "min-h-10 w-full min-w-0 rounded-xl border bg-background p-2 text-sm";
-const deniedError = (cause: unknown) => cause instanceof ApiError && [401, 403, 404].includes(cause.status);
-function metadataError(cause: unknown): never { throw cause instanceof ApiError ? new ApiError(cause.status, "Secret reference metadata is unavailable", cause.requestID) : new Error("Secret reference metadata is unavailable"); }
-function grantError(cause: unknown) {
- if (cause instanceof ApiError && cause.status === 409) return "The source generation, secret reference, or request ID conflicts. Refresh and review a separate decision explicitly.";
- if (cause instanceof ApiError && cause.status === 400) return "The server rejected this grant reference. Review the saved source and exact secret version.";
- if (deniedError(cause)) return "Source grant access is unavailable. Reload to verify current project access.";
- return "No confirmed response was received. Retry the identical retained request to recover its result.";
+const select =
+  "min-h-10 w-full min-w-0 rounded-xl border bg-background p-2 text-sm";
+const deniedError = (cause: unknown) =>
+  cause instanceof ApiError && [401, 403, 404].includes(cause.status);
+function metadataError(cause: unknown): never {
+  throw cause instanceof ApiError
+    ? new ApiError(
+        cause.status,
+        "Secret reference metadata is unavailable",
+        cause.requestID,
+      )
+    : new Error("Secret reference metadata is unavailable");
 }
-export function useSourceGrantAccess(actor: string, resource: Resource, blocked: boolean) {
- const principal = useQuery(principalQuery());
- const members = useQuery({ queryKey: ["sourceGrantOwners", actor, resource.project_id], enabled: !blocked, refetchOnWindowFocus: false, retry: false, gcTime: 0, queryFn: async ({ signal }) => {
-  const rows = []; let offset = 0;
-  for (;;) { const page = await listProjectMembers({ project_id: resource.project_id, limit: 100, offset }, { signal }); if (page.items.some((member) => member.project_id !== resource.project_id)) throw new Error("Member scope mismatch"); rows.push(...page.items); if (!page.count || page.offset + page.count >= page.total) return rows; const next = page.offset + page.count; if (next <= offset || next > 100000) throw new Error("Member pagination unavailable"); offset = next; }
- } });
- const currentActor = principal.data && JSON.stringify([principal.data.provider, principal.data.id]) === actor;
- const maintainer = Boolean(currentActor && members.data && canMaintainProject(principal.data, members.data, resource.project_id));
- const canReadGrants = Boolean(currentActor && !principal.isError && !blocked && maintainer && !members.isPending && !members.isFetching && !members.isError);
- const owner = Boolean(currentActor && !principal.isError && members.data && canOwnProject(principal.data, members.data, resource.project_id));
- return { principal, members, currentActor, maintainer, canReadGrants, owner };
+function grantError(cause: unknown) {
+  if (cause instanceof ApiError && cause.status === 409)
+    return "The source generation, secret reference, or request ID conflicts. Refresh and review a separate decision explicitly.";
+  if (cause instanceof ApiError && cause.status === 400)
+    return "The server rejected this grant reference. Review the saved source and exact secret version.";
+  if (deniedError(cause))
+    return "Source grant access is unavailable. Reload to verify current project access.";
+  return "No confirmed response was received. Retry the identical retained request to recover its result.";
+}
+export function useSourceGrantAccess(
+  actor: string,
+  resource: Resource,
+  blocked: boolean,
+) {
+  const principal = useQuery(principalQuery());
+  const members = useQuery({
+    queryKey: ["sourceGrantOwners", actor, resource.project_id],
+    enabled: !blocked,
+    refetchOnWindowFocus: false,
+    retry: false,
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const rows = [];
+      let offset = 0;
+      for (;;) {
+        const page = await listProjectMembers(
+          { project_id: resource.project_id, limit: 100, offset },
+          { signal },
+        );
+        if (
+          page.items.some((member) => member.project_id !== resource.project_id)
+        )
+          throw new Error("Member scope mismatch");
+        rows.push(...page.items);
+        if (!page.count || page.offset + page.count >= page.total) return rows;
+        const next = page.offset + page.count;
+        if (next <= offset || next > 100000)
+          throw new Error("Member pagination unavailable");
+        offset = next;
+      }
+    },
+  });
+  const currentActor =
+    principal.data &&
+    JSON.stringify([principal.data.provider, principal.data.id]) === actor;
+  const maintainer = Boolean(
+    currentActor &&
+      members.data &&
+      canMaintainProject(principal.data, members.data, resource.project_id),
+  );
+  const canReadGrants = Boolean(
+    currentActor &&
+      !principal.isError &&
+      !blocked &&
+      maintainer &&
+      !members.isPending &&
+      !members.isFetching &&
+      !members.isError,
+  );
+  const owner = Boolean(
+    currentActor &&
+      !principal.isError &&
+      members.data &&
+      canOwnProject(principal.data, members.data, resource.project_id),
+  );
+  return { principal, members, currentActor, maintainer, canReadGrants, owner };
 }
 type GrantAccessDecision = ReturnType<typeof useSourceGrantAccess>;
-type GrantProps = { actor: string; resource: Resource; blocked: boolean; onDenied: () => void; access?: GrantAccessDecision };
+type GrantProps = {
+  actor: string;
+  resource: Resource;
+  blocked: boolean;
+  onDenied: () => void;
+  access?: GrantAccessDecision;
+};
 export function ResourceSourceGrants(props: GrantProps) {
- if (props.blocked || props.resource.source.kind !== "git" || props.resource.source.git.credential_kind !== "https_basic") return null;
- const key = JSON.stringify([props.actor, props.resource.project_id, props.resource.id, props.resource.generation, props.resource.source.git.source_id, props.resource.source.git.generation]);
- return props.access ? <GrantAccess key={key} {...props} access={props.access} /> : <StandaloneGrantAccess key={key} {...props} />;
+  if (
+    props.blocked ||
+    props.resource.source.kind !== "git" ||
+    !["https_basic", "ssh_private_key"].includes(
+      props.resource.source.git.credential_kind,
+    )
+  )
+    return null;
+  const key = JSON.stringify([
+    props.actor,
+    props.resource.project_id,
+    props.resource.id,
+    props.resource.generation,
+    props.resource.source.git.source_id,
+    props.resource.source.git.generation,
+  ]);
+  if (!props.access) return <StandaloneGrantAccess key={key} {...props} />;
+  return <GrantAccess key={key} {...props} access={props.access} />;
 }
 function StandaloneGrantAccess(props: GrantProps) {
- const access = useSourceGrantAccess(props.actor, props.resource, props.blocked);
- return <GrantAccess {...props} access={access} />;
+  const access = useSourceGrantAccess(
+    props.actor,
+    props.resource,
+    props.blocked,
+  );
+  return <GrantAccess {...props} access={access} />;
 }
-function GrantAccess({ actor, resource, onDenied, access }: GrantProps & { access: GrantAccessDecision }) {
- const [offset, setOffset] = useState(0), [denied, setDenied] = useState(false);
- const client = useQueryClient();
- const { principal, members, currentActor, maintainer, owner } = access;
- const canReadGrants = access.canReadGrants && !denied;
- const grants = useQuery({ ...sourceGrantsQuery(actor, resource.project_id, resource.id, offset), enabled: canReadGrants, refetchOnWindowFocus: false });
- const deny = () => { setDenied(true); client.removeQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); onDenied(); };
- useEffect(() => { if (deniedError(grants.error) || deniedError(members.error) || principal.isError || !currentActor) deny(); }, [grants.error, members.error, principal.isError, currentActor]);
- const refresh = async () => { await client.invalidateQueries({ queryKey: sourceGrantKeys.resource(actor, resource.project_id, resource.id) }); };
- if (denied || !currentActor || principal.isError) return null;
- if (!members.isPending && !members.isError && !maintainer) return <><p>Project maintainer access is required to list source grants. Owners create and revoke grants.</p><Button className={button} type="button" disabled={members.isFetching} onClick={() => { if (!currentActor || principal.isError || denied) return; void members.refetch(); }}>Refresh source grant access</Button></>;
- return <section className="min-w-0 space-y-3 rounded border p-3" aria-label="Private HTTPS source grants"><h5 className="font-medium">Private HTTPS source grants</h5><p className="text-xs">Grants reference an existing managed secret and an explicit version. Create or rotate a JSON credential object with username and password strings in Project secrets. These controls select references and never reveal values.</p><Button className={button} variant="outline" disabled={grants.isFetching || !canReadGrants || deniedError(grants.error)} onClick={() => { if (!canReadGrants || deniedError(grants.error)) return; void grants.refetch(); void members.refetch(); }}>Refresh source grants</Button>
-  {members.isError && !deniedError(members.error) ? <><p role="alert">Unable to verify source grant access. Grant reads are paused.</p><Button className={button} type="button" disabled={members.isFetching} onClick={() => { if (!currentActor || principal.isError || denied || deniedError(members.error)) return; void members.refetch(); }}>Refresh source grant access</Button></> : null}
-  {grants.isPending ? <p role="status">Loading source grants...</p> : null}{grants.isError ? <p role="alert">Unable to read current source grant metadata. Grant actions are paused.</p> : null}
-  <ul className="space-y-2">{!grants.isError && grants.data?.items.map((grant) => <li className="min-w-0 break-all rounded border p-2" key={grant.id}><p>Grant {grant.id} · v{grant.version} · source {grant.source_id} / generation {grant.source_generation} · {grant.revoked ? "revoked" : eligibleSourceGrant(grant, resource) ? "eligible for this source" : "not eligible for this source"}</p>{owner && !grant.revoked ? <RevokeGrant key={grant.id} actor={actor} resource={resource} grantID={grant.id} paused={grants.isError || !canReadGrants} changed={refresh} onDenied={deny} /> : null}</li>)}</ul>
-  <PageNavigation label="source grants" page={grants.data} loading={grants.isFetching || !canReadGrants} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - 20))} onNext={() => setOffset(Math.min(100000, offset + 20))} />
-  {owner ? <GrantRequest key="owner" actor={actor} resource={resource} paused={grants.isError || !canReadGrants} changed={refresh} onDenied={deny} /> : <p className="text-xs">Project owner access is required to create or revoke source grants. Maintainers can select an eligible grant for a build.</p>}
- </section>;
+function GrantAccess(input: GrantProps & { access: GrantAccessDecision }) {
+  const viewModel = useGrantAccess(input);
+  const {
+    hidden,
+    insufficientRole,
+    sshSource,
+    actor,
+    resource,
+    offset,
+    setOffset,
+    denied,
+    principal,
+    members,
+    currentActor,
+    owner,
+    canReadGrants,
+    grants,
+    deny,
+    refresh,
+  } = viewModel;
+  const refreshUnavailable = !canReadGrants || deniedError(grants.error);
+  if (hidden) return null;
+  if (insufficientRole)
+    return (
+      <>
+        <p>
+          Project maintainer access is required to list source grants. Owners
+          create and revoke grants.
+        </p>
+        <Button
+          className={button}
+          type="button"
+          disabled={members.isFetching}
+          onClick={() => {
+            if (!currentActor || principal.isError || denied) return;
+            void members.refetch();
+          }}
+        >
+          Refresh source grant access
+        </Button>
+      </>
+    );
+  return (
+    <section
+      className="min-w-0 space-y-3 rounded border p-3"
+      aria-label={
+        sshSource ? "Private SSH source grants" : "Private HTTPS source grants"
+      }
+    >
+      <h5 className="font-medium">
+        {sshSource
+          ? "Private SSH source grants"
+          : "Private HTTPS source grants"}
+      </h5>
+      <p className="text-xs">
+        Grants reference an existing managed secret and an explicit version.{" "}
+        {sshSource
+          ? "Create or rotate a raw, unencrypted PEM or OpenSSH private key, up to 65536 bytes, in Project secrets. Add its public key as a deploy key on the repository."
+          : "Create or rotate a JSON credential object with username and password strings in Project secrets."}{" "}
+        These controls select references and never reveal values.
+      </p>
+      <Button
+        className={button}
+        variant="outline"
+        disabled={grants.isFetching || refreshUnavailable}
+        onClick={() => {
+          if (refreshUnavailable) return;
+          void grants.refetch();
+          void members.refetch();
+        }}
+      >
+        Refresh source grants
+      </Button>
+      <SourceGrantAccessRetry {...viewModel} />
+      {grants.isPending ? <p role="status">Loading source grants...</p> : null}
+      {grants.isError ? (
+        <p role="alert">
+          Unable to read current source grant metadata. Grant actions are
+          paused.
+        </p>
+      ) : null}
+      <SourceGrantHistory {...viewModel} />
+      <PageNavigation
+        label="source grants"
+        page={grants.data}
+        loading={grants.isFetching || !canReadGrants}
+        onFirst={() => setOffset(0)}
+        onPrevious={() => setOffset(Math.max(0, offset - 20))}
+        onNext={() => setOffset(Math.min(100000, offset + 20))}
+      />
+      {owner ? (
+        <GrantRequest
+          key="owner"
+          actor={actor}
+          resource={resource}
+          paused={grants.isError || !canReadGrants}
+          changed={refresh}
+          onDenied={deny}
+        />
+      ) : (
+        <p className="text-xs">
+          Project owner access is required to create or revoke source grants.
+          Maintainers can select an eligible grant for a build.
+        </p>
+      )}
+    </section>
+  );
 }
-function RevokeGrant({ grantID, resource, paused, changed, onDenied }: { actor: string; grantID: string; resource: Resource; paused: boolean; changed: () => Promise<void>; onDenied: () => void }) {
- const [busy, setBusy] = useState(false), [attempted, setAttempted] = useState(false), [conflict, setConflict] = useState(false), [error, setError] = useState(""); const request = useRef<AbortController | null>(null), active = useRef(false);
- useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); }; }, []);
- async function revoke() { if (paused || conflict || request.current) return; const controller = new AbortController(); request.current = controller; setBusy(true); setAttempted(true); setError(""); try { const result = await revokeHostingSourceGrant(resource.id, grantID, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (!result.revoked) throw new Error("Revocation unconfirmed"); await changed(); } catch (cause) { if (!active.current || controller.signal.aborted) return; if (deniedError(cause)) onDenied(); else { setError(grantError(cause)); if (cause instanceof ApiError && cause.status === 409) setConflict(true); } } finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); } }
- return <><Button className={button} type="button" variant="outline" disabled={busy || paused || conflict} onClick={() => void revoke()}>{busy ? "Revoking grant..." : attempted ? `Retry revoke grant ${grantID}` : `Revoke source grant ${grantID}`}</Button>{error ? <p role="alert">{error}</p> : null}{conflict ? <Button className={button} type="button" disabled={busy} onClick={() => { void changed().then(() => { if (active.current) { setConflict(false); setAttempted(false); setError(""); } }); }}>Review refreshed grant for revocation</Button> : null}</>;
+function RevokeGrant({
+  grantID,
+  resource,
+  paused,
+  changed,
+  onDenied,
+}: {
+  actor: string;
+  grantID: string;
+  resource: Resource;
+  paused: boolean;
+  changed: () => Promise<void>;
+  onDenied: () => void;
+}) {
+  const [pendingRequest, setPendingRequest] = useState<AbortController | null>(
+      null,
+    ),
+    [attempted, setAttempted] = useState(false),
+    [conflict, setConflict] = useState(false),
+    [error, setError] = useState("");
+  const busy = pendingRequest !== null;
+  const request = useRef<AbortController | null>(null),
+    active = useRef(false);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      request.current?.abort();
+    };
+  }, []);
+  async function revoke() {
+    if (paused || conflict || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPendingRequest(controller);
+    setAttempted(true);
+    setError("");
+    try {
+      const result = await revokeHostingSourceGrant(resource.id, grantID, {
+        signal: controller.signal,
+      });
+      if (!active.current || controller.signal.aborted) return;
+      if (!result.revoked) throw new Error("Revocation unconfirmed");
+      await changed();
+    } catch (cause) {
+      if (!active.current || controller.signal.aborted) return;
+      if (deniedError(cause)) onDenied();
+      else {
+        setError(grantError(cause));
+        if (cause instanceof ApiError && cause.status === 409)
+          setConflict(true);
+      }
+    } finally {
+      if (request.current === controller) request.current = null;
+      if (active.current)
+        setPendingRequest((current) =>
+          current === controller ? null : current,
+        );
+    }
+  }
+  return (
+    <>
+      <Button
+        className={button}
+        type="button"
+        variant="outline"
+        disabled={busy || paused || conflict}
+        onClick={() => void revoke()}
+      >
+        {busy
+          ? "Revoking grant..."
+          : attempted
+            ? `Retry revoke grant ${grantID}`
+            : `Revoke source grant ${grantID}`}
+      </Button>
+      {error ? <p role="alert">{error}</p> : null}
+      {conflict ? (
+        <Button
+          className={button}
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            void changed().then(() => {
+              if (active.current) {
+                setConflict(false);
+                setAttempted(false);
+                setError("");
+              }
+            });
+          }}
+        >
+          Review refreshed grant for revocation
+        </Button>
+      ) : null}
+    </>
+  );
 }
-function GrantRequest({ actor, resource, paused, changed, onDenied }: { actor: string; resource: Resource; paused: boolean; changed: () => Promise<void>; onDenied: () => void }) {
- const client = useQueryClient();
- const [base, setBase] = useState(resource), [latest, setLatest] = useState<Resource>();
- const [secretID, setSecretID] = useState(""), [version, setVersion] = useState(""), [secretOffset, setSecretOffset] = useState(0), [versionOffset, setVersionOffset] = useState(0);
- const [attempt, setAttempt] = useState<HostingSourceGrantRequest>(), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false), [conflict, setConflict] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
- const active = useRef(false), request = useRef<AbortController | null>(null);
- useEffect(() => { active.current = true; return () => { active.current = false; request.current?.abort(); client.removeQueries({ queryKey: ["sourceGrantSecrets", actor, resource.project_id, resource.id] }); client.removeQueries({ queryKey: ["sourceGrantVersions", actor, resource.project_id, resource.id] }); }; }, []);
- const secrets = useQuery({ queryKey: ["sourceGrantSecrets", actor, resource.project_id, resource.id, secretOffset], retry: false, gcTime: 0, queryFn: async ({ signal }) => {
-  const page = await listManagedSecrets({ project_id: resource.project_id, limit: 20, offset: secretOffset }, { signal }).catch(metadataError);
-  if (page.items.some((secret) => secret.project_id !== resource.project_id)) throw new Error("Secret scope mismatch");
-  return { limit: page.limit, offset: page.offset, count: page.count, total: page.total, items: page.items.map(({ id, project_id, name, current_version, status }) => ({ id, project_id, name, current_version, status })) };
- } });
- const versions = useQuery({ queryKey: ["sourceGrantVersions", actor, resource.project_id, resource.id, secretID, versionOffset], enabled: Boolean(secretID), retry: false, gcTime: 0, queryFn: async ({ signal }) => {
-  const page = await listManagedSecretVersions(secretID, { limit: 20, offset: versionOffset }, { signal }).catch(metadataError); if (page.items.some((item) => item.secret_id !== secretID)) throw new Error("Secret version scope mismatch"); return { limit: page.limit, offset: page.offset, count: page.count, total: page.total, items: page.items.map(({ secret_id, version }) => ({ secret_id, version })) };
- } });
- useEffect(() => { if (deniedError(secrets.error) || deniedError(versions.error)) onDenied(); }, [secrets.error, versions.error]);
- const selectedSecret = secrets.data?.items.find((secret) => secret.id === secretID && secret.status === "active");
- const validVersion = versions.data?.items.some((item) => item.version === Number(version) && item.version > 0);
- const disabled = busy || paused || secrets.isError || (Boolean(secretID) && (versions.isPending || versions.isError));
- async function submit() {
-  if (disabled || request.current || conflict || !confirmed || base.source.kind !== "git" || base.source.git.credential_kind !== "https_basic" || (!attempt && (!selectedSecret || !validVersion))) return;
-  const input = attempt ?? { expected_resource_generation: base.generation, expected_source_generation: base.source.git.generation, secret_id: secretID, secret_version: Number(version), request_id: newSourceGrantRequestID() };
-  const sourceID = base.source.git.source_id, controller = new AbortController(); request.current = controller; setAttempt(input); setBusy(true); setError(""); setNotice("");
-  try { const grant = await requestHostingSourceGrant(resource.id, input, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (grant.resource_id !== resource.id || grant.source_id !== sourceID || grant.source_generation !== input.expected_source_generation || grant.kind !== "https_basic" || grant.version !== 1) throw new Error("Grant scope mismatch"); setAttempt(undefined); setConfirmed(false); setNotice(`Source grant ${grant.id} recorded. Select it explicitly for a private build.`); await changed(); }
-  catch (cause) { if (!active.current || controller.signal.aborted) return; if (deniedError(cause)) onDenied(); else { setError(grantError(cause)); if (cause instanceof ApiError && cause.status === 409) setConflict(true); if (cause instanceof ApiError && cause.status === 400) { setAttempt(undefined); setConfirmed(false); } } }
-  finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); }
- }
- async function refreshDecision() { if (busy || request.current) return; const controller = new AbortController(); request.current = controller; setBusy(true); setLatest(undefined); try { const current = await getResource(resource.id, { signal: controller.signal }); if (!active.current || controller.signal.aborted) return; if (current.id !== resource.id || current.project_id !== resource.project_id) throw new Error("Resource scope mismatch"); setLatest(current); await changed(); } catch (cause) { if (active.current && !controller.signal.aborted) { if (deniedError(cause)) onDenied(); else setError("Unable to refresh the current source. The retained grant decision remains unchanged."); } } finally { if (request.current === controller) request.current = null; if (active.current) setBusy(false); } }
- return <form aria-label="Request private source grant" className="min-w-0 space-y-3 border-t pt-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}><p className="break-all text-sm">Reviewed source generation {base.source.kind === "git" ? base.source.git.generation : "unavailable"} · resource generation {base.generation}</p>
-  <label className="block">Existing managed secret<select className={select} value={secretID} disabled={disabled || Boolean(attempt)} onChange={(event) => { setSecretID(event.target.value); setVersion(""); setVersionOffset(0); setConfirmed(false); }}><option value="">Choose secret metadata</option>{secrets.data?.items.filter((secret) => secret.status === "active").map((secret) => <option key={secret.id} value={secret.id}>{secret.name} · {secret.id}</option>)}</select></label>
-  <PageNavigation label="grant secret metadata" page={secrets.data} loading={secrets.isFetching || busy || Boolean(attempt)} onFirst={() => { setSecretOffset(0); setSecretID(""); setVersion(""); }} onPrevious={() => { setSecretOffset(Math.max(0, secretOffset - 20)); setSecretID(""); setVersion(""); }} onNext={() => { setSecretOffset(Math.min(100000, secretOffset + 20)); setSecretID(""); setVersion(""); }} />
-  <label className="block">Explicit secret version<select className={select} value={version} disabled={disabled || Boolean(attempt) || !secretID} onChange={(event) => { setVersion(event.target.value); setConfirmed(false); }}><option value="">Choose an existing version</option>{versions.data?.items.map((item) => <option key={item.version} value={item.version}>Version {item.version}</option>)}</select></label>
-  {secretID ? <PageNavigation label="grant secret versions" page={versions.data} loading={versions.isFetching || busy || Boolean(attempt)} onFirst={() => { setVersionOffset(0); setVersion(""); }} onPrevious={() => { setVersionOffset(Math.max(0, versionOffset - 20)); setVersion(""); }} onNext={() => { setVersionOffset(Math.min(100000, versionOffset + 20)); setVersion(""); }} /> : null}
-  {secrets.isError || versions.isError ? <><p role="alert">Unable to verify secret metadata. No secret value was requested.</p><Button className={button} type="button" onClick={() => { void secrets.refetch(); if (secretID) void versions.refetch(); }}>Refresh grant secret metadata</Button></> : null}
-  <label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={disabled || Boolean(attempt)} onChange={(event) => setConfirmed(event.target.checked)} /><span>I reviewed this exact source generation, secret reference, and version for a private HTTPS grant.</span></label>
-  <Button className={button} type="submit" disabled={disabled || conflict || !confirmed || (!attempt && (!selectedSecret || !validVersion))}>{busy ? "Requesting source grant..." : attempt ? "Retry identical source grant request" : "Create source grant"}</Button>
-  {attempt ? <p className="break-all text-xs">Frozen grant request {attempt.request_id} · resource {attempt.expected_resource_generation} / source {attempt.expected_source_generation} · secret {attempt.secret_id} version {attempt.secret_version}</p> : null}{error ? <p role="alert">{error}</p> : null}{notice ? <p role="status" className="break-all">{notice}</p> : null}
-  {conflict ? <section className="space-y-2"><Button className={button} type="button" disabled={busy} onClick={() => void refreshDecision()}>Refresh source for grant decision</Button>{latest ? <><p className="break-all">Current resource {latest.generation} · {latest.source.kind === "git" ? `${latest.source.git.source_id} / source ${latest.source.git.generation} / ${latest.source.git.credential_kind}` : "image source"}. Check recorded grants before discarding an uncertain request.</p><Button className={button} type="button" disabled={busy || latest.source.kind !== "git" || latest.source.git.credential_kind !== "https_basic"} onClick={() => { setBase(latest); setAttempt(undefined); setConfirmed(false); setConflict(false); setError(""); setLatest(undefined); }}>Use reviewed source for a separate grant decision</Button></> : null}</section> : null}
- </form>;
+function GrantRequest(input: {
+  actor: string;
+  resource: Resource;
+  paused: boolean;
+  changed: () => Promise<void>;
+  onDenied: () => void;
+}) {
+  const viewModel = useGrantRequest(input);
+  const {
+    base,
+    attempt,
+    confirmed,
+    setConfirmed,
+    busy,
+    conflict,
+    error,
+    notice,
+    selectedSecret,
+    validVersion,
+    disabled,
+    submit,
+  } = viewModel;
+  return (
+    <form
+      aria-label="Request private source grant"
+      className="min-w-0 space-y-3 border-t pt-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <p className="break-all text-sm">
+        Reviewed source generation{" "}
+        {base.source.kind === "git"
+          ? base.source.git.generation
+          : "unavailable"}{" "}
+        · resource generation {base.generation}
+      </p>
+      <SourceGrantSecretSelection {...viewModel} />{" "}
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          disabled={disabled || Boolean(attempt)}
+          onChange={(event) => setConfirmed(event.target.checked)}
+        />
+        <span>
+          I reviewed this exact source generation, secret reference, and version
+          for a private{" "}
+          {base.source.kind === "git" &&
+          base.source.git.credential_kind === "ssh_private_key"
+            ? "SSH deploy-key"
+            : "HTTPS"}{" "}
+          grant.
+        </span>
+      </label>
+      <Button
+        className={button}
+        type="submit"
+        disabled={
+          disabled ||
+          conflict ||
+          !confirmed ||
+          (!attempt && (!selectedSecret || !validVersion))
+        }
+      >
+        {busy
+          ? "Requesting source grant..."
+          : attempt
+            ? "Retry identical source grant request"
+            : "Create source grant"}
+      </Button>
+      {attempt ? (
+        <p className="break-all text-xs">
+          Frozen grant request {attempt.request_id} · resource{" "}
+          {attempt.expected_resource_generation} / source{" "}
+          {attempt.expected_source_generation} · secret {attempt.secret_id}{" "}
+          version {attempt.secret_version}
+        </p>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+      {notice ? (
+        <p role="status" className="break-all">
+          {notice}
+        </p>
+      ) : null}
+      <SourceGrantConflict {...viewModel} />
+    </form>
+  );
+}
+
+function useGrantAccess({
+  actor,
+  resource,
+  onDenied,
+  access,
+}: GrantProps & { access: GrantAccessDecision }) {
+  const [offset, setOffset] = useState(0),
+    [denied, setDenied] = useState(false);
+  const client = useQueryClient();
+  const { principal, members, currentActor, maintainer, owner } = access;
+  const canReadGrants = access.canReadGrants && !denied;
+  const grants = useQuery({
+    ...sourceGrantsQuery(actor, resource.project_id, resource.id, offset),
+    enabled: canReadGrants,
+    refetchOnWindowFocus: false,
+  });
+  const deny = () => {
+    setDenied(true);
+    client.removeQueries({
+      queryKey: sourceGrantKeys.resource(
+        actor,
+        resource.project_id,
+        resource.id,
+      ),
+    });
+    onDenied();
+  };
+  useQueryAccessDenial(
+    [
+      sourceGrantsQuery(actor, resource.project_id, resource.id, offset)
+        .queryKey,
+      ["sourceGrantOwners", actor, resource.project_id],
+      principalQuery().queryKey,
+    ],
+    deny,
+    { key: principalQuery().queryKey, actor },
+  );
+  const refresh = async () => {
+    await client.invalidateQueries({
+      queryKey: sourceGrantKeys.resource(
+        actor,
+        resource.project_id,
+        resource.id,
+      ),
+    });
+  };
+  const hidden = denied || !currentActor || principal.isError;
+  const insufficientRole = members.isSuccess && !maintainer;
+  const sshSource =
+    resource.source.kind === "git" &&
+    resource.source.git.credential_kind === "ssh_private_key";
+  return {
+    hidden,
+    insufficientRole,
+    sshSource,
+    actor,
+    resource,
+    onDenied,
+    access,
+    offset,
+    setOffset,
+    denied,
+    principal,
+    members,
+    currentActor,
+    maintainer,
+    owner,
+    canReadGrants,
+    grants,
+    deny,
+    refresh,
+  };
+}
+
+function useGrantRequest({
+  actor,
+  resource,
+  paused,
+  changed,
+  onDenied,
+}: {
+  actor: string;
+  resource: Resource;
+  paused: boolean;
+  changed: () => Promise<void>;
+  onDenied: () => void;
+}) {
+  const client = useQueryClient();
+  const [base, setBase] = useState(resource),
+    [latest, setLatest] = useState<Resource>();
+  const [secretID, setSecretID] = useState(""),
+    [version, setVersion] = useState(""),
+    [secretOffset, setSecretOffset] = useState(0),
+    [versionOffset, setVersionOffset] = useState(0);
+  const [attempt, setAttempt] = useState<HostingSourceGrantRequest>(),
+    [confirmed, setConfirmed] = useState(false),
+    [pendingRequest, setPendingRequest] = useState<AbortController | null>(
+      null,
+    ),
+    [conflict, setConflict] = useState(false),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState("");
+  const busy = pendingRequest !== null;
+  const active = useRef(false),
+    request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      request.current?.abort();
+      client.removeQueries({
+        queryKey: [
+          "sourceGrantSecrets",
+          actor,
+          resource.project_id,
+          resource.id,
+        ],
+      });
+      client.removeQueries({
+        queryKey: [
+          "sourceGrantVersions",
+          actor,
+          resource.project_id,
+          resource.id,
+        ],
+      });
+    };
+  }, [client, actor, resource.project_id, resource.id]);
+  const secrets = useQuery({
+    queryKey: [
+      "sourceGrantSecrets",
+      actor,
+      resource.project_id,
+      resource.id,
+      secretOffset,
+    ],
+    retry: false,
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const page = await listManagedSecrets(
+        { project_id: resource.project_id, limit: 20, offset: secretOffset },
+        { signal },
+      ).catch(metadataError);
+      if (
+        page.items.some((secret) => secret.project_id !== resource.project_id)
+      )
+        throw new Error("Secret scope mismatch");
+      return {
+        limit: page.limit,
+        offset: page.offset,
+        count: page.count,
+        total: page.total,
+        items: page.items.map(
+          ({ id, project_id, name, current_version, status }) => ({
+            id,
+            project_id,
+            name,
+            current_version,
+            status,
+          }),
+        ),
+      };
+    },
+  });
+  const versions = useQuery({
+    queryKey: [
+      "sourceGrantVersions",
+      actor,
+      resource.project_id,
+      resource.id,
+      secretID,
+      versionOffset,
+    ],
+    enabled: Boolean(secretID),
+    retry: false,
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const page = await listManagedSecretVersions(
+        secretID,
+        { limit: 20, offset: versionOffset },
+        { signal },
+      ).catch(metadataError);
+      if (page.items.some((item) => item.secret_id !== secretID))
+        throw new Error("Secret version scope mismatch");
+      return {
+        limit: page.limit,
+        offset: page.offset,
+        count: page.count,
+        total: page.total,
+        items: page.items.map(({ secret_id, version }) => ({
+          secret_id,
+          version,
+        })),
+      };
+    },
+  });
+  useEffect(() => {
+    if (deniedError(secrets.error) || deniedError(versions.error)) onDenied();
+  }, [secrets.error, versions.error, onDenied]);
+  const selectedSecret = secrets.data?.items.find(
+    (secret) => secret.id === secretID && secret.status === "active",
+  );
+  const validVersion = versions.data?.items.some(
+    (item) => item.version === Number(version) && item.version > 0,
+  );
+  const disabled =
+    busy ||
+    paused ||
+    secrets.isError ||
+    (Boolean(secretID) && (versions.isPending || versions.isError));
+  async function submit() {
+    if (
+      disabled ||
+      request.current ||
+      conflict ||
+      !confirmed ||
+      base.source.kind !== "git" ||
+      !["https_basic", "ssh_private_key"].includes(
+        base.source.git.credential_kind,
+      ) ||
+      (!attempt && (!selectedSecret || !validVersion))
+    )
+      return;
+    const input = attempt ?? {
+      expected_resource_generation: base.generation,
+      expected_source_generation: base.source.git.generation,
+      secret_id: secretID,
+      secret_version: Number(version),
+      request_id: newSourceGrantRequestID(),
+    };
+    const sourceID = base.source.git.source_id,
+      controller = new AbortController();
+    request.current = controller;
+    setAttempt(input);
+    setPendingRequest(controller);
+    setError("");
+    setNotice("");
+    try {
+      const grant = await requestHostingSourceGrant(resource.id, input, {
+        signal: controller.signal,
+      });
+      if (!active.current || controller.signal.aborted) return;
+      if (
+        grant.resource_id !== resource.id ||
+        grant.source_id !== sourceID ||
+        grant.source_generation !== input.expected_source_generation ||
+        grant.kind !== base.source.git.credential_kind ||
+        grant.version !== 1
+      )
+        throw new Error("Grant scope mismatch");
+      setAttempt(undefined);
+      setConfirmed(false);
+      setNotice(
+        `Source grant ${grant.id} recorded. Select it explicitly for a private build.`,
+      );
+      await changed();
+    } catch (cause) {
+      if (!active.current || controller.signal.aborted) return;
+      if (deniedError(cause)) onDenied();
+      else {
+        setError(grantError(cause));
+        if (cause instanceof ApiError && cause.status === 409)
+          setConflict(true);
+        if (cause instanceof ApiError && cause.status === 400) {
+          setAttempt(undefined);
+          setConfirmed(false);
+        }
+      }
+    } finally {
+      if (request.current === controller) request.current = null;
+      if (active.current)
+        setPendingRequest((current) =>
+          current === controller ? null : current,
+        );
+    }
+  }
+  async function refreshDecision() {
+    if (busy || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPendingRequest(controller);
+    setLatest(undefined);
+    try {
+      const current = await getResource(resource.id, {
+        signal: controller.signal,
+      });
+      if (!active.current || controller.signal.aborted) return;
+      if (
+        current.id !== resource.id ||
+        current.project_id !== resource.project_id
+      )
+        throw new Error("Resource scope mismatch");
+      setLatest(current);
+      await changed();
+    } catch (cause) {
+      if (active.current && !controller.signal.aborted) {
+        if (deniedError(cause)) onDenied();
+        else
+          setError(
+            "Unable to refresh the current source. The retained grant decision remains unchanged.",
+          );
+      }
+    } finally {
+      if (request.current === controller) request.current = null;
+      if (active.current)
+        setPendingRequest((current) =>
+          current === controller ? null : current,
+        );
+    }
+  }
+  return {
+    resource,
+    base,
+    setBase,
+    latest,
+    setLatest,
+    secretID,
+    setSecretID,
+    version,
+    setVersion,
+    secretOffset,
+    setSecretOffset,
+    versionOffset,
+    setVersionOffset,
+    attempt,
+    setAttempt,
+    confirmed,
+    setConfirmed,
+    busy,
+    conflict,
+    setConflict,
+    error,
+    setError,
+    notice,
+    active,
+    request,
+    secrets,
+    versions,
+    selectedSecret,
+    validVersion,
+    disabled,
+    submit,
+    refreshDecision,
+  };
+}
+
+type SourceGrantHistoryModel = Pick<
+  ReturnType<typeof useGrantAccess>,
+  | "grants"
+  | "resource"
+  | "owner"
+  | "actor"
+  | "canReadGrants"
+  | "refresh"
+  | "deny"
+>;
+function SourceGrantHistory(viewModel: SourceGrantHistoryModel) {
+  const { grants, resource, owner, actor, canReadGrants, refresh, deny } =
+    viewModel;
+
+  return (
+    <ul className="space-y-2">
+      {!grants.isError &&
+        grants.data?.items.map((grant) => (
+          <li className="min-w-0 break-all rounded border p-2" key={grant.id}>
+            <p>
+              Grant {grant.id} · v{grant.version} · source {grant.source_id} /
+              generation {grant.source_generation} ·{" "}
+              {grant.revoked
+                ? "revoked"
+                : eligibleSourceGrant(grant, resource)
+                  ? "eligible for this source"
+                  : "not eligible for this source"}
+            </p>
+            {owner && !grant.revoked ? (
+              <RevokeGrant
+                key={grant.id}
+                actor={actor}
+                resource={resource}
+                grantID={grant.id}
+                paused={grants.isError || !canReadGrants}
+                changed={refresh}
+                onDenied={deny}
+              />
+            ) : null}
+          </li>
+        ))}
+    </ul>
+  );
+}
+
+type SourceGrantSecretSelectionModel = Pick<
+  ReturnType<typeof useGrantRequest>,
+  | "secretID"
+  | "disabled"
+  | "attempt"
+  | "setSecretID"
+  | "setVersion"
+  | "setVersionOffset"
+  | "setConfirmed"
+  | "secrets"
+  | "busy"
+  | "setSecretOffset"
+  | "secretOffset"
+  | "version"
+  | "versions"
+  | "versionOffset"
+>;
+function SourceGrantSecretSelection(
+  viewModel: SourceGrantSecretSelectionModel,
+) {
+  const {
+    secretID,
+    disabled,
+    attempt,
+    setSecretID,
+    setVersion,
+    setVersionOffset,
+    setConfirmed,
+    secrets,
+    busy,
+    setSecretOffset,
+    secretOffset,
+    version,
+    versions,
+    versionOffset,
+  } = viewModel;
+
+  return (
+    <>
+      <label className="block">
+        Existing managed secret
+        <select
+          className={select}
+          value={secretID}
+          disabled={disabled || Boolean(attempt)}
+          onChange={(event) => {
+            setSecretID(event.target.value);
+            setVersion("");
+            setVersionOffset(0);
+            setConfirmed(false);
+          }}
+        >
+          <option value="">Choose secret metadata</option>
+          {secrets.data?.items
+            .filter((secret) => secret.status === "active")
+            .map((secret) => (
+              <option key={secret.id} value={secret.id}>
+                {secret.name} · {secret.id}
+              </option>
+            ))}
+        </select>
+      </label>
+      <PageNavigation
+        label="grant secret metadata"
+        page={secrets.data}
+        loading={secrets.isFetching || busy || Boolean(attempt)}
+        onFirst={() => {
+          setSecretOffset(0);
+          setSecretID("");
+          setVersion("");
+        }}
+        onPrevious={() => {
+          setSecretOffset(Math.max(0, secretOffset - 20));
+          setSecretID("");
+          setVersion("");
+        }}
+        onNext={() => {
+          setSecretOffset(Math.min(100000, secretOffset + 20));
+          setSecretID("");
+          setVersion("");
+        }}
+      />
+      <label className="block">
+        Explicit secret version
+        <select
+          className={select}
+          value={version}
+          disabled={disabled || Boolean(attempt) || !secretID}
+          onChange={(event) => {
+            setVersion(event.target.value);
+            setConfirmed(false);
+          }}
+        >
+          <option value="">Choose an existing version</option>
+          {versions.data?.items.map((item) => (
+            <option key={item.version} value={item.version}>
+              Version {item.version}
+            </option>
+          ))}
+        </select>
+      </label>
+      {secretID ? (
+        <PageNavigation
+          label="grant secret versions"
+          page={versions.data}
+          loading={versions.isFetching || busy || Boolean(attempt)}
+          onFirst={() => {
+            setVersionOffset(0);
+            setVersion("");
+          }}
+          onPrevious={() => {
+            setVersionOffset(Math.max(0, versionOffset - 20));
+            setVersion("");
+          }}
+          onNext={() => {
+            setVersionOffset(Math.min(100000, versionOffset + 20));
+            setVersion("");
+          }}
+        />
+      ) : null}
+      {secrets.isError || versions.isError ? (
+        <>
+          <p role="alert">
+            Unable to verify secret metadata. No secret value was requested.
+          </p>
+          <Button
+            className={button}
+            type="button"
+            onClick={() => {
+              void secrets.refetch();
+              if (secretID) void versions.refetch();
+            }}
+          >
+            Refresh grant secret metadata
+          </Button>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+type SourceGrantConflictModel = Pick<
+  ReturnType<typeof useGrantRequest>,
+  | "conflict"
+  | "busy"
+  | "refreshDecision"
+  | "latest"
+  | "setBase"
+  | "setAttempt"
+  | "setConfirmed"
+  | "setConflict"
+  | "setError"
+  | "setLatest"
+>;
+function SourceGrantConflict(viewModel: SourceGrantConflictModel) {
+  const {
+    conflict,
+    busy,
+    refreshDecision,
+    latest,
+    setBase,
+    setAttempt,
+    setConfirmed,
+    setConflict,
+    setError,
+    setLatest,
+  } = viewModel;
+
+  if (!conflict) return null;
+  return (
+    <section className="space-y-2">
+      <Button
+        className={button}
+        type="button"
+        disabled={busy}
+        onClick={() => void refreshDecision()}
+      >
+        Refresh source for grant decision
+      </Button>
+      {latest ? (
+        <>
+          <p className="break-all">
+            Current resource {latest.generation} ·{" "}
+            {latest.source.kind === "git"
+              ? `${latest.source.git.source_id} / source ${latest.source.git.generation} / ${latest.source.git.credential_kind}`
+              : "image source"}
+            . Check recorded grants before discarding an uncertain request.
+          </p>
+          <Button
+            className={button}
+            type="button"
+            disabled={
+              busy ||
+              latest.source.kind !== "git" ||
+              !["https_basic", "ssh_private_key"].includes(
+                latest.source.git.credential_kind,
+              )
+            }
+            onClick={() => {
+              setBase(latest);
+              setAttempt(undefined);
+              setConfirmed(false);
+              setConflict(false);
+              setError("");
+              setLatest(undefined);
+            }}
+          >
+            Use reviewed source for a separate grant decision
+          </Button>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+type SourceGrantAccessRetryModel = Pick<
+  ReturnType<typeof useGrantAccess>,
+  "members" | "currentActor" | "principal" | "denied"
+>;
+function SourceGrantAccessRetry(viewModel: SourceGrantAccessRetryModel) {
+  const { members, currentActor, principal, denied } = viewModel;
+
+  if (!(members.isError && !deniedError(members.error))) return null;
+  return (
+    <>
+      <p role="alert">
+        Unable to verify source grant access. Grant reads are paused.
+      </p>
+      <Button
+        className={button}
+        type="button"
+        disabled={members.isFetching}
+        onClick={() => {
+          if (
+            !currentActor ||
+            principal.isError ||
+            denied ||
+            deniedError(members.error)
+          )
+            return;
+          void members.refetch();
+        }}
+      >
+        Refresh source grant access
+      </Button>
+    </>
+  );
 }

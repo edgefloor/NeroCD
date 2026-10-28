@@ -102,7 +102,46 @@ func TestHostingBuildVariablesBoundsAndIdentity(t *testing.T) {
 	settings.ComposeFile = ""
 	settings.PublicComponent = ""
 	settings.ContainerPort = 0
-	if domain.ValidateHostingBuildSettings(settings) == nil {
-		t.Fatal("non-Compose variables accepted")
+	if domain.ValidateHostingBuildSettings(settings) != nil {
+		t.Fatal("Dockerfile variables rejected")
+	}
+	for _, strategy := range []string{"railpack", "static"} {
+		settings.Strategy = strategy
+		if domain.ValidateHostingBuildSettings(settings) == nil {
+			t.Fatal("variables widened unrelated strategy")
+		}
+	}
+}
+
+func TestDockerfileArgumentInjectionSettings(t *testing.T) {
+	var baseline domain.HostingBuildSettings
+	if err := json.Unmarshal([]byte(`{"strategy":"dockerfile"}`), &baseline); err != nil {
+		t.Fatal(err)
+	}
+	var nullable domain.HostingBuildSettings
+	if err := json.Unmarshal([]byte(`{"strategy":"dockerfile","inject_build_args_to_dockerfile":null}`), &nullable); err != nil {
+		t.Fatal(err)
+	}
+	if domain.HostingDocumentHash(baseline) != domain.HostingDocumentHash(nullable) {
+		t.Fatal("null injection changed historical omitted hash")
+	}
+	for _, enabled := range []bool{true, false} {
+		settings := baseline
+		settings.InjectBuildArgsToDockerfile = &enabled
+		if domain.ValidateHostingBuildSettings(settings) != nil {
+			t.Fatal("explicit injection selection rejected")
+		}
+		clone := settings.Clone()
+		*clone.InjectBuildArgsToDockerfile = !enabled
+		if *settings.InjectBuildArgsToDockerfile != enabled || domain.HostingDocumentHash(settings) == domain.HostingDocumentHash(clone) {
+			t.Fatal("borrowed injection setting or missing identity")
+		}
+		settings.Strategy = "compose"
+		settings.ComposeFile = "compose.yml"
+		settings.PublicComponent = "web"
+		settings.ContainerPort = 80
+		if domain.ValidateHostingBuildSettings(settings) == nil {
+			t.Fatal("Compose accepted Dockerfile-only injection choice")
+		}
 	}
 }

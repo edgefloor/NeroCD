@@ -53,7 +53,7 @@ const privateGrant = { id: "grant-one", resource_id: "resource", source_id: "sou
 function privateBackend(handler?: (url: string, options: RequestInit) => Response | Promise<Response | undefined> | undefined) {
  return backend(async (url, options) => await handler?.(url, options) ?? (url.includes("/source-grants?") ? json({ items: [privateGrant, { ...privateGrant, id: "legacy", source_generation: 0 }, { ...privateGrant, id: "revoked", revoked: true }], count: 3, total: 3, limit: 20, offset: 0 }) : url.includes("/project-members?") ? json({ items: [{ project_id: "project", user_id: "user", role: "maintainer" }], count: 1, total: 1, limit: 100, offset: 0 }) : undefined));
 }
-function setupPrivate(writable = true) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={privateResource} writable={writable} blocked={false} /></QueryClientProvider>); }
+function setupPrivate(writable = true, savedResource = privateResource) { client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); client.setQueryData(queryKeys.principal, { id: "user", provider: "oidc", roles: [] }); return render(<QueryClientProvider client={client}><ResourceBuilds resource={savedResource} writable={writable} blocked={false} /></QueryClientProvider>); }
 async function privateReview() { await screen.findByRole("option", { name: "grant-one · source 3 · eligible" }); fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } }); fireEvent.click(screen.getByLabelText(/I reviewed this exact private HTTPS Git source/)); }
 test.each(["pending", "ready"])("external private grant becomes selectable after history refresh with %s access", async (access) => {
  let available = false;
@@ -188,9 +188,77 @@ test("Git Compose build review shows configured variables and resolved per-servi
  const settings = { strategy: "compose" as const, compose_file: "compose.yaml", public_component: "web", container_port: 3000, build_variables: [{ name: "MODE", value: "configured" }] };
  const composed = { ...build, state: "succeeded" as const, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } }, compose_result: { source: { original: "services: {}", public_component: "web", container_port: 3000 }, hash: `sha256:${"a".repeat(64)}`, definition: { version: "git-compose.v1", original_hash: "original", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:local", build: { context: ".", dockerfile: "Dockerfile", args: { MODE: "configured", FALLBACK: "default" } } }] }, services: [{ component: "web", artifact: { origin: "local_build", image_id: "sha256:local", index_digest: "index", manifest_digest: "manifest", config_digest: "config", platform: "linux/amd64" } }] } };
  backend(url => url.includes("/hosting-builds/") ? json({ build: composed }) : undefined);
+ if ("kind" in build.snapshot.source) throw new Error("Expected Git source");
  setup(true, { ...resource, source: { kind: "git", git: { ...build.snapshot.source, credential_kind: "public" as const, settings } } });
  await screen.findByText(/Reviewed build variables: MODE="configured"/);
  fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
  await screen.findByText(/Recorded build variables: MODE="configured"/);
  await screen.findByText(/Resolved build arguments: FALLBACK="default", MODE="configured"/);
+});
+
+test("Dockerfile build review retains public arguments and explicit source declaration mode", async () => {
+ const settings = { strategy: "dockerfile" as const, inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "release" }] };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build variables: MODE="release"/);
+ expect(screen.getByText(/Reviewed Dockerfile ARG injection: Disabled; use source declarations/)).toBeTruthy();
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build variables: MODE="release"/);
+ expect(screen.getByText(/Recorded Dockerfile ARG injection: Disabled; use source declarations/)).toBeTruthy();
+});
+
+test("reviewed and recorded build registry references remain independent of source grants", async () => {
+ const settings = { strategy: "dockerfile" as const, build_registry_credential: { secret_id: "build-registry", version: 2 } };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build registry credential: build-registry, version 2/);
+ expect(screen.getByText(/Requires hosting_build_registry_v1/)).toBeTruthy();
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build registry credential: build-registry, version 2/);
+});
+
+test("reviewed and recorded build secrets show only names and immutable metadata", async () => {
+ const settings = { strategy: "dockerfile" as const, build_secrets: [{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "dependency", version: 2 } }] };
+ backend(url => url.includes("/hosting-builds/") ? json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } }) : undefined);
+ if (resource.source.kind !== "git") throw new Error("Expected Git resource");
+ setup(true, { ...resource, source: { kind: "git", git: { ...resource.source.git, settings } } });
+ await screen.findByText(/Reviewed build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
+ fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
+ await screen.findByText(/Recorded build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
+});
+
+test("stored Dockerfile builds use saved generations and hash provenance without Git access", async () => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ const stored: Resource={...resource,source:{kind:"dockerfile",dockerfile:{source_id:"source",generation:3,content_hash,content:"FROM nginx\n",settings:{strategy:"dockerfile"}}}};
+ const storedBuild: HostingBuild={...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"source",generation:3,content_hash,settings:{strategy:"dockerfile"}}},source_receipt:{kind:"dockerfile",content_hash,tree_digest:"tree"}};
+ const fetch=backend((url,o) => url.includes("/builds?") ? json({items:[storedBuild],count:1,total:1,limit:20,offset:0}) : url.includes("/hosting-builds/") || o.method==="POST" ? json({build:storedBuild}) : undefined);
+ setup(true,stored);
+ fireEvent.click(await screen.findByLabelText("I reviewed this exact stored Dockerfile and generations for this build request."));
+ await waitFor(()=>expect(screen.getByRole<HTMLButtonElement>("button",{name:"Request Dockerfile build"}).disabled).toBe(false));
+ fireEvent.click(screen.getByRole("button",{name:"Request Dockerfile build"}));
+ await screen.findByRole("region",{name:"Build operation detail"});
+ expect(await screen.findByText("Acquired Dockerfile content hash")).toBeTruthy(); expect(screen.queryByText("Resolved commit")).toBeNull();
+ const writes=fetch.mock.calls.filter(([,o])=>o.method==="POST"); expect(writes).toHaveLength(1);
+ expect(JSON.parse(writes[0]![1].body as string)).toEqual({expected_resource_generation:2,expected_source_generation:3,idempotency_key:expect.any(String)});
+ expect(fetch.mock.calls.some(([url])=>url.includes("source-grants") || url.includes("github"))).toBe(false);
+});
+
+
+test("SSH builds review host fingerprints and send an explicit matching grant", async () => {
+ const fingerprints = ["SHA256:" + "A".repeat(43)];
+ const ssh: Resource = { ...privateResource, source: { kind: "git", git: { ...(privateResource.source.kind === "git" ? privateResource.source.git : {}), credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: fingerprints } } } as Resource;
+ const fetch = privateBackend(url => url.includes("/source-grants?") ? json({ items: [{ ...privateGrant, kind: "ssh_private_key" }, { ...privateGrant, id: "https-grant" }], count: 2, total: 2, limit: 20, offset: 0 }) : undefined);
+ setupPrivate(true, ssh);
+ await screen.findByText("Private SSH Git builds");
+ expect(screen.getByText(/Reviewed SSH host fingerprints:/).textContent).toContain(fingerprints[0]);
+ await screen.findByRole("option", { name: "grant-one · source 3 · eligible" });
+ fireEvent.change(screen.getByLabelText("Private source grant"), { target: { value: "grant-one" } });
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact private SSH Git source, host fingerprints, grant/));
+ fireEvent.click(screen.getByRole("button", { name: "Request private Git build" }));
+ await waitFor(() => expect(fetch.mock.calls.some(([url, options]) => url.endsWith("/builds") && options.method === "POST")).toBe(true));
+ const body = fetch.mock.calls.find(([url, options]) => url.endsWith("/builds") && options.method === "POST")![1].body;
+ expect(JSON.parse(body as string)).toMatchObject({ expected_resource_generation: 2, expected_source_generation: 3, grant_id: "grant-one" });
+ expect(JSON.parse(body as string)).not.toHaveProperty("ssh_host_fingerprints");
 });

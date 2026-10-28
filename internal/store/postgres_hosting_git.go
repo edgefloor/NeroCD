@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -13,16 +14,20 @@ import (
 )
 
 func gitReference(src domain.HostingGitSource) domain.ResourceSource {
+	if src.Kind == "dockerfile" {
+		return domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation}}
+	}
 	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation}}
 }
 func expandGitResource(ctx context.Context, q *sqlcgen.Queries, item domain.Resource) (domain.Resource, error) {
-	if item.Source.Kind != "git" {
+	if item.Source.Kind != "git" && item.Source.Kind != "dockerfile" {
 		return item, nil
 	}
-	if item.Source.Git == nil {
+	sourceID, sourceGeneration := item.Source.GitIdentity()
+	if sourceID == "" {
 		return item, ErrConflict
 	}
-	raw, err := q.GetExactResourceGitSource(ctx, sqlcgen.GetExactResourceGitSourceParams{SourceID: item.Source.Git.SourceID, Generation: item.Source.Git.Generation, ResourceID: item.ID, ProjectID: item.ProjectID})
+	raw, err := q.GetExactResourceGitSource(ctx, sqlcgen.GetExactResourceGitSourceParams{SourceID: sourceID, Generation: sourceGeneration, ResourceID: item.ID, ProjectID: item.ProjectID})
 	if err != nil {
 		return item, hostingError(err)
 	}
@@ -33,7 +38,15 @@ func expandGitResource(ctx context.Context, q *sqlcgen.Queries, item domain.Reso
 	if domain.ValidateHostingGitSource(src) != nil {
 		return item, ErrConflict
 	}
-	item.Source.Git = &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, Settings: src.Settings}}
+	if src.Kind == "dockerfile" {
+		item.Source = domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation, ContentHash: src.ContentHash, DockerfileResourceConfiguration: domain.DockerfileResourceConfiguration{Content: src.Content, Settings: src.Settings.Clone()}}}
+		return item, nil
+	}
+	var pins []string
+	if src.CredentialKind == "ssh_private_key" {
+		pins = slices.Clone(src.Policy.SSHHostFingerprints)
+	}
+	item.Source.Git = &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: pins, Settings: src.Settings}}
 	return item, nil
 }
 func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.Resource, expected int64, create bool, opts []MutationOption) (domain.Resource, error) {
@@ -47,7 +60,7 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 		if options.audit != nil {
 			actor = options.audit.ActorID
 		}
-		if options.audit != nil || item.Source.Kind == "git" {
+		if options.audit != nil || (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") {
 			if err := authorizeBuildActor(ctx, tx, actor, item.ProjectID, "maintainer"); err != nil {
 				return domain.Resource{}, err
 			}
@@ -93,7 +106,9 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 			if old.Source.Kind != item.Source.Kind {
 				return domain.Resource{}, ErrConflict
 			}
-			if item.Source.Kind == "git" && (old.Source.Git == nil || item.Source.Git == nil || old.Source.Git.SourceID != item.Source.Git.SourceID || old.Source.Git.Generation != item.Source.Git.Generation) {
+			oldID, oldGeneration := old.Source.GitIdentity()
+			newID, newGeneration := item.Source.GitIdentity()
+			if (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") && (oldID == "" || oldID != newID || oldGeneration != newGeneration) {
 				return domain.Resource{}, ErrConflict
 			}
 		}
@@ -101,14 +116,15 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 			return domain.Resource{}, ErrConflict
 		}
 		var src *domain.HostingGitSource
-		if item.Source.Kind == "git" {
+		if item.Source.Kind == "git" || item.Source.Kind == "dockerfile" {
 			if options.audit == nil {
 				return domain.Resource{}, ErrConflict
 			}
 			if options.gitSource != nil {
 				copySource := *options.gitSource
 				src = &copySource
-				if src.ResourceID != item.ID || src.ProjectID != item.ProjectID || src.ID != item.Source.Git.SourceID || domain.ValidateHostingGitSource(*src) != nil {
+				sourceID, _ := item.Source.GitIdentity()
+				if src.ResourceID != item.ID || src.ProjectID != item.ProjectID || src.ID != sourceID || domain.ValidateHostingGitSource(*src) != nil {
 					return domain.Resource{}, ErrConflict
 				}
 				if create {
@@ -135,14 +151,20 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 			if src != nil {
 				item.Source = gitReference(*src)
 			} else {
-				item.Source = domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: item.Source.Git.SourceID, Generation: item.Source.Git.Generation}}
+				id, generation := item.Source.GitIdentity()
+				kind := ""
+				if item.Source.Kind == "dockerfile" {
+					kind = "dockerfile"
+				}
+				item.Source = gitReference(domain.HostingGitSource{Kind: kind, ID: id, Generation: generation})
 			}
 		} else if options.gitSource != nil {
 			return domain.Resource{}, ErrConflict
 		}
 		raw, err := json.Marshal(item.Source)
-		if item.Source.Kind == "git" {
-			raw, err = json.Marshal(map[string]any{"kind": "git", "git": map[string]any{"source_id": item.Source.Git.SourceID, "generation": item.Source.Git.Generation}})
+		if item.Source.Kind == "git" || item.Source.Kind == "dockerfile" {
+			id, generation := item.Source.GitIdentity()
+			raw, err = json.Marshal(map[string]any{"kind": item.Source.Kind, item.Source.Kind: map[string]any{"source_id": id, "generation": generation}})
 		}
 		if err != nil {
 			return domain.Resource{}, err
@@ -202,7 +224,7 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 		if err != nil {
 			return result, err
 		}
-		if options.audit != nil || item.Source.Kind == "git" {
+		if options.audit != nil || (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") {
 			return result, authorizeBuildActor(ctx, tx, actor, item.ProjectID, "maintainer")
 		}
 		return result, nil
@@ -210,5 +232,13 @@ func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.R
 }
 func exactBuildResourceSource(raw []byte, src domain.HostingGitSource) bool {
 	var ref domain.ResourceSource
-	return json.Unmarshal(raw, &ref) == nil && ref.Kind == "git" && ref.Git != nil && ref.Git.SourceID == src.ID && ref.Git.Generation == src.Generation
+	if json.Unmarshal(raw, &ref) != nil {
+		return false
+	}
+	id, generation := ref.GitIdentity()
+	kind := "git"
+	if src.Kind == "dockerfile" {
+		kind = "dockerfile"
+	}
+	return ref.Kind == kind && id == src.ID && generation == src.Generation
 }

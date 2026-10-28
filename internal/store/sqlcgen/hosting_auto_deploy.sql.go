@@ -293,6 +293,7 @@ SELECT jsonb_build_object(
  AND ARRAY['hosting_build_v1','hosting_build_trigger_revision_v1','local_build_deploy_v1','image_release_ports_v1','proxy_apply','hosting_proxy_verified_switch_v1']::text[]<@agent.capabilities
  AND (coalesce(runtime.generation,0)=0 OR 'hosting_runtime_env_v1'=ANY(agent.capabilities))
  AND (coalesce(source_version.body->>'credential_kind','public')<>'https_basic' OR 'hosting_git_https_basic_v1'=ANY(agent.capabilities))
+ AND (coalesce(source_version.body->>'credential_kind','public')<>'ssh_private_key' OR 'hosting_git_ssh_private_key_v1'=ANY(agent.capabilities))
  AND EXISTS(SELECT 1 FROM runner_enrollments e WHERE e.runner_id=agent.id AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND e.credential_hash=agent.token_hash),false),
  'healthy',bs.healthy,'healthy_snapshot',healthy_snapshot.body,
  'manual_healthy',coalesce(healthy_operation.state='succeeded' AND healthy_snapshot.body=bs.healthy->'snapshot' AND bs.hold_operation_id IS NULL AND NOT EXISTS(SELECT 1 FROM hosting_auto_deploy_origins o WHERE o.operation_id=healthy_operation.id),false),

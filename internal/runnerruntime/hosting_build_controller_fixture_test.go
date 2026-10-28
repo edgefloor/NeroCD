@@ -53,7 +53,12 @@ type controllerFixtureHosting struct {
 func (h controllerFixtureHosting) CreateResource(ctx context.Context, r domain.Resource, opts ...store.MutationOption) (domain.Resource, error) {
 	if r.Source.Kind == "git" && r.Source.Git != nil {
 		g := r.Source.Git
-		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: r.ID, ProjectID: r.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: h.policy}))
+		policy := h.policy
+		if g.CredentialKind == "ssh_private_key" {
+			policy.AllowedSchemes = []string{"ssh"}
+			policy.SSHHostFingerprints = append([]string(nil), g.SSHHostFingerprints...)
+		}
+		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: r.ID, ProjectID: r.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: policy}))
 	}
 	return h.HostingRepository.CreateResource(ctx, r, opts...)
 }

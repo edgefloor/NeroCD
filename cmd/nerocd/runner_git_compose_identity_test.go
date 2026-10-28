@@ -52,6 +52,13 @@ func TestRunnerBuildCLIPropagatesComposeIdentityConfiguration(t *testing.T) {
 						}
 					}
 
+					foundDockerfile := false
+					for _, capability := range capabilities {
+						foundDockerfile = foundDockerfile || capability == domain.HostingDockerfileArgsCapability
+					}
+					if !foundDockerfile {
+						t.Error("configured CLI did not advertise Dockerfile arguments")
+					}
 					_ = json.NewEncoder(w).Encode(runnerRegisterResponse{Token: "dedicated-fixture"})
 				case "/api/v1/runners/identity":
 					if r.Header.Get("Authorization") != "Bearer dedicated-fixture" {

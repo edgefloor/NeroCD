@@ -86,7 +86,13 @@ func NewOIDCClient(cfg OIDCConfig) (*OIDCClient, error) {
 			if len(via) >= 5 {
 				return errors.New("oidc redirect limit exceeded")
 			}
-			if err := validateOIDCURL(req.URL.String(), cfg.AllowLoopbackHTTP, true); err != nil {
+			allowHTTP := cfg.AllowLoopbackHTTP && strings.HasPrefix(issuer, "http://")
+			for _, previous := range via {
+				if previous.URL.Scheme == "https" {
+					allowHTTP = false
+				}
+			}
+			if err := validateOIDCURL(req.URL.String(), allowHTTP, true); err != nil {
 				return errors.New("oidc redirect is invalid")
 			}
 			return nil

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,10 +35,13 @@ var (
 // processes on a host must use the same private StateDir and fixed local daemon.
 // The Docker binary, Buildx binary and state ancestors must be administrator-owned.
 type Config struct {
-	DockerBinary string
-	Socket       string
-	BuildxBinary string
-	BuildxSHA256 string
+	// RegistryCACertificates maps exact registry hosts to trusted operator PEM files.
+	RegistryCACertificates map[string]string `json:",omitempty"`
+	registryCADigests      map[string]string
+	DockerBinary           string
+	Socket                 string
+	BuildxBinary           string
+	BuildxSHA256           string
 	// PlannerImage is an operator-built image with the pinned Railpack 0.40.1
 	// CLI at /usr/local/bin/railpack and verified Mise 2026.9.15 at
 	// /usr/local/bin/mise. A digest or local immutable ID is required.
@@ -78,15 +82,18 @@ type Limits struct {
 
 // Request names an immutable source and explicit resource budgets.
 type Request struct {
-	BuildArgs map[string]string `json:",omitempty"`
-	BuildID   string
-	Checkout  string
-	SourceID  string
-	InputID   string
-	DaemonID  string
-	Strategy  Strategy
-	Platform  string
-	Limits    Limits
+	BuildSecrets    []SecretReference  `json:",omitempty"`
+	BuildRegistry   *RegistryReference `json:",omitempty"`
+	InjectBuildArgs bool               `json:",omitempty"`
+	BuildArgs       map[string]string  `json:",omitempty"`
+	BuildID         string
+	Checkout        string
+	SourceID        string
+	InputID         string
+	DaemonID        string
+	Strategy        Strategy
+	Platform        string
+	Limits          Limits
 	// Optional paths are canonical relative slash paths. Empty selects the accepted default.
 	ContextDir     string `json:",omitempty"`
 	DockerfilePath string `json:",omitempty"`
@@ -115,7 +122,10 @@ type Result struct {
 }
 
 // Engine performs synchronous builds against one fixed local daemon.
-type Engine struct{ config Config }
+type Engine struct {
+	config      Config
+	registryCAs map[string][]byte
+}
 
 // New validates trusted operator configuration and the pinned Buildx executable.
 func New(c Config) (*Engine, error) {
@@ -150,7 +160,13 @@ func New(c Config) (*Engine, error) {
 	if got, err := fileDigest(c.BuildxBinary); err != nil || got != c.BuildxSHA256 {
 		return nil, errors.New("buildx binary checksum mismatch")
 	}
-	return &Engine{config: c}, nil
+	cas, err := readRegistryCAs(c.RegistryCACertificates)
+	if err != nil {
+		return nil, err
+	}
+	c.registryCADigests = registryCADigests(cas)
+	c.RegistryCACertificates = maps.Clone(c.RegistryCACertificates)
+	return &Engine{config: c, registryCAs: cas}, nil
 }
 
 func buildxChecksum(arch string) string {
@@ -165,6 +181,10 @@ func buildxChecksum(arch string) string {
 }
 
 func (r Request) validate(ctx context.Context) error {
+	if r.BuildRegistry != nil && (r.Strategy != Dockerfile || r.BuildRegistry.SecretID == "" || r.BuildRegistry.Version < 1) {
+		return errors.New("build registry requires Dockerfile strategy and immutable reference")
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}

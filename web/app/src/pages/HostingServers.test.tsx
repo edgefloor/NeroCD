@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, test, vi } from "vitest";
-import { HostingServers, eligibleHostingRunner } from "./HostingServers";
+import { HostingServers } from "./HostingServers";
+import { eligibleHostingRunner } from "./hostingRunnerEligibility";
 import type { Runner } from "@/api";
 vi.mock("./ServerReadiness", () => ({ ServerReadiness: ({ serverID, blocked }: { serverID: string; blocked: boolean }) => <div data-testid="readiness-panel" data-server={serverID} data-blocked={String(blocked)}>Readiness for {serverID}</div> }));
 vi.mock("./HostingProxy", () => ({ HostingProxy: ({ serverID }: { serverID: string }) => <div>Managed proxy for {serverID}</div> }));

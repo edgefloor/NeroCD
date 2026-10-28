@@ -11,13 +11,15 @@ export function templateName(templates: TaskTemplate[], templateID: string | und
   return templates.find((template) => template.id === templateID)?.name ?? templateID;
 }
 
+const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
 export function formatDate(value: string | undefined): string {
   if (!value) {
     return "Pending";
   }
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "Unavailable";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
+  return dateFormatter.format(date);
 }
 
 export function formatDuration(run: Pick<TaskRun, "started_at" | "finished_at">): string {

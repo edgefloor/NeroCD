@@ -65,7 +65,7 @@ func settledComposeSourceFailure(err error, checkout, state string) bool {
 		return false
 	}
 	switch failure.Code {
-	case "fetch_failed", "dns_policy", "transport_unavailable", "credential_denied", "credential_required", "credential_expired", "invalid_credential", "unsupported_tree", "tree_limit", "workspace_limit", "workspace":
+	case "fetch_failed", "host_key", "dns_policy", "transport_unavailable", "credential_denied", "credential_required", "credential_expired", "invalid_credential", "unsupported_tree", "tree_limit", "workspace_limit", "workspace":
 	default:
 		return false
 	}

@@ -301,6 +301,8 @@ func TestRuntimePrivateGitIdentityExactOptIn(t *testing.T) {
 		build, private, valid bool
 	}{
 		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, true, true, true},
+		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingSSHGitCapability}, true, true, true},
+		{[]string{domain.HostingBuildTaskType, domain.HostingSSHGitCapability}, true, false, false},
 		{[]string{domain.HostingBuildTaskType}, true, true, false},
 		{[]string{domain.HostingPrivateGitCapability}, false, true, false},
 		{[]string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, "shell"}, true, true, false},

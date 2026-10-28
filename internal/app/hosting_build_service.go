@@ -25,11 +25,17 @@ func (s *Service) RequestHostingBuild(ctx context.Context, resourceID string, in
 	if err != nil {
 		return domain.PublicHostingBuild{}, err
 	}
-	if resource.Source.Kind != "git" || resource.Source.Git == nil || (resource.Source.Git.CredentialKind != "public" && resource.Source.Git.CredentialKind != "https_basic") {
-		return domain.PublicHostingBuild{}, InvalidInput(errors.New("unsupported Git credential kind"))
-	}
-	if (resource.Source.Git.CredentialKind == "public") != (in.GrantID == "") || len(in.GrantID) > 128 {
-		return domain.PublicHostingBuild{}, InvalidInput(errors.New("invalid source grant selection"))
+	if resource.Source.Kind == "dockerfile" {
+		if resource.Source.Dockerfile == nil || in.GrantID != "" {
+			return domain.PublicHostingBuild{}, InvalidInput(errors.New("stored Dockerfile does not accept a Git grant"))
+		}
+	} else {
+		if resource.Source.Kind != "git" || resource.Source.Git == nil || (resource.Source.Git.CredentialKind != "public" && resource.Source.Git.CredentialKind != "https_basic" && resource.Source.Git.CredentialKind != "ssh_private_key") {
+			return domain.PublicHostingBuild{}, InvalidInput(errors.New("unsupported Git credential kind"))
+		}
+		if (resource.Source.Git.CredentialKind == "public") != (in.GrantID == "") || len(in.GrantID) > 128 {
+			return domain.PublicHostingBuild{}, InvalidInput(errors.New("invalid source grant selection"))
+		}
 	}
 	if in.ExpectedResourceGeneration < 1 || in.ExpectedSourceGeneration < 1 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 128 || strings.TrimSpace(in.IdempotencyKey) != in.IdempotencyKey || strings.ContainsFunc(in.IdempotencyKey, unicode.IsControl) {
 		return domain.PublicHostingBuild{}, InvalidInput(errors.New("invalid hosting build request"))

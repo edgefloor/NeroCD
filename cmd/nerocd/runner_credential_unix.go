@@ -55,24 +55,84 @@ func readRunnerCredentialFile(filename string) (string, error) {
 	return credential, nil
 }
 
-func prepareRunnerEnrollmentFiles(enrollmentFilename, credentialFilename string) (string, string, string, error) {
-	enrollment, err := readRunnerCredentialFile(enrollmentFilename)
+// runnerEnrollmentFiles owns the file that supplied the consumed token and its
+// parent until consumption either fails or cleanup finishes.
+type runnerEnrollmentFiles struct {
+	token, credential, requestID string
+	file, parent                 *os.File
+	name                         string
+}
+
+func (files *runnerEnrollmentFiles) close() {
+	_ = files.file.Close()
+	_ = files.parent.Close()
+}
+
+func prepareRunnerEnrollmentFiles(enrollmentFilename, credentialFilename string) (*runnerEnrollmentFiles, error) {
+	parent, err := openRunnerFileDirectory(filepath.Dir(enrollmentFilename), false)
 	if err != nil {
-		return "", "", "", fmt.Errorf("enrollment file: %w", err)
+		return nil, fmt.Errorf("enrollment directory: %w", err)
+	}
+	name := filepath.Base(enrollmentFilename)
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		_ = parent.Close()
+		return nil, fmt.Errorf("enrollment file: %w", err)
+	}
+	files := &runnerEnrollmentFiles{file: os.NewFile(uintptr(fd), "runner-enrollment"), parent: parent, name: name}
+	admitted := false
+	defer func() {
+		if !admitted {
+			files.close()
+		}
+	}()
+	var stat unix.Stat_t
+	if unix.Fstat(fd, &stat) != nil || !validRunnerEnrollmentStat(stat) || stat.Nlink != 1 {
+		return nil, errors.New("enrollment file must be a private regular file with one link")
+	}
+	contents, err := io.ReadAll(io.LimitReader(files.file, 64*1024+1))
+	if err != nil {
+		return nil, err
+	}
+	files.token = strings.TrimSpace(string(contents))
+	if len(contents) > 64*1024 || files.token == "" {
+		return nil, errors.New("enrollment file is empty or too large")
 	}
 	credential, err := readRunnerCredentialFile(credentialFilename)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", "", fmt.Errorf("pending credential: %w", err)
+			return nil, fmt.Errorf("pending credential: %w", err)
 		}
 		credential, err = createRunnerCredentialFile(credentialFilename)
 		if err != nil {
-			return "", "", "", err
+			return nil, err
 		}
 	}
 	sum := sha256.Sum256([]byte(credential))
 	hash := hex.EncodeToString(sum[:])
-	return enrollment, credential, "enroll_consume_" + hash[:32], nil
+	files.credential = credential
+	files.requestID = "enroll_consume_" + hash[:32]
+	admitted = true
+	return files, nil
+}
+
+func openRunnerFileDirectory(path string, ownerOnly bool) (*os.File, error) {
+	// Pin the parent before admitting its metadata or any child. Native aliases
+	// such as macOS /var remain usable; subsequent access never resolves them.
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	var stat unix.Stat_t
+	if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o7022 != 0 || stat.Mode&0o700 != 0o700 || int(stat.Uid) != os.Geteuid() || ownerOnly && stat.Mode&0o7777 != 0o700 {
+		_ = unix.Close(fd)
+		return nil, errors.New("credential directory must be owned by the current user, writable only by its owner, and mode 0700 for credential creation")
+	}
+	return os.NewFile(uintptr(fd), "runner-credential-directory"), nil
+}
+
+func validRunnerEnrollmentStat(stat unix.Stat_t) bool {
+	return stat.Mode&unix.S_IFMT == unix.S_IFREG && stat.Mode&0o7777 == 0o600 && int(stat.Uid) == os.Geteuid() && stat.Size > 0 && stat.Size <= 64*1024 && stat.Nlink <= 1
 }
 
 func createRunnerCredentialFile(filename string) (string, error) {
@@ -83,18 +143,12 @@ func createRunnerCredentialFile(filename string) (string, error) {
 	if basename == "" || basename == "." || basename == ".." || strings.ContainsAny(basename, `/\`) {
 		return "", errors.New("credential filename is invalid")
 	}
-	dirfd, err := unix.Open(strings.TrimSuffix(dirname, string(os.PathSeparator)), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	directory, err := openRunnerFileDirectory(strings.TrimSuffix(dirname, string(os.PathSeparator)), true)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = unix.Close(dirfd) }()
-	var stat unix.Stat_t
-	if err := unix.Fstat(dirfd, &stat); err != nil {
-		return "", err
-	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Mode&0o7777 != 0o700 || int(stat.Uid) != os.Geteuid() {
-		return "", errors.New("credential directory must be an owner-only mode-0700 directory")
-	}
+	defer func() { _ = directory.Close() }()
+	dirfd := int(directory.Fd())
 	random := make([]byte, 32)
 	if _, err := rand.Read(random); err != nil {
 		return "", err
@@ -143,39 +197,35 @@ func createRunnerCredentialFile(filename string) (string, error) {
 	return credential, nil
 }
 
-func removeRunnerEnrollmentFile(filename string) error {
-	fd, err := unix.Open(filename, unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return err
-	}
+func (files *runnerEnrollmentFiles) remove() error {
+	fd := int(files.file.Fd())
 	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		_ = unix.Close(fd)
-		return err
-	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o7777 != 0o600 || int(stat.Uid) != os.Geteuid() || stat.Size <= 0 || stat.Size > 64*1024 {
-		_ = unix.Close(fd)
+	if unix.Fstat(fd, &stat) != nil || !validRunnerEnrollmentStat(stat) {
 		return errors.New("enrollment file changed before removal")
 	}
 	zeros := make([]byte, stat.Size)
-	if _, err := unix.Pwrite(fd, zeros, 0); err != nil {
-		_ = unix.Close(fd)
-		return err
-	}
-	if err := unix.Fsync(fd); err != nil {
-		_ = unix.Close(fd)
-		return err
-	}
-	if err := unix.Close(fd); err != nil {
-		return err
-	}
-	if err := unix.Unlink(filename); err != nil {
-		return err
-	}
-	dirfd, err := unix.Open(filepath.Dir(filename), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	n, err := files.file.WriteAt(zeros, 0)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = unix.Close(dirfd) }()
-	return unix.Fsync(dirfd)
+	if n != len(zeros) {
+		return io.ErrShortWrite
+	}
+	if err := files.file.Sync(); err != nil {
+		return err
+	}
+	var entry unix.Stat_t
+	parent := int(files.parent.Fd())
+	if err := unix.Fstatat(parent, files.name, &entry, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	// The admitted parent excludes other users from changing this
+	// entry between the identity check and unlink. A renamed ancestor is harmless.
+	if entry.Dev != stat.Dev || entry.Ino != stat.Ino || entry.Mode&unix.S_IFMT != unix.S_IFREG {
+		return errors.New("enrollment entry changed before removal")
+	}
+	if err := unix.Unlinkat(parent, files.name, 0); err != nil {
+		return err
+	}
+	return files.parent.Sync()
 }

@@ -123,7 +123,7 @@ func (p RepositoryPolicy) ValidateURL(raw string, redirect bool) (*url.URL, erro
 }
 
 func validSSHUser(value string) bool {
-	if value == "" || len(value) > 64 {
+	if value == "" || len(value) > 64 || strings.HasPrefix(value, "-") {
 		return false
 	}
 	for _, character := range value {

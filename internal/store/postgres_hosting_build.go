@@ -158,7 +158,7 @@ func grantDomain(row sqlcgen.HostingSourceGrant) domain.HostingSourceGrant {
 	return domain.HostingSourceGrant{ID: row.ID, Version: row.Version, SourceID: row.SourceID, ResourceID: row.ResourceID, ProjectID: row.ProjectID, RepositoryURL: row.RepositoryUrl, PolicyHash: row.PolicyHash, SecretID: row.SecretID, SecretVersion: row.SecretVersion, Kind: row.Kind, CreatedBy: row.CreatedBy, Revoked: row.RevokedAt != nil}
 }
 func checkBuildGrant(ctx context.Context, tx pgx.Tx, id string, src domain.HostingGitSource) (*domain.HostingSourceGrant, error) {
-	if src.CredentialKind == "public" {
+	if src.CredentialKind == "public" || src.Kind == "dockerfile" {
 		if id != "" {
 			return nil, ErrConflict
 		}
@@ -300,7 +300,7 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	} else if err != nil {
 		return target, "", err
 	}
-	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic"}); err != nil {
+	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic", RequireSshGit: src.CredentialKind == "ssh_private_key"}); err != nil {
 		return target, "", ErrConflict
 	}
 	if _, err = q.LockHostingBuildEnrollment(ctx, target.RunnerID); err != nil {
@@ -308,6 +308,12 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	}
 	if src.Settings.Strategy == "compose" {
 		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingGitComposeBuildCapability})
+		if e != nil || !capable {
+			return target, "", ErrConflict
+		}
+	}
+	if src.Kind == "dockerfile" {
+		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingStoredDockerfileCapability})
 		if e != nil || !capable {
 			return target, "", ErrConflict
 		}
@@ -364,7 +370,7 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		return domain.HostingBuild{}, err
 	}
 	var desired domain.ResourceSource
-	if json.Unmarshal(resource.Source, &desired) != nil || desired.Kind != "git" {
+	if json.Unmarshal(resource.Source, &desired) != nil || (desired.Kind != "git" && desired.Kind != "dockerfile") {
 		return domain.HostingBuild{}, ErrConflict
 	}
 	hash := domain.HostingDocumentHash(struct {
@@ -391,7 +397,7 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		}
 		// Configured private retries require current source intent and the same
 		// atomic grant evidence as admission. Replay never invokes the enqueuer.
-		if configured && original.Snapshot.Source.CredentialKind != "public" {
+		if configured && original.Snapshot.Source.CredentialKind != "public" && original.Snapshot.Source.Kind != "dockerfile" {
 			if err = currentBuildIntent(ctx, tx, original); err != nil {
 				return original, err
 			}
@@ -424,13 +430,14 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 	if err != nil {
 		return domain.HostingBuild{}, err
 	}
-	// Newly admitted Compose work must not reach an older runner that cannot
-	// understand argument intent. Historical receipt replay keeps its old gate.
-	if src.Settings.Strategy == "compose" {
-		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingGitComposeArgsCapability})
-		if e != nil || !capable {
-			return domain.HostingBuild{}, ErrConflict
-		}
+	if err = requireBuildArgumentCapability(ctx, tx, target.RunnerID, src.Settings); err != nil {
+		return domain.HostingBuild{}, err
+	}
+	if err = validateBuildSecrets(ctx, tx, resource.ProjectID, src.Settings); err != nil {
+		return domain.HostingBuild{}, err
+	}
+	if err = validateBuildRegistrySecret(ctx, tx, resource.ProjectID, src.Settings); err != nil {
+		return domain.HostingBuild{}, err
 	}
 	grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
 	if err != nil {
@@ -554,6 +561,49 @@ func (s *PostgresStore) DispatchHostingBuild(ctx context.Context, id string, dis
 		return readBuild(ctx, q, id)
 	})
 }
+
+// New admission and current execution require support for selected argument
+// semantics. Historical metadata replay retains its established placement gate.
+func requireBuildArgumentCapability(ctx context.Context, tx pgx.Tx, runner string, settings domain.HostingBuildSettings) error {
+	if len(settings.BuildSecrets) > 0 {
+		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runner, Capability: domain.HostingBuildSecretsCapability})
+		if err != nil {
+			return err
+		}
+		if !capable {
+			return ErrConflict
+		}
+	}
+
+	if settings.BuildRegistryCredential != nil {
+		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runner, Capability: domain.HostingBuildRegistryCapability})
+		if err != nil {
+			return err
+		}
+		if !capable {
+			return ErrConflict
+		}
+	}
+	capability := ""
+	if settings.Strategy == "compose" {
+		capability = domain.HostingGitComposeArgsCapability
+	}
+	if settings.Strategy == "dockerfile" && len(settings.BuildVariables) > 0 {
+		capability = domain.HostingDockerfileArgsCapability
+	}
+	if capability == "" {
+		return nil
+	}
+	capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runner, Capability: capability})
+	if err != nil {
+		return err
+	}
+	if !capable {
+		return ErrConflict
+	}
+	return nil
+}
+
 func checkBuildPlacement(ctx context.Context, tx pgx.Tx, b domain.HostingBuild, credentials bool) error {
 	target, daemon, err := lockBuildTarget(ctx, tx, b.Snapshot.Source)
 	if err != nil {
@@ -707,7 +757,7 @@ func checkBuildTriggerRevision(ctx context.Context, tx pgx.Tx, snapshot domain.H
 		return nil
 	}
 	_, err := sqlcgen.New(tx).LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{
-		RunnerID: snapshot.RunnerID, RequirePrivateGit: snapshot.Source.CredentialKind == "https_basic", RequireTriggerRevision: true,
+		RunnerID: snapshot.RunnerID, RequirePrivateGit: snapshot.Source.CredentialKind == "https_basic", RequireSshGit: snapshot.Source.CredentialKind == "ssh_private_key", RequireTriggerRevision: true,
 	})
 	if err != nil {
 		return ErrConflict

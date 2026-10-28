@@ -11,11 +11,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/crypto/ssh"
 	"nerocd/internal/domain"
 )
 
 // MaxSourceCredentialWireBytes bounds the entire secret response document.
-const MaxSourceCredentialWireBytes = 16 << 10
+const MaxSourceCredentialWireBytes = 96 << 10
 
 // SourceCredential owns credential bytes. Only the explicit wire codec exposes them.
 // Callers must Close after use and must not retain field copies.
@@ -53,6 +54,19 @@ func ValidBasicCredential(username string, password []byte) bool {
 	return validCredentialField(username) && len(username) <= 256 && !strings.Contains(username, ":") &&
 		utf8.Valid(password) && validCredentialField(string(password)) && len(username)+1+len(password) <= 4096
 }
+
+// ValidSourceCredential enforces the connected credential kind and decoded byte budget.
+func ValidSourceCredential(kind, username string, value []byte) bool {
+	if kind == "https_basic" {
+		return ValidBasicCredential(username, value)
+	}
+	if kind != "ssh_private_key" || username != "" || len(value) == 0 || len(value) > 65536 || !utf8.Valid(value) {
+		return false
+	}
+	_, err := ssh.ParseRawPrivateKey(value)
+	return err == nil
+}
+
 func validCredentialField(s string) bool {
 	return s != "" && utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
 }
@@ -68,7 +82,7 @@ type sourceCredentialWire struct {
 }
 
 func (c SourceCredential) valid() bool {
-	return ValidateAuthority(c.Authority) == nil && domain.ValidHostingSourceDeliveryID(c.DeliveryID) && validDigest(c.RequestHash) && c.Kind == "https_basic" && ValidBasicCredential(c.Username, c.Bytes) && !c.UseUntil.IsZero()
+	return ValidateAuthority(c.Authority) == nil && domain.ValidHostingSourceDeliveryID(c.DeliveryID) && validDigest(c.RequestHash) && ValidSourceCredential(c.Kind, c.Username, c.Bytes) && !c.UseUntil.IsZero()
 }
 
 // WriteSourceCredential is the sole secret-bearing encoder. It clears its output buffer.

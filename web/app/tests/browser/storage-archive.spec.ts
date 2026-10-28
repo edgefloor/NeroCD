@@ -280,6 +280,13 @@ test("upload archive owner workflow, identical retries and new restore across wi
         runtime_namespace: "ncd_fixture",
       });
     if (path === `${base}/storage`) return reply(route, storage);
+    // This workflow's binding and volume are synthetic. Keep adjacent archive
+    // metadata reads in the same fixture instead of querying an unbound resource.
+    if (route.request().method() === "GET") {
+      if (path === `${base}/storage-backup-schedules`) return reply(route, []);
+      if (path === `${base}/storage-backup-retention`) return reply(route, null);
+      if (path === `${base}/storage-backup-retention/executions`) return reply(route, []);
+    }
     if (path === `${base}/storage-deployment-options`)
       return reply(route, {
         resource_id: resource.id,

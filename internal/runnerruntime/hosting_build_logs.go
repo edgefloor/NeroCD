@@ -39,6 +39,7 @@ type buildOutputAdapter struct {
 	executor  *BuildExecutor
 	attempt   runner.AttemptIdentity
 	authority domain.HostingBuildAuthority
+	secrets   []runner.SecretMaterial
 	redactor  *runner.Redactor
 	tails     map[string]string
 	failed    bool
@@ -60,7 +61,7 @@ func newBuildOutputAdapter(e *BuildExecutor, a domain.HostingBuildAuthority, at 
 			return nil, errors.New("build log secret exceeds bound")
 		}
 	}
-	return &buildOutputAdapter{executor: e, attempt: at, authority: a, redactor: runner.NewRedactor(secrets), tails: map[string]string{}}, nil
+	return &buildOutputAdapter{executor: e, attempt: at, authority: a, secrets: secrets, redactor: runner.NewRedactor(secrets), tails: map[string]string{}}, nil
 }
 
 func validBuildOutput(component, stream string) bool {

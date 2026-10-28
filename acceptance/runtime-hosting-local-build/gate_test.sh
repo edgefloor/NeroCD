@@ -18,6 +18,7 @@ repo_root="/fixture/NeroCD root with spaces"
 owner="fixture-owner"
 name="fixture-owner-dind"
 image="fixture-owner:fixture"
+compiled_vite=0
 for browser_mode in 0 1; do
  export NEROCD_TEST_ARGUMENTS="$test_dir/arguments-$browser_mode"
  container_id=$(run_fixture_container)
@@ -30,7 +31,7 @@ assert raw.endswith(b"\0"), "argument framing was lost"
 actual=[value.decode() for value in raw[:-1].split(b"\0")]
 expected=["run"]
 if mode=="1": expected += ["--publish", "127.0.0.1::18080"]
-expected += ["--detach", "--privileged", "--pid=host", "--mount", "type=bind,src=/fixture/NeroCD root with spaces/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly", "--add-host", "example.com:127.0.0.1", "--name", "fixture-owner-dind", "--label", "io.nerocd.runtime-hosting-local-build.owner=fixture-owner", "--env", "DOCKER_TLS_CERTDIR=", "fixture-owner:fixture", "dockerd", "--host=unix:///var/run/docker.sock"]
+expected += ["--detach", "--privileged", "--pid=host", "--cgroupns=host", "--mount", "type=bind,src=/fixture/NeroCD root with spaces/acceptance/runtime-proxy-control/pebble.json,dst=/workspace/acceptance/runtime-proxy-control/pebble.json,readonly", "--add-host", "example.com:127.0.0.1", "--name", "fixture-owner-dind", "--label", "io.nerocd.runtime-hosting-local-build.owner=fixture-owner", "--env", "DOCKER_TLS_CERTDIR=", "fixture-owner:fixture", "dockerd", "--host=unix:///var/run/docker.sock"]
 assert actual==expected, f"mode {mode}: actual arguments {actual!r} != expected {expected!r}"
 assert "" not in actual, "spurious empty Docker argument"
 print(f"mode {mode}: exact Docker arguments passed")

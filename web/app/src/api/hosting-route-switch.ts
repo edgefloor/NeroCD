@@ -11,7 +11,8 @@ const positive = (value: unknown): value is number => Number.isSafeInteger(value
 const text = (value: unknown, limit = 512): value is string => typeof value === "string" && value.length <= limit && !/[\x00-\x1f\x7f]/.test(value);
 function fail(): never { throw new Error("Route switch evidence is malformed or belongs to another scope"); }
 function keys(value: unknown, required: string[], optional: string[] = []): asserts value is Record<string, unknown> {
-  if (!object(value) || required.some((key) => !(key in value)) || Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key))) fail();
+  const allowed = new Set([...required, ...optional]);
+  if (!object(value) || required.some((key) => !(key in value)) || Object.keys(value).some((key) => !allowed.has(key))) fail();
 }
 const reasons = ["available", "unbound", "proxy_unavailable", "busy", "restore_hold", "runner_ineligible", "no_loaded_generation", "stale_routes", "no_routes", "no_targets"];
 export function validateSwitchOptions(value: unknown, resource: string, after = ""): asserts value is SwitchOptions {

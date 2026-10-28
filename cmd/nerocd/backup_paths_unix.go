@@ -4,7 +4,6 @@ package main
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,22 +11,68 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const maxBackupMetadataBytes = 64 << 10
+func openSecureBackupDirectory(path string) (*os.File, error) {
+	fd, err := openBackupDirectoryPath(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyBackupDirectoryFD(fd); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "backup-directory"), nil
+}
 
 func secureBackupDirectory(path string) error {
-	if !filepath.IsAbs(path) {
-		return errors.New("backup path must be absolute")
-	}
-	fd, err := openBackupDirectoryPath(path)
+	directory, err := openSecureBackupDirectory(path)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = unix.Close(fd) }()
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || int(stat.Uid) != os.Geteuid() || stat.Mode&0o7777 != 0o700 {
-		return errors.New("unsafe backup directory")
+	return directory.Close()
+}
+
+func createBackupDirectoryAt(parent *os.File, name string) (*os.File, error) {
+	if err := unix.Mkdirat(int(parent.Fd()), name, 0700); err != nil {
+		return nil, err
 	}
-	return nil
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "backup-staging"), nil
+}
+
+func createBackupFileAt(parent *os.File, name string) (*os.File, error) {
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+func publishBackupDirectoryAt(parent *os.File, staging, name string) error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
+		return errors.New("backup destination already exists or cannot be inspected")
+	}
+	if err := unix.Renameat(int(parent.Fd()), staging, int(parent.Fd()), name); err != nil {
+		return err
+	}
+	return parent.Sync()
+}
+
+func removeBackupStagingAt(parent, staging *os.File, name string) {
+	// If publication renamed staging, even a failed fsync must not remove the
+	// published files. Inspect the pinned parent before touching its contents.
+	var entry, opened unix.Stat_t
+	if unix.Fstat(int(staging.Fd()), &opened) != nil || unix.Fstatat(int(parent.Fd()), name, &entry, unix.AT_SYMLINK_NOFOLLOW) != nil || entry.Dev != opened.Dev || entry.Ino != opened.Ino {
+		return
+	}
+	for _, child := range []string{"database.dump", "manifest.json"} {
+		_ = unix.Unlinkat(int(staging.Fd()), child, 0)
+	}
+	_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
 }
 
 func secureBackupRegular(path string) error {
@@ -47,7 +92,15 @@ func openSecureBackupFile(path string) (*os.File, error) {
 		return nil, errors.New("backup file cannot be opened")
 	}
 	defer func() { _ = unix.Close(parent) }()
-	fd, err := unix.Openat(parent, base, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	return openSecureBackupFileFD(parent, base)
+}
+
+func openSecureBackupFileAt(parent *os.File, name string) (*os.File, error) {
+	return openSecureBackupFileFD(int(parent.Fd()), name)
+}
+
+func openSecureBackupFileFD(parent int, name string) (*os.File, error) {
+	fd, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, errors.New("backup file cannot be opened")
 	}
@@ -104,13 +157,4 @@ func openBackupParent(path string) (int, string, error) {
 	}
 	fd, err := openBackupDirectoryPath(filepath.Dir(clean))
 	return fd, base, err
-}
-
-func readSecureBackupFile(path string) ([]byte, error) {
-	file, err := openSecureBackupFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
-	return io.ReadAll(io.LimitReader(file, maxBackupMetadataBytes+1))
 }

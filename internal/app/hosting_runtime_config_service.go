@@ -9,7 +9,7 @@ import (
 )
 
 func supportedRuntimeConfiguration(resource domain.Resource) error {
-	if resource.Kind != "application" || (resource.Source.Kind != "image" && resource.Source.Kind != "git" && resource.Source.Kind != "compose") {
+	if resource.Kind != "application" || (resource.Source.Kind != "image" && resource.Source.Kind != "git" && resource.Source.Kind != "compose" && resource.Source.Kind != "dockerfile") {
 		return InvalidInput(errors.New("runtime configuration supports application resources with image, Git, or Compose sources"))
 	}
 	return nil

@@ -1862,6 +1862,24 @@ func (s *PostgresStore) HostingReconciliation(ctx context.Context, runnerID stri
 }
 
 func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run domain.TaskRun, runnerID string) (bool, error) {
+	if run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		if domain.ValidateComposeDeploymentTask(run) != nil {
+			return false, nil
+		}
+		q := sqlcgen.New(tx)
+		deployment, err := q.GetDeploymentByID(ctx, run.RunSpec.Inputs["deployment_id"].(string))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if deployment.TaskRunID != run.ID || !deployment.FenceRequired || domain.IsTerminalDeploymentStatus(domain.DeploymentStatus(deployment.Status)) || deployment.Status == domain.DeploymentWaitingConfirmation {
+			return false, nil
+		}
+		project, err := q.DeploymentProjectID(ctx, deployment.EnvironmentID)
+		return project == run.ProjectID, err
+	}
 	if run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
 		return s.storageBackupRetentionClaimAllowed(ctx, tx, run, runnerID)
 	}
@@ -1919,7 +1937,7 @@ func (s *PostgresStore) hostingClaimAllowed(ctx context.Context, tx pgx.Tx, run 
 		return sqlcgen.New(tx).ProxyClaimEligible(ctx, sqlcgen.ProxyClaimEligibleParams{RunID: run.ID, RunnerID: runnerID})
 	}
 	if run.RunSpec.Type != domain.RunTypeImageDeploy && run.RunSpec.Type != domain.RunTypeLocalBuildDeploy && run.RunSpec.Type != domain.RunTypeDatabaseDeploy {
-		return !domain.ContainsHostingExecution(run.RunSpec, run.Workflow), nil
+		return domain.ValidateGenericRunDefinition(run.RunSpec, run.Workflow) == nil, nil
 	}
 	if validateHostingDeploymentTask(run) != nil {
 		return false, nil
@@ -2462,7 +2480,7 @@ func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, re
 	if err = json.Unmarshal(target.Source, &resourceSource); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if resourceSource.Kind == "git" {
+	if resourceSource.Kind == "git" || resourceSource.Kind == "dockerfile" {
 		if err = authorizeBuildActor(ctx, tx, actor, target.ProjectID, "maintainer"); err != nil {
 			return domain.HostingOperation{}, err
 		}
@@ -2475,7 +2493,7 @@ func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, re
 		if readErr != nil {
 			return existing, readErr
 		}
-		if resourceSource.Kind == "git" {
+		if resourceSource.Kind == "git" || resourceSource.Kind == "dockerfile" {
 			if err = hostingOperationTargetGate(ctx, tx, existing, false); err != nil {
 				return domain.HostingOperation{}, err
 			}

@@ -64,6 +64,9 @@ func lockBuildSource(root, id string) (func(), error) {
 	return func() { _ = f.Close() }, nil
 }
 func checkoutPublicBuild(ctx context.Context, s domain.HostingBuildSnapshot, path, frozen string, accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {
+	if s.Source.Kind == "dockerfile" {
+		return materializeStoredDockerfile(ctx, s, path, frozen, accept, use)
+	}
 	return checkoutBuildWithCredential(ctx, s, path, frozen, nil, accept, use)
 }
 func checkoutBuildWithCredential(ctx context.Context, s domain.HostingBuildSnapshot, path, frozen string, credential func(context.Context) (SourceCredential, error), accept func(context.Context, domain.HostingBuildSourceReceipt) error, use func(context.Context, string) error) error {

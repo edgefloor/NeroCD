@@ -940,3 +940,67 @@ func TestComposeSSHTransportEndsBeforeWorkspaceRenderAndApply(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalComposeRejectsConfigs(t *testing.T) {
+	for _, extra := range []string{
+		`,"configs":{"host":{"file":"/etc/passwd"}}`,
+		`,"configs":{"host":{"external":true}}`,
+		`,"configs":{}`,
+	} {
+		raw := `{"services":{"api":{"image":"example/api@sha256:` + strings.Repeat("a", 64) + `"}}` + extra + `}`
+		if _, _, err := canonicalCompose([]byte(raw), "test"); err == nil {
+			t.Fatal("restricted Compose admitted configs")
+		}
+	}
+	for _, configs := range []string{`["host"]`, `[{"source":"host","target":"/private"}]`, `[]`} {
+		raw := `{"services":{"api":{"image":"example/api@sha256:` + strings.Repeat("a", 64) + `","configs":` + configs + `}}}`
+		if _, _, err := canonicalCompose([]byte(raw), "test"); err == nil {
+			t.Fatal("restricted Compose admitted service configs")
+		}
+	}
+}
+
+func TestProvenanceGeneratedEnvironmentCannotFollowCheckoutSymlink(t *testing.T) {
+	previous := lookupRepositoryIP
+	lookupRepositoryIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+	}
+	t.Cleanup(func() { lookupRepositoryIP = previous })
+	target := filepath.Join(t.TempDir(), "keep")
+	if err := os.WriteFile(target, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	generated := ""
+	command := &fakeProvenanceCommand{compose: `{"services":{"api":{"image":"example/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`}
+	command.beforeRun = func(name string, args []string, dir string, _ []string) error {
+		if name == "git" && slices.Contains(args, "checkout") {
+			return os.Symlink(target, filepath.Join(dir, ".nerocd-provenance.env"))
+		}
+		if name == "docker" {
+			generated = args[slices.Index(args, "--env-file")+1]
+			relative, err := filepath.Rel(dir, generated)
+			if err != nil || filepath.IsLocal(relative) {
+				t.Fatal("provenance env is inside checkout")
+			}
+			data, err := os.ReadFile(generated)
+			if err != nil || string(data) != deploymentRevisionEnv+"="+strings.Repeat("a", 40)+"\n" {
+				t.Fatal("revision env missing")
+			}
+		}
+		return nil
+	}
+	_, err := resolveDeploymentProvenance(t.Context(), resolverDiagnosticTestPlan(), t.TempDir(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "untouched" {
+		t.Fatal("generated env followed repository symlink")
+	}
+	if generated == "" {
+		t.Fatal("Compose did not receive generated env")
+	}
+	if _, err := os.Stat(generated); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("provenance env survived cleanup")
+	}
+}

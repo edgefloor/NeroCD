@@ -1,12 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,7 +30,122 @@ const gitComposeFixtureMultiline = "first line\nsecond line"
 
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 
-func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage string) map[string]string {
+// Rotation changes the only accepted password, so version2 cannot succeed
+// using stale version1 material even when the image receipt is otherwise valid.
+func gitComposeFixtureBuildRegistryAuth(next http.Handler, password string) (http.Handler, func(string)) {
+	var active atomic.Value
+	active.Store(password)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != "build-fixture" || subtle.ConstantTimeCompare([]byte(password), []byte(active.Load().(string))) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="NeroCD build registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return handler, func(password string) { active.Store(password) }
+}
+
+func TestGitComposeBuildRegistryCredentialRotation(t *testing.T) {
+	handler, rotate := gitComposeFixtureBuildRegistryAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }), "first-fixture-password")
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+	check := func(password string, want int) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/v2/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("build-fixture", password)
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatalf("registry rotation status=%d want=%d", response.StatusCode, want)
+		}
+	}
+	check("first-fixture-password", http.StatusOK)
+	check("second-fixture-password", http.StatusUnauthorized)
+	rotate("second-fixture-password")
+	check("first-fixture-password", http.StatusUnauthorized)
+	check("second-fixture-password", http.StatusOK)
+}
+
+// The selected secret authorizes only this nonsecret build dependency marker.
+// Rotation changes accepted material, so a stale v1 mount cannot satisfy v2.
+func gitComposeFixtureBuildDependency(token string) (http.Handler, func(string)) {
+	var active atomic.Value
+	active.Store(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/__build_dependency" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		defer clear(body)
+		if err != nil || len(body) > 4096 || subtle.ConstantTimeCompare(body, []byte(active.Load().(string))) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte("nerocd-private-build-dependency\n"))
+	}), func(token string) { active.Store(token) }
+}
+
+type gitComposeFixtureDependency struct{ URL, CA string }
+
+func gitComposeFixtureSecretFiles(files map[string]string, dependency gitComposeFixtureDependency) map[string]string {
+	// Reuse the gate's pinned Alpine tool image. Secret env mounts are injected
+	// into RUN by production; neither ARG nor repository content carries a value.
+	files["project/app/Dockerfile"] = "FROM alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62 AS dependency\n" +
+		"COPY dependency-ca.crt /dependency-ca.pem\n" +
+		"RUN printf %s \"$DEPENDENCY_TOKEN\" > /tmp/dependency-token && SSL_CERT_FILE=/dependency-ca.pem wget --post-file=/tmp/dependency-token -O /dependency-marker " + dependency.URL + " && rm /tmp/dependency-token\n" +
+		files["project/app/Dockerfile"] + "COPY --from=dependency /dependency-marker /nerocd-build-dependency\n"
+	files["project/app/dependency-ca.crt"] = dependency.CA
+	return files
+}
+
+func TestGitComposeBuildSecretDependency(t *testing.T) {
+	handler, rotate := gitComposeFixtureBuildDependency("first-build-only-token")
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+	check := func(token string, want int) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/__build_dependency", strings.NewReader(token))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != want {
+			t.Fatalf("dependency status=%d want=%d", response.StatusCode, want)
+		}
+		if want == 200 && string(body) != "nerocd-private-build-dependency\n" {
+			t.Fatal("wrong dependency marker")
+		}
+		if bytes.Contains(body, []byte(token)) && token != "" {
+			t.Fatal("dependency disclosed token")
+		}
+	}
+	check("first-build-only-token", 200)
+	check("second-build-only-token", 401)
+	check("", 401)
+	rotate("second-build-only-token")
+	check("first-build-only-token", 401)
+	check("second-build-only-token", 200)
+	files := gitComposeFixtureSecretFiles(map[string]string{"project/app/Dockerfile": "FROM fixture\n"}, gitComposeFixtureDependency{URL: server.URL + "/__build_dependency", CA: "public CA bytes"})
+	if strings.Contains(files["project/app/Dockerfile"], "ARG DEPENDENCY_TOKEN") || strings.Contains(files["project/app/Dockerfile"], "--mount=") || !strings.Contains(files["project/app/Dockerfile"], "$DEPENDENCY_TOKEN") || files["project/app/dependency-ca.crt"] != "public CA bytes" {
+		t.Fatal("source bypassed production secret injection")
+	}
+}
+
+func gitComposeFixtureFiles(raw, base, buildBase, marker string, fail bool, registryImage string) map[string]string {
 	compose := strings.Replace(raw, "    image: "+base, "    build:\n      context: ../app\n"+gitComposeFixtureArgs(marker)+"    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
 	compose = strings.Replace(compose, "\n  postgresql:\n", "\n  version:\n    image: nerocd-vikunja:prepared\n    command: [version]\n\n  postgresql:\n", 1)
@@ -35,7 +156,7 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage s
 	if marker == "missing-registry" {
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
-	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
+	dockerfile := "FROM " + buildBase + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
 		"ARG MULTILINE\nARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\nARG SERVICE_URL_VIKUNJA=runtime-not-imported\n" +
 		"LABEL nerocd.fixture.multiline=\"${MULTILINE}\" nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\" nerocd.fixture.runtime=\"${SERVICE_URL_VIKUNJA}\"\n"
 	if fail {
@@ -85,9 +206,16 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}
+	settings.BuildSecrets = []domain.HostingBuildSecretReference{{Name: "DEPENDENCY_TOKEN", Secret: domain.HostingRegistryCredentialRef{SecretID: "msec_build_dependency", Version: 1}}}
+	settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_build_registry", Version: 1}
+	privateBase := "172.17.0.1:25002/private/base@sha256:" + strings.Repeat("b", 64)
+	privateFiles := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, privateBase, "A", false, "")
+	if !strings.HasPrefix(privateFiles["project/app/Dockerfile"], "FROM "+privateBase+"\n") || strings.Contains(privateFiles["project/deploy/compose.yaml"], privateBase) {
+		t.Fatal("private build base leaked into deployment registry services or alias")
+	}
 	for _, fixture := range []struct{ marker, registryImage string }{{"A", ""}, {"B", ""}, {"missing-registry", ""}, {"B", "127.0.0.1:25001/nerocd-fixture:b@sha256:" + strings.Repeat("a", 64)}} {
 		marker := fixture.marker
-		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false, fixture.registryImage)
+		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, gitComposeFixtureBase, marker, false, fixture.registryImage)
 		definition, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: files["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings)
 		if err != nil {
 			t.Fatal("actual Git Compose fixture parser", err)
@@ -134,7 +262,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			}
 		}
 	}
-	missing := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, "missing-argument", false, "")
+	missing := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, gitComposeFixtureBase, "missing-argument", false, "")
 	if _, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: missing["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings); err == nil {
 		t.Fatal("missing required argument must fail before engine execution")
 	}
@@ -147,6 +275,8 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"binding", app.ResourceBindingInput{DestinationID: "dst_fixture"}, new(app.ResourceBindingInput)},
 		{"source_secret", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Git Compose HTTPS source", Value: `{"username":"fixture-user","password":"fixture-value"}`}, new(app.ManagedSecretInput)},
 		{"grant", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: "secret_fixture", SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, new(domain.HostingSourceGrantRequest)},
+		{"build_secret_delivery", domain.HostingBuildSecretsRequest{Authority: domain.HostingBuildAuthority{BuildID: "build_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "fence_fixture"}, DeliveryID: "secret_delivery_fixture"}, new(domain.HostingBuildSecretsRequest)},
+		{"build_registry_delivery", domain.HostingBuildRegistryCredentialRequest{Authority: domain.HostingBuildAuthority{BuildID: "build_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "fence_fixture"}, DeliveryID: "delivery_fixture"}, new(domain.HostingBuildRegistryCredentialRequest)},
 		{"build", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: "source-grant-fixture", IdempotencyKey: "git-compose-build"}, new(domain.HostingBuildRequest)},
 		{"runtime", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("c", 32), Entries: []domain.HostingRuntimeEntry{}}, new(domain.HostingRuntimeConfigurationInput)},
 		{"from_build", domain.HostingBuildDeploymentInput{BuildID: "build_fixture", ExpectedGeneration: 1, ExpectedSourceGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "git-compose-deploy", ContainerPort: 3456, Readiness: domain.HostingReadiness{Path: "/health", TimeoutSeconds: 120}, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}}, new(domain.HostingBuildDeploymentInput)},
@@ -260,5 +390,142 @@ func TestGitComposeProxyQueueFailureInjection(t *testing.T) {
 	}
 	if err := insert("audit_fixture_accepted", "hosting.proxy_generation_requested"); err != nil {
 		t.Fatal("queue injection cleanup left queue blocked", err)
+	}
+}
+
+// A removed exact predecessor cannot still write. Require its destruction before
+// every replacement starts; retained die events must also agree with that order.
+// Completed one-shot containers may have no die event in Docker's finite history.
+func composeRuntimeWriterOrder(raw []byte, previous, current []string) error {
+	if len(previous) == 0 || len(current) == 0 {
+		return fmt.Errorf("writer component evidence missing")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	started, destroyed, died := map[string]int64{}, map[string]int64{}, map[string]int64{}
+	for {
+		var event struct {
+			Action   string
+			TimeNano int64
+			Actor    struct{ ID string }
+		}
+		if err := decoder.Decode(&event); err == io.EOF {
+			break
+		} else if err != nil {
+			return fmt.Errorf("Docker writer event evidence malformed: %w", err)
+		}
+		switch event.Action {
+		case "start", "destroy", "die":
+			if event.Actor.ID == "" || event.TimeNano <= 0 {
+				return fmt.Errorf("Docker writer event identity or timestamp missing")
+			}
+		default:
+			continue
+		}
+		switch event.Action {
+		case "start":
+			if prior := started[event.Actor.ID]; prior == 0 || event.TimeNano < prior {
+				started[event.Actor.ID] = event.TimeNano
+			}
+		case "destroy":
+			if event.TimeNano > destroyed[event.Actor.ID] {
+				destroyed[event.Actor.ID] = event.TimeNano
+			}
+		case "die":
+			if event.TimeNano > died[event.Actor.ID] {
+				died[event.Actor.ID] = event.TimeNano
+			}
+		}
+	}
+	var earliest int64
+	for _, id := range current {
+		stamp := started[id]
+		if id == "" || stamp == 0 {
+			return fmt.Errorf("new component start evidence missing")
+		}
+		if earliest == 0 || stamp < earliest {
+			earliest = stamp
+		}
+	}
+	for _, id := range previous {
+		if id == "" || destroyed[id] == 0 {
+			return fmt.Errorf("predecessor destruction evidence missing")
+		}
+		if destroyed[id] >= earliest || died[id] >= earliest {
+			return fmt.Errorf("new stack writer started before every predecessor was removed")
+		}
+	}
+	return nil
+}
+
+func TestGitComposeWriterOrderCapturedEvents(t *testing.T) {
+	// Relevant events captured at 2b83265c. The init and version die events
+	// were absent; all four exact predecessors were destroyed before new start.
+	previous := []string{"f8e1883efcffa9b3b6c322a4462218e44bad07addb9099deb27aec6b8fa14ac0", "03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b", "6f98150d8e51313b304bac5f1baf7aa60b2eabe64dfcff51e16a6af293aa0d4c", "7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}
+	current := []string{"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29", "7df431daa517d632cbc4ef94394b13ad61ea74c39c0c5beeb116dcd6e903f2b9", "bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec", "3e5ae056abe33efe8bbd41d8241ce2fec7af584f4e9e942c62724f0625aadd03"}
+	raw := []byte(`{"Action":"die","timeNano":1793153716203224139,"Actor":{"ID":"03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b"}}
+{"Action":"die","timeNano":1793153716286903693,"Actor":{"ID":"7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}}
+{"Action":"destroy","timeNano":1793153716336524391,"Actor":{"ID":"f8e1883efcffa9b3b6c322a4462218e44bad07addb9099deb27aec6b8fa14ac0"}}
+{"Action":"destroy","timeNano":1793153716337543603,"Actor":{"ID":"03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b"}}
+{"Action":"destroy","timeNano":1793153716338037354,"Actor":{"ID":"6f98150d8e51313b304bac5f1baf7aa60b2eabe64dfcff51e16a6af293aa0d4c"}}
+{"Action":"destroy","timeNano":1793153716338572356,"Actor":{"ID":"7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}}
+{"Action":"start","timeNano":1793153716626598137,"Actor":{"ID":"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29"}}
+{"Action":"start","timeNano":1793153716637413671,"Actor":{"ID":"7df431daa517d632cbc4ef94394b13ad61ea74c39c0c5beeb116dcd6e903f2b9"}}
+{"Action":"start","timeNano":1793153716641149808,"Actor":{"ID":"bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec"}}
+{"Action":"die","timeNano":1793153716779147742,"Actor":{"ID":"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29"}}
+{"Action":"die","timeNano":1793153716803829278,"Actor":{"ID":"bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec"}}
+{"Action":"start","timeNano":1793153722268736474,"Actor":{"ID":"3e5ae056abe33efe8bbd41d8241ce2fec7af584f4e9e942c62724f0625aadd03"}}`)
+	if err := composeRuntimeWriterOrder(raw, previous, current); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range previous {
+		t.Run(fmt.Sprintf("missing predecessor %d", i), func(t *testing.T) {
+			var kept []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.Contains(line, `"Action":"destroy"`) && strings.Contains(line, id) {
+					continue
+				}
+				kept = append(kept, line)
+			}
+			if err := composeRuntimeWriterOrder([]byte(strings.Join(kept, "\n")), previous, current); err == nil {
+				t.Fatal("accepted missing exact predecessor destruction")
+			}
+		})
+	}
+}
+
+func TestGitComposeWriterOrderEvidence(t *testing.T) {
+	event := func(action, id string, stamp int64) string {
+		return fmt.Sprintf(`{"Action":%q,"Actor":{"ID":%q},"timeNano":%d}`+"\n", action, id, stamp)
+	}
+	good := event("die", "old", 8) + event("destroy", "old", 9) + event("start", "new", 10)
+	for _, tc := range []struct {
+		name, raw string
+		wantError bool
+	}{
+		{"ordered", good, false},
+		{"completed one shot", event("destroy", "old", 9) + event("start", "new", 10), false},
+		{"missing destruction", event("die", "old", 8) + event("start", "new", 10), true},
+		{"late destruction", event("destroy", "old", 11) + event("start", "new", 10), true},
+		{"same time destruction", event("destroy", "old", 10) + event("start", "new", 10), true},
+		{"late die", good + event("die", "old", 11), true},
+		{"same time die", good + event("die", "old", 10), true},
+		{"missing start", event("destroy", "old", 9), true},
+		{"restart cannot hide overlap", event("start", "new", 5) + event("die", "old", 10) + event("destroy", "old", 11) + event("start", "new", 15), true},
+		{"out of order restart evidence", event("start", "new", 15) + event("die", "old", 10) + event("destroy", "old", 11) + event("start", "new", 5), true},
+		{"wrong predecessor", event("destroy", "other", 9) + event("start", "new", 10), true},
+		{"zero timestamp", event("destroy", "old", 0) + event("start", "new", 10), true},
+		{"malformed evidence", good + "{", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := composeRuntimeWriterOrder([]byte(tc.raw), []string{"old"}, []string{"new"}); (err != nil) != tc.wantError {
+				t.Fatalf("writer evidence error=%v, wantError=%v", err, tc.wantError)
+			}
+		})
+	}
+	if err := composeRuntimeWriterOrder([]byte(good), []string{"old", "missing"}, []string{"new"}); err == nil {
+		t.Fatal("accepted missing component destruction")
+	}
+	if err := composeRuntimeWriterOrder([]byte(good), []string{"old"}, []string{"new", "missing"}); err == nil {
+		t.Fatal("accepted missing component start")
 	}
 }

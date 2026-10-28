@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,18 +38,34 @@ type Resource struct {
 
 // ResourceSource selects an image, an immutable Git source, or a managed Compose source.
 type ResourceSource struct {
-	Kind    string              `json:"kind"`
-	Image   ImageSource         `json:"-"`
-	Git     *GitResourceSource  `json:"-"`
-	Compose *HostingStackSource `json:"-"`
+	Kind       string                    `json:"kind"`
+	Image      ImageSource               `json:"-"`
+	Git        *GitResourceSource        `json:"-"`
+	Compose    *HostingStackSource       `json:"-"`
+	Dockerfile *DockerfileResourceSource `json:"-"`
+}
+
+// DockerfileResourceConfiguration stores exact source text and public build settings.
+type DockerfileResourceConfiguration struct {
+	Content  string               `json:"content"`
+	Settings HostingBuildSettings `json:"settings"`
+}
+
+// DockerfileResourceSource identifies one immutable stored Dockerfile version.
+type DockerfileResourceSource struct {
+	SourceID    string `json:"source_id"`
+	Generation  int64  `json:"generation"`
+	ContentHash string `json:"content_hash"`
+	DockerfileResourceConfiguration
 }
 
 // GitResourceConfiguration is public, nonsecret desired build configuration.
 type GitResourceConfiguration struct {
-	RepositoryURL  string               `json:"repository_url"`
-	RequestedRef   string               `json:"requested_ref"`
-	CredentialKind string               `json:"credential_kind"`
-	Settings       HostingBuildSettings `json:"settings"`
+	SSHHostFingerprints []string             `json:"ssh_host_fingerprints,omitempty"`
+	RepositoryURL       string               `json:"repository_url"`
+	RequestedRef        string               `json:"requested_ref"`
+	CredentialKind      string               `json:"credential_kind"`
+	Settings            HostingBuildSettings `json:"settings"`
 }
 
 // GitResourceSource expands one exact immutable persisted source version.
@@ -60,10 +77,11 @@ type GitResourceSource struct {
 
 // ResourceSourceInput excludes server-owned source identities and policy.
 type ResourceSourceInput struct {
-	Kind    string                    `json:"kind"`
-	Image   ImageSource               `json:"-"`
-	Git     *GitResourceConfiguration `json:"-"`
-	Compose *HostingStackSource       `json:"-"`
+	Kind       string                           `json:"kind"`
+	Image      ImageSource                      `json:"-"`
+	Git        *GitResourceConfiguration        `json:"-"`
+	Compose    *HostingStackSource              `json:"-"`
+	Dockerfile *DockerfileResourceConfiguration `json:"-"`
 }
 
 func strictSourceJSON(data []byte, value any) error {
@@ -81,8 +99,16 @@ func strictSourceJSON(data []byte, value any) error {
 // MarshalJSON emits exactly the selected source variant.
 func (s ResourceSource) MarshalJSON() ([]byte, error) {
 	switch s.Kind {
+	case "dockerfile":
+		if s.Dockerfile == nil || s.Git != nil || s.Compose != nil || s.Image.Reference != "" {
+			return nil, errors.New("missing or mixed Dockerfile source")
+		}
+		return json.Marshal(struct {
+			Kind       string                    `json:"kind"`
+			Dockerfile *DockerfileResourceSource `json:"dockerfile"`
+		}{s.Kind, s.Dockerfile})
 	case "compose":
-		if s.Compose == nil || s.Git != nil || s.Image.Reference != "" {
+		if s.Compose == nil || s.Git != nil || s.Dockerfile != nil || s.Image.Reference != "" {
 			return nil, errors.New("missing or mixed Compose source")
 		}
 		if _, err := ParseHostingStack(*s.Compose); err != nil {
@@ -93,7 +119,7 @@ func (s ResourceSource) MarshalJSON() ([]byte, error) {
 			Compose *HostingStackSource `json:"compose"`
 		}{s.Kind, s.Compose})
 	case "image":
-		if s.Git != nil || s.Compose != nil {
+		if s.Git != nil || s.Compose != nil || s.Dockerfile != nil {
 			return nil, errors.New("mixed source variants")
 		}
 		return json.Marshal(struct {
@@ -101,7 +127,7 @@ func (s ResourceSource) MarshalJSON() ([]byte, error) {
 			Image ImageSource `json:"image"`
 		}{s.Kind, s.Image})
 	case "git":
-		if s.Git == nil || s.Compose != nil || s.Image.Reference != "" {
+		if s.Git == nil || s.Compose != nil || s.Dockerfile != nil || s.Image.Reference != "" {
 			return nil, errors.New("missing or mixed git source")
 		}
 		return json.Marshal(struct {
@@ -115,21 +141,28 @@ func (s ResourceSource) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads one exclusive persisted or expanded source variant.
 func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Kind    string          `json:"kind"`
-		Image   json.RawMessage `json:"image"`
-		Git     json.RawMessage `json:"git"`
-		Compose json.RawMessage `json:"compose"`
+		Kind       string          `json:"kind"`
+		Image      json.RawMessage `json:"image"`
+		Git        json.RawMessage `json:"git"`
+		Compose    json.RawMessage `json:"compose"`
+		Dockerfile json.RawMessage `json:"dockerfile"`
 	}
 	if err := strictSourceJSON(data, &wire); err != nil {
 		return err
 	}
 	*s = ResourceSource{Kind: wire.Kind}
 	switch wire.Kind {
+	case "dockerfile":
+		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) > 0 || len(wire.Dockerfile) == 0 || bytes.Equal(wire.Dockerfile, []byte("null")) {
+			return errors.New("dockerfile source requires only dockerfile")
+		}
+		s.Dockerfile = &DockerfileResourceSource{}
+		return strictSourceJSON(wire.Dockerfile, s.Dockerfile)
 	case "compose":
 		if !uniqueStackSourceJSON(data) {
 			return errors.New("duplicate Compose source field")
 		}
-		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
 			return errors.New("compose source requires only compose")
 		}
 		s.Compose = &HostingStackSource{}
@@ -139,12 +172,12 @@ func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 		_, err := ParseHostingStack(*s.Compose)
 		return err
 	case "image":
-		if len(wire.Compose) > 0 || len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Compose) > 0 || len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
 			return errors.New("image source requires only image")
 		}
 		return strictSourceJSON(wire.Image, &s.Image)
 	case "git":
-		if len(wire.Compose) > 0 || len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Compose) > 0 || len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
 			return errors.New("git source requires only git")
 		}
 		s.Git = &GitResourceSource{}
@@ -156,21 +189,28 @@ func (s *ResourceSource) UnmarshalJSON(data []byte) error {
 // UnmarshalJSON rejects server-owned fields and ambiguous public source variants.
 func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Kind    string          `json:"kind"`
-		Image   json.RawMessage `json:"image"`
-		Git     json.RawMessage `json:"git"`
-		Compose json.RawMessage `json:"compose"`
+		Kind       string          `json:"kind"`
+		Image      json.RawMessage `json:"image"`
+		Git        json.RawMessage `json:"git"`
+		Compose    json.RawMessage `json:"compose"`
+		Dockerfile json.RawMessage `json:"dockerfile"`
 	}
 	if err := strictSourceJSON(data, &wire); err != nil {
 		return err
 	}
 	*s = ResourceSourceInput{Kind: wire.Kind}
 	switch wire.Kind {
+	case "dockerfile":
+		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) > 0 || len(wire.Dockerfile) == 0 || bytes.Equal(wire.Dockerfile, []byte("null")) {
+			return errors.New("dockerfile source requires only dockerfile")
+		}
+		s.Dockerfile = &DockerfileResourceConfiguration{}
+		return strictSourceJSON(wire.Dockerfile, s.Dockerfile)
 	case "compose":
 		if !uniqueStackSourceJSON(data) {
 			return errors.New("duplicate Compose source field")
 		}
-		if len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Image) > 0 || len(wire.Git) > 0 || len(wire.Compose) == 0 || bytes.Equal(wire.Compose, []byte("null")) {
 			return errors.New("compose source requires only compose")
 		}
 		s.Compose = &HostingStackSource{}
@@ -179,12 +219,12 @@ func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
 		}
 		return nil
 	case "image":
-		if len(wire.Compose) > 0 || len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Compose) > 0 || len(wire.Git) > 0 || len(wire.Image) == 0 || bytes.Equal(wire.Image, []byte("null")) {
 			return errors.New("image source requires only image")
 		}
 		return strictSourceJSON(wire.Image, &s.Image)
 	case "git":
-		if len(wire.Compose) > 0 || len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
+		if len(wire.Dockerfile) > 0 || len(wire.Compose) > 0 || len(wire.Image) > 0 || len(wire.Git) == 0 || bytes.Equal(wire.Git, []byte("null")) {
 			return errors.New("git source requires only git")
 		}
 		s.Git = &GitResourceConfiguration{}
@@ -196,6 +236,10 @@ func (s *ResourceSourceInput) UnmarshalJSON(data []byte) error {
 // Source converts public configuration without manufacturing persisted identity.
 func (s ResourceSourceInput) Source() ResourceSource {
 	out := ResourceSource{Kind: s.Kind, Image: s.Image}
+	if s.Dockerfile != nil {
+		out.Dockerfile = &DockerfileResourceSource{DockerfileResourceConfiguration: *s.Dockerfile}
+		out.Dockerfile.Settings = s.Dockerfile.Settings.Clone()
+	}
 	if s.Compose != nil {
 		value := *s.Compose
 		out.Compose = &value
@@ -203,6 +247,7 @@ func (s ResourceSourceInput) Source() ResourceSource {
 	if s.Git != nil {
 		out.Git = &GitResourceSource{GitResourceConfiguration: *s.Git}
 		out.Git.Settings = out.Git.Settings.Clone()
+		out.Git.SSHHostFingerprints = slices.Clone(out.Git.SSHHostFingerprints)
 	}
 	return out
 }
@@ -321,6 +366,15 @@ func validImageRegistry(registry string) bool {
 
 // ValidateResourceSource rejects unsupported sources before persistence.
 func ValidateResourceSource(source ResourceSource) error {
+	if source.Kind == "dockerfile" {
+		if source.Dockerfile == nil || source.Git != nil || source.Compose != nil || source.Image.Reference != "" {
+			return errors.New("invalid Dockerfile source")
+		}
+		return ValidateDockerfileResourceConfiguration(source.Dockerfile.DockerfileResourceConfiguration)
+	}
+	if source.Dockerfile != nil {
+		return errors.New("mixed resource source")
+	}
 	if source.Kind == "compose" {
 		if source.Compose == nil || source.Git != nil || source.Image.Reference != "" {
 			return errors.New("invalid Compose source")

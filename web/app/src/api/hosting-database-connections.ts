@@ -72,7 +72,8 @@ const identifier = (v: unknown): v is string => typeof v === "string" && /^[A-Za
 const integer = (v: unknown, min = 0) => Number.isSafeInteger(v) && Number(v) >= min;
 const text = (v: unknown, max = 1024): v is string => typeof v === "string" && v.length <= max && !/[\x00-\x1f\x7f]/.test(v);
 function closed(value: unknown, required: string[], optional: string[] = []): boolean {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value) && required.every((key) => Object.hasOwn(value, key)) && Object.keys(value).every((key) => [...required, ...optional].includes(key)));
+  const allowed = new Set([...required, ...optional]);
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && required.every((key) => Object.hasOwn(value, key)) && Object.keys(value).every((key) => allowed.has(key)));
 }
 export function validateConnection(value: DatabaseConnection, scope: DatabaseConnectionScope, database?: string): DatabaseConnection {
   if (!closed(value, ["id", "project_id", "application_resource_id", "database_resource_id", "binding_id", "binding_hash", "state", "reason_code", "capture_id", "upgrade_operation_id", "application_operation_id", "membership_revision", "created_at", "updated_at"], ["hold_operation_id", "recovery_limit"]) ||

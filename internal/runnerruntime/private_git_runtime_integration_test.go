@@ -51,7 +51,12 @@ func (h controllerFixtureHosting) UpdateResource(ctx context.Context, resource d
 	}
 	if resource.Source.Kind == "git" && resource.Source.Git != nil && previous.Source.Git != nil && resource.Source.Git.SourceID == previous.Source.Git.SourceID && domain.HostingDocumentHash(resource.Source.Git.GitResourceConfiguration) != domain.HostingDocumentHash(previous.Source.Git.GitResourceConfiguration) {
 		g := resource.Source.Git
-		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: h.policy}))
+		policy := h.policy
+		if g.CredentialKind == "ssh_private_key" {
+			policy.AllowedSchemes = []string{"ssh"}
+			policy.SSHHostFingerprints = append([]string(nil), g.SSHHostFingerprints...)
+		}
+		opts = append(opts, store.WithHostingGitSource(domain.HostingGitSource{ID: g.SourceID, ResourceID: resource.ID, ProjectID: resource.ProjectID, Generation: g.Generation, RepositoryURL: g.RepositoryURL, RequestedRef: g.RequestedRef, CredentialKind: g.CredentialKind, Settings: g.Settings, Policy: policy}))
 	}
 	return h.HostingRepository.UpdateResource(ctx, resource, expected, opts...)
 }
@@ -378,15 +383,11 @@ func TestCompiledViteSourceContract(t *testing.T) {
 	}
 }
 
-func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string, func(string, bool), string, string) {
+func privateRuntimeRepository(t *testing.T, strategy string, compiled ...bool) (string, func(string, bool)) {
 	t.Helper()
-	actual, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
 	work := filepath.Join(root, "work")
-	if err = os.Mkdir(work, 0700); err != nil {
+	if err := os.Mkdir(work, 0700); err != nil {
 		t.Fatal(err)
 	}
 	checkoutCommand(t, work, "init", "-q", "-b", "main")
@@ -395,6 +396,9 @@ func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string,
 		dockerfile := "FROM " + hostingbuild.StaticImage + "\nCOPY --chmod=0644 index.html /usr/share/nginx/html/index.html\n"
 		if fail {
 			dockerfile += "RUN exit 9\n"
+		}
+		if len(compiled) > 1 && compiled[1] {
+			dockerfile = privateDockerfileArgumentSource(body == "declared-args", fail)
 		}
 		files := map[string]string{"Dockerfile": dockerfile, "index.html": body}
 		if len(compiled) > 0 && compiled[0] {
@@ -423,6 +427,19 @@ func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string,
 	}
 	update("local-A\n", false)
 	checkoutCommand(t, root, "clone", "--bare", work, "repo.git")
+	return root, func(body string, fail bool) {
+		update(body, fail)
+		checkoutCommand(t, work, "push", filepath.Join(root, "repo.git"), "main")
+	}
+}
+
+func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string, func(string, bool), string, string) {
+	t.Helper()
+	actual, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, update := privateRuntimeRepository(t, strategy, compiled...)
 	username := "fixture-user"
 	password := fmt.Sprintf("fixture-pat-%x", time.Now().UnixNano())
 	backend := &cgi.Handler{Path: actual, Args: []string{"http-backend"}, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}}
@@ -480,7 +497,6 @@ func privateRuntimeGit(t *testing.T, strategy string, compiled ...bool) (string,
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	return strings.Replace(server.URL, "127.0.0.1", "example.com", 1) + "/repo.git", func(body string, fail bool) {
 		update(body, fail)
-		checkoutCommand(t, work, "push", filepath.Join(root, "repo.git"), "main")
 	}, username, password
 }
 
@@ -1183,7 +1199,19 @@ func TestPrivateGitBrowser(t *testing.T) {
 		t.Fatal("compiled Vite requires Railpack")
 	}
 	privateRuntimeDatabase(t)
-	f := newControllerBuildFixture(t, domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
+	sshSource := os.Getenv("NEROCD_PRIVATE_GIT_SSH") == "1"
+	if sshSource && (strategy != "dockerfile" || compiledVite) {
+		t.Fatal("SSH qualification requires ordinary Dockerfile")
+	}
+	dockerfileArguments := strategy == "dockerfile" && !sshSource
+	capabilities := []string{domain.HostingPrivateGitCapability, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability}
+	if dockerfileArguments {
+		capabilities = append(capabilities, domain.HostingDockerfileArgsCapability)
+	}
+	if sshSource {
+		capabilities = append(capabilities, domain.HostingSSHGitCapability)
+	}
+	f := newControllerBuildFixture(t, capabilities...)
 	root, err := os.MkdirTemp("/var/lib", "nerocd-browser-proxy-")
 	if err != nil {
 		t.Fatal(err)
@@ -1203,14 +1231,33 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
-	repositoryURL, updateGit, username, password := privateRuntimeGit(t, strategy, compiledVite)
-	secret := privateRuntimeSecret(t, f, domain.Resource{ProjectID: f.environment.ProjectID}, username, password)
+	var sshFixture *privateSSHFixture
+	var repositoryURL, username, password string
+	var updateGit func(string, bool)
+	var secret domain.ManagedSecret
+	if sshSource {
+		sshFixture = privateRuntimeSSH(t)
+		repositoryURL = sshFixture.repository
+		updateGit = sshFixture.update
+		f.request(t, "POST", "/api/v1/managed-secrets", f.admin, app.ManagedSecretInput{ProjectID: f.environment.ProjectID, Name: "private-git-ssh", Value: sshFixture.keys[0]}, 201, &secret)
+	} else {
+		repositoryURL, updateGit, username, password = privateRuntimeGit(t, strategy, compiledVite, dockerfileArguments)
+		secret = privateRuntimeSecret(t, f, domain.Resource{ProjectID: f.environment.ProjectID}, username, password)
+	}
 	var ownerID string
 	if err := f.db.QueryRow(t.Context(), `SELECT id FROM users WHERE email='browser-bootstrap@example.local'`).Scan(&ownerID); err != nil {
 		t.Fatal(err)
 	}
-	patterns := []string{password, username + ":" + password, base64.StdEncoding.EncodeToString([]byte(username + ":" + password)), url.QueryEscape(password), url.PathEscape(password), f.credential, f.admin}
+	patterns := []string{f.credential, f.admin}
+	if sshSource {
+		patterns = append(patterns, sshFixture.patterns()...)
+	} else {
+		patterns = append(patterns, password, username+":"+password, base64.StdEncoding.EncodeToString([]byte(username+":"+password)), url.QueryEscape(password), url.PathEscape(password))
+	}
+	var sshFailure atomic.Bool
+	sshVersion := int64(1)
 	var failureEnabled atomic.Bool
+	var declaredArguments atomic.Bool
 	var diagnosticOnce sync.Once
 	var recordsMu sync.Mutex
 	var buildIDs []string
@@ -1315,7 +1362,21 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 		defer func() { _ = response.Body.Close() }()
 		body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
-		if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
+		want := "local-A\n"
+		if sshSource && sshVersion >= 2 {
+			want = "local-B\n"
+		}
+		if dockerfileArguments {
+			recordsMu.Lock()
+			deployed := len(deploymentIDs)
+			recordsMu.Unlock()
+			marker := "local-A"
+			if deployed > 1 {
+				marker = "local-B"
+			}
+			want = privateDockerfileArgumentBody(marker)
+		}
+		if err != nil || response.StatusCode != 200 || string(body) != want {
 			t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
 		}
 	}
@@ -1368,7 +1429,11 @@ func TestPrivateGitBrowser(t *testing.T) {
 			}
 		})
 	}
-	stages := make(chan chan struct{})
+	type browserStage struct {
+		name string
+		ack  chan struct{}
+	}
+	stages := make(chan browserStage)
 	origin := os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN")
 	handler := f.server.Config.Handler
 	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1444,7 +1509,7 @@ func TestPrivateGitBrowser(t *testing.T) {
 			if r.URL.Path == failurePath {
 				acknowledgement := make(chan struct{})
 				select {
-				case stages <- acknowledgement:
+				case stages <- browserStage{name: r.URL.Query().Get("stage"), ack: acknowledgement}:
 				case <-ctx.Done():
 					return
 				case <-r.Context().Done():
@@ -1452,7 +1517,12 @@ func TestPrivateGitBrowser(t *testing.T) {
 				}
 				select {
 				case <-acknowledgement:
-					w.WriteHeader(http.StatusNoContent)
+					if sshSource {
+						w.Header().Set("Content-Type", "application/json")
+						_ = json.NewEncoder(w).Encode(map[string]any{"secret_version": sshVersion, "fingerprint": sshFixture.fingerprint})
+					} else {
+						w.WriteHeader(http.StatusNoContent)
+					}
 				case <-ctx.Done():
 				case <-r.Context().Done():
 				}
@@ -1462,7 +1532,8 @@ func TestPrivateGitBrowser(t *testing.T) {
 			finish.Do(func() { close(done) })
 			return
 		}
-		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/builds") && !strings.HasSuffix(r.URL.Path, "/deployments/from-build") && !strings.HasSuffix(r.URL.Path, "/routes") {
+		routeUpdate := (dockerfileArguments || sshSource) && r.Method == "PATCH" && strings.HasPrefix(r.URL.Path, "/api/v1/routes/")
+		if !routeUpdate && (r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/builds") && !strings.HasSuffix(r.URL.Path, "/deployments/from-build") && !strings.HasSuffix(r.URL.Path, "/routes")) {
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -1539,6 +1610,10 @@ func TestPrivateGitBrowser(t *testing.T) {
 						}
 					}
 				}
+				var sshServerBefore []byte
+				if err == nil && sshSource && item.kind == "build" {
+					sshServerBefore, err = exec.CommandContext(ctx, "/usr/local/bin/docker", "logs", sshFixture.serverID).CombinedOutput()
+				}
 				if err == nil && item.kind == "proxy" {
 					err = runProxy()
 				} else if err == nil {
@@ -1565,6 +1640,24 @@ func TestPrivateGitBrowser(t *testing.T) {
 						}
 					}
 					err = runErr
+					if err != nil && !credentialLeak && item.kind == "build" && sshSource && sshFailure.Load() {
+						full, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
+						if readErr == nil && full.State == "failed" && full.Artifact == nil && full.SourceReceipt == nil && full.FailureCode == "source_failed" && full.Snapshot.Grant != nil && full.Snapshot.Grant.SecretID == secret.ID {
+							stage := ""
+							pins := full.Snapshot.Source.Policy.SSHHostFingerprints
+							if full.Snapshot.Grant.SecretVersion == 3 && len(pins) == 1 && pins[0] == sshFixture.fingerprint {
+								stage = "wrong-key"
+							}
+							if full.Snapshot.Grant.SecretVersion == 4 && len(pins) == 1 && pins[0] == "SHA256:"+strings.Repeat("A", 43) {
+								stage = "wrong-host"
+							}
+							after, logErr := exec.CommandContext(ctx, "/usr/local/bin/docker", "logs", sshFixture.serverID).CombinedOutput()
+							if logErr == nil && bytes.HasPrefix(after, sshServerBefore) && privateSSHFailureEvidence(stage, string(out), string(after[len(sshServerBefore):]), sshFixture.wrongFingerprint) {
+								err = nil
+								t.Logf("SSH %s: exact stage diagnostics and live server transport evidence verified", stage)
+							}
+						}
+					}
 					if err != nil && !credentialLeak && item.kind == "build" && failureEnabled.Load() {
 						full, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
 						if readErr == nil && full.State == "failed" && full.Artifact == nil && full.FailureCode == "build_failed" {
@@ -1647,7 +1740,12 @@ func TestPrivateGitBrowser(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-workerDone })
-	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath, "compiled_vite": compiledVite, "compiled_diagnostic": compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1", "compiled_probe_path": compiledProbePath, "application_origin": appOrigin, "compiled_port_path": compiledPortPath})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "complete_path": completePath, "secret_id": secret.ID, "secret_version": int64(1), "source_repository_url": repositoryURL, "strategy": strategy, "destination_id": f.target.Destination.ID, "failure_path": failurePath, "dockerfile_arguments": dockerfileArguments, "compiled_vite": compiledVite, "ssh_private_key": sshSource, "ssh_host_fingerprints": func() []string {
+		if sshSource {
+			return []string{sshFixture.fingerprint}
+		}
+		return nil
+	}(), "compiled_diagnostic": compiledVite && os.Getenv("NEROCD_PRIVATE_GIT_COMPILED_DIAGNOSTIC") == "1", "compiled_probe_path": compiledProbePath, "application_origin": appOrigin, "compiled_port_path": compiledPortPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1659,16 +1757,70 @@ journey:
 			t.Fatal(ctx.Err())
 		case err = <-results:
 			t.Fatal(err)
-		case ack := <-stages:
+		case stage := <-stages:
+			ack := stage.ack
+			if sshSource {
+				switch stage.name {
+				case "rotate":
+					if sshVersion != 1 {
+						t.Fatal("SSH rotation stage order")
+					}
+					probe()
+					sshFixture.rotate(t, f, secret, sshVersion, 1)
+					sshVersion++
+					updateGit("local-B\n", false)
+				case "wrong-key":
+					if sshVersion != 2 {
+						t.Fatal("SSH wrong-key stage order")
+					}
+					probe()
+					sshFixture.rotate(t, f, secret, sshVersion, 2)
+					sshVersion++
+					sshFailure.Store(true)
+				case "wrong-host":
+					if sshVersion != 3 {
+						t.Fatal("SSH host stage order")
+					}
+					probe()
+					sshFixture.rotate(t, f, secret, sshVersion, 1)
+					sshVersion++
+				case "revoke":
+					if sshVersion != 4 {
+						t.Fatal("SSH revoke stage order")
+					}
+					probe()
+					f.request(t, "POST", "/api/v1/managed-secrets/"+secret.ID+"/revoke", f.admin, app.ManagedSecretRevokeInput{ExpectedVersion: sshVersion}, 200, nil)
+				default:
+					t.Fatal("unknown SSH stage")
+				}
+				close(ack)
+				continue
+			}
 			recordsMu.Lock()
 			count := len(buildIDs)
 			recordsMu.Unlock()
-			if failureEnabled.Load() || count != 1 {
+			expected := 1
+			if dockerfileArguments {
+				expected = 2
+				if declaredArguments.Load() {
+					expected = 3
+				}
+			}
+			if failureEnabled.Load() || count != expected {
 				t.Fatal("unexpected private fixture stage order")
 			}
 			probe()
-			updateGit("local-B\n", true)
-			failureEnabled.Store(true)
+			if dockerfileArguments && !declaredArguments.Load() {
+				updateGit("declared-args", false)
+				declaredArguments.Store(true)
+			} else {
+				body := "local-B\n"
+				if dockerfileArguments {
+					body = "declared-args"
+				}
+				updateGit(body, true)
+				failureEnabled.Store(true)
+			}
 			close(ack)
 		case <-done:
 			break journey
@@ -1681,9 +1833,45 @@ journey:
 	ids := append([]string(nil), buildIDs...)
 	output := append([]byte(nil), cliOutput...)
 	recordsMu.Unlock()
-	if len(ids) != 2 || !failureEnabled.Load() {
+	if sshSource {
+		if len(ids) != 4 || len(deploymentIDs) != 2 || sshVersion != 4 {
+			t.Fatal("SSH browser incomplete")
+		}
+		for i, id := range ids {
+			full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if full.Snapshot.Grant == nil || full.Snapshot.Grant.Kind != "ssh_private_key" || full.Snapshot.Grant.SecretID != secret.ID || full.Snapshot.Grant.SecretVersion != int64(i+1) {
+				t.Fatal("SSH build changed exact managed-key binding")
+			}
+			if i < 2 {
+				commit := sshFixture.commits[i]
+				if full.State != "succeeded" || full.Artifact == nil || full.SourceReceipt == nil || full.SourceReceipt.Commit != commit {
+					t.Fatal("SSH successful checkout identity missing")
+				}
+			} else if full.State != "failed" || full.Artifact != nil || full.SourceReceipt != nil || full.FailureCode != "source_failed" {
+				t.Fatal("SSH transport failure published source/artifact")
+			}
+			privateRuntimeNoSecrets(t, f, id, patterns...)
+		}
+		for _, pattern := range patterns {
+			if strings.Contains(string(output), pattern) {
+				t.Fatal("SSH private key leaked to CLI")
+			}
+		}
+		probe()
+		t.Log("SSH deploy-key exact checkout, rotation, wrong-key/host rejection and retained HTTPS passed")
+		return
+	}
+	successes := 1
+	if dockerfileArguments {
+		successes = 3
+	}
+	if len(ids) != successes+1 || !failureEnabled.Load() || dockerfileArguments && len(deploymentIDs) != successes {
 		t.Fatal("browser did not complete success and genuine failure builds")
 	}
+	var previousImage string
 	for i, id := range ids {
 		full, err := f.pg.GetHostingBuild(t.Context(), "usr_bootstrap", id)
 		if err != nil {
@@ -1699,11 +1887,33 @@ journey:
 			}
 			t.Logf("compiled artifact image=%s daemon=%s platform=%s exact_release=true application_port=%d", full.Artifact.ImageID, full.Artifact.DaemonID, full.Artifact.Platform, effectivePort.Load())
 		}
-		if i == 0 && (full.State != "succeeded" || full.Artifact == nil) {
+		if i < successes && (full.State != "succeeded" || full.Artifact == nil) {
 			t.Fatal("browser success artifact missing")
 		}
-		if i == 1 && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
+		if i == successes && (full.State != "failed" || full.Artifact != nil || full.FailureCode != "build_failed") {
 			t.Fatal("genuine failed build published an artifact or unexpected status")
+		}
+		if dockerfileArguments && i < successes {
+			marker := "local-A"
+			if i > 0 {
+				marker = "local-B"
+			}
+			var labels map[string]string
+			if json.Unmarshal(controlDocker(t, "image", "inspect", full.Artifact.ImageID, "--format", "{{json .Config.Labels}}"), &labels) != nil || labels["nerocd.fixture.marker"] != marker || labels["nerocd.fixture.multiline"] != privateDockerfileMultiline || labels["nerocd.fixture.empty"] != "" {
+				t.Fatal("actual per-stage argument image effects differ")
+			}
+			if _, ok := labels["nerocd.fixture.empty"]; !ok {
+				t.Fatal("empty argument label absent")
+			}
+			choice := full.Snapshot.Source.Settings.InjectBuildArgsToDockerfile
+			if i == 2 && (choice == nil || *choice) || i < 2 && choice != nil {
+				t.Fatal("saved injection choice changed")
+			}
+			if i == 1 && previousImage == full.Artifact.ImageID {
+				t.Fatal("changed argument reused prior image identity")
+			}
+			previousImage = full.Artifact.ImageID
+			t.Logf("Dockerfile arguments build=%d exact_image_effects=true injection_enabled=%t", i+1, i < 2)
 		}
 		privateRuntimeNoSecrets(t, f, id, patterns...)
 		if i == 1 && compiledVite {

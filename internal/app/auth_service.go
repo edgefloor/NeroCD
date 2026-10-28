@@ -330,32 +330,35 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 	if len(metadata.UserAgent) > 512 {
 		metadata.UserAgent = metadata.UserAgent[:512]
 	}
-	if allowed, _ := s.loginLimiter.Allow(email, metadata.SourceIP); !allowed {
+	reservation, _ := s.loginLimiter.Reserve(email, metadata.SourceIP)
+	if reservation == nil {
 		return CreatedSession{}, auth.ErrRateLimited
 	}
+
+	defer reservation.Cancel()
 
 	user, err := s.users.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			auth.VerifyDummyPassword(password)
-			s.loginLimiter.Failed(email, metadata.SourceIP)
+			reservation.Failed()
 			return CreatedSession{}, auth.ErrInvalidCredentials
 		}
 		return CreatedSession{}, err
 	}
 	if user.Status != domain.UserActive {
 		auth.VerifyDummyPassword(password)
-		s.loginLimiter.Failed(email, metadata.SourceIP)
+		reservation.Failed()
 		return CreatedSession{}, auth.ErrInvalidCredentials
 	}
 	if user.PasswordHash == "" {
 		auth.VerifyDummyPassword(password)
-		s.loginLimiter.Failed(email, metadata.SourceIP)
+		reservation.Failed()
 		return CreatedSession{}, auth.ErrInvalidCredentials
 	}
 	valid, legacy, verifyErr := auth.VerifyPassword(password, user.PasswordHash)
 	if verifyErr != nil || !valid || (legacy && !s.allowLegacyPasswords) {
-		s.loginLimiter.Failed(email, metadata.SourceIP)
+		reservation.Failed()
 		return CreatedSession{}, auth.ErrInvalidCredentials
 	}
 	if legacy {
@@ -392,12 +395,12 @@ func (s *Service) CreateSessionWithMetadata(ctx context.Context, email string, p
 	}
 	if err := s.sessions.CreateSession(ctx, session, tokenHash, store.WithAudit(audit)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.loginLimiter.Failed(email, metadata.SourceIP)
+			reservation.Failed()
 			return CreatedSession{}, auth.ErrInvalidCredentials
 		}
 		return CreatedSession{}, err
 	}
-	s.loginLimiter.Succeeded(email)
+	reservation.Succeeded()
 	return CreatedSession{Session: session, Token: token}, nil
 }
 

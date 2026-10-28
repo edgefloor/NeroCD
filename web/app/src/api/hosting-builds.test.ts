@@ -74,3 +74,50 @@ test("public build cache retains configured variables and resolved arguments whi
  expect(decoded.compose_result!.definition.services.find(service => service.build)?.build?.args).toEqual({ MODE: "release", EMPTY: "" });
  expect(JSON.stringify(decoded)).not.toContain("secret_reference");
 });
+
+test.each([undefined, null, true, false])("Dockerfile build cache preserves public variables and injection setting %j", async injection => {
+ const settings = { strategy: "dockerfile" as const, build_variables: [{ name: "MESSAGE", value: "first\nsecond" }], ...(injection !== undefined ? { inject_build_args_to_dockerfile: injection } : {}) };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_variables).toEqual(settings.build_variables);
+ expect(decoded.snapshot.source.settings.inject_build_args_to_dockerfile).toBe(injection);
+});
+
+test("public build cache keeps only the explicit build registry reference", async () => {
+ const raw = { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings: { strategy: "dockerfile", build_registry_credential: { secret_id: "credential", version: 2, password: "never-public" } } } } };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: raw })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_registry_credential).toEqual({ secret_id: "credential", version: 2 });
+ expect(JSON.stringify(decoded)).not.toContain("never-public");
+});
+
+test("public build cache retains only build secret names and immutable references", async () => {
+ const settings = { strategy: "dockerfile", build_secrets: [{ name: "DEPENDENCY_TOKEN", value: "never-public", secret: { secret_id: "dependency", version: 2, value: "never-public" } }] };
+ vi.stubGlobal("fetch", vi.fn(async () => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } } } })));
+ const decoded = await getHostingBuild(build.id);
+ expect(decoded.snapshot.source.settings.build_secrets).toEqual([{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "dependency", version: 2 } }]);
+ expect(JSON.stringify(decoded)).not.toContain("never-public");
+});
+
+test("stored Dockerfile build cache keeps hash provenance without raw content or Git metadata", async () => {
+ const content_hash = `sha256:${"a".repeat(64)}`;
+ vi.stubGlobal("fetch",vi.fn(async () => json({build:{...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"},content:"PRIVATE SOURCE",repository_url:"https://forbidden",requested_ref:"forbidden",credential_kind:"forbidden",grant:"forbidden"}},source_receipt:{kind:"dockerfile",content_hash,tree_digest:"tree",commit:"forbidden"}}})));
+ const result = await getHostingBuild("build-one");
+ expect(result.snapshot.source).toEqual({kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"}});
+ expect(result.source_receipt).toEqual({kind:"dockerfile",content_hash,tree_digest:"tree"});
+ expect(JSON.stringify(result)).not.toMatch(/PRIVATE SOURCE|forbidden|repository_url|requested_ref|credential_kind|commit/);
+});
+test.each(["Git receipt", "wrong hash"])("stored Dockerfile rejects %s provenance", async mode => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ vi.stubGlobal("fetch",vi.fn(async ()=>json({build:{...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"}}},source_receipt:mode==="Git receipt" ? {commit:"invented",tree_digest:"tree"} : {kind:"dockerfile",content_hash:`sha256:${"b".repeat(64)}`,tree_digest:"tree"}}})));
+ await expect(getHostingBuild("build-one")).rejects.toThrow("receipt does not match");
+});
+
+
+test("SSH build requests send only the reviewed grant reference and generations", async () => {
+ const fetch = vi.fn(async (_url: string, _options: RequestInit) => json({ build: { ...build, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, credential_kind: "ssh_private_key", private_key: "must-not-cache", ssh_host_fingerprints: ["must-not-cache"] } } } }));
+ vi.stubGlobal("fetch", fetch);
+ const result = await requestHostingBuild("resource", { expected_resource_generation: 2, expected_source_generation: 3, idempotency_key: "key", grant_id: "ssh-grant" }, { credentialKind: "ssh_private_key" });
+ expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toEqual({ expected_resource_generation: 2, expected_source_generation: 3, idempotency_key: "key", grant_id: "ssh-grant" });
+ expect(JSON.stringify(result)).not.toContain("must-not-cache");
+});

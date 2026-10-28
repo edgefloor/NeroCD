@@ -367,6 +367,46 @@ test("private Git Compose requires explicit version and credential changes clear
   await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/).checked).toBe(false));
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
 });
+test("returning to a registry version does not restore deployment acknowledgment", async () => {
+  composeBackend(registryMetadata); await setup(true, composeResource);
+  await chooseGitComposeRegistry();
+  const acknowledgment = () => screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/);
+  fireEvent.click(acknowledgment());
+  expect(acknowledgment().checked).toBe(true);
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "2" } });
+  await waitFor(() => expect(acknowledgment().checked).toBe(false));
+  fireEvent.change(screen.getByLabelText("Registry credential version"), { target: { value: "1" } });
+  await screen.findByText("Image access: Registry credential credential, version 1.");
+  expect(acknowledgment().checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+});
+
+test("returning to earlier deployment options does not restore acknowledgment", async () => {
+  let options = routedComposeOptions;
+  composeBackend(url => url.endsWith("/storage-deployment-options") ? json(options) : runningCompose(url));
+  await setup(true, composeResource);
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  const acknowledgment = () => screen.getByLabelText<HTMLInputElement>(/I reviewed this exact successful Compose build/);
+  fireEvent.click(acknowledgment());
+  expect(acknowledgment().checked).toBe(true);
+  const refreshOptions = async () => {
+    await act(async () => { await client.invalidateQueries({ queryKey: ["storageDeploymentOptions"] }); });
+  };
+  options = {
+    ...routedComposeOptions,
+    routes: [{ ...routedComposeOptions.routes[0]!, version: 3 }],
+    storage_route_continuity: { ...routedComposeOptions.storage_route_continuity, expected_loaded_generation: 5, routes: [{ ...routedComposeOptions.storage_route_continuity.routes[0]!, expected_version: 3 }] },
+  };
+  await refreshOptions();
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 3.");
+  await waitFor(() => expect(acknowledgment().checked).toBe(false));
+  options = routedComposeOptions;
+  await refreshOptions();
+  await screen.findByText("Keep HTTPS route app.example.test/ · version 2.");
+  expect(acknowledgment().checked).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+});
+
 test.each([undefined, { secret_id: "other", version: 1 }, { secret_id: "credential", version: 2 }])("Git Compose rejects substituted registry receipt %j", async (registry_credential) => {
   composeBackend(url => registryMetadata(url) ?? (url.endsWith("/from-build") ? json({ ...composeOperation, snapshot: { ...composeOperation.snapshot, registry_credential } }, 202) : undefined));
   await setup(true, composeResource); await chooseGitComposeRegistry(); await composeSubmit();
@@ -435,4 +475,43 @@ test("editing only saved Compose build variables requires a new build before dep
  expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+
+test("a Dockerfile variable or injection edit requires a new build before deployment", async () => {
+ const latest: Resource = { ...resource, generation: 3, source: { kind: "git", git: { ...source!, generation: 4, settings: { strategy: "dockerfile", inject_build_args_to_dockerfile: false, build_variables: [{ name: "MODE", value: "changed" }] } } } };
+ const fetch = backend(); await setup(true, latest);
+ fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
+ expect(screen.getByRole<HTMLButtonElement>("button", { name: "Deploy selected build" }).disabled).toBe(true);
+ expect(screen.getByText(/A new build is required for the current configuration/)).toBeTruthy();
+ fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
+ expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
+});
+
+test.each(["current", "changed hash", "Git build"])("stored Dockerfile %s deployment verifies real source identity and permits port override", async mode => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ const stored: Resource={...resource,source:{kind:"dockerfile",dockerfile:{source_id:"s",generation:3,content_hash:mode==="changed hash" ? `sha256:${"b".repeat(64)}` : content_hash,content:"FROM nginx\nEXPOSE 8081/tcp\n",settings:{strategy:"dockerfile"}}}};
+ const storedBuild: HostingBuild=mode==="Git build" ? build : {...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"s",generation:3,content_hash,settings:{strategy:"dockerfile"}}}};
+ const fetch=backend((url)=>url.includes("/builds?") ? json({items:[storedBuild],count:1,total:1,limit:20,offset:0}) : url.includes("/hosting-builds/") ? json({build:storedBuild}) : undefined);
+ await setup(true,stored);
+ expect(screen.getByLabelText<HTMLInputElement>("Build container port").value).toBe("8081");
+ if (mode!=="current") {
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
+  expect(screen.getByRole<HTMLButtonElement>("button",{name:"Deploy selected build"}).disabled).toBe(true);
+  expect(fetch.mock.calls.filter(([url])=>url.endsWith("/from-build"))).toHaveLength(0);
+  return;
+ }
+ fireEvent.change(screen.getByLabelText("Build container port"),{target:{value:"9090"}});
+ await submit(); await screen.findByRole("region",{name:"Deployment operation detail"});
+ const writes=fetch.mock.calls.filter(([url])=>url.endsWith("/from-build"));
+ expect(writes).toHaveLength(1); expect(JSON.parse(writes[0]![1].body as string)).toMatchObject({expected_generation:2,expected_source_generation:3,container_port:9090});
+});
+
+
+test("an SSH build artifact deploys through the existing generation-fenced request", async () => {
+ const ssh: Resource = { ...privateResource, source: { kind: "git", git: { ...source!, credential_kind: "ssh_private_key", repository_url: "ssh://git@git.example/team/app.git", ssh_host_fingerprints: ["SHA256:" + "A".repeat(43)] } } };
+ const sshBuild: HostingBuild = { ...privateBuild, snapshot: { ...privateBuild.snapshot, source: { ...privateBuild.snapshot.source, credential_kind: "ssh_private_key" } } };
+ const fetch = privateBackend(sshBuild);
+ await setup(true, ssh); await submit();
+ await screen.findByRole("region", { name: "Deployment operation detail" });
+ expect(JSON.parse(fetch.mock.calls.find(([url]) => url.endsWith("/from-build"))![1].body as string)).toMatchObject({ build_id: "b", expected_generation: 2, expected_source_generation: 3 });
 });

@@ -248,3 +248,72 @@ func TestHostingComposeSourceSaveAndStaleUpdate(t *testing.T) {
 		t.Fatalf("source conversion accepted: %v", err)
 	}
 }
+
+func TestSSHGitResourceConfigurationPinsCanonicalIdentity(t *testing.T) {
+	service, _ := newServiceAccountTestService(t)
+	item := domain.Resource{ID: "resource", ProjectID: "project"}
+	configuration := domain.GitResourceConfiguration{RepositoryURL: "git@github.com:team/repo.git", RequestedRef: "main", CredentialKind: "ssh_private_key", SSHHostFingerprints: []string{"SHA256:" + strings.Repeat("A", 43)}, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+	input := domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: configuration}}
+	saved, err := service.publicGitSource(item, input, "source", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.RepositoryURL != "ssh://git@github.com/~/team/repo.git" || len(saved.Policy.SSHHostFingerprints) != 1 || saved.Policy.AllowedSchemes[0] != "ssh" {
+		t.Fatal("source transport identity not pinned")
+	}
+	public := publicGitResourceSource(saved)
+	public.Git.SSHHostFingerprints[0] = "mutated"
+	if saved.Policy.SSHHostFingerprints[0] != configuration.SSHHostFingerprints[0] {
+		t.Fatal("public metadata aliases policy")
+	}
+	for _, mutate := range []func(*domain.GitResourceConfiguration){
+		func(c *domain.GitResourceConfiguration) { c.SSHHostFingerprints = nil },
+		func(c *domain.GitResourceConfiguration) { c.SSHHostFingerprints = []string{"SHA256:invalid"} },
+		func(c *domain.GitResourceConfiguration) {
+			c.SSHHostFingerprints = []string{configuration.SSHHostFingerprints[0], configuration.SSHHostFingerprints[0]}
+		},
+		func(c *domain.GitResourceConfiguration) { c.RepositoryURL = "ssh://github.com/repo" },
+		func(c *domain.GitResourceConfiguration) { c.RepositoryURL = "ssh://git:password@github.com/repo" },
+		func(c *domain.GitResourceConfiguration) { c.RepositoryURL = "ssh://git@gitlab.com/repo" },
+		func(c *domain.GitResourceConfiguration) {
+			c.CredentialKind = "https_basic"
+			c.RepositoryURL = "https://github.com/team/repo"
+		},
+	} {
+		c := configuration
+		mutate(&c)
+		input.Git.GitResourceConfiguration = c
+		if _, err := service.publicGitSource(item, input, "source", 1); err == nil {
+			t.Fatal("invalid SSH configuration accepted")
+		}
+	}
+}
+
+func TestLegacyHTTPSGitPolicyPinsRemainPrivate(t *testing.T) {
+	service, _ := newServiceAccountTestService(t)
+	for _, kind := range []string{"public", "https_basic"} {
+		t.Run(kind, func(t *testing.T) {
+			configuration := domain.GitResourceConfiguration{RepositoryURL: "https://github.com/team/repo.git", RequestedRef: "main", CredentialKind: kind, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+			input := domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: configuration}}
+			item := domain.Resource{ID: "resource", ProjectID: "project"}
+			source, err := service.publicGitSource(item, input, "source", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source.Policy.SSHHostFingerprints = []string{"SHA256:" + strings.Repeat("A", 43)}
+			originalHash := domain.HostingDocumentHash(source)
+			public := publicGitResourceSource(source)
+			if len(public.Git.SSHHostFingerprints) != 0 {
+				t.Fatal("legacy HTTPS policy pins became public SSH configuration")
+			}
+			public.Git.SourceID = ""
+			public.Git.Generation = 0
+			if _, err := service.publicGitSource(item, public, "source", 1); err != nil {
+				t.Fatal("legacy HTTPS edit refused", err)
+			}
+			if domain.HostingDocumentHash(source) != originalHash {
+				t.Fatal("projection mutated legacy source")
+			}
+		})
+	}
+}

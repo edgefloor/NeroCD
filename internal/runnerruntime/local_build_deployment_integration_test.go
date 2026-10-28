@@ -437,7 +437,12 @@ func TestLocalBuildBrowser(t *testing.T) {
 	if os.Getenv("NEROCD_LOCAL_BUILD_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_LOCAL_BUILD_BROWSER") != "1" {
 		t.Skip("requires opt-in local build browser gate")
 	}
-	f := newControllerBuildFixture(t, domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability)
+	stored := os.Getenv("NEROCD_STORED_DOCKERFILE_BROWSER") == "1"
+	capabilities := []string{domain.HostingBuildTaskType, domain.RunTypeLocalBuildDeploy, domain.RunTypeProxyApply, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability}
+	if stored {
+		capabilities = append(capabilities, domain.HostingStoredDockerfileCapability)
+	}
+	f := newControllerBuildFixture(t, capabilities...)
 	root, err := os.MkdirTemp("/var/lib", "nerocd-browser-proxy-")
 	if err != nil {
 		t.Fatal(err)
@@ -457,10 +462,12 @@ func TestLocalBuildBrowser(t *testing.T) {
 		}
 		return hostingproxy.NewFixture(settings, "https://localhost:14000/dir", roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
 	}}
-	url, _ := mutableLocalBuildGit(t)
 	var resource domain.Resource
-	f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "Browser local artifact", "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "public", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}, 201, &resource)
-	f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/binding", f.admin, map[string]string{"destination_id": f.target.Destination.ID}, 201, nil)
+	if !stored {
+		url, _ := mutableLocalBuildGit(t)
+		f.request(t, "POST", "/api/v1/resources", f.admin, map[string]any{"project_id": f.environment.ProjectID, "project_environment_id": f.environment.ID, "name": "Browser local artifact", "kind": "application", "source": map[string]any{"kind": "git", "git": domain.GitResourceConfiguration{RepositoryURL: url, RequestedRef: "main", CredentialKind: "public", Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}}}, 201, &resource)
+		f.request(t, "POST", "/api/v1/resources/"+resource.ID+"/binding", f.admin, map[string]string{"destination_id": f.target.Destination.ID}, 201, nil)
+	}
 	f.request(t, "POST", "/api/v1/project-members", f.admin, map[string]string{"project_id": f.environment.ProjectID, "email": "viewer@example.local", "role": "viewer"}, 200, nil)
 	// Infrastructure setup is separate from the browser's build/deploy/route journey.
 	proxy := controlJSON[domain.HostingProxy](t, f.server.URL, f.admin, "POST", "/api/v1/servers/"+f.target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: f.environment.ProjectID, IdempotencyKey: "browser-enable-proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
@@ -538,8 +545,42 @@ func TestLocalBuildBrowser(t *testing.T) {
 	}
 	completePath := "/fixture/browser-complete/" + hex.EncodeToString(nonce)
 	origin := os.Getenv("NEROCD_LOCAL_BUILD_BROWSER_ORIGIN")
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, port, e := net.SplitHostPort(address)
+		if e != nil {
+			return nil, e
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	}}
+	defer transport.CloseIdleConnections()
+	probePath := completePath + "/https"
 	handler := f.server.Config.Handler
 	exposed := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stored && r.URL.Path == probePath {
+			if r.Method != http.MethodGet || r.Header.Get("Origin") != origin {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://local.example.test/", nil)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(request)
+			if err != nil {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+			if err != nil || response.StatusCode != http.StatusOK {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
 		if r.URL.Path == completePath {
 			if r.Method != "POST" || r.Header.Get("Origin") != origin {
 				w.WriteHeader(http.StatusForbidden)
@@ -549,7 +590,23 @@ func TestLocalBuildBrowser(t *testing.T) {
 			finish.Do(func() { close(done) })
 			return
 		}
-		if r.Method != "POST" || !(strings.HasSuffix(r.URL.Path, "/builds") || strings.HasSuffix(r.URL.Path, "/deployments/from-build") || strings.HasSuffix(r.URL.Path, "/routes")) {
+		if stored && r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources" {
+			recorded := httptest.NewRecorder()
+			handler.ServeHTTP(recorded, r)
+			if recorded.Code == http.StatusCreated {
+				if err := json.Unmarshal(recorded.Body.Bytes(), &resource); err != nil {
+					t.Error(err)
+				}
+			}
+			for key, values := range recorded.Header() {
+				w.Header()[key] = values
+			}
+			w.WriteHeader(recorded.Code)
+			_, _ = w.Write(recorded.Body.Bytes())
+			return
+		}
+		routeEdit := stored && r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/routes/")
+		if !routeEdit && (r.Method != "POST" || !(strings.HasSuffix(r.URL.Path, "/builds") || strings.HasSuffix(r.URL.Path, "/deployments/from-build") || strings.HasSuffix(r.URL.Path, "/routes"))) {
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -616,6 +673,19 @@ func TestLocalBuildBrowser(t *testing.T) {
 					command := f.agentCommand(ctx, "--local-build-deploy", "--proxy-state-root", root, "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", "/var/run/docker.sock", "--proxy-protocol", domain.HostingProxyCompilerVersion)
 					out, runErr := command.CombinedOutput()
 					err = runErr
+					if err != nil && stored && item.kind == "build" {
+						failed, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
+						if readErr == nil && failed.ID == item.id && failed.ResourceID == resource.ID && failed.Snapshot.Source.Kind == "dockerfile" && failed.Snapshot.Source.Content == storedDockerfileFixtureSource("stored-failed", true) && failed.State == "failed" && failed.Artifact == nil && failed.FailureCode == "build_failed" {
+							output, outputErr := f.pg.ListHostingBuildLogs(ctx, "usr_bootstrap", item.id, 0, 200)
+							var messages strings.Builder
+							for _, row := range output.Items {
+								messages.WriteString(row.Message)
+							}
+							if outputErr == nil && strings.Contains(messages.String(), "did not complete successfully: exit code: 9") {
+								err = nil
+							}
+						}
+					}
 					if err != nil {
 						t.Logf("bounded browser CLI diagnostic: %.1500s", out)
 					}
@@ -631,7 +701,7 @@ func TestLocalBuildBrowser(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-workerDone })
-	metadata, err := json.Marshal(map[string]string{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "resource_id": resource.ID, "complete_path": completePath})
+	metadata, err := json.Marshal(map[string]any{"origin": origin, "project_id": f.environment.ProjectID, "environment": f.environment.Name, "resource_id": resource.ID, "complete_path": completePath, "stored_dockerfile": stored, "probe_path": probePath, "destination_id": f.target.Destination.ID, "content_a": storedDockerfileFixtureSource("stored-A", false), "content_b": storedDockerfileFixtureSource("stored-B", false), "content_failed": storedDockerfileFixtureSource("stored-failed", true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,21 +715,17 @@ func TestLocalBuildBrowser(t *testing.T) {
 	}
 	// The browser reports success only after recorded HTTPS readiness. Independently
 	// probe the actual proxy with its fixture CA and ordinary application bytes.
-	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		_, port, e := net.SplitHostPort(address)
-		if e != nil {
-			return nil, e
-		}
-		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
-	}}
-	defer transport.CloseIdleConnections()
 	response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://local.example.test/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
-	if err != nil || response.StatusCode != 200 || string(body) != "local-A\n" {
+	wantBody := "local-A\n"
+	if stored {
+		wantBody = "stored-B\n"
+	}
+	if err != nil || response.StatusCode != 200 || string(body) != wantBody {
 		t.Fatalf("browser HTTPS actual response %d %q err=%v", response.StatusCode, body, err)
 	}
 }
