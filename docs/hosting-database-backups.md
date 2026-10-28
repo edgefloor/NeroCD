@@ -61,7 +61,10 @@ effects are unknown.
 MySQL supports immediate and [scheduled local backups](hosting-database-backup-schedules.md#schedule-native-mysql-backups).
 [Remote copies](hosting-database-remote-backups.md#native-mysql-remote-copy-qualification)
 can upload the completed MySQL artifact. Retention policies remain PostgreSQL-only.
-Preserve the local archive on its original backup runner for MySQL restore. This workflow does not import arbitrary uploaded SQL, overwrite
+For local restore, preserve the archive on its original backup runner. A saved
+remote upload can instead supply [MySQL remote-only restore](hosting-database-remote-backups.md#native-mysql-remote-only-restore-qualification)
+into a separate target. Database archives do not restore application uploads.
+This workflow does not import arbitrary uploaded SQL, overwrite
 a live database, upgrade an engine, or move data across destinations.
 
 ## Limits and local retention

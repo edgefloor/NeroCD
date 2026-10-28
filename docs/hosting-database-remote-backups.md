@@ -14,11 +14,11 @@ is qualified separately; uploading an archive does not itself remove the local c
 ## Enable the runner
 
 Use the existing database execution roots and logical-backup configuration,
-then add `--hosting-database-remote-backups`. The runner advertises both
-`database_backup_transfer`, `hosting_postgresql_remote_backup_v1`, and
-`hosting_mysql_remote_backup_v1`. Each database also needs its engine-specific
-local backup capability. An older
-runner cannot claim these jobs. Hosting execution must be running on the
+then add `--hosting-database-remote-backups`. The runner advertises
+`database_backup_transfer`, `hosting_postgresql_remote_backup_v1`,
+`hosting_mysql_remote_backup_v1`, and `hosting_mysql_remote_restore_v1`. Each
+database also needs its engine-specific local backup capability. An older runner
+cannot claim these jobs. Hosting execution must be running on the
 controller so its existing River consumer can dispatch transfers.
 
 The runner delivers credentials only over the protected controller transport.
@@ -114,10 +114,15 @@ Keep the local archive when replacing credentials needed by older backups.
 publication failed. It is not an S3 error. Completed staging is retained for
 local recovery; remote transfer failures do not delete it.
 
-## Restore a recorded PostgreSQL remote backup
+<a id="restore-a-recorded-postgresql-remote-backup"></a>
 
-Remote-only restore is available for PostgreSQL. MySQL copies are upload-only;
-use a retained local MySQL backup for separate-target restore.
+## Restore a recorded remote backup
+
+Remote-only restore supports native PostgreSQL and MySQL. In **Database backups**,
+select a completed backup, choose its **Saved remote object** under **Restore
+archive source**, enter a **New database name**, and choose **Restore into new
+database**. MySQL downloads require `hosting_mysql_remote_restore_v1` and use
+the separate `hosting_mysql_remote_restore_credentials.v1` credential purpose.
 
 Choose a successful upload and request a new private database. The restore
 source is the saved transfer ID and its historical target revision. It is not
@@ -128,15 +133,17 @@ credential-reference revocation still apply.
 The controller atomically creates the independent database, storage and new
 encrypted database credentials under the existing restore hold. A separate
 download task performs a real authenticated GET even when the local archive
-exists. It checks the saved size, SHA-256 and custom-format header before local
-publication. The normal fresh-target restore task cannot execute before that
+exists. It checks the saved size and SHA-256 before local publication. PostgreSQL
+also requires its custom-format header; MySQL requires `mysql_sql` metadata. The
+normal fresh-target restore task cannot execute before that
 exact download succeeds. Failed downloads retain the target hold and report an
 uncertain restore; they never make an empty database available for applications.
 
-The existing restore runs `pg_restore` with `--exit-on-error`,
+For PostgreSQL, the existing restore runs `pg_restore` with `--exit-on-error`,
 `--single-transaction`, `--no-owner`, `--no-acl` and the target application role.
-It imports no source roles or passwords. The source database and its credentials
-are not required to remain current or running merely to restore an immutable
+It imports no source roles or passwords. MySQL imports the verified SQL archive
+through its existing same-recipe, separate-target restore path. The source database
+and its credentials are not required to remain current or running merely to restore an immutable
 completed backup. The recovered database can then be bound to a distinct
 application through the existing reviewed connection workflow.
 
@@ -159,8 +166,7 @@ database commit but before durable result evidence is not inferred as success
 or blindly imported again. Local archives remain the default recovery source.
 Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
 Remote object browsing and additional engines remain outside this workflow.
-MySQL remote-only restore, retention policies, and Compose MySQL backups are
-unsupported. [MySQL failure alerts](hosting-backup-notifications.md#native-mysql-notification-qualification)
+MySQL retention policies and Compose MySQL backups remain unsupported. [MySQL failure alerts](hosting-backup-notifications.md#native-mysql-notification-qualification)
 have separate qualification.
 
 ## Implementation
@@ -227,3 +233,31 @@ reviews, runtime proof, and owned-resource cleanup.
 
 [Native MySQL failure notifications](hosting-backup-notifications.md#native-mysql-notification-qualification)
 have separate qualification. The remote-copy evidence above retains its scope.
+
+## Native MySQL remote-only restore qualification
+
+At `0ec20287` on 2026-10-28, the browser selected a saved MySQL upload after the
+exact local archive was withheld. A real authenticated GET republished its
+verified bytes and digest, then import populated a separate native MySQL target
+with distinct storage, binding, credentials, and an exact application connection.
+The restored application read snapshot records and made new writes over trusted
+HTTPS. Source-only and target-only records returned 404 from the expected opposite
+application. The original application's records, uploaded files, and route were
+preserved. The database archive does not copy or restore filesystem uploads.
+
+Corrupting the exact owned remote object with the local archive absent produced
+`object_mismatch`. The new restore remained uncertain with ownership held, no
+import intent, and no available target deployment. The original source and the
+previously restored application remained usable. The same run retained scheduled
+upload, denied-upload local success, same-artifact retry, receipt replay, and
+responsive browser assertions at 320, 390, 430, and 1440 pixels.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-remote-restore-20261028/0ec202871e33fc3754f1b5cb577e7cb639ab8597/evidence-index.json)
+records exact source, binaries, assets, PHP references, checks, reviews, and cleanup.
+The profile is same-host native Linux arm64 with rootful Docker, fixture-CA
+application HTTPS, and an owned Silo endpoint. Other providers, production S3
+HTTPS, cross-destination recovery, Compose MySQL, and MySQL retention remain
+unqualified. Native and Linux new-finding lint checks passed; inherited full-lint
+failures remain recorded as seven native findings and one Linux finding. The
+existing Compose PostgreSQL download-before-import test does not qualify
+arbitrary concurrent component dispatch ordering.

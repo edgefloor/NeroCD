@@ -85,8 +85,9 @@ local artifact. [MySQL remote-copy qualification](hosting-database-remote-backup
 covers a real due upload and independent local/upload outcomes. MySQL schedules
 do not accept `component` or `expected_deployed_operation_id`.
 [Failure notifications](hosting-backup-notifications.md#native-mysql-notification-qualification)
-cover accepted operations; discovery-only skips do not notify. Retention controls,
-remote-only restore, and Compose MySQL schedules remain unsupported. The InnoDB snapshot
+cover accepted operations; discovery-only skips do not notify. A saved upload can
+supply [remote-only restore](hosting-database-remote-backups.md#native-mysql-remote-only-restore-qualification).
+Retention controls and Compose MySQL schedules remain unsupported. The InnoDB snapshot
 and concurrent-DDL limits of immediate MySQL backups still apply.
 
 ## Schedule a Compose PostgreSQL component
