@@ -56,7 +56,7 @@ func executeDatabaseBackupWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 		id := attemptMutationKey("dbbackup", a.LeaseID, a.Attempt, phase)
 		request := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: id, PlanHash: p.Hash, Phase: phase, Blob: blob, FailureCode: failure}
 		if p.Component != nil {
-			request.ComponentVersion = domain.HostingDatabaseBackupComponentVersion
+			request.ComponentVersion = p.Operation.Version
 			request.Writers = append([]domain.HostingStorageArchiveWriterState(nil), e.writers...)
 			request.WritersResumed = p.Operation.Mode == "backup" || e.writersResumed
 		}

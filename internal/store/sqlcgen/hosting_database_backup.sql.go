@@ -150,6 +150,17 @@ func (q *Queries) LockDatabaseBackup(ctx context.Context, id string) (HostingDat
 	return i, err
 }
 
+const mySQLComponentBackupSchemaPresent = `-- name: MySQLComponentBackupSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_component_backup_schema_compatible()') IS NOT NULL)::boolean
+`
+
+func (q *Queries) MySQLComponentBackupSchemaPresent(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, mySQLComponentBackupSchemaPresent)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const readDatabaseBackup = `-- name: ReadDatabaseBackup :one
 SELECT id, project_id, source_resource_id, source_binding_id, source_generation, backup_id, mode, request_id, request_hash, created_by, state, target_resource_id, target_binding_id, deployment_operation_id, run_id, runner_id, plan, plan_hash, blob, failure_code, ownership_held, created_at, updated_at FROM hosting_database_backups WHERE id=$1
 `

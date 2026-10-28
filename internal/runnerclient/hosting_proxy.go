@@ -300,6 +300,9 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 			return "", errors.New("authenticated MySQL capability requires explicit database configuration")
 		}
 	}
+	if slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLBackupComponentCapability) && (!options.Database || !options.LogicalDatabaseBackups || !options.RuntimeEnvironment || !slices.Contains(result.Capabilities, domain.HostingStackCapability) || !slices.Contains(result.Capabilities, domain.HostingDatabaseMySQLBackupCapability) || shellCapable) {
+		return "", errors.New("authenticated MySQL component backup requires explicit stack configuration")
+	}
 	backupCapability, backupTask := false, false
 	for _, capability := range result.Capabilities {
 		backupCapability = backupCapability || capability == domain.HostingDatabaseBackupCapability || capability == domain.HostingDatabaseMySQLBackupCapability

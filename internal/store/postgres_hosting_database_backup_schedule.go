@@ -100,9 +100,12 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 			return zero, ErrConflict
 		}
 		if in.Component != "" && (in.Enabled || existingID == "") {
-			h, _, _, e := databaseBackupComponentSource(ctx, tx, actor, resource, in.Component, domain.RoleOwner)
+			h, op, _, e := databaseBackupComponentSource(ctx, tx, actor, resource, in.Component, domain.RoleOwner)
 			if e != nil {
 				return zero, e
+			}
+			if _, e = domain.HostingPostgresComponent(h, *op.Plan, in.Component); e != nil {
+				return zero, ErrConflict
 			}
 			if h.OperationID != in.ExpectedDeployedOperationID {
 				return zero, ErrConflict

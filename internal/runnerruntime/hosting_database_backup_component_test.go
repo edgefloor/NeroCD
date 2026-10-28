@@ -119,18 +119,45 @@ func TestComponentPostgresScriptsReplaceInitializedDatabase(t *testing.T) {
 
 func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEngine, domain.HostingDatabaseBackupPlan, *map[string]bool, *int) {
 	t.Helper()
+	return componentBackupEngineFixtureFor(t, mode, false)
+}
+func componentBackupEngineFixtureFor(t *testing.T, mode string, mysql bool) (*databaseBackupEngine, domain.HostingDatabaseBackupPlan, *map[string]bool, *int) {
+	t.Helper()
 	e, _, _ := backupEngineFixture(t)
 	stop := stackStopTestPlan(t)
 	plan, h := stop.TargetPlan, stop.Target
+	databaseComponent, mount, commandName, protocol := "db", "/var/lib/postgresql/data", "postgres", domain.HostingDatabaseBackupComponentVersion
+	if mysql {
+		databaseComponent, mount, commandName, protocol = "mysql", "/var/lib/mysql", "mysqld", domain.HostingDatabaseMySQLBackupComponentVersion
+	}
 	volume := domain.HostingStackVolume{Name: "pgdata", VolumeName: domain.HostingStackObjectID(plan.Snapshot.BindingID, "volume", "pgdata"), CreationOperationID: h.OperationID, CreationNonce: strings.Repeat("a", 32), CreatedAt: "2026-10-27T00:00:00Z"}
 	plan.Stack.Definition.Volumes = []string{"pgdata"}
 	plan.Stack.Definition.Services[1].Mounts = []domain.HostingStackMount{{Volume: "pgdata", Target: "/var/lib/postgresql/data"}}
 	plan.Stack.Volumes = []domain.HostingStackVolume{volume}
 	plan.Snapshot.Stack.Hash = domain.HostingDocumentHash(plan.Stack.Definition)
+	if mysql {
+		volume.Name = "mysql-data"
+		volume.VolumeName = domain.HostingStackObjectID(plan.Snapshot.BindingID, "volume", "mysql-data")
+		plan.Stack.Definition.Volumes = []string{"mysql-data"}
+		plan.Stack.Volumes = []domain.HostingStackVolume{volume}
+		plan.Stack.Definition.Services[1].Name = "mysql"
+		plan.Stack.Definition.Services[1].Mounts = []domain.HostingStackMount{{Volume: "mysql-data", Target: "/var/lib/mysql"}}
+		plan.Stack.Definition.Services[1].Environment = map[string]string{"MYSQL_DATABASE": "wordpress", "MYSQL_ROOT_PASSWORD": "${SERVICE_PASSWORD_ROOT:?Supply a separate managed MySQL root password reference}"}
+		plan.Stack.Images[1].Component = "mysql"
+		plan.Stack.Images[1].Release.CanonicalImage = "docker.io/library/mysql@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7"
+		plan.Stack.Images[1].Release.Hash = ""
+		plan.Stack.Images[1].Release.Hash = domain.HostingDocumentHash(plan.Stack.Images[1].Release)
+		plan.Release.Stack.Hash = domain.HostingDocumentHash(plan.Stack.Images)
+		plan.Release.Hash = ""
+		plan.Release.Hash = domain.HostingDocumentHash(plan.Release)
+		h.Release = plan.Release
+		h.Stack.Components[1].Component = "mysql"
+		plan.Snapshot.Stack.Hash = domain.HostingDocumentHash(plan.Stack.Definition)
+	}
 	plan.Hash = ""
 	plan.Hash = domain.HostingDocumentHash(plan)
 	h.Snapshot, h.PlanHash, h.Stack.Volumes = plan.Snapshot, plan.Hash, []domain.HostingStackVolume{volume}
-	p := domain.HostingDatabaseBackupPlan{Component: &domain.HostingDatabaseBackupComponentPlan{Source: "db"}, Operation: domain.HostingDatabaseBackupOperation{ID: "component_backup", Version: domain.HostingDatabaseBackupComponentVersion, ProjectID: "project", SourceResourceID: h.Snapshot.ResourceID, SourceGeneration: h.Snapshot.ResourceGeneration, SourceComponent: "db", SourceDeployedOperationID: h.OperationID, BackupID: "component_backup", Mode: "backup", State: "queued", OwnershipHeld: true, MaxBytes: 1 << 20, TimeoutSeconds: 30}, ActorID: "actor", RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: plan, LocationID: "component_backup", MaxBytes: 1 << 20, TimeoutSeconds: 30}
+	p := domain.HostingDatabaseBackupPlan{Component: &domain.HostingDatabaseBackupComponentPlan{Source: databaseComponent}, Operation: domain.HostingDatabaseBackupOperation{ID: "component_backup", Version: protocol, ProjectID: "project", SourceResourceID: h.Snapshot.ResourceID, SourceGeneration: h.Snapshot.ResourceGeneration, SourceComponent: databaseComponent, SourceDeployedOperationID: h.OperationID, BackupID: "component_backup", Mode: "backup", State: "queued", OwnershipHeld: true, MaxBytes: 1 << 20, TimeoutSeconds: 30}, ActorID: "actor", RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: plan, LocationID: "component_backup", MaxBytes: 1 << 20, TimeoutSeconds: 30}
 	p.Hash = domain.HostingDocumentHash(p)
 	if err := p.Validate(); err != nil {
 		t.Fatal("component plan", err)
@@ -167,7 +194,7 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 			case "ls":
 				ids := []string{}
 				for _, c := range h.Stack.Components {
-					if !strings.Contains(strings.Join(a, " "), "volume=") || c.Component == "db" {
+					if !strings.Contains(strings.Join(a, " "), "volume=") || c.Component == databaseComponent {
 						ids = append(ids, c.ContainerID)
 					}
 				}
@@ -177,7 +204,7 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 				return []byte(strings.Join(ids, "\n")), nil
 			case "inspect":
 				if strings.Contains(a[len(a)-1], "Entrypoint") {
-					return json.Marshal(map[string]any{"Config": map[string]any{"Entrypoint": []string{"docker-entrypoint.sh"}, "Cmd": []string{"postgres"}}, "HostConfig": map[string]any{"Privileged": mode == "privileged"}})
+					return json.Marshal(map[string]any{"Config": map[string]any{"Entrypoint": []string{"docker-entrypoint.sh"}, "Cmd": []string{commandName}}, "HostConfig": map[string]any{"Privileged": mode == "privileged"}})
 				}
 				for _, c := range h.Stack.Components {
 					if c.ContainerID != a[2] {
@@ -189,7 +216,7 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 					if c.Component == "app" {
 						ports["80/tcp"] = []map[string]string{{"HostIp": "127.0.0.1", "HostPort": "18080"}}
 					} else {
-						mounts = append(mounts, map[string]any{"Type": "volume", "Name": volume.VolumeName, "Destination": "/var/lib/postgresql/data", "RW": true})
+						mounts = append(mounts, map[string]any{"Type": "volume", "Name": volume.VolumeName, "Destination": mount, "RW": true})
 						if mode == "wrong image" {
 							image = "sha256:" + strings.Repeat("f", 64)
 						}
@@ -209,6 +236,9 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 			if strings.Contains(strings.Join(a, " "), "--version") {
 				if mode == "wrong major" {
 					return []byte("postgres (PostgreSQL) 17.6"), nil
+				}
+				if mysql {
+					return []byte("/usr/sbin/mysqld  Ver 8.4.13 for Linux on aarch64"), nil
 				}
 				return []byte("postgres (PostgreSQL) 16.11"), nil
 			}
@@ -237,7 +267,8 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 		return nil, errors.New("unexpected component fixture command")
 	})
 	e.stream = func(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
-		if mode == "unsupported local authentication" && strings.Contains(args[len(args)-1], "psql ") {
+		joined := strings.Join(args, " ")
+		if mode == "unsupported local authentication" && (strings.Contains(joined, "psql ") || mysql) {
 			return errors.New("local authentication rejected")
 		}
 		if slices.Contains(args, "--list") {
@@ -246,7 +277,7 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 			}
 			return nil
 		}
-		if slices.Contains(args, "nerocd-import") {
+		if slices.Contains(args, "nerocd-import") || mysql && strings.Contains(joined, "printf 'nerocd-component-import-v1:") {
 			if mode == "unresolved import" || mode == "late launch" || mode == "cancelled import" {
 				return errors.New("tool failed")
 			}
@@ -260,6 +291,14 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 			_, err := io.WriteString(out, componentImportTerminal+code+"\n")
 			return err
 		}
+		if mysql {
+			if strings.Contains(joined, "information_schema.tables") {
+				_, err := io.WriteString(out, "0")
+				return err
+			}
+			_, err := io.WriteString(out, "CREATE TABLE records (id INT);\n")
+			return err
+		}
 		_, err := out.Write(append([]byte("PGDMP"), bytes.Repeat([]byte("x"), 100)...))
 		return err
 	}
@@ -267,9 +306,17 @@ func componentBackupEngineFixture(t *testing.T, mode string) (*databaseBackupEng
 }
 
 func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
+	testComponentDatabaseProfileAndImportWriterBarrier(t, false)
+}
+func TestMySQLComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
+	testComponentDatabaseProfileAndImportWriterBarrier(t, true)
+}
+func testComponentDatabaseProfileAndImportWriterBarrier(t *testing.T, mysql bool) {
+	t.Helper()
 	for _, mode := range []string{"success", "wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume", "foreign SQL writer", "restore failure", "unresolved import", "late launch", "cancelled import", "live import", "malformed process output", "missing PID column", "unexpected process header", "corrupt archive", "tool timeout", "revoked authority", "already stopped writer"} {
 		t.Run(mode, func(t *testing.T) {
-			e, p, running, mutations := componentBackupEngineFixture(t, mode)
+			e, p, running, mutations := componentBackupEngineFixtureFor(t, mode, mysql)
+			databaseComponent := p.Component.Source
 			blob, err := e.run(t.Context(), p, func(context.Context) error { return nil })
 			reject := slices.Contains([]string{"wrong image", "wrong major", "unsupported local authentication", "privileged", "foreign network", "foreign volume"}, mode)
 			if reject {
@@ -314,10 +361,15 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 			p.Operation.Mode = "restore"
 			p.Operation.BackupID = "component_backup"
 			p.Operation.TargetResourceID = p.Target.Snapshot.ResourceID
-			p.Operation.TargetComponent = "db"
+			p.Operation.TargetComponent = databaseComponent
 			p.Operation.TargetDeployedOperationID = p.Target.OperationID
 			p.Operation.Blob = &blob
-			p.Component = &domain.HostingDatabaseBackupComponentPlan{Source: "db", Target: "db"}
+			if mysql && mode == "corrupt archive" {
+				bad := blob
+				bad.Digest = "sha256:" + strings.Repeat("f", 64)
+				p.Operation.Blob = &bad
+			}
+			p.Component = &domain.HostingDatabaseBackupComponentPlan{Source: databaseComponent, Target: databaseComponent}
 			p.Hash = ""
 			p.Hash = domain.HostingDocumentHash(p)
 			if mode == "already stopped writer" {
@@ -352,6 +404,9 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 				"missing PID column":        databaseBackupStageProcess,
 				"unexpected process header": databaseBackupStageProcess,
 			}[mode]; present {
+				if mysql && mode == "corrupt archive" {
+					want = databaseBackupStageArchive
+				}
 				var stage *databaseBackupStageError
 				if !errors.As(err, &stage) || stage.stage != want || !errors.Is(err, errDatabaseBackupHeld) {
 					t.Fatal("component failure lost its fixed stage or hold identity", err)
@@ -367,7 +422,7 @@ func TestComponentDatabaseProfileAndImportWriterBarrier(t *testing.T) {
 			if (err == nil) != wantSuccess {
 				t.Fatal("import outcome", err)
 			}
-			if slices.Contains([]string{"unresolved import", "late launch", "cancelled import", "revoked authority", "live import", "malformed process output", "missing PID column", "unexpected process header"}, mode) {
+			if mysql && slices.Contains([]string{"restore failure", "tool timeout"}, mode) || slices.Contains([]string{"unresolved import", "late launch", "cancelled import", "revoked authority", "live import", "malformed process output", "missing PID column", "unexpected process header"}, mode) {
 				if e.writersResumed {
 					t.Fatal("uncertain authority resumed writers")
 				}

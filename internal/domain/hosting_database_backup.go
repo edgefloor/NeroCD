@@ -139,7 +139,7 @@ func (p HostingDatabaseBackupPlan) Validate() error {
 	if p.Operation.Blob != nil && (p.Operation.Blob.Validate() != nil || p.Operation.Blob.Format != HostingDatabaseBackupFormatFor(p.Operation.Version)) {
 		return ErrInvalidDatabaseBackup
 	}
-	if p.Operation.Version == HostingDatabaseBackupComponentVersion {
+	if IsHostingDatabaseBackupComponentVersion(p.Operation.Version) {
 		return p.validateComponent()
 	}
 	if p.Component != nil || p.Operation.SourceComponent != "" || p.Operation.SourceDeployedOperationID != "" || p.Operation.TargetComponent != "" || p.Operation.TargetDeployedOperationID != "" {
@@ -184,7 +184,7 @@ func (in HostingDatabaseBackupMutation) Validate() error {
 		if len(in.Writers) != 0 || in.WritersResumed {
 			return ErrInvalidDatabaseBackup
 		}
-	} else if in.ComponentVersion != HostingDatabaseBackupComponentVersion || len(in.Writers) > 16 || in.Phase == "complete" && !in.WritersResumed {
+	} else if !IsHostingDatabaseBackupComponentVersion(in.ComponentVersion) || len(in.Writers) > 16 || in.Phase == "complete" && !in.WritersResumed {
 		return ErrInvalidDatabaseBackup
 	}
 	if in.LocalCopy != nil && (in.Phase != "complete" || in.LocalCopy.Validate() != nil || in.Blob == nil || in.LocalCopy.Bytes != in.Blob.Bytes) {
@@ -344,7 +344,7 @@ func HostingDatabaseBackupFormatFor(version string) string {
 	switch version {
 	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
 		return "postgresql_custom"
-	case HostingDatabaseMySQLBackupVersion:
+	case HostingDatabaseMySQLBackupVersion, HostingDatabaseMySQLBackupComponentVersion:
 		return "mysql_sql"
 	}
 	return ""
@@ -352,7 +352,7 @@ func HostingDatabaseBackupFormatFor(version string) string {
 
 // HostingDatabaseBackupCapabilityFor selects the exact engine adapter capability.
 func HostingDatabaseBackupCapabilityFor(version string) string {
-	if version == HostingDatabaseMySQLBackupVersion {
+	if version == HostingDatabaseMySQLBackupVersion || version == HostingDatabaseMySQLBackupComponentVersion {
 		return HostingDatabaseMySQLBackupCapability
 	}
 	return HostingDatabaseBackupCapability

@@ -116,7 +116,10 @@ func decodeDatabaseJournal(raw []byte, state *journalState) error {
 	}
 	return nil
 }
-func databaseJournalUnique(d *json.Decoder) bool {
+func databaseJournalUnique(d *json.Decoder) bool { return databaseJournalUniqueValue(d, false) }
+
+// Saved Compose environment keys are case-sensitive; protocol members stay canonical.
+func databaseJournalUniqueValue(d *json.Decoder, environment bool) bool {
 	token, err := d.Token()
 	if err != nil {
 		return false
@@ -131,17 +134,17 @@ func databaseJournalUnique(d *json.Decoder) bool {
 		for d.More() {
 			token, err = d.Token()
 			key, ok := token.(string)
-			if err != nil || !ok || key != strings.ToLower(key) || seen[key] {
+			if err != nil || !ok || !environment && key != strings.ToLower(key) || seen[key] {
 				return false
 			}
 			seen[key] = true
-			if !databaseJournalUnique(d) {
+			if !databaseJournalUniqueValue(d, !environment && key == "environment") {
 				return false
 			}
 		}
 	case '[':
 		for d.More() {
-			if !databaseJournalUnique(d) {
+			if !databaseJournalUniqueValue(d, false) {
 				return false
 			}
 		}

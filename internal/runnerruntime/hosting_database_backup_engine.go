@@ -337,7 +337,7 @@ func (e *databaseBackupEngine) archive(ctx context.Context, p domain.HostingData
 		return nil, errDatabaseBackupHeld
 	}
 	magic := "PGDMP"
-	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+	if domain.HostingDatabaseBackupFormatFor(p.Operation.Version) == "mysql_sql" {
 		magic = databaseMySQLDumpHeader
 	}
 	header := make([]byte, len(magic))
@@ -466,17 +466,22 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 		if e.stream(ctx, databaseMySQLQueryArgs(p.Source.ContainerID, query), nil, &bounded) != nil || strings.TrimSpace(result.String()) != "0" {
 			return blob, errDatabaseBackupHeld
 		}
+	}
+	if domain.HostingDatabaseBackupFormatFor(p.Operation.Version) == "mysql_sql" {
 		if _, err = writer.Write([]byte(databaseMySQLDumpHeader)); err != nil {
 			return blob, err
 		}
 	}
 	args := databaseBackupEngineArgs(p, "backup", p.Source.ContainerID, p.TimeoutSeconds)
 	if p.Component != nil {
-		component, err := domain.HostingPostgresComponent(p.Source, p.SourcePlan, p.Component.Source)
+		component, err := domain.HostingDatabaseBackupComponentFor(p.Operation.Version, p.Source, p.SourcePlan, p.Component.Source)
 		if err != nil {
 			return blob, errDatabaseBackupHeld
 		}
 		args = databaseBackupComponentArgs("backup", component.ContainerID, p.TimeoutSeconds)
+		if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+			args = databaseBackupMySQLComponentArgs("backup", component.ContainerID, p.TimeoutSeconds)
+		}
 	}
 	if e.stream(ctx, args, nil, &writer) != nil || file.Sync() != nil {
 		return blob, errDatabaseBackupHeld

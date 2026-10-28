@@ -10941,7 +10941,7 @@ components:
           "eligible",
           "reason"
         ],
-        "oneOf": [{"properties":{"engine":{"const":"postgresql"},"major_version":{"const":16}}},{"properties":{"engine":{"const":"mysql"},"major_version":{"const":8}}}],
+        "oneOf": [{"properties":{"engine":{"enum":["postgresql"]},"major_version":{"enum":[16]}}},{"properties":{"engine":{"enum":["mysql"]},"major_version":{"enum":[8]}}}],
         "properties": {
           "component": {
             "type": "string",

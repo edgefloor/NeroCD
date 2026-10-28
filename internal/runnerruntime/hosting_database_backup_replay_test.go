@@ -26,6 +26,10 @@ func backupJournalEntries(t *testing.T, p domain.HostingDatabaseBackupPlan) (run
 	a := domain.HostingAuthority{OperationID: p.Operation.ID, RunID: "db_backup_" + p.Operation.ID, LeaseID: "lease", Attempt: 1, Fence: "fence"}
 	identity := runner.AttemptIdentity{RunID: a.RunID, LeaseID: a.LeaseID, Attempt: 1, Fence: a.Fence, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
 	intent := runner.JournalDatabaseBackup{ID: "intent", Attempt: identity, Plan: p, Request: domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "intent", PlanHash: p.Hash, Phase: "intent"}, CreatedAt: now}
+	if p.Component != nil {
+		intent.Request.ComponentVersion = p.Operation.Version
+		intent.Request.WritersResumed = true
+	}
 	complete := intent
 	complete.ID = "complete"
 	complete.Request.ReceiptID = "complete"
@@ -34,9 +38,24 @@ func backupJournalEntries(t *testing.T, p domain.HostingDatabaseBackupPlan) (run
 	return intent, complete
 }
 func TestDatabaseBackupJournalRestartLostAcknowledgmentAndNoEffectReplay(t *testing.T) {
-	for _, engine := range []string{"postgresql", "mysql"} {
+	for _, engine := range []string{"postgresql", "mysql", "mysql_component", "postgresql_component"} {
 		t.Run(engine, func(t *testing.T) {
-			_, _, p := backupEngineFixture(t, engine)
+			var p domain.HostingDatabaseBackupPlan
+			if engine == "mysql_component" || engine == "postgresql_component" {
+				_, p, _, _ = componentBackupEngineFixtureFor(t, "success", engine == "mysql_component")
+			} else {
+				_, _, p = backupEngineFixture(t, engine)
+			}
+			if engine == "postgresql_component" {
+				p.SourcePlan.Stack.Definition.Services[1].Environment = map[string]string{"POSTGRES_USER": "postgres"}
+				p.SourcePlan.Snapshot.Stack.Hash = domain.HostingDocumentHash(p.SourcePlan.Stack.Definition)
+				p.Source.Snapshot = p.SourcePlan.Snapshot
+				p.SourcePlan.Hash = ""
+				p.SourcePlan.Hash = domain.HostingDocumentHash(p.SourcePlan)
+				p.Source.PlanHash = p.SourcePlan.Hash
+				p.Hash = ""
+				p.Hash = domain.HostingDocumentHash(p)
+			}
 			intent, complete := backupJournalEntries(t, p)
 			path := filepath.Join(t.TempDir(), "attempt.journal")
 			j, err := runner.OpenAttemptJournal(path)

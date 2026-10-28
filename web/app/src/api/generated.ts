@@ -5471,14 +5471,14 @@ export interface components {
             eligible: boolean;
             reason: string;
         } & ({
-            /** @constant */
+            /** @enum {unknown} */
             engine?: "postgresql";
-            /** @constant */
+            /** @enum {unknown} */
             major_version?: 16;
         } | {
-            /** @constant */
+            /** @enum {unknown} */
             engine?: "mysql";
-            /** @constant */
+            /** @enum {unknown} */
             major_version?: 8;
         });
         HostingDatabaseBackupComponents: {

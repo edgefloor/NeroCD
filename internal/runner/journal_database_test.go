@@ -186,3 +186,20 @@ func TestDatabaseJournalStrictDecoder(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseJournalComposeEnvironmentKeysRemainClosed(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		valid bool
+	}{
+		{`{"environment":{"MYSQL_DATABASE":"wordpress","mysql_database":"distinct"},"version":18}`, true},
+		{`{"environment":{"MYSQL_DATABASE":"one","MYSQL_DATABASE":"two"}}`, false},
+		{`{"Environment":{"MYSQL_DATABASE":"wordpress"}}`, false},
+		{`{"environment":{"nested":{"Upper":"invalid"}}}`, false},
+		{`{"operation":{"Version":18}}`, false},
+	} {
+		if databaseJournalUnique(json.NewDecoder(strings.NewReader(tc.body))) != tc.valid {
+			t.Fatal("journal map/canonical-key boundary changed")
+		}
+	}
+}

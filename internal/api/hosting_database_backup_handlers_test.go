@@ -59,6 +59,13 @@ func (r *databaseBackupHTTPRepository) DatabaseBackupMutation(context.Context, s
 	return r.value, store.ErrConflict
 }
 func TestDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
+	testDatabaseBackupHTTPPermissionsAndClosedInputs(t, false)
+}
+func TestMySQLComponentDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
+	testDatabaseBackupHTTPPermissionsAndClosedInputs(t, true)
+}
+func testDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T, component bool) {
+	t.Helper()
 	server, original, owner, viewer, runner := archiveHTTPFixture(t)
 	original.resource.Kind = "database"
 	repo := &databaseBackupHTTPRepository{archiveHTTPRepository: original}
@@ -72,6 +79,14 @@ func TestDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
 	repo.value = domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, ID: "backup", Version: domain.HostingDatabaseBackupVersion, ProjectID: repo.resource.ProjectID, SourceResourceID: repo.resource.ID, SourceGeneration: 1, BackupID: "backup", Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, CreatedAt: now, UpdatedAt: now}
 	path := "/api/v1/resources/" + repo.resource.ID + "/database-backups"
 	body := `{"request_id":"backup","expected_resource_generation":1}`
+	if component {
+		repo.resource.Kind = "application"
+		repo.resource.Source = domain.ResourceSource{Kind: "compose", Compose: &domain.HostingStackSource{}}
+		repo.value.Version = domain.HostingDatabaseMySQLBackupComponentVersion
+		repo.value.SourceComponent = "mysql"
+		repo.value.SourceDeployedOperationID = "hop_source"
+		body = `{"request_id":"backup","expected_resource_generation":1,"component":"mysql","expected_deployed_operation_id":"hop_source"}`
+	}
 	archiveHTTPCall(t, server, "POST", path, "", body, "application/json", 401)
 	archiveHTTPCall(t, server, "POST", path, runner, body, "application/json", 401)
 	archiveHTTPCall(t, server, "POST", path, viewer, body, "application/json", 403)
@@ -155,5 +170,31 @@ func TestDatabaseBackupSchemaMatchesTypedFields(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestMySQLComponentDatabaseEligibilitySchemaPairs(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		engine string
+		major  int
+		valid  bool
+	}{{"postgresql", 16, true}, {"mysql", 8, true}, {"mysql", 16, false}, {"postgresql", 8, false}, {"mariadb", 8, false}} {
+		in := map[string]any{"component": "db", "engine": tc.engine, "major_version": tc.major, "running": true, "eligible": true, "reason": "requires_runtime_profile_verification"}
+		raw, e := json.Marshal(in)
+		if e != nil {
+			t.Fatal(e)
+		}
+		var wire any
+		if json.Unmarshal(raw, &wire) != nil {
+			t.Fatal("invalid fixture JSON")
+		}
+		e = doc.Components.Schemas["HostingDatabaseBackupComponent"].Value.VisitJSON(wire)
+		if (e == nil) != tc.valid {
+			t.Fatal("invalid engine-major schema pair", tc.engine, tc.major, e)
+		}
 	}
 }

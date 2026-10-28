@@ -295,7 +295,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	if *logicalDatabaseBackups {
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability)
 		if *hostingRuntimeEnv {
-			registrationCapabilities = append(registrationCapabilities, domain.HostingDatabaseBackupComponentCapability)
+			registrationCapabilities = append(registrationCapabilities, domain.HostingDatabaseBackupComponentCapability, domain.HostingDatabaseMySQLBackupComponentCapability)
 		}
 	}
 	registrationCapabilities, err = runnerStorageArchiveCapabilities(archiveConfig != nil, capabilitiesSpecified || *hostingDatabase || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)

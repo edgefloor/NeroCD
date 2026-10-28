@@ -74,7 +74,18 @@ func databaseBackupAgent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 		capabilities = append(capabilities, domain.HostingDatabaseMySQLCapability)
 	}
 	if p.Component != nil {
-		capabilities = append(capabilities, domain.HostingDatabaseBackupComponentCapability, domain.HostingStackCapability)
+		componentCapability := domain.HostingDatabaseBackupComponentCapability
+		if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+			componentCapability = domain.HostingDatabaseMySQLBackupComponentCapability
+			present, err := sqlcgen.New(tx).MySQLComponentBackupSchemaPresent(ctx)
+			if err != nil {
+				return err
+			}
+			if !present {
+				return ErrConflict
+			}
+		}
+		capabilities = append(capabilities, componentCapability, domain.HostingStackCapability)
 	}
 	for _, capability := range capabilities {
 		ok, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: p.RunnerID, Capability: capability})

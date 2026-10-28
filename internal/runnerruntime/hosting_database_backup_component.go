@@ -51,7 +51,8 @@ func (e *databaseBackupEngine) inspectComponentStack(ctx context.Context, h doma
 	failure := func(stage databaseBackupStage) error {
 		return databaseBackupErrorAt(databaseBackupPhaseInspection, stage, errDatabaseBackupHeld)
 	}
-	db, err := domain.HostingPostgresComponent(h, plan, name)
+	version := domain.HostingDatabaseBackupComponentVersionFor(h, plan, name)
+	db, err := domain.HostingDatabaseBackupComponentFor(version, h, plan, name)
 	if err != nil {
 		return db, nil, failure(databaseBackupStagePlan)
 	}
@@ -103,8 +104,14 @@ func (e *databaseBackupEngine) inspectComponentStack(ctx context.Context, h doma
 			}
 		}
 	}
-	version, err := e.image.docker(ctx, componentDatabaseExec(db.ContainerID, false, "/usr/local/bin/postgres", "--version")...)
-	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(version)), "postgres (PostgreSQL) 16.") {
+	versionArgs := componentDatabaseExec(db.ContainerID, false, "/usr/local/bin/postgres", "--version")
+	wantVersion := "postgres (PostgreSQL) 16."
+	if version == domain.HostingDatabaseMySQLBackupComponentVersion {
+		versionArgs = componentMySQLExec(db.ContainerID, false, "/usr/sbin/mysqld", "--version")
+		wantVersion = "/usr/sbin/mysqld  Ver 8.4.13"
+	}
+	versionOutput, err := e.image.docker(ctx, versionArgs...)
+	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(versionOutput)), wantVersion) {
 		return db, nil, failure(databaseBackupStageProcess)
 	}
 	// Only inspect nonsecret execution settings. Config.Env and health output
@@ -121,8 +128,12 @@ func (e *databaseBackupEngine) inspectComponentStack(ctx context.Context, h doma
 			Devices                      []json.RawMessage
 		}
 	}
+	expectedCommand := "postgres"
+	if version == domain.HostingDatabaseMySQLBackupComponentVersion {
+		expectedCommand = "mysqld"
+	}
 	raw, err := e.image.docker(ctx, "container", "inspect", db.ContainerID, "--format", `{"Config":{"User":{{json .Config.User}},"Entrypoint":{{json .Config.Entrypoint}},"Cmd":{{json .Config.Cmd}}},"HostConfig":{"Privileged":{{json .HostConfig.Privileged}},"PublishAllPorts":{{json .HostConfig.PublishAllPorts}},"Binds":{{json .HostConfig.Binds}},"CapAdd":{{json .HostConfig.CapAdd}},"PidMode":{{json .HostConfig.PidMode}},"IpcMode":{{json .HostConfig.IpcMode}},"UsernsMode":{{json .HostConfig.UsernsMode}},"Devices":{{json .HostConfig.Devices}}}}`)
-	if err != nil || json.Unmarshal(raw, &profile) != nil || profile.Config.User != "" || !reflect.DeepEqual(profile.Config.Entrypoint, []string{"docker-entrypoint.sh"}) || !reflect.DeepEqual(profile.Config.Cmd, []string{"postgres"}) || profile.HostConfig.Privileged || profile.HostConfig.PublishAllPorts || len(profile.HostConfig.CapAdd) > 0 || profile.HostConfig.PidMode != "" || profile.HostConfig.UsernsMode != "" || profile.HostConfig.IpcMode != "private" && profile.HostConfig.IpcMode != "" || len(profile.HostConfig.Devices) > 0 {
+	if err != nil || json.Unmarshal(raw, &profile) != nil || profile.Config.User != "" || !reflect.DeepEqual(profile.Config.Entrypoint, []string{"docker-entrypoint.sh"}) || !reflect.DeepEqual(profile.Config.Cmd, []string{expectedCommand}) || profile.HostConfig.Privileged || profile.HostConfig.PublishAllPorts || len(profile.HostConfig.CapAdd) > 0 || profile.HostConfig.PidMode != "" || profile.HostConfig.UsernsMode != "" || profile.HostConfig.IpcMode != "private" && profile.HostConfig.IpcMode != "" || len(profile.HostConfig.Devices) > 0 {
 		return db, nil, failure(databaseBackupStageContainerIdentity)
 	}
 	sort.Slice(writers, func(i, j int) bool { return writers[i].ContainerID < writers[j].ContainerID })
@@ -142,10 +153,20 @@ func (e *databaseBackupEngine) componentPreflight(ctx context.Context, p domain.
 	// recording intent or interrupting target writers. No names or values leave
 	// protected execution; custom local authentication is not adopted implicitly.
 	probe := componentPostgresEnvironment + `/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --quiet --tuples-only --command='SELECT 1'`
-	if e.stream(ctx, componentDatabaseExec(db.ContainerID, false, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "10", "/bin/sh", "-ceu", probe), nil, io.Discard) != nil {
+	probeArgs := componentDatabaseExec(db.ContainerID, false, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "10", "/bin/sh", "-ceu", probe)
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+		probeArgs = databaseBackupMySQLComponentArgs("probe", db.ContainerID, 20)
+	}
+	if e.stream(ctx, probeArgs, nil, io.Discard) != nil {
 		return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStageReadiness, errDatabaseBackupHeld)
 	}
 	if p.Operation.Mode == "backup" {
+		if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+			var count bytes.Buffer
+			if e.stream(ctx, databaseBackupMySQLComponentArgs("engine", db.ContainerID, 20), nil, &count) != nil || strings.TrimSpace(count.String()) != "0" {
+				return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStageReadiness, errDatabaseBackupHeld)
+			}
+		}
 		return nil
 	}
 	if e.writers != nil && !reflect.DeepEqual(e.writers, writers) {
@@ -156,14 +177,14 @@ func (e *databaseBackupEngine) componentPreflight(ctx context.Context, p domain.
 		return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStageArchive, err)
 	}
 	defer func() { _ = f.Close() }()
-	if e.stream(ctx, componentDatabaseExec(db.ContainerID, true, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "20", "/usr/local/bin/pg_restore", "--list"), f, io.Discard) != nil {
+	if p.Operation.Version != domain.HostingDatabaseMySQLBackupComponentVersion && e.stream(ctx, componentDatabaseExec(db.ContainerID, true, "/usr/bin/timeout", "-s", "TERM", "-k", "5", "20", "/usr/local/bin/pg_restore", "--list"), f, io.Discard) != nil {
 		return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStageArchiveList, errDatabaseBackupHeld)
 	}
 	e.writers = writers
 	return nil
 }
 
-func (e *databaseBackupEngine) componentImportQuiescent(ctx context.Context, id string) error {
+func (e *databaseBackupEngine) componentImportQuiescent(ctx context.Context, id string, mysql bool) error {
 	// Docker needs the PID column to restrict ps output to this container.
 	// Request only PID and comm so process arguments cannot expose guest values.
 	raw, err := e.image.docker(ctx, "top", id, "-eo", "pid,comm")
@@ -180,7 +201,7 @@ func (e *databaseBackupEngine) componentImportQuiescent(ctx context.Context, id 
 			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
 		}
 		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid < 1 || fields[1] == "pg_restore" {
+		if err != nil || pid < 1 || fields[1] == "pg_restore" || mysql && fields[1] == "mysql" {
 			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageProcess, errDatabaseBackupHeld)
 		}
 	}
@@ -227,11 +248,11 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		if importAttempted && !importJoined {
+		if importAttempted && (!importJoined || p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion && result != nil) {
 			result = errors.Join(result, failure(databaseBackupStageImportTerminal))
 			return
 		}
-		if err := e.componentImportQuiescent(cleanup, db.ContainerID); err != nil {
+		if err := e.componentImportQuiescent(cleanup, db.ContainerID, p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion); err != nil {
 			result = errors.Join(result, err)
 			return
 		}
@@ -268,7 +289,11 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 		}
 	}
 	// Unknown SQL clients are not covered by the platform hold or stack inventory.
-	clients, err := e.image.docker(ctx, componentDatabaseExec(db.ContainerID, false, "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --tuples-only --no-align --command="SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid <> pg_backend_pid()"`)...)
+	clientArgs := componentDatabaseExec(db.ContainerID, false, "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --tuples-only --no-align --command="SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid <> pg_backend_pid()"`)
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+		clientArgs = databaseBackupMySQLComponentArgs("clients", db.ContainerID, 20)
+	}
+	clients, err := e.image.docker(ctx, clientArgs...)
 	if err != nil || strings.TrimSpace(string(clients)) != "0" {
 		return blob, failure(databaseBackupStageSQLClients)
 	}
@@ -283,7 +308,11 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 	var terminal bytes.Buffer
 	output := databaseBackupBoundedWriter{w: &terminal, max: 128}
 	importAttempted = true
-	if err = e.stream(ctx, databaseBackupComponentArgs("restore", db.ContainerID, p.TimeoutSeconds), f, &output); err != nil {
+	restoreArgs := databaseBackupComponentArgs("restore", db.ContainerID, p.TimeoutSeconds)
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion {
+		restoreArgs = databaseBackupMySQLComponentArgs("restore", db.ContainerID, p.TimeoutSeconds)
+	}
+	if err = e.stream(ctx, restoreArgs, f, &output); err != nil {
 		return blob, failure(databaseBackupStageImportTransport)
 	}
 	text := strings.TrimSpace(terminal.String())

@@ -33,11 +33,15 @@ func (s *PostgresStore) DatabaseBackupComponents(ctx context.Context, actor, res
 		}
 		out.OperationID, out.Available, out.Reason = h.OperationID, true, "available"
 		for _, c := range h.Stack.Components {
-			_, e := domain.HostingPostgresComponent(h, *op.Plan, c.Component)
-			if e != nil {
+			version := domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, c.Component)
+			if version == "" {
 				continue
 			}
-			out.Components = append(out.Components, domain.HostingDatabaseBackupComponent{Component: c.Component, Engine: "postgresql", MajorVersion: 16, Running: c.Running, Eligible: true, Reason: "requires_runtime_profile_verification"})
+			engine, major := "postgresql", 16
+			if version == domain.HostingDatabaseMySQLBackupComponentVersion {
+				engine, major = "mysql", 8
+			}
+			out.Components = append(out.Components, domain.HostingDatabaseBackupComponent{Component: c.Component, Engine: engine, MajorVersion: major, Running: c.Running, Eligible: true, Reason: "requires_runtime_profile_verification"})
 		}
 		if len(out.Components) == 0 {
 			out.Available, out.Reason = false, "unsupported_profile"
@@ -100,7 +104,7 @@ func databaseBackupComponentSource(ctx context.Context, tx pgx.Tx, actor, resour
 		return h, op, 0, err
 	}
 	if component != "" {
-		if _, err = domain.HostingPostgresComponent(h, *op.Plan, component); err != nil {
+		if domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, component) == "" {
 			return h, op, 0, ErrConflict
 		}
 	}
@@ -150,6 +154,9 @@ func (s *PostgresStore) requestDatabaseBackupComponent(ctx context.Context, tx p
 	if err != nil {
 		return zero, err
 	}
+	if domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, in.Component) == domain.HostingDatabaseMySQLBackupComponentVersion && in.RemoteTarget != nil {
+		return zero, ErrConflict
+	}
 	hash := domain.HostingDocumentHash(struct {
 		Actor string
 		Input domain.HostingDatabaseBackupInput
@@ -176,7 +183,7 @@ func (s *PostgresStore) requestDatabaseBackupComponent(ctx context.Context, tx p
 	}
 	limits := s.databaseBackupPolicy()
 	now := time.Now().UTC()
-	view := domain.HostingDatabaseBackupOperation{ID: id, Version: domain.HostingDatabaseBackupComponentVersion, ProjectID: op.ProjectID, SourceResourceID: resource, SourceGeneration: h.Snapshot.ResourceGeneration, SourceComponent: in.Component, SourceDeployedOperationID: h.OperationID, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, RemoteTarget: in.RemoteTarget, CreatedAt: now, UpdatedAt: now}
+	view := domain.HostingDatabaseBackupOperation{ID: id, Version: domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, in.Component), ProjectID: op.ProjectID, SourceResourceID: resource, SourceGeneration: h.Snapshot.ResourceGeneration, SourceComponent: in.Component, SourceDeployedOperationID: h.OperationID, BackupID: id, Mode: "backup", State: "queued", Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, RemoteTarget: in.RemoteTarget, CreatedAt: now, UpdatedAt: now}
 	p := domain.HostingDatabaseBackupPlan{Operation: view, Component: &domain.HostingDatabaseBackupComponentPlan{Source: in.Component}, ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: *op.Plan, LocationID: id, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
 	p.Hash = domain.HostingDocumentHash(p)
 	if p.Validate() != nil {
@@ -221,6 +228,9 @@ func (s *PostgresStore) requestDatabaseBackupComponentRestore(ctx context.Contex
 	if err != nil {
 		return zero, err
 	}
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion && in.RemoteSource != nil {
+		return zero, ErrConflict
+	}
 	if p.Component == nil || p.Validate() != nil || original.Mode != "backup" || original.State != "succeeded" || original.Blob == nil || in.ComponentTarget.ResourceID == original.SourceResourceID {
 		return zero, ErrConflict
 	}
@@ -261,7 +271,7 @@ func (s *PostgresStore) requestDatabaseBackupComponentRestore(ctx context.Contex
 		return zero, ErrConflict
 	}
 	now := time.Now().UTC()
-	view := domain.HostingDatabaseBackupOperation{ID: id, Version: domain.HostingDatabaseBackupComponentVersion, ProjectID: original.ProjectID, SourceResourceID: original.SourceResourceID, SourceGeneration: original.SourceGeneration, SourceComponent: p.Component.Source, SourceDeployedOperationID: p.Source.OperationID, BackupID: backup, Mode: "restore", State: "waiting_target", TargetResourceID: target.ResourceID, TargetComponent: target.Component, TargetDeployedOperationID: h.OperationID, Blob: &blob, Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, CreatedAt: now, UpdatedAt: now}
+	view := domain.HostingDatabaseBackupOperation{ID: id, Version: p.Operation.Version, ProjectID: original.ProjectID, SourceResourceID: original.SourceResourceID, SourceGeneration: original.SourceGeneration, SourceComponent: p.Component.Source, SourceDeployedOperationID: p.Source.OperationID, BackupID: backup, Mode: "restore", State: "waiting_target", TargetResourceID: target.ResourceID, TargetComponent: target.Component, TargetDeployedOperationID: h.OperationID, Blob: &blob, Consistency: "logical_snapshot_source_writable", OwnershipHeld: true, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds, CreatedAt: now, UpdatedAt: now}
 	p.Operation, p.ActorID, p.Target, p.TargetPlan = view, actor, &h, op.Plan
 	p.Component = &domain.HostingDatabaseBackupComponentPlan{Source: p.Component.Source, Target: target.Component}
 	p.MaxBytes, p.TimeoutSeconds = limits.MaxBytes, limits.TimeoutSeconds

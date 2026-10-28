@@ -12,17 +12,17 @@ import (
 )
 
 func TestDatabaseBackupReceiptVersionsAndPhases(t *testing.T) {
-	for _, version := range []string{domain.HostingDatabaseBackupVersion, domain.HostingDatabaseMySQLBackupVersion, domain.HostingDatabaseBackupComponentVersion} {
+	for _, version := range []string{domain.HostingDatabaseBackupVersion, domain.HostingDatabaseMySQLBackupVersion, domain.HostingDatabaseBackupComponentVersion, domain.HostingDatabaseMySQLBackupComponentVersion} {
 		for _, phase := range []string{"intent", "complete", "failed", "uncertain"} {
 			t.Run(version+"/"+phase, func(t *testing.T) {
 				in := domain.HostingDatabaseBackupMutation{HostingAuthority: domain.HostingAuthority{OperationID: "backup", RunID: "db_backup_backup", LeaseID: "lease", Attempt: 1, Fence: "fence"}, ReceiptID: phase, PlanHash: "sha256:" + strings.Repeat("a", 64), Phase: phase}
 				out := domain.HostingDatabaseBackupOperation{ID: "backup", Version: version, ProjectID: "project", SourceResourceID: "source", SourceGeneration: 1, BackupID: "backup", Mode: "backup", State: map[string]string{"intent": "applying", "complete": "succeeded", "failed": "failed", "uncertain": "uncertain"}[phase], Consistency: "logical_snapshot_source_writable", MaxBytes: 1024, TimeoutSeconds: 60, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-				if version == domain.HostingDatabaseBackupComponentVersion {
+				if domain.IsHostingDatabaseBackupComponentVersion(version) {
 					in.ComponentVersion = version
 					out.SourceComponent, out.SourceDeployedOperationID = "postgresql", "deployed"
 				}
 				if phase == "complete" {
-					in.WritersResumed = version == domain.HostingDatabaseBackupComponentVersion
+					in.WritersResumed = domain.IsHostingDatabaseBackupComponentVersion(version)
 					in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 10, Format: domain.HostingDatabaseBackupFormatFor(version)}
 					out.Blob = in.Blob
 				}
@@ -43,7 +43,7 @@ func TestDatabaseBackupReceiptVersionsAndPhases(t *testing.T) {
 				}
 				out.Version = domain.HostingDatabaseBackupComponentVersion
 				out.SourceComponent, out.SourceDeployedOperationID = "postgresql", "deployed"
-				if version == domain.HostingDatabaseBackupComponentVersion {
+				if domain.IsHostingDatabaseBackupComponentVersion(version) {
 					out.Version = domain.HostingDatabaseBackupVersion
 					out.SourceComponent, out.SourceDeployedOperationID = "", ""
 				}
@@ -52,7 +52,7 @@ func TestDatabaseBackupReceiptVersionsAndPhases(t *testing.T) {
 				}
 				out.Version = version
 				out.SourceComponent, out.SourceDeployedOperationID = "", ""
-				if version == domain.HostingDatabaseBackupComponentVersion {
+				if domain.IsHostingDatabaseBackupComponentVersion(version) {
 					out.SourceComponent, out.SourceDeployedOperationID = "postgresql", "deployed"
 				}
 				if phase == "complete" {

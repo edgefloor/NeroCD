@@ -12,3 +12,6 @@ SELECT * FROM hosting_database_backup_receipts WHERE operation_id=$1 AND phase=$
 SELECT * FROM hosting_database_backups WHERE run_id=$1;
 -- name: DatabaseBackupSchemaPresent :one
 SELECT (to_regclass(current_schema()||'.hosting_database_backups') IS NOT NULL)::boolean;
+
+-- name: MySQLComponentBackupSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_component_backup_schema_compatible()') IS NOT NULL)::boolean;
