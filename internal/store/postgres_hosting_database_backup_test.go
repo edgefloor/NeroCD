@@ -46,6 +46,12 @@ func claimBackup(t *testing.T, f networkCaptureFixture, id string) (domain.Hosti
 func completeBackup(t *testing.T, f networkCaptureFixture, id string) domain.HostingDatabaseBackupOperation {
 	t.Helper()
 	a, p := claimBackup(t, f, id)
+	return completeClaimedBackup(t, f, a, p)
+}
+
+func completeClaimedBackup(t *testing.T, f networkCaptureFixture, a domain.HostingAuthority, p domain.HostingDatabaseBackupPlan) domain.HostingDatabaseBackupOperation {
+	t.Helper()
+	id := p.Operation.ID
 	in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "intent_" + id, PlanHash: p.Hash, Phase: "intent"}
 	if _, err := f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); err != nil {
 		t.Fatal("intent", err)
@@ -209,6 +215,9 @@ func TestPostgresDatabaseBackupRestoreAtomicLifecycle(t *testing.T) {
 		t.Fatal("target child not awaited", err)
 	}
 	prepareBackupRestoreChild(t, f, restored, target)
+	// Retain the actual pending restore lease before claiming independent work.
+	// The generic claim queue may legitimately return this restore first.
+	restoreAuthority, restorePlan := claimBackup(t, f, restored.ID)
 	// Restoring an immutable artifact holds only its fresh target. A normal
 	// source redeployment can be admitted independently while import is pending.
 	sourceReplacement, err := f.service.RequestHostingDatabaseDeployment(f.ctx, f.resource.ID, databaseExecutionInput("source_replacement_during_restore"))
@@ -229,7 +238,7 @@ func TestPostgresDatabaseBackupRestoreAtomicLifecycle(t *testing.T) {
 	if _, err = sf.pg.HostingComplete(f.ctx, f.runner, domain.HostingCompleteRequest{HostingAuthority: sf.authority, ReceiptID: "source_replaced", Result: domain.HostingResult{Outcome: "succeeded", Ready: true, ContainerID: strings.Repeat("c", 64), ImageID: sf.op.Release.ImageID, DaemonID: sf.op.Release.DaemonID, PlanHash: sf.op.Plan.Hash}}); err != nil {
 		t.Fatal("source replacement completion", err)
 	}
-	completeBackup(t, f, restored.ID)
+	completeClaimedBackup(t, f, restoreAuthority, restorePlan)
 	history, err := f.service.ListDatabaseBackups(f.ctx, f.resource.ID)
 	if err != nil || len(history) != 2 {
 		t.Fatal("backup history", err)
