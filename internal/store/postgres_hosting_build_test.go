@@ -1088,13 +1088,30 @@ func TestPostgresHostingBuildRejectsPlacementChangedDuringDestinationWait(t *tes
 func TestPostgresHostingBuildFunctionsUseOwningSchema(t *testing.T) {
 	f := newBuildStoreFixture(t)
 	ctx := t.Context()
-	b, a := f.start(t, "schema-bound")
-	other := enrollDestinationRunner(t, f.pg, "runner_schema_other", []string{domain.RunTypeComposeDeploy})
 	var schema string
 	if err := f.db.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
 		t.Fatal(err)
 	}
 	qualified := func(table string) string { return pgx.Identifier{schema, table}.Sanitize() }
+	// Reproduce the unbound hosting functions on an existing database, then
+	// verify the additive migration repairs each function before lease admission.
+	routines := []string{"nerocd_hosting_compose_lease", "nerocd_component_backup_lease", "nerocd_component_backup_stack_hold", "nerocd_database_backup_admission", "nerocd_database_backup_receipt"}
+	for _, routine := range routines {
+		if _, err := f.db.Exec(ctx, "ALTER FUNCTION "+qualified(routine)+"() RESET search_path"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := applyEmbeddedMigrations(ctx, f.db, "0099_hosting_stored_dockerfile.sql", "0100_hosting_function_schemas.sql"); err != nil {
+		t.Fatal(err)
+	}
+	for _, routine := range routines {
+		var bound bool
+		if err := f.db.QueryRow(ctx, `SELECT COALESCE(proconfig @> ARRAY[format('search_path=pg_catalog, %I, pg_temp', $1::text)],false) FROM pg_proc WHERE oid=$2::regprocedure`, schema, qualified(routine)+"()").Scan(&bound); err != nil || !bound {
+			t.Fatalf("hosting function %s is not bound to its owning schema: %v", routine, err)
+		}
+	}
+	b, a := f.start(t, "schema-bound")
+	other := enrollDestinationRunner(t, f.pg, "runner_schema_other", []string{domain.RunTypeComposeDeploy})
 	shadow := schema + "_shadow"
 	shadowID := pgx.Identifier{shadow}.Sanitize()
 	if _, err := f.db.Exec(ctx, "CREATE SCHEMA "+shadowID); err != nil {
@@ -1204,7 +1221,14 @@ func removeHostingBuildMigrationLayer(t *testing.T, db *pgxpool.Pool) {
 	// Newer application, backup, notification, and catalog layers retain keys in
 	// the older network/runtime layers. Remove only their explicit fixture
 	// objects first; RESTRICT keeps omitted dependencies visible to this test.
-	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_database_network_upgrade_snapshot ON hosting_snapshots;
+	if _, err := db.Exec(t.Context(), `DROP TRIGGER resources_compose_source ON resources;
+DROP TRIGGER hosting_compose_lease ON run_leases;
+DROP TRIGGER hosting_component_backup_stack_hold ON hosting_operations;
+DROP TRIGGER hosting_component_backup_lease ON run_leases;
+DROP INDEX hosting_one_stack_stop_task;
+DROP TABLE hosting_build_compose_results,hosting_stack_stop_plans,hosting_stack_lifecycle,hosting_compose_source_versions,hosting_compose_create_receipts;
+DROP FUNCTION nerocd_hosting_compose_source_consistent(),nerocd_hosting_compose_lease(),nerocd_stack_stop_plan_guard(),nerocd_stack_lifecycle_guard(),nerocd_component_backup_stack_hold(),nerocd_component_backup_lease(),nerocd_hosting_build_compose_body(),nerocd_hosting_git_stack_archive_origin(text,text,text,jsonb);
+DROP TRIGGER hosting_database_network_upgrade_snapshot ON hosting_snapshots;
 DROP TRIGGER hosting_database_network_upgrade_plan ON hosting_apply_plans;
 DROP TRIGGER hosting_database_network_upgrade_lease ON run_leases;
 DROP TRIGGER hosting_connection_single_family ON hosting_database_bindings;
@@ -1363,7 +1387,9 @@ DROP TRIGGER hosting_owned_storage_runtime_lease ON run_leases;
 		t.Fatal(err)
 	}
 	// Archive restore origins also retain the older storage and apply-plan keys.
-	if _, err := db.Exec(t.Context(), `DROP TRIGGER hosting_storage_image_origin_exclusive ON hosting_storage_materializations;
+	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_storage_backup_downloads;
+ DROP FUNCTION nerocd_storage_download_identity();
+ DROP TRIGGER hosting_storage_image_origin_exclusive ON hosting_storage_materializations;
  DROP TRIGGER hosting_archive_no_apply_plan ON hosting_apply_plans;
  DROP TRIGGER hosting_archive_no_release ON hosting_releases;
  DROP TRIGGER hosting_archive_no_generic_receipt ON hosting_receipts;
@@ -1381,6 +1407,9 @@ DROP TRIGGER hosting_owned_storage_runtime_lease ON run_leases;
  DROP TABLE hosting_storage_archive_recoveries;
  DROP TABLE hosting_storage_archive_task_targets;
  DROP TABLE hosting_storage_archive_plans;
+ DROP FUNCTION nerocd_compose_remote_archive_lineage();
+ DROP TABLE hosting_compose_volumes;
+ DROP FUNCTION nerocd_hosting_compose_volume_guard();
  DROP FUNCTION nerocd_storage_archive_origin_exclusive(),nerocd_storage_archive_family_exclusive(),nerocd_storage_archive_consistent(),nerocd_storage_archive_lease(),nerocd_storage_archive_flush_constraints(),nerocd_storage_archive_schema_compatible();`); err != nil {
 		t.Fatal(err)
 	}
@@ -1439,7 +1468,7 @@ DROP TRIGGER hosting_owned_storage_runtime_lease ON run_leases;
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(t.Context(), `DROP TABLE hosting_github_push_commit_intents,hosting_github_push_deliveries,hosting_github_push_commands,hosting_github_push_policies; DROP FUNCTION nerocd_hosting_github_push_schema_compatible();
-DROP TABLE hosting_runtime_log_events,hosting_runtime_log_sessions; DROP FUNCTION nerocd_runtime_log_identity(),nerocd_hosting_runtime_log_schema_compatible();
+DROP TABLE hosting_runtime_log_events,hosting_runtime_log_sessions; DROP FUNCTION nerocd_runtime_log_identity(),nerocd_hosting_runtime_log_schema_compatible(),nerocd_runtime_log_component_identity();
  DROP TABLE hosting_runtime_observations; DROP FUNCTION nerocd_hosting_observation_schema_compatible();
  DROP TRIGGER hosting_runtime_environment_lease ON run_leases;
  DROP FUNCTION nerocd_hosting_runtime_environment_lease(),nerocd_hosting_runtime_environment_schema_compatible();
