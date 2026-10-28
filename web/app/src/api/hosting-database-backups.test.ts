@@ -154,3 +154,13 @@ test("component discovery rejects foreign resource and Docker identity fields",a
   vi.mocked(request).mockResolvedValue(value);await expect(getDatabaseBackupComponents(scope,"db")).rejects.toThrow();
  }
 });
+
+
+test("MySQL history binds SQL format to its engine and rejects cross-engine or remote metadata", () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const backup = { ...operation, version: "mysql.logical-local.v1", blob: { ...operation.blob, format: "mysql_sql" } };
+ expect(parseDatabaseBackup(backup, scope, mysql)).toEqual(backup);
+ for (const invalid of [operation, { ...backup, blob: operation.blob }, { ...backup, remote_target: { target_id: "target", revision: 1 } }]) expect(() => parseDatabaseBackup(invalid, scope, mysql)).toThrow();
+ expect(() => parseDatabaseBackup(backup, scope, { ...db, engine: "postgresql" })).toThrow();
+ expect(() => parseDatabaseBackup(backup, scope, { ...db, engine: "redis" })).toThrow();
+});

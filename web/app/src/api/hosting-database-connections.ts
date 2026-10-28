@@ -84,7 +84,7 @@ export function validateConnection(value: DatabaseConnection, scope: DatabaseCon
 }
 export function validateConnectionOptions(value: DatabaseConnectionOptions): DatabaseConnectionOptions {
   if (!closed(value, ["items"]) || !Array.isArray(value.items) || value.items.length > 1000 || new Set(value.items.map((v) => v.resource_id)).size !== value.items.length || value.items.some((v) =>
-    !closed(v, ["resource_id", "name", "engine", "generation", "destination_id", "status", "reason_code"]) || !identifier(v.resource_id) || !identifier(v.destination_id) || !integer(v.generation, 1) || !text(v.name, 255) || !v.name || !["postgresql", "redis"].includes(v.engine) || !text(v.status, 128) || !text(v.reason_code, 128))) throw new Error("Invalid database connection options");
+    !closed(v, ["resource_id", "name", "engine", "generation", "destination_id", "status", "reason_code"]) || !identifier(v.resource_id) || !identifier(v.destination_id) || !integer(v.generation, 1) || !text(v.name, 255) || !v.name || !["postgresql", "mysql", "redis"].includes(v.engine) || !text(v.status, 128) || !text(v.reason_code, 128))) throw new Error("Invalid database connection options");
   return value;
 }
 export async function getDatabaseConnection(scope: DatabaseConnectionScope, signal?: AbortSignal): Promise<DatabaseConnection | null> {

@@ -50,11 +50,11 @@ function response(body: Record<string, string>) {
     engine: body.engine,
     recipe_version: body.recipe_version,
     credentials:
-      body.engine === "postgresql"
+      body.engine !== "redis"
         ? [
             {
               role: "admin",
-              username: "postgres",
+              username: body.engine === "mysql" ? "root" : "postgres",
               secret_id: "admin_secret",
               version: 1,
             },
@@ -503,4 +503,16 @@ test("a 503-only authority refresh preserves an uncertain intent for exact retry
   fireEvent.submit(screen.getByRole("form"));
   await screen.findByRole("region", { name: "Saved database metadata for Data" });
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")[1]![1].body).toBe(body);
+});
+
+
+test("owner saves native MySQL with its pinned recipe and root/app references", async () => {
+ const { fetch } = setup(); await draft();
+ fireEvent.change(screen.getByLabelText("Database engine"), { target: { value: "mysql" } });
+ expect(screen.getByText(/mysql-8.4.13-oraclelinux9.v1/)).toBeTruthy();
+ fireEvent.submit(screen.getByRole("form"));
+ await screen.findByRole("region", { name: "Saved database metadata for Data" });
+ const body = JSON.parse(fetch.mock.calls.find(([, init]) => init.method === "POST")![1].body as string);
+ expect(body).toMatchObject({ engine: "mysql", recipe_version: "mysql-8.4.13-oraclelinux9.v1" });
+ expect(JSON.stringify(body)).not.toMatch(/password|secret_id/);
 });

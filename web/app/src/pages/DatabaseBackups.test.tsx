@@ -108,7 +108,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
 });
-function mount(owner = true, strict = false) {
+function mount(owner = true, strict = false, savedDatabase = database) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -116,7 +116,7 @@ function mount(owner = true, strict = false) {
   const element = (
     <QueryClientProvider client={client}>
       <DatabaseBackups
-        database={database}
+        database={savedDatabase}
         scope={scope}
         owner={owner}
         blocked={false}
@@ -555,4 +555,27 @@ test.each([200,403])("Git database controls fail closed without current stack pr
  expect(screen.queryByRole("region",{name:"Component database backups"})).toBeNull();
  expect(api.getDatabaseBackupComponents).not.toHaveBeenCalled();
  expect(api.listDatabaseBackups).not.toHaveBeenCalled();
+});
+
+
+test("MySQL exposes immediate local backup and a separate new-resource restore without PG remote controls", async () => {
+ const mysql = { ...database, engine: "mysql" as const };
+ const backup: DatabaseBackup = { ...completed, version: "mysql.logical-local.v1", blob: { ...completed.blob!, format: "mysql_sql" } };
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([backup]);
+ vi.mocked(api.requestDatabaseBackup).mockResolvedValue({ ...backup, id: "new_backup", backup_id: "new_backup", state: "queued", ownership_held: true });
+ vi.mocked(api.restoreDatabaseBackup).mockResolvedValue({ ...backup, id: "restore", mode: "restore", target_resource_id: "new_mysql", state: "waiting_target", ownership_held: true });
+ mount(true, false, mysql);
+ await screen.findByText("MySQL logical backups");
+ await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Back up now" }).disabled).toBe(false));
+ expect(screen.queryByLabelText("Immediate backup destination")).toBeNull();
+ expect(screen.queryByLabelText("Restore archive source")).toBeNull();
+ expect(screen.getByText(/bytes · MySQL SQL dump/)).toBeTruthy();
+ fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
+ await waitFor(() => expect(api.requestDatabaseBackup).toHaveBeenCalledOnce());
+ expect(vi.mocked(api.requestDatabaseBackup).mock.calls[0]![2]).not.toHaveProperty("remote_target");
+ await selectRestore();
+ fireEvent.click(screen.getByRole("button", { name: "Restore into new database" }));
+ await waitFor(() => expect(api.restoreDatabaseBackup).toHaveBeenCalledOnce());
+ expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3]).toMatchObject({ name: "Restored data" });
+ expect(remote.listDatabaseBackupTransfers).not.toHaveBeenCalled();
 });

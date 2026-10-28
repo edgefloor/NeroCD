@@ -255,7 +255,7 @@ export function DatabaseDeployments({
       <p>
         Deploy the saved {database.engine} configuration, generation{" "}
         {database.resource.generation}. The server checks current runner
-        capability, placement, storage, and admission before execution.
+        capability, placement, storage, and admission before execution. {database.engine === "mysql" ? "MySQL deployment requires hosting_mysql_v1." : null}
       </p>
       <p>
         Private database network. No host port is published and no public

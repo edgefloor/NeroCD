@@ -124,7 +124,7 @@ function validateSnapshot(
         : "") ||
     value.policy_version !== "database.private.owned-storage.v1" ||
     value.host_port !== 0 ||
-    value.container_port !== (database.engine === "postgresql" ? 5432 : 6379)
+    value.container_port !== (database.engine === "postgresql" ? 5432 : database.engine === "mysql" ? 3306 : 6379)
   )
     invalid();
   fields(value.readiness, ["path", "timeout_seconds"]);
@@ -145,11 +145,11 @@ function validateRelease(
   );
   if (
     !safeText(value.canonical_image) ||
-    !/^docker\.io\/library\/(postgres|redis)@sha256:[a-f0-9]{64}$/.test(
+    !/^docker\.io\/library\/(postgres|mysql|redis)@sha256:[a-f0-9]{64}$/.test(
       String(value.canonical_image),
     ) ||
     !String(value.canonical_image).startsWith(
-      `docker.io/library/${engine === "postgresql" ? "postgres" : "redis"}@`,
+      `docker.io/library/${engine === "postgresql" ? "postgres" : engine === "mysql" ? "mysql" : "redis"}@`,
     ) ||
     !hash(value.image_id) ||
     !hash(value.hash) ||
@@ -177,7 +177,7 @@ function validateStoragePlan(value: unknown, database: HostingDatabase) {
     !safeText(value.creation_nonce, 128) ||
     !safeText(value.daemon_id, 255) ||
     value.mount_path !==
-      (database.engine === "postgresql" ? "/var/lib/postgresql/data" : "/data")
+      (database.engine === "postgresql" ? "/var/lib/postgresql/data" : database.engine === "mysql" ? "/var/lib/mysql" : "/data")
   )
     invalid();
 }
@@ -317,7 +317,7 @@ export function validateDatabaseOperation(
   if (
     release &&
     !release.canonical_image.startsWith(
-      `docker.io/library/${database.engine === "postgresql" ? "postgres" : "redis"}@`,
+      `docker.io/library/${database.engine === "postgresql" ? "postgres" : database.engine === "mysql" ? "mysql" : "redis"}@`,
     )
   )
     invalid();

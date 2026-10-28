@@ -13,7 +13,7 @@ import {
 
 const digest = "sha256:" + "a".repeat(64);
 const scope = { actor: "oidc:viewer", project: "project", environment: "env" };
-function fixture(engine: "postgresql" | "redis" = "postgresql") {
+function fixture(engine: "postgresql" | "mysql" | "redis" = "postgresql") {
   const database: HostingDatabase = {
     resource: {
       id: "db",
@@ -25,7 +25,7 @@ function fixture(engine: "postgresql" | "redis" = "postgresql") {
       source: {
         kind: "image",
         image: {
-          reference: `docker.io/library/${engine === "postgresql" ? "postgres" : "redis"}@${digest}`,
+          reference: `docker.io/library/${engine === "postgresql" ? "postgres" : engine === "mysql" ? "mysql" : "redis"}@${digest}`,
         },
       },
       created_by: "owner",
@@ -45,11 +45,11 @@ function fixture(engine: "postgresql" | "redis" = "postgresql") {
     recipe_version: databaseRecipes[engine],
     runtime_state: "adapter_unqualified",
     credentials:
-      engine === "postgresql"
+      engine !== "redis"
         ? [
             {
               role: "admin",
-              username: "postgres",
+              username: engine === "mysql" ? "root" : "postgres",
               secret_id: "admin_secret",
               version: 1,
             },
@@ -87,7 +87,7 @@ function fixture(engine: "postgresql" | "redis" = "postgresql") {
     server_id: "server",
     runner_id: "runner",
     runtime_namespace: database.binding.runtime_namespace,
-    container_port: engine === "postgresql" ? 5432 : 6379,
+    container_port: engine === "postgresql" ? 5432 : engine === "mysql" ? 3306 : 6379,
     host_port: 0,
     readiness: { path: "", timeout_seconds: 0 },
     policy_version: "database.private.owned-storage.v1",
@@ -110,7 +110,7 @@ function fixture(engine: "postgresql" | "redis" = "postgresql") {
   const storage = {
     reference: database.storage_ref,
     volume_name: "ncdv_owned",
-    mount_path: engine === "postgresql" ? "/var/lib/postgresql/data" : "/data",
+    mount_path: engine === "postgresql" ? "/var/lib/postgresql/data" : engine === "mysql" ? "/var/lib/mysql" : "/data",
     creation_operation_id: "operation",
     creation_nonce: "nonce",
     daemon_id: "daemon",
@@ -159,7 +159,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-test.each(["postgresql", "redis"] as const)(
+test.each(["postgresql", "mysql", "redis"] as const)(
   "%s deployment uses only the frozen body, private evidence and scoped no-store reads",
   async (engine) => {
     const { database, operation } = fixture(engine);

@@ -660,3 +660,17 @@ test.each(["actor", "project", "resource", "owner"] as const)("%s change clears 
   expect(screen.queryByRole("button", { name: "Retry identical storage recovery request" })).toBeNull();
   expect(fetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
 });
+
+
+test("MySQL connection uses server eligibility and the existing exact-generation request", async () => {
+ const { fetch } = setup((url, init) => url.endsWith("/database-connections/options") ? json({ items: [{ ...option, engine: "mysql" }] }) : url.endsWith("/database-connections") && init.method === "POST" ? json(connection, 202) : undefined);
+ await screen.findByRole("option", { name: "Data · mysql · Available" });
+ expect(screen.getByText(/MYSQL_DATABASE, MYSQL_HOST, MYSQL_PASSWORD, MYSQL_PORT, and MYSQL_USER/)).toBeTruthy();
+ fireEvent.change(screen.getByLabelText("Database to connect"), { target: { value: "db" } });
+ fireEvent.click(screen.getByRole("checkbox"));
+ fireEvent.click(screen.getByRole("button", { name: "Connect database and deploy application" }));
+ await screen.findByText(/Request accepted: hcn_test/);
+ const body = JSON.parse(String(fetch.mock.calls.find(([url, init]) => url.endsWith("/database-connections") && init.method === "POST")![1].body));
+ expect(body.binding).toMatchObject({ database_resource_id: "db", expected_runtime_generation: 5, expected_database_generation: 2 });
+ expect(JSON.stringify(body)).not.toMatch(/MYSQL_PASSWORD|WORDPRESS_DB|secret_id/);
+});

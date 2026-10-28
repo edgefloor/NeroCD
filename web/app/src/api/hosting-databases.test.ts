@@ -203,3 +203,10 @@ test("deadline and retirement abort stalled transports even when fetch ignores c
   controller.abort();
   await expect(retired).rejects.toMatchObject({ name: "AbortError" });
 });
+
+
+test("MySQL accepts only the pinned recipe and root/app credential roles", () => {
+ const mysql: HostingDatabase = { ...database, engine: "mysql", recipe_version: databaseRecipes.mysql, credentials: [{ role: "admin", username: "root", secret_id: "admin", version: 1 }, { role: "app", username: "ncd_app", secret_id: "app", version: 1 }] };
+ expect(validateDatabase(mysql)).toBe(mysql);
+ for (const invalid of [{ ...mysql, recipe_version: databaseRecipes.postgresql }, { ...mysql, credentials: database.credentials }, { ...mysql, credentials: [{ ...mysql.credentials[0]!, username: "postgres" }, mysql.credentials[1]!] }]) expect(() => validateDatabase(invalid)).toThrow();
+});

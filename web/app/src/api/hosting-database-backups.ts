@@ -54,7 +54,7 @@ const allowed = new Set([
 export function parseDatabaseBackup(
   raw: unknown,
   scope: DatabaseScope,
-  database: Pick<HostingDatabase, "resource">,
+  database: Pick<HostingDatabase, "resource"> & Partial<Pick<HostingDatabase, "engine">>,
 ): DatabaseBackup {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
   const v = raw as Record<string, unknown>;
@@ -72,7 +72,7 @@ export function parseDatabaseBackup(
     Number(v.timeout_seconds) < 1 ||
     Number(v.timeout_seconds) > 3600 ||
     !id(v.id) ||
-    !["postgresql.logical-local.v1", "postgresql.compose-logical-local.v1"].includes(String(v.version)) ||
+    !["postgresql.logical-local.v1", "postgresql.compose-logical-local.v1", "mysql.logical-local.v1"].includes(String(v.version)) ||
     v.project_id !== scope.project ||
     v.source_resource_id !== database.resource.id ||
     !Number.isSafeInteger(v.source_generation) ||
@@ -103,6 +103,7 @@ export function parseDatabaseBackup(
         v.target_resource_id === v.source_resource_id
   )
     return fail();
+  if (database.engine && ((v.version === "mysql.logical-local.v1") !== (database.engine === "mysql") || database.engine === "redis")) return fail();
   const componentVersion = v.version === "postgresql.compose-logical-local.v1";
   const component = (value: unknown): value is string => typeof value === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(value);
   if (componentVersion ? !component(v.source_component) || !id(v.source_deployed_operation_id) || (v.mode === "restore" ? !component(v.target_component) || !id(v.target_deployed_operation_id) : v.target_component !== undefined || v.target_deployed_operation_id !== undefined) : [v.source_component, v.source_deployed_operation_id, v.target_component, v.target_deployed_operation_id].some(value => value !== undefined)) return fail();
@@ -118,10 +119,11 @@ export function parseDatabaseBackup(
       !Number.isSafeInteger(b.bytes) ||
       Number(b.bytes) < 5 ||
       Number(b.bytes) > 1073741824 ||
-      b.format !== "postgresql_custom"
+      b.format !== (v.version === "mysql.logical-local.v1" ? "mysql_sql" : "postgresql_custom")
     )
       return fail();
   }
+  if (v.version === "mysql.logical-local.v1" && v.remote_target !== undefined) return fail();
   if (
     v.failure_code !== undefined &&
     !["execution_failed", "publication_failed", "interrupted"].includes(
@@ -173,7 +175,7 @@ export const databaseBackupsKey = (scope: DatabaseScope, id: string) =>
   ] as const;
 export async function listDatabaseBackups(
   scope: DatabaseScope,
-  database: Pick<HostingDatabase, "resource">,
+  database: Pick<HostingDatabase, "resource"> & Partial<Pick<HostingDatabase, "engine">>,
   signal?: AbortSignal,
 ) {
   const raw = await boundedDatabaseRequest(
@@ -191,7 +193,7 @@ export async function listDatabaseBackups(
 }
 export async function requestDatabaseBackup(
   scope: DatabaseScope,
-  database: Pick<HostingDatabase, "resource">,
+  database: Pick<HostingDatabase, "resource"> & Partial<Pick<HostingDatabase, "engine">>,
   input: DatabaseBackupInput,
   signal: AbortSignal,
 ) {
@@ -217,7 +219,7 @@ export async function requestDatabaseBackup(
 }
 export async function restoreDatabaseBackup(
   scope: DatabaseScope,
-  database: Pick<HostingDatabase, "resource">,
+  database: Pick<HostingDatabase, "resource"> & Partial<Pick<HostingDatabase, "engine">>,
   backup: string,
   input: DatabaseRestoreInput,
   signal: AbortSignal,

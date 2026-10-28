@@ -106,7 +106,7 @@ function DatabaseBackupsPanel({
   const history = useQuery({
     queryKey: key,
     queryFn: ({ signal }) => listDatabaseBackups(scope, database, signal),
-    enabled: !blocked && !accessRevoked && database.engine === "postgresql",
+    enabled: !blocked && !accessRevoked && ["postgresql", "mysql"].includes(database.engine),
     retry: false,
     refetchInterval: (q) =>
       q.state.data?.some(
@@ -122,7 +122,7 @@ function DatabaseBackupsPanel({
     : history.data ?? [];
   const transfers = useQueries({
     queries: records
-      .filter((v) => v.mode === "backup")
+      .filter((v) => v.mode === "backup" && database.engine === "postgresql")
       .map((v) => ({
         queryKey: databaseBackupTransfersKey(scope, v.id),
         queryFn: ({ signal }: { signal: AbortSignal }) =>
@@ -170,13 +170,13 @@ function DatabaseBackupsPanel({
       onDenied();
     }
   }, [denied]);
-  if (database.engine !== "postgresql")
+  if (!["postgresql", "mysql"].includes(database.engine))
     return (
       <section aria-label="Database backups">
         <h4>Logical backups</h4>
         <p>
           Immediate logical backup and new-database restore currently support
-          PostgreSQL17.11. Redis backups are not available.
+          PostgreSQL and MySQL. Redis backups are not available.
         </p>
       </section>
     );
@@ -239,13 +239,11 @@ function DatabaseBackupsPanel({
       className="min-w-0 space-y-3 rounded-xl border p-3"
       aria-label="Database backups"
     >
-      <h4 className="font-medium">PostgreSQL logical backups</h4>
+      <h4 className="font-medium">{database.engine === "mysql" ? "MySQL" : "PostgreSQL"} logical backups</h4>
       <p>
         A backup captures a consistent logical snapshot of the app database
         while source writes continue. The operator sets byte and execution
-        limits; each accepted operation records its exact limits. Schedules and
-        S3-compatible destinations are configured below. Upload status is
-        separate from dump completion.
+        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate local backups and restore into a separate new database. Schedules, retention, and remote copies are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
       </p>
       <p>
         Restore creates a new private database with distinct credentials and
@@ -259,13 +257,13 @@ function DatabaseBackupsPanel({
         </p>
       ) : (
         <div className="space-y-3">
-          <BackupDestinationSelect
+          {database.engine === "postgresql" ? <BackupDestinationSelect
             label="Immediate backup destination"
             value={remoteTarget}
             onChange={setRemoteTarget}
             destinations={destinations}
             disabled={disabled || Boolean(attempt)}
-          />
+          /> : null}
           <Button
             type="button"
             className="h-auto max-w-full whitespace-normal"
@@ -308,7 +306,7 @@ function DatabaseBackupsPanel({
                 ))}
               </select>
             </label>
-            <label className="block">
+            {database.engine === "postgresql" ? <><label className="block">
               Restore archive source
               <select
                 aria-label="Restore archive source"
@@ -334,12 +332,11 @@ function DatabaseBackupsPanel({
               Remote restore uses only a successfully uploaded, recorded object
               at its saved destination revision. It downloads and verifies the
               archive before importing into a new database.
-            </p>
+            </p></> : null}
             {!restoreSource ? (
               <p>
                 Local restore requires the archive to remain available on the
-                original backup runner. Remote upload success does not make a
-                local restore independent of that runner.
+                original backup runner. {database.engine === "postgresql" ? "Remote upload success does not make a local restore independent of that runner." : "MySQL SQL dumps restore only into the same supported MySQL recipe, not PostgreSQL or Redis."}
               </p>
             ) : null}
             {restoreSource && !remoteRestore ? (
@@ -440,7 +437,7 @@ function DatabaseBackupsPanel({
             </p>
             {v.blob ? (
               <p>
-                {v.blob.bytes.toLocaleString()} bytes · PostgreSQL custom ·{" "}
+                {v.blob.bytes.toLocaleString()} bytes · {database.engine === "mysql" ? "MySQL SQL dump" : "PostgreSQL custom"} ·{" "}
                 {v.blob.digest}
               </p>
             ) : null}
@@ -462,7 +459,7 @@ function DatabaseBackupsPanel({
               </p>
             ) : null}
             {v.failure_code ? <p>Recorded reason: {v.failure_code}</p> : null}
-            {v.mode === "backup" ? (
+            {v.mode === "backup" && database.engine === "postgresql" ? (
               <BackupUploadStatus
                 database={database}
                 scope={scope}

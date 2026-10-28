@@ -172,6 +172,7 @@ function Create({
     if (paused || request.current || !name.trim()) return;
     const recipe = engine === "postgresql"
       ? { engine: "postgresql" as const, recipe_version: databaseRecipes.postgresql }
+      : engine === "mysql" ? { engine: "mysql" as const, recipe_version: databaseRecipes.mysql }
       : { engine: "redis" as const, recipe_version: databaseRecipes.redis };
     const body: HostingDatabaseCreateInput = attempt ?? {
       request_id: databaseRequestID(),
@@ -245,7 +246,7 @@ function Create({
       >
         <h4 className="font-medium">Add database configuration</h4>
         <p className="text-sm">
-          Save PostgreSQL or Redis metadata with an owned storage reference and
+          Save PostgreSQL, MySQL, or Redis metadata with an owned storage reference and
           encrypted credential references. Saving does not start an engine.
         </p>
         <label className="block space-y-1">
@@ -271,9 +272,11 @@ function Create({
           >
             <option value="postgresql">PostgreSQL</option>
             <option value="redis">Redis</option>
+            <option value="mysql">MySQL</option>
           </select>
         </label>
         <p className="break-all text-sm">Recipe: {databaseRecipes[engine]}</p>
+        {engine === "mysql" ? <p className="text-sm">The destination runner requires hosting_mysql_v1 for deployment and hosting_mysql_backup_v1 for logical backup and restore. The server verifies current placement and capabilities.</p> : null}
         <label className="block space-y-1">
           Database destination
           <select

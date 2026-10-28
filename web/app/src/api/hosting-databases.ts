@@ -14,6 +14,7 @@ export type DatabaseScope = {
 export const databaseRecipes = {
   postgresql: "postgresql-17.11-bookworm.v1",
   redis: "redis-8.2.10-bookworm.v1",
+  mysql: "mysql-8.4.13-oraclelinux9.v1",
 } as const;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
@@ -159,6 +160,7 @@ export function validateDatabase(
   const roles =
     value.engine === "postgresql"
       ? { admin: "postgres", app: "ncd_app" }
+      : value.engine === "mysql" ? { admin: "root", app: "ncd_app" }
       : { app: "ncd_app", probe: "ncd_probe" };
   if (
     !Array.isArray(value.credentials) ||

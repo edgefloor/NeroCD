@@ -16,8 +16,8 @@ test("cross-project/application/database metadata and unexpected secret values f
   for (const change of [{ project_id: "other" }, { application_resource_id: "other" }, { database_resource_id: "other" }, { password: "must_not_display" }]) expect(() => validateConnection({ ...connectionFixture, ...change }, scope, "db")).toThrow();
   expect(validateConnection({ ...connectionFixture, state: "future" }, scope).state).toBe("future");
 });
-test("options use server-authoritative items without generic database or secret reads", async () => {
-  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [{ resource_id: "db", name: "Data", engine: "redis", generation: 2, destination_id: "dest", status: "available", reason_code: "eligible" }] })));
+test.each(["redis", "mysql"])("%s options use server-authoritative items without generic database or secret reads", async (engine) => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [{ resource_id: "db", name: "Data", engine, generation: 2, destination_id: "dest", status: "available", reason_code: "eligible" }] })));
   vi.stubGlobal("fetch", fetch);
   expect((await getDatabaseConnectionOptions(scope)).items).toHaveLength(1);
   expect(fetch.mock.calls[0][0]).toBe("/api/v1/resources/app/database-connections/options");
