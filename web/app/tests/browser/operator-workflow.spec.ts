@@ -4388,7 +4388,7 @@ test("audit deployment targets open details and preserve filtered history", asyn
     await page.goto(`/audit?q=${deploymentID}`);
     const target = page.getByRole("link", { name: deploymentID, exact: true });
     await expect(target).toBeVisible();
-    const metadata = JSON.parse(await target.locator('xpath=ancestor::*[@role="listitem"]').locator("pre").textContent() ?? "{}");
+    const metadata = JSON.parse(await page.getByRole("listitem").filter({ has: target }).locator("pre").textContent() ?? "{}");
     expect(metadata.request_id).toEqual(expect.any(String));
     expect(metadata.request_id).not.toBe("");
     await expect(target).toHaveAttribute("href", `/deployments/${deploymentID}?q=${deploymentID}`);
