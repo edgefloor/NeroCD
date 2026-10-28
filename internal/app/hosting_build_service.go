@@ -30,7 +30,7 @@ func (s *Service) RequestHostingBuild(ctx context.Context, resourceID string, in
 			return domain.PublicHostingBuild{}, InvalidInput(errors.New("stored Dockerfile does not accept a Git grant"))
 		}
 	} else {
-		if resource.Source.Kind != "git" || resource.Source.Git == nil || (resource.Source.Git.CredentialKind != "public" && resource.Source.Git.CredentialKind != "https_basic") {
+		if resource.Source.Kind != "git" || resource.Source.Git == nil || (resource.Source.Git.CredentialKind != "public" && resource.Source.Git.CredentialKind != "https_basic" && resource.Source.Git.CredentialKind != "ssh_private_key") {
 			return domain.PublicHostingBuild{}, InvalidInput(errors.New("unsupported Git credential kind"))
 		}
 		if (resource.Source.Git.CredentialKind == "public") != (in.GrantID == "") || len(in.GrantID) > 128 {

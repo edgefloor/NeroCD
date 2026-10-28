@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"nerocd/internal/hostingjobs"
 	"nerocd/internal/source"
 	"net"
+	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -310,7 +313,14 @@ func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSou
 		return domain.HostingGitSource{}, InvalidInput(errors.New("git input must contain configuration only"))
 	}
 	c := input.Git.GitResourceConfiguration
-	if c.CredentialKind != "public" && c.CredentialKind != "https_basic" {
+	if c.CredentialKind == "ssh_private_key" {
+		normalized, err := source.NormalizeGitRepositoryURL(c.RepositoryURL)
+		if err != nil {
+			return domain.HostingGitSource{}, InvalidInput(err)
+		}
+		c.RepositoryURL = normalized
+	}
+	if c.CredentialKind != "public" && c.CredentialKind != "https_basic" && c.CredentialKind != "ssh_private_key" {
 		return domain.HostingGitSource{}, InvalidInput(errors.New("unsupported Git credential kind"))
 	}
 	if id == "" {
@@ -320,7 +330,26 @@ func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSou
 			return domain.HostingGitSource{}, err
 		}
 	}
-	src := domain.HostingGitSource{ID: id, ResourceID: item.ID, ProjectID: item.ProjectID, Generation: generation, RepositoryURL: c.RepositoryURL, RequestedRef: c.RequestedRef, CredentialKind: c.CredentialKind, Settings: c.Settings, Policy: s.hostingGitPolicy}
+	policy := s.hostingGitPolicy
+	if c.CredentialKind == "ssh_private_key" {
+		u, err := url.Parse(c.RepositoryURL)
+		if err != nil || u.Scheme != "ssh" || u.User == nil || len(c.SSHHostFingerprints) == 0 || len(c.SSHHostFingerprints) > 32 {
+			return domain.HostingGitSource{}, InvalidInput(errors.New("SSH requires an explicit username and pinned host fingerprints"))
+		}
+		seen := map[string]bool{}
+		for _, fingerprint := range c.SSHHostFingerprints {
+			raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(fingerprint, "SHA256:"))
+			if err != nil || len(raw) != 32 || "SHA256:"+base64.RawStdEncoding.EncodeToString(raw) != fingerprint || seen[fingerprint] {
+				return domain.HostingGitSource{}, InvalidInput(errors.New("invalid SSH host fingerprint"))
+			}
+			seen[fingerprint] = true
+		}
+		policy.AllowedSchemes = []string{"ssh"}
+		policy.SSHHostFingerprints = slices.Clone(c.SSHHostFingerprints)
+	} else if len(c.SSHHostFingerprints) != 0 {
+		return domain.HostingGitSource{}, InvalidInput(errors.New("host fingerprints require SSH"))
+	}
+	src := domain.HostingGitSource{ID: id, ResourceID: item.ID, ProjectID: item.ProjectID, Generation: generation, RepositoryURL: c.RepositoryURL, RequestedRef: c.RequestedRef, CredentialKind: c.CredentialKind, Settings: c.Settings.Clone(), Policy: policy}
 	if err := domain.ValidateHostingGitSource(src); err != nil {
 		return src, InvalidInput(err)
 	}
@@ -330,7 +359,7 @@ func publicGitResourceSource(src domain.HostingGitSource) domain.ResourceSource 
 	if src.Kind == "dockerfile" {
 		return domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation, ContentHash: src.ContentHash, DockerfileResourceConfiguration: domain.DockerfileResourceConfiguration{Content: src.Content, Settings: src.Settings.Clone()}}}
 	}
-	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, Settings: src.Settings}}}
+	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: slices.Clone(src.Policy.SSHHostFingerprints), Settings: src.Settings}}}
 }
 func gitResourceError(err error) error {
 	if errors.Is(err, store.ErrGitResourceUnavailable) {

@@ -160,7 +160,7 @@ func TestRunnerPrivateGitDefaultLocalDeploymentRegistrationCapabilities(t *testi
 		for _, capability := range caps {
 			got[capability] = true
 		}
-		for _, capability := range []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.RunTypeLocalBuildDeploy} {
+		for _, capability := range []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingSSHGitCapability, domain.RunTypeLocalBuildDeploy} {
 			if !got[capability] {
 				t.Fatal("fresh registration dropped capability", capability)
 			}

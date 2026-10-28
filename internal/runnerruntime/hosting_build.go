@@ -52,7 +52,7 @@ type BuildConfig struct {
 	StatusInterval, RequestTimeout time.Duration
 }
 
-// PrivateGitConfig enables trusted HTTPS Basic/PAT checkout explicitly.
+// PrivateGitConfig enables trusted HTTPS Basic/PAT and pinned-host SSH checkout.
 // TrustedLoopbackHTTP permits only isolated literal-loopback controller fixtures.
 type PrivateGitConfig struct {
 	TrustedLoopbackHTTP bool `json:"trusted_loopback_http"`
@@ -225,8 +225,8 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	}
 	if s.Source.Kind != "dockerfile" {
 		u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
-		if err != nil || u.Scheme != "https" {
-			return errors.New("HTTPS source required")
+		if err != nil || (u.Scheme != "https" && (u.Scheme != "ssh" || s.Source.CredentialKind != "ssh_private_key")) {
+			return errors.New("supported Git source required")
 		}
 	}
 	if s.ExpectedDaemonID != "" && b.DaemonID != "" && s.ExpectedDaemonID != b.DaemonID {
@@ -404,7 +404,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	failureCode := "build_failed"
 	current := response.Build
 	checkout := e.checkout
-	if s.Source.CredentialKind == "https_basic" {
+	if s.Source.CredentialKind == "https_basic" || s.Source.CredentialKind == "ssh_private_key" {
 		if e.privateCheckout == nil {
 			return errors.New("private checkout unavailable; intent retained")
 		}
@@ -414,7 +414,14 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 				if err != nil {
 					return SourceCredential{}, err
 				}
-				output, err = newBuildOutputAdapter(e, a, at, runner.SecretMaterial{Value: string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}}, runner.SecretMaterial{Value: material.Username + ":" + string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}})
+				if material.Kind == "ssh_private_key" {
+					output, err = newBuildOutputAdapter(e, a, at)
+					if err == nil {
+						err = output.addBuildSecrets(c, []domain.HostingBuildSecretValue{{Name: "SSH_DEPLOY_KEY", Value: string(material.Bytes)}})
+					}
+				} else {
+					output, err = newBuildOutputAdapter(e, a, at, runner.SecretMaterial{Value: string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}}, runner.SecretMaterial{Value: material.Username + ":" + string(material.Bytes), Encodings: []string{"base64", "base64url", "hex"}})
+				}
 				if err != nil {
 					material.Close()
 					return SourceCredential{}, err
@@ -529,7 +536,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	watchMu.Lock()
 	observerErr := watchErr
 	watchMu.Unlock()
-	if (s.Source.Settings.Strategy == "compose" || s.Source.Kind == "dockerfile") && observerErr == nil && ctx.Err() == nil && settledComposeSourceFailure(err, filepath.Join(e.config.SourceRoot, a.BuildID), e.config.Engine.StateDir) {
+	if (s.Source.Settings.Strategy == "compose" || s.Source.Kind == "dockerfile" || s.Source.CredentialKind == "ssh_private_key" && current.SourceReceipt == nil) && observerErr == nil && ctx.Err() == nil && settledComposeSourceFailure(err, filepath.Join(e.config.SourceRoot, a.BuildID), e.config.Engine.StateDir) {
 		err = buildFailed
 		failureCode = "source_failed"
 		if output == nil {
@@ -646,11 +653,11 @@ func (e *BuildExecutor) validBuildCredentialSnapshot(s domain.HostingBuildSnapsh
 	if s.Source.CredentialKind == "public" || s.Source.Kind == "dockerfile" {
 		return s.Grant == nil
 	}
-	if e.config.PrivateGit == nil || s.Source.CredentialKind != "https_basic" || s.Grant == nil {
+	if e.config.PrivateGit == nil || (s.Source.CredentialKind != "https_basic" && s.Source.CredentialKind != "ssh_private_key") || s.Grant == nil {
 		return false
 	}
 	g := s.Grant
-	return g.ID != "" && g.Version == 1 && !g.Revoked && g.Kind == "https_basic" && g.SourceID == s.Source.ID && g.ResourceID == s.Source.ResourceID && g.ProjectID == s.Source.ProjectID && g.RepositoryURL == s.Source.RepositoryURL && g.PolicyHash == domain.HostingDocumentHash(s.Source.Policy) && g.SecretID != "" && g.SecretVersion > 0 && g.CreatedBy != ""
+	return g.ID != "" && g.Version == 1 && !g.Revoked && g.Kind == s.Source.CredentialKind && g.SourceID == s.Source.ID && g.ResourceID == s.Source.ResourceID && g.ProjectID == s.Source.ProjectID && g.RepositoryURL == s.Source.RepositoryURL && g.PolicyHash == domain.HostingDocumentHash(s.Source.Policy) && g.SecretID != "" && g.SecretVersion > 0 && g.CreatedBy != ""
 }
 func (e *BuildExecutor) privateBuildCredential(ctx context.Context, a domain.HostingBuildAuthority, s domain.HostingBuildSnapshot, intentID string) (hostingbuildprotocol.SourceCredential, error) {
 	var zero hostingbuildprotocol.SourceCredential
@@ -678,7 +685,7 @@ func (e *BuildExecutor) privateBuildCredential(ctx context.Context, a domain.Hos
 		material, err := client.BuildSourceCredential(call, e.config.Target.RunnerID, request, runnerclient.SourceCredentialTransport{TrustedLoopbackHTTP: e.config.PrivateGit.TrustedLoopbackHTTP})
 		cancel()
 		if err == nil {
-			if ctx.Err() != nil || material.Authority != a || material.DeliveryID != id || material.RequestHash != hostingbuildprotocol.SourceCredentialRequestHash(e.config.Target.RunnerID, request) || material.Kind != "https_basic" || !hostingbuildprotocol.ValidBasicCredential(material.Username, material.Bytes) || !time.Now().Before(material.UseUntil) || material.UseUntil.After(time.Now().Add(time.Minute)) {
+			if ctx.Err() != nil || material.Authority != a || material.DeliveryID != id || material.RequestHash != hostingbuildprotocol.SourceCredentialRequestHash(e.config.Target.RunnerID, request) || material.Kind != s.Source.CredentialKind || !hostingbuildprotocol.ValidSourceCredential(material.Kind, material.Username, material.Bytes) || !time.Now().Before(material.UseUntil) || material.UseUntil.After(time.Now().Add(time.Minute)) {
 				material.Close()
 				return zero, errors.New("private credential response mismatch")
 			}

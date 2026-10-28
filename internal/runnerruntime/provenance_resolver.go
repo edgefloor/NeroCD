@@ -718,7 +718,7 @@ func controlledGitCheckout(ctx context.Context, command provenanceCommand, works
 		return "", commandFailure("git init", err)
 	}
 	provenanceDiagnostic("git_remote", "start")
-	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "remote", "add", "origin", repositoryURL.String()), workspace, gitEnvironment); err != nil {
+	if _, err := runProvenanceCommand(command, ctx, "git", append(append([]string{}, gitBase...), "remote", "add", "origin", source.TransportURL(repositoryURL)), workspace, gitEnvironment); err != nil {
 		return "", commandFailure("git remote add", err)
 	}
 	fetchArgs := append(append([]string{}, gitBase...), "fetch", "--no-tags", "--depth=1", "origin", requestedRef)

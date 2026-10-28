@@ -95,6 +95,7 @@ func copyHostingResource(item domain.Resource) domain.Resource {
 	if item.Source.Git != nil {
 		source := *item.Source.Git
 		source.Settings = source.Settings.Clone()
+		source.SSHHostFingerprints = append([]string(nil), source.SSHHostFingerprints...)
 		item.Source.Git = &source
 	}
 	if item.Source.Compose != nil {

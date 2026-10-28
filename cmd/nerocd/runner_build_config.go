@@ -162,7 +162,7 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		if capability == domain.HostingBuildTriggerRevisionCapability && c == nil {
 			return nil, errors.New("trigger revision capability requires explicit build configuration")
 		}
-		if capability == domain.HostingPrivateGitCapability && !private {
+		if (capability == domain.HostingPrivateGitCapability || capability == domain.HostingSSHGitCapability) && !private {
 			return nil, errors.New("private Git capability requires explicit configuration")
 		}
 	}
@@ -231,6 +231,9 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 				capabilities = append(capabilities, needed)
 			}
 		}
+	}
+	if private && !slices.Contains(capabilities, domain.HostingSSHGitCapability) {
+		capabilities = append(capabilities, domain.HostingSSHGitCapability)
 	}
 	if private {
 		found := false

@@ -300,7 +300,7 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 	} else if err != nil {
 		return target, "", err
 	}
-	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic"}); err != nil {
+	if _, err = q.LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{RunnerID: target.RunnerID, RequirePrivateGit: src.CredentialKind == "https_basic", RequireSshGit: src.CredentialKind == "ssh_private_key"}); err != nil {
 		return target, "", ErrConflict
 	}
 	if _, err = q.LockHostingBuildEnrollment(ctx, target.RunnerID); err != nil {
@@ -757,7 +757,7 @@ func checkBuildTriggerRevision(ctx context.Context, tx pgx.Tx, snapshot domain.H
 		return nil
 	}
 	_, err := sqlcgen.New(tx).LockHostingBuildRunner(ctx, sqlcgen.LockHostingBuildRunnerParams{
-		RunnerID: snapshot.RunnerID, RequirePrivateGit: snapshot.Source.CredentialKind == "https_basic", RequireTriggerRevision: true,
+		RunnerID: snapshot.RunnerID, RequirePrivateGit: snapshot.Source.CredentialKind == "https_basic", RequireSshGit: snapshot.Source.CredentialKind == "ssh_private_key", RequireTriggerRevision: true,
 	})
 	if err != nil {
 		return ErrConflict
