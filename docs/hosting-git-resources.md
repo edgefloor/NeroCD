@@ -247,8 +247,9 @@ failure.
 
 This qualification uses a generic SSH server, same-host local artifacts, and a
 test CA. It does not establish provider installation, OAuth, cross-host artifact
-delivery, or production ACME. A focused real-Git checkout test covers SCP relative
-path normalization separately from the browser's explicit SSH URL.
+delivery, or production ACME. A focused real-Git command probe verifies SCP path
+normalization and remote-command arguments separately from the browser's explicit
+SSH URL.
 The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-ssh-deploy-key-20261028/b3c4fdb8400a0ce5f03ec54c33aa0c1d7b761b71/evidence-index.json)
 records the source and artifact checks, responsive browser assertions at 320, 390,
 430, and 1440 pixels, credential scans, and verified fixture cleanup.
