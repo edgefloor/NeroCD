@@ -4,7 +4,8 @@
 
 The catalog translates pinned Coolify templates at
 `b12d1386f3d458618b4c579babcd1e339c6c40b3` into Linkding, Uptime Kuma and Actual
-Budget image applications, or a saved Vikunja/PostgreSQL Compose application.
+Budget image applications, or saved Vikunja/PostgreSQL and WordPress/MySQL
+Compose applications.
 Installation uses the existing resource, destination, deployment and managed-secret
 APIs. Image entries use owned storage; Compose uses its named volumes. These
 entries create no automation TaskTemplate.
@@ -83,6 +84,26 @@ references, and the UI offers no login-credential reveal. Register an account in
 Vikunja after deployment. Public URL creates neither a route nor a certificate.
 The saved review prefills container port 3456 and readiness `/health`, 120 seconds.
 
+## WordPress with MySQL pinned definition
+
+`wordpress-with-mysql` uses immutable version
+`coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1`. The translated
+[pinned upstream template](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/templates/compose/wordpress-with-mysql.yaml)
+saves WordPress 7.1.3 and private MySQL 8.4.13 as managed Compose services.
+The public component is `wordpress`, container port 80, with readiness `/` and a
+120-second timeout. Named volumes retain `/var/www/html` and `/var/lib/mysql`.
+
+Enter the intended HTTPS Public URL during installation. The template stores it
+as `SERVICE_URL_WORDPRESS`; installation does not create a route or certificate.
+Generated `SERVICE_USER_WORDPRESS`, `SERVICE_PASSWORD_WORDPRESS`, and
+`SERVICE_PASSWORD_ROOT` references configure database access. They are not
+WordPress administrator credentials. After deployment, add the matching HTTPS
+route and complete WordPress's own site and administrator setup in the application.
+
+The MySQL service belongs to this Compose stack. Native MySQL resource backup
+controls do not apply to it. WordPress backup, restore, upgrades, and migration
+remain outside this template's qualified workflow.
+
 ## Install and deploy
 
 1. Select the project and shared environment under Project hosting.
@@ -96,7 +117,7 @@ The saved review prefills container port 3456 and readiness `/health`, 120 secon
    Only granted destinations with the required runtime and enabled runner features
    can be selected. Refresh destination compatibility rechecks the list and clears
    the selection without installing anything. Enter a name and select a destination.
-   For Vikunja with PostgreSQL,
+   For a Compose entry,
    also enter Public URL. Project owner access is required.
 3. Install the application. The first-install transaction rechecks destination
    eligibility before creating anything. A stale eligible preview can be rejected.
@@ -104,7 +125,7 @@ The saved review prefills container port 3456 and readiness `/health`, 120 secon
    any generated encrypted credentials, runtime references, attribution and the exact request.
 4. Open the saved application deployment panel. Its catalog container port and
    readiness settings are prefilled. Enter the runner-local host port and review
-   the first storage deployment before submitting it. For the Compose entry, use
+   the first storage deployment before submitting it. For a Compose entry, use
    Review current Compose deployment and acknowledge the interruption.
 5. After the deployment succeeds, use the ordinary route controls for HTTPS
    access, or the runner-local endpoint on an explicitly authorized local target.
@@ -179,7 +200,8 @@ ownership; the existing trusted recovery boundary still applies.
 ## Supported scope
 
 The catalog contains pinned Linkding 1.47.0, Uptime Kuma 2.5.8 and Actual Budget
-26.10.0 image entries and Vikunja 2.7.1 with PostgreSQL as saved Compose. Each
+26.10.0 image entries, plus Vikunja 2.7.1 with PostgreSQL and WordPress 7.1.3
+with MySQL 8.4.13 as saved Compose. Each
 installation keeps its original
 template bytes, normalized definition, attribution, initial name and placement,
 secret references, component identities, and resolved digest. Later resource
@@ -541,3 +563,30 @@ not establish physical runner execution, architecture or available capacity.
 Accepted deployment/data evidence at `ff6b200c` retains its original scope because
 runner, engine, Compose and pinned template dependencies are unchanged. General
 templates, upgrades and broader application recovery remain outside this slice.
+
+
+## WordPress qualification
+
+At `9fa6da10` on 2026-10-28, the catalog UI installed WordPress/MySQL, retried a
+committed response loss with the identical request, and deployed the saved stack.
+The real WordPress installer created the administrator. Fresh authenticated
+sessions published posts and uploaded a PNG through managed, fixture-CA HTTPS.
+Independent HTTPS reads verified the published post and exact uploaded bytes.
+
+Redeployment after runner restart and UI Stop/Start retained the same volumes,
+runtime references, posts, and media, with new authenticated writes afterward.
+An unavailable image failed before replacement and preserved the serving stack.
+A failure after mutation retained reconciliation ownership, the same volumes,
+and no competing writers. Direct checks found the database record and exact PNG on the
+held candidate. Competing deployment was denied, and read-only reconciliation
+kept the hold. This is unresolved service state, not automatic rollback or proof
+that public service recovered. Replacing an image cannot roll back database or
+media writes.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-catalog-wordpress-20261028/9fa6da1053329a5fe7cfb675b8ba67e970181a2d/evidence-index.json)
+records source and artifact checks, responsive hosting controls at 320, 390, 430,
+and 1280 pixels, credential scans, and verified cleanup. Runtime proof covers one
+Linux arm64 destination and test-CA HTTPS. It does not establish other
+architectures, public ACME, WordPress backup, catalog upgrades, plugin/theme
+administration, cross-host recovery, or automatic data rollback. Earlier catalog
+qualifications retain their own scope.
