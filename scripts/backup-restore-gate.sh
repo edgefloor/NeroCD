@@ -82,7 +82,7 @@ PYTHON
 trap cleanup EXIT
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
-for x in docker jq od rg bun openssl python3; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
+for x in docker curl jq od rg bun openssl python3; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
 docker info >/dev/null || fail 'Docker unavailable'
 
 docker build -t "$image_tag" "$root" >"$dir/build.log" 2>&1 || fail 'backup tool image build failed'
@@ -110,7 +110,8 @@ printf 'postgres://%s:%s@%s:5432/nerocd?sslmode=disable\n' "$owner" "$password" 
 printf 'postgres://%s:%s@%s:5432/nerocd?sslmode=disable\n' "$app" "$app_password" "$source" >"$dir/source-app-url"
 printf 'postgres://%s:%s@%s:5432/nerocd?sslmode=disable\n' "$app" "$app_password" "$target" >"$dir/target-app-url"
 printf '%s\n' "$bootstrap_password" >"$dir/bootstrap-password"
-chmod 0400 "$dir/source-url" "$dir/target-url" "$dir/source-app-url" "$dir/target-app-url" "$dir/bootstrap-password"
+printf '%s\n' "$password" >"$dir/postgres-password"
+chmod 0400 "$dir/source-url" "$dir/target-url" "$dir/source-app-url" "$dir/target-app-url" "$dir/bootstrap-password" "$dir/postgres-password"
 mkdir -m 0700 "$dir/backups" "$dir/runner-files" "$dir/wrong-runner-files"
 for runner_file in runner.json template.json template-workflow.json run-root.json run-nested.json; do
   printf 'fixture runner credential must not be copied\n' >"$dir/runner-files/$runner_file"
@@ -123,8 +124,8 @@ for container in "$source" "$target"; do
   for start_attempt in 1 2; do
     docker rm -f "$container" >/dev/null 2>&1 || true
     docker run -d --name "$container" --network "$network" \
-      -e POSTGRES_DB=nerocd -e POSTGRES_USER="$owner" -e POSTGRES_PASSWORD="$password" \
-      "$postgres_image" >/dev/null
+      -e POSTGRES_DB=nerocd -e POSTGRES_USER="$owner" -e POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password \
+      -v "$dir/postgres-password:/run/secrets/postgres-password:ro" "$postgres_image" >/dev/null
     for _ in {1..40}; do docker exec "$container" pg_isready -U "$owner" -d nerocd >/dev/null 2>&1 && { ready=true; break; }; sleep 1; done
     [[ "$ready" == true ]] && break
     docker logs "$container" 2>&1 | sed -E 's/(password|POSTGRES_PASSWORD)=[^[:space:]]+/\1=<redacted>/Ig' | tail -n 40 >>"$evidence" || true
@@ -192,18 +193,21 @@ admin_email="backup-${suffix}@example.invalid"
 umask 077; printf '%s\n%s\n' "$admin_email" "$bootstrap_password" >"$dir/browser.credentials"; chmod 0600 "$dir/browser.credentials"
 browser_phase required "$dir/browser-required.json" 'browser did not render CLI-only pre-bootstrap guidance'
 run_app -v "$dir/bootstrap-password:/runtime/bootstrap-password:ro" "$image_ref" bootstrap-admin --email "$admin_email" --name 'Backup Admin' --password-file /runtime/bootstrap-password >"$dir/bootstrap.log" 2>&1 || fail 'supported source bootstrap failed'
-api_post(){
-  local path=$1 body=$2 token=${3:-}
-  if [[ -z "$token" ]]; then
-    docker run --rm --network "$network" alpine:3.22.2 wget -qO- --header 'Content-Type: application/json' --post-data "$body" "http://$source_server:8080$path"
-  else
-    docker run --rm --network "$network" alpine:3.22.2 wget -qO- --header 'Content-Type: application/json' --header "Authorization: Bearer $token" --post-data "$body" "http://$source_server:8080$path"
-  fi
+private_http(){
+  local method=$1 url=$2 token=$3 body=$4 request rc
+  shift 4
+  request=$(mktemp -d "$dir/http.XXXXXXXX") || return 1
+  printf '%s' "$body" >"$request/body"
+  printf 'Content-Type: application/json\n' >"$request/headers"
+  [[ -z "$token" ]] || printf 'Authorization: Bearer %s\n' "$token" >>"$request/headers"
+  rc=0
+  curl -ksS --max-time 15 -X "$method" --header "@$request/headers" --data-binary "@$request/body" "$@" "$url" || rc=$?
+  rm -rf -- "$request"
+  return "$rc"
 }
-api_get(){
-  local path=$1 token=$2
-  docker run --rm --network "$network" alpine:3.22.2 wget -qO- --header "Authorization: Bearer $token" "http://$source_server:8080$path"
-}
+api_post(){ private_http POST "http://127.0.0.1:${source_port##*:}$1" "${3:-}" "$2" --fail; }
+api_get(){ private_http GET "http://127.0.0.1:${source_port##*:}$1" "$2" '' --fail; }
+
 for _ in {1..30}; do docker run --rm --network "$network" alpine:3.22.2 wget -qO- "http://$source_server:8080/api/v1/ready" >/dev/null 2>&1 && break; sleep 1; done
 docker run --rm --network "$network" alpine:3.22.2 wget -qO- "http://$source_server:8080/api/v1/ready" | jq -e '.status == "ready"' >/dev/null || fail 'source server was not ready'
 session=$(api_post /api/v1/sessions "{\"email\":\"$admin_email\",\"password\":\"$bootstrap_password\"}") || fail 'source API login failed'
@@ -285,7 +289,7 @@ anonymous_code=$(curl -ksS --max-time 5 -o "$dir/operations-anonymous.json" -w '
 owner_function=$(docker exec "$source" psql -At -U "$owner" -d nerocd -c "SELECT pg_get_functiondef('nerocd_repository_policy_schema_compatible()'::regprocedure)")
 [[ -n "$owner_function" ]] || fail 'could not retain schema compatibility function'
 docker exec "$source" psql -v ON_ERROR_STOP=1 -U "$owner" -d nerocd -c "CREATE OR REPLACE FUNCTION nerocd_repository_policy_schema_compatible() RETURNS boolean LANGUAGE sql STABLE AS 'SELECT false'" >"$dir/operations-incompatible.log"
-for _ in {1..20}; do code=$(curl -ksS --max-time 5 -o "$dir/operations-incompatible.json" -w '%{http_code}' -H "Authorization: Bearer $(jq -r .token <<<"$session")" "$base/api/v1/operations/status"); [[ "$code" == 503 ]] && break; sleep .2; done
+for _ in {1..20}; do code=$(private_http GET "$base/api/v1/operations/status" "$token" '' -o "$dir/operations-incompatible.json" -w '%{http_code}'); [[ "$code" == 503 ]] && break; sleep .2; done
 [[ "$code" == 503 ]] || fail 'incompatible operations status did not return 503'
 ! rg -q 'snapshot|postgres:|schema_' "$dir/operations-incompatible.json" || fail 'incompatible operations response disclosed a partial snapshot'
 browser_phase unavailable "$dir/browser-unavailable.json" 'browser did not render bounded unavailable operations state'
@@ -431,19 +435,18 @@ docker run --rm --user "$(id -u):$(id -g)" --network "$network" \
   -e NEROCD_OWNER_DATABASE_USER="$owner" -e NEROCD_APP_DATABASE_USER="$app" \
   -v "$dir/target-url:/runtime/owner-url:ro" -v "$dir/target-app-url:/runtime/app-url:ro" \
   "$image_ref" provision-app-role --owner-file /runtime/owner-url --app-file /runtime/app-url >"$dir/target-provision-app.log" 2>&1 || fail 'restored application role provision failed'
-docker run -d --name "$target_server" --user "$(id -u):$(id -g)" --network "$network" \
+docker run -d --name "$target_server" --user "$(id -u):$(id -g)" --network "$network" -p 127.0.0.1::8080 \
   -e NEROCD_MODE=production -e NEROCD_IMAGE_REF="$image_ref" -e NEROCD_DATABASE_CREDENTIAL=app -e NEROCD_APP_DATABASE_USER="$app" \
   -e NEROCD_DATABASE_URL_FILE=/runtime/app-url -e NEROCD_PUBLIC_ORIGIN=https://backup.example.invalid \
   -v "$dir/target-app-url:/runtime/app-url:ro" "$image_ref" server --addr :8080 >/dev/null
 for _ in {1..30}; do docker run --rm --network "$network" alpine:3.22.2 wget -qO- "http://$target_server:8080/api/v1/ready" >/dev/null 2>&1 && break; sleep 1; done
 docker run --rm --network "$network" alpine:3.22.2 wget -qO- "http://$target_server:8080/api/v1/ready" | jq -e '.status == "ready"' >/dev/null || fail 'restored server was not ready'
-restored_api_post(){
-  docker run --rm --network "$network" alpine:3.22.2 wget -qO- --header 'Content-Type: application/json' --post-data "$2" "http://$target_server:8080$1"
-}
+target_port=$(docker port "$target_server" 8080/tcp | tail -1)
+restored_api_post(){ private_http POST "http://127.0.0.1:${target_port##*:}$1" '' "$2" --fail; }
 restored_session=$(restored_api_post /api/v1/sessions "{\"email\":\"$admin_email\",\"password\":\"$bootstrap_password\"}") || fail 'restored credential login failed'
 restored_token=$(jq -r '.token' <<<"$restored_session")
 [[ -n "$restored_token" && "$restored_token" != null ]] || fail 'restored login did not issue a fresh session'
-restored_get(){ docker run --rm --network "$network" alpine:3.22.2 wget -qO- --header "Authorization: Bearer $restored_token" "http://$target_server:8080$1"; }
+restored_get(){ private_http GET "http://127.0.0.1:${target_port##*:}$1" "$restored_token" '' --fail; }
 for endpoint in "/api/v1/projects" "/api/v1/services?project_id=$project_id" "/api/v1/environments?service_id=$service_id" "/api/v1/revisions?service_id=$service_id" "/api/v1/deployments?environment_id=$environment_id" "/api/v1/runners" "/api/v1/audit-events"; do
   restored_get "$endpoint" | jq -e '.items | length > 0' >/dev/null || fail "restored API history is missing for $endpoint"
 done
