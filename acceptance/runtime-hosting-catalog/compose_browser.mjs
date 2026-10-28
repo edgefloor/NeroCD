@@ -256,7 +256,7 @@ async function wordpressWorkflow(h, initial) {
   await wp.locator('#title').fill("NeroCD persistent WordPress post");
   await wp.locator('#content').fill("NeroCD persistent WordPress body");
   const draft=wp.waitForResponse(r=>r.request().method()==="POST"&&new URL(r.url()).pathname==='/wp-admin/post.php');
-  await wp.locator('#save-post').click();await draft;
+  await wp.locator('#save-post').click();if((await draft).status()!==200)throw Error('WordPress initial draft rejected');
   await wp.goto('/wp-admin/edit.php');
   const row=wp.locator('tr.type-post').filter({has:wp.getByRole('link',{name:"NeroCD persistent WordPress post",exact:true})});
   await expect(row).toHaveCount(1);
@@ -271,15 +271,29 @@ async function wordpressWorkflow(h, initial) {
   const uploading=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/async-upload.php');
   await wp.locator('input[type=file]').setInputFiles({name:'nerocd-wordpress-persistence.png',mimeType:'image/png',buffer:png});
   const uploaded=await uploading;if(uploaded.status()!==200)throw Error('WordPress upload rejected');
-  const media=await uploaded.json();if(media.success!==true||!media.data?.url)throw Error('WordPress upload receipt missing');
-  const mediaURL=new URL(media.data.url);if(mediaURL.origin!==appOrigin||!mediaURL.pathname.startsWith('/wp-content/uploads/'))throw Error('WordPress upload origin changed');
+  const mediaID=(await uploaded.text()).trim();if(!/^[1-9][0-9]*$/.test(mediaID))throw Error('WordPress short upload receipt missing');
+  const copyURL=wp.locator(`#media-item-${mediaID} .copy-attachment-url`);
+  await expect(copyURL).toBeVisible();
+  const mediaURL=new URL(await copyURL.getAttribute('data-clipboard-text'));if(mediaURL.origin!==appOrigin||!mediaURL.pathname.startsWith('/wp-content/uploads/'))throw Error('WordPress upload origin changed');
   const proof=postID+'|'+mediaURL.pathname;
   async function checkWordPress(stage){
     step='wordpress_fresh_login_'+stage;await login();
     await wp.goto('/wp-admin/edit.php');await expect(wp.getByRole('link',{name:'NeroCD persistent WordPress post',exact:true})).toBeVisible();
     const post=await freshAppContext.request.get('/?p='+postID);if(post.status()!==200||!(await post.text()).includes('NeroCD persistent WordPress body'))throw Error('WordPress public post changed');
     const image=await freshAppContext.request.get(mediaURL.pathname);if(image.status()!==200||!(await image.body()).equals(png))throw Error('WordPress upload bytes changed');
-    await wp.goto('/wp-admin/index.php');await wp.locator('#title').fill('New write after '+stage);await wp.locator('#content').fill('Fresh authenticated write '+stage);const written=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/post.php');await wp.locator('#save-post').click();await written;
+    const title='New write after '+stage,body='Fresh authenticated write '+stage;
+    await wp.goto('/wp-admin/index.php');await wp.locator('#title').fill(title);await wp.locator('#content').fill(body);
+    const written=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/post.php');
+    await wp.locator('#save-post').click();const saved=await written;
+    if(saved.status()!==200)throw Error('WordPress fresh draft write rejected');
+    await wp.goto('/wp-admin/edit.php');
+    const savedRow=wp.locator('tr.type-post').filter({has:wp.getByRole('link',{name:title,exact:true})});
+    await expect(savedRow).toHaveCount(1);
+    const savedID=(await savedRow.getAttribute('id')).replace(/^post-/,'');
+    if(!/^[1-9][0-9]*$/.test(savedID))throw Error('WordPress fresh draft identity missing');
+    await wp.goto('/?p='+savedID+'&preview=true');
+    await expect(wp.locator('body')).toContainText(title);
+    await expect(wp.locator('body')).toContainText(body);
   }
   await checkWordPress('initial');safe.wordpress_setup_post_media=true;await report('app_created',proof);
   await state('redeploy');await reloadHosting();const second=await deploy(true);await report('redeployed',second);
