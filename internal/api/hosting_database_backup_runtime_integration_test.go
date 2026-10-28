@@ -730,8 +730,8 @@ func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.Ho
 	path := "/api/v1/resources/" + source.Resource.ID + "/database-backup-schedules/" + disabled.ID
 	input := domain.HostingDatabaseBackupScheduleInput{RequestID: backupRuntimeRequestID(f.t), ExpectedResourceGeneration: source.Resource.Generation, ExpectedVersion: disabled.Revision, Frequency: "every_minute", Timezone: "UTC", Enabled: true}
 	enabled := databaseRunnerJSON[domain.HostingDatabaseBackupSchedule](f, f.token, "PUT", path, input, 200)
-	restore := backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID)
-	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
+	restore := backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID, f.adminToken)
+	databaseRunnerJSON[json.RawMessage](f, f.adminToken, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
 	backupRuntimeRestartController(f)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
@@ -1950,7 +1950,7 @@ func backupRuntimeRegisterSourceRestartCleanup(t *testing.T, containerID string,
 	})
 }
 
-func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string) func() error {
+func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project, token string) func() error {
 	f.t.Helper()
 	var mu sync.Mutex
 	restored := false
@@ -1960,7 +1960,7 @@ func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string)
 		if restored {
 			return nil
 		}
-		if err := backupRuntimeRestoreGrant(f, project); err != nil {
+		if err := backupRuntimeRestoreGrant(f, project, token); err != nil {
 			return err
 		}
 		restored = true
@@ -1975,7 +1975,7 @@ func backupRuntimeRegisterGrantCleanup(f *databaseRunnerFixture, project string)
 	return restore
 }
 
-func backupRuntimeRestoreGrant(f *databaseRunnerFixture, project string) error {
+func backupRuntimeRestoreGrant(f *databaseRunnerFixture, project, token string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	raw, err := json.Marshal(app.DestinationProjectInput{ProjectID: project})
@@ -1988,7 +1988,7 @@ func backupRuntimeRestoreGrant(f *databaseRunnerFixture, project string) error {
 		return errors.New("owned fixture grant cleanup request invalid")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+f.token)
+	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := f.client.Do(request)
 	if err != nil {
 		return errors.New("owned fixture grant cleanup transport failed")
@@ -2075,7 +2075,7 @@ func TestHostingDatabaseBackupFailuresCompiledRunner(t *testing.T) {
 					t.Fatal("revocation boundary missing")
 				}
 				databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
-				backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID)
+				backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID, f.token)
 				close(wire.release)
 				select {
 				case <-f.process.done:
@@ -2223,7 +2223,7 @@ func TestDatabaseBackupGrantCleanupAfterCanceledTestContext(t *testing.T) {
 	if !t.Run("owned_cleanup", func(child *testing.T) {
 		childContexts <- child.Context()
 		f := &databaseRunnerFixture{t: child, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
-		backupRuntimeRegisterGrantCleanup(f, "project_fixture")
+		backupRuntimeRegisterGrantCleanup(f, "project_fixture", f.token)
 	}) {
 		t.Fatal("owned grant cleanup used the canceled test lifetime")
 	}
@@ -2260,7 +2260,7 @@ func TestDatabaseBackupGrantCleanupResponseBoundaries(t *testing.T) {
 			}
 			defer server.Close()
 			f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
-			if err := backupRuntimeRestoreGrant(f, "project_fixture"); err == nil || err.Error() != "owned fixture grant cleanup response invalid" {
+			if err := backupRuntimeRestoreGrant(f, "project_fixture", f.token); err == nil || err.Error() != "owned fixture grant cleanup response invalid" {
 				t.Fatal("cleanup accepted or exposed an invalid response")
 			}
 		})
@@ -2594,7 +2594,7 @@ func TestDatabaseBackupGrantCleanupAfterExplicitRestore(t *testing.T) {
 	defer server.Close()
 	if !t.Run("restored_before_cleanup", func(child *testing.T) {
 		f := &databaseRunnerFixture{t: child, server: server, client: server.Client(), destination: "dest_fixture", token: "fixture_token"}
-		restore := backupRuntimeRegisterGrantCleanup(f, "project_fixture")
+		restore := backupRuntimeRegisterGrantCleanup(f, "project_fixture", f.token)
 		if err := restore(); err != nil {
 			child.Fatal("explicit grant restore failed")
 		}
@@ -2706,6 +2706,7 @@ func TestDatabaseBackupRouteAdministratorSession(t *testing.T) {
 	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_backup_admin", RunnerName: "backup admin", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability}}, 201)
 	databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", databaseRunnerEnrollmentConsumeInput("ncr_backup_admin_fixture"), 200)
 	target := databaseRunnerJSON[app.ServerDetail](f, f.token, "POST", "/api/v1/servers", app.ServerInput{Name: "backup admin fixture", RunnerID: "runner_backup_admin"}, 201)
+	f.destination = target.Destination.ID
 	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+target.Destination.ID+"/project-grants", app.DestinationProjectInput{ProjectID: "proj_platform"}, 201)
 	databaseRunnerJSON[domain.HostingProxy](f, f.token, "POST", "/api/v1/servers/"+target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "backup_admin_proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
 	if changed, err := database.Exec(t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`); err != nil || changed.RowsAffected() != 1 {
@@ -2724,6 +2725,15 @@ func TestDatabaseBackupRouteAdministratorSession(t *testing.T) {
 	}
 	databaseRunnerJSON[domain.HostingHostnameGrant](f, f.adminToken, "POST", path, input, 201)
 	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", path, input, 403)
+	grantPath := "/api/v1/destinations/" + target.Destination.ID + "/project-grants/revoke"
+	grant := app.DestinationProjectInput{ProjectID: "proj_platform"}
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", grantPath, grant, 403)
+	restore := backupRuntimeRegisterGrantCleanup(f, "proj_platform", f.adminToken)
+	databaseRunnerJSON[json.RawMessage](f, f.adminToken, "POST", grantPath, grant, 200)
+	if restore() != nil {
+		t.Fatal("retained administrator grant restoration failed")
+	}
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", grantPath, grant, 403)
 }
 
 func backupRuntimeRetainRouteAdministrator(f *databaseRunnerFixture) {

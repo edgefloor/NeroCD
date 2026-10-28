@@ -943,7 +943,7 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 					t.Fatal("viewer denial allocated retention work or changed copy inventory")
 				}
 
-				restoreGrant := backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID)
+				restoreGrant := backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID, x.f.token)
 				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "POST", "/api/v1/destinations/"+x.f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: x.source.Resource.ProjectID}, 200)
 				// Project ownership remains valid; the revoked placement is a conflict.
 				x.execute(p, x.f.token, 409)
