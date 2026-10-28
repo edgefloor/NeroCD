@@ -85,3 +85,22 @@ test("successful route create clears its attempt before refresh and exact-versio
   await screen.findByRole("button", { name: "Edit route route_one" });
   expect(screen.queryByRole("button", { name: "Review refreshed routes for a separate request" })).toBeNull();
 });
+
+
+test("recorded HTTPS readiness can remain ready while the exact replacement proxy operation is queued", async () => {
+  let applied = false;
+  const replacement = { ...route, version: 2, selected_release_operation_id: "hop_B", operation_id: "pop_B", http_ready: true, https_ready: true };
+  backend((url) => url.includes("/proxy-operations/") ? json({ id: "pop_B", state: applied ? "succeeded" : "queued", engine_outcome: applied ? "applied" : undefined, mutation_hold: false, restore_ownership_held: false, routes: [replacement] }) : url.includes("/routes") ? json([replacement]) : undefined);
+  setup(false);
+  await screen.findByRole("button", { name: "View route operation pop_B" });
+  expect(screen.getAllByText("ready")).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: "View route operation pop_B" }));
+  await screen.findByText("Proxy operation pop_B");
+  await screen.findByText("Operation state: queued");
+  expect(screen.queryByText("Operation state: succeeded")).toBeNull();
+  expect(screen.queryByText("Historical engine outcome: applied")).toBeNull();
+  applied = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh route operation" }));
+  await screen.findByText("Operation state: succeeded");
+  await screen.findByText("Historical engine outcome: applied");
+});
