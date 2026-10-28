@@ -145,7 +145,10 @@ and Docker daemon for preparation and deployment.
    configuration. For private HTTPS Git, use the
    existing [source grant and explicit secret version](hosting-git-resources.md#request-a-private-https-git-build).
    Saving configuration does not fetch source or change a running stack.
-3. Request the existing public or private Git build. Wait for a succeeded build
+3. For a private `FROM`, select the saved [build registry credential and exact
+   version](hosting-git-resources.md#select-a-private-build-base-registry). This is
+   separate from the Git grant and the service-image credential in step 4.
+   Request the existing public or private Git build. Wait for a succeeded build
    with its resolved commit, tree digest and prepared Compose result. An identical
    retry retains the frozen source receipt; a new build request may resolve a
    moving branch again.
@@ -195,8 +198,10 @@ managed profile remain rejected. Private Git access uses source grants separatel
 from service-image registry selection. One selected registry credential authorizes
 only matching registry-only service pulls. Built services and shared-image aliases
 retain their exact local artifacts; other registries remain anonymous. This does
-not provide Dockerfile base-image authentication, registry push, inventory,
-login/logout or multiple selected private registries.
+not provide registry push, inventory, login/logout or multiple selected private
+registries. [Selected private build-base authentication](hosting-git-resources.md#private-build-registry-qualification)
+is separately qualified at `0644c49d`, including real credential rotation and
+stateful replacement preservation.
 
 The sequence follows pinned PHP
 [`ApplicationDeploymentJob::deploy_docker_compose_buildpack`](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L751):

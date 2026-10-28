@@ -63,6 +63,32 @@ All duration integers are nanoseconds: `100000000` is 100 ms, `5000000000` is 5 
 
 The runner advertises `hosting_build_v1` only with validated execution configuration. It also advertises `hosting_dockerfile_args_v1`, required for nonempty Dockerfile build variables at admission, claim and current execution. Legacy builds without variables and Railpack retain their existing capability requirements. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
 
+## Trust a private build-registry CA
+
+Validated build configuration advertises `hosting_build_registry_v1`. Selected
+Dockerfile and Compose build credentials require that capability at admission,
+claim and current execution. Existing authorized metadata replay retains its
+original identity. Credentials are delivered only for a fresh build into an
+isolated exact-host Docker config, then removed; they are not stored in the
+engine request or retained journal.
+
+For a registry outside normal public trust, add an operator-controlled map under
+`engine` in the runner build configuration:
+
+```json
+"registry_ca_certificates": {
+  "registry.example.test:5443": "/etc/nerocd/registry-ca.pem"
+}
+```
+
+Keys are canonical exact registry hosts with optional ports. Up to eight absolute
+regular PEM files are accepted, each at most 256 KiB and containing only valid CA
+certificates. No path component may be a symlink. BuildKit receives scoped CA
+configuration and read-only copies. CA content digests, rather than local paths,
+bind the toolchain and build identities. Configure trust before computing the
+operator toolchain identity and matching policy. The application API and UI cannot
+change this trust configuration; TLS verification remains enabled.
+
 ## Enable private HTTPS Git
 
 Start with the validated version 1 build configuration above. Add this field at

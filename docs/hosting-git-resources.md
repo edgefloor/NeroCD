@@ -38,6 +38,40 @@ builds and grants remain tied to their original source. Nonempty Dockerfile
 variables require the runner capability `hosting_dockerfile_args_v1` in addition
 to the existing build and source-access capabilities.
 
+## Select a private build-base registry
+
+For Dockerfile or Git Compose builds, create a project-managed registry secret
+using the [registry credential payload](hosting-image-deployments.md#pull-a-private-image). In the Git source form,
+set **Build registry credential** to **Select build registry credential**, then select
+**Build registry credential secret** and **Build registry credential version**.
+These controls read metadata, not secret values. Save the exact reference before
+requesting a build. The API field is
+`settings.build_registry_credential: {"secret_id": "secret_build", "version": 1}`.
+
+The build credential is independent of the Git source grant and deployment
+**Image access** selection. It authorizes one exact registry host for private
+`FROM` images. Other registries remain anonymous. Rotating a secret does not
+retarget saved settings or existing builds. Select the new explicit version,
+save the source, and request a new build. Private HTTPS Git also needs a fresh
+source grant for the changed generation. Railpack does not accept this setting.
+The runner requires `hosting_build_registry_v1`; private CA configuration is
+[operator controlled](hosting-build-runtime.md#trust-a-private-build-registry-ca).
+
+### Private build-registry qualification
+
+At `0644c49d` on 2026-10-28, the stateful Git Compose workflow built from a TLS
+private base with version 1, rotated the fixture's accepted password, then rebuilt
+and redeployed with distinct version 2. Denied base authentication preserved the
+prior HTTPS application, PostgreSQL records and uploads. Route recovery and
+uncached Stop/Start persistence also passed. Ordinary Dockerfile support has an
+actual production-engine private-FROM probe and focused controller, CLI and UI
+coverage; its full browser workflow was not rerun for this slice.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-build-registry-20261028/0644c49dad62b7494a6bf6f917f1af53a9873301/evidence-index.json) records both failed fixture attempts, deterministic repairs, final cleanup,
+scoped checks and review attribution. Server registry inventory, login/logout,
+push, multiple selected build registries, build secrets and cross-daemon artifact
+transfer remain open.
+
 ## Request and review a public Git build
 
 1. Save a desired destination with an active project grant. Its active enrolled
@@ -209,5 +243,5 @@ The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hostin
 records source hashes, scoped checks, reviews, cleanup and remaining test limits.
 The initial aggregate Go test failed stale CLI expectations; the complete affected
 package passed after repair. The contract check still exposes an unchanged
-undocumented 401 on storage-backup-volumes. Build secrets, private build-base
-registry authentication and remote artifact publication remain outside this qualification.
+undocumented 401 on storage-backup-volumes. Build secrets and remote artifact publication remain outside this qualification.
+[Selected build-base authentication](#private-build-registry-qualification) has separate evidence.
