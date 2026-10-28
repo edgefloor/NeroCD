@@ -1113,6 +1113,45 @@ func retentionDumpShadowScripts(engine string) (string, string) {
 	return install, cleanup
 }
 
+func retentionDumpShadowPayload(engine string, archive []byte) ([]byte, bool) {
+	switch engine {
+	case "postgresql":
+		return archive, true
+	case "mysql":
+		// The runner adds this framing before tool stdout. The shadow must emit
+		// only the SQL stream so the next published archive has one header.
+		header := []byte("-- NeroCD MySQL logical dump v1\n")
+		if !bytes.HasPrefix(archive, header) || len(archive) == len(header) {
+			return nil, false
+		}
+		return archive[len(header):], true
+	default:
+		return nil, false
+	}
+}
+
+func TestDatabaseBackupRetentionDumpShadowPayload(t *testing.T) {
+	header := []byte("-- NeroCD MySQL logical dump v1\n")
+	sql := []byte("CREATE TABLE retained (id INT);\n")
+	archive := append(bytes.Clone(header), sql...)
+	payload, ok := retentionDumpShadowPayload("mysql", archive)
+	if !ok || !bytes.Equal(payload, sql) || !bytes.Equal(append(bytes.Clone(header), payload...), archive) {
+		t.Fatal("MySQL shadow did not reconstruct the exact original framed archive")
+	}
+	for _, invalid := range [][]byte{nil, sql, header, []byte("-- NeroCD MySQL logical dump v2\nSELECT 1;\n")} {
+		if _, ok := retentionDumpShadowPayload("mysql", invalid); ok {
+			t.Fatal("invalid MySQL archive framing accepted")
+		}
+	}
+	pg := []byte("PGDMPunchanged bytes")
+	if payload, ok := retentionDumpShadowPayload("postgresql", pg); !ok || !bytes.Equal(payload, pg) {
+		t.Fatal("PostgreSQL shadow payload changed")
+	}
+	if _, ok := retentionDumpShadowPayload("other", archive); ok {
+		t.Fatal("unsupported shadow engine accepted")
+	}
+}
+
 func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatabaseBackupOperation) domain.HostingDatabaseBackupOperation {
 	f := x.f
 	connection := f.connection(x.application.ResourceID)
@@ -1122,10 +1161,14 @@ func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatab
 		f.t.Fatal("duplicate-content source archive unavailable")
 	}
 	defer clear(data)
+	payload, valid := retentionDumpShadowPayload(x.source.Engine, data)
+	if !valid {
+		f.t.Fatal("duplicate-content source archive framing invalid")
+	}
 	// Controlled duplicate-content injection. Only this owned database container's
 	// dump invocation is shadowed, using a real archive produced by the
 	// compiled runner. Cleanup removes only this wrapper; the real binary stays intact.
-	raw, err := databaseRunnerDocker(f.t.Context(), data, "exec", "--interactive", source.Result.ContainerID, "sh", "-c", "cat >/tmp/nerocd-retention-duplicate.dump && chmod 0444 /tmp/nerocd-retention-duplicate.dump")
+	raw, err := databaseRunnerDocker(f.t.Context(), payload, "exec", "--interactive", source.Result.ContainerID, "sh", "-c", "cat >/tmp/nerocd-retention-duplicate.dump && chmod 0444 /tmp/nerocd-retention-duplicate.dump")
 	clear(raw)
 	if err != nil {
 		f.t.Fatal("duplicate-content archive injection failed")
