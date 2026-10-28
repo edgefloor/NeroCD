@@ -1,6 +1,6 @@
 # Build execution in the Go agent
 
-The normal `nerocd runner` can execute public and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
+The normal `nerocd runner` can execute stored Dockerfile, public HTTPS Git, and explicitly enabled private HTTPS Git builds through the production build controller. A successful build persists a local image artifact and its source, OCI and daemon identities. Same-host artifact deployment and managed routing are separately enabled integrations. Private Basic/PAT delivery is connected to the checkout path under the configuration below.
 
 Build execution is disabled by default. Enable it with `--build-config-file /absolute/operator/build.json`. The file must be an owned, nonsymlink, regular mode-0600 file of at most 64 KiB. Version 1 rejects unknown fields, duplicate keys (including differently cased duplicates), null values and trailing JSON. Validation happens before registration, enrollment, heartbeat or claim effects. This nonsecret file must never contain Git or runner credentials.
 
@@ -62,6 +62,20 @@ The shape below illustrates the fields; replace identifiers, digests, paths and 
 All duration integers are nanoseconds: `100000000` is 100 ms, `5000000000` is 5 seconds and `600000000000` is 10 minutes. `ComputeBuildToolchainIdentity` computes the canonical inventory identity from fixed pins and the bounded actual Docker binary hash. Local paths are not published as identity data. See [the engine prerequisites](hosting-build-engine.md) for delegated cgroup ownership, trusted privileged BuildKit, fixed toolchain pins and monitored disk overshoot. These settings provide no hard disk quota or hostile-fork isolation.
 
 The runner advertises `hosting_build_v1` only with validated execution configuration. It also advertises `hosting_dockerfile_args_v1`, required for nonempty Dockerfile build variables at admission, claim and current execution. Legacy builds without variables and Railpack retain their existing capability requirements. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
+
+## Enable stored Dockerfile builds
+
+Validated build configuration advertises `hosting_stored_dockerfile_v1` alongside
+`hosting_build_v1`. Admission, claim, and live execution require both for a
+stored source. No private Git configuration or source grant is needed. Review
+persisted enrollment capabilities before restarting an upgraded runner, as with
+other capability changes.
+
+The runner writes the exact saved content into an owned Dockerfile-only context,
+records the acquired content hash and tree digest, then uses the existing build
+engine and local artifact lifecycle. It preserves uncertain cleanup and retained
+journal evidence. Follow the [stored Dockerfile workflow](hosting-build-deployments.md#build-a-stored-dockerfile)
+to save, build, deploy, and route an application.
 
 ## Enable managed build-secret delivery
 

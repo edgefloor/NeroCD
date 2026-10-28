@@ -4,7 +4,7 @@
 
 The request contains `build_id`, `expected_source_generation`, `expected_generation`, `idempotency_key`, `container_port`, optional `host_port`, and `readiness` (`path`, `timeout_seconds`). It cannot select an artifact, daemon, destination, registry image or policy. Port allocation and HTTP readiness limits match image deployments. The response is the existing HTTP 202 hosting operation document; the resource deployment history and operation read endpoints also return these operations.
 
-Admission requires current project maintainer authority, current resource and Git source generations, a successful exact build artifact, active destination grant and enrollment, the same runner and daemon, and the new deployment capability. The operation, immutable artifact association, loopback port claim, audit event and existing River operation-ID job commit together. Idempotent replay still requires current authorization and the exact current artifact. A changed request under the same key conflicts.
+Admission requires current project maintainer authority, current resource and saved source generations, a successful exact build artifact, active destination grant and enrollment, the same runner and daemon, and the new deployment capability. The operation, immutable artifact association, loopback port claim, audit event and existing River operation-ID job commit together. Idempotent replay still requires current authorization and the exact current artifact. A changed request under the same key conflicts.
 
 Local snapshots append `local_build` containing source generation, artifact hash and exact artifact. Releases append `local_build` containing the artifact. Their registry image strings are empty. Image ID, OCI config digest, manifest digest and index digest remain distinct identities. The common image/platform/daemon fields must match the admitted artifact exactly. Registry snapshots and releases keep their original JSON and hash bytes when these fields are absent.
 
@@ -16,10 +16,10 @@ Migration 0050 is additive. It binds operation-to-build artifact identity with a
 
 ## Deploy through the resource UI
 
-The resource UI supports public and granted private HTTPS Git builds on one host. Configure the bound destination, active project grant and enrolled runner before requesting a build. The agent needs the operator-owned build configuration, the `local_build_deploy_v1` capability and `--local-build-deploy`. All three refer to the same runner and Docker daemon. The UI cannot enable those prerequisites or transfer an image to another host.
+The resource UI supports stored Dockerfile, public HTTPS Git, and granted private HTTPS Git builds on one host. Configure the bound destination, active project grant and enrolled runner before requesting a build. The agent needs the operator-owned build configuration, the `local_build_deploy_v1` capability and `--local-build-deploy`. All three refer to the same runner and Docker daemon. The UI cannot enable those prerequisites or transfer an image to another host.
 
-1. Open the application's **Public Git builds** or **Private HTTPS Git builds** section. Request a build for the reviewed saved source and generations, or select an existing successful build with **View build**.
-2. Review the recorded source commit and local artifact image ID. A successful build records an artifact. It does not establish a running application.
+1. Open the application's **Dockerfile builds**, **Public Git builds**, or **Private HTTPS Git builds** section. Request a build for the reviewed saved source and generations, or select an existing successful build with **View build**.
+2. Review the recorded Dockerfile content hash or Git commit and local artifact image ID. A successful build records an artifact. It does not establish a running application.
 3. In **Deploy recorded local build**, choose the container port and ordinary HTTP readiness path and timeout. Prefer automatic per-release host port allocation. A fixed port can interrupt the current release before replacement readiness succeeds.
 4. Acknowledge the exact build and settings, then select **Deploy selected build**. The request identifies the build and current generations. The server selects the immutable artifact and current authorized placement.
 5. Review the shared deployment operation detail and deployment history. The detail identifies the local build, source generation, artifact hash and image ID. Wait for a succeeded operation with recorded readiness, no uncertainty and no mutation or restore hold.
@@ -48,3 +48,68 @@ for the Railpack variant. The [fixture guide](../acceptance/runtime-hosting-loca
 covers the compiled Vite SPA variant, exact grant retry, typed output, artifact
 deployment, keyboard controls, responsive layouts, and viewer denial. HTTPS
 checks use a local test CA. Production ACME is outside this fixture.
+
+## Build a stored Dockerfile
+
+1. In project hosting, choose an environment and set **Application source** to
+   **Dockerfile**. Enter the application name and **Dockerfile content**, then
+   select **Save application**.
+2. Set the saved destination and active project grant. The enrolled runner needs
+   validated [build configuration](hosting-build-runtime.md),
+   `hosting_stored_dockerfile_v1`, and `hosting_build_v1`. Same-host deployment
+   also requires `--local-build-deploy` and `local_build_deploy_v1`.
+3. In **Dockerfile builds**, review the content hash, generations, and settings.
+   Acknowledge the exact source, then select **Request Dockerfile build**.
+4. Select the successful build and follow the
+   [artifact deployment and routing steps](#deploy-through-the-resource-ui).
+   Review the container port before deploying. The UI uses the first uppercase
+   `EXPOSE` instruction's numeric port, or port 80 if it cannot use that value.
+5. To replace the application, edit **Dockerfile content** or build settings and
+   select **Save configuration**. Request and deploy a new successful build,
+   then explicitly update the managed route to its settled healthy release.
+
+Content must be nonblank UTF-8, contain no NUL, and fit within 1 MiB of decoded
+bytes. NeroCD preserves the exact saved bytes and their content hash. The build
+context contains only the root `Dockerfile`. `COPY` cannot read other local or
+repository files. Supply dependencies through the Dockerfile. No repository,
+Git source grant, branch, or commit is required.
+
+**Build target**, [public build variables and ARG injection](hosting-git-resources.md#configure-dockerfile-build-variables),
+[selected build-registry credentials](hosting-git-resources.md#select-a-private-build-base-registry),
+and [managed build secrets](hosting-git-resources.md#select-managed-build-secrets)
+use the existing Dockerfile controls and limits. Runtime variables and secrets
+remain separate. Secret rotation requires selecting the new exact version,
+saving the source, and requesting a new build.
+
+Editing source settings advances the source generation. Old builds retain their
+original content hash and settings and cannot deploy against the new source.
+A rejected save retains the draft for review. Failed builds have no deployable
+artifact and leave the serving release and its route in place. A successful
+replacement also leaves the existing route on its previous release until you
+change the route explicitly.
+
+The source and build order follow the pinned PHP
+[stored Dockerfile form](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Livewire/Project/New/SimpleDockerfile.php)
+and [deployment sequence](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L640).
+NeroCD records a distinct versioned source and uses its existing artifact,
+authorization, and recovery protocol.
+
+### Stored Dockerfile qualification
+
+At `b76a1521` on 2026-10-28, the authenticated browser workflow saved a Dockerfile,
+built and deployed its local artifact, and served its content over managed HTTPS.
+An edit advanced the source generation and rejected deployment of the old build.
+The replacement built and deployed while the route retained the original content,
+then an explicit route change served the new content. A subsequent Dockerfile
+with a genuine failing `RUN` produced no artifact. Deployment was rejected, and
+the prior successful deployment, route, and HTTPS content remained unchanged.
+The browser also checked layouts at 320, 390, 430, and 1440 pixels.
+
+Run `NEROCD_STORED_DOCKERFILE_BROWSER=1 bash acceptance/runtime-hosting-local-build/gate.sh`
+from the repository root to exercise this profile. It uses the existing disposable
+Linux Docker daemon, PostgreSQL/River controller, compiled CLI, and authenticated
+UI. The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-stored-dockerfile-20261028/b76a15217b43e67476eeb26c231236e1e7953a2b/evidence-index.json)
+records checks, source revisions, and qualification limits. This Dockerfile-only,
+same-host profile uses a local test CA. It does not establish public ACME,
+cross-host artifact transfer, extra build-context uploads, or a fresh physical
+qualification of selected build-registry credentials or managed build secrets.
