@@ -72,14 +72,18 @@ async function selectOffboardingOIDCPersona(page: Page): Promise<{ used: boolean
   return selection;
 }
 
+test.beforeAll(async () => {
+  // CLI provisioning opens and validates PostgreSQL on each invocation. Give
+  // fixture setup its own bound instead of spending the browser flow's budget.
+  test.setTimeout(45_000);
+  await provisionFirstPageUsers();
+});
+
 test("administrator offboards an OIDC user and the next provider login is denied", async ({ page }) => {
-  // Allow time for ten serial CLI provisions and the full offboarding/OIDC flow.
   test.setTimeout(45_000);
   await page.goto("/settings");
   await signInAsAdministrator(page);
   await expect(page).toHaveURL(/\/settings/);
-  await provisionFirstPageUsers();
-  await page.reload({ waitUntil: "networkidle" });
 
   const userEmail = offboardingEmail;
   const userPages = page.getByRole("navigation", { name: "users pages" });
@@ -125,8 +129,13 @@ test("administrator offboards an OIDC user and the next provider login is denied
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/sign-in/);
   const personaSelection = await selectOffboardingOIDCPersona(page);
+  const callback = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/oidc/callback");
   await page.getByRole("link", { name: "Continue with SSO" }).click();
   expect(personaSelection.used).toBe(true);
+  const denied = await callback;
+  expect(denied.status()).toBe(302);
+  const destination = new URL(denied.headers().location, page.url());
+  expect(destination.pathname + destination.search).toBe("/sign-in?oidc_error=failed");
   await expect(page).toHaveURL(/\/sign-in\?oidc_error=failed/);
   await expect(page.getByRole("alert")).toContainText("Single sign-on failed");
   const principal = await page.request.get("/api/v1/me");
