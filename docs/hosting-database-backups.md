@@ -175,6 +175,8 @@ The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hostin
 records the qualified revision, source checks, browser and runtime assertions,
 retained earlier evidence, and verified fixture cleanup.
 
+Native MySQL now has a separate [local and remote retention qualification](hosting-database-backup-retention.md#native-mysql-retention-qualification).
+
 
 [Native MySQL schedules](hosting-database-backup-schedules.md#native-mysql-schedule-qualification)
 have separate qualification at `8d85d70b`, including restore from the exact

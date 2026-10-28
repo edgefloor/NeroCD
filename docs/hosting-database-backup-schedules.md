@@ -12,7 +12,7 @@ destinations. Compose schedules create local database archives only. They do not
 include application uploads or support remote backup targets.
 Native PostgreSQL and MySQL schedules can select [remote backup targets](hosting-database-remote-backups.md)
 explicitly by target ID and revision, as can standalone immediate backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure [failure alerts](hosting-backup-notifications.md) separately.
-PostgreSQL also supports [retention](hosting-database-backup-retention.md).
+Native PostgreSQL and MySQL also support independent [local and remote retention](hosting-database-backup-retention.md).
 A local archive remains dependent on that destination. Remote acceptance uses
 a loopback fixture and does not qualify off-host disaster recovery.
 

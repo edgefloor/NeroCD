@@ -166,7 +166,7 @@ database commit but before durable result evidence is not inferred as success
 or blindly imported again. Local archives remain the default recovery source.
 Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
 Remote object browsing and additional engines remain outside this workflow.
-MySQL retention policies and Compose MySQL backups remain unsupported. [MySQL failure alerts](hosting-backup-notifications.md#native-mysql-notification-qualification)
+Native MySQL has a separate [local and remote retention qualification](hosting-database-backup-retention.md#native-mysql-retention-qualification). Compose MySQL backups remain unsupported. [MySQL failure alerts](hosting-backup-notifications.md#native-mysql-notification-qualification)
 have separate qualification.
 
 ## Implementation
