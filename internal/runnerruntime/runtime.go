@@ -675,6 +675,14 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		}
 		return errors.New("claimed run did not include a process plan")
 	}
+	// A claimed attempt never shares repository-controlled ancestors with any
+	// previous attempt. Anchor cleanup to the operator's workspace root.
+	attemptDir, cleanupAttempt, err := createAttemptWorkspace(workDir)
+	if err != nil {
+		return err
+	}
+	defer cleanupAttempt()
+	workDir = attemptDir
 	preparedSecrets, err := runner.PrepareSecrets(supervisor.Context(), claim.PrimitivePlan.Secrets, secretRoot, func(_ context.Context, binding domain.SecretBinding) error {
 		accessID := attemptMutationKey("secret_access", claim.Lease.ID, claim.Lease.Attempt, strings.TrimSpace(binding.Name))
 		var grant domain.SecretAccessGrant
@@ -747,6 +755,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 			claim.PrimitivePlan.Process.WorkingDir = checkoutPath
 		}
 		artifactRoot = claim.PrimitivePlan.Process.WorkingDir
+	}
+	if claim.PrimitivePlan.Process.WorkingDir == "" {
+		claim.PrimitivePlan.Process.WorkingDir = workDir
 	}
 	if supervisor.Context().Err() != nil {
 		return fmt.Errorf("%w: before process spawn", errLeaseAuthorityLost)
