@@ -119,7 +119,7 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
       if (lifetime.current === controller) lifetime.current = null;
     };
   }, []);
-  const enabled = !blocked && !revoked && database.engine === "postgresql";
+  const enabled = !blocked && !revoked && ["postgresql", "mysql"].includes(database.engine);
   const policy = useQuery({
     queryKey: [...key, "policy"],
     queryFn: ({ signal }) => getRetentionPolicy(scope, database, signal),
@@ -160,7 +160,7 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
       onDenied();
     }
   }, [denied]);
-  if (database.engine !== "postgresql") return null;
+  if (!["postgresql", "mysql"].includes(database.engine)) return null;
   if (denied)
     return <p role="alert">Backup retention access is unavailable.</p>;
   const unavailable =
@@ -342,6 +342,7 @@ function RetentionPanel({ database, scope, owner, blocked, onDenied }: Props) {
       ) : policy.isSuccess ? (
         <p>No retention policy saved.</p>
       ) : null}
+      {database.engine === "mysql" ? <p>Native MySQL retention requires hosting_mysql_backup_retention_v1. Local and remote copies have independent limits and execution results.</p> : null}
       {!owner && policy.data ? (
         <ul>
           {(["local", "remote"] as const).map((location) => (

@@ -6,13 +6,15 @@ import {
 } from "./hosting-databases";
 
 export const retentionVersion = "postgresql.backup-retention.v1" as const;
+export const mysqlRetentionVersion = "mysql.backup-retention.v1" as const;
+type RetentionVersion = typeof retentionVersion | typeof mysqlRetentionVersion;
 export type RetentionLimits = {
   keep_count: number;
   keep_days: number;
   max_bytes: number;
 };
 export type RetentionPolicy = {
-  version: typeof retentionVersion;
+  version: RetentionVersion;
   project_id: string;
   resource_id: string;
   revision: number;
@@ -58,7 +60,7 @@ export type RetentionCopy = {
 };
 export type RetentionPreview = {
   id: string;
-  version: typeof retentionVersion;
+  version: RetentionVersion;
   project_id: string;
   resource_id: string;
   policy_revision: number;
@@ -79,7 +81,7 @@ export type RetentionExecutionInput = RetentionPreviewInput & {
 };
 export type RetentionExecution = {
   id: string;
-  version: typeof retentionVersion;
+  version: RetentionVersion;
   project_id: string;
   resource_id: string;
   preview_id: string;
@@ -148,7 +150,7 @@ function scoped(
   db: HostingDatabase,
 ) {
   if (
-    v.version !== retentionVersion ||
+    v.version !== (db.engine === "mysql" ? mysqlRetentionVersion : retentionVersion) ||
     v.project_id !== scope.project ||
     v.resource_id !== db.resource.id
   )

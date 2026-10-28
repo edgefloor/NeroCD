@@ -331,3 +331,16 @@ test("history recovery retains existing scope, preview, policy and plan correlat
     ).rejects.toThrow();
   }
 });
+
+
+test("native MySQL policy, preview and execution are engine-bound while preserving independent copy outcomes", () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const version = "mysql.backup-retention.v1";
+ const inputs = [{ parse: parseRetentionPolicy, value: policy }, { parse: parseRetentionPreview, value: preview }, { parse: parseRetentionExecution, value: execution }];
+ for (const { parse, value } of inputs) {
+   const mysqlValue = { ...value, version };
+   expect(parse(mysqlValue, scope, mysql)).toEqual(mysqlValue);
+   expect(() => parse(mysqlValue, scope, db)).toThrow();
+   expect(() => parse(value, scope, mysql)).toThrow();
+ }
+});

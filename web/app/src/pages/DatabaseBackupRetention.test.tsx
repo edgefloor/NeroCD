@@ -135,13 +135,13 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
 });
-function mount(owner = true, strict = false) {
+function mount(owner = true, strict = false, initialDatabase = db) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const denied = vi.fn();
   const element = (
-    database = db,
+    database = initialDatabase,
     actor = "owner",
     isOwner = owner,
     blocked = false,
@@ -656,4 +656,38 @@ test("recovery denial revokes authority and an unsafe conflict keeps history bou
   await screen.findByText("Backup retention access is unavailable.");
   expect(view.denied).toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Retry this batch" })).toBeNull();
+});
+
+
+test("native MySQL owner uses existing policy, protected preview, and independent local/remote deletion results", async () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const version = api.mysqlRetentionVersion;
+ vi.mocked(api.getRetentionPolicy).mockResolvedValue({ ...policy, version });
+ vi.mocked(api.saveRetentionPolicy).mockImplementation(async (_scope, _db, input) => {
+   const out = { ...policy, ...input, version, revision: input.expected_revision + 1 };
+   vi.mocked(api.getRetentionPolicy).mockResolvedValue(out);
+   return out;
+ });
+ vi.mocked(api.createRetentionPreview).mockResolvedValue({ ...preview, version, policy_revision: 2 });
+ vi.mocked(api.executeRetention).mockImplementation(async () => {
+   vi.mocked(api.listRetentionExecutions).mockResolvedValue([{ ...execution, version, policy_revision: 2 }]);
+   return { ...execution, version, policy_revision: 2 };
+ });
+ mount(true, true, mysql);
+ await button("Save retention policy");
+ expect(screen.getByText(/Native MySQL retention requires hosting_mysql_backup_retention_v1/)).toBeTruthy();
+ fireEvent.change(screen.getByLabelText("Local backups to keep"), { target: { value: "0" } });
+ fireEvent.change(screen.getByLabelText("Remote days to keep"), { target: { value: "5" } });
+ fireEvent.click(await button("Save retention policy"));
+ await screen.findByText("Saved retention revision 2.");
+ expect(vi.mocked(api.saveRetentionPolicy).mock.calls[0]![2]).toMatchObject({ expected_revision: 1, expected_resource_generation: 2, local: { keep_count: 0 }, remote: { keep_days: 5 } });
+ await showPreview();
+ expect(screen.getByText("Protected: newest, shared")).toBeTruthy();
+ fireEvent.click(confirmation());
+ fireEvent.click(screen.getByRole("button", { name: "Delete selected backup copies" }));
+ await screen.findByText(/Local result: succeeded. Remote result: uncertain/);
+ expect(vi.mocked(api.executeRetention).mock.calls[0]![2]).toMatchObject({ expected_policy_revision: 2, expected_plan_hash: hash, preview_id: "preview" });
+ expect(screen.getByText(/backup_old · local · copy local_copy · deleted/)).toBeTruthy();
+ expect(screen.getByText(/backup_old · remote · copy remote_copy · uncertain/)).toBeTruthy();
+ expect(screen.getByText(/Reservation remains held/)).toBeTruthy();
 });
