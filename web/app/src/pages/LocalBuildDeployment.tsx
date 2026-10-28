@@ -242,6 +242,19 @@ function LocalDeployment(props: LocalDeploymentProps) {
   );
 }
 
+function useDeploymentConfirmation(reviewIdentity: string, attempted: boolean) {
+  const [confirmation, setConfirmation] = useState<string>();
+  // Changed evidence retires consent even if an earlier selection returns.
+  // An attempted request keeps the acknowledgement for its frozen inputs.
+  if (!attempted && confirmation !== undefined && confirmation !== reviewIdentity)
+    setConfirmation(undefined);
+  const confirmed =
+    confirmation !== undefined && (attempted || confirmation === reviewIdentity);
+  const setConfirmed = (value: boolean) =>
+    setConfirmation(value ? reviewIdentity : undefined);
+  return [confirmed, setConfirmed] as const;
+}
+
 function useLocalDeployment({
   actor,
   resource,
@@ -266,7 +279,6 @@ function useLocalDeployment({
   const [mode, setMode] = useState("automatic"),
     [path, setPath] = useState("/"),
     [timeout, setTimeout] = useState("30");
-  const [confirmation, setConfirmation] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [registrySelection, setRegistrySelection] =
     useState<ImageRegistrySelection>({ valid: true });
@@ -325,15 +337,10 @@ function useLocalDeployment({
       ? options
       : undefined;
   const reviewIdentity = JSON.stringify([registryIdentity, optionsIdentity]);
-  // Changed evidence retires consent even if an earlier selection returns.
-  // An attempted request keeps the acknowledgement for its frozen inputs.
-  if (!attempt && confirmation !== undefined && confirmation !== reviewIdentity)
-    setConfirmation(undefined);
-  const confirmed =
-    confirmation !== undefined &&
-    (Boolean(attempt) || confirmation === reviewIdentity);
-  const setConfirmed = (value: boolean) =>
-    setConfirmation(value ? reviewIdentity : undefined);
+  const [confirmed, setConfirmed] = useDeploymentConfirmation(
+    reviewIdentity,
+    Boolean(attempt),
+  );
   useQueryAccessDenial(
     [storageDeploymentOptionsQuery(stackScope).queryKey],
     () => {
