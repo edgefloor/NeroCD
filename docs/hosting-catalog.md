@@ -569,8 +569,8 @@ templates, upgrades and broader application recovery remain outside this slice.
 
 At `9fa6da10` on 2026-10-28, the catalog UI installed WordPress/MySQL, retried a
 committed response loss with the identical request, and deployed the saved stack.
-The real WordPress installer created the administrator. Fresh authenticated
-sessions published posts and uploaded a PNG through managed, fixture-CA HTTPS.
+The real WordPress installer created the administrator. A fresh authenticated
+session published a post and uploaded a PNG through managed, fixture-CA HTTPS.
 Independent HTTPS reads verified the published post and exact uploaded bytes.
 
 Redeployment after runner restart and UI Stop/Start retained the same volumes,
