@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-// Real cookie API, embedded UI, River, pinned PostgreSQL and compiled runner.
+// Real cookie API, embedded UI, River, pinned database and compiled runner.
 // No API interception or fabricated completion is permitted in this profile.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw
   ? (JSON.parse(raw) as {
       origin: string;
+      engine: "postgresql" | "mysql";
       project_id: string;
       environment: string;
       application_name: string;
@@ -14,7 +15,7 @@ const meta = raw
       profile: string;
     })
   : undefined;
-test("real PostgreSQL schedule creation replay edit disable and application-verified restore", async ({
+test("real database schedule creation replay edit disable and application-verified restore", async ({
   page,
 }) => {
   test.skip(
@@ -145,6 +146,22 @@ test("real PostgreSQL schedule creation replay edit disable and application-veri
     )
     .toBe("restore");
   expect(backup).toMatch(/^dbb_/);
+  await schedules.getByRole("button", { name: "View occurrences", exact: true }).click();
+  const occurrences = schedules.getByRole("region", { name: "Backup schedule occurrences", exact: true });
+  await expect(occurrences).toContainText(`Backup operation: ${backup}`);
+  await expect(occurrences).toContainText("succeeded");
+  if (m.engine === "mysql") {
+    const list = await safe(schedulePath);
+    expect(list.status()).toBe(200);
+    const schedulesBody = await list.json();
+    expect(schedulesBody).toHaveLength(1);
+    expect(schedulesBody[0]).toMatchObject({ version: "mysql.logical-local.schedule.v1", revision: 3, enabled: false });
+    for (const body of submitted) {
+      expect(body).not.toHaveProperty("component");
+      expect(body).not.toHaveProperty("expected_deployed_operation_id");
+      expect(body).not.toHaveProperty("remote_target");
+    }
+  }
   await panel
     .getByRole("button", { name: "Refresh backup history", exact: true })
     .click();

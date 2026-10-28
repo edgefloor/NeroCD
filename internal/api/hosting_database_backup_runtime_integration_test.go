@@ -254,6 +254,10 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 		}
 	}
 	image := os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")
+	storageSchedule := db.Engine == "mysql" && os.Getenv("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME") == "1"
+	if storageSchedule {
+		image = os.Getenv("NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE")
+	}
 	if applicationDatabaseFixtureImage(image) != nil {
 		f.t.Fatal("owned application image required")
 	}
@@ -269,6 +273,10 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 		namespace = namespaces[0]
 	}
 	entries := []domain.HostingRuntimeEntry{}
+	if storageSchedule {
+		value := "1"
+		entries = append(entries, domain.HostingRuntimeEntry{Name: "FIXTURE_UPLOADS", Kind: "literal", Value: &value})
+	}
 	for _, v := range [][2]string{{"FIXTURE_DATABASE_ENGINE", db.Engine}, {"FIXTURE_DATABASE_NAMESPACE", namespace}} {
 		value := v[1]
 		entries = append(entries, domain.HostingRuntimeEntry{Name: v[0], Kind: "literal", Value: &value})
@@ -523,24 +531,40 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Fatal("native Linux arm64 required")
 	}
-	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+	mysql := os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1"
+	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, mysql)
 	diagnosticID := ""
 	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
-	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
+	create := backupRuntimeCreateInput(t, f.environment, f.destination)
+	if mysql {
+		create = applicationDatabaseCreateInput("mysql", f.environment, f.destination)
+		create.RequestID = backupRuntimeRequestID(t)
+	}
+	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", create, 201)
 	f.registerRouteDatabaseCleanup(source.Resource.ID)
 	requested := f.deploy(source, "schedule_source")
 	f.registerRouteOperationCleanup(requested.ID)
 	f.await(requested.ID)
 	application := backupRuntimeApplication(f, source, "scheduled_source")
+	if mysql {
+		resource := databaseRunnerJSON[domain.Resource](f, f.token, "GET", "/api/v1/resources/"+application.ResourceID, nil, 200)
+		application = f.storage.bootstrap(f, resource, application, domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}})
+		f.appRecord(application, "PUT", "a", "retained_a")
+		roots, public := newApplicationDatabaseRouteTrust(t)
+		f.initialApplicationDatabaseRoute(application, "mysql", roots, public)
+		f.storage.write(f, application, "retained_a", 0x41)
+	}
 	f.appRecord(application, "PUT", "before", "application_origin")
 	connection := f.connection(application.ResourceID)
 	sourceOp := f.await(connection.UpgradeOperationID)
-	f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; CREATE TABLE public.backup_sequence(id bigserial PRIMARY KEY,value text); INSERT INTO public.backup_sequence(value) VALUES ('before');")
+	if !mysql {
+		f.docker("exec", "--user", "postgres", sourceOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; CREATE TABLE public.backup_sequence(id bigserial PRIMARY KEY,value text); INSERT INTO public.backup_sequence(value) VALUES ('before');")
+	}
 	wire := &databaseBackupRuntimeWire{mode: "backup", entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
 	browser := startDatabaseBackupBrowserProfile(f, source, "backup_schedule")
 	created := browser.awaitSchedule()
-	if created.Revision != 1 || !created.Enabled || created.Frequency != "every_minute" || created.Timezone != "UTC" {
+	if created.Revision != 1 || !created.Enabled || created.Frequency != "every_minute" || created.Timezone != "UTC" || mysql && created.Version != "mysql.logical-local.schedule.v1" {
 		t.Fatal("live schedule creation lost reviewed configuration")
 	}
 	// Discovery must come from the running hosting controller, not a manual
@@ -576,6 +600,9 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	backupRuntimeWaitReplay(f, wire)
 	backup := backupRuntimeAwait(f, backupID)
 	f.backupWire.Store(nil)
+	if mysql && (backup.Version != domain.HostingDatabaseMySQLBackupVersion || backup.Blob.Format != "mysql_sql") {
+		t.Fatal("scheduled MySQL artifact public contract changed")
+	}
 	if f.hostingStore.ReconcileDatabaseBackupSchedules(t.Context()) != nil {
 		t.Fatal("restarted schedule controller failed")
 	}
@@ -618,11 +645,34 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	consumer := backupRuntimeApplicationObserved(f, target, "scheduled_target", browser.recordProgress)
 	f.appRecord(consumer, "GET", "before", "application_origin")
 	f.appRecord(consumer, "PUT", "restored_new", "restored_new_write")
-	upgraded := f.connection(consumer.ResourceID)
-	targetOp := f.await(upgraded.UpgradeOperationID)
-	sequence := string(f.docker("exec", "--user", "postgres", targetOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; INSERT INTO public.backup_sequence(value) VALUES ('new'); SELECT max(id),pg_get_userbyid(c.relowner) FROM public.backup_sequence,pg_class c WHERE c.oid='public.backup_sequence'::regclass GROUP BY c.relowner;"))
-	if !strings.Contains(sequence, "2") || !strings.Contains(sequence, "ncd_app") {
-		t.Fatal("scheduled restore lost sequence ownership")
+	if !mysql {
+		upgraded := f.connection(consumer.ResourceID)
+		targetOp := f.await(upgraded.UpgradeOperationID)
+		sequence := string(f.docker("exec", "--user", "postgres", targetOp.Result.ContainerID, "psql", "--username=postgres", "--dbname=app", "--no-psqlrc", "--command", "SET ROLE ncd_app; INSERT INTO public.backup_sequence(value) VALUES ('new'); SELECT max(id),pg_get_userbyid(c.relowner) FROM public.backup_sequence,pg_class c WHERE c.oid='public.backup_sequence'::regclass GROUP BY c.relowner;"))
+		if !strings.Contains(sequence, "2") || !strings.Contains(sequence, "ncd_app") {
+			t.Fatal("scheduled restore lost sequence ownership")
+		}
+	} else {
+		credential := target.Credentials[0]
+		for _, candidate := range target.Credentials {
+			if candidate.Role == "app" {
+				credential = candidate
+			}
+		}
+		if consumer.ApplicationDatabase == nil || consumer.ApplicationDatabase.Binding.DatabaseResourceID != target.Resource.ID || consumer.ApplicationDatabase.Binding.DatabaseBindingID != target.Binding.ID || consumer.ApplicationDatabase.Binding.Alias != domain.HostingDatabaseBindingAlias(target.Binding.ID) || credential.SecretID == "" || consumer.ApplicationDatabase.Binding.Credential.SecretID != credential.SecretID || consumer.ApplicationDatabase.Binding.Credential.Version != credential.Version || consumer.ApplicationDatabase.Binding.Database.Engine != "mysql" {
+			t.Fatal("scheduled MySQL consumer lost exact target binding")
+		}
+		if applicationDatabaseHTTPRecord(t.Context(), consumer, "GET", "after_snapshot", "source_still_writable") == nil {
+			t.Fatal("scheduled restore read original source instead of snapshot")
+		}
+		route := &applicationDatabaseRouteFixture{f: f, roots: f.routes.roots, publicRoot: f.routes.publicRoot, proxy: f.routes.proxy, hostname: "restored-mysql.example.test", daemonID: consumer.Release.DaemonID}
+		databaseRunnerJSON[domain.HostingHostnameGrant](f, f.adminToken, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: consumer.ProjectID, Hostname: route.hostname}, 201)
+		route.route = databaseRunnerJSON[domain.HostingRoute](f, f.token, "POST", "/api/v1/resources/"+consumer.ResourceID+"/routes", domain.HostingRouteInput{IdempotencyKey: "scheduled_restored_route", Hostname: route.hostname, PathPrefix: "/", ExpectedHealthyOperationID: consumer.ID}, 202)
+		route.awaitProxy()
+		route.assertSelected(consumer)
+		route.record(t.Context(), consumer, "GET", "before", "application_origin")
+		route.record(t.Context(), consumer, "PUT", "restored_https", "independent_target_write")
+		route.record(t.Context(), consumer, "GET", "restored_https", "independent_target_write")
 	}
 	f.docker("container", "start", sourceOp.Result.ContainerID)
 	if backupRuntimeWaitApplicationReady(t.Context(), application) != nil {
@@ -631,10 +681,99 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	f.appRecord(application, "GET", "before", "application_origin")
 	f.appRecord(application, "GET", "after_snapshot", "source_still_writable")
 	f.appRecord(application, "PUT", "source_new", "source_new_write")
+	if mysql {
+		if applicationDatabaseHTTPRecord(t.Context(), application, "GET", "restored_new", "restored_new_write") == nil || applicationDatabaseHTTPRecord(t.Context(), application, "GET", "restored_https", "independent_target_write") == nil {
+			t.Fatal("scheduled target writes reached original source")
+		}
+		f.storage.assertFiles(f, application)
+		f.routes.assertSelected(application)
+		f.routes.record(t.Context(), application, "GET", "after_snapshot", "source_still_writable")
+		var due time.Time
+		if f.database.QueryRow(t.Context(), `SELECT max(scheduled_at) FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1`, created.ID).Scan(&due) != nil {
+			t.Fatal("scheduled occurrence clock unavailable")
+		}
+		// Cross a real subsequent due minute while disabled. The running
+		// controller remains responsible for discovery; no fake tick time.
+		for time.Now().Before(due.Add(time.Minute + time.Second)) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if f.hostingStore.ReconcileDatabaseBackupSchedules(t.Context()) != nil {
+			t.Fatal("disabled schedule reconciliation failed")
+		}
+		var admitted int
+		if f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1 AND operation_id IS NOT NULL`, created.ID).Scan(&admitted) != nil || admitted != 1 {
+			t.Fatal("disabled MySQL schedule admitted a later backup")
+		}
+	}
 	browser.setPhase("complete", restored.ID)
 	browser.finished()
-	backupRuntimeGuestDumpTimeout(f, source, sourceOp, application)
-	fmt.Println("DATABASE_BACKUP_SCHEDULE_PASS postgresql")
+	if mysql {
+		backupRuntimeMySQLScheduleDenied(f, source, application, disabled)
+		fmt.Println("DATABASE_BACKUP_SCHEDULE_PASS mysql")
+	} else {
+		backupRuntimeGuestDumpTimeout(f, source, sourceOp, application)
+		fmt.Println("DATABASE_BACKUP_SCHEDULE_PASS postgresql")
+	}
+}
+
+// Reuse the owned controller lifecycle and ordinary schedule/grant APIs. No
+// backup run is admitted after current destination authority is revoked.
+func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.HostingDatabase, application domain.HostingOperation, disabled domain.HostingDatabaseBackupSchedule) {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := f.hostingStop(ctx)
+	cancel()
+	if err != nil {
+		f.t.Fatal("schedule controller did not join before denied admission")
+	}
+	path := "/api/v1/resources/" + source.Resource.ID + "/database-backup-schedules/" + disabled.ID
+	input := domain.HostingDatabaseBackupScheduleInput{RequestID: backupRuntimeRequestID(f.t), ExpectedResourceGeneration: source.Resource.Generation, ExpectedVersion: disabled.Revision, Frequency: "every_minute", Timezone: "UTC", Enabled: true}
+	enabled := databaseRunnerJSON[domain.HostingDatabaseBackupSchedule](f, f.token, "PUT", path, input, 200)
+	restore := backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID)
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
+	backupRuntimeRestartController(f)
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var state, reason string
+		var admitted bool
+		err = f.database.QueryRow(f.t.Context(), `SELECT state,reason,operation_id IS NOT NULL FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1 AND schedule_revision=$2`, enabled.ID, enabled.Revision).Scan(&state, &reason, &admitted)
+		if err == nil {
+			if state != "skipped" || reason != "source_unavailable" || admitted {
+				f.t.Fatal("denied schedule claimed an admitted operation")
+			}
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) || time.Now().After(deadline) {
+			f.t.Fatal("running controller omitted denied schedule history")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if restore() != nil {
+		f.t.Fatal("owned schedule grant restoration failed")
+	}
+	input.RequestID = backupRuntimeRequestID(f.t)
+	input.ExpectedVersion = enabled.Revision
+	input.Enabled = false
+	settled := databaseRunnerJSON[domain.HostingDatabaseBackupSchedule](f, f.token, "PUT", path, input, 200)
+	if settled.Enabled || settled.Revision != enabled.Revision+1 {
+		f.t.Fatal("denied schedule did not disable exactly")
+	}
+	occurrences := databaseRunnerJSON[[]domain.HostingDatabaseBackupOccurrence](f, f.token, "GET", path+"/occurrences", nil, 200)
+	found := false
+	for _, occurrence := range occurrences {
+		if occurrence.ScheduleRevision == enabled.Revision {
+			found = occurrence.State == "skipped" && occurrence.Reason == "source_unavailable" && occurrence.OperationID == "" && !occurrence.OwnershipHeld
+		}
+	}
+	if !found {
+		f.t.Fatal("ordinary denied occurrence projection changed")
+	}
+	f.appRecord(application, "GET", "before", "application_origin")
+	f.appRecord(application, "PUT", "after_denial", "source_remains_usable")
+	f.routes.assertSelected(application)
+	f.routes.record(f.t.Context(), application, "GET", "after_denial", "source_remains_usable")
+	f.storage.assertFiles(f, application)
+	fmt.Println("DATABASE_BACKUP_SCHEDULE_ADMISSION_FAILURE_PASS mysql source_unavailable")
 }
 
 // This is a pg_dump failure, separate from the existing pg_restore deadline.
@@ -1252,7 +1391,7 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 	if !applicationDatabaseBrowserOrigin(origin) {
 		f.t.Fatal("owned browser origin required")
 	}
-	if source.Engine == "mysql" {
+	if source.Engine == "mysql" && profile != "backup_schedule" {
 		// The immediately preceding storage browser prepared this same owner.
 		var owner, viewer, admins int
 		if f.database.QueryRow(f.t.Context(), `SELECT

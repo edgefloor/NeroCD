@@ -434,7 +434,13 @@ def provision_procps():
     say("numeric PID/UID process preflight passed")
 
 
-def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0"):
+def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0", mysql="0"):
+    if mysql not in ("0", "1"):
+        raise Failure("invalid backup engine profile")
+    if mysql == "1":
+        if (schedule, remote, retention, notifications) != ("1", "0", "0", "0"):
+            raise Failure("MySQL schedule profile is local only")
+        return "^TestHostingDatabaseBackupScheduleCompiledRunner$", ["TestHostingDatabaseBackupScheduleCompiledRunner"], ["DATABASE_BACKUP_SCHEDULE_PASS mysql", "DATABASE_BACKUP_SCHEDULE_BROWSER_PASS mysql", "DATABASE_BACKUP_SCHEDULE_ADMISSION_FAILURE_PASS mysql source_unavailable"]
     if schedule not in ("0", "1") or remote not in ("0", "1") or retention not in ("0", "1") or retention == "1" and remote != "1":
         raise Failure("invalid backup schedule profile")
     if notifications not in ("0", "1") or notifications == "1" and remote != "1":
@@ -457,8 +463,8 @@ def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0
     return "^(?:" + "|".join(names) + ")$", names, markers
 
 
-def verify_backup_runtime_output(output, schedule, remote="0", retention="0", notifications="0"):
-    _, names, markers = backup_runtime_profile(schedule, remote, retention, notifications)
+def verify_backup_runtime_output(output, schedule, remote="0", retention="0", notifications="0", mysql="0"):
+    _, names, markers = backup_runtime_profile(schedule, remote, retention, notifications, mysql)
     for marker in markers:
         if output.splitlines().count(marker) != 1:
             raise Failure("required real backup restore proof missing: " + marker)
@@ -527,7 +533,8 @@ def database_workflow_pebble_config(raw):
 
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
-    if mysql_mode not in ("0", "1") or mysql_mode == "1" and (backup_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
+    mysql_schedule = (mysql_mode, backup_mode, schedule_mode, remote_mode, retention_mode, notifications_mode, storage_mode, routes_mode, browser_mode, gate_mode) == ("1", "1", "1", "0", "0", "0", "1", "1", "1", "full")
+    if mysql_mode not in ("0", "1") or mysql_mode == "1" and not mysql_schedule and (backup_mode != "0" or schedule_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
         raise Failure("MySQL requires exact connected storage/browser profile with appended local backup")
     if notifications_mode not in ("0", "1") or notifications_mode == "1" and (remote_mode != "1" or browser_mode != "1" or gate_mode != "full"):
         raise Failure("notifications mode requires exact full remote backup/browser profile")
@@ -537,7 +544,7 @@ def main():
         raise Failure("remote mode requires the reviewed backup profile")
     if schedule_mode not in ("0", "1") or schedule_mode == "1" and backup_mode != "1":
         raise Failure("schedule mode requires the reviewed backup profile")
-    if backup_mode not in ("0", "1") or backup_mode == "1" and (browser_mode != ("0" if gate_mode == "retention-failures-diagnostic" else "1") or routes_mode != "0" or storage_mode != "0" or gate_mode not in ("full", "retention-failures-diagnostic")):
+    if backup_mode not in ("0", "1") or backup_mode == "1" and not mysql_schedule and (browser_mode != ("0" if gate_mode == "retention-failures-diagnostic" else "1") or routes_mode != "0" or storage_mode != "0" or gate_mode not in ("full", "retention-failures-diagnostic")):
         raise Failure("backup mode requires its exact private database/browser profile")
     if browser_mode not in ("0", "1"):
         raise Failure("invalid browser mode")
@@ -818,10 +825,10 @@ def main():
     if gate_mode == "storage-cutover-diagnostic":
         pattern = STORAGE_CUTOVER_DIAGNOSTIC_SELECTOR
     if backup_mode == "1":
-        pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode, retention_mode, notifications_mode)
+        pattern, _, _ = backup_runtime_profile(schedule_mode, remote_mode, retention_mode, notifications_mode, mysql_mode)
     if gate_mode == "retention-failures-diagnostic":
         pattern, _, _ = retention_failure_diagnostic_profile(backup_mode, remote_mode, retention_mode, schedule_mode, browser_mode, routes_mode, storage_mode)
-    if mysql_mode == "1":
+    if mysql_mode == "1" and backup_mode == "0":
         pattern = "^TestHostingApplicationDatabaseStorage(CompiledRunner|FailuresCompiledRunner)$"
     runtime_args += [outer, "/fixture/api.test", "-test.v", "-test.run", pattern, "-test.timeout=40m"]
     if routes_mode == "1":
@@ -838,9 +845,9 @@ def main():
         say("DATABASE_BACKUP_RETENTION_FAILURE_DIAGNOSTIC_PASS postgresql")
         return
     if backup_mode == "1":
-        verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode, notifications_mode)
+        verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode, notifications_mode, mysql_mode)
         full_workflow_pass = True
-        say("hosted PostgreSQL logical backup and new-database restore fixture passed")
+        say("hosted " + ("MySQL scheduled" if mysql_schedule else "PostgreSQL") + " logical backup and new-database restore fixture passed")
         return
     if mysql_mode == "1":
         verify_mysql_runtime_output(runtime_output)
