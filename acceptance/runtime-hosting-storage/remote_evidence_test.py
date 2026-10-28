@@ -47,7 +47,7 @@ class ProfileTest(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): evidence.publication(wrong)
 
     def test_catalog_application_publication_requires_exact_owner_name_and_no_extra_ports(self):
-        for owner in ["nerocd-git-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"]:
+        for owner in ["nerocd-git-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027", "nerocd-catalog-wordpress-runtime-20261028"]:
             value = self.fixture()
             value["Name"] = "/" + owner + "-dind"
             value["Config"] = {"Labels": {"io.nerocd.storage-runtime.owner": owner}}
@@ -311,12 +311,13 @@ class ProfileTest(unittest.TestCase):
             (root / "runtime/owned-upload.tar").write_bytes(b"fixture archive")
             (root / "runtime/deletion-markers.json").write_text("{}")
             (root / "preservation-before.private.json").write_text("private credentials")
+            (root / "compose-browser-safe.json").write_text('{"status":"passed","wordpress_setup_post_media":true}')
             (root / "browser.log").write_text("private runtime log")
             (root / "unlisted-secret").write_text("private")
             with patch("sys.argv", ["remote_evidence.py", "receipt", directory]):
                 evidence.main()
             with tarfile.open(root / "safe-receipt.tar.gz") as archive:
-                self.assertEqual(set(archive.getnames()), {"result", "runtime/owned-upload.tar", "runtime/deletion-markers.json"})
+                self.assertEqual(set(archive.getnames()), {"result", "runtime/owned-upload.tar", "runtime/deletion-markers.json", "compose-browser-safe.json"})
 
 
 if __name__ == "__main__":

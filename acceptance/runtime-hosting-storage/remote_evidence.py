@@ -29,7 +29,7 @@ def publication(value):
     if application_owner == private_owner or value.get("Name") == "/" + private_owner + "-dind":
         if application_owner != private_owner or value.get("Name") != "/" + private_owner + "-dind":
             raise ValueError("private registry owner/name mismatch")
-    application = application_owner in {"nerocd-git-compose-vikunja-runtime-20261027", "nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027"} and value.get("Name") == "/" + application_owner + "-dind"
+    application = application_owner in {"nerocd-git-compose-vikunja-runtime-20261027", "nerocd-compose-vikunja-runtime-20261027", "nerocd-catalog-uptime-kuma-runtime-20261027", "nerocd-catalog-actual-budget-runtime-20261027", "nerocd-catalog-wordpress-runtime-20261028"} and value.get("Name") == "/" + application_owner + "-dind"
     if application:
         requested["443/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": "25443"}]
     if host.get("PortBindings") != requested:
@@ -255,7 +255,7 @@ def main():
         # Explicit allowlist, never recurse over private evidence or inventories.
         names = ["result", "binary-sha256", "archive-helper-provenance", "image-store-scope",
                  "preservation-safe.json", "runtime/remote-markers.json", "runtime/retention-markers.json", "runtime/deletion-markers.json", "runtime/owned-upload.tar",
-                 "browser-safe.json", "browser-ui-manifest.json"]
+                 "browser-safe.json", "compose-browser-safe.json", "browser-ui-manifest.json"]
         with tarfile.open(root / "safe-receipt.tar.gz", "w:gz") as archive:
             for name in names:
                 path = root / name
