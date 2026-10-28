@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -1056,7 +1057,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 		f.appRecord(application, "PUT", "a", "retained_a")
 		roots, public := newApplicationDatabaseRouteTrust(t)
 		f.initialApplicationDatabaseRoute(application, "mysql", roots, public)
-		f.storage.write(f, application, "retained_notification", 0x41)
+		f.storage.write(f, application, "retained_a", 0x41)
 	}
 	f.appRecord(application, "PUT", "before", "notification_snapshot_origin")
 	target := databaseRunnerJSON[struct {
@@ -1558,5 +1559,25 @@ func TestBackupNotificationInitialRouteRequiresSeededRecord(t *testing.T) {
 	}
 	if request(http.MethodPut) != nil || request(http.MethodGet) != nil {
 		t.Fatal("exact seeded route record failed trusted identity/readback")
+	}
+}
+
+func TestBackupNotificationUploadRequiresRetainedArchiveKey(t *testing.T) {
+	data := applicationDatabaseStoragePayload(0x41)
+	for _, key := range []string{"retained_a", "retained_notification"} {
+		var raw bytes.Buffer
+		archive := tar.NewWriter(&raw)
+		if err := archive.WriteHeader(&tar.Header{Name: key, Mode: 0640, Uid: 12345, Gid: 12346, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := archive.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := archive.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if (applicationDatabaseUploadArchive(raw.Bytes(), data) == nil) != (key == "retained_a") {
+			t.Fatal("notification upload accepted a name outside the shared storage contract")
+		}
 	}
 }
