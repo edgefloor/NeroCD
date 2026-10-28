@@ -86,9 +86,10 @@ own task, lease, attempt and fence. It owns no live source-database mutation hol
 Source database maintenance can proceed while the immutable archive uploads.
 
 The stable object key includes the backup ID and full SHA-256 digest. NeroCD
-uses conditional creation and verifies the complete object body, byte count and
-engine-specific format header. PostgreSQL uses `PGDMP`; MySQL uses the recorded
-`mysql_sql` dump format. An S3 ETag is not accepted as a content digest.
+uses conditional creation and verifies the complete object body, byte count, and
+recorded SHA-256. PostgreSQL additionally requires the `PGDMP` header. MySQL
+requires `mysql_sql` plan and blob metadata; it has no additional header check.
+An S3 ETag is not accepted as a content digest.
 
 ## Failed uploads and retry
 
