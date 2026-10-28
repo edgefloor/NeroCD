@@ -511,6 +511,20 @@ def verify_mysql_runtime_output(output):
         raise Failure("MySQL qualification contains unrelated proof markers")
 
 
+def database_workflow_pebble_config(raw):
+    config = json.loads(raw)
+    try:
+        profile = config["pebble"]["profiles"]["default"]
+        if profile["validityPeriod"] != 600:
+            raise ValueError("unexpected shared certificate validity")
+    except (KeyError, TypeError, ValueError) as error:
+        raise Failure("database workflow requires the pinned short-lived CA source") from error
+    # Database persistence is not the dedicated certificate-renewal workflow.
+    # A day-long leaf stays outside the fixture Traefik one-hour renewal window.
+    profile["validityPeriod"] = 86400
+    return (json.dumps(config, sort_keys=True, indent=2) + "\n").encode()
+
+
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
     if mysql_mode not in ("0", "1") or mysql_mode == "1" and (backup_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
@@ -673,7 +687,10 @@ def main():
     docker("cp", "db/seeds/dev.sql", outer + ":/workspace/db/seeds/dev.sql")
     if routes_mode == "1":
         # Copy bytes only into owned DinD. No outer-host bind or socket mount.
-        config = Path("acceptance/runtime-proxy-control/pebble.json")
+        original = Path("acceptance/runtime-proxy-control/pebble.json").read_bytes()
+        config = evidence / "pebble.json"
+        config.write_bytes(database_workflow_pebble_config(original))
+        (evidence / "pebble-source-config-sha256").write_text(hashlib.sha256(original).hexdigest() + "\n")
         (evidence / "pebble-config-sha256").write_text(hashlib.sha256(config.read_bytes()).hexdigest() + "\n")
         docker("cp", str(config), outer + ":/fixture/pebble.json")
         docker("exec", outer, "docker", "--host", ENDPOINT, "pull", PEBBLE_IMAGE, timeout=180, output="fixture-pebble-pull")

@@ -528,7 +528,7 @@ class GateTest(unittest.TestCase):
             (client / "Dockerfile.http-storage").write_text("FROM scratch\nCOPY client /client\nENV FIXTURE_UPLOADS=1\nUSER 0:0\nENTRYPOINT [\"/client\",\"serve\"]\n")
             proxy = root / "acceptance/runtime-proxy-control"
             proxy.mkdir(parents=True)
-            (proxy / "pebble.json").write_text('{"pebble":{"listenAddress":"127.0.0.1:14000"}}\n')
+            (proxy / "pebble.json").write_bytes((Path(__file__).resolve().parents[2] / "acceptance/runtime-proxy-control/pebble.json").read_bytes())
             initial = {}
             if case == "preexisting_foreign":
                 initial["volume"] = {"Name": VOLUME, "Labels": {LABEL: "foreign"}}
@@ -876,7 +876,9 @@ class GateTest(unittest.TestCase):
         self.assertNotIn("nerocd_proxy_fixture", builds[2])
         pebble = "ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
         self.assertIn(["exec", IDENTITY, "docker", "--host", "unix:///var/run/docker.sock", "pull", pebble], commands)
-        self.assertIn(["cp", "acceptance/runtime-proxy-control/pebble.json", IDENTITY+":/fixture/pebble.json"], commands)
+        copied = next(args for args in commands if args[0] == "cp" and args[-1] == IDENTITY+":/fixture/pebble.json")
+        self.assertNotEqual(copied[1], "acceptance/runtime-proxy-control/pebble.json")
+        self.assertEqual(Path(copied[1]).name, "pebble.json")
         outer = next(args for args in commands if args[:2] == ["container", "create"])
         self.assertNotIn("--publish", outer)
         runtime = next(args for args in commands if "/fixture/api.test" in args)
@@ -1148,6 +1150,31 @@ class OuterPublicationTest(unittest.TestCase):
 
 
 class MySQLQualificationTest(unittest.TestCase):
+    def test_database_ca_changes_only_workflow_leaf_validity(self):
+        source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
+        function = next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name == "database_workflow_pebble_config")
+        namespace = dict(json=json, Failure=RuntimeError)
+        exec(compile(ast.Module(body=[function],type_ignores=[]),"gate.sh","exec"),namespace)
+        path = Path(__file__).resolve().parents[2] / "acceptance/runtime-proxy-control/pebble.json"
+        original = path.read_bytes()
+        original_config = json.loads(original)
+        effective = json.loads(namespace["database_workflow_pebble_config"](original))
+        self.assertEqual(original_config["pebble"]["profiles"]["default"]["validityPeriod"],600)
+        self.assertEqual(effective["pebble"]["profiles"]["default"]["validityPeriod"],86400)
+        # Fixture Traefik requests one-hour certificates. The shared ten-minute
+        # leaf is immediately inside that renewal window; workflow leaf is not.
+        renderer = (Path(__file__).resolve().parents[2] / "internal/hostingproxy/docker.go").read_text()
+        self.assertIn("--certificatesresolvers.managed.acme.certificatesduration=1",renderer)
+        self.assertLess(original_config["pebble"]["profiles"]["default"]["validityPeriod"],3600)
+        self.assertGreater(effective["pebble"]["profiles"]["default"]["validityPeriod"],3600+40*60)
+        effective["pebble"]["profiles"]["default"]["validityPeriod"] = 600
+        self.assertEqual(effective,original_config)
+        self.assertEqual(path.read_bytes(),original)
+        for value in (601,None,"600"):
+            changed = json.loads(original)
+            changed["pebble"]["profiles"]["default"]["validityPeriod"] = value
+            with self.subTest(value=value),self.assertRaises(RuntimeError):namespace["database_workflow_pebble_config"](json.dumps(changed))
+
     def test_mysql_mode_keeps_old_backup_and_partial_profiles_closed(self):
         source = Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
         main = next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name == "main")

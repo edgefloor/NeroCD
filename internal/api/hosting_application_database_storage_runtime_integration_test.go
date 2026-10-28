@@ -4,6 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1504,6 +1509,69 @@ func TestApplicationDatabaseStorageTrustedUpload(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestApplicationDatabaseStorageTrustedUploadRollover(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	authority := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(48 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, authority, authority, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	issue := func(serial int64) tls.Certificate {
+		leaf, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{SerialNumber: big.NewInt(serial), DNSNames: []string{"example.com"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(10 * time.Minute), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		raw, err := x509.CreateCertificate(rand.Reader, template, root, &leaf.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tls.Certificate{Certificate: [][]byte{raw}, PrivateKey: leaf}
+	}
+	original, renewed := issue(2), issue(3)
+	var rollover atomic.Bool
+	data, id := applicationDatabaseStoragePayload(17), strings.Repeat("a", 64)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-NeroCD-Fixture-Instance", id[:12])
+		_, _ = w.Write(data)
+	}))
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{original}, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if rollover.Load() {
+			return &renewed, nil
+		}
+		return &original, nil
+	}}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	pin := sha256.Sum256(original.Certificate[0])
+	op := domain.HostingOperation{Result: &domain.HostingResult{ContainerID: id}}
+	probe := func(fingerprint string) error {
+		return applicationDatabaseUpload(t.Context(), roots, "example.com", fingerprint, op, "GET", "retained_a", data, server.Listener.Addr().String())
+	}
+	if probe(hex.EncodeToString(pin[:])) != nil {
+		t.Fatal("original trusted upload rejected")
+	}
+	rollover.Store(true)
+	err = probe(hex.EncodeToString(pin[:]))
+	if err == nil || err.Error() != "connected upload response rejected status=200 read_complete=true tls_verified=true instance_match=true certificate_match=false body_match=true" {
+		t.Fatal("trusted rollover did not isolate the stale exact fingerprint")
+	}
+	pin = sha256.Sum256(renewed.Certificate[0])
+	if probe(hex.EncodeToString(pin[:])) != nil {
+		t.Fatal("renewed exact trusted upload rejected")
 	}
 }
 
