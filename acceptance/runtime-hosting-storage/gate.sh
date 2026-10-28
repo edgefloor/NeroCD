@@ -372,7 +372,7 @@ with socket.socket() as listener:
 GIT_PORT_PREREQUISITE
 fi
 if [[ "$git_compose" == true ]]; then
- go test -count=1 ./internal/api -run '^TestGitComposeFixtureSourceAndRequestContracts$' > "$evidence/git-compose-request-contracts.log" 2>&1
+ go test -count=1 ./internal/api -run '^TestGitCompose(FixtureSourceAndRequestContracts|BuildRegistryCredentialRotation)$' > "$evidence/git-compose-request-contracts.log" 2>&1
 fi
 host_docker ps -a --no-trunc --format '{{json .}}' > "$evidence/host-containers-before"
 host_docker ps -aq --no-trunc | sort > "$evidence/host-container-ids-before"

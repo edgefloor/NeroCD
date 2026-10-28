@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +26,50 @@ const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a
 const gitComposeFixtureMultiline = "first line\nsecond line"
 
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
+
+// Rotation changes the only accepted password, so version2 cannot succeed
+// using stale version1 material even when the image receipt is otherwise valid.
+func gitComposeFixtureBuildRegistryAuth(next http.Handler, password string) (http.Handler, func(string)) {
+	var active atomic.Value
+	active.Store(password)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != "build-fixture" || subtle.ConstantTimeCompare([]byte(password), []byte(active.Load().(string))) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="NeroCD build registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return handler, func(password string) { active.Store(password) }
+}
+
+func TestGitComposeBuildRegistryCredentialRotation(t *testing.T) {
+	handler, rotate := gitComposeFixtureBuildRegistryAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }), "first-fixture-password")
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+	check := func(password string, want int) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/v2/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth("build-fixture", password)
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatalf("registry rotation status=%d want=%d", response.StatusCode, want)
+		}
+	}
+	check("first-fixture-password", http.StatusOK)
+	check("second-fixture-password", http.StatusUnauthorized)
+	rotate("second-fixture-password")
+	check("first-fixture-password", http.StatusUnauthorized)
+	check("second-fixture-password", http.StatusOK)
+}
 
 func gitComposeFixtureFiles(raw, base, buildBase, marker string, fail bool, registryImage string) map[string]string {
 	compose := strings.Replace(raw, "    image: "+base, "    build:\n      context: ../app\n"+gitComposeFixtureArgs(marker)+"    image: nerocd-vikunja:prepared", 1)

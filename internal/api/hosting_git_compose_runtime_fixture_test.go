@@ -8,7 +8,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -71,7 +70,7 @@ func gitComposeRuntimePolicy() source.RepositoryPolicy {
 // The existing authenticated registry remains the fixed backend. This TLS
 // listener supplies the same trust boundary a publicly trusted registry uses,
 // through the production operator CA configuration rather than insecure flags.
-func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, secondPassword string) (string, string) {
+func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, secondPassword string) (string, string, func()) {
 	t.Helper()
 	gateway := strings.TrimSpace(string(storageRuntimeDocker(t, "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")))
 	ip := net.ParseIP(gateway)
@@ -104,16 +103,7 @@ func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, 
 	original := proxy.Director
 	proxy.Director = func(r *http.Request) { original(r); r.SetBasicAuth("fixture", backendPassword) }
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) { w.WriteHeader(http.StatusBadGateway) }
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		username, password, ok := r.BasicAuth()
-		valid := subtle.ConstantTimeCompare([]byte(password), []byte(firstPassword)) | subtle.ConstantTimeCompare([]byte(password), []byte(secondPassword))
-		if !ok || username != "build-fixture" || valid != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="NeroCD build registry"`)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		proxy.ServeHTTP(w, r)
-	})
+	handler, rotate := gitComposeFixtureBuildRegistryAuth(proxy, firstPassword)
 	listener, err := net.Listen("tcp", "0.0.0.0:25002")
 	if err != nil {
 		t.Fatal("owned TLS registry port unavailable", err)
@@ -124,7 +114,7 @@ func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, 
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	server.StartTLS()
 	t.Cleanup(server.Close)
-	return net.JoinHostPort(gateway, "25002"), path
+	return net.JoinHostPort(gateway, "25002"), path, func() { rotate(secondPassword) }
 }
 
 // This bounded probe uses the production builder, authentication callback and
@@ -136,7 +126,7 @@ func TestGitComposePrivateBaseEngine(t *testing.T) {
 	root := t.TempDir()
 	f := &storageRuntimeFixture{t: t, root: root}
 	backendPassword, firstPassword, secondPassword := hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t)
-	registry, ca := gitComposeRuntimeRegistryTLS(t, backendPassword, firstPassword, secondPassword)
+	registry, ca, _ := gitComposeRuntimeRegistryTLS(t, backendPassword, firstPassword, secondPassword)
 	repository := registryRuntimeProtectedImages(t, f, backendPassword, gitComposeFixtureBase)
 	repository = strings.Replace(repository, "127.0.0.1:25001", registry, 1)
 	checkout := filepath.Join(root, "checkout")

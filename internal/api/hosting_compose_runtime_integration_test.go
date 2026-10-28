@@ -59,9 +59,11 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 	registryPassword := hostingStorageRemoteRuntimeRandom(t)
 	buildPasswordA, buildPasswordB := hostingStorageRemoteRuntimeRandom(t), hostingStorageRemoteRuntimeRandom(t)
 	var buildRegistryHost, privateBase string
+	var rotateBuildRegistry func()
 	if gitCompose {
-		host, ca := gitComposeRuntimeRegistryTLS(t, registryPassword, buildPasswordA, buildPasswordB)
+		host, ca, rotate := gitComposeRuntimeRegistryTLS(t, registryPassword, buildPasswordA, buildPasswordB)
 		buildRegistryHost = host
+		rotateBuildRegistry = rotate
 		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_HOST", host)
 		t.Setenv("NEROCD_GIT_COMPOSE_REGISTRY_CA", ca)
 	}
@@ -493,6 +495,7 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		if wrongBase.FailureCode != "build_failed" || wrongBase.ComposeResult != nil || wrongBase.Artifact != nil {
 			t.Fatal("denied private base produced result")
 		}
+		rotateBuildRegistry()
 		buildRef.Version = 2
 		selectBuildCredential(buildRef)
 		unavailableRepository(true)
