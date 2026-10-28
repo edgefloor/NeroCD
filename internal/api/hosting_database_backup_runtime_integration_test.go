@@ -31,6 +31,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/runnerclient"
 	"nerocd/web"
 )
@@ -1405,6 +1406,9 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 		if err != nil {
 			f.t.Fatal("browser bootstrap failed")
 		}
+		if os.Getenv("NEROCD_DATABASE_CONNECTION_ROUTES") == "1" {
+			backupRuntimeRetainRouteAdministrator(f)
+		}
 		for _, member := range []app.ProjectMemberInput{{ProjectID: source.Resource.ProjectID, Email: "admin@example.local", Role: "owner"}, {ProjectID: source.Resource.ProjectID, Email: "viewer@example.local", Role: "viewer"}} {
 			databaseRunnerJSON[domain.ProjectMember](f, f.token, "POST", "/api/v1/project-members", member, 200)
 		}
@@ -2655,4 +2659,83 @@ func TestDatabaseBackupPlanPauseForwardsCompletion(t *testing.T) {
 	if len(received) != 2 || wire.replays() != 0 {
 		t.Fatal("plan pause created a receipt replay fault")
 	}
+}
+
+// Use the real session middleware and proxy handler without starting a runner.
+func TestDatabaseBackupRouteAdministratorSession(t *testing.T) {
+	api, pg, database := newHostingBuildAPIFixture(t)
+	for {
+		tx, err := database.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed, err := hostingjobs.MigrateNextTx(t.Context(), tx)
+		if err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err = tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			break
+		}
+	}
+	stop, err := pg.StartHostingExecution(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if stop(ctx) != nil {
+			t.Error("focused controller did not join")
+		}
+	})
+	server := httptest.NewTLSServer(api)
+	t.Cleanup(server.Close)
+	f := &databaseRunnerFixture{t: t, server: server, client: server.Client(), database: database}
+	owner := databaseRunnerJSON[struct {
+		Token string `json:"token"`
+	}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
+	f.token = owner.Token
+	f.adminToken = owner.Token
+	if _, err := api.app.BootstrapAdmin(t.Context(), app.BootstrapAdminInput{Email: "backup-bootstrap@example.local", Name: "Backup bootstrap", Password: "backup-bootstrap-private-only"}); err != nil {
+		t.Fatal("retained fixture administrator bootstrap failed")
+	}
+	enrollment := databaseRunnerJSON[app.CreatedRunnerEnrollment](f, f.token, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_backup_admin", RunnerName: "backup admin", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability}}, 201)
+	databaseRunnerJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", databaseRunnerEnrollmentConsumeInput("ncr_backup_admin_fixture"), 200)
+	target := databaseRunnerJSON[app.ServerDetail](f, f.token, "POST", "/api/v1/servers", app.ServerInput{Name: "backup admin fixture", RunnerID: "runner_backup_admin"}, 201)
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/destinations/"+target.Destination.ID+"/project-grants", app.DestinationProjectInput{ProjectID: "proj_platform"}, 201)
+	databaseRunnerJSON[domain.HostingProxy](f, f.token, "POST", "/api/v1/servers/"+target.Server.ID+"/proxy", domain.HostingProxyInput{ControlProjectID: "proj_platform", IdempotencyKey: "backup_admin_proxy", Configuration: domain.HostingProxyConfiguration{Email: "operator@example.test", CA: "letsencrypt-staging", ManagementPort: 19080}}, 202)
+	if changed, err := database.Exec(t.Context(), `UPDATE users SET global_role='user' WHERE id='usr_bootstrap' AND global_role='system_admin'`); err != nil || changed.RowsAffected() != 1 {
+		t.Fatal("fixture owner demotion failed")
+	}
+	path := "/api/v1/servers/" + target.Server.ID + "/proxy/hostname-grants"
+	input := domain.HostingHostnameGrantInput{ProjectID: "proj_platform", Hostname: "restored-mysql.example.test"}
+	databaseRunnerJSON[json.RawMessage](f, "", "POST", path, input, 401)
+	databaseRunnerJSON[json.RawMessage](f, f.adminToken, "POST", path, input, 403)
+	backupRuntimeRetainRouteAdministrator(f)
+	principal := databaseRunnerJSON[struct {
+		Roles []string `json:"roles"`
+	}](f, f.adminToken, "GET", "/api/v1/me", nil, 200)
+	if f.adminToken == f.token || !slices.Contains(principal.Roles, domain.RoleSystemAdmin) {
+		t.Fatal("route fixture retained demoted owner token")
+	}
+	databaseRunnerJSON[domain.HostingHostnameGrant](f, f.adminToken, "POST", path, input, 201)
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", path, input, 403)
+}
+
+func backupRuntimeRetainRouteAdministrator(f *databaseRunnerFixture) {
+	f.t.Helper()
+	const password = "backup-bootstrap-private-only"
+	f.protected = append(f.protected, []byte(password))
+	session := databaseRunnerJSON[struct {
+		Token string `json:"token"`
+	}](f, "", "POST", "/api/v1/sessions", map[string]string{"email": "backup-bootstrap@example.local", "password": password}, 201)
+	if session.Token == "" || session.Token == f.token {
+		f.t.Fatal("retained administrator session missing")
+	}
+	f.adminToken = session.Token
+	f.protected = append(f.protected, []byte(session.Token))
 }
