@@ -29,7 +29,7 @@ var ErrInvalidDatabaseBackupRemote = errors.New("invalid database remote backup 
 // HostingDatabaseBackupTransferVersionFor binds uploads to their local backup format.
 func HostingDatabaseBackupTransferVersionFor(backupVersion string) string {
 	switch backupVersion {
-	case HostingDatabaseBackupVersion:
+	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
 		return HostingDatabaseBackupTransferVersion
 	case HostingDatabaseMySQLBackupVersion:
 		return HostingDatabaseMySQLBackupTransferVersion

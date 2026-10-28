@@ -53,6 +53,17 @@ func completeClaimedBackup(t *testing.T, f networkCaptureFixture, a domain.Hosti
 	t.Helper()
 	id := p.Operation.ID
 	in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "intent_" + id, PlanHash: p.Hash, Phase: "intent"}
+	if p.Component != nil {
+		in.ComponentVersion = domain.HostingDatabaseBackupComponentVersion
+		in.WritersResumed = true
+		if p.Target != nil {
+			for _, c := range p.Target.Stack.Components {
+				if c.Component != p.Component.Target {
+					in.Writers = append(in.Writers, domain.HostingStorageArchiveWriterState{ContainerID: c.ContainerID, OperationID: c.OperationID, ImageID: c.ImageID, PlanHash: p.Target.PlanHash, ReleaseHash: p.Target.Release.Hash, Running: c.Running})
+				}
+			}
+		}
+	}
 	if _, err := f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); err != nil {
 		t.Fatal("intent", err)
 	}

@@ -150,7 +150,7 @@ func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, act
 }
 
 func (s *PostgresStore) backupRemoteRestoreAdmit(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan, source domain.BackupRemoteSource) error {
-	if p.Operation.Version != domain.HostingDatabaseBackupVersion {
+	if domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) != domain.HostingDatabaseBackupTransferVersion {
 		return ErrConflict
 	}
 	upload, err := backupRemoteLoad(ctx, tx, source.TransferID, false)

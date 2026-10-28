@@ -19,8 +19,11 @@ func TestMySQLRemoteTransferKeepsEngineAndArtifactIdentity(t *testing.T) {
 	if HostingDatabaseBackupTransferVersionFor(HostingDatabaseMySQLBackupVersion) != p.Operation.Version || HostingDatabaseBackupRemoteCapabilityFor(p.Operation.Version) != HostingDatabaseMySQLBackupRemoteCapability || HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version) != HostingDatabaseMySQLBackupRemoteCredentialPurpose {
 		t.Fatal("MySQL upload adapter identity")
 	}
-	if HostingDatabaseBackupTransferVersionFor(HostingDatabaseBackupComponentVersion) != "" {
-		t.Fatal("Compose database gained remote uploads")
+	if HostingDatabaseBackupTransferVersionFor(HostingDatabaseBackupComponentVersion) != HostingDatabaseBackupTransferVersion {
+		t.Fatal("existing Compose PostgreSQL transfer identity changed")
+	}
+	if HostingDatabaseBackupTransferVersionFor("mysql.compose.logical-local.v1") != "" {
+		t.Fatal("unsupported Compose MySQL gained remote uploads")
 	}
 	for _, change := range []func(*HostingDatabaseBackupTransferPlan){
 		func(v *HostingDatabaseBackupTransferPlan) { v.Operation.Version = HostingDatabaseBackupTransferVersion },
