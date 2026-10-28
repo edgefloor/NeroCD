@@ -295,8 +295,8 @@ func (s *Service) RequestRun(ctx context.Context, templateID string) (domain.Tas
 	if err := s.requireProjectRole(ctx, principal, template.ProjectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	if domain.ContainsHostingExecution(template.RunSpec, template.Workflow) {
-		return domain.TaskRun{}, InvalidInput(errors.New("image_deploy requires a resource deployment operation"))
+	if err := domain.ValidateGenericRunDefinition(template.RunSpec, template.Workflow); err != nil {
+		return domain.TaskRun{}, InvalidInput(err)
 	}
 	status := domain.RunQueued
 	if template.RequiresAck {
@@ -340,8 +340,8 @@ type RunRequestInput struct {
 
 // RequestRunWithSpec requests an authorized run with spec.
 func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput) (domain.TaskRun, error) {
-	if domain.ContainsHostingExecution(input.RunSpec, input.Workflow) {
-		return domain.TaskRun{}, InvalidInput(errors.New("image deployment requires the resource deployment API"))
+	if err := domain.ValidateGenericRunDefinition(input.RunSpec, input.Workflow); err != nil {
+		return domain.TaskRun{}, InvalidInput(err)
 	}
 	if strings.TrimSpace(input.TemplateID) != "" {
 		return s.RequestRun(ctx, input.TemplateID)
@@ -357,12 +357,19 @@ func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput)
 	if err := s.requireProjectRole(ctx, principal, projectID, domain.RoleMaintainer); err != nil {
 		return domain.TaskRun{}, err
 	}
-	runSpec, err := s.normalizeRunSpec(input.RunSpec, "")
+	runSpec, err := s.normalizeRunSpecNode(input.RunSpec, "")
 	if err != nil {
 		return domain.TaskRun{}, fmt.Errorf("invalid run spec: %w", err)
 	}
-	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: runSpec}); err != nil {
-		return domain.TaskRun{}, InvalidInput(err)
+	if err := s.validateRunSpecPlans(runSpec); err != nil {
+		return domain.TaskRun{}, err
+	}
+	workflow, err := s.normalizeWorkflowNodes(input.Workflow)
+	if err != nil {
+		return domain.TaskRun{}, fmt.Errorf("invalid workflow: %w", err)
+	}
+	if err := s.validateWorkflowPlans(workflow); err != nil {
+		return domain.TaskRun{}, fmt.Errorf("invalid workflow: %w", err)
 	}
 	status := domain.RunQueued
 	if input.RequiresAck {
@@ -372,10 +379,6 @@ func (s *Service) RequestRunWithSpec(ctx context.Context, input RunRequestInput)
 	runID, err := prefixedID("run")
 	if err != nil {
 		return domain.TaskRun{}, err
-	}
-	workflow, err := s.normalizeWorkflow(input.Workflow)
-	if err != nil {
-		return domain.TaskRun{}, fmt.Errorf("invalid workflow: %w", err)
 	}
 	run := domain.TaskRun{ID: runID, ProjectID: projectID, RunSpec: runSpec, Workflow: workflow, WorkflowState: initialWorkflowState(workflow), RunnerTags: normalizeTags(input.RunnerTags), Status: status, RequestedBy: principal.ID, StartedAt: now}
 	logID, err := prefixedID("log")

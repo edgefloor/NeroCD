@@ -412,7 +412,18 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 	if err != nil {
 		return domain.ClaimedRun{}, err
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
+	if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		if domain.ValidateComposeDeploymentTask(claim.Run) != nil || claim.Lease.RunID != claim.Run.ID || claim.Lease.RunnerID != principal.ID {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		plan, err := s.RunnerDeploymentPlan(ctx, DeploymentPlanInput{DeploymentID: claim.Run.RunSpec.Inputs["deployment_id"].(string), RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence})
+		if err != nil {
+			return domain.ClaimedRun{}, err
+		}
+		if plan.DeploymentID != claim.Run.RunSpec.Inputs["deployment_id"] || plan.ProjectID != claim.Run.ProjectID || plan.RunID != claim.Run.ID || plan.LeaseID != claim.Lease.ID || plan.Attempt != claim.Lease.Attempt || plan.Fence != claim.Lease.Fence {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
 		if domain.ValidateStorageBackupRetentionTask(claim.Run) != nil || claim.Lease.RunID != claim.Run.ID || claim.Lease.RunnerID != principal.ID {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
@@ -541,7 +552,7 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 		if op.TaskMode != claim.Run.RunSpec.HostingMode {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
-	} else if domain.ContainsHostingExecution(claim.Run.RunSpec, claim.Run.Workflow) {
+	} else if domain.ValidateGenericRunDefinition(claim.Run.RunSpec, claim.Run.Workflow) != nil {
 		return domain.ClaimedRun{}, store.ErrConflict
 	}
 	claim.Run = s.ensureWorkflowState(claim.Run)

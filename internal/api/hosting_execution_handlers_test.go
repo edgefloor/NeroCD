@@ -73,6 +73,11 @@ func TestPublicRunAndTemplateAPIsRejectNestedHostingTasks(t *testing.T) {
 		workflow domain.Workflow
 	}{
 		{"top", internal, domain.Workflow{}},
+		{"compose_process", domain.RunSpec{Type: domain.RunTypeComposeDeploy, Process: &domain.ProcessSpec{Command: []string{"not-executed"}}}, domain.Workflow{}},
+		{"nested_compose", generic, domain.Workflow{Steps: []domain.WorkflowStep{{ID: "compose", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}}}}},
+		{"spec_nested_compose", domain.RunSpec{Type: "ansible", Workflow: &domain.Workflow{Steps: []domain.WorkflowStep{{ID: "compose", RunSpec: domain.RunSpec{Type: domain.RunTypeComposeDeploy}}}}}, domain.Workflow{}},
+		{"step_approval", generic, domain.Workflow{Steps: []domain.WorkflowStep{{ID: "approval", RequiresAck: true, RunSpec: generic}}}},
+		{"nested_step_approval", domain.RunSpec{Type: "ansible", Workflow: &domain.Workflow{Steps: []domain.WorkflowStep{{ID: "approval", RequiresAck: true, RunSpec: generic}}}}, domain.Workflow{}},
 		{"workflow", generic, *nested},
 		{"run_spec_workflow", domain.RunSpec{Type: "ansible", Workflow: nested}, domain.Workflow{}},
 		{"deep_step", generic, domain.Workflow{Steps: []domain.WorkflowStep{{ID: "outer", RunSpec: domain.RunSpec{Type: "ansible", Workflow: nested}}}}},

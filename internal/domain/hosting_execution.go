@@ -27,14 +27,15 @@ const (
 	HostingReleasePolicyVersion = "public-image.release-ports.v1"
 )
 
+func isHostingExecution(spec RunSpec) bool {
+	return strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupRetention || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupTransfer || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackup || strings.TrimSpace(spec.Type) == RunTypeDatabaseNetworkCapture || strings.TrimSpace(spec.Type) == RunTypeStorageArchive || strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
+}
+
 // ContainsHostingExecution inspects both accepted workflow representations for
 // internal task types or authority fields. The iterative walk visits each nested
 // workflow pointer once, without recursive traversal of untrusted graph depth.
 func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
-	internal := func(spec RunSpec) bool {
-		return strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupRetention || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupTransfer || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackup || strings.TrimSpace(spec.Type) == RunTypeDatabaseNetworkCapture || strings.TrimSpace(spec.Type) == RunTypeStorageArchive || strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
-	}
-	if internal(spec) {
+	if isHostingExecution(spec) {
 		return true
 	}
 	pending := []*Workflow{&workflow, spec.Workflow}
@@ -47,7 +48,7 @@ func ContainsHostingExecution(spec RunSpec, workflow Workflow) bool {
 		}
 		seen[current] = true
 		for _, step := range current.Steps {
-			if internal(step.RunSpec) {
+			if isHostingExecution(step.RunSpec) {
 				return true
 			}
 			pending = append(pending, step.RunSpec.Workflow)

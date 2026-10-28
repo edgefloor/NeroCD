@@ -417,6 +417,10 @@ func (s *PostgresStore) GetService(ctx context.Context, id string) (domain.Servi
 // linkage, so it cannot attach an arbitrary generic execution to a deployment.
 // CreateDeploymentRequest implements the corresponding repository operation.
 func (s *PostgresStore) CreateDeploymentRequest(ctx context.Context, v domain.Deployment, run domain.TaskRun, audit domain.AuditEvent) (domain.Deployment, error) {
+	run, err := canonicalComposeDeploymentRun(v, run)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
 	raw, err := json.Marshal(run.RunSpec)
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("encode run spec: %w", err)

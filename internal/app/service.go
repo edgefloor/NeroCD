@@ -316,55 +316,88 @@ func (s *Service) templateFromInput(id string, input TemplateInput) (domain.Task
 	if name == "" {
 		return domain.TaskTemplate{}, InvalidInput(errors.New("name is required"))
 	}
-	runSpec, err := s.normalizeRunSpec(input.RunSpec, kind)
+	if strings.TrimSpace(input.RunSpec.Type) == "" {
+		input.RunSpec.Type = kind
+	}
+	if err := domain.ValidateGenericRunDefinition(input.RunSpec, input.Workflow); err != nil {
+		return domain.TaskTemplate{}, InvalidInput(err)
+	}
+	runSpec, err := s.normalizeRunSpecNode(input.RunSpec, kind)
 	if err != nil {
 		return domain.TaskTemplate{}, err
+	}
+	if err := s.validateRunSpecPlans(runSpec); err != nil {
+		return domain.TaskTemplate{}, err
+	}
+	workflow, err := s.normalizeWorkflowNodes(input.Workflow)
+	if err != nil {
+		return domain.TaskTemplate{}, err
+	}
+	if err := s.validateWorkflowPlans(workflow); err != nil {
+		return domain.TaskTemplate{}, fmt.Errorf("workflow: %w", err)
 	}
 	if kind == "" {
 		kind = runSpec.Type
 	}
-	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: runSpec}); err != nil {
-		return domain.TaskTemplate{}, InvalidInput(err)
-	}
-	var validateWorkflow func(domain.Workflow) error
-	validateWorkflow = func(workflow domain.Workflow) error {
-		for _, step := range workflow.Steps {
-			if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", ProjectID: projectID, RunSpec: step.RunSpec}); err != nil {
-				return fmt.Errorf("invalid workflow step %q: %w", step.ID, InvalidInput(err))
-			}
-			if step.RunSpec.Workflow != nil {
-				if err := validateWorkflow(*step.RunSpec.Workflow); err != nil {
-					return fmt.Errorf("workflow step %q nested workflow: %w", step.ID, err)
-				}
-			}
-		}
-		return nil
-	}
-	if runSpec.Workflow != nil {
-		if err := validateWorkflow(*runSpec.Workflow); err != nil {
-			return domain.TaskTemplate{}, fmt.Errorf("run_spec.workflow: %w", err)
-		}
-	}
-	workflow, err := s.normalizeWorkflow(input.Workflow)
-	if err != nil {
-		return domain.TaskTemplate{}, err
-	}
-	if err := validateWorkflow(workflow); err != nil {
-		return domain.TaskTemplate{}, fmt.Errorf("workflow: %w", err)
-	}
 	return domain.TaskTemplate{ID: id, ProjectID: projectID, Name: name, Kind: kind, RunSpec: runSpec, Workflow: workflow, RunnerTags: normalizeTags(input.RunnerTags), RequiresAck: input.RequiresAck}, nil
 }
 
-func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) (domain.RunSpec, error) {
+// Adapter validation receives only a node's local fields. The document-level
+// internal-field and complexity checks must run before normalization or planning.
+func (s *Service) validateRunSpecPlans(spec domain.RunSpec) error {
+	local := spec
+	local.Workflow = nil
+	if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", RunSpec: local}); err != nil {
+		return InvalidInput(err)
+	}
+	if spec.Workflow != nil {
+		if err := s.validateWorkflowPlans(*spec.Workflow); err != nil {
+			return fmt.Errorf("run_spec.workflow: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) validateWorkflowPlans(workflow domain.Workflow) error {
+	for _, step := range workflow.Steps {
+		local := step.RunSpec
+		local.Workflow = nil
+		if _, err := s.registry.BuildPlan(domain.TaskRun{ID: "validation", RunSpec: local}); err != nil {
+			return fmt.Errorf("invalid workflow step %q: %w", step.ID, InvalidInput(err))
+		}
+		if step.RunSpec.Workflow != nil {
+			if err := s.validateWorkflowPlans(*step.RunSpec.Workflow); err != nil {
+				return fmt.Errorf("workflow step %q nested workflow: %w", step.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) normalizeRunSpec(spec domain.RunSpec, fallback string) (domain.RunSpec, error) {
+	if strings.TrimSpace(spec.Type) == "" {
+		spec.Type = strings.TrimSpace(fallback)
+	}
+	if err := domain.ValidateGenericRunDefinition(spec, domain.Workflow{}); err != nil {
+		return domain.RunSpec{}, InvalidInput(err)
+	}
+	return s.normalizeRunSpecNode(spec, fallback)
+}
+
+func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, error) {
+	if err := domain.ValidateGenericRunDefinition(domain.RunSpec{}, workflow); err != nil {
+		return domain.Workflow{}, InvalidInput(err)
+	}
+	return s.normalizeWorkflowNodes(workflow)
+}
+
+func (s *Service) normalizeRunSpecNode(runSpec domain.RunSpec, fallbackType string) (domain.RunSpec, error) {
 	runType := strings.TrimSpace(runSpec.Type)
 	if runType == "" {
 		runType = strings.TrimSpace(fallbackType)
 	}
 	if runType == "" {
 		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is required"))
-	}
-	if runType == domain.RunTypeLocalBuildDeploy || runType == domain.HostingBuildTaskType || runSpec.HostingBuildID != "" || runType == domain.RunTypeImageDeploy || runType == domain.RunTypeProxyApply || runSpec.HostingOperationID != "" || runSpec.HostingMode != "" || runSpec.ProxyOperationID != "" || runSpec.ProxyMode != "" {
-		return domain.RunSpec{}, InvalidInput(errors.New("hosting execution tasks are internal-only"))
 	}
 	if !s.registry.Supports(runType) {
 		return domain.RunSpec{}, InvalidInput(errors.New("run_spec.type is not registered"))
@@ -412,7 +445,7 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 		secretTargets[secret.Target] = struct{}{}
 	}
 	if runSpec.Workflow != nil {
-		workflow, err := s.normalizeWorkflow(*runSpec.Workflow)
+		workflow, err := s.normalizeWorkflowNodes(*runSpec.Workflow)
 		if err != nil {
 			return domain.RunSpec{}, err
 		}
@@ -422,7 +455,7 @@ func (s *Service) normalizeRunSpec(runSpec domain.RunSpec, fallbackType string) 
 	return runSpec, nil
 }
 
-func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, error) {
+func (s *Service) normalizeWorkflowNodes(workflow domain.Workflow) (domain.Workflow, error) {
 	seen := map[string]struct{}{}
 	for i, step := range workflow.Steps {
 		step.ID = strings.TrimSpace(step.ID)
@@ -437,7 +470,7 @@ func (s *Service) normalizeWorkflow(workflow domain.Workflow) (domain.Workflow, 
 		if step.Name == "" {
 			step.Name = step.ID
 		}
-		runSpec, err := s.normalizeRunSpec(step.RunSpec, "")
+		runSpec, err := s.normalizeRunSpecNode(step.RunSpec, "")
 		if err != nil {
 			return domain.Workflow{}, err
 		}
@@ -547,7 +580,10 @@ func (s *Service) executableRunForWorkflowStep(run domain.TaskRun) domain.TaskRu
 	}
 	for _, step := range run.Workflow.Steps {
 		if step.ID == run.WorkflowState.CurrentStepID {
+			// The full definition was checked before selecting the step. Plan only
+			// its subtree, without visiting it again through the parent workflow.
 			run.RunSpec = step.RunSpec
+			run.Workflow = domain.Workflow{}
 			return run
 		}
 	}
