@@ -283,7 +283,7 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 	if binary == "" {
 		t.Skip("requires explicitly selected actual CLI configuration probe")
 	}
-	root, err := os.MkdirTemp("/tmp", "ncd-config-")
+	root, err := os.MkdirTemp("/var/lib", "ncd-config-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +292,11 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	for _, name := range []string{"database-state", "database-secrets"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	socket := filepath.Join(root, "docker.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -306,6 +311,7 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 		expected string
 	}{
 		{"old_wordpress", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
+		{"wordpress_temporary_database_roots_rejected", []string{"--hosting-database", "--hosting-database-backups", "--database-state-root", "/tmp/nerocd-invalid-state", "--database-secret-root", "/tmp/nerocd-invalid-secrets"}, "database roots require persistent system storage"},
 		{"wordpress_mysql_backup", []string{"--hosting-database", "--hosting-database-backups", "--database-state-root", filepath.Join(root, "database-state"), "--database-secret-root", filepath.Join(root, "database-secrets")}, "runner --poll-interval must be greater than zero"},
 		{"git_compose_basic", nil, "runner --poll-interval must be greater than zero"},
 		{"managed_archive_requires_config", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
