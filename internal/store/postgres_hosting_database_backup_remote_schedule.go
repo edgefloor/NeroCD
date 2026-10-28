@@ -59,7 +59,7 @@ func (s *PostgresStore) saveBackupRemoteScheduleSelection(ctx context.Context, t
 		return err
 	}
 	limits := s.databaseBackupPolicy()
-	check := domain.HostingDatabaseBackupPlan{ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, Operation: domain.HostingDatabaseBackupOperation{ProjectID: v.Resource.ProjectID}, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
+	check := domain.HostingDatabaseBackupPlan{ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, Operation: domain.HostingDatabaseBackupOperation{ProjectID: v.Resource.ProjectID, Version: domain.HostingDatabaseBackupVersionFor(v.Engine, v.RecipeVersion)}, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
 	if _, err = backupRemoteSelect(ctx, tx, check, *selection); err != nil {
 		return err
 	}

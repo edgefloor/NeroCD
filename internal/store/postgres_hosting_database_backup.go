@@ -299,9 +299,6 @@ func (s *PostgresStore) requestDatabaseBackupTx(ctx context.Context, tx pgx.Tx, 
 		return zero, err
 	}
 	if in.RemoteTarget != nil {
-		if v.Engine == "mysql" {
-			return zero, ErrConflict
-		}
 		if _, err = backupRemoteSelect(ctx, tx, p, *in.RemoteTarget); err != nil {
 			return zero, err
 		}

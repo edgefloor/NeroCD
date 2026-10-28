@@ -12,7 +12,7 @@ import (
 
 func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan, selection domain.BackupTargetSelection) (domain.HostingDatabaseBackupTargetSnapshot, error) {
 	var zero domain.HostingDatabaseBackupTargetSnapshot
-	if selection.Validate() != nil || p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+	if selection.Validate() != nil || domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) == "" {
 		return zero, ErrConflict
 	}
 	var current int64
@@ -34,6 +34,18 @@ func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabase
 	}
 	if !validated {
 		return zero, ErrConflict
+	}
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+		present, schemaErr := sqlcgen.New(tx).MySQLRemoteBackupSchemaPresent(ctx)
+		if schemaErr != nil {
+			return zero, schemaErr
+		}
+		if !present {
+			return zero, ErrConflict
+		}
+		if _, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: p.RunnerID, Column2: domain.HostingDatabaseMySQLBackupRemoteCapability, Column3: domain.RunTypeDatabaseBackupTransfer}); err != nil {
+			return zero, hostingError(err)
+		}
 	}
 	// Use a closed validation-shaped plan for the common current authority guard.
 	now := time.Now().UTC()
@@ -65,7 +77,7 @@ func (s *PostgresStore) backupRemoteLocalComplete(ctx context.Context, tx pgx.Tx
 	}
 	now := time.Now().UTC()
 	id := "db_upload_" + r.ID
-	out := domain.HostingDatabaseBackupTransfer{ID: id, Version: domain.HostingDatabaseBackupTransferVersion, ProjectID: r.ProjectID, TargetID: selection.TargetID, TargetRevision: selection.Revision, DestinationID: p.Source.Snapshot.DestinationID, Mode: "upload", BackupID: r.ID, State: "queued", Blob: view.Blob, CreatedAt: now, UpdatedAt: now}
+	out := domain.HostingDatabaseBackupTransfer{ID: id, Version: domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version), ProjectID: r.ProjectID, TargetID: selection.TargetID, TargetRevision: selection.Revision, DestinationID: p.Source.Snapshot.DestinationID, Mode: "upload", BackupID: r.ID, State: "queued", Blob: view.Blob, CreatedAt: now, UpdatedAt: now}
 	plan := domain.HostingDatabaseBackupTransferPlan{Operation: out, Target: snapshot, ActorID: p.ActorID, RunnerID: p.RunnerID, ServerID: p.Source.Snapshot.ServerID, DaemonID: p.Source.Release.DaemonID, LocationID: r.ID, ObjectKey: domain.BackupRemoteObjectKey(r.ID, *view.Blob), MaxBytes: p.MaxBytes, TimeoutSeconds: p.TimeoutSeconds}
 	plan.Hash = domain.HostingDocumentHash(plan)
 	return s.backupRemoteInsert(ctx, tx, plan, "upload_"+r.ID, domain.HostingDocumentHash(struct{ Backup, Plan string }{r.ID, p.Hash}), nil)
@@ -138,6 +150,9 @@ func (s *PostgresStore) RetryDatabaseBackupTransfer(ctx context.Context, id, act
 }
 
 func (s *PostgresStore) backupRemoteRestoreAdmit(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan, source domain.BackupRemoteSource) error {
+	if p.Operation.Version != domain.HostingDatabaseBackupVersion {
+		return ErrConflict
+	}
 	upload, err := backupRemoteLoad(ctx, tx, source.TransferID, false)
 	if err != nil {
 		return err

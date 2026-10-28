@@ -82,10 +82,9 @@ func databaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T, version 
 	if repo.input.ExpectedVersion != 1 || repo.input.Enabled || repo.schedule.ID != "schedule" {
 		t.Fatal("disable lost exact schedule CAS")
 	}
-	beforeRemote := repo.calls
-	archiveHTTPCall(t, server, "POST", path, owner, strings.TrimSuffix(body, "}")+`,"remote_target":{"target_id":"target","revision":1}}`, "application/json", 400)
-	if repo.calls != beforeRemote {
-		t.Fatal("remote schedule reached persistence through local HTTP decoder")
+	archiveHTTPCall(t, server, "POST", path, owner, strings.TrimSuffix(body, "}")+`,"remote_target":{"target_id":"target","revision":1}}`, "application/json", 200)
+	if repo.input.RemoteTarget == nil || repo.input.RemoteTarget.TargetID != "target" || repo.input.RemoteTarget.Revision != 1 {
+		t.Fatal("remote schedule lost pinned target in HTTP decoder")
 	}
 	// Exercise the real decoder and application validation for additive Compose fields.
 	original.resource.Source = domain.ResourceSource{Kind: "compose"}

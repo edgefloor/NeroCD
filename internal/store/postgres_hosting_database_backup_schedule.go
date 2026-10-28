@@ -78,9 +78,6 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
-		if value.Version == domain.HostingDatabaseMySQLBackupScheduleVersion && in.RemoteTarget != nil {
-			return zero, ErrConflict
-		}
 		q := sqlcgen.New(tx)
 		hash := domain.HostingDocumentHash(struct {
 			Actor, Schedule string

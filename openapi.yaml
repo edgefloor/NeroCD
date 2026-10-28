@@ -9996,7 +9996,8 @@ components:
           "version": {
             "type": "string",
             "enum": [
-              "postgresql.logical-s3-transfer.v1"
+              "postgresql.logical-s3-transfer.v1",
+              "mysql.logical-s3-transfer.v1"
             ]
           },
           "project_id": {
@@ -10723,7 +10724,7 @@ components:
           "version": {
             "type": "string",
             "enum": ["postgresql.logical-local.schedule.v1", "postgresql.compose-logical-local.schedule.v1", "mysql.logical-local.schedule.v1"],
-            "description": "Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native and local-only; component and remote_target are absent."
+            "description": "Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native; component is absent and remote_target pins an optional S3-compatible copy target."
           },
           "project_id": {
             "type": "string",

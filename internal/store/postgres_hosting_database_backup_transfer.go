@@ -56,6 +56,15 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 	if p.Validate() != nil {
 		return ErrConflict
 	}
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupTransferVersion {
+		present, err := sqlcgen.New(tx).MySQLRemoteBackupSchemaPresent(ctx)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return ErrConflict
+		}
+	}
 	if err := proxyAuthorize(ctx, tx, p.ActorID, p.Operation.ProjectID, domain.RoleOwner, false); err != nil {
 		return err
 	}
@@ -96,7 +105,7 @@ func backupRemoteCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingDatabas
 	if server != p.ServerID || runner != p.RunnerID {
 		return ErrConflict
 	}
-	_, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: runner, Column2: domain.HostingDatabaseBackupRemoteCapability, Column3: domain.RunTypeDatabaseBackupTransfer})
+	_, err = sqlcgen.New(tx).LockDatabaseBackupRemoteRunner(ctx, sqlcgen.LockDatabaseBackupRemoteRunnerParams{ID: runner, Column2: domain.HostingDatabaseBackupRemoteCapabilityFor(p.Operation.Version), Column3: domain.RunTypeDatabaseBackupTransfer})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -268,7 +277,7 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 		if err = backupRemoteCurrent(ctx, tx, r.plan); err != nil {
 			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) {
 				e := sqlcgen.New(tx).FailDatabaseBackupTransferAuthority(ctx, id)
-				if e == nil && r.view.Mode == "upload" {
+				if e == nil && r.view.Mode == "upload" && r.view.Version == domain.HostingDatabaseBackupTransferVersion {
 					receipt, receiptErr := notificationDirectReceipt(ctx, tx, "transfer", id, "authority_denied")
 					e = receiptErr
 					if e == nil {
@@ -434,7 +443,7 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		if err != nil {
 			return zero, err
 		}
-		if r.view.Mode == "upload" && (in.Phase == "failed" || in.Phase == "uncertain") {
+		if r.view.Mode == "upload" && r.view.Version == domain.HostingDatabaseBackupTransferVersion && (in.Phase == "failed" || in.Phase == "uncertain") {
 			if err = notificationUploadFailure(ctx, tx, r.view.ID, in.ReceiptID); err != nil {
 				return zero, err
 			}
@@ -462,12 +471,12 @@ func backupRemoteExpiredUploadClassification(ctx context.Context, tx pgx.Tx, run
 	if in.Phase != "uncertain" || in.FailureCode != "interrupted" || r.view.Mode != "upload" || r.view.State != "applying" || in.PlanHash != r.plan.Hash || r.daemon != in.DaemonID {
 		return false
 	}
-	_, err := sqlcgen.New(tx).LockExpiredDatabaseBackupUploadRunner(ctx, runner)
+	_, err := sqlcgen.New(tx).LockExpiredDatabaseBackupUploadRunner(ctx, sqlcgen.LockExpiredDatabaseBackupUploadRunnerParams{ID: runner, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version)})
 	if err != nil {
 		return false
 	}
 	var allowed bool
-	allowed, err = sqlcgen.New(tx).ExpiredDatabaseBackupUploadAllowed(ctx, sqlcgen.ExpiredDatabaseBackupUploadAllowedParams{OperationID: in.OperationID, ID: in.LeaseID, RunID: in.RunID, RunnerID: runner, Attempt: int32(in.Attempt), Fence: in.Fence, Authority: buildJSON(in.HostingAuthority), Column8: in.PlanHash, Column9: in.DaemonID})
+	allowed, err = sqlcgen.New(tx).ExpiredDatabaseBackupUploadAllowed(ctx, sqlcgen.ExpiredDatabaseBackupUploadAllowedParams{OperationID: in.OperationID, ID: in.LeaseID, RunID: in.RunID, RunnerID: runner, Attempt: int32(in.Attempt), Fence: in.Fence, Authority: buildJSON(in.HostingAuthority), Column8: in.PlanHash, Column9: in.DaemonID, Capability: domain.HostingDatabaseBackupRemoteCapabilityFor(r.view.Version)})
 	return err == nil && allowed
 }
 

@@ -139,9 +139,6 @@ func (p HostingDatabaseBackupPlan) Validate() error {
 	if p.Operation.Blob != nil && (p.Operation.Blob.Validate() != nil || p.Operation.Blob.Format != HostingDatabaseBackupFormatFor(p.Operation.Version)) {
 		return ErrInvalidDatabaseBackup
 	}
-	if p.Operation.Version == HostingDatabaseMySQLBackupVersion && p.Operation.RemoteTarget != nil {
-		return ErrInvalidDatabaseBackup
-	}
 	if p.Operation.Version == HostingDatabaseBackupComponentVersion {
 		return p.validateComponent()
 	}
@@ -283,7 +280,7 @@ func (o HostingDatabaseBackupOperation) Validate() error {
 	if o.validateComponentIdentity() != nil {
 		return ErrInvalidDatabaseBackup
 	}
-	if o.RemoteTarget != nil && (o.Version == HostingDatabaseMySQLBackupVersion || o.RemoteTarget.Validate() != nil) {
+	if o.RemoteTarget != nil && o.RemoteTarget.Validate() != nil {
 		return ErrInvalidDatabaseBackup
 	}
 	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || HostingDatabaseBackupFormatFor(o.Version) == "" || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {

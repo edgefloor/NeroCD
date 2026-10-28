@@ -61,7 +61,7 @@ func completeClaimedBackup(t *testing.T, f networkCaptureFixture, a domain.Hosti
 	}
 	in.Phase = "complete"
 	in.ReceiptID = "complete_" + id
-	in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 65537, Format: "postgresql_custom"}
+	in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 65537, Format: domain.HostingDatabaseBackupFormatFor(p.Operation.Version)}
 	out, err := f.pg.DatabaseBackupMutation(f.ctx, f.runner, in)
 	if err != nil || out.State != "succeeded" || out.OwnershipHeld {
 		t.Fatal("backup settle", err)

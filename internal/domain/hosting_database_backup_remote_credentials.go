@@ -70,6 +70,9 @@ type BackupRemoteCredentialMetadata struct {
 // Validate checks the backup remote credential metadata fields and invariants.
 func (m BackupRemoteCredentialMetadata) Validate() error {
 	expected := HostingDatabaseBackupRemoteCredentialPurpose
+	if m.Request.RetentionCopyID == "" && m.Request.Authority.RunID == "db_transfer_"+m.Request.Authority.OperationID && m.Purpose == HostingDatabaseMySQLBackupRemoteCredentialPurpose {
+		expected = HostingDatabaseMySQLBackupRemoteCredentialPurpose
+	}
 	if m.Request.Authority.RunID == "storage_transfer_"+m.Request.Authority.OperationID {
 		expected = HostingStorageBackupRemoteCredentialPurpose
 	}

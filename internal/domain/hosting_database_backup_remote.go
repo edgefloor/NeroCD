@@ -13,15 +13,47 @@ import (
 
 // HostingDatabaseBackupTargetVersion and related constants identify remote database backup documents and capabilities.
 const (
-	HostingDatabaseBackupTargetVersion           = "postgresql.backup-target.v1"
-	HostingDatabaseBackupTransferVersion         = "postgresql.logical-s3-transfer.v1"
-	HostingDatabaseBackupRemoteCapability        = "hosting_postgresql_remote_backup_v1"
-	RunTypeDatabaseBackupTransfer                = "database_backup_transfer"
-	HostingDatabaseBackupRemoteCredentialPurpose = "hosting_postgresql_remote_backup_credentials.v1"
+	HostingDatabaseBackupTargetVersion                = "postgresql.backup-target.v1"
+	HostingDatabaseBackupTransferVersion              = "postgresql.logical-s3-transfer.v1"
+	HostingDatabaseBackupRemoteCapability             = "hosting_postgresql_remote_backup_v1"
+	RunTypeDatabaseBackupTransfer                     = "database_backup_transfer"
+	HostingDatabaseBackupRemoteCredentialPurpose      = "hosting_postgresql_remote_backup_credentials.v1"
+	HostingDatabaseMySQLBackupTransferVersion         = "mysql.logical-s3-transfer.v1"
+	HostingDatabaseMySQLBackupRemoteCapability        = "hosting_mysql_remote_backup_v1"
+	HostingDatabaseMySQLBackupRemoteCredentialPurpose = "hosting_mysql_remote_backup_credentials.v1"
 )
 
 // ErrInvalidDatabaseBackupRemote reports invalid database backup remote input.
-var ErrInvalidDatabaseBackupRemote = errors.New("invalid PostgreSQL remote backup request")
+var ErrInvalidDatabaseBackupRemote = errors.New("invalid database remote backup request")
+
+// HostingDatabaseBackupTransferVersionFor binds uploads to their local backup format.
+func HostingDatabaseBackupTransferVersionFor(backupVersion string) string {
+	switch backupVersion {
+	case HostingDatabaseBackupVersion:
+		return HostingDatabaseBackupTransferVersion
+	case HostingDatabaseMySQLBackupVersion:
+		return HostingDatabaseMySQLBackupTransferVersion
+	default:
+		return ""
+	}
+}
+
+// HostingDatabaseBackupRemoteCapabilityFor selects the persisted transfer adapter.
+func HostingDatabaseBackupRemoteCapabilityFor(version string) string {
+	if version == HostingDatabaseMySQLBackupTransferVersion {
+		return HostingDatabaseMySQLBackupRemoteCapability
+	}
+	return HostingDatabaseBackupRemoteCapability
+}
+
+// HostingDatabaseBackupRemoteCredentialPurposeFor separates transfer credential purposes.
+func HostingDatabaseBackupRemoteCredentialPurposeFor(version string) string {
+	if version == HostingDatabaseMySQLBackupTransferVersion {
+		return HostingDatabaseMySQLBackupRemoteCredentialPurpose
+	}
+	return HostingDatabaseBackupRemoteCredentialPurpose
+}
+
 var remoteBucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
 var remoteRegionName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$`)
 
@@ -190,7 +222,7 @@ func ValidBackupRemoteFailure(s string) bool {
 
 // Validate checks the database backup transfer fields and invariants.
 func (t HostingDatabaseBackupTransfer) Validate() error {
-	if !validRuntimeReferenceID(t.ID) || t.Version != HostingDatabaseBackupTransferVersion || !validRuntimeReferenceID(t.ProjectID) || !validRuntimeReferenceID(t.TargetID) || t.TargetRevision < 1 || !validRuntimeReferenceID(t.DestinationID) || t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() || !ValidBackupRemoteFailure(t.FailureCode) {
+	if !validRuntimeReferenceID(t.ID) || (t.Version != HostingDatabaseBackupTransferVersion && t.Version != HostingDatabaseMySQLBackupTransferVersion) || !validRuntimeReferenceID(t.ProjectID) || !validRuntimeReferenceID(t.TargetID) || t.TargetRevision < 1 || !validRuntimeReferenceID(t.DestinationID) || t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() || !ValidBackupRemoteFailure(t.FailureCode) {
 		return ErrInvalidDatabaseBackupRemote
 	}
 	switch t.State {
@@ -200,11 +232,18 @@ func (t HostingDatabaseBackupTransfer) Validate() error {
 	}
 	switch t.Mode {
 	case "validate":
-		if t.BackupID != "" || t.RestoreOperationID != "" || t.Blob != nil {
+		if t.Version != HostingDatabaseBackupTransferVersion || t.BackupID != "" || t.RestoreOperationID != "" || t.Blob != nil {
 			return ErrInvalidDatabaseBackupRemote
 		}
 	case "upload", "download":
-		if !validRuntimeReferenceID(t.BackupID) || t.Blob == nil || t.Blob.Validate() != nil || t.Blob.Format != "postgresql_custom" {
+		format := "postgresql_custom"
+		if t.Version == HostingDatabaseMySQLBackupTransferVersion {
+			format = "mysql_sql"
+			if t.Mode != "upload" {
+				return ErrInvalidDatabaseBackupRemote
+			}
+		}
+		if !validRuntimeReferenceID(t.BackupID) || t.Blob == nil || t.Blob.Validate() != nil || t.Blob.Format != format {
 			return ErrInvalidDatabaseBackupRemote
 		}
 		if t.Mode == "download" && !validRuntimeReferenceID(t.RestoreOperationID) || t.Mode == "upload" && t.RestoreOperationID != "" {
@@ -234,6 +273,9 @@ type HostingDatabaseBackupTransferPlan struct {
 
 // BackupRemoteObjectKey returns the immutable remote object key for a database backup blob.
 func BackupRemoteObjectKey(backup string, blob HostingDatabaseBackupBlob) string {
+	if blob.Format == "mysql_sql" {
+		return "nerocd/mysql/" + backup + "/" + strings.TrimPrefix(blob.Digest, "sha256:") + ".sql"
+	}
 	return "nerocd/postgresql/" + backup + "/" + strings.TrimPrefix(blob.Digest, "sha256:") + ".dump"
 }
 

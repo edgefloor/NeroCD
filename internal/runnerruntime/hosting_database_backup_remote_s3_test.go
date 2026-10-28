@@ -33,9 +33,19 @@ func remoteS3Fixture(t *testing.T, handler http.HandlerFunc) (*backupRemoteS3, d
 }
 
 func TestBackupRemoteS3UploadReplayAndDownload(t *testing.T) {
+	for _, format := range []string{"postgresql_custom", "mysql_sql"} {
+		t.Run(format, func(t *testing.T) { backupRemoteS3UploadReplayAndVerify(t, format) })
+	}
+}
+
+func backupRemoteS3UploadReplayAndVerify(t *testing.T, format string) {
+	t.Helper()
 	data := []byte("PGDMPsynthetic fixture archive")
+	if format == "mysql_sql" {
+		data = []byte("CREATE TABLE retained (id INT); INSERT INTO retained VALUES (1);")
+	}
 	digest := sha256.Sum256(data)
-	blob := domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(digest[:]), Bytes: int64(len(data)), Format: "postgresql_custom"}
+	blob := domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(digest[:]), Bytes: int64(len(data)), Format: format}
 	var mu sync.Mutex
 	var saved []byte
 	puts := 0

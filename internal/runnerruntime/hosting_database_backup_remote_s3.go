@@ -211,18 +211,22 @@ func (c *backupRemoteS3) download(ctx context.Context, bucket, key string, blob 
 	// An ETag is deliberately ignored: multipart ETags are not content digests.
 	h := sha256.New()
 	reader := io.LimitReader(out.Body, blob.Bytes+1)
-	magic := make([]byte, 5)
-	if _, err = io.ReadFull(reader, magic); err != nil || string(magic) != "PGDMP" {
-		return backupRemoteError("object_mismatch")
-	}
-	if _, err = io.MultiWriter(dst, h).Write(magic); err != nil {
-		return backupRemoteError("archive_unavailable")
+	var prefixBytes int64
+	if blob.Format == "postgresql_custom" {
+		magic := make([]byte, 5)
+		if _, err = io.ReadFull(reader, magic); err != nil || string(magic) != "PGDMP" {
+			return backupRemoteError("object_mismatch")
+		}
+		if _, err = io.MultiWriter(dst, h).Write(magic); err != nil {
+			return backupRemoteError("archive_unavailable")
+		}
+		prefixBytes = 5
 	}
 	n, err := io.Copy(io.MultiWriter(dst, h), reader)
 	if err != nil {
 		return backupRemoteFailure(err)
 	}
-	if n+5 != blob.Bytes || "sha256:"+hex.EncodeToString(h.Sum(nil)) != blob.Digest {
+	if n+prefixBytes != blob.Bytes || "sha256:"+hex.EncodeToString(h.Sum(nil)) != blob.Digest {
 		return backupRemoteError("object_mismatch")
 	}
 	return nil

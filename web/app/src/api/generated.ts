@@ -5217,7 +5217,7 @@ export interface components {
         HostingDatabaseBackupTransfer: {
             id: string;
             /** @enum {string} */
-            version: "postgresql.logical-s3-transfer.v1";
+            version: "postgresql.logical-s3-transfer.v1" | "mysql.logical-s3-transfer.v1";
             project_id: string;
             target_id: string;
             /** Format: int64 */
@@ -5404,7 +5404,7 @@ export interface components {
             component?: string;
             id: string;
             /**
-             * @description Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native and local-only; component and remote_target are absent.
+             * @description Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native; component is absent and remote_target pins an optional S3-compatible copy target.
              * @enum {string}
              */
             version: "postgresql.logical-local.schedule.v1" | "postgresql.compose-logical-local.schedule.v1" | "mysql.logical-local.schedule.v1";

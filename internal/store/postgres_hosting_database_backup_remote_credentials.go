@@ -61,11 +61,11 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 		var raw []byte
 		raw, err = sqlcgen.New(tx).ReadDatabaseBackupRemoteDelivery(ctx, in.DeliveryID)
 		if err == nil {
-			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.Validate() != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in {
+			if json.Unmarshal(raw, &out.Metadata) != nil || out.Metadata.Validate() != nil || out.Metadata.RequestHash != hash || out.Metadata.Request != in || out.Metadata.Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(r.view.Version) {
 				return out, ErrConflict
 			}
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRemoteCredentialPurpose, Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
+			out.Metadata = domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRemoteCredentialPurposeFor(r.view.Version), Request: in, RunnerID: runner, RequestHash: hash, UseUntil: expiry}
 			err = sqlcgen.New(tx).CreateDatabaseBackupRemoteDelivery(ctx, sqlcgen.CreateDatabaseBackupRemoteDeliveryParams{DeliveryID: in.DeliveryID, OperationID: in.Authority.OperationID, RunID: in.Authority.RunID, LeaseID: in.Authority.LeaseID, Attempt: int32(in.Authority.Attempt), Fence: in.Authority.Fence, RunnerID: runner, RequestHash: hash, Metadata: buildJSON(out.Metadata), UseUntil: expiry})
 			if err != nil {
 				return out, hostingError(err)
@@ -97,7 +97,7 @@ func (s *PostgresStore) AuthorizeBackupRemoteCredentials(ctx context.Context, ru
 // RevalidateBackupRemoteCredentials rechecks a saved remote transfer credential grant before use.
 func (s *PostgresStore) RevalidateBackupRemoteCredentials(ctx context.Context, runner, tokenHash string, in domain.BackupRemoteCredentialRequest, m domain.BackupRemoteCredentialMetadata) error {
 	_, err := buildTransaction(ctx, s, func(tx pgx.Tx) (bool, error) {
-		_, expiry, e := backupRemoteDeliveryAuthority(ctx, tx, runner, tokenHash, in)
+		operation, expiry, e := backupRemoteDeliveryAuthority(ctx, tx, runner, tokenHash, in)
 		if e != nil {
 			return false, e
 		}
@@ -107,7 +107,7 @@ func (s *PostgresStore) RevalidateBackupRemoteCredentials(ctx context.Context, r
 			return false, hostingError(e)
 		}
 		var saved domain.BackupRemoteCredentialMetadata
-		if json.Unmarshal(raw, &saved) != nil || m.Validate() != nil {
+		if json.Unmarshal(raw, &saved) != nil || m.Validate() != nil || m.Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(operation.view.Version) {
 			return false, ErrConflict
 		}
 		// PostgreSQL and JSON can represent the same instant with different

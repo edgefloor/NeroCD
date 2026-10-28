@@ -503,7 +503,7 @@ func (q *Queries) DispatchDatabaseBackupTransfer(ctx context.Context, arg Dispat
 }
 
 const expiredDatabaseBackupUploadAllowed = `-- name: ExpiredDatabaseBackupUploadAllowed :one
-SELECT EXISTS(SELECT 1 FROM run_leases l JOIN runners r ON r.id=l.runner_id JOIN runner_enrollments e ON e.runner_id=r.id JOIN hosting_database_backup_transfer_receipts i ON i.operation_id=$1 AND i.phase='intent' WHERE l.id=$2 AND l.run_id=$3 AND l.runner_id=$4 AND l.attempt=$5 AND l.fence=$6 AND l.expires_at<=clock_timestamp() AND l.status IN ('active','expired') AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) AND i.authority=$7 AND i.body->>'plan_hash'=$8::text AND i.body->>'daemon_id'=$9::text AND NOT EXISTS(SELECT 1 FROM run_leases newer WHERE newer.run_id=l.run_id AND newer.attempt>l.attempt))
+SELECT EXISTS(SELECT 1 FROM run_leases l JOIN runners r ON r.id=l.runner_id JOIN runner_enrollments e ON e.runner_id=r.id JOIN hosting_database_backup_transfer_receipts i ON i.operation_id=$1 AND i.phase='intent' WHERE l.id=$2 AND l.run_id=$3 AND l.runner_id=$4 AND l.attempt=$5 AND l.fence=$6 AND l.expires_at<=clock_timestamp() AND l.status IN ('active','expired') AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND $10::text=ANY(r.capabilities) AND i.authority=$7 AND i.body->>'plan_hash'=$8::text AND i.body->>'daemon_id'=$9::text AND NOT EXISTS(SELECT 1 FROM run_leases newer WHERE newer.run_id=l.run_id AND newer.attempt>l.attempt))
 `
 
 type ExpiredDatabaseBackupUploadAllowedParams struct {
@@ -516,6 +516,7 @@ type ExpiredDatabaseBackupUploadAllowedParams struct {
 	Authority   json.RawMessage `json:"authority"`
 	Column8     string          `json:"column_8"`
 	Column9     string          `json:"column_9"`
+	Capability  string          `json:"capability"`
 }
 
 func (q *Queries) ExpiredDatabaseBackupUploadAllowed(ctx context.Context, arg ExpiredDatabaseBackupUploadAllowedParams) (bool, error) {
@@ -529,6 +530,7 @@ func (q *Queries) ExpiredDatabaseBackupUploadAllowed(ctx context.Context, arg Ex
 		arg.Authority,
 		arg.Column8,
 		arg.Column9,
+		arg.Capability,
 	)
 	var exists bool
 	err := row.Scan(&exists)
@@ -861,11 +863,17 @@ func (q *Queries) LockDatabaseBackupTransferAuthority(ctx context.Context, arg L
 }
 
 const lockExpiredDatabaseBackupUploadRunner = `-- name: LockExpiredDatabaseBackupUploadRunner :one
-SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.credential_hash=r.token_hash AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) FOR SHARE OF r,e
+SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.credential_hash=r.token_hash AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND $2::text=ANY(r.capabilities) FOR SHARE OF r,e
 `
 
-func (q *Queries) LockExpiredDatabaseBackupUploadRunner(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockExpiredDatabaseBackupUploadRunner, id)
+type LockExpiredDatabaseBackupUploadRunnerParams struct {
+	ID         string `json:"id"`
+	Capability string `json:"capability"`
+}
+
+func (q *Queries) LockExpiredDatabaseBackupUploadRunner(ctx context.Context, arg LockExpiredDatabaseBackupUploadRunnerParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockExpiredDatabaseBackupUploadRunner, arg.ID, arg.Capability)
+	var id string
 	err := row.Scan(&id)
 	return id, err
 }
@@ -877,6 +885,17 @@ UPDATE hosting_database_backups SET state='uncertain',failure_code='execution_fa
 func (q *Queries) MarkDatabaseBackupExecutionUncertain(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, markDatabaseBackupExecutionUncertain, id)
 	return err
+}
+
+const mySQLRemoteBackupSchemaPresent = `-- name: MySQLRemoteBackupSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_remote_backup_schema_compatible()') IS NOT NULL)::boolean
+`
+
+func (q *Queries) MySQLRemoteBackupSchemaPresent(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, mySQLRemoteBackupSchemaPresent)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const readDatabaseBackupDownloadState = `-- name: ReadDatabaseBackupDownloadState :one

@@ -26,9 +26,17 @@ import (
 
 func remoteReplayPlan(t *testing.T) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupTransferPlan, []byte) {
 	t.Helper()
+	return remoteReplayPlanFor(t, false)
+}
+
+func remoteReplayPlanFor(t *testing.T, mysql bool) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupTransferPlan, []byte) {
+	t.Helper()
 	engine, f, backup := backupEngineFixture(t)
 	now := time.Now().UTC()
 	data := []byte("PGDMPfixture remote archive")
+	if mysql {
+		data = []byte("CREATE TABLE retained (id INT); INSERT INTO retained VALUES (1);")
+	}
 	digest := sha256.Sum256(data)
 	blob := domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(digest[:]), Bytes: int64(len(data)), Format: "postgresql_custom"}
 	if _, err := engine.store.Put(t.Context(), bytes.NewReader(data), hex.EncodeToString(digest[:]), blob.Bytes); err != nil {
@@ -36,12 +44,27 @@ func remoteReplayPlan(t *testing.T) (*databaseBackupEngine, *databaseFake, domai
 	}
 	target := domain.HostingDatabaseBackupTarget{ID: "target", ProjectID: backup.Operation.ProjectID, Version: domain.HostingDatabaseBackupTargetVersion, Revision: 1, Name: "fixture", Endpoint: "https://backup.example", Bucket: "backup-fixture", Region: "us-east-1", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	p := domain.HostingDatabaseBackupTransferPlan{Operation: domain.HostingDatabaseBackupTransfer{ID: "transfer", Version: domain.HostingDatabaseBackupTransferVersion, ProjectID: target.ProjectID, TargetID: target.ID, TargetRevision: 1, DestinationID: backup.Source.Snapshot.DestinationID, Mode: "upload", BackupID: backup.Operation.ID, Blob: &blob, State: "queued", CreatedAt: now, UpdatedAt: now}, Target: domain.HostingDatabaseBackupTargetSnapshot{Target: target, Access: domain.BackupRemoteCredentialRef{SecretID: "access", Version: 1}, Secret: domain.BackupRemoteCredentialRef{SecretID: "secret", Version: 1}}, ActorID: backup.ActorID, RunnerID: backup.RunnerID, ServerID: backup.Source.Snapshot.ServerID, DaemonID: backup.Source.Release.DaemonID, LocationID: backup.Operation.ID, ObjectKey: domain.BackupRemoteObjectKey(backup.Operation.ID, blob), MaxBytes: backup.MaxBytes, TimeoutSeconds: 30}
+	if mysql {
+		p.Operation.Version = domain.HostingDatabaseMySQLBackupTransferVersion
+		p.Operation.Blob.Format = "mysql_sql"
+		p.ObjectKey = domain.BackupRemoteObjectKey(p.Operation.BackupID, *p.Operation.Blob)
+	}
 	p.Hash = domain.HostingDocumentHash(p)
 	return engine, f, p, data
 }
 
 func TestBackupRemoteCoordinatorLostAckReplayDoesNotRepeatUpload(t *testing.T) {
-	e, f, p, data := remoteReplayPlan(t)
+	for _, tc := range []struct {
+		name                string
+		mysql, wrongPurpose bool
+	}{{"postgresql", false, false}, {"mysql", true, false}, {"mysql_wrong_purpose", true, true}} {
+		t.Run(tc.name, func(t *testing.T) { backupRemoteCoordinatorLostAck(t, tc.mysql, tc.wrongPurpose) })
+	}
+}
+
+func backupRemoteCoordinatorLostAck(t *testing.T, mysql, wrongPurpose bool) {
+	t.Helper()
+	e, f, p, data := remoteReplayPlanFor(t, mysql)
 	var mu sync.Mutex
 	puts := 0
 	var object []byte
@@ -96,7 +119,11 @@ func TestBackupRemoteCoordinatorLostAckReplayDoesNotRepeatUpload(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&in) != nil {
 				t.Error("invalid delivery request")
 			}
-			m := domain.BackupRemoteCredentialMetadata{Purpose: domain.HostingDatabaseBackupRemoteCredentialPurpose, Request: in, RunnerID: p.RunnerID, UseUntil: time.Now().UTC().Add(30 * time.Second)}
+			purpose := domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version)
+			if wrongPurpose {
+				purpose = domain.HostingDatabaseBackupRemoteCredentialPurpose
+			}
+			m := domain.BackupRemoteCredentialMetadata{Purpose: purpose, Request: in, RunnerID: p.RunnerID, UseUntil: time.Now().UTC().Add(30 * time.Second)}
 			m.RequestHash = domain.HostingDocumentHash(struct {
 				Runner  string
 				Request domain.BackupRemoteCredentialRequest
@@ -149,6 +176,14 @@ func TestBackupRemoteCoordinatorLostAckReplayDoesNotRepeatUpload(t *testing.T) {
 	s := newAttemptSupervisorFrom(ctx, lease)
 	err = executeDatabaseBackupTransferWithEngine(s, j, func(context.Context) error { return nil }, server.URL, "runner", claim, "", &DatabaseExecutionConfig{LogicalBackups: true, RemoteBackups: true, TrustedLoopbackHTTP: true, RemoteFixtureOrigin: s3server.URL}, func(context.Context, DatabaseExecutionConfig, string) (*databaseBackupEngine, error) { return e, nil })
 	s.Close()
+	if wrongPurpose {
+		mu.Lock()
+		defer mu.Unlock()
+		if err == nil || puts != 0 || completePosts != 0 || j.Depth() != 0 {
+			t.Fatal("wrong engine credential purpose reached effects")
+		}
+		return
+	}
 	if err == nil || len(j.Snapshot().DatabaseBackupTransfers) != 2 {
 		t.Fatal("lost ACK failed to preserve intent and result", err)
 	}
@@ -168,7 +203,7 @@ func TestBackupRemoteCoordinatorLostAckReplayDoesNotRepeatUpload(t *testing.T) {
 		t.Fatal("replay repeated effects or failed retirement")
 	}
 	for _, call := range f.calls {
-		if strings.Contains(call, "pg_dump") || strings.Contains(call, "pg_restore") {
+		if strings.Contains(call, "pg_dump") || strings.Contains(call, "pg_restore") || strings.Contains(call, "mysqldump") || strings.Contains(call, "admin.cnf") {
 			t.Fatal("transfer executed database tool")
 		}
 	}

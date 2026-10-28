@@ -22,7 +22,7 @@ var errBackupRemoteHeld = errors.New("remote backup evidence requires reconcilia
 
 func backupRemoteReceiptMatches(p domain.HostingDatabaseBackupTransferPlan, in domain.HostingDatabaseBackupTransferMutation, out domain.HostingDatabaseBackupTransfer) bool {
 	prior := p.Operation
-	return out.Validate() == nil && out.ID == prior.ID && out.ProjectID == prior.ProjectID && out.TargetID == prior.TargetID && out.TargetRevision == prior.TargetRevision && out.DestinationID == prior.DestinationID && out.Mode == prior.Mode && out.BackupID == prior.BackupID && out.RestoreOperationID == prior.RestoreOperationID && domain.HostingDocumentHash(out.Blob) == domain.HostingDocumentHash(prior.Blob) && out.FailureCode == in.FailureCode
+	return out.Validate() == nil && out.ID == prior.ID && out.Version == prior.Version && out.ProjectID == prior.ProjectID && out.TargetID == prior.TargetID && out.TargetRevision == prior.TargetRevision && out.DestinationID == prior.DestinationID && out.Mode == prior.Mode && out.BackupID == prior.BackupID && out.RestoreOperationID == prior.RestoreOperationID && domain.HostingDocumentHash(out.Blob) == domain.HostingDocumentHash(prior.Blob) && out.FailureCode == in.FailureCode
 }
 
 func executeDatabaseBackupTransferClaim(s *attemptSupervisor, j *runner.AttemptJournal, drain func(context.Context) error, server, token string, claim domain.ClaimedRun, endpoint string, config *DatabaseExecutionConfig) error {
@@ -97,6 +97,9 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 		return err
 	}
 	defer credentials.Close()
+	if credentials.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version) {
+		return errBackupRemoteHeld
+	}
 	deliverySequence := 0
 	grant := backupRemoteGrant{useUntil: credentials.Metadata().UseUntil}
 	grant.refresh = func(refreshCtx context.Context, access, secret []byte) (time.Time, error) {
@@ -111,6 +114,9 @@ func executeDatabaseBackupTransferWithEngine(s *attemptSupervisor, j *runner.Att
 			return time.Time{}, err
 		}
 		defer fresh.Close()
+		if fresh.Metadata().Purpose != domain.HostingDatabaseBackupRemoteCredentialPurposeFor(p.Operation.Version) {
+			return time.Time{}, errBackupRemoteHeld
+		}
 		if err = fresh.Use(func(nextAccess, nextSecret []byte) error {
 			if subtle.ConstantTimeCompare(access, nextAccess) != 1 || subtle.ConstantTimeCompare(secret, nextSecret) != 1 {
 				return errBackupRemoteHeld
@@ -208,9 +214,11 @@ func executeBackupRemoteObject(ctx context.Context, e *databaseBackupEngine, rem
 		if stored.Size != blob.Bytes {
 			return backupRemoteError("archive_unavailable")
 		}
-		var magic [5]byte
-		if _, err = io.ReadFull(file, magic[:]); err != nil || string(magic[:]) != "PGDMP" {
-			return backupRemoteError("archive_unavailable")
+		if blob.Format == "postgresql_custom" {
+			var magic [5]byte
+			if _, err = io.ReadFull(file, magic[:]); err != nil || string(magic[:]) != "PGDMP" {
+				return backupRemoteError("archive_unavailable")
+			}
 		}
 		if _, err = file.Seek(0, io.SeekStart); err != nil {
 			return backupRemoteError("archive_unavailable")

@@ -18,9 +18,18 @@ import (
 
 func remoteBackupFixture(t *testing.T) (networkCaptureFixture, domain.HostingDatabaseBackupTarget) {
 	t.Helper()
-	f := backupFixture(t)
+	return remoteBackupFixtureFor(t, backupFixture(t))
+}
+
+func remoteBackupFixtureFor(t *testing.T, f networkCaptureFixture) (networkCaptureFixture, domain.HostingDatabaseBackupTarget) {
+	t.Helper()
 	if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability); err != nil {
 		t.Fatal(err)
+	}
+	if f.op.Snapshot.Database.Engine == "mysql" {
+		if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, f.runner, domain.HostingDatabaseMySQLBackupRemoteCapability); err != nil {
+			t.Fatal(err)
+		}
 	}
 	credentials, err := app.NewBackupTargetCredentials([]byte("synthetic-access-canary"), []byte("synthetic-secret-canary"))
 	if err != nil {

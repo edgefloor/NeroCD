@@ -31,9 +31,12 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 	storageRetention := in.Authority.RunID == "storage_retention_"+in.Authority.OperationID
 	storageFamily := in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID
 	token = strings.TrimSpace(token)
-	current := func() bool {
+	current := func(purpose string) bool {
 		identity, e := s.CurrentRunnerIdentity(ctx)
 		capability, kind := domain.HostingDatabaseBackupRemoteCapability, domain.RunTypeDatabaseBackupTransfer
+		if !retention && !storageFamily && !storageRetention && (purpose == domain.HostingDatabaseMySQLBackupRemoteCredentialPurpose || purpose == "" && !slices.Contains(identity.Capabilities, capability)) {
+			capability = domain.HostingDatabaseMySQLBackupRemoteCapability
+		}
 		if storageRetention {
 			capability, kind = domain.HostingStorageBackupRetentionCapability, domain.RunTypeStorageBackupRetention
 		}
@@ -50,7 +53,7 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		return e == nil && p.ID == principal.ID && p.Provider == domain.PrincipalRunner
 	}
 	repo, ok := s.hosting.(store.HostingDatabaseBackupRemoteCredentialRepository)
-	if !ok || s.secretKeyring == nil || token == "" || !current() {
+	if !ok || s.secretKeyring == nil || token == "" || !current("") {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	var a store.BackupRemoteCredentialAuthorization
@@ -78,7 +81,7 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 	if err != nil {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
-	if a.Metadata.Validate() != nil || a.Metadata.Request != in || a.Metadata.RunnerID != principal.ID || !s.clock().Before(a.Metadata.UseUntil) || a.Metadata.UseUntil.After(s.clock().Add(time.Minute)) {
+	if a.Metadata.Validate() != nil || a.Metadata.Request != in || a.Metadata.RunnerID != principal.ID || !s.clock().Before(a.Metadata.UseUntil) || a.Metadata.UseUntil.After(s.clock().Add(time.Minute)) || !current(a.Metadata.Purpose) {
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	access, err := s.secretKeyring.Open(secretcrypto.Binding{ProjectID: a.ProjectID, SecretID: a.Records.Access.Metadata.SecretID, Version: a.Records.Access.Metadata.Version}, a.Records.Access.Envelope)
@@ -108,7 +111,7 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		}
 		return repo.RevalidateBackupRemoteCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
 	}
-	if !current() || validate() != nil || ctx.Err() != nil || !s.clock().Before(a.Metadata.UseUntil) {
+	if !current(a.Metadata.Purpose) || validate() != nil || ctx.Err() != nil || !s.clock().Before(a.Metadata.UseUntil) {
 		out.Close()
 		return nil, domain.ErrBackupRemoteCredentials
 	}

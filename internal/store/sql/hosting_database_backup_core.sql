@@ -149,10 +149,10 @@ SELECT source_resource_id FROM hosting_database_backups WHERE id=$1;
 INSERT INTO hosting_database_backup_transfer_receipts(operation_id,phase,receipt_id,authority,body,body_hash,response,expired_classification) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
 
 -- name: LockExpiredDatabaseBackupUploadRunner :one
-SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.credential_hash=r.token_hash AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) FOR SHARE OF r,e;
+SELECT r.id FROM runners r JOIN runner_enrollments e ON e.runner_id=r.id WHERE r.id=$1 AND r.status='active' AND r.token_hash<>'' AND e.credential_hash=r.token_hash AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND sqlc.arg(capability)::text=ANY(r.capabilities) FOR SHARE OF r,e;
 
 -- name: ExpiredDatabaseBackupUploadAllowed :one
-SELECT EXISTS(SELECT 1 FROM run_leases l JOIN runners r ON r.id=l.runner_id JOIN runner_enrollments e ON e.runner_id=r.id JOIN hosting_database_backup_transfer_receipts i ON i.operation_id=$1 AND i.phase='intent' WHERE l.id=$2 AND l.run_id=$3 AND l.runner_id=$4 AND l.attempt=$5 AND l.fence=$6 AND l.expires_at<=clock_timestamp() AND l.status IN ('active','expired') AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND 'hosting_postgresql_remote_backup_v1'=ANY(r.capabilities) AND i.authority=$7 AND i.body->>'plan_hash'=$8::text AND i.body->>'daemon_id'=$9::text AND NOT EXISTS(SELECT 1 FROM run_leases newer WHERE newer.run_id=l.run_id AND newer.attempt>l.attempt));
+SELECT EXISTS(SELECT 1 FROM run_leases l JOIN runners r ON r.id=l.runner_id JOIN runner_enrollments e ON e.runner_id=r.id JOIN hosting_database_backup_transfer_receipts i ON i.operation_id=$1 AND i.phase='intent' WHERE l.id=$2 AND l.run_id=$3 AND l.runner_id=$4 AND l.attempt=$5 AND l.fence=$6 AND l.expires_at<=clock_timestamp() AND l.status IN ('active','expired') AND r.status='active' AND r.token_hash<>'' AND e.used_at IS NOT NULL AND e.revoked_at IS NULL AND sqlc.arg(capability)::text=ANY(r.capabilities) AND i.authority=$7 AND i.body->>'plan_hash'=$8::text AND i.body->>'daemon_id'=$9::text AND NOT EXISTS(SELECT 1 FROM run_leases newer WHERE newer.run_id=l.run_id AND newer.attempt>l.attempt));
 
 -- name: ListQueuedDatabaseBackupTransferIDs :many
 SELECT id FROM hosting_database_backup_transfers WHERE state='queued' ORDER BY created_at,id LIMIT 100;
@@ -168,3 +168,6 @@ SELECT id FROM hosting_database_backup_transfers WHERE backup_id=$1 ORDER BY cre
 
 -- name: ListDatabaseBackupValidationIDs :many
 SELECT id FROM hosting_database_backup_transfers WHERE target_id=$1 AND mode='validate' ORDER BY created_at DESC,id DESC LIMIT 100;
+
+-- name: MySQLRemoteBackupSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_remote_backup_schema_compatible()') IS NOT NULL)::boolean;

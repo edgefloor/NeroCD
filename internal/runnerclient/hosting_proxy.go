@@ -289,13 +289,13 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
 	for _, capability := range result.Capabilities {
-		if capability == domain.HostingDatabaseMySQLCapability && (!options.Database || shellCapable) || capability == domain.HostingDatabaseMySQLBackupCapability && (!options.Database || !options.LogicalDatabaseBackups || shellCapable) {
+		if capability == domain.HostingDatabaseMySQLCapability && (!options.Database || shellCapable) || capability == domain.HostingDatabaseMySQLBackupCapability && (!options.Database || !options.LogicalDatabaseBackups || shellCapable) || capability == domain.HostingDatabaseMySQLBackupRemoteCapability && (!options.Database || !options.LogicalDatabaseBackups || !options.RemoteDatabaseBackups || !remoteCap || !remoteTask || shellCapable) {
 			return "", errors.New("authenticated MySQL capability requires explicit database configuration")
 		}
 	}
 	backupCapability, backupTask := false, false
 	for _, capability := range result.Capabilities {
-		backupCapability = backupCapability || capability == domain.HostingDatabaseBackupCapability
+		backupCapability = backupCapability || capability == domain.HostingDatabaseBackupCapability || capability == domain.HostingDatabaseMySQLBackupCapability
 		backupTask = backupTask || capability == domain.RunTypeDatabaseBackup
 	}
 	if backupCapability != options.LogicalDatabaseBackups || backupTask != options.LogicalDatabaseBackups || backupCapability && (!options.Database || shellCapable) {

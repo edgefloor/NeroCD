@@ -115,9 +115,6 @@ func TestPostgresMySQLBackupScheduleClosedScope(t *testing.T) {
 	in := scheduledBackupInput(t, f, "mysql_scope", false)
 	for _, change := range []func(*domain.HostingDatabaseBackupScheduleInput){
 		func(v *domain.HostingDatabaseBackupScheduleInput) {
-			v.RemoteTarget = &domain.BackupTargetSelection{TargetID: "remote", Revision: 1}
-		},
-		func(v *domain.HostingDatabaseBackupScheduleInput) {
 			v.Component = "mysql"
 			v.ExpectedDeployedOperationID = f.op.ID
 		},
@@ -126,7 +123,7 @@ func TestPostgresMySQLBackupScheduleClosedScope(t *testing.T) {
 		invalid := in
 		change(&invalid)
 		if _, err := f.service.SaveDatabaseBackupSchedule(f.ctx, f.resource.ID, "", invalid); err == nil {
-			t.Fatal("MySQL accepted remote or component schedule")
+			t.Fatal("MySQL accepted component schedule")
 		}
 	}
 	// A real principal who owns another project cannot create or inspect this schedule.
