@@ -14,10 +14,12 @@ import (
 
 // RunTypeDatabaseBackup and related constants identify database backup tasks and protocols.
 const (
-	RunTypeDatabaseBackup                 = "database_backup"
-	HostingDatabaseBackupCapability       = "hosting_postgresql_backup_v1"
-	HostingDatabaseBackupVersion          = "postgresql.logical-local.v1"
-	HostingDatabaseBackupMaxBytes   int64 = 1 << 30
+	RunTypeDatabaseBackup                      = "database_backup"
+	HostingDatabaseBackupCapability            = "hosting_postgresql_backup_v1"
+	HostingDatabaseBackupVersion               = "postgresql.logical-local.v1"
+	HostingDatabaseMySQLBackupVersion          = "mysql.logical-local.v1"
+	HostingDatabaseMySQLBackupCapability       = "hosting_mysql_backup_v1"
+	HostingDatabaseBackupMaxBytes        int64 = 1 << 30
 )
 
 // ErrInvalidDatabaseBackup reports invalid database backup input.

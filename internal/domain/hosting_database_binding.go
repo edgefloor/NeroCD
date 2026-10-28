@@ -97,6 +97,8 @@ func HostingDatabaseBindingEnvironmentNames(engine string) []string {
 	switch engine {
 	case "postgresql":
 		return []string{"PGDATABASE", "PGHOST", "PGPASSWORD", "PGPORT", "PGUSER"}
+	case "mysql":
+		return []string{"MYSQL_DATABASE", "MYSQL_HOST", "MYSQL_PASSWORD", "MYSQL_PORT", "MYSQL_USER"}
 	case "redis":
 		return []string{"REDIS_HOST", "REDIS_PASSWORD", "REDIS_PORT", "REDIS_USERNAME"}
 	default:

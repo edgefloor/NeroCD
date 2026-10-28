@@ -5493,14 +5493,14 @@ export interface components {
             digest: string;
             bytes: number;
             /** @enum {string} */
-            format: "postgresql_custom";
+            format: "postgresql_custom" | "mysql_sql";
         };
         HostingDatabaseBackupOperation: {
             max_bytes: number;
             timeout_seconds: number;
             id: string;
             /** @enum {string} */
-            version: "postgresql.logical-local.v1" | "postgresql.compose-logical-local.v1";
+            version: "postgresql.logical-local.v1" | "mysql.logical-local.v1" | "postgresql.compose-logical-local.v1";
             project_id: string;
             source_resource_id: string;
             source_generation: number;
@@ -5545,7 +5545,7 @@ export interface components {
         } & ({
             operation?: {
                 /** @enum {unknown} */
-                version?: "postgresql.logical-local.v1";
+                version?: "postgresql.logical-local.v1" | "mysql.logical-local.v1";
             };
         } | {
             operation?: {
@@ -7433,9 +7433,9 @@ export interface components {
         };
         HostingDatabaseExecutionRef: {
             /** @enum {string} */
-            engine: "postgresql" | "redis";
+            engine: "postgresql" | "redis" | "mysql";
             /** @enum {string} */
-            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1" | "mysql-8.4.13-oraclelinux9.v1";
             configuration_hash: string;
         };
         HostingDatabasePlan: {
@@ -8446,9 +8446,9 @@ export interface components {
             name: string;
             destination_id: components["schemas"]["HostingIdentifier"];
             /** @enum {string} */
-            engine: "postgresql" | "redis";
+            engine: "postgresql" | "redis" | "mysql";
             /** @enum {string} */
-            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1" | "mysql-8.4.13-oraclelinux9.v1";
         } & ({
             /** @constant */
             engine?: "postgresql";
@@ -8459,12 +8459,17 @@ export interface components {
             engine?: "redis";
             /** @constant */
             recipe_version?: "redis-8.2.10-bookworm.v1";
+        } | {
+            /** @constant */
+            engine?: "mysql";
+            /** @constant */
+            recipe_version?: "mysql-8.4.13-oraclelinux9.v1";
         });
         HostingDatabaseCredentialRef: {
             /** @enum {string} */
             role: "admin" | "app" | "probe";
             /** @enum {string} */
-            username: "postgres" | "ncd_app" | "ncd_probe";
+            username: "postgres" | "ncd_app" | "ncd_probe" | "root";
             secret_id: components["schemas"]["HostingIdentifier"];
             /**
              * Format: int64
@@ -8477,9 +8482,9 @@ export interface components {
             binding: components["schemas"]["ResourceBinding"];
             storage_ref: components["schemas"]["HostingStorageRef"];
             /** @enum {string} */
-            engine: "postgresql" | "redis";
+            engine: "postgresql" | "redis" | "mysql";
             /** @enum {string} */
-            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1";
+            recipe_version: "postgresql-17.11-bookworm.v1" | "redis-8.2.10-bookworm.v1" | "mysql-8.4.13-oraclelinux9.v1";
             credentials: components["schemas"]["HostingDatabaseCredentialRef"][];
             /** @enum {string} */
             runtime_state: "adapter_unqualified";

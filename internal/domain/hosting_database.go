@@ -9,9 +9,11 @@ import (
 
 // Database recipes pin desired images; engine execution remains unqualified.
 const (
-	HostingDatabasePostgresRecipe = "postgresql-17.11-bookworm.v1"
-	HostingDatabaseRedisRecipe    = "redis-8.2.10-bookworm.v1"
-	HostingDatabaseUnqualified    = "adapter_unqualified"
+	HostingDatabasePostgresRecipe  = "postgresql-17.11-bookworm.v1"
+	HostingDatabaseRedisRecipe     = "redis-8.2.10-bookworm.v1"
+	HostingDatabaseMySQLRecipe     = "mysql-8.4.13-oraclelinux9.v1"
+	HostingDatabaseMySQLCapability = "hosting_mysql_v1"
+	HostingDatabaseUnqualified     = "adapter_unqualified"
 )
 
 // HostingDatabaseCreateInput selects one server-owned immutable recipe.
@@ -72,6 +74,8 @@ func HostingDatabaseRecipeFor(engine, version string) (HostingDatabaseRecipe, er
 	switch {
 	case engine == "postgresql" && version == HostingDatabasePostgresRecipe:
 		return HostingDatabaseRecipe{Engine: engine, Version: version, ImageReference: "docker.io/library/postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27", MountPath: "/var/lib/postgresql/data", ContainerPort: 5432, DatabaseName: "app", Credentials: []HostingDatabaseCredentialRef{{Role: "admin", Username: "postgres"}, {Role: "app", Username: "ncd_app"}}, Platforms: []HostingDatabaseImagePlatform{{OS: "linux", Architecture: "amd64", Digest: "sha256:ec4dfc6571f04fe0731ce948c1500d676af49a7224392dcc6995cc1ee33a94bb"}, {OS: "linux", Architecture: "arm64", Variant: "v8", Digest: "sha256:f97ca6038b7641359fef23126949d824ac68edd8a7081b424d6a78e1f7076f8e"}}}, nil
+	case engine == "mysql" && version == HostingDatabaseMySQLRecipe:
+		return HostingDatabaseRecipe{Engine: engine, Version: version, ImageReference: "docker.io/library/mysql@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7", MountPath: "/var/lib/mysql", ContainerPort: 3306, DatabaseName: "app", Credentials: []HostingDatabaseCredentialRef{{Role: "admin", Username: "root"}, {Role: "app", Username: "ncd_app"}}, Platforms: []HostingDatabaseImagePlatform{{OS: "linux", Architecture: "amd64", Digest: "sha256:5cf1e1293ea42e077e6a22114e6773b9aae3bb8f9933a2acd5a9721518ff8f5b"}, {OS: "linux", Architecture: "arm64", Variant: "v8", Digest: "sha256:8ab2115abe8ca3d2745962f4e75f2f86fb8182ae19908773cd4cce811f3c106e"}}}, nil
 	case engine == "redis" && version == HostingDatabaseRedisRecipe:
 		return HostingDatabaseRecipe{Engine: engine, Version: version, ImageReference: "docker.io/library/redis@sha256:e5f23377739f95a2f530b9c99f93accb4f634577f09d00a7d8e0638f2fdf69e0", MountPath: "/data", ContainerPort: 6379, Credentials: []HostingDatabaseCredentialRef{{Role: "app", Username: "ncd_app"}, {Role: "probe", Username: "ncd_probe"}}, Platforms: []HostingDatabaseImagePlatform{{OS: "linux", Architecture: "amd64", Digest: "sha256:dfb838e40392b4142485b89a51241c635e9e04e4f30bd9d3db4dabf1c1429e00"}, {OS: "linux", Architecture: "arm64", Variant: "v8", Digest: "sha256:b9fe60acc13c30e9a4ed29b9022ceea7b468fa2f032a173787a55bb8f8998f03"}}}, nil
 	default:

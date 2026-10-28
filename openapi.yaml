@@ -11129,7 +11129,7 @@ components:
           "format": {
             "type": "string",
             "enum": [
-              "postgresql_custom"
+              "postgresql_custom", "mysql_sql"
             ]
           }
         }
@@ -11172,7 +11172,7 @@ components:
           "version": {
             "type": "string",
             "enum": [
-              "postgresql.logical-local.v1",
+              "postgresql.logical-local.v1", "mysql.logical-local.v1",
               "postgresql.compose-logical-local.v1"
             ]
           },
@@ -11353,7 +11353,7 @@ components:
                 "properties": {
                   "version": {
                     "enum": [
-                      "postgresql.logical-local.v1"
+                      "postgresql.logical-local.v1", "mysql.logical-local.v1"
                     ]
                   }
                 }
@@ -14642,8 +14642,8 @@ components:
       additionalProperties: false
       required: [engine, recipe_version, configuration_hash]
       properties:
-        engine: {type: string, enum: [postgresql, redis]}
-        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+        engine: {type: string, enum: [postgresql, redis, mysql]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1, mysql-8.4.13-oraclelinux9.v1]}
         configuration_hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
     HostingDatabasePlan:
       type: object
@@ -17168,8 +17168,8 @@ components:
         project_environment_id: {$ref: "#/components/schemas/HostingIdentifier"}
         name: {type: string, minLength: 1, maxLength: 128}
         destination_id: {$ref: "#/components/schemas/HostingIdentifier"}
-        engine: {type: string, enum: [postgresql, redis]}
-        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+        engine: {type: string, enum: [postgresql, redis, mysql]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1, mysql-8.4.13-oraclelinux9.v1]}
       oneOf:
         - properties:
             engine: {const: postgresql}
@@ -17177,13 +17177,16 @@ components:
         - properties:
             engine: {const: redis}
             recipe_version: {const: redis-8.2.10-bookworm.v1}
+        - properties:
+            engine: {const: mysql}
+            recipe_version: {const: mysql-8.4.13-oraclelinux9.v1}
     HostingDatabaseCredentialRef:
       type: object
       additionalProperties: false
       required: [role, username, secret_id, version]
       properties:
         role: {type: string, enum: [admin, app, probe]}
-        username: {type: string, enum: [postgres, ncd_app, ncd_probe]}
+        username: {type: string, enum: [postgres, ncd_app, ncd_probe, root]}
         secret_id: {$ref: "#/components/schemas/HostingIdentifier"}
         version: {type: integer, format: int64, enum: [1]}
     HostingDatabase:
@@ -17194,8 +17197,8 @@ components:
         resource: {$ref: "#/components/schemas/Resource"}
         binding: {$ref: "#/components/schemas/ResourceBinding"}
         storage_ref: {$ref: "#/components/schemas/HostingStorageRef"}
-        engine: {type: string, enum: [postgresql, redis]}
-        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1]}
+        engine: {type: string, enum: [postgresql, redis, mysql]}
+        recipe_version: {type: string, enum: [postgresql-17.11-bookworm.v1, redis-8.2.10-bookworm.v1, mysql-8.4.13-oraclelinux9.v1]}
         credentials:
           type: array
           minItems: 2
