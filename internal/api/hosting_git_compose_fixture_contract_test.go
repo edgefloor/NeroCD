@@ -100,10 +100,10 @@ func gitComposeFixtureSecretFiles(files map[string]string, dependency gitCompose
 	// Reuse the gate's pinned Alpine tool image. Secret env mounts are injected
 	// into RUN by production; neither ARG nor repository content carries a value.
 	files["project/app/Dockerfile"] = "FROM alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62 AS dependency\n" +
-		"COPY dependency-ca.pem /dependency-ca.pem\n" +
+		"COPY dependency-ca.crt /dependency-ca.pem\n" +
 		"RUN printf %s \"$DEPENDENCY_TOKEN\" > /tmp/dependency-token && SSL_CERT_FILE=/dependency-ca.pem wget --post-file=/tmp/dependency-token -O /dependency-marker " + dependency.URL + " && rm /tmp/dependency-token\n" +
 		files["project/app/Dockerfile"] + "COPY --from=dependency /dependency-marker /nerocd-build-dependency\n"
-	files["project/app/dependency-ca.pem"] = dependency.CA
+	files["project/app/dependency-ca.crt"] = dependency.CA
 	return files
 }
 
@@ -140,7 +140,7 @@ func TestGitComposeBuildSecretDependency(t *testing.T) {
 	check("first-build-only-token", 401)
 	check("second-build-only-token", 200)
 	files := gitComposeFixtureSecretFiles(map[string]string{"project/app/Dockerfile": "FROM fixture\n"}, gitComposeFixtureDependency{URL: server.URL + "/__build_dependency", CA: "public CA bytes"})
-	if strings.Contains(files["project/app/Dockerfile"], "ARG DEPENDENCY_TOKEN") || strings.Contains(files["project/app/Dockerfile"], "--mount=") || !strings.Contains(files["project/app/Dockerfile"], "$DEPENDENCY_TOKEN") || files["project/app/dependency-ca.pem"] != "public CA bytes" {
+	if strings.Contains(files["project/app/Dockerfile"], "ARG DEPENDENCY_TOKEN") || strings.Contains(files["project/app/Dockerfile"], "--mount=") || !strings.Contains(files["project/app/Dockerfile"], "$DEPENDENCY_TOKEN") || files["project/app/dependency-ca.crt"] != "public CA bytes" {
 		t.Fatal("source bypassed production secret injection")
 	}
 }
