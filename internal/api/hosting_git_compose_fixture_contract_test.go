@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -314,5 +317,142 @@ func TestGitComposeProxyQueueFailureInjection(t *testing.T) {
 	}
 	if err := insert("audit_fixture_accepted", "hosting.proxy_generation_requested"); err != nil {
 		t.Fatal("queue injection cleanup left queue blocked", err)
+	}
+}
+
+// A removed exact predecessor cannot still write. Require its destruction before
+// every replacement starts; retained die events must also agree with that order.
+// Completed one-shot containers may have no die event in Docker's finite history.
+func composeRuntimeWriterOrder(raw []byte, previous, current []string) error {
+	if len(previous) == 0 || len(current) == 0 {
+		return fmt.Errorf("writer component evidence missing")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	started, destroyed, died := map[string]int64{}, map[string]int64{}, map[string]int64{}
+	for {
+		var event struct {
+			Action   string
+			TimeNano int64
+			Actor    struct{ ID string }
+		}
+		if err := decoder.Decode(&event); err == io.EOF {
+			break
+		} else if err != nil {
+			return fmt.Errorf("Docker writer event evidence malformed: %w", err)
+		}
+		switch event.Action {
+		case "start", "destroy", "die":
+			if event.Actor.ID == "" || event.TimeNano <= 0 {
+				return fmt.Errorf("Docker writer event identity or timestamp missing")
+			}
+		default:
+			continue
+		}
+		switch event.Action {
+		case "start":
+			if prior := started[event.Actor.ID]; prior == 0 || event.TimeNano < prior {
+				started[event.Actor.ID] = event.TimeNano
+			}
+		case "destroy":
+			if event.TimeNano > destroyed[event.Actor.ID] {
+				destroyed[event.Actor.ID] = event.TimeNano
+			}
+		case "die":
+			if event.TimeNano > died[event.Actor.ID] {
+				died[event.Actor.ID] = event.TimeNano
+			}
+		}
+	}
+	var earliest int64
+	for _, id := range current {
+		stamp := started[id]
+		if id == "" || stamp == 0 {
+			return fmt.Errorf("new component start evidence missing")
+		}
+		if earliest == 0 || stamp < earliest {
+			earliest = stamp
+		}
+	}
+	for _, id := range previous {
+		if id == "" || destroyed[id] == 0 {
+			return fmt.Errorf("predecessor destruction evidence missing")
+		}
+		if destroyed[id] >= earliest || died[id] >= earliest {
+			return fmt.Errorf("new stack writer started before every predecessor was removed")
+		}
+	}
+	return nil
+}
+
+func TestGitComposeWriterOrderCapturedEvents(t *testing.T) {
+	// Relevant events captured at 2b83265c. The init and version die events
+	// were absent; all four exact predecessors were destroyed before new start.
+	previous := []string{"f8e1883efcffa9b3b6c322a4462218e44bad07addb9099deb27aec6b8fa14ac0", "03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b", "6f98150d8e51313b304bac5f1baf7aa60b2eabe64dfcff51e16a6af293aa0d4c", "7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}
+	current := []string{"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29", "7df431daa517d632cbc4ef94394b13ad61ea74c39c0c5beeb116dcd6e903f2b9", "bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec", "3e5ae056abe33efe8bbd41d8241ce2fec7af584f4e9e942c62724f0625aadd03"}
+	raw := []byte(`{"Action":"die","timeNano":1793153716203224139,"Actor":{"ID":"03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b"}}
+{"Action":"die","timeNano":1793153716286903693,"Actor":{"ID":"7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}}
+{"Action":"destroy","timeNano":1793153716336524391,"Actor":{"ID":"f8e1883efcffa9b3b6c322a4462218e44bad07addb9099deb27aec6b8fa14ac0"}}
+{"Action":"destroy","timeNano":1793153716337543603,"Actor":{"ID":"03ef0d1a0df8276ccd10a8ac32e8f5dc287f2e8cf3d66ea1aca42294e8cf1e7b"}}
+{"Action":"destroy","timeNano":1793153716338037354,"Actor":{"ID":"6f98150d8e51313b304bac5f1baf7aa60b2eabe64dfcff51e16a6af293aa0d4c"}}
+{"Action":"destroy","timeNano":1793153716338572356,"Actor":{"ID":"7acc61a177291a3401aefc2669aaa68a13015a9861c05be8bbea1e9ef5393ffa"}}
+{"Action":"start","timeNano":1793153716626598137,"Actor":{"ID":"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29"}}
+{"Action":"start","timeNano":1793153716637413671,"Actor":{"ID":"7df431daa517d632cbc4ef94394b13ad61ea74c39c0c5beeb116dcd6e903f2b9"}}
+{"Action":"start","timeNano":1793153716641149808,"Actor":{"ID":"bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec"}}
+{"Action":"die","timeNano":1793153716779147742,"Actor":{"ID":"db1544c7753f549f9e85fee315d3521a87ef917d9bd3d9b427663e1749a10b29"}}
+{"Action":"die","timeNano":1793153716803829278,"Actor":{"ID":"bc1fe54907967fe328aa52c549a49cb5828fba319135b285cdfe3e66613d86ec"}}
+{"Action":"start","timeNano":1793153722268736474,"Actor":{"ID":"3e5ae056abe33efe8bbd41d8241ce2fec7af584f4e9e942c62724f0625aadd03"}}`)
+	if err := composeRuntimeWriterOrder(raw, previous, current); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range previous {
+		t.Run(fmt.Sprintf("missing predecessor %d", i), func(t *testing.T) {
+			var kept []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.Contains(line, `"Action":"destroy"`) && strings.Contains(line, id) {
+					continue
+				}
+				kept = append(kept, line)
+			}
+			if err := composeRuntimeWriterOrder([]byte(strings.Join(kept, "\n")), previous, current); err == nil {
+				t.Fatal("accepted missing exact predecessor destruction")
+			}
+		})
+	}
+}
+
+func TestGitComposeWriterOrderEvidence(t *testing.T) {
+	event := func(action, id string, stamp int64) string {
+		return fmt.Sprintf(`{"Action":%q,"Actor":{"ID":%q},"timeNano":%d}`+"\n", action, id, stamp)
+	}
+	good := event("die", "old", 8) + event("destroy", "old", 9) + event("start", "new", 10)
+	for _, tc := range []struct {
+		name, raw string
+		wantError bool
+	}{
+		{"ordered", good, false},
+		{"completed one shot", event("destroy", "old", 9) + event("start", "new", 10), false},
+		{"missing destruction", event("die", "old", 8) + event("start", "new", 10), true},
+		{"late destruction", event("destroy", "old", 11) + event("start", "new", 10), true},
+		{"same time destruction", event("destroy", "old", 10) + event("start", "new", 10), true},
+		{"late die", good + event("die", "old", 11), true},
+		{"same time die", good + event("die", "old", 10), true},
+		{"missing start", event("destroy", "old", 9), true},
+		{"restart cannot hide overlap", event("start", "new", 5) + event("die", "old", 10) + event("destroy", "old", 11) + event("start", "new", 15), true},
+		{"out of order restart evidence", event("start", "new", 15) + event("die", "old", 10) + event("destroy", "old", 11) + event("start", "new", 5), true},
+		{"wrong predecessor", event("destroy", "other", 9) + event("start", "new", 10), true},
+		{"zero timestamp", event("destroy", "old", 0) + event("start", "new", 10), true},
+		{"malformed evidence", good + "{", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := composeRuntimeWriterOrder([]byte(tc.raw), []string{"old"}, []string{"new"}); (err != nil) != tc.wantError {
+				t.Fatalf("writer evidence error=%v, wantError=%v", err, tc.wantError)
+			}
+		})
+	}
+	if err := composeRuntimeWriterOrder([]byte(good), []string{"old", "missing"}, []string{"new"}); err == nil {
+		t.Fatal("accepted missing component destruction")
+	}
+	if err := composeRuntimeWriterOrder([]byte(good), []string{"old"}, []string{"new", "missing"}); err == nil {
+		t.Fatal("accepted missing component start")
 	}
 }

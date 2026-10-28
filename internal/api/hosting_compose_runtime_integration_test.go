@@ -983,40 +983,16 @@ func composeRuntimeUploadOwnership(t *testing.T, operation domain.HostingOperati
 func composeRuntimeWriterBarrier(t *testing.T, previous, current domain.HostingOperation) {
 	t.Helper()
 	raw := storageRuntimeDocker(t, "events", "--since", previous.CreatedAt.Format(time.RFC3339Nano), "--until", time.Now().Format(time.RFC3339Nano), "--filter", "type=container", "--filter", "label=io.nerocd.binding="+current.BindingID, "--format", "{{json .}}")
-	decoder := json.NewDecoder(bytes.NewReader(raw))
 	defer clear(raw)
-	stopped := map[string]int64{}
-	started := map[string]int64{}
-	for decoder.More() {
-		var event struct {
-			Action   string
-			TimeNano int64
-			Actor    struct{ ID string }
-		}
-		if decoder.Decode(&event) != nil {
-			t.Fatal("Docker writer event evidence malformed")
-		}
-		if event.Action == "die" {
-			stopped[event.Actor.ID] = event.TimeNano
-		}
-		if event.Action == "start" {
-			started[event.Actor.ID] = event.TimeNano
-		}
-	}
-	earliest := int64(0)
-	for _, component := range current.Result.Stack.Components {
-		stamp := started[component.ContainerID]
-		if stamp == 0 {
-			t.Fatal("new component start evidence missing")
-		}
-		if earliest == 0 || stamp < earliest {
-			earliest = stamp
-		}
-	}
+	var previousIDs, currentIDs []string
 	for _, component := range previous.Result.Stack.Components {
-		if stopped[component.ContainerID] == 0 || stopped[component.ContainerID] > earliest {
-			t.Fatal("new stack writer started before every predecessor stopped")
-		}
+		previousIDs = append(previousIDs, component.ContainerID)
+	}
+	for _, component := range current.Result.Stack.Components {
+		currentIDs = append(currentIDs, component.ContainerID)
+	}
+	if err := composeRuntimeWriterOrder(raw, previousIDs, currentIDs); err != nil {
+		t.Fatal(err)
 	}
 }
 
