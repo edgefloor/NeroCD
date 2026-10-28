@@ -255,8 +255,8 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 		}
 	}
 	image := os.Getenv("NEROCD_DATABASE_HTTP_APP_IMAGE")
-	storageSchedule := db.Engine == "mysql" && os.Getenv("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME") == "1"
-	if storageSchedule {
+	storageBackup := db.Engine == "mysql" && (os.Getenv("NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME") == "1")
+	if storageBackup {
 		image = os.Getenv("NEROCD_DATABASE_STORAGE_HTTP_APP_IMAGE")
 	}
 	if applicationDatabaseFixtureImage(image) != nil {
@@ -274,7 +274,7 @@ func backupRuntimeApplicationObserved(f *databaseRunnerFixture, db domain.Hostin
 		namespace = namespaces[0]
 	}
 	entries := []domain.HostingRuntimeEntry{}
-	if storageSchedule {
+	if storageBackup {
 		value := "1"
 		entries = append(entries, domain.HostingRuntimeEntry{Name: "FIXTURE_UPLOADS", Kind: "literal", Value: &value})
 	}

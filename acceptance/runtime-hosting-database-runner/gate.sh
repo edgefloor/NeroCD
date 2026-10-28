@@ -438,6 +438,8 @@ def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0
     if mysql not in ("0", "1"):
         raise Failure("invalid backup engine profile")
     if mysql == "1":
+        if (schedule, remote, retention, notifications) == ("0", "1", "0", "1"):
+            return "^TestHostingBackupNotificationsCompiledRunner$", ["TestHostingBackupNotificationsCompiledRunner"], ["DATABASE_BACKUP_NOTIFICATIONS_PASS mysql " + proof for proof in ("dump_email_webhook", "upload_email_webhook", "source_replay_restart", "retry_exhaustion", "current_authority", "source_preserved")] + ["DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS mysql"]
         if (schedule, remote, retention, notifications) == ("1", "1", "0", "0"):
             return "^TestHostingDatabaseBackupRemoteCompiledRunner$", ["TestHostingDatabaseBackupRemoteCompiledRunner"], ["DATABASE_BACKUP_REMOTE_PASS mysql", "DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql", "DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql", "DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql"]
         if (schedule, remote, retention, notifications) != ("1", "0", "0", "0"):
@@ -535,7 +537,7 @@ def database_workflow_pebble_config(raw):
 
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
-    mysql_schedule = (mysql_mode, backup_mode, schedule_mode, remote_mode, retention_mode, notifications_mode, storage_mode, routes_mode, browser_mode, gate_mode) in (("1", "1", "1", "0", "0", "0", "1", "1", "1", "full"), ("1", "1", "1", "1", "0", "0", "1", "1", "1", "full"))
+    mysql_schedule = (mysql_mode, backup_mode, schedule_mode, remote_mode, retention_mode, notifications_mode, storage_mode, routes_mode, browser_mode, gate_mode) in (("1", "1", "1", "0", "0", "0", "1", "1", "1", "full"), ("1", "1", "1", "1", "0", "0", "1", "1", "1", "full"), ("1", "1", "0", "1", "0", "1", "1", "1", "1", "full"))
     if mysql_mode not in ("0", "1") or mysql_mode == "1" and not mysql_schedule and (backup_mode != "0" or schedule_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
         raise Failure("MySQL requires exact connected storage/browser profile with appended local backup")
     if notifications_mode not in ("0", "1") or notifications_mode == "1" and (remote_mode != "1" or browser_mode != "1" or gate_mode != "full"):
@@ -849,7 +851,10 @@ def main():
     if backup_mode == "1":
         verify_backup_runtime_output(runtime_output, schedule_mode, remote_mode, retention_mode, notifications_mode, mysql_mode)
         full_workflow_pass = True
-        say("hosted " + ("MySQL scheduled" if mysql_schedule else "PostgreSQL") + " logical backup and new-database restore fixture passed")
+        if mysql_mode == "1" and notifications_mode == "1":
+            say("native MySQL local and upload failure notifications fixture passed")
+        else:
+            say("hosted " + ("MySQL scheduled" if mysql_schedule else "PostgreSQL") + " logical backup and new-database restore fixture passed")
         return
     if mysql_mode == "1":
         verify_mysql_runtime_output(runtime_output)

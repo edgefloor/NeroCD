@@ -6,7 +6,7 @@ test.use({ trace: "off", screenshot: "off", video: "off" });
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw ? JSON.parse(raw) as {
   origin: string; project_id: string; environment: string;
-  database_resource_id: string; control_path: string; profile: string; tls_spki: string;
+  database_resource_id: string; engine: "postgresql" | "mysql"; control_path: string; profile: string; tls_spki: string;
 } : undefined;
 
 // Go's url.Values and the UI's URLSearchParams serialize the same locator in
@@ -222,12 +222,14 @@ test("actual backup notifications configure both transports and recover the reta
   }
   expect(sourceMutations).toBe(0);
   await acknowledge("observed");
+  if (m.engine === "postgresql") {
   await expect(recover.getByRole("combobox", { name: "Completed backup", exact: true })).toHaveValue(recoveryState.backup_id);
   await expect(recover.getByRole("combobox", { name: "Restore archive source", exact: true })).toHaveValue("");
   await recover.getByLabel("New database name", { exact: true }).fill("Notification recovered database");
   await recover.getByRole("button", { name: "Restore into new database", exact: true }).click();
+  }
   await expect.poll(async () => (await state()).phase, { timeout: 240_000, intervals: [250, 500] }).toBe("complete");
-  expect(sourceMutations).toBe(1);
+  expect(sourceMutations).toBe(m.engine === "mysql" ? 0 : 1);
   const complete = await state();
   expect(complete.failed_backup_id).toMatch(/^dbb_/);
   expect(["failed", "uncertain"]).toContain(complete.failed_backup_state);

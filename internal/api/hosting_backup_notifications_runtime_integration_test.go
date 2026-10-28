@@ -692,7 +692,7 @@ func startBackupNotificationBrowser(f *databaseRunnerFixture, source domain.Host
 			f.t.Error("notification browser did not join")
 		}
 	})
-	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": "postgresql", "profile": "backup_notifications", "tls_spki": receivers.spki, "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
+	meta := map[string]string{"origin": origin, "project_id": source.Resource.ProjectID, "environment": "database runner acceptance", "engine": source.Engine, "profile": "backup_notifications", "tls_spki": receivers.spki, "application_resource_id": source.Resource.ID, "application_name": source.Resource.Name, "database_resource_id": source.Resource.ID, "foreign_resource_id": "unused_fixture", "control_path": control}
 	raw, _ := json.Marshal(meta)
 	fmt.Println("DATABASE_BACKUP_BROWSER_READY " + string(raw))
 	return b
@@ -757,7 +757,7 @@ func notificationRuntimeRetryAndAuthority(f *databaseRunnerFixture, project stri
 	if persisted.State != "failed" || persisted.AttemptCount != 5 || len(persisted.Attempts) != 5 {
 		f.t.Fatal("restart lost exhaustion")
 	}
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql retry_exhaustion")
+	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS " + notificationRuntimeEngine() + " retry_exhaustion")
 	for _, kind := range []string{"disabled", "changed"} {
 		r.failNext("webhook", 1)
 		delivery := notificationRuntimeTest(f, project, extra)
@@ -809,8 +809,25 @@ func notificationRuntimeRetryAndAuthority(f *databaseRunnerFixture, project stri
 }
 
 // Docker's daemon events establish that the actual pinned command ran and
-// exited nonzero. A failed API state alone cannot prove a pg_dump invocation.
-func notificationRuntimeFailedDumpExec(raw []byte, container string) bool {
+// exited nonzero. A failed API state alone cannot prove a dump invocation.
+func notificationRuntimeEngine() string {
+	if os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+		return "mysql"
+	}
+	return "postgresql"
+}
+
+func notificationRuntimeDumpCommand(engine string) string {
+	if engine == "mysql" {
+		return "timeout --signal=TERM --kill-after=5s 60s mysqldump --defaults-extra-file=/run/nerocd-db/admin.cnf --single-transaction --quick --skip-lock-tables --no-tablespaces --set-gtid-purged=OFF --routines --events --triggers --hex-blob --column-statistics=0 app"
+	}
+	return "timeout --signal=TERM --kill-after=5s 10s pg_dump --username=postgres --dbname=app --format=custom --no-owner --no-acl"
+}
+
+func notificationRuntimeFailedDumpExec(raw []byte, container, engine string) bool {
+	if engine != "postgresql" && engine != "mysql" {
+		return false
+	}
 	if len(raw) > 1<<20 {
 		return false
 	}
@@ -839,7 +856,7 @@ func notificationRuntimeFailedDumpExec(raw []byte, container string) bool {
 		}
 		if strings.HasPrefix(value.Action, "exec_create: ") {
 			command := strings.Join(strings.Fields(strings.TrimPrefix(value.Action, "exec_create: ")), " ")
-			if command == "timeout --signal=TERM --kill-after=5s 10s pg_dump --username=postgres --dbname=app --format=custom --no-owner --no-acl" {
+			if command == notificationRuntimeDumpCommand(engine) {
 				created[id] = true
 			}
 		}
@@ -934,17 +951,31 @@ func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.Host
 		f.t.Fatal("notification dump current source container ownership or running state mismatch")
 	}
 	clear(raw)
-	// Read and preserve the original setting before changing only the owned app DB.
-	original := strings.TrimSpace(string(docker("read_original", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT datallowconn FROM pg_database WHERE datname='app';")))
-	if original != "t" {
-		f.t.Fatal("source app database must initially allow connections")
+	// Change only fixture-owned failure state and restore it on every exit.
+	mysql := source.Engine == "mysql"
+	query := func(step, sql string) []byte {
+		return docker(step, "exec", "--user", "mysql", container, "mysql", "--defaults-extra-file=/run/nerocd-db/admin.cnf", "--batch", "--skip-column-names", "--execute="+sql)
+	}
+	if mysql {
+		if string(query("read_original", "SELECT COUNT(*) FROM information_schema.tables WHERE TABLE_SCHEMA='app' AND TABLE_NAME IN ('nerocd_notification_dump_table','nerocd_notification_dump_view')")) != "0\n" {
+			f.t.Fatal("dump failure fixture names already exist")
+		}
+	} else {
+		original := strings.TrimSpace(string(docker("read_original", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--tuples-only", "--no-align", "--command", "SELECT datallowconn FROM pg_database WHERE datname='app';")))
+		if original != "t" {
+			f.t.Fatal("source app database must initially allow connections")
+		}
 	}
 	var once sync.Once
 	restore := func() {
 		once.Do(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			raw, err := notificationRuntimeDumpDocker(ctx, "restore_connections", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS true;")
+			args := []string{"exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS true;"}
+			if mysql {
+				args = []string{"exec", "--user", "mysql", container, "mysql", "--defaults-extra-file=/run/nerocd-db/admin.cnf", "--execute=DROP VIEW IF EXISTS app.nerocd_notification_dump_view; DROP TABLE IF EXISTS app.nerocd_notification_dump_table"}
+			}
+			raw, err := notificationRuntimeDumpDocker(ctx, "restore_connections", args...)
 			clear(raw)
 			if err != nil {
 				f.t.Error(err)
@@ -954,7 +985,11 @@ func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.Host
 	f.t.Cleanup(restore)
 	defer restore()
 	started := time.Now().UTC().Format(time.RFC3339Nano)
-	docker("disable_connections", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS false;")
+	if mysql {
+		query("disable_connections", "CREATE TABLE app.nerocd_notification_dump_table (id INT PRIMARY KEY) ENGINE=InnoDB; CREATE VIEW app.nerocd_notification_dump_view AS SELECT id FROM app.nerocd_notification_dump_table; DROP TABLE app.nerocd_notification_dump_table")
+	} else {
+		docker("disable_connections", "exec", "--user", "postgres", container, "psql", "--username=postgres", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--command", "ALTER DATABASE app ALLOW_CONNECTIONS false;")
+	}
 	wire := &databaseBackupRuntimeWire{mode: "backup", pause: true, entered: make(chan struct{}), release: make(chan struct{})}
 	f.backupWire.Store(wire)
 	var release sync.Once
@@ -972,9 +1007,9 @@ func notificationRuntimeDumpFailure(f *databaseRunnerFixture, source domain.Host
 	})
 	f.backupWire.Store(nil)
 	events := docker("read_events", "events", "--since", started, "--until", time.Now().UTC().Format(time.RFC3339Nano), "--filter", "container="+container, "--filter", "event=exec_create", "--filter", "event=exec_die", "--format", "{{json .}}")
-	if !notificationRuntimeFailedDumpExec(events, container) {
+	if !notificationRuntimeFailedDumpExec(events, container, source.Engine) {
 		clear(events)
-		f.t.Fatal("no actual pinned pg_dump invocation with a failed exit was observed")
+		f.t.Fatal("no actual pinned dump invocation with a failed exit was observed")
 	}
 	clear(events)
 	if requested.Blob != nil || requested.FailureCode == "" {
@@ -991,6 +1026,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Fatal("native Linux arm64 required")
 	}
+	mysql := notificationRuntimeEngine() == "mysql"
 	receivers := startBackupNotificationReceivers(t)
 	sender, err := notificationtransport.New(notificationtransport.Policy{PrivateOrigins: map[string][]netip.Prefix{}, FixtureTLSOrigins: []string{receivers.webhookOrigin, receivers.smtpOrigin}, RootCAs: receivers.roots})
 	if err != nil {
@@ -998,17 +1034,29 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	}
 	f := newDatabaseRunnerFixtureConfigured(t, true, true, func(pg *store.PostgresStore, ring *secretcrypto.Keyring) error {
 		return pg.ConfigureBackupNotifications(ring, sender, strings.Replace(os.Getenv("NEROCD_DATABASE_CONNECTION_BROWSER_ORIGIN"), "http://", "https://", 1))
-	}, true)
+	}, true, mysql)
 	f.protected = append(f.protected, []byte(receivers.username), []byte(receivers.password))
 	diagnosticID := ""
 	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
 	silo := startDatabaseRemoteSilo(f)
-	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
+	create := backupRuntimeCreateInput(t, f.environment, f.destination)
+	if mysql {
+		create = applicationDatabaseCreateInput("mysql", f.environment, f.destination)
+		create.RequestID = backupRuntimeRequestID(t)
+	}
+	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", create, 201)
 	f.registerRouteDatabaseCleanup(source.Resource.ID)
 	deployed := f.deploy(source, "notification_source")
 	f.registerRouteOperationCleanup(deployed.ID)
 	deployed = f.await(deployed.ID)
 	application := backupRuntimeApplication(f, source, "notification_source")
+	if mysql {
+		resource := databaseRunnerJSON[domain.Resource](f, f.token, "GET", "/api/v1/resources/"+application.ResourceID, nil, 200)
+		application = f.storage.bootstrap(f, resource, application, domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}})
+		roots, public := newApplicationDatabaseRouteTrust(t)
+		f.initialApplicationDatabaseRoute(application, "mysql", roots, public)
+		f.storage.write(f, application, "retained_notification", 0x41)
+	}
 	f.appRecord(application, "PUT", "before", "notification_snapshot_origin")
 	target := databaseRunnerJSON[struct {
 		ID       string `json:"id"`
@@ -1106,7 +1154,12 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	if "sha256:"+hex.EncodeToString(digest[:]) != backup.Blob.Digest {
 		t.Fatal("retained local archive digest changed")
 	}
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql upload_email_webhook")
+	if mysql {
+		f.routes.assertSelected(application)
+		f.routes.record(t.Context(), application, "GET", "before", "notification_snapshot_origin")
+		f.storage.assertFiles(f, application)
+	}
+	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS " + source.Engine + " upload_email_webhook")
 	before := databaseRunnerJSON[[]backupNotificationDelivery](f, f.token, "GET", notificationRuntimePath(source.Resource.ProjectID), nil, 200)
 	backupRuntimeRestartController(f)
 	after := databaseRunnerJSON[[]backupNotificationDelivery](f, f.token, "GET", notificationRuntimePath(source.Resource.ProjectID), nil, 200)
@@ -1122,28 +1175,30 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 			t.Fatal("controller restart changed durable delivery identity")
 		}
 	}
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql source_replay_restart")
+	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS " + source.Engine + " source_replay_restart")
 	browser.set("recovery", backup.ID, recoveryLink)
 	browser.await(browser.observed, "current-scope recovery without automatic action")
-	var restored domain.HostingDatabaseBackupOperation
-	select {
-	case restored = <-browser.restored:
-	case <-time.After(120 * time.Second):
-		t.Fatal("explicit browser local restore missing")
+	if !mysql {
+		var restored domain.HostingDatabaseBackupOperation
+		select {
+		case restored = <-browser.restored:
+		case <-time.After(120 * time.Second):
+			t.Fatal("explicit browser local restore missing")
+		}
+		diagnosticID = restored.ID
+		f.registerRouteDatabaseCleanup(restored.TargetResourceID)
+		restored = backupRuntimeAwait(f, restored.ID)
+		fresh := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
+		if fresh.Resource.ID == source.Resource.ID || fresh.Binding.ID == source.Binding.ID || fresh.StorageRef == source.StorageRef {
+			t.Fatal("local recovery reused source resources")
+		}
+		distinct := backupRuntimeApplication(f, fresh, "notification_restored")
+		f.appRecord(distinct, "GET", "before", "notification_snapshot_origin")
+		f.appRecord(distinct, "PUT", "new", "notification_new_write")
+		f.appRecord(distinct, "GET", "new", "notification_new_write")
+		f.appRecord(application, "GET", "before", "notification_snapshot_origin")
+		fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql local_restore_app")
 	}
-	diagnosticID = restored.ID
-	f.registerRouteDatabaseCleanup(restored.TargetResourceID)
-	restored = backupRuntimeAwait(f, restored.ID)
-	fresh := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
-	if fresh.Resource.ID == source.Resource.ID || fresh.Binding.ID == source.Binding.ID || fresh.StorageRef == source.StorageRef {
-		t.Fatal("local recovery reused source resources")
-	}
-	distinct := backupRuntimeApplication(f, fresh, "notification_restored")
-	f.appRecord(distinct, "GET", "before", "notification_snapshot_origin")
-	f.appRecord(distinct, "PUT", "new", "notification_new_write")
-	f.appRecord(distinct, "GET", "new", "notification_new_write")
-	f.appRecord(application, "GET", "before", "notification_snapshot_origin")
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql local_restore_app")
 	notificationRuntimeRetryAndAuthority(f, source.Resource.ProjectID, receivers)
 	dump := notificationRuntimeDumpFailure(f, source, deployed, application)
 	diagnosticID = dump.ID
@@ -1154,8 +1209,16 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 			t.Fatal("dump notification misrepresented uncertain outcome")
 		}
 	}
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql dump_email_webhook")
-	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS postgresql current_authority")
+	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS " + source.Engine + " dump_email_webhook")
+	if mysql {
+		f.appRecord(application, "PUT", "after_notifications", "source_remains_usable")
+		f.routes.assertSelected(application)
+		f.routes.record(t.Context(), application, "GET", "before", "notification_snapshot_origin")
+		f.routes.record(t.Context(), application, "GET", "after_notifications", "source_remains_usable")
+		f.storage.assertFiles(f, application)
+		fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS mysql source_preserved")
+	}
+	fmt.Println("DATABASE_BACKUP_NOTIFICATIONS_PASS " + source.Engine + " current_authority")
 	browser.mu.Lock()
 	browser.failedBackup, browser.failedBackupState = dump.ID, dump.State
 	browser.mu.Unlock()
@@ -1241,11 +1304,29 @@ func TestBackupNotificationFailedDumpRequiresMatchingDaemonExec(t *testing.T) {
 	}
 	started := create("exec_create: timeout --signal=TERM --kill-after=5s 10s pg_dump --username=postgres --dbname=app --format=custom --no-owner --no-acl", container, id, "")
 	terminal := create("exec_die", container, id, "1")
-	if !notificationRuntimeFailedDumpExec([]byte(started+terminal), container) {
+	for _, engine := range []string{"postgresql", "mysql"} {
+		actual := create("exec_create: "+notificationRuntimeDumpCommand(engine), container, id, "")
+		if !notificationRuntimeFailedDumpExec([]byte(actual+terminal), container, engine) {
+			t.Fatal("exact engine dump event rejected")
+		}
+		other := "mysql"
+		if engine == "mysql" {
+			other = "postgresql"
+		}
+		for _, invalid := range []string{actual, actual + create("exec_die", container, id, "0"), strings.Replace(actual, "dump", "status", 1) + terminal} {
+			if notificationRuntimeFailedDumpExec([]byte(invalid), container, engine) {
+				t.Fatal("missing, successful or unrelated dump accepted")
+			}
+		}
+		if notificationRuntimeFailedDumpExec([]byte(actual+terminal), container, other) {
+			t.Fatal("foreign engine dump accepted")
+		}
+	}
+	if !notificationRuntimeFailedDumpExec([]byte(started+terminal), container, "postgresql") {
 		t.Fatal("actual failed dump exec rejected")
 	}
 	for _, invalid := range []string{started, terminal, started + create("exec_die", container, id, "0"), started + create("exec_die", container, strings.Repeat("c", 64), "1"), started + create("exec_die", strings.Repeat("d", 64), id, "1"), strings.Replace(started, "pg_dump", "pg_isready", 1) + terminal, started + terminal + "invalid"} {
-		if notificationRuntimeFailedDumpExec([]byte(invalid), container) {
+		if notificationRuntimeFailedDumpExec([]byte(invalid), container, "postgresql") {
 			t.Fatal("unproven dump invocation accepted")
 		}
 	}
