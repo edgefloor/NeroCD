@@ -69,10 +69,7 @@ func (r *Redactor) Redact(text string) string {
 	if r == nil {
 		return text
 	}
-	for _, pattern := range r.patterns {
-		text = strings.ReplaceAll(text, pattern, RedactionMarker)
-	}
-	return text
+	return r.redactLocked(text)
 }
 
 // RedactChunk redacts one output chunk while preserving stream boundaries.
@@ -90,13 +87,15 @@ func (r *Redactor) RedactChunk(stream, chunk string) string {
 	for index := 0; index < len(chunk); index++ {
 		pending += chunk[index : index+1]
 		for len(pending) > 0 {
-			if r.isPattern(pending) {
-				safe.WriteString(RedactionMarker)
-				pending = ""
-				break
-			}
+			// A complete short pattern can still be the prefix of a longer secret.
+			// Wait until continuation distinguishes them before emitting either.
 			if r.isPatternPrefix(pending) {
 				break
+			}
+			if size := r.longestPatternPrefix(pending); size > 0 {
+				safe.WriteString(RedactionMarker)
+				pending = pending[size:]
+				continue
 			}
 			safe.WriteByte(pending[0])
 			pending = pending[1:]
@@ -124,13 +123,15 @@ func (r *Redactor) Flush() []ProcessEvent {
 	return events
 }
 
-func (r *Redactor) isPattern(value string) bool {
+// longestPatternPrefix returns the longest complete match at the start of value.
+// NewRedactor sorts immutable patterns by descending length.
+func (r *Redactor) longestPatternPrefix(value string) int {
 	for _, pattern := range r.patterns {
-		if value == pattern {
-			return true
+		if strings.HasPrefix(value, pattern) {
+			return len(pattern)
 		}
 	}
-	return false
+	return 0
 }
 
 func (r *Redactor) isPatternPrefix(value string) bool {
@@ -143,8 +144,15 @@ func (r *Redactor) isPatternPrefix(value string) bool {
 }
 
 func (r *Redactor) redactLocked(text string) string {
-	for _, pattern := range r.patterns {
-		text = strings.ReplaceAll(text, pattern, RedactionMarker)
+	var safe strings.Builder
+	for len(text) > 0 {
+		if size := r.longestPatternPrefix(text); size > 0 {
+			safe.WriteString(RedactionMarker)
+			text = text[size:]
+			continue
+		}
+		safe.WriteByte(text[0])
+		text = text[1:]
 	}
-	return text
+	return safe.String()
 }

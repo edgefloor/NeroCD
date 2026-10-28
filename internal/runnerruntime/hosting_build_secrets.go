@@ -78,19 +78,40 @@ func (s *buildOutputAdapter) addBuildSecrets(ctx context.Context, values []domai
 	if len(values) > 64 {
 		return errors.New("too many build secrets")
 	}
+	known := make(map[string]int, len(s.secrets))
+	for i, material := range s.secrets {
+		known[material.Value] = i
+	}
+	add := func(value string, encoded bool) {
+		if value == "" {
+			return
+		}
+		if i, exists := known[value]; exists {
+			if encoded && len(s.secrets[i].Encodings) == 0 {
+				s.secrets[i].Encodings = []string{"base64", "base64url", "hex"}
+			}
+			return
+		}
+		known[value] = len(s.secrets)
+		material := runner.SecretMaterial{Value: strings.Clone(value)}
+		if encoded {
+			material.Encodings = []string{"base64", "base64url", "hex"}
+		}
+		s.secrets = append(s.secrets, material)
+	}
 	for _, value := range values {
 		if !domain.ValidHostingBuildSecretValue(value.Value) {
 			return errors.New("invalid build secret redaction")
 		}
-		if value.Value == "" {
-			continue
-		}
-		found := false
-		for _, existing := range s.secrets {
-			found = found || existing.Value == value.Value
-		}
-		if !found {
-			s.secrets = append(s.secrets, runner.SecretMaterial{Value: strings.Clone(value.Value), Encodings: []string{"base64", "base64url", "hex"}})
+		add(value.Value, true)
+	}
+	// BuildKit plain progress prefixes each LF-delimited output line. Register
+	// raw line fragments as well as whole values, trimming only CRLF's CR.
+	// Deduplication includes single-character lines. Fragments generate no new
+	// encodings, and their total text is at most the selected values' 4 MiB bound.
+	for _, value := range values {
+		for line := range strings.SplitSeq(value.Value, "\n") {
+			add(strings.TrimSuffix(line, "\r"), false)
 		}
 	}
 	s.redactor = runner.NewRedactor(s.secrets)
