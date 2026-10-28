@@ -154,3 +154,35 @@ func TestStoredDockerfileFixtureContracts(t *testing.T) {
 		})
 	}
 }
+
+func TestPrivateSSHFixtureContracts(t *testing.T) {
+	fingerprint := "SHA256:" + strings.Repeat("A", 43)
+	raw, err := json.Marshal(map[string]any{"source": map[string]any{"kind": "git", "git": map[string]any{"repository_url": "ssh://git@example.com:2222/repo.git", "requested_ref": "refs/heads/main", "credential_kind": "ssh_private_key", "ssh_host_fingerprints": []string{fingerprint}, "settings": map[string]any{"strategy": "dockerfile"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		Source domain.ResourceSourceInput `json:"source"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&request); err != nil {
+		t.Fatal("real SSH source decoder", err)
+	}
+	g := request.Source.Git
+	if g == nil || g.RepositoryURL != "ssh://git@example.com:2222/repo.git" || g.CredentialKind != "ssh_private_key" || len(g.SSHHostFingerprints) != 1 || g.SSHHostFingerprints[0] != fingerprint || g.Settings.Strategy != "dockerfile" {
+		t.Fatal("SSH fixture contract changed")
+	}
+	if domain.HostingSSHGitCapability != "hosting_git_ssh_private_key_v1" {
+		t.Fatal("SSH capability contract changed")
+	}
+	for _, body := range []any{domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 2, ExpectedSourceGeneration: 2, SecretID: "msec_ssh_fixture", SecretVersion: 2, RequestID: strings.Repeat("a", 32)}, domain.HostingBuildRequest{ExpectedResourceGeneration: 2, ExpectedSourceGeneration: 2, GrantID: "hsg_ssh_fixture", IdempotencyKey: "ssh-fixture-build"}} {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "private_key") || strings.Contains(string(encoded), "fingerprint") {
+			t.Fatal("grant/build request invented key or policy input")
+		}
+	}
+}
