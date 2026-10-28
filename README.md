@@ -95,6 +95,16 @@ Choose checks for the area you change:
 Database and hosting runtime checks can require additional services and fixtures.
 See the [Makefile](Makefile) for individual targets.
 
+PR CI runs independent Go and web checks concurrently. The runtime race suite
+is divided into six deterministic groups discovered from the current test
+binary; other product packages run in a separate race job. Every test, example,
+and fuzz seed remains included, and the required `check` job succeeds only when
+all jobs succeed. Release evidence gates retain their serial execution order.
+To reproduce a CI group locally, run `python3 -B scripts/ci-check.py runtime-0`
+through `runtime-5`, or select `go`, `race`, or `web`. The Go CI job also runs
+`make postgres-test` with its PostgreSQL fixture, and the web job generates
+release artifacts after its checks pass.
+
 ## Code layout
 
 The control plane stores state in PostgreSQL and dispatches hosting work through
