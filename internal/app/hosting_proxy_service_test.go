@@ -57,6 +57,32 @@ func TestProxyOperationProjectProjectionDoesNotExposeOtherProjects(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The ordinary project endpoint preserves the proxy's applied state while
+	// keeping the engine result private, even after successful completion.
+	repository.op.State = "applied"
+	repository.op.MutationHold = false
+	repository.op.Result = &domain.HostingProxyResult{Outcome: "applied"}
+	result, err = service.ProxyOperation(viewer, repository.op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public map[string]json.RawMessage
+	if err = json.Unmarshal(encoded, &public); err != nil {
+		t.Fatal(err)
+	}
+	if string(public["id"]) != `"pop_shared"` || string(public["state"]) != `"applied"` {
+		t.Fatalf("ordinary operation public contract: %s", encoded)
+	}
+	for _, private := range []string{"engine_outcome", "result", "snapshot"} {
+		if _, exposed := public[private]; exposed {
+			t.Fatalf("ordinary project view exposes %s", private)
+		}
+	}
+	t.Logf("ordinary proxy operation marshaled project contract: %s", encoded)
 	for _, forbidden := range []string{"proxy_private", "srv_private", "dest_private", "runner_private", "route_foreign", "res_foreign", "foreign.example.com", "proj_platform", "snapshot", "plan", "run_id"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("project projection contains %q: %s", forbidden, encoded)

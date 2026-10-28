@@ -193,8 +193,7 @@ test("owner configures private Git strategy, builds and deploys exact artifact, 
   expect(routeB.operation_id).toMatch(/^pop_/);
   const routeOperation=routes.getByRole("region",{name:"Route operation status",exact:true});
   await expect(routeOperation.getByText(`Proxy operation ${routeB.operation_id}`,{exact:true})).toBeVisible();
-  await expect(routeOperation.getByText("Operation state: succeeded",{exact:true})).toBeVisible({timeout:120_000});
-  await expect(routeOperation.getByText("Historical engine outcome: applied",{exact:true})).toBeVisible();
+  await expect(routeOperation.getByText("Operation state: applied",{exact:true})).toBeVisible({timeout:120_000});
   await routes.getByRole("button",{name:"Refresh resource routes",exact:true}).click();
   await expect(route.getByText("Trusted HTTPS readiness recorded",{exact:true}).locator("+ dd")).toHaveText("ready",{timeout:120_000});
   const settled=await (await page.request.get(`/api/v1/hosting-operations/${operationB.id}`)).json();
