@@ -27,4 +27,3 @@ export function statusLabel(status: string): string {
   };
   return labels[status] ?? status.replaceAll("_", " ");
 }
-
