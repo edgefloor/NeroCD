@@ -556,3 +556,50 @@ test.each([401, 403])("denied compatibility %i leaves no installable destination
   fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
   expect(api.installCatalog).not.toHaveBeenCalled();
 });
+
+
+const wordpress: api.CatalogTemplate = {
+  ...vikunja, id: "wordpress-with-mysql", name: "WordPress with MySQL", category: "CMS",
+  immutable_version: "coolify-b12d1386.wordpress-mysql.v1", upstream_path: "templates/compose/wordpress-with-mysql.yaml",
+  definition: { ...vikunja.definition, container_port: 80, readiness: { path: "/", timeout_seconds: 120 }, credential_names: ["SERVICE_PASSWORD_WORDPRESS", "SERVICE_PASSWORD_MYSQLROOT"],
+    compose: { original: "services:\n  wordpress:\n    image: wordpress@sha256:pinned\n    environment:\n      WORDPRESS_DB_PASSWORD: ${SERVICE_PASSWORD_WORDPRESS}\n  mysql:\n    image: mysql@sha256:pinned\nvolumes:\n  wordpress-data: {}\n  mysql-data: {}\n", public_component: "wordpress", container_port: 80 } },
+};
+test("WordPress Compose install uses selected metadata and guides setup and separate routing without revealing database secrets", async () => {
+  vi.mocked(api.getCatalog).mockResolvedValueOnce([template, vikunja, wordpress]);
+  vi.mocked(placement.getCatalogDestinationOptions).mockImplementation(async (_project, selected, offset) => {
+    const options = optionsFor(selected, offset);
+    return selected.id === wordpress.id ? { ...options, requirements: { ...options.requirements, mount_paths: ["/var/www/html", "/var/lib/mysql"] } } : options;
+  });
+  setup();
+  await screen.findByRole("option", { name: /WordPress with MySQL ·/ });
+  fireEvent.change(screen.getByLabelText("Catalog application"), { target: { value: wordpress.id } });
+  await screen.findByRole("option", { name: "Docker" });
+  expect(screen.getByLabelText<HTMLInputElement>("Installation name").value).toBe(wordpress.name);
+  const preview = screen.getByRole("region", { name: "Catalog installation preview" });
+  expect(preview.querySelector("pre")?.textContent).toBe(wordpress.definition.compose!.original);
+  expect(preview.textContent).toContain("Public componentwordpress");
+  expect(preview.textContent).toContain("Container port80");
+  expect(screen.getByRole("region", { name: "Catalog application requirements" }).textContent).toContain("/var/www/html, /var/lib/mysql");
+  fireEvent.change(screen.getByLabelText("Catalog destination"), { target: { value: "dest" } });
+  fireEvent.change(screen.getByLabelText("Public URL"), { target: { value: "https://blog.example.test" } });
+  vi.mocked(api.installCatalog).mockRejectedValueOnce(Error("lost response")).mockImplementationOnce(async body => ({
+    id: "res", request: body, template: wordpress,
+    resource: { id: "res", project_id: "project", project_environment_id: "env", name: body.name, kind: "application", source: { kind: "compose", compose: wordpress.definition.compose! }, generation: 1, created_by: "actor", created_at: "", updated_at: "" },
+    binding: { id: "binding", resource_id: "res", destination_id: "dest", runtime_namespace: "ncd", created_by: "actor", created_at: "" },
+    storage_ref: { storage_id: "", generation: 0, hash: "" }, runtime_configuration: { generation: 1, hash: "runtime" },
+    credentials: [{ name: "SERVICE_PASSWORD_WORDPRESS", kind: "managed_secret", secret: { secret_id: "secret", version: 1 } }], created_by: "actor", created_at: "",
+  }));
+  fireEvent.submit(screen.getByRole("form", { name: "Install catalog application" }));
+  await screen.findByRole("button", { name: "Retry same installation" });
+  const first = vi.mocked(api.installCatalog).mock.calls[0]![0];
+  expect(first).toMatchObject({ template_id: wordpress.id, immutable_version: wordpress.immutable_version, public_url: "https://blog.example.test" });
+  expect(first).not.toHaveProperty("runtime_environment");
+  fireEvent.click(screen.getByRole("button", { name: "Retry same installation" }));
+  await screen.findByText(/Deploy public component/);
+  expect(vi.mocked(api.installCatalog).mock.calls[1]![0]).toBe(first);
+  expect(screen.getByText(/Deploy public component/).textContent).toContain("wordpress on container port 80");
+  expect(screen.getByText(/Deploy public component/).textContent).toContain("https://blog.example.test");
+  expect(screen.getByText(/Generated runtime secrets/).textContent).toContain("complete its initial setup");
+  expect(screen.queryByRole("button", { name: "Reveal login credentials" })).toBeNull();
+  expect(revealManagedSecret).not.toHaveBeenCalled();
+});

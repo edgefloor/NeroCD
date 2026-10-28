@@ -154,7 +154,7 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
     <p className="text-sm">Arbitrary Compose import is incomplete.</p>
  {created ? <>
         <p role="status">Installed {created.resource.name}. Open its application, review deployment settings, and deploy.</p>
-        {created.resource.source.kind === "compose" ? <p>Generated runtime secrets are saved as managed-secret references. Review the saved runtime configuration and Compose deployment settings before deploying. Open the application after deployment to register an account. The public URL does not create a route or HTTPS certificate.</p> : created.credentials.length > 0 ? <>
+        {created.resource.source.kind === "compose" ? <><p>Generated runtime secrets are saved as managed-secret references. Review the saved runtime configuration and Compose deployment settings before deploying. Open the application after deployment to complete its initial setup. The public URL does not create a route or HTTPS certificate.</p><p className="break-all">Deploy public component <code>{created.resource.source.compose.public_component}</code> on container port {created.resource.source.compose.container_port}. Configure a matching HTTPS route for {created.request.public_url} separately.</p></> : created.credentials.length > 0 ? <>
         <p>Login and password are retained managed secrets. Linkding creates the initial account only when its username is absent. Changing startup credentials does not rotate an existing account password.</p>
         <Button type="button" disabled={busy || blocked} onClick={() => void reveal()}>Reveal login credentials</Button>
         <Button type="button" variant="outline" onClick={() => setValues({})}>Hide credentials</Button>{Object.entries(values).map(([key, value]) => <p className="break-all" key={key}>{key}: <output>{value}</output>
@@ -195,14 +195,14 @@ function CatalogForm({ projectID, environmentID, actor, blocked }: {
                 <dt>Readiness check</dt><dd>{selected.definition.readiness.path}, timeout {selected.definition.readiness.timeout_seconds} seconds</dd>
                 <dt>Template source</dt><dd>{selected.upstream_repository}, {selected.upstream_path} at {selected.upstream_commit}</dd>
             </dl>
-            <p>{selected.definition.compose ? "Runtime secrets are generated once during installation and saved as managed-secret references. Register an application account after deployment." : selected.definition.credential_names.length > 0
+            <p>{selected.definition.compose ? "Runtime secrets are generated once during installation and saved as managed-secret references. Complete initial setup in the application after deployment." : selected.definition.credential_names.length > 0
                 ? "Credentials are generated once during installation and stored as managed secrets."
                 : "No login credentials are generated. After deployment, open the application to complete its initial setup."} Configure a domain and HTTPS route after deployment.</p>
             {currentOptions ? <CatalogRequirements requirements={currentOptions.requirements} /> : <p>Choose a destination after its requirements have loaded. Hardware requirements and compatibility have not been verified.</p>}
         </section> : null}
         {selected?.definition.compose ? <>
             <label className="block" htmlFor={`${id}-public-url`}>Public URL</label>
-            <Input id={`${id}-public-url`} type="url" required maxLength={512} value={publicURL} disabled={unavailable || !!attempt} onChange={e => setPublicURL(e.target.value)} aria-describedby={`${id}-public-url-help`} placeholder="https://tasks.example.com" />
+            <Input id={`${id}-public-url`} type="url" required maxLength={512} value={publicURL} disabled={unavailable || !!attempt} onChange={e => setPublicURL(e.target.value)} aria-describedby={`${id}-public-url-help`} placeholder="https://app.example.com" />
             <p id={`${id}-public-url-help`} className="text-sm text-muted-foreground">Saved as the application's public URL. Configure a matching domain and HTTPS route separately. Installation does not publish the application.</p>
         </> : null}
         <label className="block" htmlFor={`${id}-name`}>Installation name</label>
