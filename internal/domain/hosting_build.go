@@ -31,6 +31,7 @@ const HostingBuildProtocol = "local-build.v1"
 // HostingBuildSettings mirrors the accepted local engine's non-secret settings.
 // Build variables are explicit public values, never runtime or credential inputs.
 type HostingBuildSettings struct {
+	BuildSecrets                []HostingBuildSecretReference `json:"build_secrets,omitempty"`
 	BuildRegistryCredential     *HostingRegistryCredentialRef `json:"build_registry_credential,omitempty"`
 	InjectBuildArgsToDockerfile *bool                         `json:"inject_build_args_to_dockerfile,omitempty"`
 	BuildVariables              []HostingBuildVariable        `json:"build_variables,omitempty"`
@@ -48,6 +49,7 @@ type HostingBuildSettings struct {
 // Clone gives mutable variable storage to the receiving settings owner.
 func (s HostingBuildSettings) Clone() HostingBuildSettings {
 	s.BuildVariables = slices.Clone(s.BuildVariables)
+	s.BuildSecrets = slices.Clone(s.BuildSecrets)
 	if s.BuildRegistryCredential != nil {
 		ref := *s.BuildRegistryCredential
 		s.BuildRegistryCredential = &ref
@@ -223,6 +225,9 @@ var buildCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // ValidateHostingBuildSettings checks canonical settings before any database mutation.
 func ValidateHostingBuildSettings(s HostingBuildSettings) error {
+	if err := validateHostingBuildSecrets(s); err != nil {
+		return err
+	}
 	if s.BuildRegistryCredential != nil && (s.BuildRegistryCredential.Validate() != nil || s.Strategy != "dockerfile" && s.Strategy != "compose") {
 		return errors.New("build registry credential requires Dockerfile or Compose strategy")
 	}

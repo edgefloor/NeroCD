@@ -16860,11 +16860,30 @@ components:
       properties:
         authority: {$ref: "#/components/schemas/HostingBuildAuthority"}
         delivery_id: {type: string, pattern: '^(?:[0-9a-f]{32}|[0-9a-f]{64})$'}
+    HostingBuildSecretReference:
+      type: object
+      additionalProperties: false
+      required: [name, secret]
+      properties:
+        name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: Unique RUN environment name. Same reserved names as public build variables. Cannot collide with build_variables.}
+        secret: {$ref: "#/components/schemas/HostingRegistryCredentialRef"}
+    HostingBuildSecretsRequest:
+      type: object
+      additionalProperties: false
+      required: [authority, delivery_id]
+      properties:
+        authority: {$ref: "#/components/schemas/HostingBuildAuthority"}
+        delivery_id: {type: string, pattern: '^(?:[0-9a-f]{32}|[0-9a-f]{64})$'}
     HostingBuildSettings:
       type: object
       additionalProperties: false
       required: [strategy]
       properties:
+        build_secrets:
+          type: array
+          maxItems: 64
+          description: Explicit managed secret versions for Dockerfile or Compose RUN environments. Only references enter immutable metadata. Values are delivered for live fresh builds and staged outside the source context.
+          items: {$ref: "#/components/schemas/HostingBuildSecretReference"}
         build_registry_credential:
           allOf: [{$ref: "#/components/schemas/HostingRegistryCredentialRef"}]
           nullable: true
