@@ -169,7 +169,7 @@ test("actual source build to local deployment and settled HTTPS route is availab
     await expect(detail.getByText("Succeeded", { exact: true })).toBeVisible({ timeout: 180_000 });
     const recordedB = await page.request.get(`/api/v1/hosting-builds/${requestedBuildB.id}`);
     expect(recordedB.status()).toBe(200);
-    const buildB = await recordedB.json();
+    const buildB = (await recordedB.json()).build;
     expect(buildB.snapshot.source.generation).toBe(changed.source.dockerfile.generation);
     expect(buildB.source_receipt).toMatchObject({ kind: "dockerfile", content_hash: changed.source.dockerfile.content_hash });
     expect(buildB.source_receipt.commit).toBeUndefined();
