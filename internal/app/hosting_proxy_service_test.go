@@ -53,7 +53,7 @@ func TestProxyOperationProjectProjectionDoesNotExposeOtherProjects(t *testing.T)
 	if !ok || len(view.Routes) != 1 || view.Routes[0].ID != "route_own" || !view.MutationHold {
 		t.Fatalf("unexpected projection: %+v", result)
 	}
-	encoded, err := json.Marshal(result)
+	_, err = json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestProxyOperationProjectProjectionDoesNotExposeOtherProjects(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err = json.Marshal(result)
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}

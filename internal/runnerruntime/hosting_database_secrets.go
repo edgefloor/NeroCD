@@ -270,14 +270,15 @@ func databaseGeneration(operation string, plan domain.HostingApplyPlan) string {
 
 func databaseSecretFiles(operation string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue) map[string][]byte {
 	files := map[string][]byte{}
-	if plan.Database.Reference.Engine == "postgresql" {
+	switch plan.Database.Reference.Engine {
+	case "postgresql":
 		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
-	} else if plan.Database.Reference.Engine == "mysql" {
+	case "mysql":
 		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
 		files["app-password"] = bytes.Clone(databasePassword(values, "app"))
 		files["admin.cnf"] = []byte("[client]\nuser=root\npassword=" + string(databasePassword(values, "admin")) + "\nsocket=/var/run/mysqld/mysqld.sock\n")
 		files["app.cnf"] = []byte("[client]\nuser=ncd_app\npassword=" + string(databasePassword(values, "app")) + "\ndatabase=app\n")
-	} else {
+	default:
 		app := sha256.Sum256(databasePassword(values, "app"))
 		probe := sha256.Sum256(databasePassword(values, "probe"))
 		files["users.acl"] = []byte("user default off\nuser ncd_app on #" + hex.EncodeToString(app[:]) + " ~* -@all +@read +@write +ping -@dangerous\nuser ncd_probe on #" + hex.EncodeToString(probe[:]) + " -@all +ping\n")
