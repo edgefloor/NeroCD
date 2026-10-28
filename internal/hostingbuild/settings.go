@@ -108,6 +108,11 @@ func currentContextPolicy(r Request) string {
 	return ""
 }
 func requestIdentity(r Request, c Config, policy string) (string, error) {
+	var err error
+	c, err = registryIdentityConfig(c)
+	if err != nil {
+		return "", err
+	}
 	if policy != "" && (policy != staticContextPolicy || r.Strategy != Static) {
 		return "", errors.New("unsupported context policy")
 	}

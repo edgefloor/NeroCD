@@ -3,7 +3,6 @@ package hostingbuild
 import (
 	"bytes"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -23,28 +22,9 @@ func readRegistryCAs(paths map[string]string) (map[string][]byte, error) {
 		if !canonicalRegistry(host) || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return nil, errors.New("invalid registry CA configuration")
 		}
-		// Trusted operator paths still reject symlink components before opening.
-		current := string(filepath.Separator)
-		for _, part := range strings.Split(strings.TrimPrefix(path, current), string(filepath.Separator)) {
-			current = filepath.Join(current, part)
-			st, err := os.Lstat(current)
-			if err != nil || st.Mode()&os.ModeSymlink != 0 {
-				return nil, errors.New("registry CA path must not contain symlinks")
-			}
-		}
-		before, err := os.Lstat(path)
-		if err != nil || !before.Mode().IsRegular() || before.Size() > 256<<10 || before.Size() == 0 {
-			return nil, errors.New("invalid registry CA file")
-		}
-		f, err := os.Open(path)
+		raw, err := readRegistryCAFile(path)
 		if err != nil {
-			return nil, errors.New("registry CA unavailable")
-		}
-		after, statErr := f.Stat()
-		raw, readErr := io.ReadAll(io.LimitReader(f, (256<<10)+1))
-		closeErr := f.Close()
-		if statErr != nil || readErr != nil || closeErr != nil || !os.SameFile(before, after) || len(raw) > 256<<10 {
-			return nil, errors.New("registry CA changed or exceeds bounds")
+			return nil, err
 		}
 		rest := bytes.TrimSpace(raw)
 		count := 0
@@ -90,20 +70,19 @@ func registryCADigests(contents map[string][]byte) map[string]string {
 	return result
 }
 
-// MarshalJSON replaces operator CA paths with content digests in immutable engine identity.
-func (c Config) MarshalJSON() ([]byte, error) {
-	type wire Config
+// registryIdentityConfig substitutes CA digests only for request identity.
+// Operational Config JSON retains its original operator paths.
+func registryIdentityConfig(c Config) (Config, error) {
 	identity := c.registryCADigests
 	if identity == nil && len(c.RegistryCACertificates) > 0 {
 		var err error
 		identity, err = RegistryCADigests(c.RegistryCACertificates)
 		if err != nil {
-			return nil, err
+			return Config{}, err
 		}
 	}
-	value := wire(c)
-	value.RegistryCACertificates = identity
-	return json.Marshal(value)
+	c.RegistryCACertificates = identity
+	return c, nil
 }
 func (e *Engine) stageRegistryCAs(dir string) (string, []string, error) {
 	var hosts []string
@@ -131,4 +110,50 @@ func (e *Engine) stageRegistryCAs(dir string) (string, []string, error) {
 		mounts = append(mounts, "--mount", "type=bind,src="+local+",dst="+container+",readonly")
 	}
 	return toml.String(), mounts, nil
+}
+
+// Each opened directory is compared to its no-follow observation before walking
+// the next component. The final file is read through that same verified descriptor.
+func readRegistryCAFile(path string) ([]byte, error) {
+	root, err := os.OpenRoot(string(filepath.Separator))
+	if err != nil {
+		return nil, errors.New("registry CA root unavailable")
+	}
+	parts := strings.Split(strings.TrimPrefix(path, string(filepath.Separator)), string(filepath.Separator))
+	for _, part := range parts[:len(parts)-1] {
+		before, e := root.Lstat(part)
+		if e != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+			_ = root.Close()
+			return nil, errors.New("registry CA path must not contain symlinks")
+		}
+		next, e := root.OpenRoot(part)
+		if e != nil {
+			_ = root.Close()
+			return nil, errors.New("registry CA directory unavailable")
+		}
+		after, e := next.Stat(".")
+		_ = root.Close()
+		if e != nil || !os.SameFile(before, after) {
+			_ = next.Close()
+			return nil, errors.New("registry CA directory changed")
+		}
+		root = next
+	}
+	defer func() { _ = root.Close() }()
+	name := parts[len(parts)-1]
+	before, err := root.Lstat(name)
+	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm()&0022 != 0 || before.Size() > 256<<10 || before.Size() == 0 {
+		return nil, errors.New("invalid registry CA file")
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, errors.New("registry CA unavailable")
+	}
+	after, statErr := f.Stat()
+	raw, readErr := io.ReadAll(io.LimitReader(f, (256<<10)+1))
+	closeErr := f.Close()
+	if statErr != nil || readErr != nil || closeErr != nil || !os.SameFile(before, after) || len(raw) > 256<<10 {
+		return nil, errors.New("registry CA changed or exceeds bounds")
+	}
+	return raw, nil
 }

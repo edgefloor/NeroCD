@@ -3,12 +3,13 @@ package runnerruntime
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
+
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingbuild"
 	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
-	"strings"
-	"time"
 )
 
 type buildRegistryClient interface {
@@ -74,7 +75,7 @@ func (s *buildOutputAdapter) addRegistrySecrets(ctx context.Context, c domain.Ho
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, value := range []string{c.Password, c.Username + ":" + c.Password} {
+	for _, value := range []string{c.Username, c.Password, c.Username + ":" + c.Password} {
 		if value == "" || len(value) > 20256 {
 			return errors.New("build registry redaction exceeds bound")
 		}

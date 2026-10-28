@@ -427,6 +427,9 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 	if err = requireBuildArgumentCapability(ctx, tx, target.RunnerID, src.Settings); err != nil {
 		return domain.HostingBuild{}, err
 	}
+	if err = validateBuildRegistrySecret(ctx, tx, resource.ProjectID, src.Settings); err != nil {
+		return domain.HostingBuild{}, err
+	}
 	grant, err := checkBuildGrant(ctx, tx, in.GrantID, src)
 	if err != nil {
 		return domain.HostingBuild{}, err
@@ -553,6 +556,15 @@ func (s *PostgresStore) DispatchHostingBuild(ctx context.Context, id string, dis
 // New admission and current execution require support for selected argument
 // semantics. Historical metadata replay retains its established placement gate.
 func requireBuildArgumentCapability(ctx context.Context, tx pgx.Tx, runner string, settings domain.HostingBuildSettings) error {
+	if settings.BuildRegistryCredential != nil {
+		capable, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: runner, Capability: domain.HostingBuildRegistryCapability})
+		if err != nil {
+			return err
+		}
+		if !capable {
+			return ErrConflict
+		}
+	}
 	capability := ""
 	if settings.Strategy == "compose" {
 		capability = domain.HostingGitComposeArgsCapability

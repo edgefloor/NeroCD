@@ -179,7 +179,10 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 	if err := currentBuildIntent(ctx, tx, b); err != nil {
 		return err
 	}
-	return requireBuildArgumentCapability(ctx, tx, b.Snapshot.RunnerID, b.Snapshot.Source.Settings)
+	if err := requireBuildArgumentCapability(ctx, tx, b.Snapshot.RunnerID, b.Snapshot.Source.Settings); err != nil {
+		return err
+	}
+	return validateBuildRegistrySecret(ctx, tx, b.ProjectID, b.Snapshot.Source.Settings)
 }
 
 // currentBuildIntent also supports metadata-only retries of private requests.

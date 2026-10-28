@@ -249,6 +249,11 @@ func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, 
 	if _, err = e.docker(ctx, dir, "volume", "create", "--label", "io.nerocd.hostingbuild.owner="+token, resources.Volume); err != nil {
 		return result, err
 	}
+	defer func() {
+		if caErr := os.RemoveAll(filepath.Join(dir, "registry-ca")); caErr != nil {
+			retErr = errors.Join(ErrCleanupUnconfirmed, errors.New("registry CA cleanup failed"))
+		}
+	}()
 	caTOML, caMounts, err := e.stageRegistryCAs(dir)
 	if err != nil {
 		return result, err

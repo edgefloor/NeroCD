@@ -12,7 +12,7 @@ import (
 	"nerocd/internal/hostingbuildprotocol"
 )
 
-// HostingRegistryCredential retrieves only the snapshot-selected credential.
+// BuildRegistryCredential retrieves only the snapshot-selected credential.
 func (c Client) BuildRegistryCredential(ctx context.Context, runnerID string, in domain.HostingBuildRegistryCredentialRequest, options SourceCredentialTransport) (*domain.HostingRegistryCredentialDelivery, error) {
 	var zero *domain.HostingRegistryCredentialDelivery
 	if runnerID == "" || hostingbuildprotocol.ValidateAuthority(in.Authority) != nil || !domain.ValidHostingSourceDeliveryID(in.DeliveryID) {

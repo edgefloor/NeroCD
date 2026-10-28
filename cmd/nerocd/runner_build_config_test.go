@@ -237,3 +237,20 @@ func TestDockerfileArgumentsRequireExplicitBuildConfiguration(t *testing.T) {
 		t.Fatal("configured build runtime omitted argument capability")
 	}
 }
+
+func TestBuildRegistryRequiresExplicitBuildConfiguration(t *testing.T) {
+	if _, err := runnerBuildCapabilities(nil, false, true, []string{domain.HostingBuildRegistryCapability}); err == nil {
+		t.Fatal("argument capability accepted without build configuration")
+	}
+	capabilities, err := runnerBuildCapabilities(&runnerruntime.BuildConfig{}, false, true, []string{domain.HostingBuildTaskType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, capability := range capabilities {
+		found = found || capability == domain.HostingBuildRegistryCapability
+	}
+	if !found {
+		t.Fatal("configured build runtime omitted argument capability")
+	}
+}

@@ -87,23 +87,31 @@ func TestRegistryCAValidationIdentityAndMounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(Config{RegistryCACertificates: paths})
+	identity, err := registryIdentityConfig(Config{RegistryCACertificates: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(identity)
 	if err != nil || strings.Contains(string(raw), root) || !strings.Contains(string(raw), digests["registry.example:5000"]) {
 		t.Fatal("identity leaked path or omitted CA", err)
+	}
+	operational, err := json.Marshal(Config{RegistryCACertificates: paths})
+	if err != nil || !strings.Contains(string(operational), root) {
+		t.Fatal("operational config paths were replaced", err)
 	}
 	contents, err := readRegistryCAs(paths)
 	if err != nil {
 		t.Fatal(err)
 	}
 	engine := Engine{registryCAs: contents}
-	toml, mounts, err := engine.stageRegistryCAs(filepath.Join(root, "build"))
+	_, _, err = engine.stageRegistryCAs(filepath.Join(root, "build"))
 	if !os.IsNotExist(err) {
 		t.Fatal("invalid destination admitted", err)
 	}
 	if err = os.Mkdir(filepath.Join(root, "build"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	toml, mounts, err = engine.stageRegistryCAs(filepath.Join(root, "build"))
+	toml, mounts, err := engine.stageRegistryCAs(filepath.Join(root, "build"))
 	if err != nil || !strings.Contains(toml, `[registry."registry.example:5000"]`) || !strings.Contains(toml, `ca = ["/etc/nerocd-registry-ca/0.pem"]`) || len(mounts) != 2 || !strings.HasSuffix(mounts[1], ",readonly") {
 		t.Fatal("CA scope/mount incorrect", toml, mounts, err)
 	}
@@ -138,5 +146,56 @@ func TestBuildRegistryReferenceOwnedIdentity(t *testing.T) {
 	raw, _ := json.Marshal(RegistryCredential{Password: "secret"})
 	if string(raw) != "{}" {
 		t.Fatal("material serialization")
+	}
+}
+
+func TestRegistryConfigCancellationAndFailureCleanup(t *testing.T) {
+	for _, mode := range []string{"provider_error", "cancelled", "malformed", "success"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "docker"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(registryConfigPath(dir), []byte("{}"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			provider := func(context.Context) (RegistryCredential, error) {
+				if mode == "provider_error" {
+					return RegistryCredential{}, context.DeadlineExceeded
+				}
+				if mode == "cancelled" {
+					cancel()
+				}
+				host := "registry.example"
+				if mode == "malformed" {
+					host = "https://registry.example"
+				}
+				return RegistryCredential{Registry: host, Username: "user", Password: "protected"}, nil
+			}
+			err := writeBuildRegistryConfig(ctx, dir, provider)
+			if (err == nil) != (mode == "success") {
+				t.Fatal("credential write outcome", err)
+			}
+			if err = removeBuildRegistryConfig(dir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = os.Stat(registryConfigPath(dir)); !os.IsNotExist(err) {
+				t.Fatal("early exit retained config", err)
+			}
+		})
+	}
+	// A nonempty directory at the fixed credential path cannot be silently retired.
+	state := t.TempDir()
+	path := filepath.Join(state, "build-hold", "docker", "config.json")
+	if err := os.MkdirAll(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "unexpected"), []byte("do not remove"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ScrubRegistryCredentials(state); err == nil {
+		t.Fatal("failed cleanup did not hold")
 	}
 }

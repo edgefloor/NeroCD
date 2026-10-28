@@ -63,3 +63,29 @@ func TestDockerfileArgumentsIdentityPreservesLegacyBuilds(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRegistryIdentityPreservesLegacyBuilds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		caps  []string
+		build bool
+		ok    bool
+	}{
+		{"legacy build", []string{domain.HostingBuildTaskType}, true, true},
+		{"arguments", []string{domain.HostingBuildTaskType, domain.HostingBuildRegistryCapability}, true, true},
+		{"no configuration", []string{domain.HostingBuildTaskType, domain.HostingBuildRegistryCapability}, false, false},
+		{"no build type", []string{domain.HostingBuildRegistryCapability}, true, false},
+		{"shell", []string{domain.HostingBuildTaskType, domain.HostingBuildRegistryCapability, "shell"}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(proxyIdentityResponse{RunnerID: "runner", Capabilities: tc.caps})
+			}))
+			defer server.Close()
+			_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Build: tc.build})
+			if (err == nil) != tc.ok {
+				t.Fatal("identity acceptance changed", err)
+			}
+		})
+	}
+}

@@ -375,6 +375,12 @@ func TestPublicAPIsRejectBuildTaskAndAuthorityAtEveryWorkflowShape(t *testing.T)
 }
 
 func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
+	dockerfilePrivateGrantGenerationHTTP(t, false)
+}
+func TestBuildRegistryPrivateGrantGenerationHTTP(t *testing.T) {
+	dockerfilePrivateGrantGenerationHTTP(t, true)
+}
+func dockerfilePrivateGrantGenerationHTTP(t *testing.T, registry bool) {
 	server, pg, database := newHostingBuildAPIFixture(t)
 	ring, err := secretcrypto.New("args-fixture", map[string][]byte{"args-fixture": bytes.Repeat([]byte{8}, 32)})
 	if err != nil {
@@ -390,7 +396,7 @@ func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := service.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_argument_grants", RunnerName: "Argument grants", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingDockerfileArgsCapability}})
+	enrollment, err := service.CreateRunnerEnrollment(ctx, app.RunnerEnrollmentInput{RunnerID: "runner_argument_grants", RunnerName: "Argument grants", Capabilities: []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,8 +475,15 @@ func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
 	call("POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: target.Destination.ID}, 201, nil)
 	var secret domain.ManagedSecret
 	call("POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Argument source credential", Value: `{"username":"fixture","password":"fixture"}`}, 201, &secret)
+	var selected, wrong domain.ManagedSecret
+	lastGeneration := int64(4)
+	if registry {
+		lastGeneration = 8
+		call("POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Build registry selected", Value: `{"registry":"registry.example","username":"user","password":"valid-v1"}`}, 201, &selected)
+		call("POST", "/api/v1/managed-secrets", app.ManagedSecretInput{ProjectID: resource.ProjectID, Name: "Build registry wrong", Value: `{"registry":"registry.example","username":"user","password":"wrong"}`}, 201, &wrong)
+	}
 	previousGrant := ""
-	for generation := int64(2); generation <= 4; generation++ {
+	for generation := int64(2); generation <= lastGeneration; generation++ {
 		switch generation {
 		case 2:
 			configuration.RequestedRef = "argument-branch"
@@ -480,6 +493,20 @@ func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
 		case 4:
 			disabled := false
 			configuration.Settings.InjectBuildArgsToDockerfile = &disabled
+		case 5:
+			configuration.Settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: selected.ID, Version: 1}
+		case 6:
+			configuration.Settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: wrong.ID, Version: 1}
+		case 7:
+			if _, err = service.RevokeManagedSecret(ctx, wrong.ID, app.ManagedSecretRevokeInput{ExpectedVersion: 1}); err != nil {
+				t.Fatal(err)
+			}
+			configuration.Settings.BuildVariables = []domain.HostingBuildVariable{{Name: "APP", Value: "revoked"}}
+		case 8:
+			if _, err = service.RotateManagedSecret(ctx, selected.ID, app.ManagedSecretRotateInput{ExpectedVersion: 1, Value: `{"registry":"registry.example","username":"user","password":"valid-v2"}`}); err != nil {
+				t.Fatal(err)
+			}
+			configuration.Settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: selected.ID, Version: 2}
 		}
 		call("PATCH", "/api/v1/resources/"+resource.ID, map[string]any{"expected_generation": resource.Generation, "source": source()}, 200, &resource)
 		if resource.Generation != generation || resource.Source.Git.Generation != generation {
@@ -496,6 +523,11 @@ func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
 		if granted.Grant.SourceGeneration != generation {
 			t.Fatal("grant did not pin selected generation")
 		}
+		if registry && generation == 7 {
+			call("POST", path+"/builds", domain.HostingBuildRequest{ExpectedResourceGeneration: generation, ExpectedSourceGeneration: generation, GrantID: granted.Grant.ID, IdempotencyKey: "revoked-registry"}, 409, nil)
+			previousGrant = granted.Grant.ID
+			continue
+		}
 		var response struct {
 			Build domain.PublicHostingBuild `json:"build"`
 		}
@@ -506,6 +538,9 @@ func TestDockerfileArgumentPrivateGrantGenerationHTTP(t *testing.T) {
 		}
 		if generation == 4 && (persisted.Snapshot.Source.Settings.InjectBuildArgsToDockerfile == nil || *persisted.Snapshot.Source.Settings.InjectBuildArgsToDockerfile) {
 			t.Fatal("disabled injection lost in private build snapshot")
+		}
+		if generation >= 5 && (persisted.Snapshot.Source.Settings.BuildRegistryCredential == nil || *persisted.Snapshot.Source.Settings.BuildRegistryCredential != *configuration.Settings.BuildRegistryCredential) {
+			t.Fatal("build registry reference not bound to exact generation")
 		}
 		previousGrant = granted.Grant.ID
 	}

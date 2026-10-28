@@ -270,7 +270,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/runner/server-readiness/") || strings.HasPrefix(r.URL.Path, "/api/v1/servers/") && strings.HasSuffix(r.URL.Path, "/readiness") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" || r.URL.Path == "/api/v1/runners/hosting/database-credentials" || r.URL.Path == "/api/v1/runners/hosting/registry-credential" {
+	if (r.URL.Path == "/api/v1/runners/builds/source-credential" || r.URL.Path == "/api/v1/runners/builds/registry-credential") || r.URL.Path == "/api/v1/runners/hosting/runtime-environment" || r.URL.Path == "/api/v1/runners/hosting/database-credentials" || r.URL.Path == "/api/v1/runners/hosting/registry-credential" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if r.URL.Path == "/api/v1/managed-secrets" || strings.HasPrefix(r.URL.Path, "/api/v1/managed-secrets/") {
@@ -490,7 +490,7 @@ func requiresRunnerAuth(path string) bool {
 		return true
 	case "/api/v1/runners/hosting-observations/targets", "/api/v1/runners/hosting-observations/report":
 		return true
-	case "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment", "/api/v1/runners/hosting/database-credentials", "/api/v1/runners/hosting/registry-credential":
+	case "/api/v1/runners/builds/registry-credential", "/api/v1/runners/builds/source-credential", "/api/v1/runners/hosting/runtime-environment", "/api/v1/runners/hosting/database-credentials", "/api/v1/runners/hosting/registry-credential":
 		return true
 	case "/api/v1/runners/builds/events", "/api/v1/runners/builds/status", "/api/v1/runners/builds/source-begin", "/api/v1/runners/builds/source-commit", "/api/v1/runners/builds/prepare", "/api/v1/runners/builds/complete":
 		return true

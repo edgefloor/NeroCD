@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/distribution/reference"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/distribution/reference"
 )
 
 // RegistryReference is nonsecret immutable input. Material never enters Request.
@@ -23,11 +24,16 @@ type RegistryReference struct {
 // RegistryCredential is ephemeral authentication supplied only for a fresh build.
 type RegistryCredential struct{ Registry, Username, Password string }
 
+// Format redacts credential material for every formatting verb.
 func (RegistryCredential) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "[redacted build registry credential]")
 }
+
+// MarshalJSON prevents accidental protected serialization.
 func (RegistryCredential) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
-func (c *RegistryCredential) Close()                    { *c = RegistryCredential{} }
+
+// Close releases references to credential material. Go cannot guarantee string erasure.
+func (c *RegistryCredential) Close() { *c = RegistryCredential{} }
 
 // RegistryCredentialProvider authorizes fresh material under the caller's attempt.
 type RegistryCredentialProvider func(context.Context) (RegistryCredential, error)
@@ -40,6 +46,9 @@ func canonicalRegistry(host string) bool {
 	return err == nil && reference.Domain(n) == host && !strings.ContainsFunc(host, unicode.IsControl)
 }
 func writeBuildRegistryConfig(ctx context.Context, dir string, provider RegistryCredentialProvider) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	credential, err := provider(ctx)
 	if err != nil {
 		return errors.New("build registry credential unavailable")
@@ -64,8 +73,21 @@ func writeBuildRegistryConfig(ctx context.Context, dir string, provider Registry
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.OpenFile("docker/config.json", os.O_WRONLY|os.O_TRUNC, 0600)
+	before, err := root.Lstat("docker/config.json")
+	if err != nil || !before.Mode().IsRegular() {
+		return errors.New("unsafe build registry config")
+	}
+	f, err := root.OpenFile("docker/config.json", os.O_WRONLY, 0600)
 	if err != nil {
+		return err
+	}
+	after, statErr := f.Stat()
+	if statErr != nil || !os.SameFile(before, after) {
+		_ = f.Close()
+		return errors.New("build registry config changed")
+	}
+	if err = f.Truncate(0); err != nil {
+		_ = f.Close()
 		return err
 	}
 	_, writeErr := f.Write(raw)
@@ -83,7 +105,10 @@ func removeBuildRegistryConfig(dir string) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return syncDir(filepath.Join(dir, "docker"))
 }
 
 // ScrubRegistryCredentials removes only fixed credential files from private engine
@@ -116,7 +141,15 @@ func ScrubRegistryCredentials(state string) error {
 			return ErrCleanupUnconfirmed
 		}
 		err = docker.Remove("config.json")
+		if err == nil {
+			err = syncDir(filepath.Join(state, entry.Name(), "docker"))
+		}
 		_ = docker.Close()
+		if caErr := build.RemoveAll("registry-ca"); caErr != nil && !os.IsNotExist(caErr) {
+			_ = docker.Close()
+			_ = build.Close()
+			return ErrCleanupUnconfirmed
+		}
 		_ = build.Close()
 		if err != nil && !os.IsNotExist(err) {
 			return ErrCleanupUnconfirmed
