@@ -282,6 +282,7 @@ type databaseRunnerFixture struct {
 	capture                               atomic.Pointer[databaseCaptureRuntimeWire]
 	backupWire                            atomic.Pointer[databaseBackupRuntimeWire]
 	remoteBackupWire                      atomic.Pointer[databaseRemoteBackupWire]
+	remoteBackupFault                     bool
 	retentionWire                         atomic.Pointer[databaseRetentionWire]
 	upgrade                               bool
 	connected                             bool
@@ -630,7 +631,11 @@ func databaseRunnerArguments(f *databaseRunnerFixture) []string {
 	if os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
 		args = append(args, "--hosting-database-backups")
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
-			args = append(args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000")
+			origin := "http://127.0.0.1:9000"
+			if f.remoteBackupFault {
+				origin = "http://127.0.0.1:9002"
+			}
+			args = append(args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback="+origin)
 			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
 				args = append(args, "--hosting-database-backup-retention")
 			}

@@ -162,6 +162,19 @@ func TestBackupRemoteS3RejectsCorruptionAndRedirect(t *testing.T) {
 }
 
 func TestBackupRemoteNetworkPolicyAndRebinding(t *testing.T) {
+	for _, origin := range []string{"http://127.0.0.1:9000", "http://127.0.0.1:9002"} {
+		transport, err := newBackupRemoteTransport(t.Context(), "http://127.0.0.1:9002", backupRemoteNetworkPolicy{fixtureOrigin: origin})
+		if origin == "http://127.0.0.1:9000" {
+			if err != errBackupRemoteNetwork || transport != nil {
+				t.Fatal("different loopback origin accepted")
+			}
+		} else {
+			if err != nil || transport == nil {
+				t.Fatal("exact fixture loopback origin rejected", err)
+			}
+			transport.Close()
+		}
+	}
 	for _, s := range []string{"127.0.0.1", "::1", "169.254.169.254", "10.1.1.1", "100.100.100.200", "192.168.1.1", "::ffff:169.254.169.254", "64:ff9b::a9fe:a9fe"} {
 		if (backupRemoteNetworkPolicy{}).permits("https://object.example", netip.MustParseAddr(s)) {
 			t.Fatalf("unsafe address accepted: %s", s)

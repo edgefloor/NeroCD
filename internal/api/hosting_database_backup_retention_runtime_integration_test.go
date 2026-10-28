@@ -266,14 +266,9 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 		server.Start()
 		t.Cleanup(server.Close)
 		origin = "http://127.0.0.1:9002"
+		f.remoteBackupFault = true
 		f.stop()
-		args := databaseRunnerArguments(f)
-		for i, v := range args {
-			if v == "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000" {
-				args[i] = "--hosting-backup-remote-trusted-loopback=" + origin
-			}
-		}
-		f.startRunner(args)
+		f.start()
 	}
 	create := backupRuntimeCreateInput(t, f.environment, f.destination)
 	if mysql {
@@ -1342,6 +1337,21 @@ func TestDatabaseBackupRetentionFixtureSelectionAndOptIn(t *testing.T) {
 	t.Setenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME", "1")
 	if !slices.Contains(databaseRunnerArguments(f), "--hosting-database-backup-retention") {
 		t.Fatal("retention profile omitted compiled runner flag")
+	}
+	// Storage bootstrap and unrelated-route setup both restart through f.start,
+	// which regenerates these actual arguments rather than retaining a prior slice.
+	defaultOrigin := "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000"
+	faultOrigin := "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9002"
+	if !slices.Contains(databaseRunnerArguments(f), defaultOrigin) {
+		t.Fatal("ordinary remote fixture changed trusted origin")
+	}
+	f.remoteBackupFault = true
+	for _, storage := range []*applicationDatabaseStorageFixture{nil, {}} {
+		f.storage = storage
+		args := databaseRunnerArguments(f)
+		if !slices.Contains(args, faultOrigin) || slices.Contains(args, defaultOrigin) {
+			t.Fatal("fault origin lost when shared restart regenerated runner arguments")
+		}
 	}
 	t.Setenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME", "0")
 	if slices.Contains(databaseRunnerArguments(f), "--hosting-database-backup-retention") {
