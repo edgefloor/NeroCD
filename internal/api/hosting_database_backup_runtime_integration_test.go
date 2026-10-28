@@ -721,27 +721,6 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 
 // Reuse the owned controller lifecycle and ordinary schedule/grant APIs. No
 // backup run is admitted after current destination authority is revoked.
-func backupRuntimeFixtureRouteMatches(project, actualProject string, known, current domain.HostingRoute) bool {
-	return project != "" && actualProject == project && known.ID != "" && current.Enabled && current.ResourceID == known.ResourceID && current.ID == known.ID && current.Hostname == known.Hostname && current.PathPrefix == known.PathPrefix && current.SelectedReleaseOperationID == known.SelectedReleaseOperationID
-}
-
-func TestBackupRuntimeFixtureRouteRequiresExactProject(t *testing.T) {
-	known := domain.HostingRoute{ID: "route", ResourceID: "application", Hostname: "source.example.test", PathPrefix: "/", SelectedReleaseOperationID: "healthy", Enabled: true}
-	if !backupRuntimeFixtureRouteMatches("project", "project", known, known) {
-		t.Fatal("exact fixture route rejected")
-	}
-	if backupRuntimeFixtureRouteMatches("project", "foreign", known, known) || backupRuntimeFixtureRouteMatches("", "", known, known) {
-		t.Fatal("foreign or empty project accepted")
-	}
-	for _, mutate := range []func(*domain.HostingRoute){func(v *domain.HostingRoute) { v.Enabled = false }, func(v *domain.HostingRoute) { v.ID = "other" }, func(v *domain.HostingRoute) { v.ResourceID = "other" }, func(v *domain.HostingRoute) { v.Hostname = "other.example.test" }, func(v *domain.HostingRoute) { v.PathPrefix = "/other" }, func(v *domain.HostingRoute) { v.SelectedReleaseOperationID = "other" }} {
-		current := known
-		mutate(&current)
-		if backupRuntimeFixtureRouteMatches("project", "project", known, current) {
-			t.Fatal("changed fixture route accepted")
-		}
-	}
-}
-
 func backupRuntimeCaptureFixtureRoutes(f *databaseRunnerFixture, project string, routes []domain.HostingRoute) []domain.HostingRoute {
 	f.t.Helper()
 	for i, known := range routes {
@@ -750,7 +729,7 @@ func backupRuntimeCaptureFixtureRoutes(f *databaseRunnerFixture, project string,
 		if err := f.database.QueryRow(f.t.Context(), `SELECT project_id FROM resources WHERE id=$1`, current.ResourceID).Scan(&actualProject); err != nil {
 			f.t.Fatal("fixture route resource scope unavailable")
 		}
-		if !backupRuntimeFixtureRouteMatches(project, actualProject, known, current) {
+		if project == "" || actualProject != project || known.ID == "" || !current.Enabled || current.ResourceID != known.ResourceID || current.ID != known.ID || current.Hostname != known.Hostname || current.PathPrefix != known.PathPrefix || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID {
 			f.t.Fatal("fixture route identity changed")
 		}
 		routes[i] = current
