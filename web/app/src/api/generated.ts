@@ -12751,6 +12751,13 @@ export interface operations {
                     "application/x-tar": string;
                 };
             };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Authority revoked */
             403: {
                 headers: {
