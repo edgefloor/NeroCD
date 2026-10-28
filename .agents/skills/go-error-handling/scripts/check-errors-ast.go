@@ -200,23 +200,21 @@ func analyzeFile(path string, checkBareReturn bool) ([]finding, error) {
 		return true
 	})
 
+	// Line directives can reorder reported positions despite AST source order.
+	// Sort once, then exclude later logs without rescanning them for each return.
+	sort.Ints(logLines)
 	for _, retLine := range errReturnLines {
-		for i := len(logLines) - 1; i >= 0; i-- {
-			logLine := logLines[i]
-			if logLine >= retLine {
-				continue
-			}
-			if retLine-logLine > 5 {
-				break
-			}
-			findings = append(findings, finding{
-				File:    path,
-				Line:    logLine,
-				Rule:    "log-and-return",
-				Message: fmt.Sprintf("error is both logged (line %d) and returned (line %d); handle errors once", logLine, retLine),
-			})
-			break
+		preceding := sort.SearchInts(logLines, retLine) - 1
+		if preceding < 0 || retLine-logLines[preceding] > 5 {
+			continue
 		}
+		logLine := logLines[preceding]
+		findings = append(findings, finding{
+			File:    path,
+			Line:    logLine,
+			Rule:    "log-and-return",
+			Message: fmt.Sprintf("error is both logged (line %d) and returned (line %d); handle errors once", logLine, retLine),
+		})
 	}
 
 	return findings, nil
