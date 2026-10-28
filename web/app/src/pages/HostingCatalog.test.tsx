@@ -560,8 +560,8 @@ test.each([401, 403])("denied compatibility %i leaves no installable destination
 
 const wordpress: api.CatalogTemplate = {
   ...vikunja, id: "wordpress-with-mysql", name: "WordPress with MySQL", category: "CMS",
-  immutable_version: "coolify-b12d1386.wordpress-mysql.v1", upstream_path: "templates/compose/wordpress-with-mysql.yaml",
-  definition: { ...vikunja.definition, container_port: 80, readiness: { path: "/", timeout_seconds: 120 }, credential_names: ["SERVICE_PASSWORD_WORDPRESS", "SERVICE_PASSWORD_MYSQLROOT"],
+  immutable_version: "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1", upstream_path: "templates/compose/wordpress-with-mysql.yaml",
+  definition: { ...vikunja.definition, container_port: 80, readiness: { path: "/", timeout_seconds: 120 }, credential_names: ["SERVICE_USER_WORDPRESS", "SERVICE_PASSWORD_WORDPRESS", "SERVICE_PASSWORD_ROOT"],
     compose: { original: "services:\n  wordpress:\n    image: wordpress@sha256:pinned\n    environment:\n      WORDPRESS_DB_PASSWORD: ${SERVICE_PASSWORD_WORDPRESS}\n  mysql:\n    image: mysql@sha256:pinned\nvolumes:\n  wordpress-data: {}\n  mysql-data: {}\n", public_component: "wordpress", container_port: 80 } },
 };
 test("WordPress Compose install uses selected metadata and guides setup and separate routing without revealing database secrets", async () => {
