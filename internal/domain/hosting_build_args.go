@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -17,6 +19,24 @@ type HostingBuildVariable struct {
 	Value string `json:"value"`
 }
 
+// UnmarshalJSON requires both string fields, including an explicit empty value.
+func (v *HostingBuildVariable) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Name  *string `json:"name"`
+		Value *string `json:"value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&wire) != nil || wire.Name == nil || wire.Value == nil {
+		return errors.New("build variables require name and public string value")
+	}
+	*v = HostingBuildVariable{Name: *wire.Name, Value: *wire.Value}
+	return nil
+}
+
+// Engine namespaces reserve the pinned frontend and BuildKit behavior. Proxy
+// arguments have Docker-specific network semantics; automatic platform arguments
+// are engine-selected. Application values otherwise remain literal argv data.
 func validHostingBuildArgName(name string) bool {
 	if !runtimeEnvironmentName.MatchString(name) {
 		return false
@@ -35,7 +55,7 @@ func validHostingBuildArgName(name string) bool {
 }
 
 func validHostingBuildArgValue(value string) bool {
-	return len(value) <= 4096 && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
+	return len(value) <= 4096 && utf8.ValidString(value) && !strings.ContainsRune(value, 0)
 }
 
 func validateHostingBuildVariables(variables []HostingBuildVariable) error {

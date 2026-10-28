@@ -20,6 +20,7 @@ func TestHostingComposeBuildArguments(t *testing.T) {
 		{name: "map", yaml: "{ONE: literal, EMPTY: '', BARE: null, AMBIENT_ARG: null}", want: map[string]string{"ONE": "literal", "EMPTY": ""}},
 		{name: "scalars", yaml: "{NUMBER: 20, FLAG: true, HEX: 0x20, FRACTION: 1.25}", want: map[string]string{"NUMBER": "20", "FLAG": "true", "HEX": "32", "FRACTION": "1.25"}},
 		{name: "list", yaml: "[ONE=literal, EMPTY=, BARE, AMBIENT_ARG]", want: map[string]string{"ONE": "literal", "EMPTY": ""}},
+		{name: "multiline", yaml: "{ONE: '${TEXT}'}", variables: []domain.HostingBuildVariable{{Name: "TEXT", Value: "first\nsecond\r\nthird"}}, want: map[string]string{"ONE": "first\nsecond\r\nthird", "TEXT": "first\nsecond\r\nthird"}},
 		{name: "override", yaml: "{ONE: source, BARE: null, FROM: '${OTHER:?required}'}", variables: []domain.HostingBuildVariable{{Name: "ONE", Value: "configured"}, {Name: "BARE", Value: ""}, {Name: "OTHER", Value: "$UNCHANGED"}}, want: map[string]string{"ONE": "configured", "BARE": "", "OTHER": "$UNCHANGED", "FROM": "$UNCHANGED"}},
 		{name: "operators", yaml: "{DEFAULT: '${MISSING:-fallback}', EMPTY: '${SET-fallback}', REQUIRED: '${SET?required}', ALT: '${SET:+yes}', ESCAPE: '$$VALUE'}", variables: []domain.HostingBuildVariable{{Name: "SET", Value: ""}}, want: map[string]string{"DEFAULT": "fallback", "EMPTY": "", "REQUIRED": "", "ALT": "", "ESCAPE": "$VALUE", "SET": ""}},
 		{name: "empty required", yaml: "{ONE: '${SET:?no}'}", variables: []domain.HostingBuildVariable{{Name: "SET", Value: ""}}, bad: true},
@@ -69,7 +70,7 @@ func TestHostingBuildVariablesBoundsAndIdentity(t *testing.T) {
 		t.Fatal("empty variables changed historical bytes")
 	}
 	for _, vars := range [][]domain.HostingBuildVariable{
-		{{Name: "BAD-NAME", Value: "x"}}, {{Name: "ARG", Value: "x"}, {Name: "ARG", Value: "y"}}, {{Name: "ARG", Value: strings.Repeat("x", 4097)}}, {{Name: "ARG", Value: "line\nbreak"}}, {{Name: "ARG", Value: string([]byte{0xff})}}, {{Name: "ARG", Value: "nul\x00"}}, {{Name: "BUILDKIT_SYNTAX", Value: "x"}}, {{Name: "http_proxy", Value: "x"}},
+		{{Name: "BAD-NAME", Value: "x"}}, {{Name: "ARG", Value: "x"}, {Name: "ARG", Value: "y"}}, {{Name: "ARG", Value: strings.Repeat("x", 4097)}}, {{Name: "ARG", Value: string([]byte{0xff})}}, {{Name: "ARG", Value: "nul\x00"}}, {{Name: "BUILDKIT_SYNTAX", Value: "x"}}, {{Name: "http_proxy", Value: "x"}},
 	} {
 		settings.BuildVariables = vars
 		if domain.ValidateHostingBuildSettings(settings) == nil {
