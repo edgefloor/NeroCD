@@ -129,7 +129,7 @@ function BuildSecretsField({ value, projectID, disabled, onChange, onValidityCha
  if (!supported) return null;
  return <section aria-label="Build secrets" className="min-w-0 space-y-3 rounded-lg border p-3">
   <h6 className="font-medium">Build secrets</h6>
-  <p className="text-xs text-muted-foreground">Choose existing managed secret versions for private build dependencies. Mount each name in your Dockerfile with RUN --mount=type=secret,id=NAME,env=NAME. Secret values are not shown here. Runtime secrets are configured separately.</p>
+  <p className="text-xs text-muted-foreground">Choose existing managed secret versions for private build dependencies. Selected names are available as environment variables in build RUN commands. Commands with existing secret mounts keep their explicit configuration. Runtime secrets are configured separately.</p>
   {rows.length && (!ready || denied) ? <p role="alert">Build secret access is unavailable. Refresh build secret metadata to recheck access before saving this Git source.</p> : null}
   {rows.map((row, index) => <div key={index} className="min-w-0 space-y-2">
    <label htmlFor={`${id}-build-secret-name-${index}`}>Build secret name {index + 1}</label><Input id={`${id}-build-secret-name-${index}`} value={row.name} required pattern="[A-Za-z_][A-Za-z0-9_]{0,127}" maxLength={128} disabled={disabled} spellCheck={false} onChange={event => update(rows.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} />
