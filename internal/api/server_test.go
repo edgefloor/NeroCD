@@ -2334,3 +2334,36 @@ func createTestSessionFor(t *testing.T, server *Server, email string, password s
 	}
 	return sessionBody.Token
 }
+
+func TestHTTPMetricsOverflowKeepsFixedLabelsAndCardinality(t *testing.T) {
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	for _, route := range publicRoutes {
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "other"} {
+			for _, status := range []int{200, 300, 400, 500, 100} {
+				server.metrics.record(method, route.Path, status, 0)
+			}
+		}
+	}
+	if got := len(server.metrics.requests); got != maxMetricSeries {
+		t.Fatalf("did not exercise overflow: series=%d", got)
+	}
+	for i := 0; i < 20; i++ {
+		method := fmt.Sprintf("EVIL%d|forged|200", i)
+		server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, "/unknown", nil))
+	}
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("scrape status=%d", response.Code)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, "EVIL") || strings.Contains(body, "forged") || !strings.Contains(body, `method="other",path="/other",status="other"`) {
+		t.Fatalf("unsafe overflow labels: %s", body)
+	}
+	if got := len(server.metrics.requests); got != maxMetricSeries {
+		t.Fatalf("unbounded overflow: series=%d", got)
+	}
+}
