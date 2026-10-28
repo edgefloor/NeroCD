@@ -1,11 +1,11 @@
-# Hosted PostgreSQL remote backups
+# Hosted database remote backups
 
-Remote backups copy a completed hosted PostgreSQL custom-format archive to a
-project-owned S3-compatible destination. Local snapshot creation and remote
+Remote backups copy a completed hosted PostgreSQL custom-format archive or native
+MySQL SQL dump to a project-owned S3-compatible destination. Local snapshot creation and remote
 transfer have separate outcomes. A failed upload does not erase the local dump
 or change its successful backup receipt.
 
-This workflow supports the pinned PostgreSQL recipe on the same authorized
+This workflow supports the pinned PostgreSQL and MySQL recipes on the same authorized
 Docker destination and runner. It does not implement storage-volume archives,
 controller-database backups, arbitrary SQL uploads or object browsing.
 [Independent retention](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence)
@@ -15,7 +15,9 @@ is qualified separately; uploading an archive does not itself remove the local c
 
 Use the existing database execution roots and logical-backup configuration,
 then add `--hosting-database-remote-backups`. The runner advertises both
-`database_backup_transfer` and `hosting_postgresql_remote_backup_v1`. An older
+`database_backup_transfer`, `hosting_postgresql_remote_backup_v1`, and
+`hosting_mysql_remote_backup_v1`. Each database also needs its engine-specific
+local backup capability. An older
 runner cannot claim these jobs. Hosting execution must be running on the
 controller so its existing River consumer can dispatch transfers.
 
@@ -85,7 +87,8 @@ Source database maintenance can proceed while the immutable archive uploads.
 
 The stable object key includes the backup ID and full SHA-256 digest. NeroCD
 uses conditional creation and verifies the complete object body, byte count and
-`PGDMP` header. An S3 ETag is not accepted as a content digest.
+engine-specific format header. PostgreSQL uses `PGDMP`; MySQL uses the recorded
+`mysql_sql` dump format. An S3 ETag is not accepted as a content digest.
 
 ## Failed uploads and retry
 
@@ -95,7 +98,8 @@ the local backup remains successful and available for local restore.
 
 After correcting permissions, retry the selected failed or uncertain upload.
 The retry creates a new fenced transfer attempt using the same backup, local
-blob, digest and saved object location. It does not invoke `pg_dump`. If an
+blob, digest and saved object location. It does not invoke `pg_dump` or
+`mysqldump`. If an
 earlier request may have written the object, the new attempt verifies the
 existing object before deciding whether conditional creation is needed.
 
@@ -109,7 +113,10 @@ Keep the local archive when replacing credentials needed by older backups.
 publication failed. It is not an S3 error. Completed staging is retained for
 local recovery; remote transfer failures do not delete it.
 
-## Restore a recorded remote backup
+## Restore a recorded PostgreSQL remote backup
+
+Remote-only restore is available for PostgreSQL. MySQL copies are upload-only;
+use a retained local MySQL backup for separate-target restore.
 
 Choose a successful upload and request a new private database. The restore
 source is the saved transfer ID and its historical target revision. It is not
@@ -151,6 +158,8 @@ database commit but before durable result evidence is not inferred as success
 or blindly imported again. Local archives remain the default recovery source.
 Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
 Remote object browsing and additional engines remain outside this workflow.
+MySQL remote-only restore, retention policies, notifications, and Compose MySQL
+backups are unsupported.
 
 ## Implementation
 
@@ -168,7 +177,7 @@ implement transfer, credential renewal, and replay. Failure alerts use the separ
 
 The [runtime scenario](../internal/api/hosting_database_backup_remote_runtime_integration_test.go)
 and [browser scenario](../web/app/tests/browser/database-remote-backups-live.spec.ts)
-cover denied upload with local success, restart and reload history, same-archive
+cover PostgreSQL denied upload with local success, restart and reload history, same-archive
 retry without another dump, lost completion acknowledgement, actual GET after
 the local copy is withheld, and independent restored application reads and writes.
 They do not establish exactly one PUT. Target creation and validation use API
@@ -178,3 +187,38 @@ The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful
 classic-store Docker, and pinned Silo on the same destination through explicit
 loopback HTTP. Production S3 HTTPS, certificate installation, other providers,
 cross-host recovery, and destination disk loss are unqualified.
+
+
+## Native MySQL remote-copy qualification
+
+At `eef0727b` on 2026-10-28, the native MySQL profile copied an actual due scheduled
+`mysql_sql` backup to pinned Silo and verified its bytes against the local blob.
+The browser selected the destination for the schedule and an immediate backup.
+After upload permission was denied, the immediate local backup succeeded while
+the upload reported `access_denied`. The source application retained routed
+records and exact uploaded files.
+
+Restoring permission for the same explicit credentials allowed retry of the saved
+backup, blob, digest, object key, and target revision without another dump. A lost
+completion response replayed the committed receipt after runner restart. Browser
+checks covered reload persistence and overflow at 320, 390, 430, and 1440 pixels.
+These were responsive assertions, not screenshots. Target creation and validation
+used the API.
+
+MySQL transfers use `mysql.logical-s3-transfer.v1` and object keys
+`nerocd/mysql/<backupID>/<digest>.sql`. Shared destination validation retains the
+existing PostgreSQL-named target protocol. The runner uses the separate
+`hosting_mysql_remote_backup_credentials.v1` purpose for MySQL uploads.
+
+This qualification covers native Linux arm64, rootful same-host Docker,
+fixture-CA application HTTPS, and explicit loopback HTTP to Silo. It does not
+qualify production S3 HTTPS, other providers, remote-only MySQL restore, retention,
+notifications, or Compose MySQL backups. Existing PostgreSQL remote recovery
+evidence retains its scope. A focused PostgreSQL-backed regression checks
+Compose upload and remote restore admission with simulated runner receipts and
+explicit download-before-import ordering; it does not qualify arbitrary
+concurrent component dispatch ordering.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-remote-20261028/eef0727b1bde256b3723c753266b9eb46b57ed8f/evidence-index.json)
+records the exact source, execution binaries, pinned PHP reference, checks,
+reviews, runtime proof, and owned-resource cleanup.

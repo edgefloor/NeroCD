@@ -59,8 +59,9 @@ imports retain target ownership. Reconciliation must not replay an import whose
 effects are unknown.
 
 MySQL supports immediate and [scheduled local backups](hosting-database-backup-schedules.md#schedule-native-mysql-backups).
-Retention policies and remote copies remain PostgreSQL-only. Preserve the archive on its original
-backup runner. This workflow does not import arbitrary uploaded SQL, overwrite
+[Remote copies](hosting-database-remote-backups.md#native-mysql-remote-copy-qualification)
+can upload the completed MySQL artifact. Retention policies remain PostgreSQL-only.
+Preserve the local archive on its original backup runner for MySQL restore. This workflow does not import arbitrary uploaded SQL, overwrite
 a live database, upgrade an engine, or move data across destinations.
 
 ## Limits and local retention
@@ -123,7 +124,8 @@ administrative resolution for that crash window.
 ## Related workflows and limits
 
 Use [schedules](hosting-database-backup-schedules.md) for recurring PostgreSQL or
-native MySQL local dumps. For PostgreSQL, use [remote backups](hosting-database-remote-backups.md) for recorded S3 copies,
+native MySQL local dumps. Use [remote backups](hosting-database-remote-backups.md)
+for recorded PostgreSQL or MySQL S3 copies. PostgreSQL also supports
 [retention](hosting-database-backup-retention.md) for copy cleanup, and
 [notifications](hosting-backup-notifications.md) for failure alerts.
 
