@@ -8155,7 +8155,7 @@ export interface components {
         HostingBuildVariable: {
             /** @description Unique argument name. NEROCD_/BUILDKIT_/BUILDX_ prefixes and proxy or automatic platform control arguments are reserved. */
             name: string;
-            /** @description Public nonsecret literal */
+            /** @description Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed. */
             value: string;
         };
         HostingBuildSettings: {

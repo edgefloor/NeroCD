@@ -16847,7 +16847,10 @@ components:
       required: [name, value]
       properties:
         name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: Unique argument name. NEROCD_/BUILDKIT_/BUILDX_ prefixes and proxy or automatic platform control arguments are reserved.}
-        value: {type: string, maxLength: 4096, description: Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed.}
+        value:
+          type: string
+          maxLength: 4096
+          description: Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL. Empty and multiline values are allowed.
     HostingBuildSettings:
       type: object
       additionalProperties: false
