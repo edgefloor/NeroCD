@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -57,6 +58,9 @@ func (s *Service) InstallHostingCatalog(ctx context.Context, in domain.HostingCa
 		value := base64.RawURLEncoding.EncodeToString(entropy[:])
 		if name == "LD_SUPERUSER_NAME" {
 			value = "ncd_" + base64.RawURLEncoding.EncodeToString(entropy[:12])
+		}
+		if name == "SERVICE_USER_WORDPRESS" {
+			value = "ncd_" + hex.EncodeToString(entropy[:8])
 		}
 		id := domain.HostingCatalogSecretID(resource, name)
 		plaintext := []byte(value)

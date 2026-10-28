@@ -36,7 +36,7 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 	check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", "", 401)
 	raw := check("GET", "/api/v1/hosting-catalog?project_id=proj_platform", "", token, 200)
 	var items []domain.HostingCatalogTemplate
-	if json.Unmarshal(raw, &items) != nil || len(items) != 4 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
+	if json.Unmarshal(raw, &items) != nil || len(items) != 5 || items[0].Version != domain.HostingCatalogLinkdingVersion || items[0].Category != "RSS" || items[0].AMDOnly || items[0].ARMOnly {
 		t.Fatal("catalog metadata missing")
 	}
 	if strings.Contains(string(raw), `"amd_only"`) || strings.Contains(string(raw), `"arm_only"`) {
@@ -51,10 +51,11 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 }
 
 func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
-	for _, tc := range []struct{ id, version string }{{"linkding", domain.HostingCatalogLinkdingVersion}, {"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}} {
+	for _, tc := range []struct{ id, version string }{{"linkding", domain.HostingCatalogLinkdingVersion}, {"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}, {"wordpress-with-mysql", domain.HostingCatalogWordPressVersion}} {
 		t.Run(tc.id, func(t *testing.T) {
 			server, pg, database := newHostingBuildAPIFixture(t)
-			if tc.id == "vikunja-with-postgresql" || tc.id == "linkding" {
+			compose := tc.id == "vikunja-with-postgresql" || tc.id == "wordpress-with-mysql"
+			if compose || tc.id == "linkding" {
 				ring, e := secretcrypto.New("catalog", map[string][]byte{"catalog": bytes.Repeat([]byte{8}, 32)})
 				if e != nil {
 					t.Fatal(e)
@@ -87,7 +88,7 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			}
 			token := createTestSession(t, server)
 			in := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("8", 32), ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, DestinationID: detail.Destination.ID, Name: "Catalog app", TemplateID: tc.id, ImmutableVersion: tc.version}
-			if tc.id == "vikunja-with-postgresql" {
+			if compose {
 				in.PublicURL = "https://tasks.example.test"
 			}
 			call := func(input domain.HostingCatalogInstallInput, status int) []byte {
@@ -107,7 +108,7 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 				return response.Body.Bytes()
 			}
 			badURL := in
-			if tc.id == "vikunja-with-postgresql" {
+			if compose {
 				badURL.PublicURL = ""
 			} else {
 				badURL.PublicURL = "https://irrelevant.example.test"
@@ -169,7 +170,7 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 				t.Fatal("HTTP response-loss replay changed installed copy")
 			}
 
-			if tc.id == "vikunja-with-postgresql" {
+			if compose {
 				if installed.Resource.Source.Kind != "compose" || installed.StorageRef != (domain.HostingStorageRef{}) {
 					t.Fatal("HTTP install did not select managed Compose")
 				}

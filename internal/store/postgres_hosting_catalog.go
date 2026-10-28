@@ -169,8 +169,8 @@ func (s *PostgresStore) InstallHostingCatalog(ctx context.Context, actor string,
 	for name, value := range template.Definition.RuntimeEnvironment {
 		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: name, Kind: "literal", Value: &value})
 	}
-	if source.Kind == "compose" {
-		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: "SERVICE_URL_VIKUNJA", Kind: "literal", Value: &in.PublicURL})
+	if name := template.Definition.PublicURLRuntimeVariable(); name != "" {
+		runtimeEntries = append(runtimeEntries, domain.HostingRuntimeEntry{Name: name, Kind: "literal", Value: &in.PublicURL})
 	}
 	doc, refs, err := domain.CanonicalHostingRuntimeDocument(runtimeEntries)
 	if err != nil {

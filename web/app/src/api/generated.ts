@@ -8346,9 +8346,9 @@ export interface components {
             destination_id: string;
             name: string;
             /** @enum {string} */
-            template_id: "linkding" | "uptime-kuma" | "actualbudget" | "vikunja-with-postgresql";
+            template_id: "linkding" | "uptime-kuma" | "actualbudget" | "vikunja-with-postgresql" | "wordpress-with-mysql";
             /** @enum {string} */
-            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1" | "coolify-b12d1386.actualbudget-26.10.0.v1" | "coolify-b12d1386.vikunja-2.7.1.v1";
+            immutable_version: "coolify-b12d1386.linkding-1.47.0.v1" | "coolify-b12d1386.uptime-kuma-2.5.8.v1" | "coolify-b12d1386.actualbudget-26.10.0.v1" | "coolify-b12d1386.vikunja-2.7.1.v1" | "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1";
             /** @description Public HTTP(S) base URL required only for managed Compose catalog applications. Does not create a route or hostname grant. */
             public_url?: string;
         };
@@ -8358,6 +8358,8 @@ export interface components {
             mount_path: string;
             readiness: components["schemas"]["HostingReadiness"];
             credential_names: string[];
+            /** @description Curated runtime variable supplied by the install public_url. Absent metadata preserves the historical Compose template behavior. */
+            public_url_variable?: string;
             /** @description Curated nonsecret literal runtime settings from the pinned template. Not user-supplied overrides. */
             runtime_environment?: {
                 [key: string]: string;

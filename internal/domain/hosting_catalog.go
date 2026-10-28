@@ -46,8 +46,30 @@ type HostingCatalogDefinition struct {
 	MountPath          string              `json:"mount_path"`
 	Readiness          HostingReadiness    `json:"readiness"`
 	CredentialNames    []string            `json:"credential_names"`
+	PublicURLVariable  string              `json:"public_url_variable,omitempty"`
 	RuntimeEnvironment map[string]string   `json:"runtime_environment,omitempty"`
 	Compose            *HostingStackSource `json:"compose,omitempty"`
+}
+
+// HostingCatalogWordPressVersion identifies the pinned WordPress and MySQL translation.
+const HostingCatalogWordPressVersion = "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1"
+
+//go:embed testdata/wordpress-with-mysql.yaml
+var hostingCatalogWordPressOriginal string
+
+//go:embed hosting_catalog_wordpress.yaml
+var hostingCatalogWordPressCompose string
+
+// PublicURLRuntimeVariable selects a template-owned public URL setting. Definitions
+// saved before this metadata existed retain their original Vikunja behavior.
+func (d HostingCatalogDefinition) PublicURLRuntimeVariable() string {
+	if d.Compose == nil {
+		return ""
+	}
+	if d.PublicURLVariable != "" {
+		return d.PublicURLVariable
+	}
+	return "SERVICE_URL_VIKUNJA"
 }
 
 // HostingCatalogVikunjaVersion identifies the pinned managed Compose translation.
@@ -91,7 +113,10 @@ func HostingCatalogTemplates() []HostingCatalogTemplate {
 	templates = append(templates, HostingCatalogTemplate{ID: "actualbudget", Version: HostingCatalogActualBudgetVersion, Name: "Actual Budget", Category: "finance", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/actualbudget.yaml", Original: hostingCatalogActualBudgetOriginal, OriginalHash: "sha256:" + hex.EncodeToString(actualSum[:]), Definition: actual, DefinitionHash: HostingDocumentHash(actual)})
 	vikunja := HostingCatalogDefinition{ContainerPort: 3456, Readiness: HostingReadiness{Path: "/health", TimeoutSeconds: 120}, CredentialNames: []string{"SERVICE_PASSWORD_JWTSECRET", "SERVICE_PASSWORD_POSTGRESQL"}, RuntimeEnvironment: map[string]string{"SERVICE_USER_POSTGRESQL": "vikunja", "POSTGRESQL_DATABASE": "vikunja"}, Compose: &HostingStackSource{Original: hostingCatalogVikunjaCompose, PublicComponent: "vikunja", ContainerPort: 3456}}
 	vikunjaSum := sha256.Sum256([]byte(hostingCatalogVikunjaOriginal))
-	return append(templates, HostingCatalogTemplate{ID: "vikunja-with-postgresql", Version: HostingCatalogVikunjaVersion, Name: "Vikunja with PostgreSQL", Category: "productivity", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/vikunja-with-postgresql.yaml", Original: hostingCatalogVikunjaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(vikunjaSum[:]), Definition: vikunja, DefinitionHash: HostingDocumentHash(vikunja)})
+	templates = append(templates, HostingCatalogTemplate{ID: "vikunja-with-postgresql", Version: HostingCatalogVikunjaVersion, Name: "Vikunja with PostgreSQL", Category: "productivity", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/vikunja-with-postgresql.yaml", Original: hostingCatalogVikunjaOriginal, OriginalHash: "sha256:" + hex.EncodeToString(vikunjaSum[:]), Definition: vikunja, DefinitionHash: HostingDocumentHash(vikunja)})
+	wordpress := HostingCatalogDefinition{ContainerPort: 80, Readiness: HostingReadiness{Path: "/", TimeoutSeconds: 120}, CredentialNames: []string{"SERVICE_USER_WORDPRESS", "SERVICE_PASSWORD_WORDPRESS", "SERVICE_PASSWORD_ROOT"}, PublicURLVariable: "SERVICE_URL_WORDPRESS", Compose: &HostingStackSource{Original: hostingCatalogWordPressCompose, PublicComponent: "wordpress", ContainerPort: 80}}
+	wordpressSum := sha256.Sum256([]byte(hostingCatalogWordPressOriginal))
+	return append(templates, HostingCatalogTemplate{ID: "wordpress-with-mysql", Version: HostingCatalogWordPressVersion, Name: "WordPress with MySQL", Category: "cms", UpstreamRepository: "https://github.com/coollabsio/coolify", UpstreamCommit: "b12d1386f3d458618b4c579babcd1e339c6c40b3", UpstreamPath: "templates/compose/wordpress-with-mysql.yaml", Original: hostingCatalogWordPressOriginal, OriginalHash: "sha256:" + hex.EncodeToString(wordpressSum[:]), Definition: wordpress, DefinitionHash: HostingDocumentHash(wordpress)})
 }
 
 // LookupHostingCatalogTemplate selects one exact current template version.
