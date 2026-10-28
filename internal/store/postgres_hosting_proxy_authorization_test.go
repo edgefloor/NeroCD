@@ -684,7 +684,8 @@ func TestPostgresProxyLegacyTokenRevocationSerializesMutation(t *testing.T) {
 }
 
 func TestPostgresProxyDestinationRegrantRequiresExplicitRouteRestore(t *testing.T) {
-	pg, database, resource, server, destination, healthy := proxyControlFixture(t)
+	var stop func(context.Context) error
+	pg, database, resource, server, destination, healthy := proxyControlFixture(t, &stop)
 	ctx := t.Context()
 	input := domain.HostingRouteInput{IdempotencyKey: "schedule-source-route", Hostname: "schedule.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}
 	route, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_schedule_source", "usr_bootstrap", input, destinationEvent("schedule-source"))
@@ -692,6 +693,9 @@ func TestPostgresProxyDestinationRegrantRequiresExplicitRouteRestore(t *testing.
 		t.Fatal(err)
 	}
 	settleProxyGeneration(t, pg, route.OperationID, server.RunnerID, healthy.Release.DaemonID)
+	if err = stop(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pg.RevokeDestinationProject(ctx, destination.ID, resource.ProjectID, destinationEvent("schedule-revoke")); err != nil {
 		t.Fatal(err)
 	}
@@ -706,6 +710,26 @@ func TestPostgresProxyDestinationRegrantRequiresExplicitRouteRestore(t *testing.
 	var withdrawal string
 	if err = database.QueryRow(ctx, `SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation=$2`, proxy.ID, proxy.DesiredGeneration).Scan(&withdrawal); err != nil {
 		t.Fatal(err)
+	}
+	queued, err := pg.GetHostingProxyOperation(ctx, withdrawal)
+	if err != nil || queued.State != "queued" || queued.RunID != "" || proxy.LoadedGeneration == proxy.DesiredGeneration {
+		t.Fatal("paused controller dispatched withdrawal", err)
+	}
+	restartedStop, err := pg.StartHostingExecution(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := restartedStop(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
+	// This waits for the real restarted controller to publish a task run.
+	dispatched := awaitProxyDispatch(t, pg, withdrawal)
+	if dispatched.RunID == "" {
+		t.Fatal("restarted controller omitted withdrawal dispatch")
 	}
 	settleProxyGeneration(t, pg, withdrawal, server.RunnerID, healthy.Release.DaemonID)
 	event := destinationEvent("schedule-regrant")

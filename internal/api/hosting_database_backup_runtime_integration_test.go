@@ -754,8 +754,8 @@ func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.Ho
 			f.t.Fatal("destination revocation did not withdraw exact fixture route")
 		}
 	}
-	f.routes.awaitProxy()
 	backupRuntimeRestartController(f)
+	f.routes.awaitProxy()
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		var state, reason string
