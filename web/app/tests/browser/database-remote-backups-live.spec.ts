@@ -6,6 +6,7 @@ const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw
   ? (JSON.parse(raw) as {
       origin: string;
+      engine: "postgresql" | "mysql";
       project_id: string;
       environment: string;
       application_name: string;
@@ -14,7 +15,7 @@ const meta = raw
       profile: string;
     })
   : undefined;
-test("real remote PostgreSQL denial retry and remote-only restore through embedded UI", async ({
+test("real remote database denial retry and supported restore through embedded UI", async ({
   page,
 }) => {
   test.skip(
@@ -70,6 +71,25 @@ test("real remote PostgreSQL denial retry and remote-only restore through embedd
   await expect(destination.locator("option").filter({ hasText: "Runtime S3" })).toHaveCount(1);
   const target = await destination.locator("option").filter({ hasText: "Runtime S3" }).getAttribute("value");
   expect(target).toMatch(/^[A-Za-z0-9_-]+:1$/);
+  if (m.engine === "mysql") {
+    const schedules = panel.getByRole("region", { name: "Database backup schedules", exact: true });
+    await schedules.getByLabel("Backup frequency", { exact: true }).fill("every_minute");
+    await schedules.getByLabel("Backup timezone", { exact: true }).fill("UTC");
+    await schedules.getByLabel("Scheduled backup destination", { exact: true }).selectOption(target!);
+    const schedulePath = `/api/v1/resources/${m.database_resource_id}/database-backup-schedules`;
+    const create = page.waitForRequest(r => new URL(r.url()).pathname === schedulePath && r.method() === "POST");
+    await schedules.getByRole("button", { name: "Create backup schedule", exact: true }).click();
+    const body = (await create).postDataJSON();
+    expect(body.remote_target).toEqual({ target_id: target!.split(":")[0], revision: 1 });
+    expect(body).not.toHaveProperty("source_component");
+    expect(body).not.toHaveProperty("expected_deployed_operation_id");
+    await schedules.getByRole("button", { name: "Retry the same schedule request", exact: true }).click();
+    await expect(schedules.getByText(/Saved schedule .* revision 1\./)).toBeVisible();
+    await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe("scheduled");
+    await schedules.getByRole("button", { name: "Disable schedule", exact: true }).click();
+    await expect(schedules.getByText(/Saved schedule .* revision 2\./)).toBeVisible();
+    await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 90_000 }).toBe("backup");
+  }
   await destination.selectOption(target!);
   await panel.getByRole("button", { name: "Back up now", exact: true }).click();
   let backup = "";
@@ -90,7 +110,7 @@ test("real remote PostgreSQL denial retry and remote-only restore through embedd
     .getByRole("button", { name: "Refresh backup history", exact: true })
     .click();
   await expect(
-    panel.getByText("Local logical snapshot published.", { exact: true }),
+    panel.getByText("Local logical snapshot published.", { exact: true }).first(),
   ).toBeVisible({ timeout: 30_000 });
   const warning = panel.getByRole("alert").filter({ hasText: "Remote upload failed: access_denied" });
   await expect(warning).toContainText("Retry uploads the same archive and object key without another dump.");
@@ -98,12 +118,25 @@ test("real remote PostgreSQL denial retry and remote-only restore through embedd
   await hosting.getByLabel("Hosting project", { exact: true }).selectOption(m.project_id);
   await hosting.getByRole("button", { name: m.environment, exact: true }).click();
   await expect(warning).toBeVisible({ timeout: 30_000 });
-  await expect(panel.getByText("Local logical snapshot published.", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Local logical snapshot published.", { exact: true }).first()).toBeVisible();
   const acknowledged = await page.request.post(m.control_path + "/warning-seen", { headers, timeout: 5000 });
   expect(acknowledged.status()).toBe(204);
   await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 90_000 }).toBe("retry");
   await panel.getByRole("button", { name: `Retry upload for ${backup}`, exact: true }).click();
-  await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe("restore");
+  await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe(m.engine === "mysql" ? "complete" : "restore");
+  if (m.engine === "mysql") {
+    const uploads = panel.getByLabel(`Remote uploads for ${backup}`, { exact: true });
+    for (const width of [320, 390, 430, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await panel.getByRole("button", { name: "Refresh backup history", exact: true }).click();
+      await expect(uploads.getByText("Local dump: succeeded. Latest remote upload: succeeded.", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await panel.getByLabel("Completed backup", { exact: true }).selectOption(backup);
+    await expect(panel.getByLabel("Restore archive source", { exact: true })).toHaveCount(0);
+    expect((await page.request.post(m.control_path + "/done", { headers, timeout: 5000 })).status()).toBe(204);
+    return;
+  }
   await panel.getByRole("button", { name: "Refresh backup history", exact: true }).click();
   await panel
     .getByLabel("Completed backup", { exact: true })

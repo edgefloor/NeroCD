@@ -438,8 +438,10 @@ def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0
     if mysql not in ("0", "1"):
         raise Failure("invalid backup engine profile")
     if mysql == "1":
+        if (schedule, remote, retention, notifications) == ("1", "1", "0", "0"):
+            return "^TestHostingDatabaseBackupRemoteCompiledRunner$", ["TestHostingDatabaseBackupRemoteCompiledRunner"], ["DATABASE_BACKUP_REMOTE_PASS mysql", "DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql", "DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql", "DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql"]
         if (schedule, remote, retention, notifications) != ("1", "0", "0", "0"):
-            raise Failure("MySQL schedule profile is local only")
+            raise Failure("MySQL requires the exact local or remote schedule profile")
         return "^TestHostingDatabaseBackupScheduleCompiledRunner$", ["TestHostingDatabaseBackupScheduleCompiledRunner"], ["DATABASE_BACKUP_SCHEDULE_PASS mysql", "DATABASE_BACKUP_SCHEDULE_BROWSER_PASS mysql", "DATABASE_BACKUP_SCHEDULE_ADMISSION_FAILURE_PASS mysql source_unavailable"]
     if schedule not in ("0", "1") or remote not in ("0", "1") or retention not in ("0", "1") or retention == "1" and remote != "1":
         raise Failure("invalid backup schedule profile")
@@ -533,7 +535,7 @@ def database_workflow_pebble_config(raw):
 
 def main():
     global head, tree, image, volume_attempted, outer_attempted, outer, full_workflow_pass, diagnostic_pass, outer_deadline
-    mysql_schedule = (mysql_mode, backup_mode, schedule_mode, remote_mode, retention_mode, notifications_mode, storage_mode, routes_mode, browser_mode, gate_mode) == ("1", "1", "1", "0", "0", "0", "1", "1", "1", "full")
+    mysql_schedule = (mysql_mode, backup_mode, schedule_mode, remote_mode, retention_mode, notifications_mode, storage_mode, routes_mode, browser_mode, gate_mode) in (("1", "1", "1", "0", "0", "0", "1", "1", "1", "full"), ("1", "1", "1", "1", "0", "0", "1", "1", "1", "full"))
     if mysql_mode not in ("0", "1") or mysql_mode == "1" and not mysql_schedule and (backup_mode != "0" or schedule_mode != "0" or storage_mode != "1" or routes_mode != "1" or browser_mode != "1" or gate_mode != "full"):
         raise Failure("MySQL requires exact connected storage/browser profile with appended local backup")
     if notifications_mode not in ("0", "1") or notifications_mode == "1" and (remote_mode != "1" or browser_mode != "1" or gate_mode != "full"):

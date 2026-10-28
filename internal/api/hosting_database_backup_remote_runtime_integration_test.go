@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"nerocd/internal/domain"
 )
 
@@ -29,6 +31,7 @@ const databaseRemoteSiloImage = "pgsty/silo@sha256:87585bb783b7822318b3e1bcc4497
 // reviewed remote implementation is integrated. It still calls only real APIs.
 type databaseRemoteTransfer struct {
 	ID                 string                            `json:"id"`
+	Version            string                            `json:"version"`
 	Mode               string                            `json:"mode"`
 	State              string                            `json:"state"`
 	BackupID           string                            `json:"backup_id"`
@@ -140,6 +143,7 @@ func databaseRemoteAwait(f *databaseRunnerFixture, backup, mode, state string) d
 type databaseRemoteSilo struct {
 	f                          *databaseRunnerFixture
 	id, volume, access, secret string
+	engine                     string
 }
 
 func databaseRemoteRandom(t *testing.T) string {
@@ -153,6 +157,10 @@ func databaseRemoteRandom(t *testing.T) string {
 func startDatabaseRemoteSilo(f *databaseRunnerFixture) *databaseRemoteSilo {
 	f.t.Helper()
 	s := &databaseRemoteSilo{f: f, volume: databaseRunnerOwner + "-silo-" + databaseRemoteRandom(f.t), access: databaseRemoteRandom(f.t)[:20], secret: databaseRemoteRandom(f.t)}
+	s.engine = "postgresql"
+	if os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1" {
+		s.engine = "mysql"
+	}
 	// The gate pulls the exact digest, and this fixture rejects another platform.
 	var image []struct{ Architecture, OS string }
 	if json.Unmarshal(f.docker("image", "inspect", databaseRemoteSiloImage), &image) != nil || len(image) != 1 || image[0].Architecture != "arm64" || image[0].OS != "linux" {
@@ -218,7 +226,7 @@ func (s *databaseRemoteSilo) policy(put bool) {
 	if put {
 		actions = append(actions, "s3:PutObject")
 	}
-	policy := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Action": []string{"s3:ListBucket"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime"}}, map[string]any{"Effect": "Allow", "Action": actions, "Resource": []string{"arn:aws:s3:::nerocd-runtime/nerocd/postgresql/*"}}}}
+	policy := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Action": []string{"s3:ListBucket"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime"}}, map[string]any{"Effect": "Allow", "Action": actions, "Resource": []string{"arn:aws:s3:::nerocd-runtime/nerocd/" + s.engine + "/*"}}}}
 	raw, _ := json.Marshal(policy)
 	attach := ""
 	if !put {
@@ -231,7 +239,11 @@ func (s *databaseRemoteSilo) verify(backup domain.HostingDatabaseBackupOperation
 	if backup.Blob == nil {
 		s.f.t.Fatal("remote blob absent")
 	}
-	key := "nerocd/postgresql/" + backup.ID + "/" + strings.TrimPrefix(backup.Blob.Digest, "sha256:") + ".dump"
+	extension := ".dump"
+	if s.engine == "mysql" {
+		extension = ".sql"
+	}
+	key := "nerocd/" + s.engine + "/" + backup.ID + "/" + strings.TrimPrefix(backup.Blob.Digest, "sha256:") + extension
 	// Both identifiers derive from validated server documents, never shell input.
 	if backup.Validate() != nil {
 		s.f.t.Fatal("remote backup identity invalid")
@@ -250,16 +262,30 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Fatal("native Linux arm64 required")
 	}
-	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+	mysql := os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1"
+	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, mysql)
 	diagnosticID := ""
 	defer f.reportDatabaseBackupFailureIfFailed(&diagnosticID)
 	silo := startDatabaseRemoteSilo(f)
-	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
+	create := backupRuntimeCreateInput(t, f.environment, f.destination)
+	if mysql {
+		create = applicationDatabaseCreateInput("mysql", f.environment, f.destination)
+		create.RequestID = backupRuntimeRequestID(t)
+	}
+	source := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", create, 201)
 	f.registerRouteDatabaseCleanup(source.Resource.ID)
 	deployed := f.deploy(source, "remote_source")
 	f.registerRouteOperationCleanup(deployed.ID)
 	f.await(deployed.ID)
 	application := backupRuntimeApplication(f, source, "remote_source")
+	if mysql {
+		resource := databaseRunnerJSON[domain.Resource](f, f.token, "GET", "/api/v1/resources/"+application.ResourceID, nil, 200)
+		application = f.storage.bootstrap(f, resource, application, domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}})
+		f.appRecord(application, "PUT", "a", "retained_a")
+		roots, public := newApplicationDatabaseRouteTrust(t)
+		f.initialApplicationDatabaseRoute(application, "mysql", roots, public)
+		f.storage.write(f, application, "retained_a", 0x41)
+	}
 	f.appRecord(application, "PUT", "before", "remote_snapshot_origin")
 	target := databaseRunnerJSON[struct {
 		ID       string `json:"id"`
@@ -267,7 +293,41 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	}](f, f.token, "POST", "/api/v1/projects/"+source.Resource.ProjectID+"/database-backup-targets", map[string]any{"request_id": backupRuntimeRequestID(t), "expected_revision": 0, "name": "Runtime S3", "endpoint": "http://127.0.0.1:9000", "bucket": "nerocd-runtime", "region": "us-east-1", "enabled": true, "credentials": map[string]string{"access_key": silo.access, "secret_key": silo.secret}}, 200)
 	validation := databaseRunnerJSON[databaseRemoteTransfer](f, f.token, "POST", "/api/v1/projects/"+source.Resource.ProjectID+"/database-backup-targets/"+target.ID+"/validations", map[string]any{"request_id": backupRuntimeRequestID(t), "expected_revision": target.Revision, "destination_id": f.destination}, 202)
 	databaseRemoteAwaitValidation(f, validation)
+	if mysql {
+		silo.policy(true)
+	}
 	browser := startDatabaseBackupBrowserProfile(f, source, "backup_remote")
+	var scheduledID string
+	if mysql {
+		schedule := browser.awaitSchedule()
+		if schedule.RemoteTarget == nil || schedule.RemoteTarget.TargetID != target.ID || schedule.RemoteTarget.Revision != target.Revision || schedule.Version != "mysql.logical-local.schedule.v1" || !schedule.Enabled {
+			t.Fatal("remote schedule lost selected target")
+		}
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			err := f.database.QueryRow(t.Context(), `SELECT operation_id FROM hosting_database_backup_schedule_occurrences WHERE schedule_id=$1 AND operation_id IS NOT NULL`, schedule.ID).Scan(&scheduledID)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, pgx.ErrNoRows) || time.Now().After(deadline) {
+				t.Fatal("running remote schedule controller omitted backup")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		scheduled := backupRuntimeAwait(f, scheduledID)
+		upload := databaseRemoteAwait(f, scheduledID, "upload", "succeeded")
+		if scheduled.Blob == nil || scheduled.Blob.Format != "mysql_sql" || upload.Version != "mysql.logical-s3-transfer.v1" || upload.Blob == nil || *upload.Blob != *scheduled.Blob || upload.TargetID != target.ID || upload.TargetRevision != target.Revision {
+			t.Fatal("scheduled remote MySQL identity changed")
+		}
+		silo.verify(scheduled)
+		browser.setPhase("scheduled", scheduledID)
+		disabled := browser.awaitSchedule()
+		if disabled.ID != schedule.ID || disabled.Revision != schedule.Revision+1 || disabled.Enabled {
+			t.Fatal("remote schedule did not disable")
+		}
+		silo.policy(false)
+		browser.setPhase("backup", "")
+	}
 	id := browser.await("backup")
 	diagnosticID = id
 	backup := backupRuntimeAwait(f, id)
@@ -276,6 +336,11 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 		t.Fatal("Put denial did not preserve local archive and target identity")
 	}
 	f.appRecord(application, "PUT", "after_snapshot", "source_stays_writable")
+	if mysql {
+		f.routes.assertSelected(application)
+		f.routes.record(t.Context(), application, "GET", "after_snapshot", "source_stays_writable")
+		f.storage.assertFiles(f, application)
+	}
 	backupRuntimeRestartController(f)
 	f.stop()
 	f.start()
@@ -324,6 +389,38 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 		t.Fatal("upload retry requested another dump plan")
 	}
 	silo.verify(backup)
+	if mysql {
+		var failedPlan, retryPlan domain.HostingDatabaseBackupTransferPlan
+		var rawFailed, rawRetry []byte
+		if f.database.QueryRow(t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, failed.ID).Scan(&rawFailed) != nil || f.database.QueryRow(t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, uploaded.ID).Scan(&rawRetry) != nil || json.Unmarshal(rawFailed, &failedPlan) != nil || json.Unmarshal(rawRetry, &retryPlan) != nil {
+			t.Fatal("saved remote plan unavailable")
+		}
+		if failedPlan.Target != retryPlan.Target || failedPlan.ObjectKey != retryPlan.ObjectKey || uploaded.Version != "mysql.logical-s3-transfer.v1" || uploaded.TargetID != failed.TargetID || uploaded.BackupID != backup.ID || backup.Blob.Format != "mysql_sql" {
+			t.Fatal("retry changed explicit target credential snapshot or saved object")
+		}
+		history := databaseRunnerJSON[[]domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/resources/"+source.Resource.ID+"/database-backups", nil, 200)
+		if len(history) != 2 {
+			t.Fatal("remote retry admitted another dump")
+		}
+		for _, op := range history {
+			if op.Mode != "backup" || op.State != "succeeded" || op.ID != id && op.ID != scheduledID {
+				t.Fatal("remote history changed local success")
+			}
+		}
+		f.appRecord(application, "GET", "before", "remote_snapshot_origin")
+		f.appRecord(application, "GET", "after_snapshot", "source_stays_writable")
+		f.appRecord(application, "PUT", "after_remote_retry", "source_remains_usable")
+		f.routes.assertSelected(application)
+		f.routes.record(t.Context(), application, "GET", "after_remote_retry", "source_remains_usable")
+		f.storage.assertFiles(f, application)
+		browser.setPhase("complete", id)
+		browser.finished()
+		f.assertRedacted()
+		fmt.Println("DATABASE_BACKUP_REMOTE_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql")
+		return
+	}
 	// Withhold only the exact fixture-owned CAS file. Metadata and staging remain,
 	// so successful remote restore must perform a real GET and re-publish the CAS.
 	cas := filepath.Join(f.root, "state", "logical-backups", strings.TrimPrefix(backup.Blob.Digest, "sha256:"))

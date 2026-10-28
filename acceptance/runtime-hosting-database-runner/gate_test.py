@@ -1194,7 +1194,8 @@ class MySQLQualificationTest(unittest.TestCase):
         exec(guards,valid.copy())
         for key in ("schedule_mode","backup_mode","storage_mode","routes_mode","browser_mode"):
             with self.subTest(key=key),self.assertRaises(RuntimeError):exec(guards,dict(valid,**{key:"0"}))
-        for key in ("remote_mode","retention_mode","notifications_mode"):
+        exec(guards,dict(valid,remote_mode="1"))
+        for key in ("retention_mode","notifications_mode"):
             with self.subTest(key=key),self.assertRaises(RuntimeError):exec(guards,dict(valid,**{key:"1"}))
         pg=dict(valid,mysql_mode="0",storage_mode="0",routes_mode="0")
         exec(guards,pg)
@@ -1263,8 +1264,21 @@ class BackupScheduleSelectionTest(unittest.TestCase):
             with self.subTest(marker=marker),self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output.replace(marker,""),"1",mysql="1")
         for suffix in ("\n--- SKIP: mysql (0.01s)","\n--- FAIL: mysql (0.01s)","\n"+markers[-1]):
             with self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output+suffix,"1",mysql="1")
-        for arguments in (("0","0","0","0","1"),("1","1","0","0","1"),("1","0","1","0","1"),("1","0","0","1","1")):
+        for arguments in (("0","0","0","0","1"),("1","0","1","0","1"),("1","0","0","1","1")):
             with self.assertRaises(RuntimeError):ns["backup_runtime_profile"](*arguments)
+
+    def test_mysql_remote_selects_only_remote_and_requires_all_proofs(self):
+        ns = self.functions()
+        pattern,names,markers = ns["backup_runtime_profile"]("1","1",mysql="1")
+        self.assertEqual(names,["TestHostingDatabaseBackupRemoteCompiledRunner"])
+        self.assertNotRegex("TestHostingDatabaseBackupScheduleCompiledRunner",pattern)
+        self.assertNotRegex("TestHostingDatabaseBackupCompiledRunner",pattern)
+        output="\n".join(["--- PASS: "+names[0]+" (0.01s)"]+markers)
+        ns["verify_backup_runtime_output"](output,"1","1",mysql="1")
+        for marker in markers:
+            with self.subTest(marker=marker),self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output.replace(marker,""),"1","1",mysql="1")
+        for remote,retention,notifications in (("1","1","0"),("1","0","1")):
+            with self.assertRaises(RuntimeError):ns["backup_runtime_profile"]("1",remote,retention,notifications,mysql="1")
 
     def test_remote_profile_requires_all_real_proofs_and_never_accepts_skips(self):
         ns = self.functions()
@@ -1359,7 +1373,7 @@ def stop(*_):
 signal.signal(signal.SIGTERM,stop)
 try:
  profiles = ([('backup_notifications','postgresql')] if case.startswith('backup_notifications') else [])+([('backup_remote','postgresql')] if case.startswith(('backup_remote','backup_retention','backup_notifications')) else [])+([('backup_retention','postgresql'),('backup_retention_recovery','postgresql')] if case.startswith('backup_retention') else [])+[('backup','postgresql')]+([('backup_schedule','postgresql')] if case.startswith('backup_schedule') else []) if case.startswith('backup_') else [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else [])
- if case.startswith('mysql_'):profiles=[('backup_schedule','mysql')] if case.startswith('mysql_schedule') else [('storage','mysql'),('backup','mysql')]
+ if case.startswith('mysql_'):profiles=[('backup_remote','mysql')] if case.startswith('mysql_remote') else [('backup_schedule','mysql')] if case.startswith('mysql_schedule') else [('storage','mysql'),('backup','mysql')]
  for profile,engine in profiles:
   meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
   if profile!='base':meta['profile']=profile
@@ -1446,9 +1460,9 @@ class BrowserDriverTest(unittest.TestCase):
             environment=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],NEROCD_TEST_DATABASE_URL='SENSITIVE-CANARY')
             environment['NEROCD_DATABASE_MYSQL_RUNTIME']='1' if case.startswith('mysql_') else '0'
             environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith(('storage_','mysql_')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith(('backup_','mysql_schedule')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME']='1' if case.startswith(('backup_schedule','mysql_schedule')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith(('backup_','mysql_schedule','mysql_remote')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME']='1' if case.startswith(('backup_schedule','mysql_schedule','mysql_remote')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications','mysql_remote')) else '0'
             environment['NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME']='1' if case.startswith('backup_notifications') else '0'
             environment['NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME']='1' if case.startswith('backup_retention') else '0'
             process=subprocess.Popen([node,str(driver),'http://127.0.0.1:35002',str(root/'evidence'),'--',sys.executable,str(fixture),str(root)],cwd=Path(__file__).resolve().parents[2],env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
@@ -1463,7 +1477,10 @@ class BrowserDriverTest(unittest.TestCase):
                 self.assertEqual(process.returncode,expected,output)
                 self.assertNotIn('SENSITIVE-CANARY',output)
                 if expected==0:
-                    if case.startswith('mysql_schedule'):
+                    if case.startswith('mysql_remote'):
+                        self.assertEqual(output.count('DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql'),1)
+                        self.assertNotIn('DATABASE_BACKUP_BROWSER_PASS mysql',output)
+                    elif case.startswith('mysql_schedule'):
                         self.assertEqual(output.count('DATABASE_BACKUP_SCHEDULE_BROWSER_PASS mysql'),1)
                         self.assertNotIn('DATABASE_CONNECTION_STORAGE_BROWSER_PASS',output)
                     elif case.startswith('mysql_'):
@@ -1517,6 +1534,9 @@ class BrowserDriverTest(unittest.TestCase):
         self.run_driver('backup_notifications_success',0)
         for case in ('backup_notifications_bad_pin','backup_notifications_http','backup_notifications_missing','backup_notifications_unknown','backup_schedule_missing','backup_schedule_unknown','backup_remote_missing','backup_remote_unknown','backup_retention_missing','backup_retention_unknown','backup_retention_recovery_missing','backup_retention_recovery_unknown'):
             with self.subTest(case=case):self.run_driver(case,1)
+
+    def test_mysql_remote_reuses_single_existing_browser_flow(self):
+        self.run_driver('mysql_remote_success',0)
 
     def test_mysql_schedule_reuses_single_existing_browser_flow(self):
         self.run_driver('mysql_schedule_success',0)

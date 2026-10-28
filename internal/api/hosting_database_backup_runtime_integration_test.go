@@ -1432,7 +1432,7 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 	if !applicationDatabaseBrowserOrigin(origin) {
 		f.t.Fatal("owned browser origin required")
 	}
-	if source.Engine == "mysql" && profile != "backup_schedule" {
+	if source.Engine == "mysql" && profile == "backup" {
 		// The immediately preceding storage browser prepared this same owner.
 		var owner, viewer, admins int
 		if f.database.QueryRow(f.t.Context(), `SELECT
@@ -1522,7 +1522,7 @@ func startDatabaseBackupBrowserProfile(f *databaseRunnerFixture, source domain.H
 			databaseRemoteCopyResponse(w, rec)
 			return
 		}
-		if profile == "backup_schedule" && (r.Method == http.MethodPost || r.Method == http.MethodPut) && strings.Contains(r.URL.Path, "/database-backup-schedules") {
+		if (profile == "backup_schedule" || profile == "backup_remote" && source.Engine == "mysql") && (r.Method == http.MethodPost || r.Method == http.MethodPut) && strings.Contains(r.URL.Path, "/database-backup-schedules") {
 			rec := httptest.NewRecorder()
 			api.ServeHTTP(rec, r)
 			if rec.Code == 200 {
