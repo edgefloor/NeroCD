@@ -35,7 +35,7 @@ func (s *PostgresStore) RequestHostingDatabaseMaintenance(ctx context.Context, i
 		if err != nil {
 			return zero, err
 		}
-		if err = requireConnectionAgent(ctx, tx, b.RunnerID, false); err != nil {
+		if err = requireConnectionAgent(ctx, tx, b.RunnerID, false, b.Database.Engine); err != nil {
 			return zero, err
 		}
 		requestHash := domain.HostingDocumentHash(struct {

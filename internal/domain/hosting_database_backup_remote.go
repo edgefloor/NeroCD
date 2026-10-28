@@ -204,7 +204,7 @@ func (t HostingDatabaseBackupTransfer) Validate() error {
 			return ErrInvalidDatabaseBackupRemote
 		}
 	case "upload", "download":
-		if !validRuntimeReferenceID(t.BackupID) || t.Blob == nil || t.Blob.Validate() != nil {
+		if !validRuntimeReferenceID(t.BackupID) || t.Blob == nil || t.Blob.Validate() != nil || t.Blob.Format != "postgresql_custom" {
 			return ErrInvalidDatabaseBackupRemote
 		}
 		if t.Mode == "download" && !validRuntimeReferenceID(t.RestoreOperationID) || t.Mode == "upload" && t.RestoreOperationID != "" {

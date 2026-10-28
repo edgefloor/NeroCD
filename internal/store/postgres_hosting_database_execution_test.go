@@ -28,6 +28,11 @@ func databaseExecutionFixture(t *testing.T, engine string) (storageMaterializati
 	if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=ARRAY['compose_deploy',$2,$3,$4]::text[] WHERE id=$1`, runner, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability); err != nil {
 		t.Fatal(err)
 	}
+	if engine == "mysql" {
+		if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, runner, domain.HostingDatabaseMySQLCapability); err != nil {
+			t.Fatal(err)
+		}
+	}
 	row, err := sqlcgen.New(db).ReadHostingStorage(ctx, view.Resource.ID)
 	if err != nil {
 		t.Fatal(err)

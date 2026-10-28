@@ -42,6 +42,9 @@ func databaseFixture(t *testing.T, engine string) (*databaseFake, *DatabaseCrede
 	if engine == "redis" {
 		version = domain.HostingDatabaseRedisRecipe
 	}
+	if engine == "mysql" {
+		version = domain.HostingDatabaseMySQLRecipe
+	}
 	recipe, err := domain.HostingDatabaseRecipeFor(engine, version)
 	if err != nil {
 		t.Fatal(err)
@@ -292,31 +295,35 @@ func TestDatabaseEngineApplyAndReadOnlyObserve(t *testing.T) {
 }
 
 func TestDatabaseEngineSecondReleaseStopsSameVolumeWriter(t *testing.T) {
-	f, credentials := databaseFixture(t, "postgresql")
-	first := f.apply(context.Background(), credentials)
-	if !first.Ready {
-		t.Fatal(first)
-	}
-	oldPlan := f.plan
-	old := domain.HostingHealthy{OperationID: f.req.OriginOperationID, ContainerID: first.ContainerID, Snapshot: oldPlan.Snapshot, Release: oldPlan.Release, PlanHash: oldPlan.Hash, Storage: &domain.HostingHealthyStorage{Plan: *oldPlan.Storage, CreationPlanHash: f.req.OriginPlanHash}}
-	next := oldPlan.Snapshot
-	next.ResourceGeneration++
-	var err error
-	f.plan, err = domain.CompileHostingDatabasePlan(next, oldPlan.Release, &old, *oldPlan.Storage, *oldPlan.Database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nextCredentials := databaseFixtureCredentials(t, f.plan)
-	result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), nextCredentials, f.config, f.before)
-	if !result.Ready || result.Uncertain || result.PreviousContainerID != first.ContainerID || f.networkCreates != 1 || f.creates != 2 || f.starts != 2 || f.stops != 1 {
-		t.Fatalf("second release did not preserve stopped writer/volume: %+v counts %d/%d/%d/%d", result, f.networkCreates, f.creates, f.starts, f.stops)
-	}
-	if f.containers[first.ContainerID] != nil || f.removes != 1 {
-		t.Fatal("proven stopped predecessor was not retired")
-	}
-	record, exists, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
-	if err != nil || !exists || record.OriginPlan != oldPlan.Hash || record.OriginPlan == f.plan.Hash || !record.InitReady {
-		t.Fatal("release replaced original initialization identity")
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			f, credentials := databaseFixture(t, engine)
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			oldPlan := f.plan
+			old := domain.HostingHealthy{OperationID: f.req.OriginOperationID, ContainerID: first.ContainerID, Snapshot: oldPlan.Snapshot, Release: oldPlan.Release, PlanHash: oldPlan.Hash, Storage: &domain.HostingHealthyStorage{Plan: *oldPlan.Storage, CreationPlanHash: f.req.OriginPlanHash}}
+			next := oldPlan.Snapshot
+			next.ResourceGeneration++
+			var err error
+			f.plan, err = domain.CompileHostingDatabasePlan(next, oldPlan.Release, &old, *oldPlan.Storage, *oldPlan.Database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextCredentials := databaseFixtureCredentials(t, f.plan)
+			result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), nextCredentials, f.config, f.before)
+			if !result.Ready || result.Uncertain || result.PreviousContainerID != first.ContainerID || f.networkCreates != 1 || f.creates != 2 || f.starts != 2 || f.stops != 1 {
+				t.Fatalf("second release did not preserve stopped writer/volume: %+v counts %d/%d/%d/%d", result, f.networkCreates, f.creates, f.starts, f.stops)
+			}
+			if f.containers[first.ContainerID] != nil || f.removes != 1 {
+				t.Fatal("proven stopped predecessor was not retired")
+			}
+			record, exists, err := f.config.readRecord(f.plan.Database.NetworkName + ".json")
+			if err != nil || !exists || record.OriginPlan != oldPlan.Hash || record.OriginPlan == f.plan.Hash || !record.InitReady {
+				t.Fatal("release replaced original initialization identity")
+			}
+		})
 	}
 }
 
@@ -996,31 +1003,35 @@ func TestDatabaseEngineRetirementNeedsExactExistingReadyReplacement(t *testing.T
 }
 
 func TestDatabaseEngineFailedReplacementReadinessRetainsPredecessor(t *testing.T) {
-	f, credentials := databaseFixture(t, "postgresql")
-	first := f.apply(context.Background(), credentials)
-	if !first.Ready {
-		t.Fatal(first)
-	}
-	credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
-		cancel()
-		return errDatabaseReadiness
-	}
-	failed := f.e.ApplyDatabase(ctx, "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
-	if failed.Ready || !failed.Uncertain || f.removes != 0 || f.containers[first.ContainerID] == nil || f.containers[first.ContainerID]["State"].(map[string]any)["Running"].(bool) {
-		t.Fatal("failed readiness retired predecessor or fabricated restoration", failed)
-	}
-	if _, err := os.Stat(filepath.Join(f.config.stateRoot, databaseRetirementName("hop_second", f.plan))); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("failed readiness admitted predecessor retirement")
-	}
-	f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
-		return nil
-	}
-	result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
-	if !result.Ready || f.creates != 2 || f.starts != 2 || f.removes != 1 {
-		t.Fatal("authorized recovery failed to finish existing ready replacement", result)
+	for _, engine := range []string{"postgresql", "mysql"} {
+		t.Run(engine, func(t *testing.T) {
+			f, credentials := databaseFixture(t, engine)
+			first := f.apply(context.Background(), credentials)
+			if !first.Ready {
+				t.Fatal(first)
+			}
+			credentials = databaseNextPlan(t, f, f.req.OriginOperationID, first)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
+				cancel()
+				return errDatabaseReadiness
+			}
+			failed := f.e.ApplyDatabase(ctx, "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			if failed.Ready || !failed.Uncertain || f.removes != 0 || f.containers[first.ContainerID] == nil || f.containers[first.ContainerID]["State"].(map[string]any)["Running"].(bool) {
+				t.Fatal("failed readiness retired predecessor or fabricated restoration", failed)
+			}
+			if _, err := os.Stat(filepath.Join(f.config.stateRoot, databaseRetirementName("hop_second", f.plan))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("failed readiness admitted predecessor retirement")
+			}
+			f.config.readiness = func(context.Context, string, domain.HostingApplyPlan, []DatabaseCredentialValue, bool, bool, func(context.Context) error) error {
+				return nil
+			}
+			result := f.e.ApplyDatabase(context.Background(), "hop_second", f.plan, f.req, f.evidence(), credentials, f.config, f.before)
+			if !result.Ready || f.creates != 2 || f.starts != 2 || f.removes != 1 {
+				t.Fatal("authorized recovery failed to finish existing ready replacement", result)
+			}
+		})
 	}
 }
 

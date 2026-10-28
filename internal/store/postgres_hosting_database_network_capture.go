@@ -132,6 +132,9 @@ func networkCaptureRunner(ctx context.Context, q *sqlcgen.Queries, runner, crede
 	if err != nil {
 		return err
 	}
+	if p.SourceHealthy.Snapshot.Database.Engine == "mysql" && !slices.Contains(r.Capabilities, domain.HostingDatabaseMySQLCapability) {
+		return ErrConflict
+	}
 	if r.Status != "active" || r.TokenHash != credential || !slices.Contains(r.Capabilities, domain.HostingDatabaseNetworkCaptureCapability) || slices.Contains(r.Capabilities, "shell") {
 		return ErrConflict
 	}

@@ -109,10 +109,10 @@ func (s *Service) RequestDatabaseBackupRestore(ctx context.Context, backup strin
 	if err != nil {
 		return zero, err
 	}
-	if source.Engine != "postgresql" || s.secretKeyring == nil {
+	if domain.HostingDatabaseBackupVersionFor(source.Engine, source.RecipeVersion) == "" || s.secretKeyring == nil {
 		return zero, store.ErrHostingDatabaseUnavailable
 	}
-	create := domain.HostingDatabaseCreateInput{RequestID: domain.HostingDocumentHash(struct{ Backup, Request string }{backup, in.RequestID})[7:39], ProjectID: source.Resource.ProjectID, ProjectEnvironmentID: source.Resource.ProjectEnvironmentID, Name: in.Name, DestinationID: source.Binding.DestinationID, Engine: "postgresql", RecipeVersion: domain.HostingDatabasePostgresRecipe}
+	create := domain.HostingDatabaseCreateInput{RequestID: domain.HostingDocumentHash(struct{ Backup, Request string }{backup, in.RequestID})[7:39], ProjectID: source.Resource.ProjectID, ProjectEnvironmentID: source.Resource.ProjectEnvironmentID, Name: in.Name, DestinationID: source.Binding.DestinationID, Engine: source.Engine, RecipeVersion: source.RecipeVersion}
 	resource := domain.HostingDatabaseResourceID(create.ProjectID, create.RequestID)
 	recipe, _ := domain.HostingDatabaseRecipeFor(create.Engine, create.RecipeVersion)
 	records := make([]store.HostingDatabaseCredentialRecord, 0, len(recipe.Credentials))

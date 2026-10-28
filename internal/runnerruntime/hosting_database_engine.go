@@ -213,6 +213,9 @@ func databaseContainerLabels(operation string, plan domain.HostingApplyPlan, rec
 }
 
 func databaseRecipeArgs(plan domain.HostingApplyPlan) ([]string, []string) {
+	if plan.Database.Reference.Engine == "mysql" {
+		return []string{"MYSQL_ROOT_PASSWORD_FILE=" + databaseSecretMount + "/admin-password", "MYSQL_PASSWORD_FILE=" + databaseSecretMount + "/app-password", "MYSQL_DATABASE=app", "MYSQL_USER=ncd_app"}, []string{"mysqld", "--general-log=OFF", "--slow-query-log=OFF", "--log-error-verbosity=1", "--mysqlx=OFF", "--local-infile=OFF", "--skip-log-bin"}
+	}
 	if plan.Database.Reference.Engine == "redis" {
 		return nil, []string{"redis-server", databaseSecretMount + "/redis.conf"}
 	}

@@ -76,11 +76,9 @@ func (c Client) HostingDatabaseBackupMutation(ctx context.Context, in domain.Hos
 	}
 	out = response.value
 	state := map[string]string{"intent": "applying", "complete": "succeeded", "failed": "failed", "uncertain": "uncertain"}[in.Phase]
-	expectedVersion := domain.HostingDatabaseBackupVersion
-	if in.ComponentVersion == domain.HostingDatabaseBackupComponentVersion {
-		expectedVersion = domain.HostingDatabaseBackupComponentVersion
-	}
-	if out.Validate() != nil || out.ID != in.OperationID || out.Version != expectedVersion || out.State != state || in.Phase == "complete" && (out.Blob == nil || domain.HostingDocumentHash(out.Blob) != domain.HostingDocumentHash(in.Blob)) {
+	native := in.ComponentVersion == "" && (out.Version == domain.HostingDatabaseBackupVersion || out.Version == domain.HostingDatabaseMySQLBackupVersion)
+	component := in.ComponentVersion == domain.HostingDatabaseBackupComponentVersion && out.Version == domain.HostingDatabaseBackupComponentVersion
+	if out.Validate() != nil || out.ID != in.OperationID || (!native && !component) || out.State != state || in.Phase == "complete" && (out.Blob == nil || domain.HostingDocumentHash(out.Blob) != domain.HostingDocumentHash(in.Blob)) {
 		return out, errors.New("invalid database backup receipt response")
 	}
 	return out, nil

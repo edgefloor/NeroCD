@@ -12,7 +12,7 @@ import (
 )
 
 func TestDatabaseBackupReceiptVersionsAndPhases(t *testing.T) {
-	for _, version := range []string{domain.HostingDatabaseBackupVersion, domain.HostingDatabaseBackupComponentVersion} {
+	for _, version := range []string{domain.HostingDatabaseBackupVersion, domain.HostingDatabaseMySQLBackupVersion, domain.HostingDatabaseBackupComponentVersion} {
 		for _, phase := range []string{"intent", "complete", "failed", "uncertain"} {
 			t.Run(version+"/"+phase, func(t *testing.T) {
 				in := domain.HostingDatabaseBackupMutation{HostingAuthority: domain.HostingAuthority{OperationID: "backup", RunID: "db_backup_backup", LeaseID: "lease", Attempt: 1, Fence: "fence"}, ReceiptID: phase, PlanHash: "sha256:" + strings.Repeat("a", 64), Phase: phase}
@@ -23,7 +23,7 @@ func TestDatabaseBackupReceiptVersionsAndPhases(t *testing.T) {
 				}
 				if phase == "complete" {
 					in.WritersResumed = version == domain.HostingDatabaseBackupComponentVersion
-					in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 10, Format: "postgresql_custom"}
+					in.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 10, Format: domain.HostingDatabaseBackupFormatFor(version)}
 					out.Blob = in.Blob
 				}
 				if phase == "failed" || phase == "uncertain" {

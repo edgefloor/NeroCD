@@ -406,3 +406,32 @@ func TestDatabaseExecutionIdentityRequiresExactConfigurationAndPrerequisites(t *
 		}
 	}
 }
+
+func TestMySQLExecutionIdentityRequiresConfiguredAdapter(t *testing.T) {
+	base := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	for _, tc := range []struct {
+		name              string
+		database, backups bool
+		extra             []string
+		valid             bool
+	}{
+		{"legacy PostgreSQL", true, false, nil, true},
+		{"MySQL database", true, false, []string{domain.HostingDatabaseMySQLCapability}, true},
+		{"unconfigured MySQL", false, false, []string{domain.HostingDatabaseMySQLCapability}, false},
+		{"unconfigured backup", true, false, []string{domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability}, false},
+		{"configured backup", true, true, []string{domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability, domain.HostingDatabaseBackupCapability, domain.RunTypeDatabaseBackup}, true},
+		{"shell", true, false, []string{domain.HostingDatabaseMySQLCapability, "shell"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caps := append(append([]string(nil), base...), tc.extra...)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"runner_id": "runner", "capabilities": caps})
+			}))
+			defer server.Close()
+			_, err := New(server.URL, "fixture").RuntimeExecutionIdentityWithOptions(t.Context(), RuntimeExecutionOptions{Database: tc.database, LogicalDatabaseBackups: tc.backups, DatabaseTrustedLoopbackHTTP: true})
+			if (err == nil) != tc.valid {
+				t.Fatal("MySQL adapter boundary", err)
+			}
+		})
+	}
+}

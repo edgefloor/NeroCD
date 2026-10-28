@@ -3,6 +3,7 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -293,6 +294,23 @@ func databaseBackupArgs(mode, container string, seconds int) []string {
 	return append(args, "pg_restore", "--username=postgres", "--dbname=app", "--role=ncd_app", "--no-owner", "--no-acl", "--exit-on-error", "--single-transaction")
 }
 
+const databaseMySQLDumpHeader = "-- NeroCD MySQL logical dump v1\n"
+
+func databaseBackupEngineArgs(p domain.HostingDatabaseBackupPlan, mode, container string, seconds int) []string {
+	if p.Operation.Version != domain.HostingDatabaseMySQLBackupVersion {
+		return databaseBackupArgs(mode, container, seconds)
+	}
+	args := []string{"exec", "--user", "mysql", "--interactive", container, "timeout", "--signal=TERM", "--kill-after=5s", strconv.Itoa(seconds) + "s"}
+	if mode == "backup" {
+		return append(args, "mysqldump", "--defaults-extra-file="+databaseSecretMount+"/admin.cnf", "--single-transaction", "--quick", "--skip-lock-tables", "--no-tablespaces", "--set-gtid-purged=OFF", "--routines", "--events", "--triggers", "--hex-blob", "--column-statistics=0", "app")
+	}
+	return append(args, "mysql", "--defaults-extra-file="+databaseSecretMount+"/admin.cnf", "--database=app", "--binary-mode=1", "--local-infile=0", "--skip-reconnect", "--batch")
+}
+
+func databaseMySQLQueryArgs(container, query string) []string {
+	return []string{"exec", "--user", "mysql", container, "timeout", "--signal=TERM", "--kill-after=5s", "10s", "mysql", "--defaults-extra-file=" + databaseSecretMount + "/admin.cnf", "--batch", "--skip-column-names", "--execute=" + query}
+}
+
 type databaseBackupBoundedWriter struct {
 	w      io.Writer
 	n, max int64
@@ -318,8 +336,16 @@ func (e *databaseBackupEngine) archive(ctx context.Context, p domain.HostingData
 		_ = f.Close()
 		return nil, errDatabaseBackupHeld
 	}
-	var magic [5]byte
-	if _, err = io.ReadFull(f, magic[:]); err != nil || string(magic[:]) != "PGDMP" {
+	magic := "PGDMP"
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+		magic = databaseMySQLDumpHeader
+	}
+	header := make([]byte, len(magic))
+	if p.Operation.Blob.Format != domain.HostingDatabaseBackupFormatFor(p.Operation.Version) {
+		_ = f.Close()
+		return nil, errDatabaseBackupHeld
+	}
+	if _, err = io.ReadFull(f, header); err != nil || string(header) != magic {
 		_ = f.Close()
 		return nil, errDatabaseBackupHeld
 	}
@@ -353,7 +379,12 @@ func (e *databaseBackupEngine) preflight(parent context.Context, p domain.Hostin
 		}
 		defer func() { _ = f.Close() }()
 		args := []string{"exec", "--user", "postgres", "--interactive", p.Target.ContainerID, "timeout", "--signal=TERM", "--kill-after=5s", "30s", "pg_restore", "--list"}
-		if e.stream(ctx, args, f, io.Discard) != nil {
+		var archive io.Reader = f
+		if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+			args = databaseMySQLQueryArgs(p.Target.ContainerID, "SELECT 1")
+			archive = nil
+		}
+		if e.stream(ctx, args, archive, io.Discard) != nil {
 			return databaseBackupErrorAt(databaseBackupPhasePreflight, databaseBackupStageArchiveList, errDatabaseBackupHeld)
 		}
 	}
@@ -396,7 +427,7 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 		if databaseAuthorize(ctx, before) != nil {
 			return blob, databaseBackupErrorAt(databaseBackupPhaseExecution, databaseBackupStageAuthority, errDatabaseBackupHeld)
 		}
-		if e.stream(ctx, databaseBackupArgs("restore", p.Target.ContainerID, p.TimeoutSeconds), f, io.Discard) != nil {
+		if e.stream(ctx, databaseBackupEngineArgs(p, "restore", p.Target.ContainerID, p.TimeoutSeconds), f, io.Discard) != nil {
 			return blob, databaseBackupErrorAt(databaseBackupPhaseExecution, databaseBackupStageRestore, errDatabaseBackupHeld)
 		}
 		// Independent readiness on the exact database and unchanged provenance.
@@ -407,6 +438,9 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 			return blob, databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageAuthority, errDatabaseBackupHeld)
 		}
 		ready := []string{"exec", "--user", "postgres", p.Target.ContainerID, "pg_isready", "--username=postgres", "--dbname=app", "--timeout=5"}
+		if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+			ready = databaseMySQLQueryArgs(p.Target.ContainerID, "SELECT 1")
+		}
 		if e.stream(ctx, ready, nil, io.Discard) != nil {
 			return blob, databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageReadiness, errDatabaseBackupHeld)
 		}
@@ -423,7 +457,20 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 	if databaseAuthorize(ctx, before) != nil {
 		return blob, errDatabaseBackupHeld
 	}
-	args := databaseBackupArgs("backup", p.Source.ContainerID, p.TimeoutSeconds)
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+		// Single-transaction snapshots cover InnoDB tables. Refuse another storage
+		// engine rather than mislabel a writable source's backup consistency.
+		var result bytes.Buffer
+		query := "SELECT COUNT(*) FROM information_schema.tables WHERE TABLE_SCHEMA='app' AND TABLE_TYPE='BASE TABLE' AND ENGINE <> 'InnoDB'"
+		bounded := databaseBackupBoundedWriter{w: &result, max: 128}
+		if e.stream(ctx, databaseMySQLQueryArgs(p.Source.ContainerID, query), nil, &bounded) != nil || strings.TrimSpace(result.String()) != "0" {
+			return blob, errDatabaseBackupHeld
+		}
+		if _, err = writer.Write([]byte(databaseMySQLDumpHeader)); err != nil {
+			return blob, err
+		}
+	}
+	args := databaseBackupEngineArgs(p, "backup", p.Source.ContainerID, p.TimeoutSeconds)
 	if p.Component != nil {
 		component, err := domain.HostingPostgresComponent(p.Source, p.SourcePlan, p.Component.Source)
 		if err != nil {
@@ -434,7 +481,7 @@ func (e *databaseBackupEngine) run(parent context.Context, p domain.HostingDatab
 	if e.stream(ctx, args, nil, &writer) != nil || file.Sync() != nil {
 		return blob, errDatabaseBackupHeld
 	}
-	blob = domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Bytes: writer.n, Format: "postgresql_custom"}
+	blob = domain.HostingDatabaseBackupBlob{Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Bytes: writer.n, Format: domain.HostingDatabaseBackupFormatFor(p.Operation.Version)}
 	if blob.Validate() != nil {
 		return blob, errDatabaseBackupHeld
 	}

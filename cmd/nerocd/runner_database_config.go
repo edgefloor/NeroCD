@@ -24,7 +24,7 @@ func runnerDatabaseConfig(enabled, execute bool, complete, stateRoot, secretRoot
 }
 func runnerDatabaseCapabilities(enabled, specified bool, capabilities []string) ([]string, error) {
 	if enabled && !specified {
-		capabilities = []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+		capabilities = []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseMySQLCapability}
 	}
 	has := func(name string) bool {
 		for _, capability := range capabilities {
@@ -34,14 +34,14 @@ func runnerDatabaseCapabilities(enabled, specified bool, capabilities []string) 
 		}
 		return false
 	}
-	if !enabled && (has(domain.HostingDatabaseCapability) || has(domain.RunTypeDatabaseDeploy)) {
+	if !enabled && (has(domain.HostingDatabaseCapability) || has(domain.HostingDatabaseMySQLCapability) || has(domain.RunTypeDatabaseDeploy)) {
 		return nil, errors.New("database capabilities require --hosting-database")
 	}
 	if enabled {
 		if has("shell") {
 			return nil, errors.New("shell and database execution cannot share this runner")
 		}
-		for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability} {
+		for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseMySQLCapability} {
 			if !has(capability) {
 				capabilities = append(capabilities, capability)
 			}

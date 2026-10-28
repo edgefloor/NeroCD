@@ -114,7 +114,7 @@ func databaseConnectionAuthority(ctx context.Context, tx pgx.Tx, op domain.Hosti
 			return err
 		}
 	}
-	if err = requireConnectionAgent(ctx, tx, b.RunnerID, false); err != nil {
+	if err = requireConnectionAgent(ctx, tx, b.RunnerID, false, b.Database.Engine); err != nil {
 		return err
 	}
 	view, err := hostingDatabaseLoad(ctx, q, c.DatabaseResourceID)
@@ -262,7 +262,7 @@ func databaseConnectionLegacyDatabaseGate(ctx context.Context, tx pgx.Tx, op dom
 	if err != nil || hold.ConnectionID != c.ID || hold.OperationID == nil || *hold.OperationID != op.ID {
 		return ErrConflict
 	}
-	return requireConnectionAgent(ctx, tx, op.Snapshot.RunnerID, true)
+	return requireConnectionAgent(ctx, tx, op.Snapshot.RunnerID, true, op.Snapshot.Database.Engine)
 }
 
 func finalDatabaseConnectionAuthority(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority, op domain.HostingOperation, observe, settled bool) error {

@@ -264,6 +264,9 @@ func databaseRedisProbe(ctx context.Context, address string, values []DatabaseCr
 }
 
 func databaseReady(ctx context.Context, address string, plan domain.HostingApplyPlan, values []DatabaseCredentialValue, readOnly bool, initialize bool, before func(context.Context) error) error {
+	if plan.Database.Reference.Engine == "mysql" {
+		return databaseMySQLReady(ctx, address, values)
+	}
 	if plan.Database.Reference.Engine == "redis" {
 		return databaseRedisReady(ctx, address, values, readOnly, before)
 	}

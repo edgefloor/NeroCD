@@ -293,7 +293,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability)
 	}
 	if *logicalDatabaseBackups {
-		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability)
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability)
 		if *hostingRuntimeEnv {
 			registrationCapabilities = append(registrationCapabilities, domain.HostingDatabaseBackupComponentCapability)
 		}

@@ -22,9 +22,13 @@ import (
 	"nerocd/internal/domain"
 )
 
-func backupEngineFixture(t *testing.T) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupPlan) {
+func backupEngineFixture(t *testing.T, engines ...string) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupPlan) {
 	t.Helper()
-	f, credentials := databaseFixture(t, "postgresql")
+	engine := "postgresql"
+	if len(engines) > 0 {
+		engine = engines[0]
+	}
+	f, credentials := databaseFixture(t, engine)
 	t.Cleanup(credentials.Close)
 	result := f.apply(t.Context(), credentials)
 	if result.Outcome != "succeeded" {
@@ -39,7 +43,7 @@ func backupEngineFixture(t *testing.T) (*databaseBackupEngine, *databaseFake, do
 		return nil, nil, false
 	}
 	h := domain.HostingHealthy{OperationID: f.req.OriginOperationID, ContainerID: result.ContainerID, PlanHash: f.plan.Hash, Snapshot: f.plan.Snapshot, Release: f.plan.Release, Storage: &domain.HostingHealthyStorage{Plan: *f.plan.Storage, CreationPlanHash: f.req.OriginPlanHash}}
-	p := domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, ID: "backup", Version: domain.HostingDatabaseBackupVersion, ProjectID: f.req.Storage.ProjectID, SourceResourceID: h.Snapshot.ResourceID, SourceGeneration: 1, BackupID: "backup", Mode: "backup", State: "queued", OwnershipHeld: true}, ActorID: "actor", RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: f.plan, SourceStorage: f.req.Storage, Credentials: f.plan.Database.Credentials, LocationID: "backup", MaxBytes: 1 << 20, TimeoutSeconds: 30}
+	p := domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{MaxBytes: 1 << 20, TimeoutSeconds: 30, ID: "backup", Version: domain.HostingDatabaseBackupVersionFor(engine, f.plan.Snapshot.Database.RecipeVersion), ProjectID: f.req.Storage.ProjectID, SourceResourceID: h.Snapshot.ResourceID, SourceGeneration: 1, BackupID: "backup", Mode: "backup", State: "queued", OwnershipHeld: true}, ActorID: "actor", RunnerID: h.Snapshot.RunnerID, Source: h, SourcePlan: f.plan, SourceStorage: f.req.Storage, Credentials: f.plan.Database.Credentials, LocationID: "backup", MaxBytes: 1 << 20, TimeoutSeconds: 30}
 	p.Hash = domain.HostingDocumentHash(p)
 	if p.Validate() != nil {
 		t.Fatal("invalid backup plan")
@@ -198,16 +202,19 @@ func TestDatabaseBackupGuestDeadlineAndRestoreOwnershipCommand(t *testing.T) {
 	_ = time.Second
 }
 
-func backupRestoreEngineFixture(t *testing.T) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupPlan) {
+func backupRestoreEngineFixture(t *testing.T, engines ...string) (*databaseBackupEngine, *databaseFake, domain.HostingDatabaseBackupPlan) {
 	t.Helper()
-	e, source, p := backupEngineFixture(t)
+	e, source, p := backupEngineFixture(t, engines...)
 	payload := []byte("PGDMPfixture_archive")
+	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+		payload = []byte(databaseMySQLDumpHeader + "CREATE TABLE fixture(id INT);\n")
+	}
 	sum := sha256.Sum256(payload)
 	key := hex.EncodeToString(sum[:])
 	if _, err := e.store.Put(t.Context(), bytes.NewReader(payload), key, int64(len(payload))); err != nil {
 		t.Fatal(err)
 	}
-	target, originalCredentials := databaseFixture(t, "postgresql")
+	target, originalCredentials := databaseFixture(t, p.Source.Snapshot.Database.Engine)
 	originalCredentials.Close()
 	storage := target.req.Storage
 	storage.BindingID += "_target"
@@ -219,7 +226,7 @@ func backupRestoreEngineFixture(t *testing.T) (*databaseBackupEngine, *databaseF
 	snapshot.ResourceID = storage.ResourceID
 	snapshot.RuntimeNamespace = "ncd_" + strings.Repeat("f", 32)
 	snapshot.Storage = storage.Reference()
-	recipe, _ := domain.HostingDatabaseRecipeFor("postgresql", domain.HostingDatabasePostgresRecipe)
+	recipe, _ := domain.HostingDatabaseRecipeFor(p.Source.Snapshot.Database.Engine, p.Source.Snapshot.Database.RecipeVersion)
 	refs := recipe.Credentials
 	for i := range refs {
 		refs[i].SecretID = domain.HostingDatabaseSecretID(snapshot.ResourceID, refs[i].Role)
@@ -258,7 +265,7 @@ func backupRestoreEngineFixture(t *testing.T) (*databaseBackupEngine, *databaseF
 	p.Operation.ID = "restore"
 	p.Operation.Mode = "restore"
 	p.Operation.TargetResourceID = snapshot.ResourceID
-	p.Operation.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + key, Bytes: int64(len(payload)), Format: "postgresql_custom"}
+	p.Operation.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + key, Bytes: int64(len(payload)), Format: domain.HostingDatabaseBackupFormatFor(p.Operation.Version)}
 	p.Target = &h
 	p.TargetPlan = &plan
 	p.TargetStorage = &storage

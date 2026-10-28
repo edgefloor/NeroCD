@@ -33,7 +33,11 @@ func requireHostingDatabaseAgent(ctx context.Context, tx pgx.Tx, snap domain.Hos
 	if domain.ValidateHostingDatabaseSnapshot(snap) != nil || snap.Database == (domain.HostingDatabaseExecutionRef{}) {
 		return ErrConflict
 	}
-	for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability} {
+	capabilities := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability}
+	if snap.Database.Engine == "mysql" {
+		capabilities = append(capabilities, domain.HostingDatabaseMySQLCapability)
+	}
+	for _, capability := range capabilities {
 		ok, err := sqlcgen.New(tx).HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: snap.RunnerID, Capability: capability})
 		if err != nil {
 			return fmt.Errorf("read database runner capability: %w", err)

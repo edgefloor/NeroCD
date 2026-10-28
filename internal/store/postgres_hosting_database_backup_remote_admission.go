@@ -12,7 +12,7 @@ import (
 
 func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabaseBackupPlan, selection domain.BackupTargetSelection) (domain.HostingDatabaseBackupTargetSnapshot, error) {
 	var zero domain.HostingDatabaseBackupTargetSnapshot
-	if selection.Validate() != nil {
+	if selection.Validate() != nil || p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
 		return zero, ErrConflict
 	}
 	var current int64

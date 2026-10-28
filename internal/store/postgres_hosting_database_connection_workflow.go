@@ -94,7 +94,7 @@ func (s *PostgresStore) databaseConnectionStep(ctx context.Context, id string) (
 		if json.Unmarshal(c.AcceptedRequest, &step.input) != nil {
 			return step, ErrConflict
 		}
-		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, true); err != nil {
+		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, true, binding.Database.Engine); err != nil {
 			return step, err
 		}
 		advance := func(state, reason string) error {

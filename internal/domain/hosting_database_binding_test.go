@@ -13,6 +13,9 @@ func databaseBindingFixture(t *testing.T, engine string) (HostingDatabaseBinding
 	if engine == "redis" {
 		version = HostingDatabaseRedisRecipe
 	}
+	if engine == "mysql" {
+		version = HostingDatabaseMySQLRecipe
+	}
 	s, release, storage, db := databaseExecutionFixture(t, engine, version, 1)
 	database, err := CompileHostingDatabasePlan(s, release, nil, storage, db)
 	if err != nil {
@@ -102,7 +105,7 @@ func TestHostingDatabaseBindingProfilesAndStableIdentity(t *testing.T) {
 			}
 		})
 	}
-	if HostingDatabaseBindingID("same", "same") != "" || HostingDatabaseBindingID("/foreign", "db") != "" || HostingDatabaseBindingAlias("") != "" || HostingDatabaseBindingEnvironmentNames("mysql") != nil {
+	if HostingDatabaseBindingID("same", "same") != "" || HostingDatabaseBindingID("/foreign", "db") != "" || HostingDatabaseBindingAlias("") != "" || HostingDatabaseBindingEnvironmentNames("mariadb") != nil {
 		t.Fatal("invalid identity or unsupported profile accepted")
 	}
 }

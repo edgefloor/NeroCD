@@ -272,6 +272,11 @@ func databaseSecretFiles(operation string, plan domain.HostingApplyPlan, values 
 	files := map[string][]byte{}
 	if plan.Database.Reference.Engine == "postgresql" {
 		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
+	} else if plan.Database.Reference.Engine == "mysql" {
+		files["admin-password"] = bytes.Clone(databasePassword(values, "admin"))
+		files["app-password"] = bytes.Clone(databasePassword(values, "app"))
+		files["admin.cnf"] = []byte("[client]\nuser=root\npassword=" + string(databasePassword(values, "admin")) + "\nsocket=/var/run/mysqld/mysqld.sock\n")
+		files["app.cnf"] = []byte("[client]\nuser=ncd_app\npassword=" + string(databasePassword(values, "app")) + "\ndatabase=app\n")
 	} else {
 		app := sha256.Sum256(databasePassword(values, "app"))
 		probe := sha256.Sum256(databasePassword(values, "probe"))

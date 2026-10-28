@@ -30,7 +30,7 @@ func TestRunnerDatabaseCapabilitiesDefaultOffAndNoShell(t *testing.T) {
 	if got, err := runnerDatabaseCapabilities(false, false, []string{"shell"}); err != nil || !slices.Equal(got, []string{"shell"}) {
 		t.Fatal("ordinary capabilities changed", err)
 	}
-	for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability} {
+	for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability} {
 		if _, err := runnerDatabaseCapabilities(false, true, []string{capability}); err == nil {
 			t.Fatal("accepted database capability without config")
 		}
@@ -42,7 +42,7 @@ func TestRunnerDatabaseCapabilitiesDefaultOffAndNoShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability} {
+	for _, capability := range []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.HostingOwnedStorageCapability} {
 		if !slices.Contains(got, capability) {
 			t.Fatal("database prerequisite absent")
 		}

@@ -40,7 +40,7 @@ func (s *PostgresStore) RequestHostingDatabaseConnectionRecovery(ctx context.Con
 		if err != nil {
 			return zero, err
 		}
-		if err = requireConnectionAgent(ctx, tx, b.RunnerID, false); err != nil {
+		if err = requireConnectionAgent(ctx, tx, b.RunnerID, false, b.Database.Engine); err != nil {
 			return zero, err
 		}
 		requestHash := domain.HostingDocumentHash(in)

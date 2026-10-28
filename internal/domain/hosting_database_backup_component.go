@@ -52,7 +52,7 @@ type HostingDatabaseBackupComponentPlan struct {
 }
 
 func (o HostingDatabaseBackupOperation) validateComponentIdentity() error {
-	if o.Version == HostingDatabaseBackupVersion {
+	if o.Version == HostingDatabaseBackupVersion || o.Version == HostingDatabaseMySQLBackupVersion {
 		if o.SourceComponent != "" || o.SourceDeployedOperationID != "" || o.TargetComponent != "" || o.TargetDeployedOperationID != "" {
 			return ErrInvalidDatabaseBackup
 		}

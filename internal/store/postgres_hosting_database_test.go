@@ -37,6 +37,9 @@ func hostingDatabaseFixture(t *testing.T, engine string) (*store.PostgresStore, 
 	if engine == "redis" {
 		version = domain.HostingDatabaseRedisRecipe
 	}
+	if engine == "mysql" {
+		version = domain.HostingDatabaseMySQLRecipe
+	}
 	in := domain.HostingDatabaseCreateInput{RequestID: strings.Repeat("a", 32), ProjectID: r.ProjectID, ProjectEnvironmentID: r.ProjectEnvironmentID, Name: "database fixture", DestinationID: destination.ID, Engine: engine, RecipeVersion: version}
 	return pg, db, s, ctx, in
 }

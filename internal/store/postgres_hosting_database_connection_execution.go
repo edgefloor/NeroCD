@@ -123,7 +123,7 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if err != nil {
 			return zero, err
 		}
-		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, false); err != nil {
+		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, false, binding.Database.Engine); err != nil {
 			return zero, err
 		}
 		requestHash := domain.HostingDocumentHash(struct {
@@ -292,7 +292,7 @@ func (s *PostgresStore) RequestHostingApplicationDatabaseDeployment(ctx context.
 		if err = finalizeConnectionRequest(ctx, tx, c, binding, actor, domain.RoleOwner, false); err != nil {
 			return zero, err
 		}
-		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, false); err != nil {
+		if err = requireConnectionAgent(ctx, tx, binding.RunnerID, false, binding.Database.Engine); err != nil {
 			return zero, err
 		}
 		if err = proxyCheckLegacyToken(ctx, tx, actor); err != nil {

@@ -45,7 +45,7 @@ func databaseConnectionBindingGate(ctx context.Context, tx pgx.Tx, app, database
 	return nil
 }
 
-func requireConnectionAgent(ctx context.Context, tx pgx.Tx, runner string, initial bool) error {
+func requireConnectionAgent(ctx context.Context, tx pgx.Tx, runner string, initial bool, engine ...string) error {
 	q := sqlcgen.New(tx)
 	r, err := q.LockObservationRunner(ctx, runner)
 	if err != nil {
@@ -55,6 +55,9 @@ func requireConnectionAgent(ctx context.Context, tx pgx.Tx, runner string, initi
 		return ErrConflict
 	}
 	capabilities := []string{domain.HostingApplicationDatabaseCapability, domain.HostingDatabaseMaintenanceCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingReleasePortsCapability, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseDeploy, domain.RunTypeImageDeploy}
+	if len(engine) > 0 && engine[0] == "mysql" {
+		capabilities = append(capabilities, domain.HostingDatabaseMySQLCapability)
+	}
 	if initial {
 		capabilities = append(capabilities, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability)
 	}
@@ -171,7 +174,7 @@ func finalizeConnectionRequest(ctx context.Context, tx pgx.Tx, c sqlcgen.Hosting
 		return err
 	}
 	if initial {
-		if err := requireConnectionAgent(ctx, tx, b.RunnerID, true); err != nil {
+		if err := requireConnectionAgent(ctx, tx, b.RunnerID, true, b.Database.Engine); err != nil {
 			return err
 		}
 	}
@@ -212,7 +215,11 @@ func (s *PostgresStore) ConnectHostingApplicationDatabase(ctx context.Context, i
 		if err = databaseBindingGrant(ctx, q, app.ProjectID, app.DestinationID); err != nil {
 			return zero, err
 		}
-		if err = requireConnectionAgent(ctx, tx, app.RunnerID, true); err != nil {
+		view, err := hostingDatabaseLoad(ctx, q, in.Binding.DatabaseResourceID)
+		if err != nil {
+			return zero, err
+		}
+		if err = requireConnectionAgent(ctx, tx, app.RunnerID, true, view.Engine); err != nil {
 			return zero, err
 		}
 		old, err := q.ReadDatabaseConnection(ctx, application)
@@ -407,7 +414,7 @@ func (s *PostgresStore) ListEligibleHostingDatabases(ctx context.Context, actor,
 			if err != nil {
 				return zero, err
 			}
-			if err = requireConnectionAgent(ctx, tx, app.RunnerID, true); err != nil {
+			if err = requireConnectionAgent(ctx, tx, app.RunnerID, true, healthy.Snapshot.Database.Engine); err != nil {
 				return zero, err
 			}
 			resource, err := q.GetResource(ctx, id)

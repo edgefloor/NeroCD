@@ -184,6 +184,10 @@ func databaseBindingEntries(binding domain.HostingDatabaseBinding) []domain.Host
 		literals = map[string]string{"PGHOST": binding.Alias, "PGPORT": strconv.Itoa(recipe.ContainerPort), "PGDATABASE": recipe.DatabaseName, "PGUSER": binding.Credential.Username}
 		password = "PGPASSWORD"
 	}
+	if binding.Database.Engine == "mysql" {
+		literals = map[string]string{"MYSQL_HOST": binding.Alias, "MYSQL_PORT": strconv.Itoa(recipe.ContainerPort), "MYSQL_DATABASE": recipe.DatabaseName, "MYSQL_USER": binding.Credential.Username}
+		password = "MYSQL_PASSWORD"
+	}
 	entries := make([]domain.HostingRuntimeEntry, 0, len(binding.EnvironmentNames))
 	for _, name := range binding.EnvironmentNames {
 		entry := domain.HostingRuntimeEntry{Name: name, Kind: "literal"}

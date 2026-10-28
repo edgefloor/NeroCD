@@ -288,6 +288,11 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	if remoteCap != options.RemoteDatabaseBackups || remoteTask != options.RemoteDatabaseBackups || remoteCap && (!options.LogicalDatabaseBackups || !options.Database || shellCapable) {
 		return "", errors.New("authenticated remote backup capability does not match explicit configuration")
 	}
+	for _, capability := range result.Capabilities {
+		if capability == domain.HostingDatabaseMySQLCapability && (!options.Database || shellCapable) || capability == domain.HostingDatabaseMySQLBackupCapability && (!options.Database || !options.LogicalDatabaseBackups || shellCapable) {
+			return "", errors.New("authenticated MySQL capability requires explicit database configuration")
+		}
+	}
 	backupCapability, backupTask := false, false
 	for _, capability := range result.Capabilities {
 		backupCapability = backupCapability || capability == domain.HostingDatabaseBackupCapability

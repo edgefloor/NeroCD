@@ -81,7 +81,7 @@ type HostingDatabaseBackupBlob struct {
 
 // Validate checks the database backup blob fields and invariants.
 func (b HostingDatabaseBackupBlob) Validate() error {
-	if !imageSHA256.MatchString(b.Digest) || b.Bytes < 5 || b.Bytes > HostingDatabaseBackupMaxBytes || b.Format != "postgresql_custom" {
+	if !imageSHA256.MatchString(b.Digest) || b.Bytes < 5 || b.Bytes > HostingDatabaseBackupMaxBytes || (b.Format != "postgresql_custom" && b.Format != "mysql_sql") {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
@@ -136,6 +136,12 @@ type HostingDatabaseBackupPlan struct {
 
 // Validate checks the database backup plan fields and invariants.
 func (p HostingDatabaseBackupPlan) Validate() error {
+	if p.Operation.Blob != nil && (p.Operation.Blob.Validate() != nil || p.Operation.Blob.Format != HostingDatabaseBackupFormatFor(p.Operation.Version)) {
+		return ErrInvalidDatabaseBackup
+	}
+	if p.Operation.Version == HostingDatabaseMySQLBackupVersion && p.Operation.RemoteTarget != nil {
+		return ErrInvalidDatabaseBackup
+	}
 	if p.Operation.Version == HostingDatabaseBackupComponentVersion {
 		return p.validateComponent()
 	}
@@ -144,14 +150,14 @@ func (p HostingDatabaseBackupPlan) Validate() error {
 	}
 	hash := p.Hash
 	p.Hash = ""
-	if hash != HostingDocumentHash(p) || p.Operation.Version != HostingDatabaseBackupVersion || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || p.RunnerID != p.Source.Snapshot.RunnerID || p.Operation.SourceResourceID != p.Source.Snapshot.ResourceID || p.SourcePlan.Hash != p.Source.PlanHash || (ValidateHostingDatabasePlan(p.SourcePlan) != nil && ValidateHostingDatabasePlanV2(p.SourcePlan) != nil) || ValidateHostingHealthyStorage(p.Source) != nil || p.Source.Snapshot.Database.Engine != "postgresql" || p.Source.Snapshot.Database.RecipeVersion != HostingDatabasePostgresRecipe || p.SourceStorage.Validate() != nil || p.SourceStorage.Reference() != p.Source.Snapshot.Storage || p.MaxBytes < 5 || p.MaxBytes > HostingDatabaseBackupMaxBytes || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || p.LocationID != p.Operation.BackupID {
+	if hash != HostingDocumentHash(p) || (HostingDatabaseBackupVersionFor(p.Source.Snapshot.Database.Engine, p.Source.Snapshot.Database.RecipeVersion) == "" || p.Operation.Version != HostingDatabaseBackupVersionFor(p.Source.Snapshot.Database.Engine, p.Source.Snapshot.Database.RecipeVersion)) || !validRuntimeReferenceID(p.Operation.ID) || !validRuntimeReferenceID(p.ActorID) || p.RunnerID != p.Source.Snapshot.RunnerID || p.Operation.SourceResourceID != p.Source.Snapshot.ResourceID || p.SourcePlan.Hash != p.Source.PlanHash || (ValidateHostingDatabasePlan(p.SourcePlan) != nil && ValidateHostingDatabasePlanV2(p.SourcePlan) != nil) || ValidateHostingHealthyStorage(p.Source) != nil || p.SourceStorage.Validate() != nil || p.SourceStorage.Reference() != p.Source.Snapshot.Storage || p.MaxBytes < 5 || p.MaxBytes > HostingDatabaseBackupMaxBytes || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 3600 || p.LocationID != p.Operation.BackupID {
 		return ErrInvalidDatabaseBackup
 	}
 	if p.Operation.MaxBytes != p.MaxBytes || p.Operation.TimeoutSeconds != p.TimeoutSeconds || p.Operation.ProjectID != p.SourceStorage.ProjectID || p.Operation.SourceGeneration != p.Source.Snapshot.ResourceGeneration || p.Source.Snapshot != p.SourcePlan.Snapshot || p.Source.Release != p.SourcePlan.Release || p.Source.Storage == nil || p.SourcePlan.Storage == nil || p.Source.Storage.Plan != *p.SourcePlan.Storage || HostingDocumentHash(p.Credentials) != HostingDocumentHash(p.SourcePlan.Database.Credentials) {
 		return ErrInvalidDatabaseBackup
 	}
 	if p.Operation.Mode == "restore" {
-		if p.TargetStorage == nil || p.TargetStorage.Validate() != nil || p.Target == nil || p.TargetStorage.Reference() != p.Target.Snapshot.Storage || p.TargetPlan == nil || p.Target.Snapshot.Database.Engine != "postgresql" || p.Target.Snapshot.Database.RecipeVersion != HostingDatabasePostgresRecipe || p.Target.Snapshot != p.TargetPlan.Snapshot || p.Target.Release != p.TargetPlan.Release || p.Target.ContainerID == p.Source.ContainerID || p.TargetStorage.ID == p.SourceStorage.ID || p.TargetStorage.VolumeName == p.SourceStorage.VolumeName || p.Target.Snapshot.BindingID == p.Source.Snapshot.BindingID || p.Operation.TargetResourceID != p.Target.Snapshot.ResourceID || p.Target.Snapshot.DestinationID != p.Source.Snapshot.DestinationID || p.Target.Release.DaemonID != p.Source.Release.DaemonID || p.Target.Snapshot.ResourceID == p.Source.Snapshot.ResourceID || p.TargetPlan.Hash != p.Target.PlanHash || ValidateHostingDatabasePlan(*p.TargetPlan) != nil || ValidateHostingHealthyStorage(*p.Target) != nil || p.Operation.Blob == nil || p.Operation.Blob.Validate() != nil {
+		if p.TargetStorage == nil || p.TargetStorage.Validate() != nil || p.Target == nil || p.TargetStorage.Reference() != p.Target.Snapshot.Storage || p.TargetPlan == nil || p.Target.Snapshot.Database.Engine != p.Source.Snapshot.Database.Engine || p.Target.Snapshot.Database.RecipeVersion != p.Source.Snapshot.Database.RecipeVersion || p.Target.Snapshot != p.TargetPlan.Snapshot || p.Target.Release != p.TargetPlan.Release || p.Target.ContainerID == p.Source.ContainerID || p.TargetStorage.ID == p.SourceStorage.ID || p.TargetStorage.VolumeName == p.SourceStorage.VolumeName || p.Target.Snapshot.BindingID == p.Source.Snapshot.BindingID || p.Operation.TargetResourceID != p.Target.Snapshot.ResourceID || p.Target.Snapshot.DestinationID != p.Source.Snapshot.DestinationID || p.Target.Release.DaemonID != p.Source.Release.DaemonID || p.Target.Snapshot.ResourceID == p.Source.Snapshot.ResourceID || p.TargetPlan.Hash != p.Target.PlanHash || ValidateHostingDatabasePlan(*p.TargetPlan) != nil || ValidateHostingHealthyStorage(*p.Target) != nil || p.Operation.Blob == nil || p.Operation.Blob.Validate() != nil {
 			return ErrInvalidDatabaseBackup
 		}
 	} else if p.Operation.Mode != "backup" || p.Target != nil || p.TargetPlan != nil {
@@ -277,10 +283,10 @@ func (o HostingDatabaseBackupOperation) Validate() error {
 	if o.validateComponentIdentity() != nil {
 		return ErrInvalidDatabaseBackup
 	}
-	if o.RemoteTarget != nil && o.RemoteTarget.Validate() != nil {
+	if o.RemoteTarget != nil && (o.Version == HostingDatabaseMySQLBackupVersion || o.RemoteTarget.Validate() != nil) {
 		return ErrInvalidDatabaseBackup
 	}
-	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || (o.Version != HostingDatabaseBackupVersion && o.Version != HostingDatabaseBackupComponentVersion) || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {
+	if !validRuntimeReferenceID(o.ID) || !validRuntimeReferenceID(o.ProjectID) || !validRuntimeReferenceID(o.SourceResourceID) || !validRuntimeReferenceID(o.BackupID) || o.SourceGeneration < 1 || o.MaxBytes < 1 || o.MaxBytes > HostingDatabaseBackupMaxBytes || o.TimeoutSeconds < 1 || o.TimeoutSeconds > 3600 || HostingDatabaseBackupFormatFor(o.Version) == "" || o.Consistency != "logical_snapshot_source_writable" || o.CreatedAt.IsZero() || o.UpdatedAt.IsZero() {
 		return ErrInvalidDatabaseBackup
 	}
 	switch o.State {
@@ -300,7 +306,7 @@ func (o HostingDatabaseBackupOperation) Validate() error {
 	default:
 		return ErrInvalidDatabaseBackup
 	}
-	if o.Blob != nil && o.Blob.Validate() != nil || o.State == "succeeded" && (o.Blob == nil || o.OwnershipHeld) || o.State == "uncertain" && !o.OwnershipHeld {
+	if o.Blob != nil && (o.Blob.Validate() != nil || o.Blob.Format != HostingDatabaseBackupFormatFor(o.Version)) || o.State == "succeeded" && (o.Blob == nil || o.OwnershipHeld) || o.State == "uncertain" && !o.OwnershipHeld {
 		return ErrInvalidDatabaseBackup
 	}
 	return nil
@@ -323,4 +329,34 @@ func (l HostingDatabaseBackupLimits) Validate() error {
 // DefaultHostingDatabaseBackupLimits returns the default backup size and timeout limits.
 func DefaultHostingDatabaseBackupLimits() HostingDatabaseBackupLimits {
 	return HostingDatabaseBackupLimits{MaxBytes: HostingDatabaseBackupMaxBytes, TimeoutSeconds: 900}
+}
+
+// HostingDatabaseBackupVersionFor admits only qualified standalone logical recipe formats.
+func HostingDatabaseBackupVersionFor(engine, recipe string) string {
+	if engine == "postgresql" && recipe == HostingDatabasePostgresRecipe {
+		return HostingDatabaseBackupVersion
+	}
+	if engine == "mysql" && recipe == HostingDatabaseMySQLRecipe {
+		return HostingDatabaseMySQLBackupVersion
+	}
+	return ""
+}
+
+// HostingDatabaseBackupFormatFor binds archive representation to its engine protocol.
+func HostingDatabaseBackupFormatFor(version string) string {
+	switch version {
+	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
+		return "postgresql_custom"
+	case HostingDatabaseMySQLBackupVersion:
+		return "mysql_sql"
+	}
+	return ""
+}
+
+// HostingDatabaseBackupCapabilityFor selects the exact engine adapter capability.
+func HostingDatabaseBackupCapabilityFor(version string) string {
+	if version == HostingDatabaseMySQLBackupVersion {
+		return HostingDatabaseMySQLBackupCapability
+	}
+	return HostingDatabaseBackupCapability
 }
