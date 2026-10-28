@@ -163,3 +163,24 @@ func TestPostgresSSHCapabilityDispatchAndClaim(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresLegacyHTTPSPolicyDoesNotExposeSSHPins(t *testing.T) {
+	f := newBuildStoreFixture(t)
+	src := f.src
+	src.Generation = 2
+	src.Policy.SSHHostFingerprints = []string{"SHA256:" + strings.Repeat("A", 43)}
+	if _, err := configureBuildFixtureSource(f.pg, t.Context(), "usr_bootstrap", 1, src, destinationEvent("legacy_https_pins")); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := f.pg.GetResource(t.Context(), src.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resource.Source.Git.SSHHostFingerprints) != 0 {
+		t.Fatal("HTTPS policy pins exposed as SSH config")
+	}
+	saved, err := f.pg.GetHostingBuildSource(t.Context(), "usr_bootstrap", src.ResourceID)
+	if err != nil || domain.HostingDocumentHash(saved) != domain.HostingDocumentHash(src) {
+		t.Fatal("legacy HTTPS source body changed", err)
+	}
+}

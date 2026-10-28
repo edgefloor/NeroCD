@@ -42,7 +42,11 @@ func expandGitResource(ctx context.Context, q *sqlcgen.Queries, item domain.Reso
 		item.Source = domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation, ContentHash: src.ContentHash, DockerfileResourceConfiguration: domain.DockerfileResourceConfiguration{Content: src.Content, Settings: src.Settings.Clone()}}}
 		return item, nil
 	}
-	item.Source.Git = &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: slices.Clone(src.Policy.SSHHostFingerprints), Settings: src.Settings}}
+	var pins []string
+	if src.CredentialKind == "ssh_private_key" {
+		pins = slices.Clone(src.Policy.SSHHostFingerprints)
+	}
+	item.Source.Git = &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: pins, Settings: src.Settings}}
 	return item, nil
 }
 func (s *PostgresStore) mutateHostingResource(ctx context.Context, item domain.Resource, expected int64, create bool, opts []MutationOption) (domain.Resource, error) {

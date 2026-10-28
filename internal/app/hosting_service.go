@@ -359,7 +359,11 @@ func publicGitResourceSource(src domain.HostingGitSource) domain.ResourceSource 
 	if src.Kind == "dockerfile" {
 		return domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation, ContentHash: src.ContentHash, DockerfileResourceConfiguration: domain.DockerfileResourceConfiguration{Content: src.Content, Settings: src.Settings.Clone()}}}
 	}
-	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: slices.Clone(src.Policy.SSHHostFingerprints), Settings: src.Settings}}}
+	var pins []string
+	if src.CredentialKind == "ssh_private_key" {
+		pins = slices.Clone(src.Policy.SSHHostFingerprints)
+	}
+	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, SSHHostFingerprints: pins, Settings: src.Settings}}}
 }
 func gitResourceError(err error) error {
 	if errors.Is(err, store.ErrGitResourceUnavailable) {

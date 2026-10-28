@@ -288,3 +288,32 @@ func TestSSHGitResourceConfigurationPinsCanonicalIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyHTTPSGitPolicyPinsRemainPrivate(t *testing.T) {
+	service, _ := newServiceAccountTestService(t)
+	for _, kind := range []string{"public", "https_basic"} {
+		t.Run(kind, func(t *testing.T) {
+			configuration := domain.GitResourceConfiguration{RepositoryURL: "https://github.com/team/repo.git", RequestedRef: "main", CredentialKind: kind, Settings: domain.HostingBuildSettings{Strategy: "dockerfile"}}
+			input := domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{GitResourceConfiguration: configuration}}
+			item := domain.Resource{ID: "resource", ProjectID: "project"}
+			source, err := service.publicGitSource(item, input, "source", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source.Policy.SSHHostFingerprints = []string{"SHA256:" + strings.Repeat("A", 43)}
+			originalHash := domain.HostingDocumentHash(source)
+			public := publicGitResourceSource(source)
+			if len(public.Git.SSHHostFingerprints) != 0 {
+				t.Fatal("legacy HTTPS policy pins became public SSH configuration")
+			}
+			public.Git.SourceID = ""
+			public.Git.Generation = 0
+			if _, err := service.publicGitSource(item, public, "source", 1); err != nil {
+				t.Fatal("legacy HTTPS edit refused", err)
+			}
+			if domain.HostingDocumentHash(source) != originalHash {
+				t.Fatal("projection mutated legacy source")
+			}
+		})
+	}
+}
