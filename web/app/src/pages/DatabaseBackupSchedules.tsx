@@ -86,7 +86,7 @@ function DatabaseBackupSchedulePanel({
     queryKey: key,
     queryFn: ({ signal }) =>
       listDatabaseBackupSchedules(scope, database, signal),
-    enabled: !blocked && !accessRevoked && database.engine === "postgresql",
+    enabled: !blocked && !accessRevoked && ["postgresql", "mysql"].includes(database.engine),
     retry: false,
     refetchInterval: 10000,
   });
@@ -116,7 +116,7 @@ function DatabaseBackupSchedulePanel({
       onDenied();
     }
   }, [denied]);
-  if (database.engine !== "postgresql") return null;
+  if (!["postgresql", "mysql"].includes(database.engine)) return null;
   if (denied) return <p role="alert">Backup schedule access is unavailable.</p>;
   function review(schedule?: DatabaseBackupSchedule) {
     if (attempt || pending) return;
@@ -183,7 +183,7 @@ function DatabaseBackupSchedulePanel({
       aria-label="Database backup schedules"
       className="min-w-0 space-y-3 rounded-xl border p-3"
     >
-      <h4 className="font-medium">PostgreSQL backup schedules</h4>
+      <h4 className="font-medium">{database.engine === "mysql" ? "MySQL" : "PostgreSQL"} backup schedules</h4>
       <p>
         Save a five-field cron expression or every_minute, hourly, daily,
         weekly, monthly or yearly. The IANA timezone is explicit. The controller
@@ -194,9 +194,7 @@ function DatabaseBackupSchedulePanel({
         Disable stops future discovery. Accepted work keeps its original
         identity and authority checks. Overlapping backups of the same source
         are skipped. Missed, denied and failed occurrences remain in history.
-        External notifications are not available. Retention is configured in the
-        backup retention section. Remote uploads
-        have separate transfer status in backup history.
+        External notifications are not available. {database.engine === "mysql" ? "MySQL schedules create local logical backups only. Remote copies and retention controls are not available for MySQL." : "Retention is configured in the backup retention section. Remote uploads have separate transfer status in backup history."}
       </p>
       {!owner ? (
         <p>
@@ -232,13 +230,13 @@ function DatabaseBackupSchedulePanel({
               onChange={(e) => setTimezone(e.target.value)}
             />
           </label>
-          <BackupDestinationSelect
+          {database.engine === "postgresql" ? <BackupDestinationSelect
             label="Scheduled backup destination"
             value={remoteTarget}
             onChange={setRemoteTarget}
             destinations={destinations}
             disabled={unavailable}
-          />
+          /> : null}
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -268,7 +266,7 @@ function DatabaseBackupSchedulePanel({
                     frequency,
                     timezone,
                     enabled,
-                    ...(remoteTarget ? { remote_target: remoteTarget } : {}),
+                    ...(database.engine === "postgresql" && remoteTarget ? { remote_target: remoteTarget } : {}),
                   },
                 })
               }
@@ -382,7 +380,7 @@ function DatabaseBackupSchedulePanel({
                           frequency: s.frequency,
                           timezone: s.timezone,
                           enabled: !s.enabled,
-                          ...(s.remote_target
+                          ...(database.engine === "postgresql" && s.remote_target
                             ? { remote_target: s.remote_target }
                             : {}),
                         },

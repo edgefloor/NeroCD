@@ -310,3 +310,26 @@ test("Compose create requires deployment, disable omits it, replies retain compo
     ),
   ).rejects.toThrow();
 });
+
+
+test("MySQL schedules require native engine evidence and reject PostgreSQL, component, and remote metadata", () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const local = { ...schedule, version: "mysql.logical-local.schedule.v1" };
+ expect(parseDatabaseBackupSchedule(local, scope, mysql)).toEqual(local);
+ for (const context of [db, { ...db, engine: "postgresql" as const }]) expect(() => parseDatabaseBackupSchedule(local, scope, context)).toThrow();
+ for (const invalid of [schedule, { ...local, component: "mysql" }, { ...local, remote_target: { target_id: "remote", revision: 1 } }]) expect(() => parseDatabaseBackupSchedule(invalid, scope, mysql)).toThrow();
+ expect(parseDatabaseBackupOccurrence(occurrence, scope, mysql, "schedule")).toEqual(occurrence);
+ expect(() => parseDatabaseBackupOccurrence({ ...occurrence, component: "mysql" }, scope, mysql, "schedule")).toThrow();
+});
+test("MySQL schedule transport keeps the native local payload and rejects remote or component requests before sending", async () => {
+ const mysql = { ...db, engine: "mysql" as const };
+ const local = { ...schedule, version: "mysql.logical-local.schedule.v1" };
+ const input = { request_id: "stable_request", expected_resource_generation: 2, expected_version: 0, frequency: "daily", timezone: "UTC", enabled: true };
+ const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(local)));
+ vi.stubGlobal("fetch", fetch);
+ expect(await saveDatabaseBackupSchedule(scope, mysql, "", input, new AbortController().signal)).toEqual(local);
+ expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
+ fetch.mockClear();
+ for (const change of [{ remote_target: { target_id: "remote", revision: 1 } }, { component: "mysql", expected_deployed_operation_id: "operation" }, { expected_deployed_operation_id: "operation" }]) await expect(saveDatabaseBackupSchedule(scope, mysql, "", { ...input, ...change }, new AbortController().signal)).rejects.toThrow();
+ expect(fetch).not.toHaveBeenCalled();
+});

@@ -67,6 +67,7 @@ beforeEach(() => {
     async (_scope, _database, id, input) => {
       const out = {
         ...saved,
+        version: _database.engine === "mysql" ? "mysql.logical-local.schedule.v1" as const : saved.version,
         id: id || saved.id,
         revision: input.expected_version + 1,
         frequency: input.frequency,
@@ -83,12 +84,12 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-function mount(owner = true, strict = false) {
+function mount(owner = true, strict = false, initialDatabase = database) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const denied = vi.fn();
-  const element = (db = database) => (
+  const element = (db = initialDatabase) => (
     <QueryClientProvider client={client}>
       <DatabaseBackupSchedules
         database={db}
@@ -119,8 +120,9 @@ async function enabledButton(name = "Create backup schedule") {
   );
   return screen.getByRole("button", { name });
 }
-test("StrictMode owner creates, edits and disables with exact reviewed revisions", async () => {
-  mount(true, true);
+test.each(["postgresql", "mysql"] as const)("%s StrictMode owner creates, edits and disables with exact reviewed revisions", async (engine) => {
+  mount(true, true, { ...database, engine });
+  if (engine === "mysql") expect(screen.queryByLabelText("Scheduled backup destination")).toBeNull();
   await enabledButton();
   fireEvent.change(screen.getByLabelText("Backup frequency"), {
     target: { value: "every_minute" },
@@ -142,6 +144,7 @@ test("StrictMode owner creates, edits and disables with exact reviewed revisions
     enabled: true,
   });
   expect(first[4].aborted).toBe(false);
+  expect(Object.keys(first[3]).sort()).toEqual(["enabled", "expected_resource_generation", "expected_version", "frequency", "request_id", "timezone"]);
   fireEvent.click(await enabledButton("Disable schedule"));
   await screen.findByText(/Saved schedule schedule revision 2/);
   expect(savedCall(1)[3]).toMatchObject({
@@ -162,8 +165,8 @@ test("StrictMode owner creates, edits and disables with exact reviewed revisions
     enabled: false,
   });
 });
-test("viewer reads occurrences without mutation controls or inferred restore authority", async () => {
-  values = [saved];
+test.each(["postgresql", "mysql"] as const)("%s viewer reads occurrences without mutation controls or inferred restore authority", async (engine) => {
+  values = [{ ...saved, version: engine === "mysql" ? "mysql.logical-local.schedule.v1" : saved.version }];
   vi.mocked(api.listDatabaseBackupOccurrences).mockResolvedValue([
     {
       id: "occurrence",
@@ -181,7 +184,7 @@ test("viewer reads occurrences without mutation controls or inferred restore aut
       created_at: "2026-10-25T12:00:03Z",
     },
   ]);
-  mount(false);
+  mount(false, false, { ...database, engine });
   fireEvent.click(
     await screen.findByRole("button", { name: "View occurrences" }),
   );

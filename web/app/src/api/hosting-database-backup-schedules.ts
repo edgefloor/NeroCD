@@ -16,7 +16,8 @@ export type DatabaseBackupSchedule = Omit<
 > & {
   version:
     | "postgresql.logical-local.schedule.v1"
-    | "postgresql.compose-logical-local.schedule.v1";
+    | "postgresql.compose-logical-local.schedule.v1"
+    | "mysql.logical-local.schedule.v1";
   component?: string;
   remote_target?: RemoteBackupTarget;
 };
@@ -30,7 +31,8 @@ export type DatabaseBackupOccurrence =
   components["schemas"]["HostingDatabaseBackupOccurrence"] & {
     component?: string;
   };
-type ScheduleContext = Pick<HostingDatabase, "resource">;
+type ScheduleContext = Pick<HostingDatabase, "resource"> &
+  Partial<Pick<HostingDatabase, "engine">>;
 const componentName = (v: unknown): v is string =>
   typeof v === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(v);
 const identifier = (v: unknown): v is string =>
@@ -164,10 +166,14 @@ export function parseDatabaseBackupSchedule(
   if (
     !identifier(v.id) ||
     (v.version !== "postgresql.logical-local.schedule.v1" &&
-      v.version !== "postgresql.compose-logical-local.schedule.v1") ||
+      v.version !== "postgresql.compose-logical-local.schedule.v1" &&
+      v.version !== "mysql.logical-local.schedule.v1") ||
     (v.version === "postgresql.compose-logical-local.schedule.v1"
       ? !componentName(v.component) || v.remote_target !== undefined
       : v.component !== undefined) ||
+    (v.version === "mysql.logical-local.schedule.v1" &&
+      (database.engine !== "mysql" || v.remote_target !== undefined)) ||
+    (database.engine === "mysql" && v.version !== "mysql.logical-local.schedule.v1") ||
     v.project_id !== scope.project ||
     v.resource_id !== database.resource.id ||
     !positive(v.revision) ||
@@ -208,7 +214,7 @@ export function parseDatabaseBackupOccurrence(
   const v = document(raw, occurrenceRequired, occurrenceAllowed);
   if (
     !identifier(v.id) ||
-    (v.component !== undefined && !componentName(v.component)) ||
+    (v.component !== undefined && (database.engine === "mysql" || !componentName(v.component))) ||
     v.schedule_id !== schedule ||
     !identifier(v.schedule_id) ||
     v.project_id !== scope.project ||
@@ -313,6 +319,12 @@ export async function saveDatabaseBackupSchedule(
       : input.expected_deployed_operation_id !== undefined
   )
     return fail();
+  if (
+    database.engine === "mysql" &&
+    [input.component, input.expected_deployed_operation_id, input.remote_target].some(
+      value => value !== undefined,
+    )
+  ) return fail();
   if (input.remote_target !== undefined)
     parseRemoteBackupTarget(input.remote_target);
   const raw = await boundedDatabaseRequest(

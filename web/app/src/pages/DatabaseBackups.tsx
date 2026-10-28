@@ -243,7 +243,7 @@ function DatabaseBackupsPanel({
       <p>
         A backup captures a consistent logical snapshot of the app database
         while source writes continue. The operator sets byte and execution
-        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate local backups and restore into a separate new database. Schedules, retention, and remote copies are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
+        limits; each accepted operation records its exact limits. {database.engine === "mysql" ? "MySQL requires hosting_mysql_backup_v1 for immediate or scheduled local backups and restore into a separate new database. Retention and remote copies are not available for MySQL." : "Schedules and S3-compatible destinations are configured below. Upload status is separate from dump completion."}
       </p>
       <p>
         Restore creates a new private database with distinct credentials and
