@@ -70,7 +70,7 @@ func gitComposeRuntimePolicy() source.RepositoryPolicy {
 // The existing authenticated registry remains the fixed backend. This TLS
 // listener supplies the same trust boundary a publicly trusted registry uses,
 // through the production operator CA configuration rather than insecure flags.
-func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, secondPassword string) (string, string, func()) {
+func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, secondPassword string, dependency ...http.Handler) (string, string, func()) {
 	t.Helper()
 	gateway := strings.TrimSpace(string(storageRuntimeDocker(t, "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")))
 	ip := net.ParseIP(gateway)
@@ -108,7 +108,14 @@ func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, 
 	if err != nil {
 		t.Fatal("owned TLS registry port unavailable", err)
 	}
-	server := httptest.NewUnstartedServer(handler)
+	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__build_dependency" && len(dependency) == 1 {
+			dependency[0].ServeHTTP(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	server := httptest.NewUnstartedServer(combined)
 	_ = server.Listener.Close()
 	server.Listener = listener
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
@@ -216,10 +223,14 @@ func gitComposeRuntimeBuildPolicy(identity string) domain.HostingBuildPolicy {
 	return domain.HostingBuildPolicy{Identity: "sha256:" + strings.Repeat("a", 64), ToolchainIdentity: identity, Protocol: domain.HostingBuildProtocol, Platform: "linux/" + runtime.GOARCH, GitCompose: true, Limits: domain.HostingBuildLimits{CPUQuota: 100000, MemoryBytes: 1 << 30, Deadline: 4 * time.Minute, ContextBytes: 8 << 20, ContextFiles: 1000, PlanBytes: 1 << 20, LogBytes: 8 << 20, ExportBytes: 512 << 20, UnpackedBytes: 1 << 30, UsageBytes: 3 << 30, ReserveBytes: 256 << 20, PollInterval: 100 * time.Millisecond, DiskMode: "monitored"}, SourceLimits: domain.HostingSourceLimits{MaxTreeBytes: 8 << 20, MaxWorkspaceBytes: 32 << 20, MinFreeBytes: 256 << 20, MaxEntries: 1000, MaxDepth: 32, PollInterval: 100 * time.Millisecond}}
 }
 
-func gitComposeRuntimeRepository(t *testing.T, raw, base, buildBase, password string) (string, func(string, bool, string) string, func(bool), string) {
+func gitComposeRuntimeRepository(t *testing.T, raw, base, buildBase, password string, dependency ...gitComposeFixtureDependency) (string, func(string, bool, string) string, func(bool), string) {
 	t.Helper()
 	files := func(marker string, fail bool, registryImage string) map[string]string {
-		return gitComposeFixtureFiles(raw, base, buildBase, marker, fail, registryImage)
+		result := gitComposeFixtureFiles(raw, base, buildBase, marker, fail, registryImage)
+		if len(dependency) == 1 {
+			result = gitComposeFixtureSecretFiles(result, dependency[0])
+		}
+		return result
 	}
 	url, update, unavailable := hostingfixture.GitHTTPS(t, files("A", false, ""), "fixture-user", password)
 	return strings.Replace(url, "127.0.0.1", "example.com", 1), func(marker string, fail bool, registryImage string) string {
@@ -284,7 +295,7 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Compose Vikunja acceptance", Kind: "application", Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}}}}, 201)
 	// Keep the fixture's current credential-file capability profile. Trigger
 	// revision support remains optional for existing registered build runners.
-	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability}
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
 	credential := "ncr_git_compose_startup_fixture"
 	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("e", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}, 200)

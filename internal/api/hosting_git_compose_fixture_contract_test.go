@@ -74,6 +74,77 @@ func TestGitComposeBuildRegistryCredentialRotation(t *testing.T) {
 	check("second-fixture-password", http.StatusOK)
 }
 
+// The selected secret authorizes only this nonsecret build dependency marker.
+// Rotation changes accepted material, so a stale v1 mount cannot satisfy v2.
+func gitComposeFixtureBuildDependency(token string) (http.Handler, func(string)) {
+	var active atomic.Value
+	active.Store(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/__build_dependency" || r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		defer clear(body)
+		if err != nil || len(body) > 4096 || subtle.ConstantTimeCompare(body, []byte(active.Load().(string))) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte("nerocd-private-build-dependency\n"))
+	}), func(token string) { active.Store(token) }
+}
+
+type gitComposeFixtureDependency struct{ URL, CA string }
+
+func gitComposeFixtureSecretFiles(files map[string]string, dependency gitComposeFixtureDependency) map[string]string {
+	// Reuse the gate's pinned Alpine tool image. Secret env mounts are injected
+	// into RUN by production; neither ARG nor repository content carries a value.
+	files["project/app/Dockerfile"] = "FROM alpine:3.23.2@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62 AS dependency\n" +
+		"COPY dependency-ca.pem /dependency-ca.pem\n" +
+		"RUN printf %s \"$DEPENDENCY_TOKEN\" > /tmp/dependency-token && SSL_CERT_FILE=/dependency-ca.pem wget --post-file=/tmp/dependency-token -O /dependency-marker " + dependency.URL + " && rm /tmp/dependency-token\n" +
+		files["project/app/Dockerfile"] + "COPY --from=dependency /dependency-marker /nerocd-build-dependency\n"
+	files["project/app/dependency-ca.pem"] = dependency.CA
+	return files
+}
+
+func TestGitComposeBuildSecretDependency(t *testing.T) {
+	handler, rotate := gitComposeFixtureBuildDependency("first-build-only-token")
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+	check := func(token string, want int) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/__build_dependency", strings.NewReader(token))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != want {
+			t.Fatalf("dependency status=%d want=%d", response.StatusCode, want)
+		}
+		if want == 200 && string(body) != "nerocd-private-build-dependency\n" {
+			t.Fatal("wrong dependency marker")
+		}
+		if bytes.Contains(body, []byte(token)) && token != "" {
+			t.Fatal("dependency disclosed token")
+		}
+	}
+	check("first-build-only-token", 200)
+	check("second-build-only-token", 401)
+	check("", 401)
+	rotate("second-build-only-token")
+	check("first-build-only-token", 401)
+	check("second-build-only-token", 200)
+	files := gitComposeFixtureSecretFiles(map[string]string{"project/app/Dockerfile": "FROM fixture\n"}, gitComposeFixtureDependency{URL: server.URL + "/__build_dependency", CA: "public CA bytes"})
+	if strings.Contains(files["project/app/Dockerfile"], "ARG DEPENDENCY_TOKEN") || strings.Contains(files["project/app/Dockerfile"], "--mount=") || !strings.Contains(files["project/app/Dockerfile"], "$DEPENDENCY_TOKEN") || files["project/app/dependency-ca.pem"] != "public CA bytes" {
+		t.Fatal("source bypassed production secret injection")
+	}
+}
+
 func gitComposeFixtureFiles(raw, base, buildBase, marker string, fail bool, registryImage string) map[string]string {
 	compose := strings.Replace(raw, "    image: "+base, "    build:\n      context: ../app\n"+gitComposeFixtureArgs(marker)+"    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
@@ -135,6 +206,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}, {Name: "MULTILINE", Value: gitComposeFixtureMultiline}}}
+	settings.BuildSecrets = []domain.HostingBuildSecretReference{{Name: "DEPENDENCY_TOKEN", Secret: domain.HostingRegistryCredentialRef{SecretID: "msec_build_dependency", Version: 1}}}
 	settings.BuildRegistryCredential = &domain.HostingRegistryCredentialRef{SecretID: "msec_build_registry", Version: 1}
 	privateBase := "172.17.0.1:25002/private/base@sha256:" + strings.Repeat("b", 64)
 	privateFiles := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, privateBase, "A", false, "")
@@ -203,6 +275,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 		{"binding", app.ResourceBindingInput{DestinationID: "dst_fixture"}, new(app.ResourceBindingInput)},
 		{"source_secret", app.ManagedSecretInput{ProjectID: "proj_platform", Name: "Git Compose HTTPS source", Value: `{"username":"fixture-user","password":"fixture-value"}`}, new(app.ManagedSecretInput)},
 		{"grant", domain.HostingSourceGrantRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, SecretID: "secret_fixture", SecretVersion: 1, RequestID: strings.Repeat("b", 32)}, new(domain.HostingSourceGrantRequest)},
+		{"build_secret_delivery", domain.HostingBuildSecretsRequest{Authority: domain.HostingBuildAuthority{BuildID: "build_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "fence_fixture"}, DeliveryID: "secret_delivery_fixture"}, new(domain.HostingBuildSecretsRequest)},
 		{"build_registry_delivery", domain.HostingBuildRegistryCredentialRequest{Authority: domain.HostingBuildAuthority{BuildID: "build_fixture", RunID: "run_fixture", LeaseID: "lease_fixture", Attempt: 1, Fence: "fence_fixture"}, DeliveryID: "delivery_fixture"}, new(domain.HostingBuildRegistryCredentialRequest)},
 		{"build", domain.HostingBuildRequest{ExpectedResourceGeneration: 1, ExpectedSourceGeneration: 1, GrantID: "source-grant-fixture", IdempotencyKey: "git-compose-build"}, new(domain.HostingBuildRequest)},
 		{"runtime", domain.HostingRuntimeConfigurationInput{ExpectedResourceGeneration: 1, ExpectedRuntimeGeneration: 0, RequestID: strings.Repeat("c", 32), Entries: []domain.HostingRuntimeEntry{}}, new(domain.HostingRuntimeConfigurationInput)},
