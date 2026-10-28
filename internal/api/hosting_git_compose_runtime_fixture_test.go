@@ -4,12 +4,24 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,6 +67,66 @@ func (h gitComposeRuntimeHosting) UpdateResource(ctx context.Context, r domain.R
 func gitComposeRuntimePolicy() source.RepositoryPolicy {
 	return source.RepositoryPolicy{Version: 1, State: "configured", Mode: "internal", AllowInternal: true, AllowedSchemes: []string{"https"}, AllowedHosts: []string{"example.com"}, AllowedCIDRs: []string{"127.0.0.0/8"}}
 }
+
+// The existing authenticated registry remains the fixed backend. This TLS
+// listener supplies the same trust boundary a publicly trusted registry uses,
+// through the production operator CA configuration rather than insecure flags.
+func gitComposeRuntimeRegistryTLS(t *testing.T, backendPassword, firstPassword, secondPassword string) (string, string) {
+	t.Helper()
+	gateway := strings.TrimSpace(string(storageRuntimeDocker(t, "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")))
+	ip := net.ParseIP(gateway)
+	if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+		t.Fatal("registry bridge address unavailable")
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "NeroCD owned registry fixture"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: []net.IP{ip}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "registry-ca.pem")
+	if err = os.WriteFile(path, ca, 0600); err != nil {
+		t.Fatal(err)
+	}
+	target, err := url.Parse("http://127.0.0.1:25001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	original := proxy.Director
+	proxy.Director = func(r *http.Request) { original(r); r.SetBasicAuth("fixture", backendPassword) }
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) { w.WriteHeader(http.StatusBadGateway) }
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		valid := subtle.ConstantTimeCompare([]byte(password), []byte(firstPassword)) | subtle.ConstantTimeCompare([]byte(password), []byte(secondPassword))
+		if !ok || username != "build-fixture" || valid != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="NeroCD build registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	listener, err := net.Listen("tcp", "0.0.0.0:25002")
+	if err != nil {
+		t.Fatal("owned TLS registry port unavailable", err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	_ = server.Listener.Close()
+	server.Listener = listener
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return net.JoinHostPort(gateway, "25002"), path
+}
+
 func configureGitComposeRuntime(t *testing.T, f *storageRuntimeFixture, pg *store.PostgresStore) {
 	t.Helper()
 	sources := filepath.Join(f.root, "sources")
