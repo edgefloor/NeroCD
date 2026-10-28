@@ -5,8 +5,11 @@ set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$root/scripts/local-image-registry.sh"
-evidence=/tmp/nerocd-backup-restore.txt
-dir=$(mktemp -d /tmp/nerocd-backup-restore.XXXXXXXX)
+evidence_output=${NEROCD_BACKUP_RESTORE_EVIDENCE:-/tmp/nerocd-backup-restore.txt}
+evidence_dir=$(mktemp -d /tmp/nerocd-backup-restore.XXXXXXXX)
+evidence=$(mktemp "$evidence_dir/evidence.XXXXXXXX")
+dir="$evidence_dir/work"
+mkdir -m 0700 "$dir"
 suffix=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
 network="nerocd-backup-$suffix"
 source="nerocd-backup-source-$suffix"
@@ -16,7 +19,6 @@ target_server="nerocd-backup-restored-server-$suffix"
 tls_proxy="nerocd-backup-tls-$suffix"
 image_tag="nerocd-backup-tool:$suffix"
 pass=false
-: >"$evidence"
 record(){ printf '%s\n' "$*" >>"$evidence"; }
 fail(){ trap - ERR; record "FAIL: $*"; printf 'backup-restore: %s\n' "$*" >&2; exit 1; }
 browser_phase(){
@@ -60,13 +62,27 @@ cleanup(){
   docker image rm -f "$image_tag" >/dev/null 2>&1 || true
   rm -rf -- "$dir"
   [[ "$pass" == true && $code -eq 0 ]] && record 'PASS: source-to-empty-target backup/restore gate'
+  # replace() replaces the destination entry itself, including a symlink. It
+  # never opens the old destination, and keeps the stable prerequisite handoff.
+  if python3 - "$evidence" "$evidence_output" <<'PYTHON'
+import os
+import sys
+os.replace(sys.argv[1], sys.argv[2])
+PYTHON
+  then
+    evidence=$evidence_output
+    rmdir -- "$evidence_dir"
+  else
+    code=1
+    printf 'backup-restore: could not publish evidence; private evidence retained\n' >&2
+  fi
   printf 'backup/restore evidence: %s\n' "$evidence"
   exit "$code"
 }
 trap cleanup EXIT
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
-for x in docker jq od rg bun openssl; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
+for x in docker jq od rg bun openssl python3; do command -v "$x" >/dev/null || fail "missing dependency $x"; done
 docker info >/dev/null || fail 'Docker unavailable'
 
 docker build -t "$image_tag" "$root" >"$dir/build.log" 2>&1 || fail 'backup tool image build failed'
