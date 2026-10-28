@@ -667,10 +667,11 @@ func resolveDeploymentProvenanceWithCredentialWorkspace(ctx context.Context, pla
 	// part in provenance resolution. This also lets a service expose the exact
 	// resolved immutable revision from a health endpoint without trusting a
 	// checkout-selected value.
-	emptyEnv := filepath.Join(workspace, ".nerocd-provenance.env")
-	if err := os.WriteFile(emptyEnv, []byte(deploymentRevisionEnv+"="+commit+"\n"), 0600); err != nil {
+	emptyEnv, cleanupEnv, err := writeComposeRevisionEnv(workspace, commit)
+	if err != nil {
 		return resolvedProvenance{}, err
 	}
+	defer cleanupEnv()
 	composeArgs := []string{"compose", "--project-name", plan.ComposeProject, "--env-file", emptyEnv, "--file", composePath}
 	if secretOverride != "" {
 		composeArgs = append(composeArgs, "--file", secretOverride)
@@ -1073,6 +1074,9 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 		}
 		delete(doc, "name")
 	}
+	if _, exists := doc["configs"]; exists {
+		return nil, nil, errors.New("compose uses forbidden configs")
+	}
 	if err := normalizeComposeSecretDescriptors(doc, serverProject, bindings, sources); err != nil {
 		return nil, nil, err
 	}
@@ -1089,7 +1093,7 @@ func canonicalComposeWithSecretSources(raw []byte, serverProject string, binding
 		if !ok {
 			return nil, nil, errors.New("invalid compose service")
 		}
-		for _, forbidden := range []string{"build", "privileged", "devices", "cap_add", "network_mode", "pid", "ipc", "volumes", "volumes_from", "security_opt", "userns_mode", "extra_hosts", "links", "container_name"} {
+		for _, forbidden := range []string{"build", "privileged", "devices", "cap_add", "network_mode", "pid", "ipc", "volumes", "volumes_from", "security_opt", "userns_mode", "extra_hosts", "links", "container_name", "configs"} {
 			if _, exists := svc[forbidden]; exists {
 				return nil, nil, fmt.Errorf("compose uses forbidden %s", forbidden)
 			}

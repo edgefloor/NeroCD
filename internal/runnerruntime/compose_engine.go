@@ -290,8 +290,8 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string, s
 			return nil, nil, errors.New("compose secret override is unsafe")
 		}
 	}
-	envFile := filepath.Join(workspace, ".nerocd-compose-empty.env")
-	if err := os.WriteFile(envFile, []byte(deploymentRevisionEnv+"="+revision+"\n"), 0600); err != nil {
+	envFile, cleanupEnv, err := writeComposeRevisionEnv(workspace, revision)
+	if err != nil {
 		return nil, nil, err
 	}
 	args := []string{"compose", "--project-name", plan.ComposeProject, "--env-file", envFile, "--file", composePath}
@@ -300,12 +300,12 @@ func composeInvocation(plan domain.DeploymentPlan, workspace, revision string, s
 	}
 	for _, profile := range plan.Profiles {
 		if strings.TrimSpace(profile) == "" || strings.ContainsAny(profile, "\x00\r\n") {
-			_ = os.Remove(envFile)
+			cleanupEnv()
 			return nil, nil, errors.New("invalid compose profile")
 		}
 		args = append(args, "--profile", profile)
 	}
-	return args, func() { _ = os.Remove(envFile) }, nil
+	return args, cleanupEnv, nil
 }
 
 func immutableImageDigest(value string) bool {
@@ -585,4 +585,24 @@ func parseComposePS(raw []byte) error {
 		return errors.New("compose reconciliation found no managed containers")
 	}
 	return nil
+}
+
+// writeComposeRevisionEnv keeps generated metadata outside repository-controlled
+// names. Compose receives an absolute path and never loads the checkout's .env.
+func writeComposeRevisionEnv(workspace, revision string) (string, func(), error) {
+	root, err := filepath.Abs(filepath.Dir(workspace))
+	if err != nil {
+		return "", nil, err
+	}
+	dir, err := os.MkdirTemp(root, ".nerocd-compose-env-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "revision.env")
+	if err := os.WriteFile(path, []byte(deploymentRevisionEnv+"="+revision+"\n"), 0600); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return path, cleanup, nil
 }
