@@ -56,6 +56,12 @@ func TestStoredDockerfileSerializationPreservesGitIdentity(t *testing.T) {
 		t.Fatalf("Git identity changed: %s != %s (%v)", before, after, err)
 	}
 	git.Kind = "dockerfile"
+	if _, err := json.Marshal(git); err == nil {
+		t.Fatal("mixed stored/Git source serialized")
+	}
+	git.RepositoryURL = ""
+	git.RequestedRef = ""
+	git.CredentialKind = ""
 	git.Content = "FROM scratch\n"
 	git.ContentHash = HostingDockerfileContentHash(git.Content)
 	private, _ := json.Marshal(git)
@@ -67,5 +73,26 @@ func TestStoredDockerfileSerializationPreservesGitIdentity(t *testing.T) {
 	}
 	if strings.Contains(string(public), "FROM scratch") {
 		t.Fatal("public build duplicated source content")
+	}
+}
+
+func TestStoredDockerfileLegacyReceiptAndStoredIdentity(t *testing.T) {
+	empty, _ := json.Marshal(HostingBuildSourceReceipt{})
+	if string(empty) != `{"build_id":"","source_id":"","input_id":"","commit":"","policy_hash":"","tree_digest":""}` {
+		t.Fatal("legacy empty receipt changed", string(empty))
+	}
+	s := HostingBuildSnapshot{BuildID: "build", InputID: "sha256:" + strings.Repeat("a", 64), Source: HostingGitSource{Kind: "dockerfile", ID: "source", ResourceID: "resource", ProjectID: "project", Generation: 1, Content: "FROM scratch", ContentHash: HostingDockerfileContentHash("FROM scratch"), Settings: HostingBuildSettings{Strategy: "dockerfile"}}}
+	r := HostingBuildSourceReceipt{Kind: "dockerfile", ContentHash: s.Source.ContentHash, BuildID: s.BuildID, SourceID: s.Source.ID, InputID: s.InputID, TreeDigest: "sha256:" + strings.Repeat("b", 64)}
+	if err := ValidateHostingBuildSourceReceipt(r, s); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*HostingBuildSnapshot){func(s *HostingBuildSnapshot) { s.Source.Content += "\n" }, func(s *HostingBuildSnapshot) { s.Source.RepositoryURL = "https://example.com/repo" }, func(s *HostingBuildSnapshot) {
+		s.TriggerRevision = &HostingBuildTriggerRevision{Version: 1, ExpectedCommit: strings.Repeat("a", 40)}
+	}, func(s *HostingBuildSnapshot) { s.Grant = &HostingSourceGrant{ID: "grant"} }} {
+		copy := s
+		change(&copy)
+		if ValidateHostingBuildSourceReceipt(r, copy) == nil {
+			t.Fatal("mismatched source/authority accepted")
+		}
 	}
 }

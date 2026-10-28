@@ -8277,7 +8277,7 @@ export interface components {
             settings: components["schemas"]["HostingBuildSettings"];
         };
         DockerfileResourceInput: {
-            /** @description Exact UTF-8 Dockerfile content */
+            /** @description Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile. */
             content: string;
             settings: components["schemas"]["HostingBuildSettings"];
         };

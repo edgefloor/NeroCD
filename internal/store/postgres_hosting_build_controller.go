@@ -144,7 +144,7 @@ func (s *PostgresStore) PrepareBuild(ctx context.Context, id string) error {
 }
 
 func configuredBuildSource(b domain.HostingBuild) bool {
-	return b.Snapshot.Source.CredentialKind == "public" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "https_basic" && b.Snapshot.Grant != nil && b.Snapshot.Grant.Kind == "https_basic"
+	return b.Snapshot.Source.Kind == "dockerfile" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "public" && b.Snapshot.Grant == nil || b.Snapshot.Source.CredentialKind == "https_basic" && b.Snapshot.Grant != nil && b.Snapshot.Grant.Kind == "https_basic"
 }
 func (s *PostgresStore) buildCreator(ctx context.Context, id string) string {
 	b, err := readBuild(ctx, s.queries, id)

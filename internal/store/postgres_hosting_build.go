@@ -158,7 +158,7 @@ func grantDomain(row sqlcgen.HostingSourceGrant) domain.HostingSourceGrant {
 	return domain.HostingSourceGrant{ID: row.ID, Version: row.Version, SourceID: row.SourceID, ResourceID: row.ResourceID, ProjectID: row.ProjectID, RepositoryURL: row.RepositoryUrl, PolicyHash: row.PolicyHash, SecretID: row.SecretID, SecretVersion: row.SecretVersion, Kind: row.Kind, CreatedBy: row.CreatedBy, Revoked: row.RevokedAt != nil}
 }
 func checkBuildGrant(ctx context.Context, tx pgx.Tx, id string, src domain.HostingGitSource) (*domain.HostingSourceGrant, error) {
-	if src.CredentialKind == "public" {
+	if src.CredentialKind == "public" || src.Kind == "dockerfile" {
 		if id != "" {
 			return nil, ErrConflict
 		}
@@ -312,6 +312,12 @@ func lockBuildTarget(ctx context.Context, tx pgx.Tx, src domain.HostingGitSource
 			return target, "", ErrConflict
 		}
 	}
+	if src.Kind == "dockerfile" {
+		capable, e := q.HostingRunnerHasReleasePorts(ctx, sqlcgen.HostingRunnerHasReleasePortsParams{RunnerID: target.RunnerID, Capability: domain.HostingStoredDockerfileCapability})
+		if e != nil || !capable {
+			return target, "", ErrConflict
+		}
+	}
 	return target, daemon, nil
 }
 
@@ -364,7 +370,7 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		return domain.HostingBuild{}, err
 	}
 	var desired domain.ResourceSource
-	if json.Unmarshal(resource.Source, &desired) != nil || desired.Kind != "git" {
+	if json.Unmarshal(resource.Source, &desired) != nil || (desired.Kind != "git" && desired.Kind != "dockerfile") {
 		return domain.HostingBuild{}, ErrConflict
 	}
 	hash := domain.HostingDocumentHash(struct {
@@ -391,7 +397,7 @@ func (s *PostgresStore) requestHostingBuildTx(ctx context.Context, tx pgx.Tx, id
 		}
 		// Configured private retries require current source intent and the same
 		// atomic grant evidence as admission. Replay never invokes the enqueuer.
-		if configured && original.Snapshot.Source.CredentialKind != "public" {
+		if configured && original.Snapshot.Source.CredentialKind != "public" && original.Snapshot.Source.Kind != "dockerfile" {
 			if err = currentBuildIntent(ctx, tx, original); err != nil {
 				return original, err
 			}

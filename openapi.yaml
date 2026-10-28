@@ -16960,7 +16960,7 @@ components:
       additionalProperties: false
       required: [content, settings]
       properties:
-        content: {type: string, minLength: 1, maxLength: 1048576, description: Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile.}
+        content: {type: string, minLength: 1, maxLength: 1048576, description: "Exact UTF-8 Dockerfile content, limited to 1048576 decoded bytes, without NUL. The context contains only this root Dockerfile."}
         settings: {$ref: "#/components/schemas/HostingBuildSettings"}
     DockerfileResourceSource:
       type: object

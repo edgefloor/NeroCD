@@ -11,7 +11,7 @@ import (
 	"nerocd/internal/hostingbuildprotocol"
 )
 
-const maxBuildResponseBytes = 1 << 20
+const maxBuildResponseBytes = domain.HostingDockerfileResourceJSONLimit
 
 var errBuildResponse = errors.New("invalid hosting build response")
 

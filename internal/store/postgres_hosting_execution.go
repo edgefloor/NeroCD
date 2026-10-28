@@ -2462,7 +2462,7 @@ func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, re
 	if err = json.Unmarshal(target.Source, &resourceSource); err != nil {
 		return domain.HostingOperation{}, err
 	}
-	if resourceSource.Kind == "git" {
+	if resourceSource.Kind == "git" || resourceSource.Kind == "dockerfile" {
 		if err = authorizeBuildActor(ctx, tx, actor, target.ProjectID, "maintainer"); err != nil {
 			return domain.HostingOperation{}, err
 		}
@@ -2475,7 +2475,7 @@ func (s *PostgresStore) RequestHostingReleaseCleanup(ctx context.Context, id, re
 		if readErr != nil {
 			return existing, readErr
 		}
-		if resourceSource.Kind == "git" {
+		if resourceSource.Kind == "git" || resourceSource.Kind == "dockerfile" {
 			if err = hostingOperationTargetGate(ctx, tx, existing, false); err != nil {
 				return domain.HostingOperation{}, err
 			}

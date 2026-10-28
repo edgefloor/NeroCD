@@ -104,11 +104,11 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		{nil, false, true, []string{domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, true, []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, false, []string{domain.HostingPrivateGitCapability}, nil, true},
-		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
-		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
+		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingStoredDockerfileCapability, domain.HostingBuildSecretsCapability}, false},
+		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingStoredDockerfileCapability, domain.HostingBuildSecretsCapability}, false},
 		{c, false, true, []string{"shell"}, nil, true},
 		{nil, false, true, []string{domain.HostingBuildTaskType}, nil, true},
-		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
+		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingStoredDockerfileCapability, domain.HostingBuildSecretsCapability}, false},
 	} {
 		got, err := runnerBuildCapabilities(tc.config, tc.proxy, tc.specified, tc.caps)
 		if (err != nil) != tc.fail {

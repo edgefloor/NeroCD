@@ -223,9 +223,11 @@ func (e *BuildExecutor) validateBuild(b domain.HostingBuild, a domain.HostingBui
 	if b.ID != a.BuildID || b.RunID != a.RunID || s.BuildID != a.BuildID || b.Revision < 1 || b.ResourceID != s.Source.ResourceID || b.ProjectID != s.Source.ProjectID || s.ResourceGeneration < 1 || s.InputID != domain.HostingDocumentHash(unhashed) || domain.ValidateHostingGitSource(s.Source) != nil || domain.ValidateHostingBuildTriggerRevision(s) != nil || domain.ValidateHostingBuildPolicy(s.Policy) != nil || !reflect.DeepEqual(s.Policy, e.config.Policy) || !e.validBuildCredentialSnapshot(s) || s.RunnerID != e.config.Target.RunnerID || s.ServerID != e.config.Target.ServerID || s.DestinationID != e.config.Target.DestinationID || !validBuildPlacementID(s.BindingID) || e.config.Target.BindingID != "" && s.BindingID != e.config.Target.BindingID || snapshot != nil && !reflect.DeepEqual(s, *snapshot) {
 		return errors.New("build immutable snapshot or target mismatch")
 	}
-	u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
-	if err != nil || u.Scheme != "https" {
-		return errors.New("HTTPS source required")
+	if s.Source.Kind != "dockerfile" {
+		u, err := s.Source.Policy.ValidateURL(s.Source.RepositoryURL, false)
+		if err != nil || u.Scheme != "https" {
+			return errors.New("HTTPS source required")
+		}
 	}
 	if s.ExpectedDaemonID != "" && b.DaemonID != "" && s.ExpectedDaemonID != b.DaemonID {
 		return errors.New("build daemon identity changed")
@@ -337,7 +339,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	if response.Acknowledgment != nil || response.Build.State != "sourcing" {
 		return errors.New("source begin response mismatch")
 	}
-	if s.Source.CredentialKind == "public" {
+	if s.Source.CredentialKind == "public" || s.Source.Kind == "dockerfile" {
 		output, err = newBuildOutputAdapter(e, a, at)
 		if err != nil {
 			return err
@@ -527,7 +529,7 @@ func (e *BuildExecutor) Execute(ctx context.Context, a domain.HostingBuildAuthor
 	watchMu.Lock()
 	observerErr := watchErr
 	watchMu.Unlock()
-	if s.Source.Settings.Strategy == "compose" && observerErr == nil && ctx.Err() == nil && settledComposeSourceFailure(err, filepath.Join(e.config.SourceRoot, a.BuildID), e.config.Engine.StateDir) {
+	if (s.Source.Settings.Strategy == "compose" || s.Source.Kind == "dockerfile") && observerErr == nil && ctx.Err() == nil && settledComposeSourceFailure(err, filepath.Join(e.config.SourceRoot, a.BuildID), e.config.Engine.StateDir) {
 		err = buildFailed
 		failureCode = "source_failed"
 		if output == nil {
@@ -641,7 +643,7 @@ type privateBuildCredentialClient interface {
 }
 
 func (e *BuildExecutor) validBuildCredentialSnapshot(s domain.HostingBuildSnapshot) bool {
-	if s.Source.CredentialKind == "public" {
+	if s.Source.CredentialKind == "public" || s.Source.Kind == "dockerfile" {
 		return s.Grant == nil
 	}
 	if e.config.PrivateGit == nil || s.Source.CredentialKind != "https_basic" || s.Grant == nil {

@@ -60,7 +60,7 @@ type PublicHostingBuildTarget struct {
 type PublicHostingBuildSourceReceipt struct {
 	Kind        string `json:"kind,omitempty"`
 	ContentHash string `json:"content_hash,omitempty"`
-	Commit      string `json:"commit,omitempty"`
+	Commit      string `json:"commit"`
 	TreeDigest  string `json:"tree_digest"`
 }
 

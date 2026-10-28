@@ -355,7 +355,7 @@ func strictJSONDocument(w http.ResponseWriter, r *http.Request) bool {
 		writeErrorEnvelope(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "application/json is required")
 		return false
 	}
-	limit := maxJSONBodyBytes
+	limit := requestJSONBodyLimit(r)
 	if databaseConnectionPath(r.URL.Path) {
 		limit = domain.HostingDatabaseConnectionJSONLimit
 	}
@@ -640,7 +640,7 @@ func parseNonNegativeInt(value string, fallback int) int {
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, value any) bool {
-	if err := decodeJSONDocument(io.LimitReader(r.Body, maxJSONBodyBytes+1), value); err != nil {
+	if err := decodeJSONDocument(io.LimitReader(r.Body, int64(requestJSONBodyLimit(r))+1), value); err != nil {
 		writeErrorEnvelope(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return false
 	}
@@ -828,3 +828,11 @@ func (r *statusRecorder) Write(value []byte) (int, error) {
 
 // Unwrap permits narrow streaming handlers to set connection deadlines.
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// requestJSONBodyLimit reserves worst-case escaping only for resource source mutations.
+func requestJSONBodyLimit(r *http.Request) int {
+	if r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources" || r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/resources/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/resources/"), "/") {
+		return domain.HostingDockerfileResourceJSONLimit
+	}
+	return maxJSONBodyBytes
+}

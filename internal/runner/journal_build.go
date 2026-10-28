@@ -149,6 +149,15 @@ func validateJournalBuild(entry JournalBuild) error {
 			return invalid
 		}
 		receipt := entry.Source.Receipt
+		if receipt.Kind == "dockerfile" {
+			if !buildJournalID(receipt.SourceID) || !buildJournalDigest(receipt.InputID) || !buildJournalDigest(receipt.ContentHash) || !buildJournalDigest(receipt.TreeDigest) || receipt.Commit != "" || receipt.PolicyHash != "" {
+				return invalid
+			}
+			break
+		}
+		if receipt.Kind != "" || receipt.ContentHash != "" {
+			return invalid
+		}
 		if !buildJournalID(receipt.SourceID) || !buildJournalDigest(receipt.InputID) || !buildJournalDigest(receipt.PolicyHash) || !buildJournalDigest(receipt.TreeDigest) || (len(receipt.Commit) != 40 && len(receipt.Commit) != 64) {
 			return invalid
 		}

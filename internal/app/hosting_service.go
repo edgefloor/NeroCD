@@ -180,7 +180,7 @@ func (s *Service) CreateResource(ctx context.Context, in ResourceInput) (domain.
 	if item.Source.Kind == "compose" {
 		opts = append(opts, store.WithHostingComposeCreate(in.RequestID, domain.HostingDocumentHash(in)))
 	}
-	if item.Source.Kind == "git" {
+	if item.Source.Kind == "git" || item.Source.Kind == "dockerfile" {
 		src, sourceErr := s.publicGitSource(item, in.Source, "", 1)
 		if sourceErr != nil {
 			return domain.Resource{}, sourceErr
@@ -238,8 +238,9 @@ func (s *Service) UpdateResource(ctx context.Context, id string, in ResourcePatc
 		return domain.Resource{}, err
 	}
 	opts := []store.MutationOption{store.WithAudit(audit)}
-	if in.Source != nil && item.Source.Kind == "git" {
-		src, sourceErr := s.publicGitSource(item, *in.Source, originalSource.Git.SourceID, originalSource.Git.Generation)
+	if in.Source != nil && (item.Source.Kind == "git" || item.Source.Kind == "dockerfile") {
+		sourceID, sourceGeneration := originalSource.GitIdentity()
+		src, sourceErr := s.publicGitSource(item, *in.Source, sourceID, sourceGeneration)
 		if sourceErr != nil {
 			return domain.Resource{}, sourceErr
 		}
@@ -291,6 +292,20 @@ func PublicHostingGitPolicy(hosts []string) (source.RepositoryPolicy, error) {
 	return p, p.ValidatePolicy()
 }
 func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSource, id string, generation int64) (domain.HostingGitSource, error) {
+	if input.Kind == "dockerfile" {
+		if input.Dockerfile == nil || input.Dockerfile.SourceID != "" || input.Dockerfile.Generation != 0 || input.Dockerfile.ContentHash != "" || domain.ValidateResourceSource(input) != nil {
+			return domain.HostingGitSource{}, InvalidInput(errors.New("invalid stored Dockerfile configuration"))
+		}
+		if id == "" {
+			var err error
+			id, err = prefixedID("hsrc")
+			if err != nil {
+				return domain.HostingGitSource{}, err
+			}
+		}
+		c := input.Dockerfile
+		return domain.HostingGitSource{Kind: "dockerfile", ID: id, ResourceID: item.ID, ProjectID: item.ProjectID, Generation: generation, Content: c.Content, ContentHash: domain.HostingDockerfileContentHash(c.Content), Settings: c.Settings.Clone()}, nil
+	}
 	if input.Git == nil || input.Image.Reference != "" || input.Git.SourceID != "" || input.Git.Generation != 0 {
 		return domain.HostingGitSource{}, InvalidInput(errors.New("git input must contain configuration only"))
 	}
@@ -312,6 +327,9 @@ func (s *Service) publicGitSource(item domain.Resource, input domain.ResourceSou
 	return src, nil
 }
 func publicGitResourceSource(src domain.HostingGitSource) domain.ResourceSource {
+	if src.Kind == "dockerfile" {
+		return domain.ResourceSource{Kind: "dockerfile", Dockerfile: &domain.DockerfileResourceSource{SourceID: src.ID, Generation: src.Generation, ContentHash: src.ContentHash, DockerfileResourceConfiguration: domain.DockerfileResourceConfiguration{Content: src.Content, Settings: src.Settings.Clone()}}}
+	}
 	return domain.ResourceSource{Kind: "git", Git: &domain.GitResourceSource{SourceID: src.ID, Generation: src.Generation, GitResourceConfiguration: domain.GitResourceConfiguration{RepositoryURL: src.RepositoryURL, RequestedRef: src.RequestedRef, CredentialKind: src.CredentialKind, Settings: src.Settings}}}
 }
 func gitResourceError(err error) error {

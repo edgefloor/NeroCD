@@ -182,8 +182,8 @@ type HostingBuildSourceReceipt struct {
 	BuildID     string `json:"build_id"`
 	SourceID    string `json:"source_id"`
 	InputID     string `json:"input_id"`
-	Commit      string `json:"commit,omitempty"`
-	PolicyHash  string `json:"policy_hash,omitempty"`
+	Commit      string `json:"commit"`
+	PolicyHash  string `json:"policy_hash"`
 	TreeDigest  string `json:"tree_digest"`
 }
 
@@ -288,6 +288,15 @@ func ValidateHostingBuildSettings(s HostingBuildSettings) error {
 
 // ValidateHostingGitSource admits explicit policy-controlled Git source configuration.
 func ValidateHostingGitSource(s HostingGitSource) error {
+	if s.Kind == "dockerfile" {
+		if !buildID(s.ID) || !buildID(s.ResourceID) || !buildID(s.ProjectID) || s.Generation < 1 || s.RepositoryURL != "" || s.RequestedRef != "" || s.CredentialKind != "" || HostingDocumentHash(s.Policy) != HostingDocumentHash(source.RepositoryPolicy{}) || s.ContentHash != HostingDockerfileContentHash(s.Content) {
+			return errors.New("invalid stored Dockerfile source identity")
+		}
+		return ValidateDockerfileResourceConfiguration(DockerfileResourceConfiguration{Content: s.Content, Settings: s.Settings})
+	}
+	if s.Kind != "" || s.Content != "" || s.ContentHash != "" {
+		return errors.New("invalid Git source variant")
+	}
 	if !buildID(s.ID) || !buildID(s.ResourceID) || !buildID(s.ProjectID) || s.Generation < 1 {
 		return errors.New("invalid source identity")
 	}
@@ -343,6 +352,9 @@ func ValidateHostingBuildPolicy(p HostingBuildPolicy) error {
 // ValidateHostingBuildTriggerRevision checks optional trusted intent without
 // changing historical nil-revision source semantics.
 func ValidateHostingBuildTriggerRevision(s HostingBuildSnapshot) error {
+	if s.Source.Kind == "dockerfile" && (s.TriggerRevision != nil || s.Grant != nil) {
+		return errors.New("stored Dockerfile cannot select Git authority")
+	}
 	r := s.TriggerRevision
 	if r == nil {
 		return nil
@@ -359,6 +371,15 @@ func ValidateHostingBuildTriggerRevision(s HostingBuildSnapshot) error {
 
 // ValidateHostingBuildSourceReceipt binds a full commit and tree to the frozen source input.
 func ValidateHostingBuildSourceReceipt(r HostingBuildSourceReceipt, s HostingBuildSnapshot) error {
+	if s.Source.Kind == "dockerfile" {
+		if ValidateHostingGitSource(s.Source) != nil || ValidateHostingBuildTriggerRevision(s) != nil || r.Kind != "dockerfile" || r.ContentHash != s.Source.ContentHash || r.Commit != "" || r.PolicyHash != "" || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildDigest.MatchString(r.TreeDigest) {
+			return errors.New("stored Dockerfile receipt identity mismatch")
+		}
+		return nil
+	}
+	if r.Kind != "" || r.ContentHash != "" {
+		return errors.New("invalid Git receipt variant")
+	}
 	if ValidateHostingBuildTriggerRevision(s) != nil || s.TriggerRevision != nil && r.Commit != s.TriggerRevision.ExpectedCommit || (buildCommit.MatchString(s.Source.RequestedRef) && r.Commit != s.Source.RequestedRef) || r.BuildID != s.BuildID || r.SourceID != s.Source.ID || r.InputID != s.InputID || !buildCommit.MatchString(r.Commit) || r.PolicyHash != HostingDocumentHash(s.Source.Policy) || !buildDigest.MatchString(r.TreeDigest) {
 		return errors.New("source receipt identity mismatch")
 	}

@@ -354,3 +354,36 @@ func TestBuildJournalConcurrentIdenticalAppendAndNonsecretEncoding(t *testing.T)
 		}
 	}
 }
+
+func TestStoredDockerfileJournalReceiptReopensExactly(t *testing.T) {
+	j, directory := openBuildJournal(t)
+	_, source, _ := buildJournalFixture()
+	source.Source.Receipt.Kind = "dockerfile"
+	source.Source.Receipt.ContentHash = "sha256:" + strings.Repeat("c", 64)
+	source.Source.Receipt.Commit = ""
+	source.Source.Receipt.PolicyHash = ""
+	if _, err := j.AppendBuild(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenAttemptJournal(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	got := reopened.Snapshot().Build
+	if len(got) != 1 || !reflect.DeepEqual(got[0], source) {
+		t.Fatal("stored receipt changed across restart")
+	}
+	mixed := source
+	mixed.ID = "mixed"
+	copyRequest := *source.Source
+	mixed.Source = &copyRequest
+	mixed.Source.ReceiptID = mixed.ID
+	mixed.Source.Receipt.Commit = strings.Repeat("b", 40)
+	if _, err := reopened.AppendBuild(mixed); err == nil {
+		t.Fatal("mixed stored/Git receipt accepted")
+	}
+}
