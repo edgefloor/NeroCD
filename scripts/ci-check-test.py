@@ -2,6 +2,7 @@
 """Coverage and failure propagation for the parallel CI runner."""
 
 import importlib.util
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -16,9 +17,29 @@ SPEC.loader.exec_module(CI)
 
 
 class CICheckTest(unittest.TestCase):
+    def test_postgres_requires_a_live_database_configuration(self):
+        with patch.dict(os.environ, {"NEROCD_TEST_DATABASE_URL": ""}), patch.object(CI, "run") as run:
+            with self.assertRaises(ValueError):
+                CI.check_lane("postgres-0")
+        run.assert_not_called()
+
+    def test_postgres_shards_execute_all_discovered_targets_without_test_cache(self):
+        names = [f"TestPostgres{i}" for i in range(19)] + ["Example", "FuzzDecode"]
+        selected = []
+        with patch.dict(os.environ, {"NEROCD_TEST_DATABASE_URL": "postgres://fixture"}):
+            for index in range(CI.SHARDS):
+                with patch.object(CI, "run", return_value=subprocess.CompletedProcess([], 0, "\n".join(names))) as run:
+                    CI.check_lane(f"postgres-{index}")
+                self.assertEqual(run.call_args_list[0].args[0], ["go", "test", "-count=1", "-list", ".", CI.STORE])
+                command = run.call_args_list[1].args[0]
+                self.assertEqual(command[:5], ["go", "test", "-count=1", "-timeout=15m", "-run"])
+                self.assertEqual(command[-1], CI.STORE)
+                selected.extend(name for name in names if re.fullmatch(command[5], name))
+        self.assertEqual(sorted(selected), sorted(names))
+
     def test_every_test_example_and_fuzz_seed_has_one_shard(self):
         names = [f"TestCase{i}" for i in range(41)] + ["Example", "ExampleClient_Open", "FuzzDecode"]
-        inventory = CI.runtime_tests("\n".join(reversed(names)) + "\nBenchmarkIgnored\nok\tnerocd/internal/runnerruntime\t0.1s\n")
+        inventory = CI.discover_tests("\n".join(reversed(names)) + "\nBenchmarkIgnored\nok\tnerocd/internal/runnerruntime\t0.1s\n")
         shards = [CI.shard_tests(inventory, i) for i in range(CI.SHARDS)]
         self.assertEqual(sorted(name for shard in shards for name in shard), sorted(names))
         self.assertLessEqual(max(map(len, shards)) - min(map(len, shards)), 1)
@@ -29,7 +50,7 @@ class CICheckTest(unittest.TestCase):
     def test_invalid_inventories_and_shards_fail(self):
         for output in ["", "ok\tpackage\n", "TestSame\nTestSame\n"]:
             with self.assertRaises(ValueError):
-                CI.runtime_tests(output)
+                CI.discover_tests(output)
         for names, index in [([], 0), (["TestOne"], 1), (["TestOne"], -1), (["TestOne"], CI.SHARDS)]:
             with self.assertRaises(ValueError):
                 CI.shard_tests(names, index)
@@ -73,7 +94,8 @@ class CICheckTest(unittest.TestCase):
             ("if: matrix.lane == 'go' || matrix.lane == 'race' || matrix.lane == 'web'", "if: matrix.lane == 'web'"),
             ("      - name: Run checks\n", "      - name: Run checks\n        if: false\n"),
             ("      - name: Require every verification lane\n", "      - name: Require every verification lane\n        if: false\n"),
-            ("run: make postgres-test", "run: true"),
+            ('"postgres-5", ', ""),
+            ("NEROCD_TEST_DATABASE_URL:", "UNUSED_DATABASE_URL:"),
             ("run: make release-artifacts", "run: true"),
         ]:
             with self.subTest(mutation=old), tempfile.TemporaryDirectory() as directory:

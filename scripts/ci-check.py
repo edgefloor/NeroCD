@@ -11,28 +11,30 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = "nerocd/internal/runnerruntime"
+STORE = "nerocd/internal/store"
 SHARDS = 6
-LANES = ["go", "race", *[f"runtime-{n}" for n in range(SHARDS)], "web"]
+LANES = ["go", "race", *[f"runtime-{n}" for n in range(SHARDS)],
+         *[f"postgres-{n}" for n in range(SHARDS)], "web"]
 GO_GATES = ["ci-release-policy-gate", "verify"]
 WEB_GATES = ["web-test", "build", "browser-smoke", "web-policy", "contract",
              "check-generated", "production-compose-policy-gate",
              "local-image-registry-gate", "docker-build"]
 
 
-def runtime_tests(output):
+def discover_tests(output):
     names = [line for line in output.splitlines()
              if re.fullmatch(r"(?:Test|Example|Fuzz)\w*", line)]
     if not names or len(names) != len(set(names)):
-        raise ValueError("runtime test inventory is empty or contains duplicates")
+        raise ValueError("test inventory is empty or contains duplicates")
     return sorted(names)
 
 
 def shard_tests(names, index):
     if index not in range(SHARDS):
-        raise ValueError("invalid runtime shard")
+        raise ValueError("invalid test shard")
     selected = names[index::SHARDS]
     if not selected:
-        raise ValueError("runtime shard is empty")
+        raise ValueError("test shard is empty")
     return selected
 
 
@@ -57,14 +59,20 @@ def check_lane(lane):
             raise ValueError("non-runtime race inventory is empty")
         run(["go", "test", "-race", "-timeout=10m", *packages])
     elif lane in LANES:
-        index = int(lane.removeprefix("runtime-"))
+        group, number = lane.rsplit("-", 1)
+        index = int(number)
+        package = RUNTIME if group == "runtime" else STORE
+        flags = ["-race"] if group == "runtime" else ["-count=1"]
+        if group == "postgres" and not os.environ.get("NEROCD_TEST_DATABASE_URL", "").strip():
+            raise ValueError("PostgreSQL shards require NEROCD_TEST_DATABASE_URL; skipping is forbidden")
         # Build and discover with the same tags/instrumentation as execution.
-        output = run(["go", "test", "-race", "-list", ".", RUNTIME], capture=True).stdout
-        names = runtime_tests(output)
+        output = run(["go", "test", *flags, "-list", ".", package], capture=True).stdout
+        names = discover_tests(output)
         selected = shard_tests(names, index)
-        print(f"Runtime shard {index + 1}/{SHARDS}: {len(selected)}/{len(names)} tests", flush=True)
+        print(f"{group} shard {index + 1}/{SHARDS}: {len(selected)}/{len(names)} tests", flush=True)
         pattern = "^(?:" + "|".join(re.escape(name) for name in selected) + ")$"
-        run(["go", "test", "-race", "-timeout=10m", "-run", pattern, RUNTIME])
+        timeout = "10m" if group == "runtime" else "15m"
+        run(["go", "test", *flags, f"-timeout={timeout}", "-run", pattern, package])
     else:
         raise ValueError("unknown CI lane")
 
@@ -94,8 +102,10 @@ def validate_workflow(root):
     for name in ["Run checks", "Require every verification lane"]:
         if re.search(r"^        if:", step(name), re.M):
             raise ValueError(f"CI step must be unconditional: {name}")
+    database_env = "          NEROCD_TEST_DATABASE_URL: ${{ startsWith(matrix.lane, 'postgres-') && 'postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable' || '' }}\n"
+    if database_env not in step("Run checks"):
+        raise ValueError("PostgreSQL shards must use their isolated service database")
     for name, lane, command in [
-        ("Run PostgreSQL integration tests", "go", "make postgres-test"),
         ("Generate release artifacts", "web", "make release-artifacts"),
     ]:
         block = step(name)

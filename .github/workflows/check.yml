@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ["go", "race", "runtime-0", "runtime-1", "runtime-2", "runtime-3", "runtime-4", "runtime-5", "web"]
+        lane: ["go", "race", "runtime-0", "runtime-1", "runtime-2", "runtime-3", "runtime-4", "runtime-5", "postgres-0", "postgres-1", "postgres-2", "postgres-3", "postgres-4", "postgres-5", "web"]
     services:
       postgres:
         image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
@@ -80,13 +80,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes ripgrep
 
       - name: Run checks
-        run: python3 -B scripts/ci-check.py "${{ matrix.lane }}"
-
-      - name: Run PostgreSQL integration tests
-        if: matrix.lane == 'go'
-        run: make postgres-test
         env:
-          NEROCD_TEST_DATABASE_URL: postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable
+          NEROCD_TEST_DATABASE_URL: ${{ startsWith(matrix.lane, 'postgres-') && 'postgres://nerocd:nerocd_dev@127.0.0.1:5432/nerocd?sslmode=disable' || '' }}
+        run: python3 -B scripts/ci-check.py "${{ matrix.lane }}"
 
       - name: Generate release artifacts
         if: matrix.lane == 'web'
