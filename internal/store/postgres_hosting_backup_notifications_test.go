@@ -65,7 +65,15 @@ func failedNotificationBackup(t *testing.T, f networkCaptureFixture, id string) 
 	return v, in
 }
 func TestPostgresBackupNotificationAtomicReplayAndChannelRevision(t *testing.T) {
-	f := backupFixture(t)
+	testBackupNotificationAtomicReplayAndChannelRevision(t, backupFixture(t))
+}
+
+func TestPostgresMySQLBackupNotificationAtomicReplayAndChannelRevision(t *testing.T) {
+	testBackupNotificationAtomicReplayAndChannelRevision(t, scheduledBackupFixtureFor(t, "mysql"))
+}
+
+func testBackupNotificationAtomicReplayAndChannelRevision(t *testing.T, f networkCaptureFixture) {
+	t.Helper()
 	var calls atomic.Int32
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
 	defer receiver.Close()
@@ -422,8 +430,17 @@ func TestPostgresBackupNotificationSMTPUsesCurrentMembersAfterActorRevocation(t 
 }
 
 func TestPostgresBackupNotificationDirectControllerSources(t *testing.T) {
+	testBackupNotificationDirectControllerSources(t, "postgresql")
+}
+
+func TestPostgresMySQLBackupNotificationDirectControllerSources(t *testing.T) {
+	testBackupNotificationDirectControllerSources(t, "mysql")
+}
+
+func testBackupNotificationDirectControllerSources(t *testing.T, engine string) {
+	t.Helper()
 	t.Run("accepted_schedule_retirement", func(t *testing.T) {
-		f := scheduledBackupFixture(t)
+		f := scheduledBackupFixtureFor(t, engine)
 		receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 		defer receiver.Close()
 		_, service := notificationStore(t, f, receiver)
@@ -442,28 +459,12 @@ func TestPostgresBackupNotificationDirectControllerSources(t *testing.T) {
 		}
 	})
 	t.Run("upload_admission_denied_preserves_backup", func(t *testing.T) {
-		f := scheduledBackupFixture(t)
+		f := scheduledBackupFixtureFor(t, engine)
 		receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 		defer receiver.Close()
 		_, service := notificationStore(t, f, receiver)
 		notificationChannel(t, service, f.ctx, f.resource.ProjectID, receiver.URL)
-		if _, err := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability); err != nil {
-			t.Fatal(err)
-		}
-		credentials, err := app.NewBackupTargetCredentials([]byte("fixture_access"), []byte("fixture_secret"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer credentials.Close()
-		target, err := f.service.SaveDatabaseBackupTarget(f.ctx, f.resource.ProjectID, "", domain.HostingDatabaseBackupTargetInput{RequestID: "notify_remote_target", Name: "fixture target", Endpoint: "https://backup.example", Bucket: "fixture", Region: "us-east-1", Enabled: true}, credentials)
-		if err != nil {
-			t.Fatal(err)
-		}
-		validation, err := f.service.ValidateDatabaseBackupTarget(f.ctx, target.ProjectID, target.ID, domain.HostingDatabaseBackupTargetValidationInput{RequestID: "notify_validate", ExpectedRevision: target.Revision, DestinationID: f.op.Snapshot.DestinationID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		settleRemoteTransfer(t, f, validation.ID, "")
+		f, target := remoteBackupFixtureFor(t, f)
 		backup, err := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "notify_upload_source", ExpectedResourceGeneration: f.resource.Generation, RemoteTarget: &domain.BackupTargetSelection{TargetID: target.ID, Revision: target.Revision}})
 		if err != nil {
 			t.Fatal(err)

@@ -277,7 +277,7 @@ func (s *PostgresStore) PrepareDatabaseBackupTransfer(ctx context.Context, id st
 		if err = backupRemoteCurrent(ctx, tx, r.plan); err != nil {
 			if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, auth.ErrForbidden) || errors.Is(err, auth.ErrUnauthenticated) {
 				e := sqlcgen.New(tx).FailDatabaseBackupTransferAuthority(ctx, id)
-				if e == nil && r.view.Mode == "upload" && r.view.Version == domain.HostingDatabaseBackupTransferVersion {
+				if e == nil && r.view.Mode == "upload" && (r.view.Version == domain.HostingDatabaseBackupTransferVersion || r.view.Version == domain.HostingDatabaseMySQLBackupTransferVersion) {
 					receipt, receiptErr := notificationDirectReceipt(ctx, tx, "transfer", id, "authority_denied")
 					e = receiptErr
 					if e == nil {
@@ -443,7 +443,7 @@ func (s *PostgresStore) DatabaseBackupTransferMutation(ctx context.Context, runn
 		if err != nil {
 			return zero, err
 		}
-		if r.view.Mode == "upload" && r.view.Version == domain.HostingDatabaseBackupTransferVersion && (in.Phase == "failed" || in.Phase == "uncertain") {
+		if r.view.Mode == "upload" && (r.view.Version == domain.HostingDatabaseBackupTransferVersion || r.view.Version == domain.HostingDatabaseMySQLBackupTransferVersion) && (in.Phase == "failed" || in.Phase == "uncertain") {
 			if err = notificationUploadFailure(ctx, tx, r.view.ID, in.ReceiptID); err != nil {
 				return zero, err
 			}
