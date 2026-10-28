@@ -12,17 +12,15 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
-func databaseBackupScheduleView(r sqlcgen.HostingDatabaseBackupSchedule) domain.HostingDatabaseBackupSchedule {
-	version := domain.HostingDatabaseBackupScheduleVersion
-	if r.Component != "" {
-		version = domain.HostingDatabaseBackupComponentScheduleVersion
-	}
+func databaseBackupScheduleView(r sqlcgen.HostingDatabaseBackupSchedule, version string) domain.HostingDatabaseBackupSchedule {
 	return domain.HostingDatabaseBackupSchedule{Component: r.Component, ID: r.ID, Version: version, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
 type databaseBackupScheduleSource struct {
-	Resource domain.Resource
-	Binding  domain.ResourceBinding
+	Resource   domain.Resource
+	Binding    domain.ResourceBinding
+	Version    string
+	Capability string
 }
 
 // Placement admission precedes the schedule lock in both writers and controller
@@ -56,16 +54,17 @@ func databaseBackupScheduleAuthority(ctx context.Context, tx pgx.Tx, actor, reso
 		}
 	}
 	if source.Kind == "compose" || source.Kind == "git" {
-		return databaseBackupScheduleSource{Resource: domain.Resource{ID: resource, ProjectID: target.ProjectID, Generation: target.Generation, Source: source}, Binding: domain.ResourceBinding{ID: target.BindingID, DestinationID: target.DestinationID}}, proxyCheckLegacyToken(ctx, tx, actor)
+		return databaseBackupScheduleSource{Resource: domain.Resource{ID: resource, ProjectID: target.ProjectID, Generation: target.Generation, Source: source}, Binding: domain.ResourceBinding{ID: target.BindingID, DestinationID: target.DestinationID}, Version: domain.HostingDatabaseBackupComponentScheduleVersion, Capability: domain.HostingDatabaseBackupCapability}, proxyCheckLegacyToken(ctx, tx, actor)
 	}
 	value, err := hostingDatabaseLoad(ctx, q, resource)
 	if err != nil {
 		return zero, err
 	}
-	if value.Engine != "postgresql" || value.RecipeVersion != domain.HostingDatabasePostgresRecipe {
+	version := domain.HostingDatabaseBackupScheduleVersionFor(value.Engine, value.RecipeVersion)
+	if version == "" {
 		return zero, ErrConflict
 	}
-	return databaseBackupScheduleSource{Resource: value.Resource, Binding: value.Binding}, proxyCheckLegacyToken(ctx, tx, actor)
+	return databaseBackupScheduleSource{Resource: value.Resource, Binding: value.Binding, Version: version, Capability: domain.HostingDatabaseBackupCapabilityFor(domain.HostingDatabaseBackupVersionFor(value.Engine, value.RecipeVersion))}, proxyCheckLegacyToken(ctx, tx, actor)
 }
 
 // SaveDatabaseBackupSchedule creates or revises an authorized database backup schedule.
@@ -78,6 +77,9 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		value, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner)
 		if err != nil {
 			return zero, err
+		}
+		if value.Version == domain.HostingDatabaseMySQLBackupScheduleVersion && in.RemoteTarget != nil {
+			return zero, ErrConflict
 		}
 		q := sqlcgen.New(tx)
 		hash := domain.HostingDocumentHash(struct {
@@ -153,7 +155,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err = s.saveBackupRemoteScheduleSelection(ctx, tx, actor, resource, id, saved.Revision, in.Enabled, selection); err != nil {
 			return zero, err
 		}
-		out := databaseBackupScheduleView(saved)
+		out := databaseBackupScheduleView(saved, value.Version)
 		out.RemoteTarget = selection
 		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleRequest(ctx, sqlcgen.CreateDatabaseBackupScheduleRequestParams{ResourceID: resource, RequestID: in.RequestID, ActorID: actor, RequestHash: hash, ScheduleID: id, Revision: int64(saved.Revision), Response: buildJSON(out)})
 		if err != nil {
@@ -169,7 +171,8 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 // ListDatabaseBackupSchedules lists authorized database backup schedules for a resource.
 func (s *PostgresStore) ListDatabaseBackupSchedules(ctx context.Context, actor, resource string) ([]domain.HostingDatabaseBackupSchedule, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupSchedule, error) {
-		if _, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); err != nil {
+		value, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer)
+		if err != nil {
 			return nil, err
 		}
 		rows, err := sqlcgen.New(tx).ListDatabaseBackupSchedules(ctx, resource)
@@ -178,7 +181,7 @@ func (s *PostgresStore) ListDatabaseBackupSchedules(ctx context.Context, actor, 
 		}
 		out := make([]domain.HostingDatabaseBackupSchedule, 0, len(rows))
 		for _, r := range rows {
-			item := databaseBackupScheduleView(r)
+			item := databaseBackupScheduleView(r, value.Version)
 			item.RemoteTarget, err = backupRemoteScheduleSelection(ctx, tx, r.ID, r.Revision)
 			if err != nil {
 				return nil, err

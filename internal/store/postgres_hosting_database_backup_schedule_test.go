@@ -24,6 +24,11 @@ import (
 // preparer. Runner evidence below uses the existing store lifecycle fixture.
 func scheduledBackupFixture(t *testing.T) networkCaptureFixture {
 	t.Helper()
+	return scheduledBackupFixtureFor(t, "postgresql")
+}
+
+func scheduledBackupFixtureFor(t *testing.T, engine string) networkCaptureFixture {
+	t.Helper()
 	var stop func(context.Context) error
 	pg, db, r, server, destination := hostingExecutionFixture(t, &stop)
 	if err := stop(t.Context()); err != nil {
@@ -31,12 +36,23 @@ func scheduledBackupFixture(t *testing.T) networkCaptureFixture {
 	}
 	service := hostingDatabaseApplication(t, pg)
 	ctx := auth.WithPrincipal(t.Context(), auth.Principal{ID: "usr_bootstrap", Provider: domain.PrincipalLocal, Roles: []string{domain.RoleSystemAdmin}})
-	view, err := service.CreateHostingDatabase(ctx, domain.HostingDatabaseCreateInput{RequestID: strings.Repeat("a", 32), ProjectID: r.ProjectID, ProjectEnvironmentID: r.ProjectEnvironmentID, Name: "scheduled source", DestinationID: destination.ID, Engine: "postgresql", RecipeVersion: domain.HostingDatabasePostgresRecipe})
+	recipe := domain.HostingDatabasePostgresRecipe
+	backupCapability := domain.HostingDatabaseBackupCapability
+	if engine == "mysql" {
+		recipe = domain.HostingDatabaseMySQLRecipe
+		backupCapability = domain.HostingDatabaseMySQLBackupCapability
+	}
+	view, err := service.CreateHostingDatabase(ctx, domain.HostingDatabaseCreateInput{RequestID: strings.Repeat("a", 32), ProjectID: r.ProjectID, ProjectEnvironmentID: r.ProjectEnvironmentID, Name: "scheduled source", DestinationID: destination.ID, Engine: engine, RecipeVersion: recipe})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=ARRAY['compose_deploy',$2,$3,$4,$5,$6]::text[] WHERE id=$1`, server.RunnerID, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability); err != nil {
+	if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=ARRAY['compose_deploy',$2,$3,$4,$5,$6]::text[] WHERE id=$1`, server.RunnerID, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.RunTypeDatabaseBackup, backupCapability); err != nil {
 		t.Fatal(err)
+	}
+	if engine == "mysql" {
+		if _, err = db.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, server.RunnerID, domain.HostingDatabaseMySQLCapability); err != nil {
+			t.Fatal(err)
+		}
 	}
 	row, err := sqlcgen.New(db).ReadHostingStorage(ctx, view.Resource.ID)
 	if err != nil {

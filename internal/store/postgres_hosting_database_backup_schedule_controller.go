@@ -110,7 +110,7 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 					target, targetErr := sqlcgen.New(admission).LockHostingResourceTarget(ctx, schedule.ResourceID)
 					e = targetErr
 					if e == nil {
-						_, e = sqlcgen.New(admission).LockHostingExactRunner(ctx, sqlcgen.LockHostingExactRunnerParams{ID: target.BindingID, ResourceID: schedule.ResourceID, ID_2: target.DestinationID, ID_3: target.ServerID, ID_4: target.RunnerID, ProjectID: target.ProjectID, Capability: domain.HostingDatabaseBackupCapability})
+						_, e = sqlcgen.New(admission).LockHostingExactRunner(ctx, sqlcgen.LockHostingExactRunnerParams{ID: target.BindingID, ResourceID: schedule.ResourceID, ID_2: target.DestinationID, ID_3: target.ServerID, ID_4: target.RunnerID, ProjectID: target.ProjectID, Capability: value.Capability})
 						if errors.Is(e, pgx.ErrNoRows) {
 							e = ErrConflict
 						}
@@ -323,5 +323,5 @@ func (o *databaseBackupScheduleObserver) run(ctx context.Context, now time.Time,
 		}
 	}
 	o.nextReport = now.Add(time.Minute)
-	logger.WarnContext(ctx, "PostgreSQL backup schedule controller pass failed", "error_class", class)
+	logger.WarnContext(ctx, "database backup schedule controller pass failed", "error_class", class)
 }

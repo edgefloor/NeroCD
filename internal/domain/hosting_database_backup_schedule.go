@@ -13,11 +13,26 @@ import (
 // HostingDatabaseBackupScheduleVersion identifies the database backup schedule document format.
 const HostingDatabaseBackupScheduleVersion = "postgresql.logical-local.schedule.v1"
 
+// HostingDatabaseMySQLBackupScheduleVersion identifies a native MySQL local schedule.
+const HostingDatabaseMySQLBackupScheduleVersion = "mysql.logical-local.schedule.v1"
+
 // HostingDatabaseBackupComponentScheduleVersion identifies a Compose component schedule.
 const HostingDatabaseBackupComponentScheduleVersion = "postgresql.compose-logical-local.schedule.v1"
 
 // ErrInvalidDatabaseBackupSchedule reports invalid database backup schedule input.
-var ErrInvalidDatabaseBackupSchedule = errors.New("invalid PostgreSQL backup schedule")
+var ErrInvalidDatabaseBackupSchedule = errors.New("invalid database backup schedule")
+
+// HostingDatabaseBackupScheduleVersionFor admits only qualified native recipes.
+func HostingDatabaseBackupScheduleVersionFor(engine, recipe string) string {
+	switch HostingDatabaseBackupVersionFor(engine, recipe) {
+	case HostingDatabaseBackupVersion:
+		return HostingDatabaseBackupScheduleVersion
+	case HostingDatabaseMySQLBackupVersion:
+		return HostingDatabaseMySQLBackupScheduleVersion
+	default:
+		return ""
+	}
+}
 
 // HostingDatabaseBackupScheduleInput uses a whole-document compare-and-swap.
 // Creation requires expected_version=0; updates retain the original schedule ID.

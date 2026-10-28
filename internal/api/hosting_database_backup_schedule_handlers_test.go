@@ -45,11 +45,18 @@ func (r *backupScheduleHTTPRepository) ListDatabaseBackupOccurrences(ctx context
 }
 
 func TestDatabaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
+	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion} {
+		t.Run(version, func(t *testing.T) { databaseBackupScheduleHTTPPermissionsAndClosedInputs(t, version) })
+	}
+}
+
+func databaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T, version string) {
+	t.Helper()
 	server, original, owner, viewer, runner := archiveHTTPFixture(t)
 	original.resource.Kind = "database"
 	repo := &backupScheduleHTTPRepository{databaseBackupHTTPRepository: &databaseBackupHTTPRepository{archiveHTTPRepository: original}}
 	now := time.Now().UTC()
-	repo.schedule = domain.HostingDatabaseBackupSchedule{ID: "schedule", Version: domain.HostingDatabaseBackupScheduleVersion, ProjectID: original.resource.ProjectID, ResourceID: original.resource.ID, Revision: 1, Frequency: "daily", Timezone: "UTC", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	repo.schedule = domain.HostingDatabaseBackupSchedule{ID: "schedule", Version: version, ProjectID: original.resource.ProjectID, ResourceID: original.resource.ID, Revision: 1, Frequency: "daily", Timezone: "UTC", Enabled: true, CreatedAt: now, UpdatedAt: now}
 	mem := repo.MemoryStore
 	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
 	if err != nil {
@@ -63,7 +70,10 @@ func TestDatabaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
 	archiveHTTPCall(t, server, "POST", path, viewer, body, "application/json", 403)
 	archiveHTTPCall(t, server, "GET", path, viewer, "", "", 200)
 	archiveHTTPCall(t, server, "GET", path+"/schedule/occurrences", viewer, "", "", 200)
-	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 200)
+	created := archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 200)
+	if !strings.Contains(created.Body.String(), `"version":"`+version+`"`) {
+		t.Fatal("schedule response lost engine version")
+	}
 	if repo.input.ExpectedVersion != 0 || !repo.input.Enabled || repo.input.Timezone != "UTC" {
 		t.Fatal("create lost typed preconditions")
 	}
@@ -71,6 +81,11 @@ func TestDatabaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
 	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, update, "application/json", 200)
 	if repo.input.ExpectedVersion != 1 || repo.input.Enabled || repo.schedule.ID != "schedule" {
 		t.Fatal("disable lost exact schedule CAS")
+	}
+	beforeRemote := repo.calls
+	archiveHTTPCall(t, server, "POST", path, owner, strings.TrimSuffix(body, "}")+`,"remote_target":{"target_id":"target","revision":1}}`, "application/json", 400)
+	if repo.calls != beforeRemote {
+		t.Fatal("remote schedule reached persistence through local HTTP decoder")
 	}
 	// Exercise the real decoder and application validation for additive Compose fields.
 	original.resource.Source = domain.ResourceSource{Kind: "compose"}
@@ -131,6 +146,18 @@ func TestDatabaseBackupScheduleOpenAPI(t *testing.T) {
 	for _, name := range []string{"HostingDatabaseBackupSchedule", "HostingDatabaseBackupOccurrence"} {
 		if doc.Components.Schemas[name] == nil {
 			t.Fatal("missing safe schema", name)
+		}
+	}
+	now := time.Now().UTC()
+	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseBackupComponentScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion} {
+		schedule := domain.HostingDatabaseBackupSchedule{ID: "schedule", Version: version, ProjectID: "project", ResourceID: "resource", Revision: 1, Frequency: "daily", Timezone: "UTC", CreatedAt: now, UpdatedAt: now}
+		value = nil
+		raw, err := json.Marshal(schedule)
+		if err != nil || json.Unmarshal(raw, &value) != nil {
+			t.Fatal("schedule JSON fixture", err)
+		}
+		if err = doc.Components.Schemas["HostingDatabaseBackupSchedule"].Value.VisitJSON(value); err != nil {
+			t.Fatal("engine schedule response violates OpenAPI", err)
 		}
 	}
 }

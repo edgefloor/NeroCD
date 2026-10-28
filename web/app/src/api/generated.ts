@@ -5403,8 +5403,11 @@ export interface components {
             /** @description Immutable Compose PostgreSQL component. Omitted for standalone schedules. */
             component?: string;
             id: string;
-            /** @enum {string} */
-            version: "postgresql.logical-local.schedule.v1" | "postgresql.compose-logical-local.schedule.v1";
+            /**
+             * @description Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native and local-only; component and remote_target are absent.
+             * @enum {string}
+             */
+            version: "postgresql.logical-local.schedule.v1" | "postgresql.compose-logical-local.schedule.v1" | "mysql.logical-local.schedule.v1";
             project_id: string;
             resource_id: string;
             /** Format: int64 */

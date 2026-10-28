@@ -16,6 +16,19 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
+// Retention remains PostgreSQL-only even though schedule admission also supports
+// native MySQL. Keep every policy, inventory and execution entrypoint fenced.
+func databaseBackupRetentionAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (databaseBackupScheduleSource, error) {
+	value, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, role)
+	if err != nil {
+		return value, err
+	}
+	if value.Version != domain.HostingDatabaseBackupScheduleVersion && value.Version != domain.HostingDatabaseBackupComponentScheduleVersion {
+		return databaseBackupScheduleSource{}, ErrConflict
+	}
+	return value, nil
+}
+
 func backupRetentionLock(ctx context.Context, tx pgx.Tx) error {
 	e := sqlcgen.New(tx).LockDatabaseBackupCopyAdmission(ctx)
 	return e
@@ -61,7 +74,7 @@ func backupRetentionSaveRequest(ctx context.Context, tx pgx.Tx, resource, actor,
 // GetDatabaseBackupRetention returns the authorized database backup retention policy.
 func (s *PostgresStore) GetDatabaseBackupRetention(ctx context.Context, actor, resource string) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (*domain.HostingDatabaseBackupRetentionPolicy, error) {
-		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
+		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
 			return nil, e
 		}
 		return backupRetentionPolicy(ctx, tx, resource)
@@ -75,7 +88,7 @@ func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, 
 		return zero, domain.ErrInvalidDatabaseBackupRetention
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionPolicy, error) {
-		value, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner)
+		value, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner)
 		if e != nil {
 			return zero, e
 		}
@@ -373,7 +386,7 @@ func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, 
 		return zero, domain.ErrInvalidDatabaseBackupRetention
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionPreview, error) {
-		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
+		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
 			return zero, e
 		}
 		if e := backupRetentionLock(ctx, tx); e != nil {
@@ -404,7 +417,7 @@ func (s *PostgresStore) PreviewDatabaseBackupRetention(ctx context.Context, id, 
 // ListDatabaseBackupRetentionExecutions lists authorized database backup retention executions.
 func (s *PostgresStore) ListDatabaseBackupRetentionExecutions(ctx context.Context, actor, resource string) ([]domain.HostingDatabaseBackupRetentionExecution, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) ([]domain.HostingDatabaseBackupRetentionExecution, error) {
-		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
+		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
 			return nil, e
 		}
 		rows, e := sqlcgen.New(tx).ListDatabaseBackupRetentionExecutionBodies(ctx, resource)
@@ -427,7 +440,7 @@ func (s *PostgresStore) ListDatabaseBackupRetentionExecutions(ctx context.Contex
 func (s *PostgresStore) GetDatabaseBackupRetentionExecution(ctx context.Context, actor, resource, id string) (domain.HostingDatabaseBackupRetentionExecution, error) {
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionExecution, error) {
 		var v domain.HostingDatabaseBackupRetentionExecution
-		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
+		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleViewer); e != nil {
 			return v, e
 		}
 		var raw []byte
@@ -450,7 +463,7 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		return zero, domain.ErrInvalidDatabaseBackupRetention
 	}
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseBackupRetentionExecution, error) {
-		if _, e := databaseBackupScheduleAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
+		if _, e := databaseBackupRetentionAuthority(ctx, tx, actor, resource, domain.RoleOwner); e != nil {
 			return zero, e
 		}
 		if e := backupRetentionLock(ctx, tx); e != nil {
@@ -575,7 +588,7 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 	if p.Validate() != nil {
 		return ErrConflict
 	}
-	value, e := databaseBackupScheduleAuthority(ctx, tx, p.ActorID, p.Operation.ResourceID, domain.RoleOwner)
+	value, e := databaseBackupRetentionAuthority(ctx, tx, p.ActorID, p.Operation.ResourceID, domain.RoleOwner)
 	if e != nil {
 		return e
 	}

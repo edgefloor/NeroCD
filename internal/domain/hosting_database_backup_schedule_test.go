@@ -5,6 +5,21 @@ import (
 	"time"
 )
 
+func TestDatabaseBackupScheduleRecipeVersions(t *testing.T) {
+	for _, tc := range []struct{ engine, recipe, want string }{
+		{"postgresql", HostingDatabasePostgresRecipe, HostingDatabaseBackupScheduleVersion},
+		{"mysql", HostingDatabaseMySQLRecipe, HostingDatabaseMySQLBackupScheduleVersion},
+		{"mysql", HostingDatabasePostgresRecipe, ""},
+		{"postgresql", HostingDatabaseMySQLRecipe, ""},
+		{"mysql", "mysql-latest", ""},
+		{"redis", HostingDatabaseRedisRecipe, ""},
+	} {
+		if got := HostingDatabaseBackupScheduleVersionFor(tc.engine, tc.recipe); got != tc.want {
+			t.Fatalf("%s/%s schedule version = %q, want %q", tc.engine, tc.recipe, got, tc.want)
+		}
+	}
+}
+
 func scheduleTime(t *testing.T, s string) time.Time {
 	t.Helper()
 	v, e := time.Parse(time.RFC3339, s)
