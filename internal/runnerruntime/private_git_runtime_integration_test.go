@@ -1610,6 +1610,10 @@ func TestPrivateGitBrowser(t *testing.T) {
 						}
 					}
 				}
+				var sshServerBefore []byte
+				if err == nil && sshSource && item.kind == "build" {
+					sshServerBefore, err = exec.CommandContext(ctx, "/usr/local/bin/docker", "logs", sshFixture.serverID).CombinedOutput()
+				}
 				if err == nil && item.kind == "proxy" {
 					err = runProxy()
 				} else if err == nil {
@@ -1638,8 +1642,20 @@ func TestPrivateGitBrowser(t *testing.T) {
 					err = runErr
 					if err != nil && !credentialLeak && item.kind == "build" && sshSource && sshFailure.Load() {
 						full, readErr := f.pg.GetHostingBuild(ctx, "usr_bootstrap", item.id)
-						if readErr == nil && full.State == "failed" && full.Artifact == nil && full.SourceReceipt == nil && full.FailureCode == "source_failed" {
-							err = nil
+						if readErr == nil && full.State == "failed" && full.Artifact == nil && full.SourceReceipt == nil && full.FailureCode == "source_failed" && full.Snapshot.Grant != nil && full.Snapshot.Grant.SecretID == secret.ID {
+							stage := ""
+							pins := full.Snapshot.Source.Policy.SSHHostFingerprints
+							if full.Snapshot.Grant.SecretVersion == 3 && len(pins) == 1 && pins[0] == sshFixture.fingerprint {
+								stage = "wrong-key"
+							}
+							if full.Snapshot.Grant.SecretVersion == 4 && len(pins) == 1 && pins[0] == "SHA256:"+strings.Repeat("A", 43) {
+								stage = "wrong-host"
+							}
+							after, logErr := exec.CommandContext(ctx, "/usr/local/bin/docker", "logs", sshFixture.serverID).CombinedOutput()
+							if logErr == nil && bytes.HasPrefix(after, sshServerBefore) && privateSSHFailureEvidence(stage, string(out), string(after[len(sshServerBefore):]), sshFixture.wrongFingerprint) {
+								err = nil
+								t.Logf("SSH %s: exact stage diagnostics and live server transport evidence verified", stage)
+							}
 						}
 					}
 					if err != nil && !credentialLeak && item.kind == "build" && failureEnabled.Load() {

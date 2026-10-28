@@ -42,7 +42,7 @@ func fixtureProcess(t *testing.T, name string, args ...string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func sourceCheckoutSSHServer(t *testing.T, root, image string) (string, string) {
+func sourceCheckoutSSHServer(t *testing.T, root, image string) (string, string, string) {
 	t.Helper()
 	for _, key := range []string{"host", "client"} {
 		fixtureProcess(t, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(root, key))
@@ -58,7 +58,7 @@ func sourceCheckoutSSHServer(t *testing.T, root, image string) (string, string) 
 	}
 	sum := sha256.Sum256(blob)
 	fingerprint := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
-	config := "Port 2222\nListenAddress 0.0.0.0\nHostKey /fixture/host\nPidFile /tmp/sshd.pid\nAuthorizedKeysFile /fixture/client.pub\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers git\nForceCommand git -c safe.directory=/fixture/repo.git upload-pack /fixture/repo.git\n"
+	config := "LogLevel DEBUG1\nPerSourcePenalties no\nPort 2222\nListenAddress 0.0.0.0\nHostKey /fixture/host\nPidFile /tmp/sshd.pid\nAuthorizedKeysFile /fixture/client.pub\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nAllowUsers git\nForceCommand git -c safe.directory=/fixture/repo.git upload-pack /fixture/repo.git\n"
 	if err := os.WriteFile(filepath.Join(root, "sshd_config"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func sourceCheckoutSSHServer(t *testing.T, root, image string) (string, string) 
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return address, fingerprint
+	return address, fingerprint, id
 }
 
 func TestSourceCheckoutSSHTransport(t *testing.T) {
@@ -101,7 +101,7 @@ func TestSourceCheckoutSSHTransport(t *testing.T) {
 	checkoutCommand(t, work, "commit", "-qm", "fixture")
 	commit := checkoutCommand(t, work, "rev-parse", "HEAD")
 	checkoutCommand(t, root, "clone", "--bare", work, "repo.git")
-	address, fingerprint := sourceCheckoutSSHServer(t, root, image)
+	address, fingerprint, serverID := sourceCheckoutSSHServer(t, root, image)
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {
 		t.Fatal(err)
@@ -124,25 +124,43 @@ func TestSourceCheckoutSSHTransport(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			used := false
-			receipt, err := WithSourceCheckout(ctx, r, func(context.Context) (SourceCredential, error) {
-				keyName := "client"
-				if mode == "wrong-key" {
-					keyName = "wrong"
-				}
-				key, e := os.ReadFile(filepath.Join(root, keyName))
-				return SourceCredential{Kind: "ssh_private_key", Bytes: key, UseUntil: time.Now().Add(time.Minute)}, e
-			}, func(context.Context, SourceReceipt) error { return nil }, func(_ context.Context, path string, _ SourceReceipt) error {
-				used = true
-				b, e := os.ReadFile(filepath.Join(path, "hello"))
-				if e != nil || string(b) != "ssh fixture\n" {
-					t.Fatal("bad SSH tree")
-				}
-				entries, e := os.ReadDir(parent)
-				if e != nil || len(entries) != 1 {
-					t.Fatal("SSH material retained before use")
-				}
-				return nil
+			before := fixtureProcess(t, "docker", "logs", serverID)
+			var receipt SourceReceipt
+			diagnostics, err := captureProvenanceDiagnostics(t, func() error {
+				var checkoutErr error
+				receipt, checkoutErr = WithSourceCheckout(ctx, r, func(context.Context) (SourceCredential, error) {
+					keyName := "client"
+					if mode == "wrong-key" {
+						keyName = "wrong"
+					}
+					key, e := os.ReadFile(filepath.Join(root, keyName))
+					return SourceCredential{Kind: "ssh_private_key", Bytes: key, UseUntil: time.Now().Add(time.Minute)}, e
+				}, func(context.Context, SourceReceipt) error { return nil }, func(_ context.Context, path string, _ SourceReceipt) error {
+					used = true
+					b, e := os.ReadFile(filepath.Join(path, "hello"))
+					if e != nil || string(b) != "ssh fixture\n" {
+						t.Fatal("bad SSH tree")
+					}
+					entries, e := os.ReadDir(parent)
+					if e != nil || len(entries) != 1 {
+						t.Fatal("SSH material retained before use")
+					}
+					return nil
+				})
+				return checkoutErr
 			})
+			after := fixtureProcess(t, "docker", "logs", serverID)
+			if !strings.HasPrefix(after, before) {
+				t.Fatal("SSH server log changed history")
+			}
+			serverLog := strings.TrimPrefix(after, before)
+			if mode != "valid" {
+				wrongFP := strings.Fields(fixtureProcess(t, "ssh-keygen", "-lf", filepath.Join(root, "wrong.pub")))[1]
+				stage := map[string]string{"changed-host": "wrong-host", "wrong-key": "wrong-key"}[mode]
+				if !privateSSHFailureEvidence(stage, diagnostics, serverLog, wrongFP) {
+					t.Fatalf("missing stage-specific SSH evidence: %s\n%s", diagnostics, serverLog)
+				}
+			}
 			if mode != "valid" {
 				if err == nil || used {
 					t.Fatal("changed host key accepted")

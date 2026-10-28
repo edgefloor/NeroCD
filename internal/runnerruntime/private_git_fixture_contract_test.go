@@ -186,3 +186,58 @@ func TestPrivateSSHFixtureContracts(t *testing.T) {
 		}
 	}
 }
+
+// Only fixed provenance markers and the fixture server's public-key events
+// identify an intended SSH failure. A generic source_failed status is insufficient.
+func privateSSHFailureEvidence(stage, diagnostics, serverLog, wrongFingerprint string) bool {
+	marker := func(stage, status string) bool {
+		return strings.Contains("\n"+diagnostics, "\nprovenance stage="+stage+" status="+status+"\n")
+	}
+	if !marker("ssh_keyscan", "start") {
+		return false
+	}
+	switch stage {
+	case "wrong-key":
+		if !marker("ssh_fingerprint", "matched") || !marker("git_fetch", "start") || marker("git_checkout", "start") || wrongFingerprint == "" {
+			return false
+		}
+		for _, line := range strings.Split(serverLog, "\n") {
+			if strings.HasPrefix(line, "Failed publickey for git ") && strings.Contains(line, "ED25519 "+wrongFingerprint) {
+				return true
+			}
+		}
+	case "wrong-host":
+		return !marker("ssh_fingerprint", "matched") && !marker("git_init", "start") && !marker("git_fetch", "start") && strings.Contains(serverLog, "kex: host key algorithm: ssh-ed25519") && strings.Contains(serverLog, "SSH2_MSG_NEWKEYS sent") && !strings.Contains(serverLog, "Failed publickey") && !strings.Contains(serverLog, "Accepted publickey")
+	}
+	return false
+}
+
+func TestPrivateSSHFailureEvidence(t *testing.T) {
+	scan := "provenance stage=ssh_keyscan status=start\n"
+	matched := scan + "provenance stage=ssh_fingerprint status=matched\nprovenance stage=git_fetch status=start\n"
+	fingerprint := "SHA256:" + strings.Repeat("A", 43)
+	auth := "Failed publickey for git from 127.0.0.1 port 1234 ssh2: ED25519 " + fingerprint + "\n"
+	host := "debug1: kex: host key algorithm: ssh-ed25519 [preauth]\ndebug1: SSH2_MSG_NEWKEYS sent [preauth]\n"
+	for _, tc := range []struct {
+		name, stage, diagnostics, server string
+		want                             bool
+	}{
+		{"wrong key", "wrong-key", matched, auth, true},
+		{"host mismatch", "wrong-host", scan, host, true},
+		{"generic terminal failure", "wrong-key", "source_failed", auth, false},
+		{"fetch unavailable", "wrong-key", matched, "connection refused", false},
+		{"different key rejected", "wrong-key", matched, strings.ReplaceAll(auth, fingerprint, "SHA256:different"), false},
+		{"no host match", "wrong-key", scan, auth, false},
+		{"checkout reached", "wrong-key", matched + "provenance stage=git_checkout status=start\n", auth, false},
+		{"server unavailable", "wrong-host", scan, "connection refused", false},
+		{"key exchange incomplete", "wrong-host", scan, "kex: host key algorithm: ssh-ed25519", false},
+		{"matched host", "wrong-host", matched, host, false},
+		{"auth attempted", "wrong-host", scan, host + auth, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := privateSSHFailureEvidence(tc.stage, tc.diagnostics, tc.server, fingerprint); got != tc.want {
+				t.Fatalf("evidence=%t want %t", got, tc.want)
+			}
+		})
+	}
+}

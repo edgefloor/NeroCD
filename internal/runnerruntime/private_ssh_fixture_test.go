@@ -14,10 +14,10 @@ import (
 )
 
 type privateSSHFixture struct {
-	repository, fingerprint, root string
-	keys                          []string
-	update                        func(string, bool)
-	commits                       []string
+	repository, fingerprint, root, serverID, wrongFingerprint string
+	keys                                                      []string
+	update                                                    func(string, bool)
+	commits                                                   []string
 }
 
 func privateRuntimeSSH(t *testing.T) *privateSSHFixture {
@@ -30,12 +30,12 @@ func privateRuntimeSSH(t *testing.T) *privateSSHFixture {
 	if err := os.Chmod(root, 0755); err != nil {
 		t.Fatal(err)
 	}
-	address, fingerprint := sourceCheckoutSSHServer(t, root, image)
+	address, fingerprint, serverID := sourceCheckoutSSHServer(t, root, image)
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &privateSSHFixture{repository: "ssh://git@example.com:" + port + "/repo.git", fingerprint: fingerprint, root: root}
+	f := &privateSSHFixture{repository: "ssh://git@example.com:" + port + "/repo.git", fingerprint: fingerprint, root: root, serverID: serverID}
 	f.commits = append(f.commits, checkoutCommand(t, filepath.Join(root, "repo.git"), "rev-parse", "main"))
 	f.update = func(body string, fail bool) {
 		update(body, fail)
@@ -51,6 +51,7 @@ func privateRuntimeSSH(t *testing.T) *privateSSHFixture {
 		}
 		f.keys = append(f.keys, string(raw))
 	}
+	f.wrongFingerprint = strings.Fields(fixtureProcess(t, "ssh-keygen", "-lf", filepath.Join(root, "client-wrong.pub")))[1]
 	return f
 }
 
