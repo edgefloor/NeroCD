@@ -145,8 +145,10 @@ and Docker daemon for preparation and deployment.
    configuration. For private HTTPS Git, use the
    existing [source grant and explicit secret version](hosting-git-resources.md#request-a-private-https-git-build).
    Saving configuration does not fetch source or change a running stack.
-3. For a private `FROM`, select the saved [build registry credential and exact
-   version](hosting-git-resources.md#select-a-private-build-base-registry). This is
+3. For private build dependencies, select [managed build secrets](hosting-git-resources.md#select-managed-build-secrets).
+   Names become ephemeral `RUN` environment mounts for built services, not runtime
+   service variables. For a private `FROM`, select the saved
+   [build registry credential and exact version](hosting-git-resources.md#select-a-private-build-base-registry). This is
    separate from the Git grant and the service-image credential in step 4.
    Request the existing public or private Git build. Wait for a succeeded build
    with its resolved commit, tree digest and prepared Compose result. An identical
@@ -191,9 +193,11 @@ deployment require current resource and source generations. After changing the
 source, prepare a new eligible build before Start; a denied stale Start preserves
 the stopped receipt and volumes.
 
-This profile does not support build secrets, SSH credential
-delivery, remote build contexts, repository file bind mounts, unrestricted raw
-Compose or cross-daemon artifact transfer. Other unsupported fields in the
+[Selected managed build secrets](hosting-git-resources.md#managed-build-secret-qualification)
+are qualified for Git Compose at `75965ca1`. This profile does not support
+repository-defined Compose secret sources, SSH credential delivery, remote build
+contexts, repository file bind mounts, unrestricted raw Compose or cross-daemon
+artifact transfer. Other unsupported fields in the
 managed profile remain rejected. Private Git access uses source grants separately
 from service-image registry selection. One selected registry credential authorizes
 only matching registry-only service pulls. Built services and shared-image aliases

@@ -63,6 +63,20 @@ All duration integers are nanoseconds: `100000000` is 100 ms, `5000000000` is 5 
 
 The runner advertises `hosting_build_v1` only with validated execution configuration. It also advertises `hosting_dockerfile_args_v1`, required for nonempty Dockerfile build variables at admission, claim and current execution. Legacy builds without variables and Railpack retain their existing capability requirements. Shell and build execution cannot be combined. Explicit capability flags and persisted enrolled capabilities must match local configuration before heartbeat or claim. Image and configured proxy modes retain their existing behavior. The authenticated runner ID must equal `target.runner_id`; `--id` cannot override it.
 
+## Enable managed build-secret delivery
+
+Validated build configuration advertises `hosting_build_secrets_v1`. Dockerfile
+and Compose builds selecting `settings.build_secrets` require that capability at
+admission, claim and execution. Delivery uses protected controller HTTPS and the
+full live build authority. A fresh attempt stages owner-only secret files outside
+the checkout, passes their paths through BuildKit `--secret`, and removes them
+after execution. Values are excluded from saved configuration, request identities
+and durable journals. Authorized metadata replay does not reacquire secret values.
+
+The existing indexed output redactor covers configured raw values, supported
+encodings and multiline fragments before durable output. This is not a sandbox
+against malicious build instructions. See [selection and qualification](hosting-git-resources.md#select-managed-build-secrets).
+
 ## Trust a private build-registry CA
 
 Validated build configuration advertises `hosting_build_registry_v1`. Selected

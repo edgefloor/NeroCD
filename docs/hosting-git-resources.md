@@ -38,6 +38,48 @@ builds and grants remain tied to their original source. Nonempty Dockerfile
 variables require the runner capability `hosting_dockerfile_args_v1` in addition
 to the existing build and source-access capabilities.
 
+## Select managed build secrets
+
+For Dockerfile or Git Compose builds, use **Build secrets** in the Git source
+form. Choose **Add build secret**, enter **Build secret name 1**, then select
+**Build secret 1 secret** and **Build secret 1 version**. The picker reads existing
+project-managed secret metadata; it does not reveal values. Save the source
+before requesting a build. The API stores only exact references:
+
+```json
+"build_secrets": [
+  {"name": "DEPENDENCY_TOKEN", "secret": {"secret_id": "msec_dependency", "version": 1}}
+]
+```
+
+Use up to 64 unique names, separate from public build-variable names. Selected
+values are literal UTF-8, at most 64 KiB each; NUL is rejected. They are separate
+from Git source grants, build-registry credentials and deployment runtime secrets.
+Rotation does not retarget a saved version. Select the new version, save, and
+request a new build. Private HTTPS Git needs a new source grant for that generation.
+
+The runner automatically mounts each selected name as a BuildKit secret environment
+variable in `RUN` instructions without an existing secret mount. A `RUN` that
+already declares a secret mount keeps its explicit configuration. The repository
+is not edited; values are not public build arguments. This follows the pinned PHP
+[build-secret sequence](https://github.com/coollabsio/coolify/blob/b12d1386f3d458618b4c579babcd1e339c6c40b3/app/Jobs/ApplicationDeploymentJob.php#L5165).
+Railpack and static builds do not accept these references.
+
+### Managed build-secret qualification
+
+At `75965ca1` on 2026-10-28, the Git Compose workflow fetched a TLS build-only
+dependency with version 1, then rebuilt and redeployed with distinct version 2
+after the dependency rejected version 1. Wrong, revoked and stale selections
+failed before replacement. HTTPS PostgreSQL records, uploads, route recovery and
+uncached Stop/Start persistence passed. Image/history, runtime, journal and retained
+output checks found no secret canaries. Ordinary Dockerfile support has focused
+engine, controller, CLI and UI tests; this slice did not rerun its full browser flow.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-build-secrets-20261028/75965ca19519fb9d1366783f936d239c2d9ca624/evidence-index.json) records the accepted scope and check limitations. Ephemeral mounts and output
+redaction do not prevent a malicious Dockerfile from exfiltrating a secret or
+copying it into an image. Repository-defined Compose secret sources and broader
+secret-provider support remain outside this profile.
+
 ## Select a private build-base registry
 
 For Dockerfile or Git Compose builds, create a project-managed registry secret
@@ -243,5 +285,6 @@ The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hostin
 records source hashes, scoped checks, reviews, cleanup and remaining test limits.
 The initial aggregate Go test failed stale CLI expectations; the complete affected
 package passed after repair. The contract check still exposes an unchanged
-undocumented 401 on storage-backup-volumes. Build secrets and remote artifact publication remain outside this qualification.
+undocumented 401 on storage-backup-volumes. Remote artifact publication remains outside this qualification.
+[Managed build secrets](#managed-build-secret-qualification) have separate evidence.
 [Selected build-base authentication](#private-build-registry-qualification) has separate evidence.
