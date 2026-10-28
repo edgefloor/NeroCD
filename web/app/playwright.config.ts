@@ -43,7 +43,8 @@ export default defineConfig({
         command: `NEROCD_BROWSER_RUN_ID="${browserRunID}" sh scripts/browser-server.sh "${port}" "${baseURL}"`,
         url: baseURL,
         reuseExistingServer: false,
-        timeout: 30_000,
+        // Startup includes PostgreSQL, OIDC setup, and a fresh Go binary build.
+        timeout: 120_000,
         gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
       },
   projects: [
