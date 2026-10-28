@@ -87,7 +87,8 @@ do not accept `component` or `expected_deployed_operation_id`.
 [Failure notifications](hosting-backup-notifications.md#native-mysql-notification-qualification)
 cover accepted operations; discovery-only skips do not notify. A saved upload can
 supply [remote-only restore](hosting-database-remote-backups.md#native-mysql-remote-only-restore-qualification).
-Retention controls and Compose MySQL schedules remain unsupported. The InnoDB snapshot
+Native MySQL supports [local and remote retention](hosting-database-backup-retention.md#native-mysql-retention-qualification).
+Compose MySQL schedules remain unsupported. The InnoDB snapshot
 and concurrent-DDL limits of immediate MySQL backups still apply.
 
 ## Schedule a Compose PostgreSQL component

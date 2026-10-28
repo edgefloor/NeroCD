@@ -60,7 +60,8 @@ effects are unknown.
 
 MySQL supports immediate and [scheduled local backups](hosting-database-backup-schedules.md#schedule-native-mysql-backups).
 [Remote copies](hosting-database-remote-backups.md#native-mysql-remote-copy-qualification)
-can upload the completed MySQL artifact. Retention policies remain PostgreSQL-only.
+can upload the completed MySQL artifact. Native MySQL also supports
+[independent local and remote retention](hosting-database-backup-retention.md#native-mysql-retention-qualification).
 For local restore, preserve the archive on its original backup runner. A saved
 remote upload can instead supply [MySQL remote-only restore](hosting-database-remote-backups.md#native-mysql-remote-only-restore-qualification)
 into a separate target. Database archives do not restore application uploads.
@@ -128,8 +129,9 @@ administrative resolution for that crash window.
 
 Use [schedules](hosting-database-backup-schedules.md) for recurring PostgreSQL or
 native MySQL local dumps. Use [remote backups](hosting-database-remote-backups.md)
-for recorded PostgreSQL or MySQL S3 copies. PostgreSQL also supports
-[retention](hosting-database-backup-retention.md) for copy cleanup. Both engines
+for recorded PostgreSQL or MySQL S3 copies. Native PostgreSQL and MySQL support
+[retention](hosting-database-backup-retention.md) for independent local and remote
+copy cleanup. Both engines
 support [notifications](hosting-backup-notifications.md) for accepted backup and
 upload failures.
 
