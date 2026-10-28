@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -267,4 +268,53 @@ func wordpressFixturePNG() []byte {
 		panic("invalid fixed PNG fixture")
 	}
 	return raw
+}
+
+// This cheap configuration probe uses the real Linux CLI and a real Unix socket.
+// It never connects to a daemon or controller and cannot execute a workload.
+func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
+	binary := os.Getenv("NEROCD_RUNNER_CONFIGURATION_PROBE_BINARY")
+	if binary == "" {
+		t.Skip("requires explicitly selected actual CLI configuration probe")
+	}
+	root, err := os.MkdirTemp("/tmp", "ncd-config-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
+	socket := filepath.Join(root, "docker.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability}
+	base := []string{"runner", "--server", "https://127.0.0.1:1", "--poll-interval", "0s", "--execute", "--hosting-runtime-env", "--hosting-registry-pull", "--hosting-runtime-logs", "--capabilities", strings.Join(caps, ","), "--proxy-state-root", filepath.Join(root, "proxy"), "--proxy-docker-binary", "/usr/local/bin/docker", "--proxy-docker-socket", socket, "--proxy-protocol", domain.HostingProxyCompilerVersion, "--proxy-verified-switch", "--image-docker-endpoint", "unix://" + socket}
+	for _, tc := range []struct {
+		name     string
+		extra    []string
+		expected string
+	}{
+		{"old_wordpress", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
+		{"wordpress_basic", nil, "runner --poll-interval must be greater than zero"},
+		{"git_compose_basic", nil, "runner --poll-interval must be greater than zero"},
+		{"managed_archive_requires_config", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
+		{"native_capabilities_require_explicit_config", []string{"--capabilities", strings.Join(append(append([]string{}, caps...), domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability), ",")}, "database capabilities require --hosting-database"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, append(append([]string{}, base...), tc.extra...)...)
+			command.Env = append(os.Environ(), "NEROCD_TOKEN=", "NEROCD_RUNNER_CREDENTIAL_FILE=")
+			output, err := command.CombinedOutput()
+			if err == nil || !strings.Contains(string(output), tc.expected) {
+				t.Fatalf("actual CLI validation category mismatch: %s", strings.TrimSpace(string(output)))
+			}
+			t.Logf("actual_cli profile=%s category=%s", tc.name, tc.expected)
+		})
+	}
 }
