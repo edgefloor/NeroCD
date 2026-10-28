@@ -29,7 +29,8 @@ Current bounded workflows include image and HTTPS Git builds, same-host artifact
 deployment, runtime configuration, status and logs, Traefik routing, GitHub push
 builds and optional unprotected automatic deployment. PostgreSQL/Redis connections
 and owned upload volumes have physical qualification on one trusted Linux arm64
-profile. PostgreSQL and upload recovery now include selected schedules, remote
+profile. [Native MySQL 8.4.13](hosting-database-connections.md#native-mysql-qualification)
+adds private application binding, persistent replacement, and immediate local recovery. PostgreSQL and upload recovery now include selected schedules, remote
 copies, retention and failure notifications. Pinned Linkding includes
 separate-target application recovery. Pinned Uptime Kuma 2.5.8 now has
 [accepted SQLite setup, routing and monitor/settings persistence across replacement](hosting-catalog.md#uptime-kuma-qualification). Actual Budget 26.10.0 has
@@ -85,7 +86,8 @@ parity.
 
 | Area | Existing bounded workflow | Remaining work |
 | --- | --- | --- |
-| Application and database | [One image application with PostgreSQL or Redis](hosting-database-connections.md), then one owned upload volume | Broader application inputs, credential rotation, cross-server binding presentation and full R42/A17 |
+| Application and database | [One image application with PostgreSQL or Redis](hosting-database-connections.md), then one owned upload volume; [native MySQL 8.4.13](hosting-database-connections.md#native-mysql-qualification) has separate stateful and failure-recovery proof | Broader application inputs, credential rotation, cross-server binding presentation and full R42/A17 |
+| MySQL local recovery | [Immediate SQL backup and separate same-recipe target restore](hosting-database-backups.md#mysql-qualification), recovered application records, source/target isolation, retained uploads, and trusted HTTPS | Credential rotation, engine upgrades, schedules, remote copies, retention, image-specific variable mapping, and full MySQL/M3 coverage remain open |
 | PostgreSQL recovery | [Immediate backup/restore](hosting-database-backups.md), [schedules](hosting-database-backup-schedules.md), [remote copies](hosting-database-remote-backups.md), [retention](hosting-database-backup-retention.md), and [failure alerts](hosting-backup-notifications.md) | Production S3 HTTPS, additional engines, cross-destination and in-place recovery, broader cron grammar and notification events/channels |
 | Upload recovery | [Local archives](hosting-storage-archive.md), [remote copies](hosting-storage-remote-backups.md), [schedules/alerts](hosting-storage-backup-schedules.md), [retention](hosting-storage-backup-retention.md), and [selected-copy deletion](hosting-storage-backup-deletion.md) | Broader mount types, unknown-writer recovery, cross-host/in-place recovery and full A25–A27/A37 |
 | Catalog | [Local category/search filters and upstream declarations accepted at `6aeac387`](hosting-catalog.md#catalog-filter-qualification), [pinned Linkding install](hosting-catalog.md) and [separate-target recovery](hosting-catalog-recovery.md), plus [Uptime Kuma persistence at `397a8d826`](hosting-catalog.md#uptime-kuma-qualification) and [Actual Budget server-data persistence at `ca3b8dcd`](hosting-catalog.md#actual-budget-qualification), plus [Vikunja/PostgreSQL catalog install/deploy at `eeee82b6`](hosting-catalog.md#catalog-compose-qualification) and [selected-template destination eligibility/requirements at `985652b9`](hosting-catalog.md#destination-requirements-qualification) | Physical architecture/capacity checks, more tested definitions, explicit upgrades and broader application-specific recovery |
@@ -121,8 +123,8 @@ interpret a metadata resolution as proof that a proxy converged.
 
 ## Current connected stateful workflow
 
-The [connected workflow](hosting-database-connections.md) attaches one PostgreSQL
-or Redis database on the application's destination, then one owned named volume.
+The [connected workflow](hosting-database-connections.md) attaches one PostgreSQL,
+MySQL, or Redis database on the application's destination, then one owned named volume.
 Storage replacement stops the exact predecessor before admitting the replacement
 as sole writer. Recovery preserves candidate-written records and uploads.
 

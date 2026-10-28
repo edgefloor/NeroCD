@@ -1,8 +1,8 @@
-# Hosted PostgreSQL logical backups
+# Hosted database logical backups
 
 Project owners can request an immediate logical backup from a healthy hosted
-PostgreSQL database and restore a completed backup into a new private managed
-database. Project viewers can read the nonsecret history. This family is separate
+PostgreSQL or MySQL database and restore a completed backup into a new private
+managed database. Project viewers can read the nonsecret history. This family is separate
 from backups of NeroCD's own controller database and from upload-volume archives.
 
 The database panel offers **Back up now**, completed backup selection, a new
@@ -12,7 +12,7 @@ resource identity. It never includes credentials, local filesystem locations, or
 runner commands. A completed restored database can be selected when connecting a
 distinct application; it does not replace an existing database binding.
 
-## Snapshot and restore behavior
+## PostgreSQL snapshot and restore behavior
 
 The supported recipe is the pinned PostgreSQL 17.11 application database. A backup
 uses PostgreSQL custom format with ownership and ACL export disabled. The source
@@ -36,6 +36,33 @@ daemon identity, the immutable local artifact, and the exact held target. It doe
 not stop or mutate the source. The destination and retained runner storage must
 still exist. This first version cannot move a dump to another destination.
 
+## MySQL local backup and restore
+
+The native MySQL recipe is `mysql-8.4.13-oraclelinux9.v1`. Its immediate local
+backup and separate new-database restore require `hosting_mysql_backup_v1` and
+`hosting_mysql_v1`, with the existing database backup runner opt-in. Use **Back up
+now**, select a completed backup, enter a **New database name**, and choose
+**Restore into new database**.
+
+The backup records version `mysql.logical-local.v1` and blob format `mysql_sql`.
+It captures the `app` database with an InnoDB transaction snapshot while the source
+remains writable. The runner refuses non-InnoDB tables before dumping and does
+not promise consistency for concurrent DDL. Source users and passwords are excluded. The dump is
+bounded and published through the same protected local artifact store.
+
+Restore creates a separate MySQL resource with the same recipe, distinct generated
+credentials, and a new owned volume on the backup's authorized destination.
+PostgreSQL archives cannot be restored into MySQL, and MySQL SQL dumps cannot be
+restored into PostgreSQL or Redis. The target stays unavailable for application
+connections until import and readiness succeed. Failed, canceled, or uncertain
+imports retain target ownership. Reconciliation must not replay an import whose
+effects are unknown.
+
+MySQL supports immediate local operations only. Schedules, retention policies,
+and remote copies remain PostgreSQL-only. Preserve the archive on its original
+backup runner. This workflow does not import arbitrary uploaded SQL, overwrite
+a live database, upgrade an engine, or move data across destinations.
+
 ## Limits and local retention
 
 Protected server options `--database-backup-max-bytes` and
@@ -46,9 +73,10 @@ Ordinary API requests cannot override them. Each admission saves its limits
 immutably, and changing server settings does not rewrite accepted operations.
 
 The agent verifies the exact existing container, image, daemon, private network,
-process user, owned volume and creation provenance. It invokes argument arrays
-inside the pinned container as the `postgres` Unix user using its local socket;
-credentials are not transported in command arguments or environment variables.
+process user, owned volume and creation provenance. PostgreSQL tools run inside
+the pinned container as the `postgres` Unix user through its local socket. MySQL
+tools run as the `mysql` Unix user with a protected local credential file. Neither
+adapter transports passwords in command arguments or environment variables.
 Each guest tool has an explicit timeout in addition to the fenced local attempt.
 Stopping the local Docker client does not establish that a guest import stopped.
 Uncertain effects therefore retain ownership for reconciliation.
@@ -58,7 +86,8 @@ the existing content-addressed artifact store. Publication checks digest, size,
 owner, file type and link count and does not overwrite an existing artifact.
 A completed staging dump is retained if publication fails. The public history
 records `publication_failed`; this is a local publication failure, not an S3
-error. Configure copy cleanup separately through the [retention policy](hosting-database-backup-retention.md).
+error. For PostgreSQL, configure copy cleanup separately through the
+[retention policy](hosting-database-backup-retention.md).
 Operators must preserve the runner's protected state and storage; a local backup
 is not protection against loss of that destination.
 
@@ -78,8 +107,8 @@ The UI retains the request for an explicit retry after a transport failure and
 allows correction after a definitive input rejection.
 
 The runner requires `--hosting-database --hosting-database-backups` and advertises
-`hosting_postgresql_backup_v1`. River carries only the operation ID. The normal
-run/lease/attempt/fence system authorizes execution; backup is not a separate
+`hosting_postgresql_backup_v1` and `hosting_mysql_backup_v1`. River carries only
+the operation ID. The normal run/lease/attempt/fence system authorizes execution; backup is not a separate
 weaker queue. A restore deployment child can cross its target hold only through
 its saved exact parent relationship.
 
@@ -93,14 +122,15 @@ administrative resolution for that crash window.
 
 ## Related workflows and limits
 
-Use [schedules](hosting-database-backup-schedules.md) for recurring dumps,
+For PostgreSQL, use [schedules](hosting-database-backup-schedules.md) for recurring
+dumps,
 [remote backups](hosting-database-remote-backups.md) for recorded S3 copies,
 [retention](hosting-database-backup-retention.md) for copy cleanup, and
 [notifications](hosting-backup-notifications.md) for failure alerts.
 
-Only the pinned PostgreSQL recipe is supported here. Restore creates a new database
-on the same destination. It does not accept arbitrary SQL uploads or URLs, import
-source roles, replace a live database, or move data across destinations.
+Only the pinned PostgreSQL and MySQL recipes are supported here. Restore creates
+a new database on the same destination. It does not accept arbitrary SQL uploads
+or URLs, import source roles, replace a live database, or move data across destinations.
 
 <a id="accepted-qualification-and-evidence"></a>
 <a id="deliberate-limits-and-upstream-reference"></a>
@@ -117,5 +147,25 @@ and 1440 pixels.
 
 The tested profile is native Linux arm64, PostgreSQL 17.11, trusted rootful Docker
 with the classic image store, one destination, and private fixture-CA HTTPS.
-Other engines, architectures, production ACME, cross-host recovery, and destination
-disk loss are unqualified.
+That PostgreSQL qualification does not establish other engines, architectures,
+production ACME, cross-host recovery, or destination disk loss.
+
+
+## MySQL qualification
+
+At `f2b4e471` on 2026-10-28, the native MySQL workflow published a local
+`mysql_sql` backup and restored it into a distinct same-recipe resource. The
+backup browser scenario passed. Direct database checks and application reads and
+writes verified the recovered records and source/target isolation. The connected
+application retained records, uploads, and trusted HTTPS through redeployment
+in the [same qualification](hosting-database-connections.md#native-mysql-qualification).
+
+This profile covers immediate local backup and new-resource restore on native
+Linux arm64 with one destination and fixture-CA HTTPS. It does not qualify
+MySQL schedules, remote copies, retention policies, credential rotation, engine
+upgrades, arbitrary SQL import, or cross-host recovery. PostgreSQL schedule,
+remote-copy, retention, and timeout evidence above retains its original scope.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-20261028/f2b4e471df39b5483326cba4b09e0134328dc5b7/evidence-index.json)
+records the qualified revision, source checks, browser and runtime assertions,
+retained earlier evidence, and verified fixture cleanup.

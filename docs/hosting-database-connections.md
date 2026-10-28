@@ -1,6 +1,6 @@
-# Connect an image application to PostgreSQL or Redis
+# Connect an image application to a private database
 
-Connect one public-image application to a healthy PostgreSQL or Redis database
+Connect one public-image application to a healthy PostgreSQL, MySQL, or Redis database
 in the same project and destination. First Connect deploys without application
 storage or routes. After it settles, you can attach one owned upload volume or
 continue reviewed HTTPS routes during later replacements.
@@ -12,7 +12,7 @@ database maintenance. Current project viewers can read eligible options and
 recorded connection progress. The server rechecks current authority for changes.
 
 Create an undeployed application from a public container image. Deploy a
-PostgreSQL or Redis database first and wait for its healthy settled deployment.
+PostgreSQL, MySQL, or Redis database first and wait for its healthy settled deployment.
 Place both resources in the same project and destination. The connection uses
 the retained private database network and a deterministic database alias.
 Cross-server networking is unsupported.
@@ -38,10 +38,30 @@ prove that the runner enabled automatic capture. Preserve the runner's credentia
 journal and protected state roots across restart. See the
 [runner configuration checks](../cmd/nerocd/runner_application_database_config.go).
 
+## Save and deploy a native MySQL database
+
+In the project environment, open **Add database configuration**. Enter its name,
+select **MySQL**, and choose a project-granted **Database destination**. The
+fixed recipe is `mysql-8.4.13-oraclelinux9.v1`. Saving creates the resource,
+owned storage reference, and encrypted `root` and `ncd_app` credential versions.
+It does not start MySQL or expose a database port on the host.
+
+Open **Database deployments**, review the saved generation, and request its
+deployment. The runner requires `hosting_mysql_v1` alongside the existing database,
+private-network, and owned-storage capabilities. Wait for successful engine
+readiness before selecting the database for an application connection. The
+application database is `app`, with internal port 3306 and an owned volume mounted
+at `/var/lib/mysql`.
+
+Later same-version replacements retain that volume. These operations do not
+authorize an engine-version upgrade. Keep the runner's protected state and owned storage
+across restarts. Use [logical backup and new-database restore](hosting-database-backups.md#mysql-local-backup-and-restore)
+for a separate recovery copy.
+
 ## Connect through the UI
 
 1. Open the image application in its project environment and find **Database connection**.
-2. Select an available PostgreSQL or Redis database in **Database to connect**.
+2. Select an available PostgreSQL, MySQL, or Redis database in **Database to connect**.
    If no database appears, check the database deployment, placement and application prerequisites.
 3. Review **Application container port**, **Application readiness path** and
    **Readiness timeout in seconds**. Use the port and path served by your image.
@@ -55,11 +75,15 @@ The server adds exact credential references under these application environment 
 | Engine | Names |
 | --- | --- |
 | PostgreSQL | `PGDATABASE`, `PGHOST`, `PGPASSWORD`, `PGPORT`, `PGUSER` |
+| MySQL | `MYSQL_DATABASE`, `MYSQL_HOST`, `MYSQL_PASSWORD`, `MYSQL_PORT`, `MYSQL_USER` |
 | Redis | `REDIS_HOST`, `REDIS_PASSWORD`, `REDIS_PORT`, `REDIS_USERNAME` |
 
 The connection UI does not display credential values. Protected delivery resolves
 the referenced managed-secret versions for authorized execution. Configure your
-application to consume these names. Do not paste passwords into public literals.
+application to consume these names. MySQL does not automatically map them to
+`WORDPRESS_DB_*` or another image-specific convention. Use an application image
+that consumes or explicitly maps the supplied names. Do not paste passwords into
+public literals.
 
 **Connection workflow completed** records a settled operation. It is not continuous
 health monitoring. Verify application behavior separately and use runtime status
@@ -365,12 +389,30 @@ copies all ownership metadata cannot be distinguished from the original volume.
 Coolify's named-volume metadata and deployment review inform this workflow; the
 exclusive writer interruption and fresh recovery receipts are Go runner behavior.
 
+## Native MySQL qualification
+
+At `f2b4e471` on 2026-10-28, the compiled-runner workflow created native MySQL
+through `POST /api/v1/databases`, connected an image application through the
+private `MYSQL_*` profile, and retained records and uploaded files across
+replacement. A direct Docker stop/start of the source database checked restore
+isolation and retained source data. Managed HTTPS routing, failed-readiness recovery,
+and failed-cutover recovery passed with the prior database and volume identities
+preserved. The existing connection and backup browser scenarios also passed.
+
+The engine picker has source tests. This physical fixture created MySQL through
+the real API, so it does not establish browser operation of that picker. The
+profile is MySQL 8.4.13 on native Linux arm64 with trusted rootful classic-store
+Docker, one destination, and fixture-CA HTTPS. Credential rotation, engine
+upgrades, cross-host recovery, and automatic image-specific variable mapping
+remain open. [Local backup and separate-target recovery](hosting-database-backups.md#mysql-qualification)
+have their own assertions within the same run.
+
 <a id="historical-storage-less-qualification"></a>
 
 ## Tests and supported environments
 
 The [runtime guide](../acceptance/runtime-hosting-database-runner/README.md#current-connected-storage-qualification)
-describes the fixture. It covers both engines, application and database
+describes the earlier PostgreSQL and Redis fixture. It covers application and database
 replacement, one-writer upload continuity, strict HTTPS cutover, response-loss
 replay, and owner recovery. PostgreSQL resume and Redis forward completion also
 use the live owner recovery form with viewer denial and keyboard review.
