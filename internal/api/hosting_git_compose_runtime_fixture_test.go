@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -148,10 +149,10 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	f := &storageRuntimeFixture{t: t, control: control, client: control.Client()}
 	f.token = createTestSession(t, server)
 	env := storageRuntimeJSON[domain.ProjectEnvironment](f, "POST", "/api/v1/project-environments", app.ProjectEnvironmentInput{ProjectID: "proj_platform", Name: "Git Compose startup"}, 201)
-	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Compose Vikunja acceptance", Kind: "application", Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}}}}, 201)
+	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{ProjectID: env.ProjectID, ProjectEnvironmentID: env.ID, Name: "Compose Vikunja acceptance", Kind: "application", Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}}}}}}, 201)
 	// Keep the fixture's current credential-file capability profile. Trigger
 	// revision support remains optional for existing registered build runners.
-	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability}
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability}
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
 	credential := "ncr_git_compose_startup_fixture"
 	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, enrollment.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "enroll_consume_" + strings.Repeat("e", 32), CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}, 200)
@@ -217,7 +218,7 @@ func TestGitComposeFixtureStartupPolicyAndAdmission(t *testing.T) {
 	if listedResource == nil {
 		t.Fatal("created resource missing from actual UI list")
 	}
-	if listedResource.Source.Kind != current.Source.Kind || listedResource.Source.Git == nil || current.Source.Git == nil || *listedResource.Source.Git != *current.Source.Git {
+	if listedResource.Source.Kind != current.Source.Kind || listedResource.Source.Git == nil || current.Source.Git == nil || !reflect.DeepEqual(listedResource.Source.Git, current.Source.Git) {
 		t.Fatal("resource list source differs from actual saved source")
 	}
 
@@ -296,7 +297,7 @@ func TestGitComposeFixtureCompiledRunnerPrivateBuild(t *testing.T) {
 	f := newStorageRuntimeFixture(t, true)
 	resource := storageRuntimeJSON[domain.Resource](f, "POST", "/api/v1/resources", gitComposeFixtureCreateRequest{
 		ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, Name: "Git Compose build prerequisite", Kind: "application",
-		Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: repository, RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}}},
+		Source: gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: repository, RequestedRef: "main", CredentialKind: "https_basic", Settings: domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}}}}},
 	}, 201)
 	storageRuntimeJSON[json.RawMessage](f, "POST", "/api/v1/resources/"+resource.ID+"/binding", app.ResourceBindingInput{DestinationID: f.destinationID}, 201)
 	credential, err := json.Marshal(map[string]string{"username": "fixture-user", "password": password})

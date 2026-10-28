@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ const gitComposeFixturePostgres = "postgres:16-alpine@sha256:0cefaabd882e42bcb2a
 const gitComposeFixtureBase = "vikunja/vikunja:2.7.1@sha256:f7dc8428d10aef17f3075886d3c1c022f566ec456f88985f02c137f4fc534576"
 
 func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage string) map[string]string {
-	compose := strings.Replace(raw, "    image: "+base, "    build: ../app\n    image: nerocd-vikunja:prepared", 1)
+	compose := strings.Replace(raw, "    image: "+base, "    build:\n      context: ../app\n"+gitComposeFixtureArgs(marker)+"    image: nerocd-vikunja:prepared", 1)
 	compose = strings.Replace(compose, "    depends_on:\n", "    depends_on:\n      version:\n        condition: service_completed_successfully\n", 1)
 	compose = strings.Replace(compose, "\n  postgresql:\n", "\n  version:\n    image: nerocd-vikunja:prepared\n    command: [version]\n\n  postgresql:\n", 1)
 	compose = strings.Replace(compose, "        if [", "        printf 'nerocd-init-log-fixture\\n'\n        if [", 1)
@@ -32,11 +33,25 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage s
 	if marker == "missing-registry" {
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
-	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n"
+	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
+		"ARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\n" +
+		"LABEL nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\"\n"
 	if fail {
 		dockerfile += "RUN exit 9\n"
 	}
 	return map[string]string{"project/deploy/compose.yaml": compose, "project/app/Dockerfile": dockerfile, "project/app/marker": marker + "\n"}
+}
+
+// Keep A's mapping and B's list forms semantically equivalent except for the
+// version marker. Docker defaults distinguish omitted args from explicit empty.
+func gitComposeFixtureArgs(marker string) string {
+	if marker == "missing-argument" {
+		return "      args:\n        COMPOSE_MARKER: ${NEROCD_REQUIRED_FIXTURE:?required fixture argument}\n"
+	}
+	if marker == "B" {
+		return "      args:\n        - CONFIGURED=compose-value\n        - COMPOSE_MARKER=B\n        - INTERPOLATED=${CONFIGURED}\n        - DEFAULTED=${NEROCD_UNSET_FIXTURE:-fallback}\n        - ALTERNATE=${CONFIGURED:+present}\n        - ESCAPED=$$literal\n        - EMPTY=\n        - OMITTED\n        - BARE\n        - NUMBER=20\n        - FLAG=true\n"
+	}
+	return "      args:\n        CONFIGURED: compose-value\n        COMPOSE_MARKER: " + marker + "\n        INTERPOLATED: ${CONFIGURED}\n        DEFAULTED: ${NEROCD_UNSET_FIXTURE:-fallback}\n        ALTERNATE: ${CONFIGURED:+present}\n        ESCAPED: $$literal\n        EMPTY: ''\n        OMITTED: null\n        BARE:\n        NUMBER: 20\n        FLAG: true\n"
 }
 
 type gitComposeFixtureSource struct {
@@ -67,7 +82,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456}
+	settings := domain.HostingBuildSettings{Strategy: "compose", ContextDir: "project", ComposeFile: "deploy/compose.yaml", PublicComponent: "vikunja", ContainerPort: 3456, BuildVariables: []domain.HostingBuildVariable{{Name: "CONFIGURED", Value: "operator-value"}}}
 	for _, fixture := range []struct{ marker, registryImage string }{{"A", ""}, {"B", ""}, {"missing-registry", ""}, {"B", "127.0.0.1:25001/nerocd-fixture:b@sha256:" + strings.Repeat("a", 64)}} {
 		marker := fixture.marker
 		files := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, marker, false, fixture.registryImage)
@@ -106,10 +121,20 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			if service.Name == "init" && !strings.Contains(strings.Join(service.Command, "\n"), "nerocd-init-log-fixture") {
 				t.Fatal("generated Git init command omitted required component log marker", marker)
 			}
+			if service.Name == "vikunja" && service.Build != nil {
+				want := map[string]string{"CONFIGURED": "operator-value", "COMPOSE_MARKER": marker, "INTERPOLATED": "operator-value", "DEFAULTED": "fallback", "ALTERNATE": "present", "ESCAPED": "$literal", "EMPTY": "", "NUMBER": "20", "FLAG": "true"}
+				if !reflect.DeepEqual(service.Build.Args, want) {
+					t.Fatal("generated Compose argument resolution changed", marker)
+				}
+			}
 			if service.Name == "vikunja" && (service.Build == nil || service.Build.Context != "project/app" || service.DependsOn["version"] != "service_completed_successfully") {
 				t.Fatal("relative build path or completed alias contract changed")
 			}
 		}
+	}
+	missing := gitComposeFixtureFiles(string(raw), gitComposeFixtureBase, "missing-argument", false, "")
+	if _, err := domain.ParseHostingGitCompose(domain.HostingStackSource{Original: missing["project/deploy/compose.yaml"], PublicComponent: "vikunja", ContainerPort: 3456}, settings); err == nil {
+		t.Fatal("missing required argument must fail before engine execution")
 	}
 	source := gitComposeFixtureSource{Kind: "git", Git: &domain.GitResourceConfiguration{RepositoryURL: "https://example.com:443/repo.git", RequestedRef: "main", CredentialKind: "https_basic", Settings: settings}}
 	bodies := []struct {
@@ -157,7 +182,7 @@ func TestGitComposeFixtureSourceAndRequestContracts(t *testing.T) {
 			if tc.name == "create" {
 				decoded := tc.out.(*createDecoded)
 				input := tc.in.(gitComposeFixtureCreateRequest)
-				if decoded.RequestID != "" || decoded.ProjectID != input.ProjectID || decoded.ProjectEnvironmentID != input.ProjectEnvironmentID || decoded.Name != input.Name || decoded.Kind != input.Kind || decoded.Source.Kind != input.Source.Kind || decoded.Source.Git == nil || *decoded.Source.Git != *input.Source.Git {
+				if decoded.RequestID != "" || decoded.ProjectID != input.ProjectID || decoded.ProjectEnvironmentID != input.ProjectEnvironmentID || decoded.Name != input.Name || decoded.Kind != input.Kind || decoded.Source.Kind != input.Source.Kind || decoded.Source.Git == nil || !reflect.DeepEqual(decoded.Source.Git, input.Source.Git) {
 					t.Fatal("production resource source decoder changed Git configuration")
 				}
 				return

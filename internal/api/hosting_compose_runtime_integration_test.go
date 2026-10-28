@@ -284,6 +284,15 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 				if actual != ownerImage {
 					t.Fatal("alias/container did not use owner ImageID")
 				}
+				var labels map[string]string
+				if json.Unmarshal(storageRuntimeDocker(t, "image", "inspect", ownerImage, "--format", "{{json .Config.Labels}}"), &labels) != nil {
+					t.Fatal("built argument label inspection")
+				}
+				for name, want := range map[string]string{"configured": "operator-value", "marker": strings.TrimSpace(expectedMarker), "interpolated": "operator-value", "defaulted": "fallback", "alternate": "present", "escaped": "$literal", "empty": "", "omitted": "docker-default", "bare": "docker-default", "number": "20", "flag": "true"} {
+					if got, ok := labels["nerocd.fixture."+name]; !ok || got != want {
+						t.Fatal("actual built image argument differs from configured/Compose resolution", name)
+					}
+				}
 				if component.Component == "vikunja" {
 					archive := tar.NewReader(bytes.NewReader(storageRuntimeDocker(t, "cp", component.ContainerID+":/nerocd-version", "-")))
 					header, err := archive.Next()
@@ -321,6 +330,11 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 				name, v, ok := strings.Cut(value, "=")
 				if ok {
 					values[name] = v
+				}
+			}
+			if gitCompose {
+				if _, exists := values["CONFIGURED"]; exists {
+					t.Fatal("build-time variable leaked into runtime environment")
 				}
 			}
 			if component.Component == "postgresql" && values["POSTGRES_PASSWORD"] != password || component.Component == "vikunja" && (values["VIKUNJA_DATABASE_PASSWORD"] != password || values["VIKUNJA_SERVICE_SECRET"] != jwt) {
@@ -422,6 +436,11 @@ func testHostingComposeVikunjaCompiledRunnerHTTPS(t *testing.T, gitCompose bool)
 		unavailableRepository(false)
 		if failedSource.FailureCode != "source_failed" {
 			t.Fatal("fetch failure did not settle safely")
+		}
+		updateRepository("missing-argument", false, "")
+		missingArgument := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-missing-argument", "failed")
+		if missingArgument.FailureCode != "build_failed" || missingArgument.ComposeResult != nil || missingArgument.Artifact != nil {
+			t.Fatal("required build argument failure did not settle before producing an artifact")
 		}
 		updateRepository("failed-build", true, "")
 		failedBuild := gitComposeRuntimeBuild(f, resource, gitGrant, "git-compose-build-failed", "failed")

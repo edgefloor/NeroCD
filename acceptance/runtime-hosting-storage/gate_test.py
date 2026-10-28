@@ -1228,6 +1228,7 @@ class GitComposeContractTests(unittest.TestCase):
         self.assertIn("browser_git_compose_route_continuity", required)
         self.assertIn("browser_git_compose_route_recovery", required)
         self.assertIn("browser_git_compose_registry_selection", required)
+        self.assertIn("browser_git_compose_build_variables", required)
         for missing in [None, *required, "skip", "runtime"]:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
