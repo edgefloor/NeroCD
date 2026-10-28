@@ -509,10 +509,17 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 	if parent.Err() != nil {
 		return parent.Err()
 	}
+	if err := validateTypedExecutionClaim(claim); err != nil {
+		return err
+	}
 	if isBuildClaim(claim) {
 		return executeBuildClaim(parent, server, token, claim, claim.Lease.RunnerID, cancelPollInterval, options.build, operational)
 	}
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
+	if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		if err := validateComposeExecutionClaim(claim); err != nil {
+			return err
+		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
 		if options.storageArchive == nil || !options.storageArchive.BackupRetention || domain.ValidateStorageBackupRetentionTask(claim.Run) != nil {
 			return errors.New("storage retention is unconfigured")
 		}
@@ -609,7 +616,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
+	if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -664,12 +671,10 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		}
 		return executeImageClaim(supervisor, journal, reporter, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.localBuild, options.runtimeEnvironment, options.registryPull)
 	}
+	if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
+		return resolveComposeClaim(supervisor, journal, reporter, server, token, workDir, secretRoot, imagePolicy, claim)
+	}
 	if claim.PrimitivePlan.Process == nil {
-		if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy {
-			// Resolution is read-only: it cannot start containers or settle the
-			// deployment successfully. A later fenced adapter owns application.
-			return resolveComposeClaim(supervisor, journal, reporter, server, token, workDir, secretRoot, imagePolicy, claim)
-		}
 		if err := completeReportedAttempt(supervisor, watcher, renewer, reporter, journal, server, token, claim.Run.ID, claim.Lease, "failed", nil); err != nil {
 			return err
 		}

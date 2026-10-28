@@ -299,6 +299,9 @@ func resolveComposeClaim(supervisor *attemptSupervisor, journal *runner.AttemptJ
 	if err != nil {
 		return err
 	}
+	if plan.DeploymentID != deploymentID || plan.RunID != claim.Run.ID || plan.LeaseID != claim.Lease.ID || plan.Attempt != claim.Lease.Attempt || plan.Fence != claim.Lease.Fence {
+		return errors.New("compose deployment plan authority does not match claim")
+	}
 	// A fixed, server-owned stage marker gives operators a minimal durable
 	// indication that a first fenced Compose owner started resolution.  It has
 	// no user-controlled identifiers, paths, URLs, or provenance values.  A
