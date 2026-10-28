@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RunLog } from "./resources";
+import { listRunLogs, type RunLog } from "./resources";
 import { deploymentQuery, deploymentsQuery, runLogsQuery, runsQuery, shouldPollDeploymentList, shouldPollRunList, type DeploymentFilters, type RunFilters } from "./queries";
 
 export function useRunsPollingQuery(filters?: RunFilters) {
@@ -11,65 +11,26 @@ type LogWindow = { runID: string; logs: RunLog[]; firstOffset: number; nextOffse
 const logPageSize = 100;
 
 export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
-  const client = useQueryClient();
-  const [window, setWindow] = useState<LogWindow>({ runID, logs: [], firstOffset: 0 });
-  const previousRequests = useRef(new Set<string>());
-  const [previousStates, setPreviousStates] = useState<Record<string, { loading: boolean; error?: Error }>>({});
-  const current: LogWindow = window.runID === runID ? window : { runID, logs: [], firstOffset: 0 };
   const probe = useQuery({ ...runLogsQuery({ run_id: runID, limit: 1, offset: 0 }), enabled: Boolean(runID) });
+  const [current, setWindow] = useLogWindow(runID, probe.data?.total);
 
-  useEffect(() => setWindow({ runID, logs: [], firstOffset: 0 }), [runID]);
-  useEffect(() => {
-    if (!runID || !probe.data || current.nextOffset !== undefined) return;
-    const tailOffset = Math.max(0, probe.data.total - logPageSize);
-    setWindow({ runID, logs: [], firstOffset: tailOffset, nextOffset: tailOffset });
-  }, [current.nextOffset, probe.data, runID]);
-
+  const pageFilters = { run_id: runID, limit: logPageSize, offset: current.nextOffset ?? 0 };
+  const pageOptions = runLogsQuery(pageFilters);
   const page = useQuery({
-    ...runLogsQuery({ run_id: runID, limit: logPageSize, offset: current.nextOffset ?? 0 }),
+    // A terminal transition takes one final snapshot at the current cursor.
+    // Query identity schedules that read once, even if the offset is unchanged.
+    queryKey: [...pageOptions.queryKey, { follow }],
+    queryFn: ({ signal }) => listRunLogs(pageFilters, { signal }),
     enabled: Boolean(runID) && current.nextOffset !== undefined,
     refetchInterval: (query) => follow && !probe.isError && query.state.status !== "error" ? 3_000 : false,
   });
-  const wasFollowing = useRef(follow);
-  useEffect(() => {
-    if (wasFollowing.current && !follow && current.nextOffset !== undefined) void page.refetch();
-    wasFollowing.current = follow;
-  }, [current.nextOffset, follow, page.refetch]);
-  useEffect(() => {
-    if (!page.data || current.nextOffset === undefined || page.data.offset !== current.nextOffset) return;
-    setWindow((previous) => {
-      if (previous.runID !== runID) return previous;
-      const byID = new Map(previous.logs.map((log) => [log.id, log]));
-      for (const log of page.data.items) byID.set(log.id, log);
-      return {
-        ...previous,
-        logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence),
-        nextOffset: page.data.offset + page.data.count,
-      };
-    });
-  }, [current.nextOffset, page.data, runID]);
+  if (page.data && page.data.count > 0 && page.data.offset === current.nextOffset) {
+    const byID = new Map(current.logs.map((log) => [log.id, log]));
+    for (const log of page.data.items) byID.set(log.id, log);
+    setWindow({ ...current, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence), nextOffset: page.data.offset + page.data.count });
+  }
 
-  const loadPrevious = useCallback(async () => {
-    if (!runID || current.firstOffset === 0 || previousRequests.current.has(runID)) return;
-    previousRequests.current.add(runID);
-    setPreviousStates((states) => ({ ...states, [runID]: { loading: true } }));
-    try {
-      const offset = Math.max(0, current.firstOffset - logPageSize);
-      const previous = await client.fetchQuery(runLogsQuery({ run_id: runID, limit: current.firstOffset - offset, offset }));
-      setWindow((value) => {
-        if (value.runID !== runID) return value;
-        const byID = new Map(previous.items.map((log) => [log.id, log]));
-        for (const log of value.logs) byID.set(log.id, log);
-        return { ...value, firstOffset: offset, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence) };
-      });
-    } catch (cause) {
-      const error = cause instanceof Error ? cause : new Error("Unable to load earlier output");
-      setPreviousStates((states) => ({ ...states, [runID]: { loading: true, error } }));
-    } finally {
-      previousRequests.current.delete(runID);
-      setPreviousStates((states) => ({ ...states, [runID]: { ...states[runID], loading: false } }));
-    }
-  }, [client, current.firstOffset, runID]);
+  const previous = usePreviousLogPage(runID, current.firstOffset, setWindow);
 
   const retry = useCallback(async () => {
     if (!runID) return;
@@ -84,8 +45,52 @@ export function useSelectedRunLogsPollingQuery(runID: string, follow: boolean) {
     isPending: !probe.isError && !page.isError && (probe.isPending || (current.logs.length === 0 && page.isPending)),
     isError: probe.isError || page.isError,
     error: (probe.error ?? page.error) ?? undefined,
+    ...previous,
+  };
+}
+
+function useLogWindow(runID: string, total: number | undefined) {
+  const [window, setWindow] = useState<LogWindow>({ runID, logs: [], firstOffset: 0 });
+  const current: LogWindow = window.runID === runID ? window : { runID, logs: [], firstOffset: 0 };
+
+  if (window.runID !== runID) setWindow(current);
+  if (runID && total !== undefined && current.nextOffset === undefined) {
+    const tailOffset = Math.max(0, total - logPageSize);
+    setWindow({ runID, logs: [], firstOffset: tailOffset, nextOffset: tailOffset });
+  }
+
+  return [current, setWindow] as const;
+}
+
+function usePreviousLogPage(runID: string, firstOffset: number, setWindow: Dispatch<SetStateAction<LogWindow>>) {
+  const client = useQueryClient();
+  const previousRequests = useRef(new Set<string>());
+  const [previousStates, setPreviousStates] = useState<Record<string, { loading: boolean; error?: Error }>>({});
+  const loadPrevious = useCallback(async () => {
+    if (!runID || firstOffset === 0 || previousRequests.current.has(runID)) return;
+    previousRequests.current.add(runID);
+    setPreviousStates((states) => ({ ...states, [runID]: { loading: true } }));
+    try {
+      const offset = Math.max(0, firstOffset - logPageSize);
+      const previous = await client.fetchQuery(runLogsQuery({ run_id: runID, limit: firstOffset - offset, offset }));
+      setWindow((value) => {
+        if (value.runID !== runID) return value;
+        const byID = new Map(previous.items.map((log) => [log.id, log]));
+        for (const log of value.logs) byID.set(log.id, log);
+        return { ...value, firstOffset: offset, logs: [...byID.values()].sort((left, right) => left.sequence - right.sequence) };
+      });
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("Unable to load earlier output");
+      setPreviousStates((states) => ({ ...states, [runID]: { loading: true, error } }));
+    } finally {
+      previousRequests.current.delete(runID);
+      setPreviousStates((states) => ({ ...states, [runID]: { ...states[runID], loading: false } }));
+    }
+  }, [client, firstOffset, runID, setWindow]);
+
+  return {
     previousError: previousStates[runID]?.error,
-    hasPrevious: current.firstOffset > 0,
+    hasPrevious: firstOffset > 0,
     loadingPrevious: previousStates[runID]?.loading ?? false,
     loadPrevious,
   };

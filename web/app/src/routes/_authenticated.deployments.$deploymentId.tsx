@@ -27,6 +27,23 @@ function BackToDeployments() {
 
 function DeploymentDetailRoute() {
   const { deploymentId } = Route.useParams();
+  const { deployment, environment, revision, previousRevision, related, taskRun, logs, failedQueries, canOperate, actions } = useDeploymentDetail(deploymentId);
+  if (deployment.isPending) return <section className="space-y-3"><BackToDeployments /><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
+  if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
+  const hasLoadedData = Boolean(deployment.data) && failedQueries.every((query) => query.data !== undefined);
+  const error = failedQueries.length ? <section className="space-y-3">
+    <p role="alert">{hasLoadedData ? "Unable to refresh deployment. Showing previously loaded data." : "Unable to load deployment. Try again."}</p>
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
+      <BackToDeployments />
+    </div>
+  </section> : null;
+  if (error && !hasLoadedData) return error;
+  const { pendingAction, actionError } = deploymentActionFeedback(actions, deploymentId);
+  return <div className="grid min-w-0 gap-4">{error ?? <BackToDeployments />}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || Boolean(actions.busy)} onConfirm={(id) => { void actions.confirm(id); }} onCancel={(input) => { void actions.cancel(input); }} /></div>;
+}
+
+function useDeploymentDetail(deploymentId: string) {
   const deployment = useDeploymentPollingQuery(deploymentId);
   const environments = useQuery(allEnvironmentsQuery());
   const environment = environments.data?.find((item) => item.id === deployment.data?.environment_id);
@@ -45,19 +62,12 @@ function DeploymentDetailRoute() {
   const failedQueries = [deployment, environments, services, revisions, history, principal, members, runs].filter((query) => query.isError);
   const canOperate = canMaintainProject(principal.data, members.data ?? [], service?.project_id);
   const actions = useDeploymentActions(failedQueries.length > 0 || !canOperate);
-  if (deployment.isPending) return <section className="space-y-3"><BackToDeployments /><p role="status">Loading deployment...</p><SkeletonCard rows={4} /></section>;
-  if (!deployment.isError && !deployment.data) return <DeploymentUnavailable />;
-  const hasLoadedData = Boolean(deployment.data) && failedQueries.every((query) => query.data !== undefined);
-  const error = failedQueries.length ? <section className="space-y-3">
-    <p role="alert">{hasLoadedData ? "Unable to refresh deployment. Showing previously loaded data." : "Unable to load deployment. Try again."}</p>
-    <div className="flex flex-wrap gap-2">
-      <Button disabled={failedQueries.some((query) => query.isFetching)} onClick={() => { for (const query of failedQueries) void query.refetch(); }}>Retry</Button>
-      <BackToDeployments />
-    </div>
-  </section> : null;
-  if (error && !hasLoadedData) return error;
-  const pendingAction = actions.busy === `confirm:${deploymentId}` ? "confirm" : actions.busy === `cancel:${deploymentId}` ? "cancel" : undefined;
+  return { deployment, environment, revision, previousRevision, related, taskRun, logs, failedQueries, canOperate, actions };
+}
+
+function deploymentActionFeedback(actions: ReturnType<typeof useDeploymentActions>, deploymentId: string) {
+  const pendingAction: "confirm" | "cancel" | undefined = actions.busy === `confirm:${deploymentId}` ? "confirm" : actions.busy === `cancel:${deploymentId}` ? "cancel" : undefined;
   const actionError = actions.error?.key === `confirm:${deploymentId}` ? `Unable to confirm deployment: ${actions.error.message}`
     : actions.error?.key === `cancel:${deploymentId}` ? `Unable to request cancellation: ${actions.error.message}` : undefined;
-  return <div className="grid min-w-0 gap-4">{error ?? <BackToDeployments />}<DeploymentDetailView deployment={deployment.data ?? undefined} environment={environment} revision={revision} previousRevision={previousRevision} related={related} taskRun={taskRun} logs={logs.data} logsError={logs.error} logsLoading={logs.isPending} logsRetrying={logs.isFetching} onRetryLogs={() => void logs.retry()} canOperate={canOperate} pendingAction={pendingAction} actionError={actionError} busy={failedQueries.length > 0 || Boolean(actions.busy)} onConfirm={(id) => { void actions.confirm(id); }} onCancel={(input) => { void actions.cancel(input); }} /></div>;
+  return { pendingAction, actionError };
 }

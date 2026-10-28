@@ -38,12 +38,13 @@ function exact(
   required: string[],
   optional: string[] = [],
 ): v is Record<string, unknown> {
+  const allowed = new Set([...required, ...optional]);
   return (
     !!v &&
     typeof v === "object" &&
     !Array.isArray(v) &&
     required.every((k) => Object.hasOwn(v, k)) &&
-    Object.keys(v).every((k) => [...required, ...optional].includes(k))
+    Object.keys(v).every((k) => allowed.has(k))
   );
 }
 export function validateComposeBackupVolumes(

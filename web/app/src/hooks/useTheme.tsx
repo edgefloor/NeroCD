@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 
 type Theme = "light" | "dark";
 const STORAGE_KEY = "nerocd.theme.v2";
@@ -25,7 +25,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme]);
   const toggleTheme = useCallback(() => setTheme((current) => current === "dark" ? "light" : "dark"), []);
-  return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
+  const value = useMemo(() => ({ theme, toggleTheme }), [theme, toggleTheme]);
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

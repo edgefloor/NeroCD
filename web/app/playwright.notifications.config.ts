@@ -3,7 +3,8 @@ import base from "./playwright.config";
 
 const pin = process.env.NEROCD_NOTIFICATION_BROWSER_SPKI;
 const origin = process.env.PLAYWRIGHT_BASE_URL;
-if (!pin || !/^[A-Za-z0-9+/]{43}=$/.test(pin) || Buffer.from(pin, "base64").toString("base64") !== pin || !origin || !/^https:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/.test(origin) || Number(new URL(origin).port) > 65535) {
+const fixtureOrigin = /^https:\/\/127\.0\.0\.1:([1-9][0-9]{3,4})$/.exec(origin ?? "");
+if (!pin || !/^[A-Za-z0-9+/]{43}=$/.test(pin) || Buffer.from(pin, "base64").toString("base64") !== pin || !fixtureOrigin || Number(fixtureOrigin[1]) > 65535) {
   throw new Error("exact notification fixture TLS identity required");
 }
 
