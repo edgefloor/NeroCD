@@ -78,8 +78,12 @@ func TestPostgresMySQLRemoteBackupRetryKeepsLocalArtifact(t *testing.T) {
 		t.Fatal("MySQL upload settlement", err)
 	}
 	var after, notifications int
-	if err = f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_database_backups),(SELECT count(*) FROM hosting_notification_events)`).Scan(&after, &notifications); err != nil || before != after || notifications != 0 {
-		t.Fatal("upload retry redumped source or enabled notifications", err, before, after, notifications)
+	if err = f.db.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM hosting_database_backups),(SELECT count(*) FROM hosting_notification_events)`).Scan(&after, &notifications); err != nil || before != after || notifications != 1 {
+		t.Fatal("upload retry redumped source or lost its failure event", err, before, after, notifications)
+	}
+	var event, source, state string
+	if err = f.db.QueryRow(f.ctx, `SELECT event,source_id,source_state FROM hosting_notification_events`).Scan(&event, &source, &state); err != nil || event != "upload_failed" || source != failed.ID || state != "failed" {
+		t.Fatal("retry changed the immutable failed-upload notification source", err)
 	}
 	if _, err = f.service.GetDatabaseBackupRetention(f.ctx, f.resource.ID); !errors.Is(err, store.ErrConflict) {
 		t.Fatal("remote MySQL gained retention", err)
