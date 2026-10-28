@@ -38,8 +38,8 @@ still exist. This first version cannot move a dump to another destination.
 
 ## MySQL local backup and restore
 
-The native MySQL recipe is `mysql-8.4.13-oraclelinux9.v1`. Its immediate local
-backup and separate new-database restore require `hosting_mysql_backup_v1` and
+The native MySQL recipe is `mysql-8.4.13-oraclelinux9.v1`. Its immediate or
+scheduled local backup and separate new-database restore require `hosting_mysql_backup_v1` and
 `hosting_mysql_v1`, with the existing database backup runner opt-in. Use **Back up
 now**, select a completed backup, enter a **New database name**, and choose
 **Restore into new database**.
@@ -58,8 +58,8 @@ connections until import and readiness succeed. Failed, canceled, or uncertain
 imports retain target ownership. Reconciliation must not replay an import whose
 effects are unknown.
 
-MySQL supports immediate local operations only. Schedules, retention policies,
-and remote copies remain PostgreSQL-only. Preserve the archive on its original
+MySQL supports immediate and [scheduled local backups](hosting-database-backup-schedules.md#schedule-native-mysql-backups).
+Retention policies and remote copies remain PostgreSQL-only. Preserve the archive on its original
 backup runner. This workflow does not import arbitrary uploaded SQL, overwrite
 a live database, upgrade an engine, or move data across destinations.
 
@@ -122,9 +122,8 @@ administrative resolution for that crash window.
 
 ## Related workflows and limits
 
-For PostgreSQL, use [schedules](hosting-database-backup-schedules.md) for recurring
-dumps,
-[remote backups](hosting-database-remote-backups.md) for recorded S3 copies,
+Use [schedules](hosting-database-backup-schedules.md) for recurring PostgreSQL or
+native MySQL local dumps. For PostgreSQL, use [remote backups](hosting-database-remote-backups.md) for recorded S3 copies,
 [retention](hosting-database-backup-retention.md) for copy cleanup, and
 [notifications](hosting-backup-notifications.md) for failure alerts.
 
@@ -169,3 +168,8 @@ remote-copy, retention, and timeout evidence above retains its original scope.
 The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-20261028/f2b4e471df39b5483326cba4b09e0134328dc5b7/evidence-index.json)
 records the qualified revision, source checks, browser and runtime assertions,
 retained earlier evidence, and verified fixture cleanup.
+
+
+[Native MySQL schedules](hosting-database-backup-schedules.md#native-mysql-schedule-qualification)
+have separate qualification at `8d85d70b`, including restore from the exact
+scheduled artifact. The earlier immediate-backup evidence above retains its scope.

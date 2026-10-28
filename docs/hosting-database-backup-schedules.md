@@ -1,18 +1,18 @@
-# Hosted PostgreSQL backup schedules
+# Hosted database backup schedules
 
 A project owner can create, edit and disable logical backup schedules from the
-PostgreSQL database's **Database backups** panel. Project viewers can inspect
-schedules and occurrence history. A schedule uses the same local custom-format
-backup, protected execution limits, fenced runner and new-database restore path
-as [immediate PostgreSQL backups](hosting-database-backups.md).
+PostgreSQL or MySQL database's **Database backups** panel. Project viewers can inspect
+schedules and occurrence history. A schedule uses the same engine-specific local
+backup format, protected execution limits, fenced runner, and new-database restore
+path as [immediate backups](hosting-database-backups.md).
 
-Supported sources are the pinned standalone PostgreSQL 17.11 recipe and the
-qualified managed Compose PostgreSQL 16 component on their authorized stable
+Supported sources are the pinned standalone PostgreSQL 17.11 and MySQL 8.4.13
+recipes and the qualified managed Compose PostgreSQL 16 component on their authorized stable
 destinations. Compose schedules create local database archives only. They do not
 include application uploads or support remote backup targets. Standalone
 PostgreSQL remote-target semantics are unchanged. [Remote backup targets](hosting-database-remote-backups.md)
 can be selected explicitly by target ID and revision for standalone immediate
-and scheduled backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure
+and scheduled backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. For PostgreSQL, configure
 [retention](hosting-database-backup-retention.md) and
 [failure alerts](hosting-backup-notifications.md) separately.
 A local archive remains dependent on that destination. Remote acceptance uses
@@ -72,6 +72,20 @@ returns its historical acknowledgment under current access checks. A changed
 request with the same ID is rejected. The UI retains the exact request after an
 ambiguous transport failure. A version conflict requires an explicit refresh
 and review before submitting another edit; it is never silently resubmitted.
+
+## Schedule native MySQL backups
+
+For `mysql-8.4.13-oraclelinux9.v1`, open **MySQL backup schedules** in the native
+database panel. Create, edit, disable, and retry with the same fields and revision
+checks described above. The response version is `mysql.logical-local.schedule.v1`.
+A due occurrence creates an ordinary local `mysql_sql` backup through the existing
+MySQL backup capability and authority checks. Select that exact completed backup
+for [restore into a separate same-recipe target](hosting-database-backups.md#mysql-local-backup-and-restore).
+
+MySQL schedules are local-only. They do not accept a remote target, `component`,
+or `expected_deployed_operation_id`. Remote copies, retention controls, failure
+notifications, and Compose MySQL schedules remain unsupported. The InnoDB snapshot
+and concurrent-DDL limits of immediate MySQL backups still apply.
 
 ## Schedule a Compose PostgreSQL component
 
@@ -188,3 +202,29 @@ The managed Compose PostgreSQL 16 schedule workflow passed the existing
 `09cd2670154443f788963d9812aa6b77a2c919c8` on 2026-10-27. See the
 [Compose qualification checklist](hosting-compose.md#qualification) for retained
 evidence, check limits, and the tested profile.
+
+
+## Native MySQL schedule qualification
+
+At `8d85d70b` on 2026-10-28, the existing UI created a native MySQL schedule,
+replayed a lost response identically, edited it, disabled it, and read occurrence
+history. The background controller produced a due `mysql_sql` artifact. Restore
+used that exact scheduled artifact in a separate resource with distinct binding,
+volume, and credential identities. A routed application verified recovered data
+and made a new write. Source-only and target-only writes remained isolated,
+including during a direct source-database outage.
+
+After disable, crossing another due minute admitted no new backup. Revoking the
+destination grant produced a `skipped` occurrence with `source_unavailable` and no
+operation. Revocation also withdrew the routes. Restoring permission left them
+disabled; explicit current-version route updates recovered the known source and
+target routes. Fresh source HTTPS writes and exact uploads passed afterward.
+This is explicit recovery, not uninterrupted availability.
+
+The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-schedules-20261028/8d85d70b7b5eada485ea72dd0680df445effd591/evidence-index.json)
+records source checks, responsive owner/viewer assertions, exact artifact restore,
+and cleanup. The profile is one native Linux arm64 destination, trusted rootful
+Docker, and test-CA HTTPS. The full WebUI run retained 2,241 passing tests and one
+unrelated timeout; that test passed separately without a timeout change, and the
+separate build passed. MySQL remote copies, retention, notifications, Compose
+MySQL scheduling, production ACME, and cross-host recovery remain unqualified.
