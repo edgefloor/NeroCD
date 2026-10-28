@@ -312,7 +312,7 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 	}{
 		{"old_wordpress", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
 		{"wordpress_temporary_database_roots_rejected", []string{"--hosting-database", "--hosting-database-backups", "--database-state-root", "/tmp/nerocd-invalid-state", "--database-secret-root", "/tmp/nerocd-invalid-secrets"}, "database roots require persistent system storage"},
-		{"wordpress_mysql_backup", []string{"--hosting-database", "--hosting-database-backups", "--database-state-root", filepath.Join(root, "database-state"), "--database-secret-root", filepath.Join(root, "database-secrets")}, "runner --poll-interval must be greater than zero"},
+		{"wordpress_mysql_backup", []string{"--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--hosting-database-backups", "--database-state-root", filepath.Join(root, "database-state"), "--database-secret-root", filepath.Join(root, "database-secrets")}, "runner --poll-interval must be greater than zero"},
 		{"git_compose_basic", nil, "runner --poll-interval must be greater than zero"},
 		{"managed_archive_requires_config", []string{"--hosting-storage-backup-download"}, "archive downloads require qualified storage archive configuration"},
 		{"native_capabilities_require_explicit_config", []string{"--capabilities", strings.Join(append(append([]string{}, caps...), domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseMySQLBackupCapability), ",")}, "database capabilities require --hosting-database"},
@@ -586,6 +586,7 @@ func wordpressRuntimeComponent(t *testing.T, operation domain.HostingOperation, 
 }
 
 func TestWordPressComponentBackupEnrollment(t *testing.T) {
+	t.Setenv("NEROCD_CATALOG_BROWSER_ORIGIN", "https://127.0.0.1:25444")
 	_, pg, _ := newHostingBuildAPIFixture(t)
 	server := catalogRuntimeServer(t, pg)
 	control := httptest.NewTLSServer(server)
@@ -595,7 +596,13 @@ func TestWordPressComponentBackupEnrollment(t *testing.T) {
 	caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.HostingDatabaseBackupComponentCapability, "hosting_compose_mysql_backup_v1", domain.HostingOwnedStorageCapability, domain.HostingRuntimeEnvironmentCapability, domain.RunTypeComposeDeploy}
 	created := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, "POST", "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_wordpress_backup", RunnerName: "WordPress component backup", Capabilities: caps}, 201)
 	credential := "ncr_wordpress_component_backup_fixture"
-	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, created.Token, "POST", "/api/v1/runner-enrollments/consume", app.RunnerEnrollmentConsumeInput{RequestID: "consume_wordpress_backup", CredentialHash: fmt.Sprintf("%x", sha256.Sum256([]byte(credential)))}, 200)
+	consume := databaseRunnerEnrollmentConsumeInput(credential)
+	raw, err := json.Marshal(consume)
+	var decoded app.RunnerEnrollmentConsumeInput
+	if err != nil || !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/runner-enrollments/consume", bytes.NewReader(raw)), &decoded) || !reflect.DeepEqual(decoded, consume) {
+		t.Fatal("actual enrollment consume fixture decoder changed")
+	}
+	enrolled := storageRuntimeAuthorizedJSON[app.ConsumedRunnerEnrollment](f, created.Token, "POST", "/api/v1/runner-enrollments/consume", decoded, 200)
 	client := runnerclient.New(control.URL, credential)
 	client.HTTP = control.Client()
 	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: true, RuntimeEnvironment: true})
