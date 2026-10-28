@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -289,5 +290,29 @@ func TestClientFailureOutputAndInputBounds(t *testing.T) {
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 || string(out) != "database marker client failed\n" {
 			t.Fatalf("failure output or exit contract changed: %q, error %v", out, err)
 		}
+	}
+}
+
+func TestMySQLMissingRecordHandlerPreservesApplicationIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, method string
+		err          error
+		status       int
+	}{
+		{"missing_get", http.MethodGet, sql.ErrNoRows, http.StatusNotFound},
+		{"unavailable_get", http.MethodGet, errors.New("unavailable"), http.StatusServiceUnavailable},
+		{"missing_put", http.MethodPut, sql.ErrNoRows, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, err := httpDatabaseInstanceHandler("abcdef012345", httpDatabaseHandler(func(context.Context, string, string, string) (string, error) { return "", tc.err }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(tc.method, "/records/missing", strings.NewReader("value")))
+			if response.Code != tc.status || response.Header().Get("X-NeroCD-Fixture-Instance") != "abcdef012345" {
+				t.Fatalf("record response status=%d want=%d", response.Code, tc.status)
+			}
+		})
 	}
 }

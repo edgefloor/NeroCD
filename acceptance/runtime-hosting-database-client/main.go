@@ -364,7 +364,11 @@ func (c httpDatabase) mysqlRecord(ctx context.Context, host, action, key, value 
 			return "", invalid
 		}
 	}
-	if db.QueryRowContext(ctx, "SELECT value FROM nerocd_fixture_http WHERE namespace=? AND record_key=?", c.namespace, key).Scan(&result) != nil || len(result) > 4096 {
+	err = db.QueryRowContext(ctx, "SELECT value FROM nerocd_fixture_http WHERE namespace=? AND record_key=?", c.namespace, key).Scan(&result)
+	if action == "get" && errors.Is(err, sql.ErrNoRows) {
+		return "", sql.ErrNoRows
+	}
+	if err != nil || len(result) > 4096 {
 		return "", invalid
 	}
 	return result, nil
@@ -468,6 +472,10 @@ func httpDatabaseHandler(record func(context.Context, string, string, string) (s
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		out, err := record(ctx, action, key, value)
+		if action == "get" && errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "record not found", http.StatusNotFound)
+			return
+		}
 		if err != nil || len(out) > 4096 {
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 			return
