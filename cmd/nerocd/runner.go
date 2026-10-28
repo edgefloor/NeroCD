@@ -394,20 +394,21 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		*id = buildConfig.Target.RunnerID
 	}
 	if enrollmentPath != "" {
-		enrollmentToken, credential, requestID, err := prepareRunnerEnrollmentFiles(enrollmentPath, credentialPath)
+		enrollment, err := prepareRunnerEnrollmentFiles(enrollmentPath, credentialPath)
 		if err != nil {
 			return err
 		}
-		credentialSum := sha256.Sum256([]byte(credential))
-		consume := app.RunnerEnrollmentConsumeInput{RequestID: requestID, CredentialHash: hex.EncodeToString(credentialSum[:])}
+		defer enrollment.close()
+		credentialSum := sha256.Sum256([]byte(enrollment.credential))
+		consume := app.RunnerEnrollmentConsumeInput{RequestID: enrollment.requestID, CredentialHash: hex.EncodeToString(credentialSum[:])}
 		var consumed app.ConsumedRunnerEnrollment
 		var consumeErr error
 		backoff := 100 * time.Millisecond
 		if *hostingReadiness || *hostingDatabase || archiveConfig != nil {
-			consumeErr = postRunnerBootstrap(runnerContext, *hostingDatabase || archiveConfig != nil, *hostingReadiness, *server, "/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+			consumeErr = postRunnerBootstrap(runnerContext, *hostingDatabase || archiveConfig != nil, *hostingReadiness, *server, "/api/v1/runner-enrollments/consume", consume, enrollment.token, &consumed)
 		} else {
 			for attempt := 0; attempt < 5; attempt++ {
-				consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollmentToken, &consumed)
+				consumeErr = postAPIInto(*server+"/api/v1/runner-enrollments/consume", consume, enrollment.token, &consumed)
 				if consumeErr == nil || classifyRunnerFailure(consumeErr) != runnerFailureTransient {
 					break
 				}
@@ -421,10 +422,11 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		if strings.TrimSpace(consumed.Runner.ID) == "" {
 			return errors.New("runner enrollment response did not include identity")
 		}
-		if err := removeRunnerEnrollmentFile(enrollmentPath); err != nil {
+		if err := enrollment.remove(); err != nil {
 			return fmt.Errorf("remove consumed enrollment file: %w", err)
 		}
-		runnerToken = credential
+		enrollment.close()
+		runnerToken = enrollment.credential
 	} else if credentialPath != "" {
 		credential, err := readRunnerCredentialFile(credentialPath)
 		if err != nil {
