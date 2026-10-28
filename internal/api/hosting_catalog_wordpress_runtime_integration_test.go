@@ -262,7 +262,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 }
 
 func wordpressFixturePNG() []byte {
-	raw, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYaQAAAAASUVORK5CYII=")
+	raw, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
 	if err != nil {
 		panic("invalid fixed PNG fixture")
 	}

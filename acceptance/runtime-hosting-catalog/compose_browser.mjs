@@ -267,7 +267,7 @@ async function wordpressWorkflow(h, initial) {
   await expect(edit).toHaveCount(0);
   step="wordpress_upload_media";
   await wp.goto('/wp-admin/media-new.php');
-  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYaQAAAAASUVORK5CYII=','base64');
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','base64');
   const uploading=wp.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/wp-admin/async-upload.php');
   await wp.locator('input[type=file]').setInputFiles({name:'nerocd-wordpress-persistence.png',mimeType:'image/png',buffer:png});
   const uploaded=await uploading;if(uploaded.status()!==200)throw Error('WordPress upload rejected');
