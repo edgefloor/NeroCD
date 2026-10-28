@@ -23,6 +23,7 @@ import { ResourceRuntimeLogs } from "./ResourceRuntimeLogs";
 import { ResourceStorage } from "./ResourceStorage";
 import { ResourceDatabase } from "./ResourceDatabase";
 import { HostingCatalog } from "./HostingCatalog";
+import { DockerfileApplicationFields, dockerfileContentError, emptyDockerfileDraft, type DockerfileApplicationDraft } from "./DockerfileApplicationFields";
 import { ComposeApplicationFields, emptyComposeDraft, type ComposeApplicationDraft } from "./ComposeApplicationFields";
 import { DatabaseCreateForm } from "./DatabaseCreateForm";
 
@@ -38,6 +39,7 @@ function errorText(error: unknown): string {
 function sourceDescription(resource: Resource): string {
   if (resource.source.kind === "image") return resource.source.image.reference;
   if (resource.source.kind === "compose") return `Compose stack · public component ${resource.source.compose.public_component}`;
+  if (resource.source.kind === "dockerfile") return `Dockerfile · source generation ${resource.source.dockerfile.generation}`;
   return `${resource.source.git.repository_url} · ${resource.source.git.requested_ref}`;
 }
 
@@ -53,6 +55,9 @@ function ApplicationFields({ name, image, setName, setImage, disabled, showImage
 
 function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource: Resource; writable: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [base, setBase] = useState(resource);
+  const [dockerfile, setDockerfile] = useState<DockerfileApplicationDraft>(resource.source.kind === "dockerfile" ? {content: resource.source.dockerfile.content, settings: resource.source.dockerfile.settings} : emptyDockerfileDraft());
+  const [dockerfileSecretsValid, setDockerfileSecretsValid] = useState(false);
+  const [dockerfileRegistryValid, setDockerfileRegistryValid] = useState(resource.source.kind !== "dockerfile" || !resource.source.dockerfile.settings.build_registry_credential);
   const [gitSecretsValid, setGitSecretsValid] = useState(false);
   const [gitRegistryValid, setGitRegistryValid] = useState(resource.source.kind !== "git" || !resource.source.git.settings.build_registry_credential);
   const [name, setName] = useState(resource.name);
@@ -64,8 +69,8 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Resource>();
   const [refreshError, setRefreshError] = useState("");
-  const baseInput: ResourceSourceInput = base.source.kind !== "git" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
-  const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : base.source.kind === "compose" ? {kind: "compose", compose} : { kind: "git", git };
+  const baseInput: ResourceSourceInput = base.source.kind === "dockerfile" ? {kind:"dockerfile",dockerfile:{content:base.source.dockerfile.content,settings:base.source.dockerfile.settings}} : base.source.kind !== "git" ? base.source : { kind: "git", git: { repository_url: base.source.git.repository_url, requested_ref: base.source.git.requested_ref, credential_kind: base.source.git.credential_kind as GitApplicationDraft["credential_kind"], settings: base.source.git.settings } };
+  const source: ResourceSourceInput = base.source.kind === "image" ? { kind: "image", image: { reference: image } } : base.source.kind === "compose" ? {kind: "compose", compose} : base.source.kind === "dockerfile" ? {kind:"dockerfile",dockerfile} : { kind: "git", git };
   const sourceChanged = JSON.stringify(source) !== JSON.stringify(baseInput);
   const changed = name !== base.name || sourceChanged;
 
@@ -80,8 +85,8 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   }
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (busy || !writable || conflict || !changed || base.source.kind === "git" && (!gitRegistryValid || !gitSecretsValid)) return;
-    const problem = base.source.kind === "git" ? gitBuildVariablesError(git.settings) : "";
+    if (busy || !writable || conflict || !changed || (base.source.kind === "git" && (!gitRegistryValid || !gitSecretsValid) || base.source.kind === "dockerfile" && (!dockerfileRegistryValid || !dockerfileSecretsValid))) return;
+    const problem = base.source.kind === "git" ? gitBuildVariablesError(git.settings) : base.source.kind === "dockerfile" ? dockerfileContentError(dockerfile.content) || gitBuildVariablesError(dockerfile.settings) : "";
     if (problem) { setError(problem); return; }
     setBusy(true);
     setError("");
@@ -108,6 +113,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
   return <form onSubmit={(event) => void save(event)} className="space-y-3 rounded-xl border p-3" aria-label={`Edit ${resource.name}`} aria-busy={busy}>
     <h4 className="font-medium">Edit application configuration</h4>
     <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy || !writable} showImage={base.source.kind === "image"} />
+    {base.source.kind === "dockerfile" ? <DockerfileApplicationFields value={dockerfile} onChange={setDockerfile} disabled={busy || !writable} projectID={resource.project_id} onRegistryValidityChange={setDockerfileRegistryValid} onSecretsValidityChange={setDockerfileSecretsValid} /> : null}
     {base.source.kind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy || !writable} /> : null}
     {base.source.kind === "git" ? <GitApplicationFields value={git} onChange={setGit} disabled={busy || !writable} projectID={resource.project_id} onRegistryValidityChange={setGitRegistryValid} onSecretsValidityChange={setGitSecretsValid} /> : null}
     {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to save application. {error}</p> : null}
@@ -115,6 +121,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
       <p role="status">The saved configuration changed. Your draft is preserved. Review the current values before saving again.</p>
       {latest ? <>
         <dl className="space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current generation</dt><dd>{latest.generation}</dd><dt>Current name</dt><dd>{latest.name}</dd><dt>Current source</dt><dd>{sourceDescription(latest)}</dd></dl>
+        {latest.source.kind === "dockerfile" ? <section aria-label="Current Dockerfile configuration"><dl className="min-w-0 space-y-1 break-words text-sm [overflow-wrap:anywhere]"><dt>Current source generation</dt><dd>{latest.source.dockerfile.generation}</dd><dt>Current Dockerfile content</dt><dd><pre className="max-h-64 overflow-auto whitespace-pre-wrap">{latest.source.dockerfile.content}</pre></dd><dt>Current build settings</dt><dd><pre className="max-h-64 overflow-auto whitespace-pre-wrap">{JSON.stringify(latest.source.dockerfile.settings, null, 2)}</pre></dd></dl></section> : null}
         {latest.source.kind === "git" ? <section aria-label="Current Git configuration">
           <dl className="min-w-0 space-y-1 break-words text-sm [overflow-wrap:anywhere]">
             <dt>Current repository URL</dt><dd>{latest.source.git.repository_url}</dd>
@@ -143,7 +150,7 @@ function ApplicationEditor({ resource, writable, onClose, onSaved }: { resource:
       {refreshError ? <p role="alert">Unable to load current configuration. {refreshError}</p> : null}
       <Button type="button" variant="outline" disabled={busy} onClick={() => void loadLatest()}>Reload current configuration</Button>
     </section> : null}
-    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy || !writable || conflict || !changed || base.source.kind === "git" && (!gitRegistryValid || !gitSecretsValid)}>{busy ? "Saving configuration..." : "Save configuration"}</Button><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel edit</Button></div>
+    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy || !writable || conflict || !changed || (base.source.kind === "git" && (!gitRegistryValid || !gitSecretsValid) || base.source.kind === "dockerfile" && (!dockerfileRegistryValid || !dockerfileSecretsValid))}>{busy ? "Saving configuration..." : "Save configuration"}</Button><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel edit</Button></div>
   </form>;
 }
 
@@ -156,7 +163,10 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const [composeRequestID, setComposeRequestID] = useState(() => crypto.randomUUID().replaceAll("-", ""));
   const [gitSecretsValid, setGitSecretsValid] = useState(false);
   const [gitRegistryValid, setGitRegistryValid] = useState(true);
-  const [sourceKind, setSourceKind] = useState<"image" | "git" | "compose">("image");
+  const [sourceKind, setSourceKind] = useState<"image" | "git" | "compose" | "dockerfile">("image");
+  const [dockerfile, setDockerfile] = useState<DockerfileApplicationDraft>(emptyDockerfileDraft());
+  const [dockerfileSecretsValid, setDockerfileSecretsValid] = useState(false);
+  const [dockerfileRegistryValid, setDockerfileRegistryValid] = useState(true);
   const [git, setGit] = useState<GitApplicationDraft>(emptyGitDraft());
   const sourceSelectID = useId();
   const [busy, setBusy] = useState(false);
@@ -168,13 +178,13 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
   const refresh = async () => { await client.invalidateQueries({ queryKey: resourceKey(projectID) }); };
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (!canWrite || busy || editing || sourceKind === "git" && (!gitRegistryValid || !gitSecretsValid)) return;
-    const problem = sourceKind === "git" ? gitBuildVariablesError(git.settings) : "";
+    if (!canWrite || busy || editing || (sourceKind === "git" && (!gitRegistryValid || !gitSecretsValid) || sourceKind === "dockerfile" && (!dockerfileRegistryValid || !dockerfileSecretsValid))) return;
+    const problem = sourceKind === "git" ? gitBuildVariablesError(git.settings) : sourceKind === "dockerfile" ? dockerfileContentError(dockerfile.content) || gitBuildVariablesError(dockerfile.settings) : "";
     if (problem) { setError(problem); return; }
     setBusy(true); setError(""); setNotice("");
     try {
-      await createResource({ ...(sourceKind === "compose" ? {request_id: composeRequestID} : {}), project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : sourceKind === "compose" ? { kind: "compose", compose } : { kind: "git", git } });
-      setName(""); setImage(""); setGit(emptyGitDraft()); setCompose(emptyComposeDraft()); setComposeRequestID(crypto.randomUUID().replaceAll("-", "")); setNotice("Application configuration saved. Deployment is a separate request.");
+      await createResource({ ...(sourceKind === "compose" ? {request_id: composeRequestID} : {}), project_id: projectID, project_environment_id: environment.id, name, kind: "application", source: sourceKind === "image" ? { kind: "image", image: { reference: image } } : sourceKind === "compose" ? { kind: "compose", compose } : sourceKind === "dockerfile" ? {kind:"dockerfile",dockerfile} : { kind: "git", git } });
+      setName(""); setImage(""); setGit(emptyGitDraft()); setDockerfile(emptyDockerfileDraft()); setCompose(emptyComposeDraft()); setComposeRequestID(crypto.randomUUID().replaceAll("-", "")); setNotice("Application configuration saved. Deployment is a separate request.");
       setOffset(0);
       await refresh();
     } catch (cause) { setError(errorText(cause)); }
@@ -206,11 +216,12 @@ function Applications({ projectID, environment, writable, blocked }: { projectID
     <PageNavigation label="applications" page={resources.data} loading={resources.isFetching || Boolean(editing) || busy} onFirst={() => setOffset(0)} onPrevious={() => setOffset(Math.max(0, offset - pageSize))} onNext={() => setOffset(Math.min(maximumPageOffset, offset + pageSize))} />
     {writable ? <form onSubmit={(event) => void create(event)} aria-label="Create application" aria-busy={busy} className="space-y-3 border-t pt-4">
       <h4 className="font-medium">Add application</h4>
-      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git" | "compose")}><option value="image">Container image</option><option value="git">Git repository</option><option value="compose">Compose stack</option></select></div>
+      <div className="space-y-1.5"><label htmlFor={sourceSelectID}>Application source</label><select id={sourceSelectID} className={selectClass} value={sourceKind} disabled={busy} onChange={(event) => setSourceKind(event.target.value as "image" | "git" | "compose" | "dockerfile")}><option value="image">Container image</option><option value="git">Git repository</option><option value="dockerfile">Dockerfile</option><option value="compose">Compose stack</option></select></div>
       <ApplicationFields name={name} image={image} setName={setName} setImage={setImage} disabled={busy} showImage={sourceKind === "image"} />
+      {sourceKind === "dockerfile" ? <DockerfileApplicationFields value={dockerfile} onChange={setDockerfile} disabled={busy} projectID={projectID} onRegistryValidityChange={setDockerfileRegistryValid} onSecretsValidityChange={setDockerfileSecretsValid} /> : null}
       {sourceKind === "compose" ? <ComposeApplicationFields value={compose} onChange={setCompose} disabled={busy} /> : null}
       {sourceKind === "git" ? <GitApplicationFields key={composeRequestID} value={git} onChange={setGit} disabled={busy} projectID={projectID} onRegistryValidityChange={setGitRegistryValid} onSecretsValidityChange={setGitSecretsValid} /> : null}
-      <Button type="submit" disabled={!canWrite || busy || Boolean(editing) || sourceKind === "git" && (!gitRegistryValid || !gitSecretsValid)}>{busy ? "Saving application..." : "Save application"}</Button>
+      <Button type="submit" disabled={!canWrite || busy || Boolean(editing) || (sourceKind === "git" && (!gitRegistryValid || !gitSecretsValid) || sourceKind === "dockerfile" && (!dockerfileRegistryValid || !dockerfileSecretsValid))}>{busy ? "Saving application..." : "Save application"}</Button>
       {error ? <p role="alert" className="break-words [overflow-wrap:anywhere]">Unable to create application. {error}</p> : null}
     </form> : null}
     <HostingCatalog projectID={projectID} environmentID={environment.id} blocked={blocked || resources.isError || resources.isPending} />

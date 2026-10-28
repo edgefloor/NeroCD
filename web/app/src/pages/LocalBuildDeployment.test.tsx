@@ -446,3 +446,22 @@ test("a Dockerfile variable or injection edit requires a new build before deploy
  fireEvent.submit(screen.getByRole("form", { name: "Deploy selected build" }));
  expect(fetch.mock.calls.some(([url]) => url.endsWith("/from-build"))).toBe(false);
 });
+
+test.each(["current", "changed hash", "Git build"])("stored Dockerfile %s deployment verifies real source identity and permits port override", async mode => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ const stored: Resource={...resource,source:{kind:"dockerfile",dockerfile:{source_id:"s",generation:3,content_hash:mode==="changed hash" ? `sha256:${"b".repeat(64)}` : content_hash,content:"FROM nginx\nEXPOSE 8081/tcp\n",settings:{strategy:"dockerfile"}}}};
+ const storedBuild: HostingBuild=mode==="Git build" ? build : {...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"s",generation:3,content_hash,settings:{strategy:"dockerfile"}}}};
+ const fetch=backend((url)=>url.includes("/builds?") ? json({items:[storedBuild],count:1,total:1,limit:20,offset:0}) : url.includes("/hosting-builds/") ? json({build:storedBuild}) : undefined);
+ await setup(true,stored);
+ expect(screen.getByLabelText<HTMLInputElement>("Build container port").value).toBe("8081");
+ if (mode!=="current") {
+  fireEvent.click(screen.getByLabelText(/I reviewed this exact successful build/));
+  expect(screen.getByRole<HTMLButtonElement>("button",{name:"Deploy selected build"}).disabled).toBe(true);
+  expect(fetch.mock.calls.filter(([url])=>url.endsWith("/from-build"))).toHaveLength(0);
+  return;
+ }
+ fireEvent.change(screen.getByLabelText("Build container port"),{target:{value:"9090"}});
+ await submit(); await screen.findByRole("region",{name:"Deployment operation detail"});
+ const writes=fetch.mock.calls.filter(([url])=>url.endsWith("/from-build"));
+ expect(writes).toHaveLength(1); expect(JSON.parse(writes[0]![1].body as string)).toMatchObject({expected_generation:2,expected_source_generation:3,container_port:9090});
+});

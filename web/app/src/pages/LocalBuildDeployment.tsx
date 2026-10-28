@@ -13,12 +13,15 @@ import { Input } from "@/components/ui/input";
 import { canMaintainProject } from "@/lib/permissions";
 import { OperationDetail } from "./ResourceDeployments";
 
+function dockerfilePort(content: string): number {
+ const exposed = content.split("\n").map(line => line.trim()).find(line => line.startsWith("EXPOSE"));
+ const port = Number.parseInt(exposed?.slice(6).trim() ?? "", 10);
+ return port >= 1 && port <= 65535 ? port : 80;
+}
 function matchesBuildGenerations(resource: Resource, build: HostingBuild): boolean {
-  return resource.source.kind === "git" && ["public", "https_basic"].includes(resource.source.git.credential_kind)
-    && resource.source.git.credential_kind === build.snapshot.source.credential_kind
-    && resource.generation === build.snapshot.resource_generation
-    && resource.source.git.source_id === build.snapshot.source.source_id
-    && resource.source.git.generation === build.snapshot.source.generation;
+  const source = resource.source.kind === "git" ? resource.source.git : resource.source.kind === "dockerfile" ? resource.source.dockerfile : undefined;
+  const kindMatches = resource.source.kind === "dockerfile" ? "kind" in build.snapshot.source && resource.source.dockerfile.content_hash === build.snapshot.source.content_hash : resource.source.kind === "git" && !("kind" in build.snapshot.source) && ["public", "https_basic"].includes(resource.source.git.credential_kind) && resource.source.git.credential_kind === build.snapshot.source.credential_kind;
+  return Boolean(source && kindMatches && resource.generation === build.snapshot.resource_generation && source.source_id === build.snapshot.source.source_id && source.generation === build.snapshot.source.generation);
 }
 
 // The parent keys this component by actor, resource, permission and exact build.
@@ -35,7 +38,7 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
   const id = useId(), client = useQueryClient();
   const [base, setBase] = useState(resource);
   const compose = build.compose_result;
-  const [containerPort, setContainerPort] = useState(String(compose?.source.container_port ?? 80)), [hostPort, setHostPort] = useState("8080");
+  const [containerPort, setContainerPort] = useState(String(compose?.source.container_port ?? (resource.source.kind === "dockerfile" ? dockerfilePort(resource.source.dockerfile.content) : 80))), [hostPort, setHostPort] = useState("8080");
   const [mode, setMode] = useState("automatic"), [path, setPath] = useState("/"), [timeout, setTimeout] = useState("30");
   const [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false);
   const [registrySelection, setRegistrySelection] = useState<ImageRegistrySelection>({ valid: true });
@@ -68,10 +71,10 @@ function LocalDeployment({ actor, resource, build, writable, blocked, onDenied }
     client.invalidateQueries({ queryKey: currentGitStackKey(stackScope) }),
     client.invalidateQueries({ queryKey: storageDeploymentOptionsQuery(stackScope).queryKey }),
   ]); };
-  const source = base.source.kind === "git" ? base.source.git : undefined;
-  const currentSource = resource.source.kind === "git" ? resource.source.git : undefined;
+  const source = base.source.kind === "git" ? base.source.git : base.source.kind === "dockerfile" ? base.source.dockerfile : undefined;
+  const currentSource = resource.source.kind === "git" ? resource.source.git : resource.source.kind === "dockerfile" ? resource.source.dockerfile : undefined;
   const exactBuild = build.project_id === resource.project_id && build.resource_id === resource.id && build.state === "succeeded" && Boolean(compose ? !build.artifact : build.artifact) && matchesBuildGenerations(base, build) && matchesBuildGenerations(resource, build);
-  const changedSource = resource.generation > base.generation || (currentSource?.generation ?? 0) > (source?.generation ?? 0) || currentSource?.source_id !== source?.source_id;
+  const changedSource = resource.source.kind !== base.source.kind || resource.generation > base.generation || (currentSource?.generation ?? 0) > (source?.generation ?? 0) || currentSource?.source_id !== source?.source_id;
   const placementMatches = binding.data?.id === build.snapshot.target.binding_id && binding.data?.destination_id === build.snapshot.target.destination_id;
   const held = Boolean(history.data?.items.some((operation) => operation.mutation_hold));
   const restored = restoreHeld || Boolean(history.data?.items.some((operation) => operation.restore_ownership_held));

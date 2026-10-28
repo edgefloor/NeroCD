@@ -188,6 +188,7 @@ test("Git Compose build review shows configured variables and resolved per-servi
  const settings = { strategy: "compose" as const, compose_file: "compose.yaml", public_component: "web", container_port: 3000, build_variables: [{ name: "MODE", value: "configured" }] };
  const composed = { ...build, state: "succeeded" as const, snapshot: { ...build.snapshot, source: { ...build.snapshot.source, settings } }, compose_result: { source: { original: "services: {}", public_component: "web", container_port: 3000 }, hash: `sha256:${"a".repeat(64)}`, definition: { version: "git-compose.v1", original_hash: "original", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:local", build: { context: ".", dockerfile: "Dockerfile", args: { MODE: "configured", FALLBACK: "default" } } }] }, services: [{ component: "web", artifact: { origin: "local_build", image_id: "sha256:local", index_digest: "index", manifest_digest: "manifest", config_digest: "config", platform: "linux/amd64" } }] } };
  backend(url => url.includes("/hosting-builds/") ? json({ build: composed }) : undefined);
+ if ("kind" in build.snapshot.source) throw new Error("Expected Git source");
  setup(true, { ...resource, source: { kind: "git", git: { ...build.snapshot.source, credential_kind: "public" as const, settings } } });
  await screen.findByText(/Reviewed build variables: MODE="configured"/);
  fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
@@ -226,4 +227,20 @@ test("reviewed and recorded build secrets show only names and immutable metadata
  await screen.findByText(/Reviewed build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
  fireEvent.click(await screen.findByRole("button", { name: "View build build-one" }));
  await screen.findByText(/Recorded build secrets: DEPENDENCY_TOKEN: dependency, version 2/);
+});
+
+test("stored Dockerfile builds use saved generations and hash provenance without Git access", async () => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ const stored: Resource={...resource,source:{kind:"dockerfile",dockerfile:{source_id:"source",generation:3,content_hash,content:"FROM nginx\n",settings:{strategy:"dockerfile"}}}};
+ const storedBuild: HostingBuild={...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"source",generation:3,content_hash,settings:{strategy:"dockerfile"}}},source_receipt:{kind:"dockerfile",content_hash,tree_digest:"tree"}};
+ const fetch=backend((url,o) => url.includes("/builds?") ? json({items:[storedBuild],count:1,total:1,limit:20,offset:0}) : url.includes("/hosting-builds/") || o.method==="POST" ? json({build:storedBuild}) : undefined);
+ setup(true,stored);
+ fireEvent.click(await screen.findByLabelText("I reviewed this exact stored Dockerfile and generations for this build request."));
+ await waitFor(()=>expect(screen.getByRole<HTMLButtonElement>("button",{name:"Request Dockerfile build"}).disabled).toBe(false));
+ fireEvent.click(screen.getByRole("button",{name:"Request Dockerfile build"}));
+ await screen.findByRole("region",{name:"Build operation detail"});
+ expect(await screen.findByText("Acquired Dockerfile content hash")).toBeTruthy(); expect(screen.queryByText("Resolved commit")).toBeNull();
+ const writes=fetch.mock.calls.filter(([,o])=>o.method==="POST"); expect(writes).toHaveLength(1);
+ expect(JSON.parse(writes[0]![1].body as string)).toEqual({expected_resource_generation:2,expected_source_generation:3,idempotency_key:expect.any(String)});
+ expect(fetch.mock.calls.some(([url])=>url.includes("source-grants") || url.includes("github"))).toBe(false);
 });

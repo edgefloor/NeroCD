@@ -750,3 +750,32 @@ test("removing an incomplete build secret leaves a validated row saveable", asyn
  await waitFor(() => expect(api.createResource).toHaveBeenCalled());
  expect(vi.mocked(api.createResource).mock.calls[0]![0].source).toMatchObject({ kind: "git", git: { settings: { build_secrets: [{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "credential", version: 1 } }] } } });
 });
+
+const storedDockerfileResource: api.Resource = { ...resource, source: { kind: "dockerfile", dockerfile: { source_id: "stored-source", generation: 2, content_hash: `sha256:${"a".repeat(64)}`, content: 'FROM nginx\nEXPOSE 8080\n', settings: {strategy: "dockerfile"} } } };
+test("stored Dockerfile creation sends content without Git metadata and preserves a rejected draft", async () => {
+ setup(); await selectEnvironment(); const form = screen.getByRole("form", {name:"Create application"});
+ fireEvent.change(within(form).getByLabelText("Application source"), {target:{value:"dockerfile"}});
+ expect(within(form).queryByLabelText("Git repository URL")).toBeNull(); expect(within(form).queryByLabelText("Dockerfile path")).toBeNull();
+ fireEvent.change(within(form).getByLabelText("Application name"), {target:{value:"Stored web"}});
+ fireEvent.change(within(form).getByLabelText("Dockerfile content"), {target:{value:'FROM nginx\nEXPOSE 8080\n'}});
+ fireEvent.change(within(form).getByLabelText("Build target"), {target:{value:"web"}});
+ vi.mocked(api.createResource).mockRejectedValue(new ApiError(503,"unavailable",null));
+ await waitFor(() => expect(within(form).getByRole<HTMLButtonElement>("button", {name:"Save application"}).disabled).toBe(false));
+ fireEvent.submit(form); await screen.findByRole("alert");
+ expect(api.createResource).toHaveBeenCalledWith({project_id:"one",project_environment_id:"env",name:"Stored web",kind:"application",source:{kind:"dockerfile",dockerfile:{content:'FROM nginx\nEXPOSE 8080\n',settings:{strategy:"dockerfile",build_target:"web"}}}});
+ expect(within(form).getByLabelText<HTMLTextAreaElement>("Dockerfile content").value).toBe('FROM nginx\nEXPOSE 8080\n');
+});
+test("stored Dockerfile conflict shows saved content while retaining and explicitly resaving the draft", async () => {
+ vi.mocked(api.listResources).mockResolvedValue(page([storedDockerfileResource])); setup(); const form = await edit();
+ fireEvent.change(within(form).getByLabelText("Dockerfile content"), {target:{value:"FROM nginx\nEXPOSE 9000\n"}});
+ if (storedDockerfileResource.source.kind !== "dockerfile") throw new Error("Expected Dockerfile");
+ const latest: api.Resource = {...storedDockerfileResource,generation:3,source:{kind:"dockerfile",dockerfile:{...storedDockerfileResource.source.dockerfile,generation:4,content:"FROM busybox\n",content_hash:`sha256:${"b".repeat(64)}`}}};
+ vi.mocked(api.updateResource).mockRejectedValueOnce(new ApiError(409,"stale",null)).mockResolvedValueOnce(latest); vi.mocked(api.getResource).mockResolvedValue(latest);
+ await waitFor(() => expect(within(form).getByRole<HTMLButtonElement>("button",{name:"Save configuration"}).disabled).toBe(false));
+ fireEvent.submit(form); await screen.findByRole("button",{name:"Keep my draft with generation 3"});
+ expect(within(form).getByLabelText("Current Dockerfile configuration").textContent).toContain("FROM busybox");
+ expect(within(form).getByLabelText<HTMLTextAreaElement>("Dockerfile content").value).toContain("EXPOSE 9000");
+ fireEvent.click(within(form).getByRole("button",{name:"Keep my draft with generation 3"})); fireEvent.submit(form);
+ await screen.findByText("Application configuration updated. Deployment is a separate request.");
+ expect(api.updateResource).toHaveBeenLastCalledWith("app",{expected_generation:3,source:{kind:"dockerfile",dockerfile:{content:"FROM nginx\nEXPOSE 9000\n",settings:{strategy:"dockerfile"}}}});
+});

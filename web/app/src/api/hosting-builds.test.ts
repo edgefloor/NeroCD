@@ -98,3 +98,17 @@ test("public build cache retains only build secret names and immutable reference
  expect(decoded.snapshot.source.settings.build_secrets).toEqual([{ name: "DEPENDENCY_TOKEN", secret: { secret_id: "dependency", version: 2 } }]);
  expect(JSON.stringify(decoded)).not.toContain("never-public");
 });
+
+test("stored Dockerfile build cache keeps hash provenance without raw content or Git metadata", async () => {
+ const content_hash = `sha256:${"a".repeat(64)}`;
+ vi.stubGlobal("fetch",vi.fn(async () => json({build:{...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"},content:"PRIVATE SOURCE",repository_url:"https://forbidden",requested_ref:"forbidden",credential_kind:"forbidden",grant:"forbidden"}},source_receipt:{kind:"dockerfile",content_hash,tree_digest:"tree",commit:"forbidden"}}})));
+ const result = await getHostingBuild("build-one");
+ expect(result.snapshot.source).toEqual({kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"}});
+ expect(result.source_receipt).toEqual({kind:"dockerfile",content_hash,tree_digest:"tree"});
+ expect(JSON.stringify(result)).not.toMatch(/PRIVATE SOURCE|forbidden|repository_url|requested_ref|credential_kind|commit/);
+});
+test.each(["Git receipt", "wrong hash"])("stored Dockerfile rejects %s provenance", async mode => {
+ const content_hash=`sha256:${"a".repeat(64)}`;
+ vi.stubGlobal("fetch",vi.fn(async ()=>json({build:{...build,snapshot:{...build.snapshot,source:{kind:"dockerfile",source_id:"stored",generation:3,content_hash,settings:{strategy:"dockerfile"}}},source_receipt:mode==="Git receipt" ? {commit:"invented",tree_digest:"tree"} : {kind:"dockerfile",content_hash:`sha256:${"b".repeat(64)}`,tree_digest:"tree"}}})));
+ await expect(getHostingBuild("build-one")).rejects.toThrow("receipt does not match");
+});
