@@ -15,12 +15,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,6 +62,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 	}
 	b.set("deploy", resourceID)
 	first := f.await(b.await(t, "deployed"), "succeeded")
+	var sourcePort int
 	verify := func(op domain.HostingOperation) {
 		t.Helper()
 		if op.Result == nil || op.Result.Stack == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || len(op.Result.Stack.Components) != 2 || len(op.Result.Stack.Volumes) != 2 || op.Release == nil {
@@ -78,6 +81,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 				t.Fatal("unexpected WordPress component")
 			}
 		}
+		sourcePort = op.Snapshot.HostPort
 	}
 	verify(first)
 	b.set("healthy", resourceID)
@@ -111,8 +115,59 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			if strings.HasPrefix(path, "/wp-content/uploads/") {
 				kind = "upload"
 			}
-			r, e := client.Get("https://catalog-runtime.example.test" + path)
+			url := "https://catalog-runtime.example.test" + path
+			var gotConnection, reused, tlsDone, wrote, firstByte atomic.Bool
+			trace := &httptrace.ClientTrace{
+				GotConn:              func(info httptrace.GotConnInfo) { gotConnection.Store(true); reused.Store(info.Reused) },
+				TLSHandshakeDone:     func(tls.ConnectionState, error) { tlsDone.Store(true) },
+				WroteRequest:         func(httptrace.WroteRequestInfo) { wrote.Store(true) },
+				GotFirstResponseByte: func() { firstByte.Store(true) },
+			}
+			request, requestErr := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), http.MethodGet, url, nil)
+			if requestErr != nil {
+				t.Fatal("WordPress assertion request construction failed")
+			}
+			r, e := client.Do(request)
 			if e != nil {
+				t.Logf("WordPress failed HTTPS trace kind=%s connection=%t reused=%t tls_done=%t wrote=%t first_byte=%t", kind, gotConnection.Load(), reused.Load(), tlsDone.Load(), wrote.Load(), firstByte.Load())
+				for _, direct := range []bool{false, true} {
+					controlTransport := transport.Clone()
+					controlURL, controlKind := url, "fresh_tls"
+					if direct {
+						controlTransport = &http.Transport{Proxy: nil}
+						controlURL, controlKind = fmt.Sprintf("http://127.0.0.1:%d%s", sourcePort, path), "direct_source"
+					}
+					control := &http.Client{Transport: controlTransport, Timeout: 5 * time.Second}
+					controlRequest, controlErr := http.NewRequestWithContext(context.Background(), http.MethodGet, controlURL, nil)
+					if controlErr != nil {
+						controlTransport.CloseIdleConnections()
+						t.Logf("WordPress failure control kind=%s request=%s category=request_construction", kind, controlKind)
+						continue
+					}
+					if direct {
+						controlRequest.Host = "catalog-runtime.example.test:25443"
+						controlRequest.Header.Set("X-Forwarded-Proto", "https")
+						control.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+					}
+					response, controlErr := control.Do(controlRequest)
+					status, verified, matches, category := 0, false, false, "none"
+					if controlErr != nil {
+						category = wordpressRuntimeHTTPErrorCategory(controlErr)
+					} else {
+						data, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+						closeErr := response.Body.Close()
+						status, verified = response.StatusCode, response.TLS != nil && len(response.TLS.VerifiedChains) > 0
+						matches = len(data) <= 2<<20 && bytes.Contains(data, marker)
+						if kind == "upload" {
+							matches = bytes.Equal(data, marker)
+						}
+						if readErr != nil || closeErr != nil {
+							category = "body_read_or_close"
+						}
+					}
+					controlTransport.CloseIdleConnections()
+					t.Logf("WordPress failure control kind=%s request=%s status=%d verified=%t matches=%t category=%s", kind, controlKind, status, verified, matches, category)
+				}
 				t.Fatalf("WordPress trusted HTTPS failed kind=%s category=%s", kind, wordpressRuntimeHTTPErrorCategory(e))
 			}
 			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
