@@ -34,8 +34,8 @@ func gitComposeFixtureFiles(raw, base, marker string, fail bool, registryImage s
 		compose = strings.Replace(compose, "postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab", "postgres:nerocd-required-missing-20261027", 1)
 	}
 	dockerfile := "FROM " + base + "\nCOPY --chmod=0644 marker /nerocd-version\n" +
-		"ARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\n" +
-		"LABEL nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\"\n"
+		"ARG CONFIGURED\nARG COMPOSE_MARKER\nARG INTERPOLATED\nARG DEFAULTED\nARG ALTERNATE\nARG ESCAPED\nARG EMPTY=not-empty\nARG OMITTED=docker-default\nARG BARE=docker-default\nARG NUMBER\nARG FLAG\nARG SERVICE_URL_VIKUNJA=runtime-not-imported\n" +
+		"LABEL nerocd.fixture.configured=\"${CONFIGURED}\" nerocd.fixture.marker=\"${COMPOSE_MARKER}\" nerocd.fixture.interpolated=\"${INTERPOLATED}\" nerocd.fixture.defaulted=\"${DEFAULTED}\" nerocd.fixture.alternate=\"${ALTERNATE}\" nerocd.fixture.escaped=\"${ESCAPED}\" nerocd.fixture.empty=\"${EMPTY}\" nerocd.fixture.omitted=\"${OMITTED}\" nerocd.fixture.bare=\"${BARE}\" nerocd.fixture.number=\"${NUMBER}\" nerocd.fixture.flag=\"${FLAG}\" nerocd.fixture.runtime=\"${SERVICE_URL_VIKUNJA}\"\n"
 	if fail {
 		dockerfile += "RUN exit 9\n"
 	}
@@ -49,9 +49,9 @@ func gitComposeFixtureArgs(marker string) string {
 		return "      args:\n        COMPOSE_MARKER: ${NEROCD_REQUIRED_FIXTURE:?required fixture argument}\n"
 	}
 	if marker == "B" {
-		return "      args:\n        - CONFIGURED=compose-value\n        - COMPOSE_MARKER=B\n        - INTERPOLATED=${CONFIGURED}\n        - DEFAULTED=${NEROCD_UNSET_FIXTURE:-fallback}\n        - ALTERNATE=${CONFIGURED:+present}\n        - ESCAPED=$$literal\n        - EMPTY=\n        - OMITTED\n        - BARE\n        - NUMBER=20\n        - FLAG=true\n"
+		return "      args:\n        - CONFIGURED=compose-value\n        - COMPOSE_MARKER=B\n        - INTERPOLATED=${CONFIGURED}\n        - DEFAULTED=${NEROCD_UNSET_FIXTURE:-fallback}\n        - ALTERNATE=${CONFIGURED:+present}\n        - ESCAPED=$$literal\n        - EMPTY=\n        - OMITTED\n        - BARE\n        - NUMBER=20\n        - FLAG=true\n        - SERVICE_URL_VIKUNJA\n"
 	}
-	return "      args:\n        CONFIGURED: compose-value\n        COMPOSE_MARKER: " + marker + "\n        INTERPOLATED: ${CONFIGURED}\n        DEFAULTED: ${NEROCD_UNSET_FIXTURE:-fallback}\n        ALTERNATE: ${CONFIGURED:+present}\n        ESCAPED: $$literal\n        EMPTY: ''\n        OMITTED: null\n        BARE:\n        NUMBER: 20\n        FLAG: true\n"
+	return "      args:\n        CONFIGURED: compose-value\n        COMPOSE_MARKER: " + marker + "\n        INTERPOLATED: ${CONFIGURED}\n        DEFAULTED: ${NEROCD_UNSET_FIXTURE:-fallback}\n        ALTERNATE: ${CONFIGURED:+present}\n        ESCAPED: $$literal\n        EMPTY: ''\n        OMITTED: null\n        BARE:\n        NUMBER: 20\n        FLAG: true\n        SERVICE_URL_VIKUNJA: null\n"
 }
 
 type gitComposeFixtureSource struct {
