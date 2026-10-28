@@ -14,15 +14,17 @@ import (
 
 // Git Compose versions gate prepared results and runner execution separately from pasted stacks.
 const (
+	HostingGitComposeArgsCapability  = "hosting_git_compose_args_v1"
 	HostingGitComposeBuildCapability = "hosting_git_compose_build_v1"
 	HostingGitComposeVersion         = "git-compose.v1"
 )
 
 // HostingStackBuild retains only a confined Dockerfile build, without caller shell or secrets.
 type HostingStackBuild struct {
-	Context    string `json:"context"`
-	Dockerfile string `json:"dockerfile"`
-	Target     string `json:"target,omitempty"`
+	Args       map[string]string `json:"args,omitempty"`
+	Context    string            `json:"context"`
+	Dockerfile string            `json:"dockerfile"`
+	Target     string            `json:"target,omitempty"`
 }
 
 // HostingBuildComposeService binds one build-owning component to its local artifact.
@@ -69,13 +71,15 @@ func parseHostingStackBuild(node *yaml.Node, settings HostingBuildSettings) (*Ho
 	dockerfile := "Dockerfile"
 	target := ""
 	var err error
+	var argsNode *yaml.Node
 	if node.Kind == yaml.ScalarNode {
 		context, err = stackString(node)
 	} else {
-		fields, e := stackFields(node, "build", "context", "dockerfile", "target")
+		fields, e := stackFields(node, "build", "context", "dockerfile", "target", "args")
 		if e != nil {
 			return nil, e
 		}
+		argsNode = fields["args"]
 		context = "."
 		if fields["context"] != nil {
 			context, err = stackString(fields["context"])
@@ -104,7 +108,11 @@ func parseHostingStackBuild(node *yaml.Node, settings HostingBuildSettings) (*Ho
 	if ValidateHostingBuildSettings(HostingBuildSettings{Strategy: "dockerfile", ContextDir: resolved, DockerfilePath: dockerfile, BuildTarget: target}) != nil {
 		return nil, errors.New("invalid Git Compose build settings")
 	}
-	return &HostingStackBuild{Context: resolved, Dockerfile: dockerfile, Target: target}, nil
+	args, err := parseHostingComposeBuildArgs(argsNode, settings.BuildVariables)
+	if err != nil {
+		return nil, err
+	}
+	return &HostingStackBuild{Context: resolved, Dockerfile: dockerfile, Target: target, Args: args}, nil
 }
 
 // HostingStackBuildOwner resolves a build service or unique same-image alias.

@@ -202,6 +202,7 @@ func (s ResourceSourceInput) Source() ResourceSource {
 	}
 	if s.Git != nil {
 		out.Git = &GitResourceSource{GitResourceConfiguration: *s.Git}
+		out.Git.Settings = out.Git.Settings.Clone()
 	}
 	return out
 }

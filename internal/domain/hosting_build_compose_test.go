@@ -53,7 +53,7 @@ func TestHostingGitComposeParsingAndPastedIsolation(t *testing.T) {
 			t.Fatalf("unsafe context accepted: %s", context)
 		}
 	}
-	for _, extra := range []string{"      args: {TOKEN: secret}\n", "      secrets: [key]\n"} {
+	for _, extra := range []string{"      secrets: [key]\n"} {
 		bad := result.Source
 		bad.Original = strings.Replace(bad.Original, "      target: release\n", "      target: release\n"+extra, 1)
 		if _, err = domain.ParseHostingGitCompose(bad, build.Snapshot.Source.Settings); err == nil {

@@ -16841,11 +16841,23 @@ components:
             original: {type: string, minLength: 1, maxLength: 131072, description: Exact reference-bearing Compose source. Protected values belong in runtime configuration.}
             public_component: {type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$'}
             container_port: {type: integer, minimum: 1, maximum: 65535}
+    HostingBuildVariable:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}$', description: Unique argument name. NEROCD_/BUILDKIT_/BUILDX_ prefixes and proxy or automatic platform control arguments are reserved.}
+        value: {type: string, maxLength: 4096, description: Public nonsecret literal, at most 4096 UTF-8 bytes, without NUL or line breaks. Empty is allowed.}
     HostingBuildSettings:
       type: object
       additionalProperties: false
       required: [strategy]
       properties:
+        build_variables:
+          type: array
+          maxItems: 64
+          description: Compose-only public build-time variables. Supply argument interpolation and override same-name Compose arguments. Runtime variables and managed secrets are not included. Empty or absent is omitted from canonical settings.
+          items: {$ref: "#/components/schemas/HostingBuildVariable"}
         strategy: {type: string, enum: [dockerfile, railpack, static, compose]}
         context_dir: {type: string, maxLength: 512}
         dockerfile_path: {type: string, maxLength: 512}
@@ -22013,6 +22025,11 @@ components:
       additionalProperties: false
       required: [context, dockerfile]
       properties:
+        args:
+          type: object
+          maxProperties: 64
+          additionalProperties: {type: string, maxLength: 4096}
+          description: Resolved public build arguments pinned by the prepared result. Unset bare or null arguments are omitted.
         context: {type: string}
         dockerfile: {type: string}
         target: {type: string}
