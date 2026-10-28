@@ -13,6 +13,12 @@ GATE = Path(__file__).with_name('backup-restore-gate.sh')
 
 class EvidenceTest(unittest.TestCase):
     def test_publication_replaces_symlink_without_touching_target(self):
+        self.check_publication(GATE, 'NEROCD_BACKUP_RESTORE_EVIDENCE', 'backup/restore')
+
+    def test_dogfood_publication_replaces_symlink_without_touching_target(self):
+        self.check_publication(GATE.with_name('dogfood-gate.sh'), 'NEROCD_DOGFOOD_EVIDENCE', 'dogfood')
+
+    def check_publication(self, gate, variable, label):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             bindir = root / 'bin'
@@ -43,16 +49,16 @@ if sys.argv[1] == 'info':
             self.assertIsNotNone(mktemp)
             (bindir / 'mktemp').write_text(f'#!/bin/sh\nif [ "$1" = -d ]; then {mktemp} "$@" | tee "$TEST_ROOT/stage"; else {mktemp} "$@"; fi\n')
             (bindir / 'mktemp').chmod(0o755)
-            env = dict(os.environ, PATH=f'{bindir}:{os.environ["PATH"]}', TEST_ROOT=str(root),
-                       NEROCD_BACKUP_RESTORE_EVIDENCE=str(evidence))
-            result = subprocess.run(['bash', str(GATE)], env=env, text=True, capture_output=True, timeout=20)
+            env = dict(os.environ, PATH=f'{bindir}:{os.environ["PATH"]}', TEST_ROOT=str(root))
+            env[variable] = str(evidence)
+            result = subprocess.run(['bash', str(gate)], env=env, text=True, capture_output=True, timeout=20)
             stage = Path((root / 'stage').read_text().strip())
             self.addCleanup(lambda: shutil.rmtree(stage, ignore_errors=True))
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual(victim.read_text(), 'valuable existing content')
             self.assertFalse(evidence.is_symlink())
             self.assertIn('FAIL: Docker unavailable', evidence.read_text())
-            self.assertIn(f'backup/restore evidence: {evidence}', result.stdout)
+            self.assertIn(f'{label} evidence: {evidence}', result.stdout)
             self.assertEqual(evidence.stat().st_mode & 0o777, 0o600)
             self.assertFalse(stage.exists(), 'private work directory was not cleaned')
     def test_http_helpers_keep_credentials_out_of_child_arguments(self):
