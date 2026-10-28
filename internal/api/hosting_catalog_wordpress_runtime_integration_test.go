@@ -107,9 +107,17 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			t.Fatal("WordPress browser identity missing")
 		}
 		for path, marker := range map[string][]byte{"/?p=" + parts[0]: []byte("NeroCD persistent WordPress post"), parts[1]: wordpressFixturePNG()} {
+			kind := "post"
+			if strings.HasPrefix(path, "/wp-content/uploads/") {
+				kind = "upload"
+			}
 			r, e := client.Get("https://catalog-runtime.example.test" + path)
 			if e != nil {
-				t.Fatal("WordPress trusted HTTPS failed")
+				t.Fatalf("WordPress trusted HTTPS failed kind=%s category=%s", kind, wordpressRuntimeHTTPErrorCategory(e))
+			}
+			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+				leaf := r.TLS.PeerCertificates[0]
+				t.Logf("WordPress HTTPS kind=%s status=%d verified=%t leaf_not_before=%s leaf_not_after=%s", kind, r.StatusCode, len(r.TLS.VerifiedChains) > 0, leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339))
 			}
 			body, e := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 			_ = r.Body.Close()

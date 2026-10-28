@@ -2,11 +2,19 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"nerocd/internal/domain"
 )
@@ -89,6 +97,73 @@ func TestWordPressComponentDatabaseFixtureRequests(t *testing.T) {
 			var got domain.HostingDatabaseBackupRestoreInput
 			if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/database-backups/dbb_fixture/restores", bytes.NewReader(raw)), &got) || !reflect.DeepEqual(in, got) || (got.Validate() == nil) != tc.valid {
 				t.Fatal("MySQL import fixture public decoder/authority fields changed")
+			}
+		})
+	}
+}
+
+// Keep transport diagnostics closed: errors can include private URLs or values.
+func wordpressRuntimeHTTPErrorCategory(err error) string {
+	var certificate *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalidCertificate x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	if errors.As(err, &invalidCertificate) && invalidCertificate.Reason == x509.Expired {
+		if invalidCertificate.Cert != nil && time.Now().Before(invalidCertificate.Cert.NotBefore) {
+			return "tls_not_yet_valid"
+		}
+		return "tls_expired"
+	}
+	if errors.As(err, &unknownAuthority) {
+		return "tls_unknown_authority"
+	}
+	if errors.As(err, &hostname) {
+		return "tls_hostname"
+	}
+	if errors.As(err, &certificate) || errors.As(err, &invalidCertificate) {
+		return "tls_verification"
+	}
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	var request *url.Error
+	if errors.As(err, &request) && request.Err != nil && request.Err.Error() == "stopped after 10 redirects" {
+		return "redirect_limit"
+	}
+	var operation *net.OpError
+	if errors.As(err, &operation) && operation.Op == "dial" {
+		return "connect"
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "connection_closed"
+	}
+	return "transport_other"
+}
+
+func TestWordPressRuntimeHTTPErrorCategories(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"certificate", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, "tls_unknown_authority"},
+		{"expired", x509.CertificateInvalidError{Cert: &x509.Certificate{NotAfter: time.Now().Add(-time.Hour)}, Reason: x509.Expired}, "tls_expired"},
+		{"not_yet_valid", x509.CertificateInvalidError{Cert: &x509.Certificate{NotBefore: time.Now().Add(time.Hour)}, Reason: x509.Expired}, "tls_not_yet_valid"},
+		{"hostname", x509.HostnameError{}, "tls_hostname"},
+		{"timeout", context.DeadlineExceeded, "timeout"},
+		{"canceled", context.Canceled, "canceled"},
+		{"redirect", &url.Error{Op: "Get", URL: "https://private.invalid/token", Err: errors.New("stopped after 10 redirects")}, "redirect_limit"},
+		{"connect", &net.OpError{Op: "dial", Err: errors.New("private address")}, "connect"},
+		{"closed", io.ErrUnexpectedEOF, "connection_closed"},
+		{"other", errors.New("private detail"), "transport_other"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := wordpressRuntimeHTTPErrorCategory(test.err); got != test.want {
+				t.Fatalf("category=%s want=%s", got, test.want)
 			}
 		})
 	}
