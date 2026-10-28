@@ -188,10 +188,7 @@ test("MySQL component archives bind SQL format, deployed evidence and local comp
  const input={request_id:"request",expected_resource_generation:1,component:"mysql",expected_deployed_operation_id:"hop_current"};
  vi.mocked(request).mockResolvedValue(value);
  await requestDatabaseBackup(scope,db,input,new AbortController().signal);
- vi.mocked(request).mockClear();
- await expect(requestDatabaseBackup(scope,db,{...input,remote_target:{target_id:"storage",revision:1}},new AbortController().signal)).rejects.toThrow();
- await expect(restoreDatabaseBackup(scope,db,"backup",{request_id:"restore",component_target:{resource_id:"target",component:"mysql",expected_resource_generation:1,expected_deployed_operation_id:"hop_target",acknowledge_replacement:true},remote_source:{transfer_id:"upload",expected_target_revision:1}},new AbortController().signal)).rejects.toThrow();
- expect(request).not.toHaveBeenCalled();
+
 });
 test("component discovery binds supported engine and major-version pairs",async()=>{
  const value={resource_id:"db",resource_generation:1,operation_id:"hop_current",available:true,reason:"available",components:[{component:"mysql",engine:"mysql",major_version:8,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]};
@@ -201,4 +198,18 @@ test("component discovery binds supported engine and major-version pairs",async(
   vi.mocked(request).mockResolvedValue({...value,components:[{...value.components[0],engine,major_version}]});
   await expect(getDatabaseBackupComponents(scope,"db")).rejects.toThrow();
  }
+});
+
+
+test("PostgreSQL component remote backup and restore preserve exact admitted requests",async()=>{
+ const remote_target={target_id:"storage",revision:3};
+ const component={...operation,version:"postgresql.compose-logical-local.v1",source_component:"postgresql",source_deployed_operation_id:"hop_source"};
+ const backupInput={request_id:"backup_remote",expected_resource_generation:2,component:"postgresql",expected_deployed_operation_id:"hop_source",remote_target};
+ vi.mocked(request).mockResolvedValue({...component,remote_target});
+ expect((await requestDatabaseBackup(scope,db,backupInput,new AbortController().signal)).remote_target).toEqual(remote_target);
+ expect(request).toHaveBeenLastCalledWith("/api/v1/resources/db/database-backups",expect.objectContaining({method:"POST",body:backupInput,requestID:"backup_remote"}));
+ const restoreInput={request_id:"restore_remote",component_target:{resource_id:"target",component:"postgresql",expected_resource_generation:4,expected_deployed_operation_id:"hop_target",acknowledge_replacement:true},remote_source:{transfer_id:"upload",expected_target_revision:3}};
+ vi.mocked(request).mockResolvedValue({...component,id:"restored",mode:"restore",target_resource_id:"target",target_component:"postgresql",target_deployed_operation_id:"hop_target"});
+ expect((await restoreDatabaseBackup(scope,db,"backup",restoreInput,new AbortController().signal)).target_component).toBe("postgresql");
+ expect(request).toHaveBeenLastCalledWith("/api/v1/database-backups/backup/restores",expect.objectContaining({method:"POST",body:restoreInput,requestID:"restore_remote"}));
 });

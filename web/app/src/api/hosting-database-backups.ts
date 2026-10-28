@@ -199,7 +199,6 @@ export async function requestDatabaseBackup(
   input: DatabaseBackupInput,
   signal: AbortSignal,
 ) {
-  if (input.component && input.remote_target !== undefined) return fail();
   if (input.remote_target !== undefined)
     parseRemoteBackupTarget(input.remote_target);
   const raw = await boundedDatabaseRequest(
@@ -227,7 +226,6 @@ export async function restoreDatabaseBackup(
   input: DatabaseRestoreInput,
   signal: AbortSignal,
 ) {
-  if (input.component_target && input.remote_source !== undefined) return fail();
   if (
     input.remote_source !== undefined &&
     (!id(input.remote_source.transfer_id) ||
