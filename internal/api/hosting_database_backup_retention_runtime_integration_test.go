@@ -225,7 +225,8 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
 		t.Fatal("native Linux arm64 required")
 	}
-	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true)
+	mysql := os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1"
+	f := newDatabaseRunnerFixtureWithProfile(t, true, true, true, mysql)
 	x := &databaseRetentionFixture{f: f, silo: startDatabaseRemoteSilo(f)}
 	x.silo.policy(true)
 	origin := "http://127.0.0.1:9000"
@@ -274,12 +275,25 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 		}
 		f.startRunner(args)
 	}
-	x.source = databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", backupRuntimeCreateInput(t, f.environment, f.destination), 201)
+	create := backupRuntimeCreateInput(t, f.environment, f.destination)
+	if mysql {
+		create = applicationDatabaseCreateInput("mysql", f.environment, f.destination)
+		create.RequestID = backupRuntimeRequestID(t)
+	}
+	x.source = databaseRunnerJSON[domain.HostingDatabase](f, f.token, "POST", "/api/v1/databases", create, 201)
 	f.registerRouteDatabaseCleanup(x.source.Resource.ID)
 	deployed := f.deploy(x.source, "retention_source")
 	f.registerRouteOperationCleanup(deployed.ID)
 	f.await(deployed.ID)
 	x.application = backupRuntimeApplication(f, x.source, "retention_source")
+	if mysql {
+		resource := databaseRunnerJSON[domain.Resource](f, f.token, "GET", "/api/v1/resources/"+x.application.ResourceID, nil, 200)
+		x.application = f.storage.bootstrap(f, resource, x.application, domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ContainerPort: 8080, Readiness: domain.HostingReadiness{Path: "/ready", TimeoutSeconds: 30}})
+		f.appRecord(x.application, "PUT", "a", "retained_a")
+		roots, public := newApplicationDatabaseRouteTrust(t)
+		f.initialApplicationDatabaseRoute(x.application, "mysql", roots, public)
+		f.storage.write(f, x.application, "retained_a", 0x41)
+	}
 	f.appRecord(x.application, "PUT", "before", "retention_origin")
 	target := databaseRunnerJSON[struct {
 		ID       string `json:"id"`
@@ -291,6 +305,18 @@ func newDatabaseRetentionFixture(t *testing.T, faultMode ...string) *databaseRet
 	databaseRemoteAwaitValidation(f, v)
 	return x
 }
+func (x *databaseRetentionFixture) assertSourcePreserved() {
+	x.f.t.Helper()
+	x.f.appRecord(x.application, "GET", "before", "retention_origin")
+	x.f.appRecord(x.application, "PUT", "after_retention", "retention_source_write")
+	x.f.appRecord(x.application, "GET", "after_retention", "retention_source_write")
+	if x.source.Engine == "mysql" {
+		x.f.routes.assertSelected(x.application)
+		x.f.routes.record(x.f.t.Context(), x.application, "GET", "after_retention", "retention_source_write")
+		x.f.storage.assertFiles(x.f, x.application)
+	}
+}
+
 func (x *databaseRetentionFixture) path() string {
 	return "/api/v1/resources/" + x.source.Resource.ID + "/database-backup-retention"
 }
@@ -366,11 +392,11 @@ func retentionExactSelection(p databaseRetentionPreview, want []string) bool {
 	return !p.SelectionTruncated && slices.Equal(retentionSelected(p), want)
 }
 func (x *databaseRetentionFixture) deletePolicy(allow bool) {
-	resources := []string{"arn:aws:s3:::nerocd-runtime/nerocd/postgresql/retention-probes/*"}
+	resources := []string{"arn:aws:s3:::nerocd-runtime/nerocd/" + x.source.Engine + "/retention-probes/*"}
 	for _, b := range x.backups {
 		resources = append(resources, "arn:aws:s3:::nerocd-runtime/"+retentionObjectKey(b))
 	}
-	statements := []any{map[string]any{"Effect": "Allow", "Action": []string{"s3:ListBucket"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime"}}, map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime/nerocd/postgresql/*"}}}
+	statements := []any{map[string]any{"Effect": "Allow", "Action": []string{"s3:ListBucket"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime"}}, map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{"arn:aws:s3:::nerocd-runtime/nerocd/" + x.source.Engine + "/*"}}}
 	if allow {
 		statements = append(statements, map[string]any{"Effect": "Allow", "Action": []string{"s3:DeleteObject"}, "Resource": resources})
 	}
@@ -381,7 +407,7 @@ func retentionObjectKey(b domain.HostingDatabaseBackupOperation) string {
 	if b.Blob == nil || b.Validate() != nil {
 		panic("invalid retained archive identity")
 	}
-	return "nerocd/postgresql/" + b.ID + "/" + strings.TrimPrefix(b.Blob.Digest, "sha256:") + ".dump"
+	return domain.BackupRemoteObjectKey(b.ID, *b.Blob)
 }
 
 // Observe the owned Silo directly, outside runner fault proxies. Only a complete,
@@ -475,9 +501,11 @@ func databaseRetentionObserveRemote(ctx context.Context, client *s3.Client, key 
 func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, deleted map[string]bool) {
 	for _, item := range p.Items {
 		known := false
+		var archive domain.HostingDatabaseBackupOperation
 		for _, b := range x.backups {
 			if b.ID == item.BackupID && b.Blob != nil && b.Blob.Digest == item.Digest && b.Blob.Bytes == item.Bytes && b.Validate() == nil {
 				known = true
+				archive = b
 				break
 			}
 		}
@@ -504,7 +532,7 @@ func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, dele
 				}
 			}
 		} else {
-			key := "nerocd/postgresql/" + item.BackupID + "/" + strings.TrimPrefix(item.Digest, "sha256:") + ".dump"
+			key := retentionObjectKey(archive)
 			transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 3 * time.Second}
 			client := databaseRetentionObservationClient(x.silo.access, x.silo.secret, &http.Client{
 				Transport: transport, Timeout: 3 * time.Second,
@@ -538,7 +566,7 @@ func (x *databaseRetentionFixture) restoreApplication(backup domain.HostingDatab
 	}
 	fresh := databaseRunnerJSON[domain.HostingDatabase](x.f, x.f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
 	x.f.registerRouteDatabaseCleanup(fresh.Resource.ID)
-	if fresh.Resource.ID == x.source.Resource.ID || fresh.StorageRef == x.source.StorageRef || fresh.Credentials[0].SecretID == x.source.Credentials[0].SecretID {
+	if fresh.Engine != x.source.Engine || fresh.RecipeVersion != x.source.RecipeVersion || fresh.Binding.ID == x.source.Binding.ID || fresh.Resource.ID == x.source.Resource.ID || fresh.StorageRef == x.source.StorageRef || fresh.Credentials[0].SecretID == x.source.Credentials[0].SecretID {
 		x.f.t.Fatal("retention restore reused source identity")
 	}
 	app := backupRuntimeApplication(x.f, fresh, suffix)
@@ -548,6 +576,20 @@ func (x *databaseRetentionFixture) restoreApplication(backup domain.HostingDatab
 	x.f.appRecord(app, "GET", "before", "retention_origin")
 	x.f.appRecord(app, "PUT", "restored_new", "retention_new_write")
 	x.f.appRecord(app, "GET", "restored_new", "retention_new_write")
+	if x.source.Engine == "mysql" {
+		var credential domain.HostingDatabaseCredentialRef
+		for _, ref := range fresh.Credentials {
+			if ref.Role == "app" {
+				credential = ref
+			}
+		}
+		if app.ApplicationDatabase == nil || app.ApplicationDatabase.Binding.DatabaseResourceID != fresh.Resource.ID || app.ApplicationDatabase.Binding.DatabaseBindingID != fresh.Binding.ID || app.ApplicationDatabase.Binding.Alias != domain.HostingDatabaseBindingAlias(fresh.Binding.ID) || app.ApplicationDatabase.Binding.Credential.SecretID != credential.SecretID || app.ApplicationDatabase.Binding.Credential.Version != credential.Version {
+			x.f.t.Fatal("retention target application lost exact binding snapshot")
+		}
+		if databaseRemoteMissingRecord(x.f.t.Context(), x.application, "restored_new") != nil {
+			x.f.t.Fatal("retention target write reached source")
+		}
+	}
 	return fresh, app
 }
 
@@ -708,8 +750,25 @@ func TestHostingDatabaseBackupRetentionCompiledRunner(t *testing.T) {
 	survivor, upload := x.backups[3], x.uploads[3]
 	restorePath := "/api/v1/database-backups/" + survivor.ID + "/restores"
 	remoteRequest := map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Retention remote survivor", "remote_source": map[string]any{"transfer_id": upload.ID, "expected_target_revision": upload.TargetRevision}}
+	survivorCAS := filepath.Join(x.f.root, "state", "logical-backups", strings.TrimPrefix(survivor.Blob.Digest, "sha256:"))
+	if _, err := os.Lstat(survivorCAS); !os.IsNotExist(err) {
+		t.Fatal("retention survivor local CAS remains before remote recovery")
+	}
 	remoteAdmission := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", restorePath, remoteRequest, 202)
 	remoteDatabase, remoteApp := x.restoreApplication(survivor, remoteAdmission.ID, "retention_remote_survivor")
+	if x.source.Engine == "mysql" {
+		if databaseRemoteMissingRecord(t.Context(), remoteApp, "local_newest") != nil {
+			t.Fatal("remote survivor imported post-snapshot source record")
+		}
+		route := &applicationDatabaseRouteFixture{f: x.f, roots: x.f.routes.roots, publicRoot: x.f.routes.publicRoot, proxy: x.f.routes.proxy, hostname: "restored-mysql.example.test", daemonID: remoteApp.Release.DaemonID}
+		databaseRunnerJSON[domain.HostingHostnameGrant](x.f, x.f.adminToken, "POST", "/api/v1/servers/"+x.f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: remoteApp.ProjectID, Hostname: route.hostname}, 201)
+		route.route = databaseRunnerJSON[domain.HostingRoute](x.f, x.f.token, "POST", "/api/v1/resources/"+remoteApp.ResourceID+"/routes", domain.HostingRouteInput{IdempotencyKey: "retention_remote_route", Hostname: route.hostname, PathPrefix: "/", ExpectedHealthyOperationID: remoteApp.ID}, 202)
+		route.awaitProxy()
+		route.assertSelected(remoteApp)
+		route.record(t.Context(), remoteApp, "GET", "before", "retention_origin")
+		route.record(t.Context(), remoteApp, "PUT", "remote_https", "retention_target_write")
+		route.record(t.Context(), remoteApp, "GET", "remote_https", "retention_target_write")
+	}
 	download := databaseRemoteAwait(x.f, survivor.ID, "download", "succeeded", remoteAdmission.ID)
 	if download.RestoreOperationID != remoteAdmission.ID || download.Blob == nil || *download.Blob != *survivor.Blob {
 		t.Fatal("retention recovery did not download the original remote archive")
@@ -752,8 +811,9 @@ func TestHostingDatabaseBackupRetentionCompiledRunner(t *testing.T) {
 		t.Fatal("restore or replay changed the original deletion history")
 	}
 	x.f.assertRedacted()
-	fmt.Println("DATABASE_BACKUP_RETENTION_PASS postgresql")
-	fmt.Println("DATABASE_BACKUP_RETENTION_RESTORE_APP_PASS postgresql")
+	x.assertSourcePreserved()
+	fmt.Println("DATABASE_BACKUP_RETENTION_PASS " + x.source.Engine)
+	fmt.Println("DATABASE_BACKUP_RETENTION_RESTORE_APP_PASS " + x.source.Engine)
 }
 
 func TestHostingDatabaseBackupRetentionReplayCompiledRunner(t *testing.T) {
@@ -912,10 +972,11 @@ func TestHostingDatabaseBackupRetentionReplayCompiledRunner(t *testing.T) {
 	}
 	browser.setPhase("complete", execution.ID)
 	browser.finished()
-	fmt.Println("DATABASE_BACKUP_RETENTION_RECOVERY_PASS postgresql")
-	fmt.Println("DATABASE_BACKUP_RETENTION_STALE_AUTHORITY_PASS postgresql")
+	x.assertSourcePreserved()
+	fmt.Println("DATABASE_BACKUP_RETENTION_RECOVERY_PASS " + x.source.Engine)
+	fmt.Println("DATABASE_BACKUP_RETENTION_STALE_AUTHORITY_PASS " + x.source.Engine)
 
-	fmt.Println("DATABASE_BACKUP_RETENTION_REPLAY_PASS postgresql")
+	fmt.Println("DATABASE_BACKUP_RETENTION_REPLAY_PASS " + x.source.Engine)
 }
 
 func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
@@ -943,8 +1004,21 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 					t.Fatal("viewer denial allocated retention work or changed copy inventory")
 				}
 
+				var routes []domain.HostingRoute
+				if x.source.Engine == "mysql" {
+					routes = backupRuntimeCaptureFixtureRoutes(x.f, x.source.Resource.ProjectID, []domain.HostingRoute{x.f.routes.route, x.f.routes.unrelatedRoute})
+				}
 				restoreGrant := backupRuntimeRegisterGrantCleanup(x.f, x.source.Resource.ProjectID, x.f.token)
 				databaseRunnerJSON[json.RawMessage](x.f, x.f.token, "POST", "/api/v1/destinations/"+x.f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: x.source.Resource.ProjectID}, 200)
+				if x.source.Engine == "mysql" {
+					for _, known := range routes {
+						current := databaseRunnerJSON[domain.HostingRoute](x.f, x.f.token, "GET", "/api/v1/routes/"+known.ID, nil, 200)
+						if current.Enabled || current.Version != known.Version+1 || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID {
+							t.Fatal("retention grant revoke did not withdraw exact fixture route")
+						}
+					}
+					x.f.routes.awaitProxy()
+				}
 				// Project ownership remains valid; the revoked placement is a conflict.
 				x.execute(p, x.f.token, 409)
 				if x.admissionInventory() != beforeDenial {
@@ -952,6 +1026,9 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 				}
 				if restoreGrant() != nil {
 					t.Fatal("owned grant restore failed")
+				}
+				if x.source.Engine == "mysql" {
+					backupRuntimeRecoverFixtureRoutes(x.f, routes, "retention_restore_")
 				}
 				if !retentionSameInventory(p.Items, x.preview().Items) {
 					t.Fatal("denied admission or grant cleanup changed the exact copy selection")
@@ -970,7 +1047,8 @@ func TestHostingDatabaseBackupRetentionFailuresCompiledRunner(t *testing.T) {
 				}
 				x.assertCopies(p, map[string]bool{})
 			}
-			fmt.Println("DATABASE_BACKUP_RETENTION_FAILURE_PASS postgresql " + kind)
+			x.assertSourcePreserved()
+			fmt.Println("DATABASE_BACKUP_RETENTION_FAILURE_PASS " + x.source.Engine + " " + kind)
 		})
 	}
 }
@@ -1020,13 +1098,23 @@ func retentionQualificationHeld(preview databaseRetentionPreview, execution data
 	return failures == 1
 }
 
-func retentionDumpShadowScripts() (string, string) {
+func retentionDumpShadowScripts(engine string) (string, string) {
 	// The exact pinned arm64 image was observed selecting /usr/bin/pg_dump,
-	// resolved to pg_wrapper and reporting major17. Never move that executable.
+	// resolved to pg_wrapper and reporting major17. The pinned MySQL image
+	// selects the regular /usr/bin/mysqldump at8.4.13. Never move either binary.
 	const wrapper = "#!/bin/sh\n# nerocd-owned-retention-duplicate\nexec cat /tmp/nerocd-retention-duplicate.dump\n"
 	quoted := "'" + wrapper + "'"
 	install := "set -eu\ntest \"$(command -v pg_dump)\" = /usr/bin/pg_dump\ntest -x /usr/bin/pg_dump\ntest \"$(readlink -f /usr/bin/pg_dump)\" = /usr/share/postgresql-common/pg_wrapper\ncase \"$(pg_dump --version)\" in \"pg_dump (PostgreSQL) 17.\"*) ;; *) exit 1 ;; esac\ntest ! -e /usr/local/bin/pg_dump\ntest ! -L /usr/local/bin/pg_dump\n(set -C; printf '%s' " + quoted + " >/usr/local/bin/pg_dump)\nchmod 0755 /usr/local/bin/pg_dump\nhash -r\ntest \"$(command -v pg_dump)\" = /usr/local/bin/pg_dump\n"
 	cleanup := "set -eu\nif test -e /usr/local/bin/pg_dump || test -L /usr/local/bin/pg_dump; then\n  test ! -L /usr/local/bin/pg_dump\n  test \"$(cat /usr/local/bin/pg_dump)\" = \"$(printf '%s' " + quoted + ")\"\n  rm /usr/local/bin/pg_dump\nfi\ntest \"$(command -v pg_dump)\" = /usr/bin/pg_dump\nrm -f /tmp/nerocd-retention-duplicate.dump\n"
+	if engine == "mysql" {
+		install = strings.ReplaceAll(install, "pg_dump", "mysqldump")
+		install = strings.ReplaceAll(install, "/usr/share/postgresql-common/pg_wrapper", "/usr/bin/mysqldump")
+		install = strings.ReplaceAll(install, "mysqldump (PostgreSQL) 17.", "mysqldump  Ver 8.4.13")
+		install = strings.Replace(install, "test -x /usr/bin/mysqldump\n", "test -x /usr/bin/mysqldump\ntest ! -L /usr/bin/mysqldump\n", 1)
+		cleanup = strings.ReplaceAll(cleanup, "pg_dump", "mysqldump")
+	} else if engine != "postgresql" {
+		panic("invalid fixture dump engine")
+	}
 	return install, cleanup
 }
 
@@ -1040,14 +1128,14 @@ func (x *databaseRetentionFixture) duplicateArchive(original domain.HostingDatab
 	}
 	defer clear(data)
 	// Controlled duplicate-content injection. Only this owned database container's
-	// pg_dump invocation is shadowed, using a real archive produced by the
+	// dump invocation is shadowed, using a real archive produced by the
 	// compiled runner. Cleanup removes only this wrapper; the real binary stays intact.
 	raw, err := databaseRunnerDocker(f.t.Context(), data, "exec", "--interactive", source.Result.ContainerID, "sh", "-c", "cat >/tmp/nerocd-retention-duplicate.dump && chmod 0444 /tmp/nerocd-retention-duplicate.dump")
 	clear(raw)
 	if err != nil {
 		f.t.Fatal("duplicate-content archive injection failed")
 	}
-	install, cleanup := retentionDumpShadowScripts()
+	install, cleanup := retentionDumpShadowScripts(x.source.Engine)
 	restore := func(ctx context.Context) error {
 		raw, err := databaseRunnerDocker(ctx, nil, "exec", source.Result.ContainerID, "sh", "-c", cleanup)
 		clear(raw)
@@ -1230,8 +1318,9 @@ func TestHostingDatabaseBackupRetentionProtectionsCompiledRunner(t *testing.T) {
 	sharedRestore := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", "/api/v1/database-backups/"+second.ID+"/restores", map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Shared archive recovery"}, 202)
 	x.restoreApplication(second, sharedRestore.ID, "retention_shared_survivor")
 	x.f.assertRedacted()
-	fmt.Println("DATABASE_BACKUP_RETENTION_PROTECTION_PASS postgresql newest_shared_active_failed_upload_external")
-	fmt.Println("DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS postgresql")
+	x.assertSourcePreserved()
+	fmt.Println("DATABASE_BACKUP_RETENTION_PROTECTION_PASS " + x.source.Engine + " newest_shared_active_failed_upload_external")
+	fmt.Println("DATABASE_BACKUP_RETENTION_INDEPENDENT_LIMITS_PASS " + x.source.Engine)
 }
 
 func TestDatabaseBackupRetentionFixtureSelectionAndOptIn(t *testing.T) {
@@ -1304,12 +1393,20 @@ func TestDatabaseBackupRetentionWireExactReplayAndDefaultIsolation(t *testing.T)
 }
 
 func retentionArchiveDelete(r *http.Request) bool {
-	return r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/") &&
-		!strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/retention-probes/") && strings.HasSuffix(r.URL.Path, ".dump")
+	if r.Method != http.MethodDelete {
+		return false
+	}
+	for _, profile := range []struct{ engine, suffix string }{{"postgresql", ".dump"}, {"mysql", ".sql"}} {
+		prefix := "/nerocd-runtime/nerocd/" + profile.engine + "/"
+		if strings.HasPrefix(r.URL.Path, prefix) && !strings.HasPrefix(r.URL.Path, prefix+"retention-probes/") && strings.HasSuffix(r.URL.Path, profile.suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func retentionConditionalFault(r *http.Request) bool {
-	return r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/retention-probes/") && strings.HasPrefix(r.Header.Get("If-Match"), "\"nerocd-does-not-match-")
+	return r.Method == http.MethodDelete && (strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/postgresql/retention-probes/") || strings.HasPrefix(r.URL.Path, "/nerocd-runtime/nerocd/mysql/retention-probes/")) && strings.HasPrefix(r.Header.Get("If-Match"), "\"nerocd-does-not-match-")
 }
 func TestDatabaseBackupRetentionConditionalFaultScope(t *testing.T) {
 	for _, v := range []struct {
@@ -1317,6 +1414,11 @@ func TestDatabaseBackupRetentionConditionalFaultScope(t *testing.T) {
 		want               bool
 	}{
 		{"DELETE", "/nerocd-runtime/nerocd/postgresql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", true},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", true},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/backup/digest.sql", "\"nerocd-does-not-match-owned\"", false},
+		{"GET", "/nerocd-runtime/nerocd/mysql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", false},
+		{"DELETE", "/foreign/nerocd/mysql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", false},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/retention-probes/owned/nonce", "\"real-object-etag\"", false},
 		{"DELETE", "/nerocd-runtime/nerocd/postgresql/backup/digest.dump", "\"nerocd-does-not-match-owned\"", false},
 		{"GET", "/nerocd-runtime/nerocd/postgresql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", false},
 		{"DELETE", "/foreign/nerocd/postgresql/retention-probes/owned/nonce", "\"nerocd-does-not-match-owned\"", false},
@@ -1453,7 +1555,14 @@ func TestHostingDatabaseBackupRetentionUnknownDeleteCompiledRunner(t *testing.T)
 		t.Fatal("unknown deletion profile has no exact remote candidate")
 	}
 	x.deleteFault.mu.Lock()
-	x.deleteFault.path = "/nerocd-runtime/nerocd/postgresql/" + unknown.BackupID + "/" + strings.TrimPrefix(unknown.Digest, "sha256:") + ".dump"
+	for _, backup := range x.backups {
+		if backup.ID == unknown.BackupID {
+			x.deleteFault.path = "/nerocd-runtime/" + retentionObjectKey(backup)
+		}
+	}
+	if x.deleteFault.path == "" {
+		t.Fatal("unknown delete escaped exact owned archive")
+	}
 	x.deleteFault.mu.Unlock()
 	admitted := x.execute(preview, x.f.token, 202)
 	settled := x.await(admitted.ID)
@@ -1509,7 +1618,8 @@ func TestHostingDatabaseBackupRetentionUnknownDeleteCompiledRunner(t *testing.T)
 	if len(history) != 1 || history[0].ID != admitted.ID {
 		t.Fatal("unknown deletion escaped its saved batch")
 	}
-	fmt.Println("DATABASE_BACKUP_RETENTION_UNKNOWN_DELETE_HELD_PASS postgresql")
+	x.assertSourcePreserved()
+	fmt.Println("DATABASE_BACKUP_RETENTION_UNKNOWN_DELETE_HELD_PASS " + x.source.Engine)
 }
 
 func TestDatabaseBackupRetentionUnknownFaultScope(t *testing.T) {
@@ -1723,6 +1833,11 @@ func TestDatabaseBackupRetentionQualificationPendingProof(t *testing.T) {
 		want         bool
 	}{
 		{"DELETE", "/nerocd-runtime/nerocd/postgresql/backup/archive.dump", true},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/backup/archive.sql", true},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/backup/archive.dump", false},
+		{"GET", "/nerocd-runtime/nerocd/mysql/backup/archive.sql", false},
+		{"DELETE", "/nerocd-runtime/nerocd/mysql/retention-probes/owned/archive.sql", false},
+		{"DELETE", "/foreign/nerocd/mysql/backup/archive.sql", false},
 		{"GET", "/nerocd-runtime/nerocd/postgresql/backup/archive.dump", false},
 		{"DELETE", "/nerocd-runtime/nerocd/postgresql/retention-probes/owned/archive.dump", false},
 		{"DELETE", "/foreign/nerocd/postgresql/backup/archive.dump", false},
@@ -1734,93 +1849,111 @@ func TestDatabaseBackupRetentionQualificationPendingProof(t *testing.T) {
 }
 
 func TestDatabaseBackupRetentionDumpShadowGuard(t *testing.T) {
-	install, cleanup := retentionDumpShadowScripts()
-	for _, script := range []string{install, cleanup} {
-		command := exec.CommandContext(t.Context(), "sh", "-n")
-		command.Stdin = strings.NewReader(script)
-		if err := command.Run(); err != nil {
-			t.Fatal("owned dump shadow script syntax invalid")
+	for _, engine := range []string{"postgresql", "mysql"} {
+		tool := "pg_dump"
+		if engine == "mysql" {
+			tool = "mysqldump"
 		}
-		if strings.Contains(script, "mv ") || strings.Contains(script, "retention-original") {
-			t.Fatal("dump shadow altered the real executable")
+		install, cleanup := retentionDumpShadowScripts(engine)
+		for _, script := range []string{install, cleanup} {
+			command := exec.CommandContext(t.Context(), "sh", "-n")
+			command.Stdin = strings.NewReader(script)
+			if err := command.Run(); err != nil {
+				t.Fatal("owned dump shadow script syntax invalid")
+			}
+			if strings.Contains(script, "mv ") || strings.Contains(script, "retention-original") {
+				t.Fatal("dump shadow altered the real executable")
+			}
 		}
-	}
-	for _, guard := range []string{"test ! -e /usr/local/bin/pg_dump", "test ! -L /usr/local/bin/pg_dump", "set -C", "hash -r", "$(command -v pg_dump)\" = /usr/bin/pg_dump", "$(command -v pg_dump)\" = /usr/local/bin/pg_dump"} {
-		if !strings.Contains(install, guard) {
-			t.Fatal("dump shadow installation lost an executable ownership guard")
+		for _, guard := range []string{"test ! -e /usr/local/bin/pg_dump", "test ! -L /usr/local/bin/pg_dump", "set -C", "hash -r", "$(command -v pg_dump)\" = /usr/bin/pg_dump", "$(command -v pg_dump)\" = /usr/local/bin/pg_dump"} {
+			if !strings.Contains(install, strings.ReplaceAll(guard, "pg_dump", tool)) {
+				t.Fatal("dump shadow installation lost an executable ownership guard")
+			}
 		}
-	}
-	if !strings.Contains(cleanup, "test ! -L /usr/local/bin/pg_dump") || !strings.Contains(cleanup, "$(cat /usr/local/bin/pg_dump)") || !strings.Contains(cleanup, "nerocd-owned-retention-duplicate") {
-		t.Fatal("dump shadow cleanup lost exact-content guards")
+		if !strings.Contains(cleanup, "test ! -L /usr/local/bin/"+tool) || !strings.Contains(cleanup, "$(cat /usr/local/bin/"+tool+")") || !strings.Contains(cleanup, "nerocd-owned-retention-duplicate") {
+			t.Fatal("dump shadow cleanup lost exact-content guards")
+		}
 	}
 }
 
 func TestDatabaseBackupRetentionDumpShadowLifecycle(t *testing.T) {
-	for _, preexisting := range []bool{false, true} {
-		t.Run(fmt.Sprint(preexisting), func(t *testing.T) {
-			root, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal("shadow unit fixture canonical path failed")
-			}
-			localBin, bin, share := filepath.Join(root, "usr/local/bin"), filepath.Join(root, "usr/bin"), filepath.Join(root, "usr/share/postgresql-common")
-			for _, dir := range []string{localBin, bin, share} {
-				if err := os.MkdirAll(dir, 0700); err != nil {
-					t.Fatal("shadow unit fixture directory failed")
+	for _, engine := range []string{"postgresql", "mysql"} {
+		for _, preexisting := range []bool{false, true} {
+			t.Run(engine+fmt.Sprint(preexisting), func(t *testing.T) {
+				root, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal("shadow unit fixture canonical path failed")
 				}
-			}
-			real := filepath.Join(share, "pg_wrapper")
-			realBytes := []byte("#!/bin/sh\nprintf '%s\\n' 'pg_dump (PostgreSQL) 17.11'\n")
-			if os.WriteFile(real, realBytes, 0700) != nil || os.Symlink(real, filepath.Join(bin, "pg_dump")) != nil {
-				t.Fatal("shadow unit fixture executable failed")
-			}
-			archive := filepath.Join(root, "archive.dump")
-			payload := []byte("owned archive bytes for shell lifecycle regression")
-			if os.WriteFile(archive, payload, 0600) != nil {
-				t.Fatal("shadow unit fixture archive failed")
-			}
-			shadow := filepath.Join(localBin, "pg_dump")
-			if preexisting && os.WriteFile(shadow, []byte("unrelated"), 0600) != nil {
-				t.Fatal("shadow preexisting fixture failed")
-			}
-			install, cleanup := retentionDumpShadowScripts()
-			rewrite := strings.NewReplacer("/usr/local/bin", localBin, "/usr/bin", bin, "/usr/share/postgresql-common", share, "/tmp/nerocd-retention-duplicate.dump", archive)
-			run := func(script string) ([]byte, error) {
-				command := exec.CommandContext(t.Context(), "/bin/sh", "-c", rewrite.Replace(script))
-				command.Env = append(os.Environ(), "PATH="+localBin+":"+bin+":/usr/bin:/bin")
-				return command.Output()
-			}
-			_, installed := run(install)
-			if preexisting {
-				if installed == nil {
-					t.Fatal("shadow installation overwrote an existing executable")
+				localBin, bin, share := filepath.Join(root, "usr/local/bin"), filepath.Join(root, "usr/bin"), filepath.Join(root, "usr/share/postgresql-common")
+				for _, dir := range []string{localBin, bin, share} {
+					if err := os.MkdirAll(dir, 0700); err != nil {
+						t.Fatal("shadow unit fixture directory failed")
+					}
 				}
-				if _, err := run(cleanup); err == nil {
-					t.Fatal("shadow cleanup accepted an unrelated file")
+				tool := "pg_dump"
+				if engine == "mysql" {
+					tool = "mysqldump"
 				}
-				raw, err := os.ReadFile(shadow)
-				if err != nil || string(raw) != "unrelated" {
-					t.Fatal("shadow cleanup removed an unrelated file")
+				real := filepath.Join(share, "pg_wrapper")
+				realBytes := []byte("#!/bin/sh\nprintf '%s\\n' 'pg_dump (PostgreSQL) 17.11'\n")
+				if engine == "mysql" {
+					real = filepath.Join(bin, tool)
+					realBytes = []byte("#!/bin/sh\nprintf '%s\\n' 'mysqldump  Ver 8.4.13 for Linux on aarch64 (MySQL Community Server - GPL)'\n")
+					if os.WriteFile(real, realBytes, 0700) != nil {
+						t.Fatal("MySQL unit executable failed")
+					}
+				} else if os.WriteFile(real, realBytes, 0700) != nil || os.Symlink(real, filepath.Join(bin, tool)) != nil {
+					t.Fatal("shadow unit fixture executable failed")
 				}
-				return
-			}
-			if installed != nil {
-				t.Fatal("observed executable layout rejected by shadow installation")
-			}
-			if raw, err := run("pg_dump"); err != nil || !bytes.Equal(raw, payload) {
-				t.Fatal("shadow was not the executable selected by PATH")
-			}
-			if _, err := run(cleanup); err != nil {
-				t.Fatal("owned shadow cleanup failed")
-			}
-			if _, err := run(cleanup); err != nil {
-				t.Fatal("owned shadow cleanup was not idempotent")
-			}
-			if _, err := os.Lstat(shadow); !os.IsNotExist(err) {
-				t.Fatal("owned shadow survived cleanup")
-			}
-			if raw, err := os.ReadFile(real); err != nil || !bytes.Equal(raw, realBytes) {
-				t.Fatal("real executable changed during shadow lifecycle")
-			}
-		})
+				archive := filepath.Join(root, "archive.dump")
+				payload := []byte("owned archive bytes for shell lifecycle regression")
+				if os.WriteFile(archive, payload, 0600) != nil {
+					t.Fatal("shadow unit fixture archive failed")
+				}
+				shadow := filepath.Join(localBin, tool)
+				if preexisting && os.WriteFile(shadow, []byte("unrelated"), 0600) != nil {
+					t.Fatal("shadow preexisting fixture failed")
+				}
+				install, cleanup := retentionDumpShadowScripts(engine)
+				rewrite := strings.NewReplacer("/usr/local/bin", localBin, "/usr/bin", bin, "/usr/share/postgresql-common", share, "/tmp/nerocd-retention-duplicate.dump", archive)
+				run := func(script string) ([]byte, error) {
+					command := exec.CommandContext(t.Context(), "/bin/sh", "-c", rewrite.Replace(script))
+					command.Env = append(os.Environ(), "PATH="+localBin+":"+bin+":/usr/bin:/bin")
+					return command.Output()
+				}
+				_, installed := run(install)
+				if preexisting {
+					if installed == nil {
+						t.Fatal("shadow installation overwrote an existing executable")
+					}
+					if _, err := run(cleanup); err == nil {
+						t.Fatal("shadow cleanup accepted an unrelated file")
+					}
+					raw, err := os.ReadFile(shadow)
+					if err != nil || string(raw) != "unrelated" {
+						t.Fatal("shadow cleanup removed an unrelated file")
+					}
+					return
+				}
+				if installed != nil {
+					t.Fatal("observed executable layout rejected by shadow installation")
+				}
+				if raw, err := run(tool); err != nil || !bytes.Equal(raw, payload) {
+					t.Fatal("shadow was not the executable selected by PATH")
+				}
+				if _, err := run(cleanup); err != nil {
+					t.Fatal("owned shadow cleanup failed")
+				}
+				if _, err := run(cleanup); err != nil {
+					t.Fatal("owned shadow cleanup was not idempotent")
+				}
+				if _, err := os.Lstat(shadow); !os.IsNotExist(err) {
+					t.Fatal("owned shadow survived cleanup")
+				}
+				if raw, err := os.ReadFile(real); err != nil || !bytes.Equal(raw, realBytes) {
+					t.Fatal("real executable changed during shadow lifecycle")
+				}
+			})
+		}
 	}
 }

@@ -15,7 +15,7 @@ export function validateMetadata(value, origin) {
   for (const name of ["project_id", "application_resource_id", "database_resource_id", "foreign_resource_id"]) if (typeof value[name] !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value[name])) throw Error("invalid browser fixture identity");
   for (const name of ["environment", "application_name"]) if (typeof value[name] !== "string" || !value[name] || value[name].length > 255 || /[\x00-\x1f\x7f]/.test(value[name])) throw Error("invalid browser fixture label");
   if (!(["backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery", "backup_notifications"].includes(value.profile) ? /^\/api\/v1\/fixture\/database-backup\/[a-f0-9]{32}$/ : /^\/api\/v1\/fixture\/database-connection\/[a-f0-9]{32}$/).test(value.control_path)) throw Error("invalid browser fixture controls");
-  if (value.engine === "mysql" && !["storage", "backup", "backup_schedule", "backup_remote", "backup_notifications"].includes(value.profile)) throw Error("invalid MySQL browser profile");
+  if (value.engine === "mysql" && !["storage", "backup", "backup_schedule", "backup_remote", "backup_retention", "backup_retention_recovery", "backup_notifications"].includes(value.profile)) throw Error("invalid MySQL browser profile");
   return value;
 }
 
@@ -59,7 +59,7 @@ export async function drive(origin, evidence, command) {
   const notifications = process.env.NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME ?? "0";
   if (!["0", "1"].includes(notifications) || notifications === "1" && remote !== "1") throw Error("invalid browser notifications profile");
   // Go registers backup_remote_runtime before backup_runtime in lexical file order.
-  const expected = mysqlMode ? notifications === "1" ? ["backup_notifications:mysql"] : remote === "1" ? ["backup_remote:mysql"] : schedule === "1" ? ["backup_schedule:mysql"] : ["storage:mysql", "backup:mysql"] : backupMode ? [...(notifications === "1" ? ["backup_notifications:postgresql"] : []), ...(remote === "1" ? ["backup_remote:postgresql"] : []), ...(retention === "1" ? ["backup_retention:postgresql", "backup_retention_recovery:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
+  const expected = mysqlMode ? notifications === "1" ? ["backup_notifications:mysql"] : retention === "1" ? ["backup_retention:mysql", "backup_retention_recovery:mysql"] : remote === "1" ? ["backup_remote:mysql"] : schedule === "1" ? ["backup_schedule:mysql"] : ["storage:mysql", "backup:mysql"] : backupMode ? [...(notifications === "1" ? ["backup_notifications:postgresql"] : []), ...(remote === "1" ? ["backup_remote:postgresql"] : []), ...(retention === "1" ? ["backup_retention:postgresql", "backup_retention_recovery:postgresql"] : []), "backup:postgresql", ...(schedule === "1" ? ["backup_schedule:postgresql"] : [])] : ["base:postgresql", "base:redis", ...(storage === "1" ? ["storage:postgresql", "storage:redis", "storage_resume:postgresql", "storage_complete:redis"] : [])];
   let active, fixture, failed = false, fixtureDone = false, browserPasses = 0, outputBytes = 0, buffer = "";
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
@@ -86,8 +86,8 @@ export async function drive(origin, evidence, command) {
       try { await join(current); } catch { abort(); return; }
       browserPasses++;
       if (meta.profile === "backup_notifications") process.stdout.write(`DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS ${meta.engine}\n`);
-      else if (meta.profile === "backup_retention_recovery") process.stdout.write("DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS postgresql\n");
-      else if (meta.profile === "backup_retention") process.stdout.write("DATABASE_BACKUP_RETENTION_BROWSER_PASS postgresql\n");
+      else if (meta.profile === "backup_retention_recovery") process.stdout.write(`DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS ${meta.engine}\n`);
+      else if (meta.profile === "backup_retention") process.stdout.write(`DATABASE_BACKUP_RETENTION_BROWSER_PASS ${meta.engine}\n`);
       else if (meta.profile === "backup_remote") process.stdout.write(`DATABASE_BACKUP_REMOTE_BROWSER_PASS ${meta.engine}\n`);
       else if (meta.profile === "backup_schedule") process.stdout.write(`DATABASE_BACKUP_SCHEDULE_BROWSER_PASS ${meta.engine}\n`);
       else if (meta.profile === "backup") process.stdout.write(`DATABASE_BACKUP_BROWSER_PASS ${meta.engine}\n`);

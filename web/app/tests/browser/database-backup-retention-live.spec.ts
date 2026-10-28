@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-// Real cookie API, embedded UI, River, pinned PostgreSQL and compiled runner.
+// Real cookie API, embedded UI, River, pinned PostgreSQL/MySQL and compiled runner.
 // No API interception or fabricated completion is permitted in this profile.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 const raw = process.env.NEROCD_DATABASE_CONNECTION_BROWSER_META;
 const meta = raw
   ? (JSON.parse(raw) as {
       origin: string;
+      engine: "postgresql" | "mysql";
       project_id: string;
       environment: string;
       application_name: string;
@@ -68,6 +69,20 @@ test("real independent local and remote retention through embedded UI", async ({
   await expect(panel).toBeVisible();
   const retention = panel.getByRole("region", { name: "Database backup retention", exact: true });
   await expect(retention).toBeVisible();
+  const responsive = async (history = false) => {
+    if(m.engine!=="mysql")return;
+    for(const width of [320,390,430,1440]) {
+      await page.setViewportSize({width,height:900});
+      await expect(retention).toBeVisible();
+      await expect(retention.getByLabel("Local backups to keep",{exact:true})).toBeVisible();
+      await expect(retention.getByLabel("Remote backups to keep",{exact:true})).toBeVisible();
+      await expect(retention.getByRole("button",{name:"Refresh retention history",exact:true})).toBeVisible();
+      if(history)await expect(retention.getByText("Local result: succeeded. Remote result: succeeded.",{exact:true})).toBeVisible();
+      const fits=await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth);
+      expect(fits).toBe(true);
+    }
+  };
+  await responsive();
   if (m.profile === "backup_retention_recovery") {
     // Reload discards React's original preview and request state. The action
     // must reconstruct the exact saved batch from public execution history.
@@ -83,6 +98,7 @@ test("real independent local and remote retention through embedded UI", async ({
     await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout:120_000 }).toBe("complete");
     await retention.getByRole("button", { name:"Refresh retention history", exact:true }).click();
     await expect(retention.getByText("Local result: succeeded. Remote result: succeeded.", { exact:true })).toBeVisible();
+    await responsive(true);
     const done=await page.request.post(m.control_path+"/done", {headers,timeout:5000});expect(done.status()).toBe(204);
     return;
   }
@@ -106,6 +122,7 @@ test("real independent local and remote retention through embedded UI", async ({
   await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe("complete");
   await retention.getByRole("button", { name: "Refresh retention history", exact: true }).click();
   await expect(retention.getByText("Local result: succeeded. Remote result: succeeded.", { exact: true })).toBeVisible();
+  await responsive(true);
   const done = await page.request.post(m.control_path + "/done", { headers, timeout: 5000 });
   expect(done.status()).toBe(204);
 });

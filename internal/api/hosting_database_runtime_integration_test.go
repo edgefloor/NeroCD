@@ -531,7 +531,7 @@ func newDatabaseRunnerFixtureConfigured(t *testing.T, capture, upgrade bool, con
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1", "hosting_mysql_remote_backup_v1", "hosting_mysql_remote_restore_v1")
 			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
-				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1")
+				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1", "hosting_mysql_backup_retention_v1")
 			}
 		}
 	}
@@ -1645,7 +1645,7 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 		if os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1" {
 			caps = append(caps, "database_backup_transfer", "hosting_postgresql_remote_backup_v1", "hosting_mysql_remote_backup_v1", "hosting_mysql_remote_restore_v1")
 			if os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1" {
-				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1")
+				caps = append(caps, "database_backup_retention", "hosting_postgresql_backup_retention_v1", "hosting_mysql_backup_retention_v1")
 			}
 		}
 	}
@@ -1665,7 +1665,7 @@ func TestDatabaseRunnerEnrollmentInputAcceptedByAPI(t *testing.T) {
 	t.Cleanup(tlsServer.Close)
 	client := runnerclient.New(tlsServer.URL, credential)
 	client.HTTP = tlsServer.Client()
-	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1", RemoteDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1"})
+	id, err := client.RuntimeExecutionIdentityWithOptions(t.Context(), runnerclient.RuntimeExecutionOptions{Database: true, LogicalDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_RUNTIME") == "1" || os.Getenv("NEROCD_DATABASE_MYSQL_RUNTIME") == "1", RemoteDatabaseBackups: os.Getenv("NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME") == "1", DatabaseBackupRetention: os.Getenv("NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME") == "1"})
 	if err != nil || id != enrolled.Runner.ID {
 		t.Fatal("real API/client rejected the enrolled database runtime identity")
 	}

@@ -1201,6 +1201,15 @@ class MySQLQualificationTest(unittest.TestCase):
         exec(guards,pg)
         with self.assertRaises(RuntimeError):exec(guards,dict(pg,routes_mode="1"))
 
+    def test_mysql_retention_combination_matches_real_gate_guards(self):
+        source=Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
+        main=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=="main")
+        guards=compile(ast.Module(body=main.body[1:12],type_ignores=[]),"gate.sh","exec")
+        valid=dict(mysql_mode="1",backup_mode="1",schedule_mode="0",remote_mode="1",retention_mode="1",notifications_mode="0",storage_mode="1",routes_mode="1",browser_mode="1",gate_mode="full",Failure=RuntimeError)
+        exec(guards,valid.copy())
+        for key,value in (("remote_mode","0"),("backup_mode","0"),("storage_mode","0"),("routes_mode","0"),("browser_mode","0"),("schedule_mode","1"),("notifications_mode","1")):
+            with self.subTest(key=key),self.assertRaises(RuntimeError):exec(guards,dict(valid,**{key:value}))
+
     def test_mysql_notifications_combination_matches_real_gate_guards(self):
         source=Path(__file__).with_name("gate.sh").read_text().split("# PYTHON SOURCE\n",1)[1].rsplit("\nPY\n",1)[0]
         main=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=="main")
@@ -1291,6 +1300,24 @@ class BackupScheduleSelectionTest(unittest.TestCase):
             with self.subTest(marker=marker),self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output.replace(marker,""),"1","1",mysql="1")
         for remote,retention,notifications in (("1","1","0"),("1","0","1")):
             with self.assertRaises(RuntimeError):ns["backup_runtime_profile"]("1",remote,retention,notifications,mysql="1")
+
+    def test_mysql_retention_selects_only_existing_retention_roots(self):
+        ns=self.functions()
+        pattern,names,markers=ns["backup_runtime_profile"]("0","1","1",mysql="1")
+        self.assertEqual(len(names),5)
+        self.assertEqual(len(markers),13)
+        self.assertTrue(all(name.startswith("TestHostingDatabaseBackupRetention") for name in names))
+        self.assertTrue(all(" mysql" in marker and "postgresql" not in marker for marker in markers))
+        for name in names:self.assertRegex(name,pattern)
+        self.assertNotRegex("TestHostingDatabaseBackupRemoteCompiledRunner",pattern)
+        output="\n".join(["--- PASS: "+name+" (0.01s)" for name in names]+markers)
+        ns["verify_backup_runtime_output"](output,"0","1","1",mysql="1")
+        for marker in markers:
+            with self.subTest(marker=marker),self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output.replace(marker,""),"0","1","1",mysql="1")
+        for suffix in ("\n--- SKIP: selected (0.01s)","\n--- FAIL: selected (0.01s)","\n"+markers[0]):
+            with self.assertRaises(RuntimeError):ns["verify_backup_runtime_output"](output+suffix,"0","1","1",mysql="1")
+        for schedule,remote,retention,notifications in (("1","1","1","0"),("0","0","1","0"),("0","1","1","1")):
+            with self.assertRaises(RuntimeError):ns["backup_runtime_profile"](schedule,remote,retention,notifications,mysql="1")
 
     def test_mysql_notifications_select_only_existing_notification_workflow(self):
         ns=self.functions()
@@ -1399,7 +1426,7 @@ def stop(*_):
 signal.signal(signal.SIGTERM,stop)
 try:
  profiles = ([('backup_notifications','postgresql')] if case.startswith('backup_notifications') else [])+([('backup_remote','postgresql')] if case.startswith(('backup_remote','backup_retention','backup_notifications')) else [])+([('backup_retention','postgresql'),('backup_retention_recovery','postgresql')] if case.startswith('backup_retention') else [])+[('backup','postgresql')]+([('backup_schedule','postgresql')] if case.startswith('backup_schedule') else []) if case.startswith('backup_') else [('base','postgresql'),('base','redis')]+([('storage','postgresql'),('storage','redis'),('storage_resume','postgresql'),('storage_complete','redis')] if case in ('storage_success','storage_duplicate','storage_unknown_profile') else [])
- if case.startswith('mysql_'):profiles=[('backup_notifications','mysql')] if case.startswith('mysql_notifications') else [('backup_remote','mysql')] if case.startswith('mysql_remote') else [('backup_schedule','mysql')] if case.startswith('mysql_schedule') else [('storage','mysql'),('backup','mysql')]
+ if case.startswith('mysql_'):profiles=[('backup_notifications','mysql')] if case.startswith('mysql_notifications') else [('backup_retention','mysql'),('backup_retention_recovery','mysql')] if case.startswith('mysql_retention') else [('backup_remote','mysql')] if case.startswith('mysql_remote') else [('backup_schedule','mysql')] if case.startswith('mysql_schedule') else [('storage','mysql'),('backup','mysql')]
  for profile,engine in profiles:
   meta=dict(origin='http://127.0.0.1:35002',engine=engine,project_id='project',environment='environment',application_resource_id='application',application_name='application',database_resource_id='database',foreign_resource_id='foreign',control_path='/api/v1/fixture/database-connection/'+'a'*32)
   if profile!='base':meta['profile']=profile
@@ -1410,8 +1437,8 @@ try:
   if profile=='backup_notifications' and case in ('backup_notifications_bad_pin','mysql_notifications_bad_pin'):meta['tls_spki']='bad'
   if profile=='backup_notifications' and case in ('backup_notifications_http','mysql_notifications_http'):meta['origin']='http://127.0.0.1:35002'
   if profile=='backup_notifications' and case=='backup_notifications_unknown':meta['profile']='foreign'
-  if profile=='backup_retention' and case=='backup_retention_unknown':meta['profile']='foreign'
-  if profile=='backup_retention_recovery' and case=='backup_retention_recovery_unknown':meta['profile']='foreign'
+  if profile=='backup_retention' and case in ('backup_retention_unknown','mysql_retention_unknown'):meta['profile']='foreign'
+  if profile=='backup_retention_recovery' and case in ('backup_retention_recovery_unknown','mysql_retention_recovery_unknown'):meta['profile']='foreign'
   if profile=='storage' and case=='storage_unknown_profile':meta['profile']='foreign'
   if case=='foreign_origin':meta['origin']='http://127.0.0.1:35003'
   if case=='metadata_secret':meta['password']='SENSITIVE-CANARY'
@@ -1486,11 +1513,11 @@ class BrowserDriverTest(unittest.TestCase):
             environment=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],NEROCD_TEST_DATABASE_URL='SENSITIVE-CANARY')
             environment['NEROCD_DATABASE_MYSQL_RUNTIME']='1' if case.startswith('mysql_') else '0'
             environment['NEROCD_DATABASE_CONNECTION_STORAGE']='1' if case.startswith(('storage_','mysql_')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith(('backup_','mysql_schedule','mysql_remote','mysql_notifications')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_RUNTIME']='1' if case.startswith(('backup_','mysql_schedule','mysql_remote','mysql_retention','mysql_notifications')) else '0'
             environment['NEROCD_DATABASE_BACKUP_SCHEDULE_RUNTIME']='1' if case.startswith(('backup_schedule','mysql_schedule','mysql_remote')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications','mysql_remote','mysql_notifications')) else '0'
+            environment['NEROCD_DATABASE_BACKUP_REMOTE_RUNTIME']='1' if case.startswith(('backup_remote','backup_retention','backup_notifications','mysql_remote','mysql_retention','mysql_notifications')) else '0'
             environment['NEROCD_DATABASE_BACKUP_NOTIFICATIONS_RUNTIME']='1' if case.startswith(('backup_notifications','mysql_notifications')) else '0'
-            environment['NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME']='1' if case.startswith('backup_retention') else '0'
+            environment['NEROCD_DATABASE_BACKUP_RETENTION_RUNTIME']='1' if case.startswith(('backup_retention','mysql_retention')) else '0'
             process=subprocess.Popen([node,str(driver),'http://127.0.0.1:35002',str(root/'evidence'),'--',sys.executable,str(fixture),str(root)],cwd=Path(__file__).resolve().parents[2],env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
             pids=[]
             try:
@@ -1505,6 +1532,10 @@ class BrowserDriverTest(unittest.TestCase):
                 if expected==0:
                     if case.startswith('mysql_notifications'):
                         self.assertEqual(output.count('DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS mysql'),1)
+                        self.assertNotIn('DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql',output)
+                    elif case.startswith('mysql_retention'):
+                        self.assertEqual(output.count('DATABASE_BACKUP_RETENTION_BROWSER_PASS mysql'),1)
+                        self.assertEqual(output.count('DATABASE_BACKUP_RETENTION_RECOVERY_BROWSER_PASS mysql'),1)
                         self.assertNotIn('DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql',output)
                     elif case.startswith('mysql_remote'):
                         self.assertEqual(output.count('DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql'),1)
@@ -1568,6 +1599,11 @@ class BrowserDriverTest(unittest.TestCase):
         self.run_driver('mysql_notifications_success',0)
         self.run_driver('mysql_notifications_bad_pin',1)
         self.run_driver('mysql_notifications_http',1)
+
+    def test_mysql_retention_reuses_existing_main_and_recovery_browser(self):
+        self.run_driver('mysql_retention_success',0)
+        self.run_driver('mysql_retention_unknown',1)
+        self.run_driver('mysql_retention_recovery_unknown',1)
 
     def test_mysql_remote_reuses_single_existing_browser_flow(self):
         self.run_driver('mysql_remote_success',0)
