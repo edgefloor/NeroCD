@@ -55,7 +55,7 @@ func TestExecuteProcessReturnsWhenEmitBlocksAfterBoundedDrain(t *testing.T) {
 	start := time.Now()
 	go func() {
 		result, err := ExecuteProcess(t.Context(), domain.ProcessSpec{Command: []string{"sh", "-c", "echo blocked-callback"}}, func(event ProcessEvent) {
-			if event.Message != "blocked-callback" {
+			if event.Message != "blocked-callback\n" {
 				return
 			}
 			close(entered)
@@ -202,5 +202,32 @@ func TestExecuteProcessUsesOnlyExplicitEnvironment(t *testing.T) {
 		if environment != nil && (!strings.Contains(got, "EXPLICIT_VALUE=authorized-value") || !strings.Contains(got, "LANG=explicit-locale")) {
 			t.Fatalf("explicit environment missing: %s", got)
 		}
+	}
+}
+
+func TestExecuteProcessPreservesExactBytesForMultilineRedaction(t *testing.T) {
+	for _, secret := range []string{"first-line\nsecond-line", "terminal-newline\n", "windows\r\nsecret\r\n", strings.Repeat("x", 32768) + "\nend"} {
+		t.Run(strings.TrimSpace(secret[:min(len(secret), 12)]), func(t *testing.T) {
+			redactor := NewRedactor([]SecretMaterial{{Value: secret}})
+			var mu sync.Mutex
+			streams := map[string]string{}
+			result, err := ExecuteProcess(t.Context(), domain.ProcessSpec{
+				Command:     []string{"sh", "-c", `printf 'before:'; printf '%s' "$SECRET"; printf ':after'; printf '%s' "$SECRET" >&2`},
+				Environment: map[string]string{"SECRET": secret},
+			}, func(event ProcessEvent) {
+				mu.Lock()
+				defer mu.Unlock()
+				streams[event.Stream] += redactor.RedactChunk(event.Stream, event.Message)
+			})
+			if err != nil || result.ExitCode != 0 {
+				t.Fatalf("execute = %+v, %v", result, err)
+			}
+			for _, event := range redactor.Flush() {
+				streams[event.Stream] += event.Message
+			}
+			if streams[domain.LogStdout] != "before:"+RedactionMarker+":after" || streams[domain.LogStderr] != RedactionMarker {
+				t.Fatal("exact multiline secret was not fully redacted")
+			}
+		})
 	}
 }

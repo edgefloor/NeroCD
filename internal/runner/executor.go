@@ -1,10 +1,10 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -92,24 +92,32 @@ func ExecuteProcess(ctx context.Context, spec domain.ProcessSpec, emit func(Proc
 		return result, err
 	}
 	// The child received duplicated descriptors at Start. Keeping these parent
-	// writers open would prevent scanners from ever observing EOF.
+	// writers open would prevent readers from ever observing EOF.
 	_ = stdoutWriter.Close()
 	_ = stderrWriter.Close()
 
 	var wg sync.WaitGroup
-	scan := func(stream string, scanner *bufio.Scanner) {
+	readOutput := func(stream string, reader *os.File) {
 		defer wg.Done()
-		scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
-		for scanner.Scan() {
-			emit(ProcessEvent{Stream: stream, Message: scanner.Text()})
-		}
-		if err := scanner.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
-			emit(ProcessEvent{Stream: domain.LogSystem, Message: fmt.Sprintf("%s stream read failed: %v", stream, err)})
+		// Preserve exact bytes, including CR/LF, until secret redaction. Line
+		// splitting here would make registered multiline values unrecognizable.
+		buffer := make([]byte, 32<<10)
+		for {
+			n, err := reader.Read(buffer)
+			if n > 0 {
+				emit(ProcessEvent{Stream: stream, Message: string(buffer[:n])})
+			}
+			if err != nil {
+				if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
+					emit(ProcessEvent{Stream: domain.LogSystem, Message: fmt.Sprintf("%s stream read failed: %v", stream, err)})
+				}
+				return
+			}
 		}
 	}
 	wg.Add(2)
-	go scan(domain.LogStdout, bufio.NewScanner(stdoutReader))
-	go scan(domain.LogStderr, bufio.NewScanner(stderrReader))
+	go readOutput(domain.LogStdout, stdoutReader)
+	go readOutput(domain.LogStderr, stderrReader)
 
 	waitErr := make(chan error, 1)
 	go func() {
