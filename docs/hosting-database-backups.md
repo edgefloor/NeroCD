@@ -126,8 +126,9 @@ administrative resolution for that crash window.
 Use [schedules](hosting-database-backup-schedules.md) for recurring PostgreSQL or
 native MySQL local dumps. Use [remote backups](hosting-database-remote-backups.md)
 for recorded PostgreSQL or MySQL S3 copies. PostgreSQL also supports
-[retention](hosting-database-backup-retention.md) for copy cleanup, and
-[notifications](hosting-backup-notifications.md) for failure alerts.
+[retention](hosting-database-backup-retention.md) for copy cleanup. Both engines
+support [notifications](hosting-backup-notifications.md) for accepted backup and
+upload failures.
 
 Only the pinned PostgreSQL and MySQL recipes are supported here. Restore creates
 a new database on the same destination. It does not accept arbitrary SQL uploads

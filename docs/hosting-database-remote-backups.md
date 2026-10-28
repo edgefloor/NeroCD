@@ -159,8 +159,9 @@ database commit but before durable result evidence is not inferred as success
 or blindly imported again. Local archives remain the default recovery source.
 Retention and local deletion have a [separate accepted workflow](hosting-database-backup-retention.md#accepted-qualification-and-durable-evidence).
 Remote object browsing and additional engines remain outside this workflow.
-MySQL remote-only restore, retention policies, notifications, and Compose MySQL
-backups are unsupported.
+MySQL remote-only restore, retention policies, and Compose MySQL backups are
+unsupported. [MySQL failure alerts](hosting-backup-notifications.md#native-mysql-notification-qualification)
+have separate qualification.
 
 ## Implementation
 
@@ -223,3 +224,6 @@ concurrent component dispatch ordering.
 The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-remote-20261028/eef0727b1bde256b3723c753266b9eb46b57ed8f/evidence-index.json)
 records the exact source, execution binaries, pinned PHP reference, checks,
 reviews, runtime proof, and owned-resource cleanup.
+
+[Native MySQL failure notifications](hosting-backup-notifications.md#native-mysql-notification-qualification)
+have separate qualification. The remote-copy evidence above retains its scope.

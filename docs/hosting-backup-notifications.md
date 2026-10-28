@@ -1,6 +1,6 @@
 # Hosting backup notifications
 
-Project notification channels deliver accepted backup and remote upload failures for PostgreSQL and owned-upload storage. Channels use SMTP email or a generic HTTPS webhook. An upload failure leaves the successful backup and its local-copy records intact. Notification delivery runs after the source transaction commits.
+Project notification channels deliver accepted backup and remote upload failures for PostgreSQL, native MySQL, and owned-upload storage. Channels use SMTP email or a generic HTTPS webhook. An upload failure leaves the successful backup and its local-copy records intact. Notification delivery runs after the source transaction commits.
 
 ## Configure project alerts
 
@@ -22,8 +22,8 @@ If a save or test response is lost, inspect refreshed history before using the r
 1. Open **Notification delivery history** and identify the backup or upload event. **Inspect delivery** shows the attempts, safe failure guidance, and timestamps. The panel lists the latest 100 deliveries.
 2. Distinguish source outcome from delivery outcome. `delivered` means the receiver acknowledged the notification. A failed or uncertain backup remains failed or uncertain even when its alert was delivered. An upload failure can leave a successful local backup available.
 3. Follow **Open authenticated backup recovery** from the message or history. Sign in if required. The page checks current project, environment, resource, backup, and transfer scope before showing linked history. Opening a link does not retry an upload or start a restore. Viewers can inspect authorized history. Owners perform recovery actions.
-4. For a PostgreSQL upload failure with an available local copy, inspect the linked successful backup and failed transfer. Use **Retry upload for** that backup only after checking the target. The retry sends the same archive without another dump. See [remote backup recovery](hosting-database-remote-backups.md).
-5. To recover PostgreSQL data, select the completed backup and an available archive source, enter **New database name**, and select **Restore into new database**. See [PostgreSQL backup and restore](hosting-database-backups.md). Verify the restored application can read the snapshot and make new writes. Preserve the source database until that proof is complete.
+4. For a PostgreSQL or native MySQL upload failure with an available local copy, inspect the linked successful backup and failed transfer. Use **Retry upload for** that backup only after checking the target. The retry sends the same archive without another dump. See [remote backup recovery](hosting-database-remote-backups.md).
+5. To recover PostgreSQL data, select the completed backup and an available archive source, enter **New database name**, and select **Restore into new database**. See [PostgreSQL backup and restore](hosting-database-backups.md). For MySQL, use a [retained local backup](hosting-database-backups.md#mysql-local-backup-and-restore); remote-only MySQL restore is unavailable. Verify the restored application can read the snapshot and make new writes. Preserve the source database until that proof is complete.
 
 For owned uploads, a delivered storage alert selects the authorized resource's
 upload panel and exact archive or failed transfer. Use **Retry remote upload of
@@ -119,14 +119,14 @@ and redaction. These checks are separate from actual backup-failure delivery.
 
 ## Tests and supported environments
 
-The [runtime scenario](../internal/api/hosting_backup_notifications_runtime_integration_test.go)
+The PostgreSQL profile of the [runtime scenario](../internal/api/hosting_backup_notifications_runtime_integration_test.go)
 checks SMTP and HTTPS webhook configuration, explicit tests, and delivery of real
 backup and upload failures. Receipt replay and controller restart preserve
 notification identity. Opening a delivered recovery link starts no operation;
 an owner explicitly restores into a fresh database, and a distinct application
 reads the snapshot and makes new writes.
 
-The physical dump-failure scenario settles as `uncertain`. Messages and browser
+The physical PostgreSQL dump-failure scenario settles as `uncertain`. Messages and browser
 history retain that state. It does not prove both definite and uncertain dump
 failure. Explicit test events separately exercise retry exhaustion, channel
 disablement, generation changes, and removed-recipient suppression.
@@ -139,3 +139,35 @@ classic-store Docker, and same-destination Silo through loopback HTTP. SMTP and
 webhook receivers use a private CA and explicit fixture TLS origins. Production
 public-CA deployment, production S3 HTTPS, other engines, architectures, providers,
 events, channels, and cross-channel escalation are unqualified.
+
+
+## Native MySQL notification qualification
+
+At `38f12664` on 2026-10-28, the native MySQL profile sent actual `mysqldump` and
+remote-upload failures to TLS email and HTTPS webhook receivers. The denied
+upload preserved the successful local dump. Source receipt replay and controller
+restart preserved event and delivery identities. Actual alerts retried transient
+receiver rejection. Explicit test events exercised retry exhaustion, channel
+revision, and current-recipient safeguards through the existing notification flow. The source application retained records, new writes, exact
+uploaded files, and its selected trusted HTTPS route.
+
+The browser configured both channels, inspected real failure history and
+authenticated recovery context, and checked viewer restrictions and responsive
+layouts at 320, 390, 430, and 1440 pixels. These were assertions, not screenshots.
+It did not execute MySQL recovery. Actual same-artifact upload retry retains the
+[earlier remote-copy qualification](hosting-database-remote-backups.md#native-mysql-remote-copy-qualification).
+
+Physical source failures were immediate. Scheduled failure, accepted retirement,
+and skipped-discovery distinctions have focused PostgreSQL-backed tests rather
+than timed runtime proof. Unique event and delivery rows do not make external
+email or webhook effects exactly once; delivery remains at least once after a
+lost acknowledgment. Validation, restore, download, retention, and discovery-only
+skips remain excluded. This adds no Compose MySQL backup support.
+
+The profile uses native Linux arm64, rootful same-host Docker, fixture-CA HTTPS,
+and controlled TLS receivers. Production providers and public-CA deployment
+remain unqualified. Native full lint reported seven existing proxy findings, and
+Linux arm64 full lint reported one existing proxy-test finding. Both new-finding
+checks passed against the accepted base; affected tests, build, and exact reviews
+passed. These full-lint failures remain recorded in the
+[evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-mysql-notifications-20261028/38f1266437a24b6ef8a78b8e2b8b09e492db789a/evidence-index.json).

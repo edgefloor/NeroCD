@@ -11,9 +11,8 @@ recipes and the qualified managed Compose PostgreSQL 16 component on their autho
 destinations. Compose schedules create local database archives only. They do not
 include application uploads or support remote backup targets.
 Native PostgreSQL and MySQL schedules can select [remote backup targets](hosting-database-remote-backups.md)
-explicitly by target ID and revision, as can standalone immediate backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. For PostgreSQL, configure
-[retention](hosting-database-backup-retention.md) and
-[failure alerts](hosting-backup-notifications.md) separately.
+explicitly by target ID and revision, as can standalone immediate backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure [failure alerts](hosting-backup-notifications.md) separately.
+PostgreSQL also supports [retention](hosting-database-backup-retention.md).
 A local archive remains dependent on that destination. Remote acceptance uses
 a loopback fixture and does not qualify off-host disaster recovery.
 
@@ -84,9 +83,10 @@ for [restore into a separate same-recipe target](hosting-database-backups.md#mys
 Select a validated remote destination and its exact revision to copy the completed
 local artifact. [MySQL remote-copy qualification](hosting-database-remote-backups.md#native-mysql-remote-copy-qualification)
 covers a real due upload and independent local/upload outcomes. MySQL schedules
-do not accept `component` or `expected_deployed_operation_id`. Retention controls,
-failure notifications, remote-only restore, and Compose MySQL schedules remain
-unsupported. The InnoDB snapshot
+do not accept `component` or `expected_deployed_operation_id`.
+[Failure notifications](hosting-backup-notifications.md#native-mysql-notification-qualification)
+cover accepted operations; discovery-only skips do not notify. Retention controls,
+remote-only restore, and Compose MySQL schedules remain unsupported. The InnoDB snapshot
 and concurrent-DDL limits of immediate MySQL backups still apply.
 
 ## Schedule a Compose PostgreSQL component
