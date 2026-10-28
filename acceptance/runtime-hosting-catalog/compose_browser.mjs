@@ -199,13 +199,14 @@ async function wordpressWorkflow(h, initial) {
   async function deploy(replacement,stoppedOperation){
     step=stoppedOperation?"wordpress_start":"wordpress_deploy";
     const review=application.getByRole("region",{name:"Saved Compose deployment review",exact:true});
-    await expect(review.getByLabel("Readiness path",{exact:true})).toHaveValue("/");
-    await review.getByRole("button",{name:stoppedOperation?"Review current Compose start":"Review current Compose deployment",exact:true}).click();
+    step="wordpress_initial_readiness";if(!replacement)await expect(review.getByLabel("Readiness path",{exact:true})).toHaveValue("/");
+    step=stoppedOperation?"wordpress_review_start":"wordpress_review_deploy";await review.getByRole("button",{name:stoppedOperation?"Review current Compose start":"Review current Compose deployment",exact:true}).click();
+    step="wordpress_reviewed_readiness";await expect(review.getByRole("region",{name:"Reviewed Compose deployment",exact:true})).toContainText("readiness /.");
     await review.getByRole("checkbox").check();
     const pending=response(page,`/api/v1/resources/${resourceID}/deployments`);
-    await review.getByRole("button",{name:stoppedOperation?"Start reviewed Compose":"Deploy reviewed Compose",exact:true}).click();
-    const r=await pending,input=r.request().postDataJSON();
-    if(input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation||Boolean(input.storage_route_continuity)!==replacement||input.container_port!==80||input.readiness.path!=="/")throw Error("WordPress deployment authority/readiness changed");
+    step=stoppedOperation?"wordpress_submit_start":"wordpress_submit_deploy";await review.getByRole("button",{name:stoppedOperation?"Start reviewed Compose":"Deploy reviewed Compose",exact:true}).click();
+    const r=await pending,input=r.request().postDataJSON();safe.wordpress_deployment_response_status=r.status();
+    step="wordpress_deployment_request_contract";if(input.managed_stack?.acknowledge_interruption!==true||input.managed_stack?.expected_stopped_operation_id!==stoppedOperation||Boolean(input.storage_route_continuity)!==replacement||input.container_port!==80||input.readiness.path!=="/")throw Error("WordPress deployment authority/readiness changed");
     return (await checkedResponse(r,202)).id;
   }
   await state("deploy");const firstOperation=await deploy(false);await report("deployed",firstOperation);

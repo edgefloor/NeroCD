@@ -652,7 +652,11 @@ async function reviewCompose() {
 }
 test.each([false, true])("saved Compose captures runtime references and exact %s replacement route authority", async (replacement) => {
   const fetch = composeBackend(replacement); setup("maintainer", [], false, compose);
+  await screen.findByRole("region", { name: "Saved Compose deployment review" });
+  if (replacement) expect(screen.queryByLabelText("Readiness path")).toBeNull();
+  else expect(screen.getByLabelText<HTMLInputElement>("Readiness path").value).toBe("/");
   await reviewCompose();
+  expect(screen.getByRole("region", { name: "Reviewed Compose deployment" }).textContent).toContain(`readiness ${replacement ? "/ready" : "/"}.`);
   expect(screen.getByText(/TOKEN \(managed secret reference\)/)).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Retained releases" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
@@ -743,13 +747,15 @@ test("Start reviews saved configuration and freezes the exact stopped reference"
   setup("maintainer", [], false, compose);
   fireEvent.click(await screen.findByRole("button", { name: "Review current Compose start" }));
   await screen.findByText(/Starts from recorded stop operation stop_one/);
+  expect(screen.queryByLabelText("Readiness path")).toBeNull();
+  expect(screen.getByRole("region", { name: "Reviewed Compose deployment" }).textContent).toContain("readiness /ready.");
   fireEvent.click(screen.getByLabelText(/I reviewed this saved Compose configuration/));
   fireEvent.click(screen.getByRole("button", { name: "Start reviewed Compose" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry identical Compose deployment request" }));
   await screen.findByText(/Deployment request accepted: hop_one/);
   const writes = fetch.mock.calls.filter(([url, init]) => url.endsWith("/deployments") && init.method === "POST");
   expect(writes).toHaveLength(2); expect(writes[0]![1].body).toBe(writes[1]![1].body);
-  expect(JSON.parse(String(writes[0]![1].body))).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, managed_stack: { acknowledge_interruption: true, expected_stopped_operation_id: "stop_one" } });
+  expect(JSON.parse(String(writes[0]![1].body))).toMatchObject({ expected_generation: 1, expected_runtime_configuration_generation: 3, managed_stack: { acknowledge_interruption: true, expected_stopped_operation_id: "stop_one" }, readiness: { path: "/ready", timeout_seconds: 20 } });
 });
 
 test("private stateless image retry keeps the exact credential version and sends no secret values", async () => {
