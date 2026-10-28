@@ -1,7 +1,9 @@
-import { DatabaseBackups } from "./DatabaseBackups";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { allProjectMembersQuery, principalQuery } from "@/api";
+import type { Resource } from "@/api/hosting";
+import {
+  databaseDeploymentKey,
+  databaseOperationKey,
+} from "@/api/hosting-database-deployments";
 import {
   databaseDenied,
   databaseError,
@@ -9,14 +11,13 @@ import {
   databaseQuery,
   type HostingDatabase,
 } from "@/api/hosting-databases";
-import type { Resource } from "@/api/hosting";
-import { canMaintainProject, canOwnProject } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
+import { canMaintainProject, canOwnProject } from "@/lib/permissions";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { DatabaseBackups } from "./DatabaseBackups";
 import { DatabaseDeployments } from "./DatabaseDeployments";
-import {
-  databaseDeploymentKey,
-  databaseOperationKey,
-} from "@/api/hosting-database-deployments";
+import { useQueryAccessDenial } from "./useQueryAccessDenial";
 
 export function useDatabaseAccess(project: string, environment: string) {
   const identity = useQuery(principalQuery());
@@ -36,11 +37,11 @@ export function useDatabaseAccess(project: string, environment: string) {
     !members.isPending;
   const viewer = Boolean(
     principal &&
-    (principal.roles.includes("system_admin") ||
-      members.data?.some(
-        (member) =>
-          member.project_id === project && member.user_id === principal.id,
-      )),
+      (principal.roles.includes("system_admin") ||
+        members.data?.some(
+          (member) =>
+            member.project_id === project && member.user_id === principal.id,
+        )),
   );
   const owner = canOwnProject(principal, members.data ?? [], project);
   const maintainer = canMaintainProject(principal, members.data ?? [], project);
@@ -199,9 +200,16 @@ function DatabaseDetail({
     });
     onDenied();
   }, [client, scope, resource.id, onDenied]);
-  useEffect(() => {
-    if (denial) deny();
-  }, [denial, deny]);
+  useQueryAccessDenial(
+    [
+      databaseQuery(scope, resource.id).queryKey,
+      principalQuery().queryKey,
+      allProjectMembersQuery().queryKey,
+    ],
+    deny,
+    undefined,
+    databaseDenied,
+  );
   if (denial) return <p role="alert">Database access is unavailable.</p>;
   return (
     <section

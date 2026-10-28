@@ -1,7 +1,9 @@
+import { gitBuildVariablesError } from "./buildSettingsValidation";
 import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { GitApplicationFields, emptyGitDraft, gitBuildVariablesError, type GitApplicationDraft } from "./GitApplicationFields";
+import { GitApplicationFields, type GitApplicationDraft } from "./GitApplicationFields";
+import { emptyGitDraft } from "./gitApplicationDraft";
 afterEach(cleanup);
 function Editor({ initial = emptyGitDraft(), disabled = false }: { initial?: GitApplicationDraft; disabled?: boolean } = {}) { const [value, setValue] = useState<GitApplicationDraft>(initial); return <><GitApplicationFields value={value} onChange={setValue} disabled={disabled} /><output>{JSON.stringify(value)}</output></>; }
 test("public is explicit by default and private access survives all builder switches", () => { render(<Editor />); expect(screen.getByLabelText<HTMLSelectElement>("Git source access").value).toBe("public"); fireEvent.change(screen.getByLabelText("Git source access"), { target: { value: "https_basic" } }); for (const strategy of ["dockerfile", "railpack", "static", "compose"]) { fireEvent.change(screen.getByLabelText("Build strategy"), { target: { value: strategy } }); expect(screen.getByLabelText<HTMLSelectElement>("Git source access").value).toBe("https_basic"); expect(screen.getByRole("status").textContent).toContain(`"credential_kind":"https_basic"`); } expect(screen.queryByLabelText(/password|secret value/i)).toBeNull(); });
