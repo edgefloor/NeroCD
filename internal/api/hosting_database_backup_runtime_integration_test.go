@@ -643,6 +643,7 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	if target.Resource.ID == source.Resource.ID || target.Binding.ID == source.Binding.ID || target.StorageRef == source.StorageRef || target.Credentials[0].SecretID == source.Credentials[0].SecretID || restored.BackupID != backup.ID || restored.Blob.Digest != backup.Blob.Digest {
 		t.Fatal("scheduled restore reused source identity or changed archive")
 	}
+	var restoredRoute domain.HostingRoute
 	consumer := backupRuntimeApplicationObserved(f, target, "scheduled_target", browser.recordProgress)
 	f.appRecord(consumer, "GET", "before", "application_origin")
 	f.appRecord(consumer, "PUT", "restored_new", "restored_new_write")
@@ -674,6 +675,7 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 		route.record(t.Context(), consumer, "GET", "before", "application_origin")
 		route.record(t.Context(), consumer, "PUT", "restored_https", "independent_target_write")
 		route.record(t.Context(), consumer, "GET", "restored_https", "independent_target_write")
+		restoredRoute = route.route
 	}
 	f.docker("container", "start", sourceOp.Result.ContainerID)
 	if backupRuntimeWaitApplicationReady(t.Context(), application) != nil {
@@ -709,7 +711,7 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 	browser.setPhase("complete", restored.ID)
 	browser.finished()
 	if mysql {
-		backupRuntimeMySQLScheduleDenied(f, source, application, disabled)
+		backupRuntimeMySQLScheduleDenied(f, source, application, disabled, restoredRoute)
 		fmt.Println("DATABASE_BACKUP_SCHEDULE_PASS mysql")
 	} else {
 		backupRuntimeGuestDumpTimeout(f, source, sourceOp, application)
@@ -719,7 +721,7 @@ func TestHostingDatabaseBackupScheduleCompiledRunner(t *testing.T) {
 
 // Reuse the owned controller lifecycle and ordinary schedule/grant APIs. No
 // backup run is admitted after current destination authority is revoked.
-func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.HostingDatabase, application domain.HostingOperation, disabled domain.HostingDatabaseBackupSchedule) {
+func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.HostingDatabase, application domain.HostingOperation, disabled domain.HostingDatabaseBackupSchedule, restoredRoute domain.HostingRoute) {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err := f.hostingStop(ctx)
@@ -730,8 +732,29 @@ func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.Ho
 	path := "/api/v1/resources/" + source.Resource.ID + "/database-backup-schedules/" + disabled.ID
 	input := domain.HostingDatabaseBackupScheduleInput{RequestID: backupRuntimeRequestID(f.t), ExpectedResourceGeneration: source.Resource.Generation, ExpectedVersion: disabled.Revision, Frequency: "every_minute", Timezone: "UTC", Enabled: true}
 	enabled := databaseRunnerJSON[domain.HostingDatabaseBackupSchedule](f, f.token, "PUT", path, input, 200)
+	// Revoking destination authority intentionally withdraws all project routes.
+	// Capture only these known fixture routes and recover each own selection.
+	routes := []domain.HostingRoute{f.routes.route, f.routes.unrelatedRoute, restoredRoute}
+	for i, known := range routes {
+		current := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+known.ID, nil, 200)
+		var project string
+		if err := f.database.QueryRow(f.t.Context(), `SELECT project_id FROM resources WHERE id=$1`, current.ResourceID).Scan(&project); err != nil {
+			f.t.Fatal("fixture route resource scope unavailable")
+		}
+		if known.ID == "" || !current.Enabled || project != source.Resource.ProjectID || current.ResourceID != known.ResourceID || current.ID != known.ID || current.Hostname != known.Hostname || current.PathPrefix != known.PathPrefix || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID {
+			f.t.Fatal("schedule authority fixture route identity changed")
+		}
+		routes[i] = current
+	}
 	restore := backupRuntimeRegisterGrantCleanup(f, source.Resource.ProjectID, f.adminToken)
 	databaseRunnerJSON[json.RawMessage](f, f.adminToken, "POST", "/api/v1/destinations/"+f.destination+"/project-grants/revoke", app.DestinationProjectInput{ProjectID: source.Resource.ProjectID}, 200)
+	for _, known := range routes {
+		current := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+known.ID, nil, 200)
+		if current.Enabled || current.Version != known.Version+1 || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID {
+			f.t.Fatal("destination revocation did not withdraw exact fixture route")
+		}
+	}
+	f.routes.awaitProxy()
 	backupRuntimeRestartController(f)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
@@ -751,6 +774,23 @@ func backupRuntimeMySQLScheduleDenied(f *databaseRunnerFixture, source domain.Ho
 	}
 	if restore() != nil {
 		f.t.Fatal("owned schedule grant restoration failed")
+	}
+	for _, known := range routes {
+		current := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+known.ID, nil, 200)
+		if current.Enabled || current.Version != known.Version+1 || current.Hostname != known.Hostname || current.PathPrefix != known.PathPrefix || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID {
+			f.t.Fatal("grant restoration changed withdrawn fixture route")
+		}
+		databaseRunnerJSON[domain.HostingRoute](f, f.token, "PATCH", "/api/v1/routes/"+known.ID, domain.HostingRouteInput{ExpectedRouteVersion: current.Version, IdempotencyKey: "scheduled_restore_" + known.ID, Hostname: known.Hostname, PathPrefix: known.PathPrefix, ExpectedHealthyOperationID: known.SelectedReleaseOperationID}, 202)
+		f.routes.awaitProxy()
+	}
+	for _, known := range routes {
+		current := databaseRunnerJSON[domain.HostingRoute](f, f.token, "GET", "/api/v1/routes/"+known.ID, nil, 200)
+		if current.ID != known.ID || current.Version != known.Version+2 || current.SelectedReleaseOperationID != known.SelectedReleaseOperationID || current.Hostname != known.Hostname || current.PathPrefix != known.PathPrefix || !current.Enabled || !current.HTTPReady || !current.HTTPSReady || current.Certificate.Status != "trusted" || current.Certificate.Hostname != known.Hostname {
+			f.t.Fatal("explicit fixture route recovery did not restore trusted identity")
+		}
+		if current.ID == f.routes.unrelatedRoute.ID {
+			f.routes.unrelatedRoute = current
+		}
 	}
 	input.RequestID = backupRuntimeRequestID(f.t)
 	input.ExpectedVersion = enabled.Revision

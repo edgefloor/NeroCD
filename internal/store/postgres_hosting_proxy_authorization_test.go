@@ -682,3 +682,50 @@ func TestPostgresProxyLegacyTokenRevocationSerializesMutation(t *testing.T) {
 		t.Fatalf("committed revocation did not fence later mutation: %v", err)
 	}
 }
+
+func TestPostgresProxyDestinationRegrantRequiresExplicitRouteRestore(t *testing.T) {
+	pg, database, resource, server, destination, healthy := proxyControlFixture(t)
+	ctx := t.Context()
+	input := domain.HostingRouteInput{IdempotencyKey: "schedule-source-route", Hostname: "schedule.apps.nerocd.invalid", PathPrefix: "/", ExpectedHealthyOperationID: healthy.ID}
+	route, err := pg.RequestHostingRoute(ctx, resource.ID, "", "pop_schedule_source", "usr_bootstrap", input, destinationEvent("schedule-source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settleProxyGeneration(t, pg, route.OperationID, server.RunnerID, healthy.Release.DaemonID)
+	if _, err = pg.RevokeDestinationProject(ctx, destination.ID, resource.ProjectID, destinationEvent("schedule-revoke")); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn, err := pg.GetHostingRoute(ctx, route.ID)
+	if err != nil || withdrawn.Route.Enabled || withdrawn.Route.Version != route.Version+1 || withdrawn.Route.SelectedReleaseOperationID != healthy.ID {
+		t.Fatal("destination revocation did not withdraw exact route", err)
+	}
+	proxy, err := pg.GetHostingProxy(ctx, "proxy_fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var withdrawal string
+	if err = database.QueryRow(ctx, `SELECT id FROM hosting_proxy_operations WHERE proxy_id=$1 AND generation=$2`, proxy.ID, proxy.DesiredGeneration).Scan(&withdrawal); err != nil {
+		t.Fatal(err)
+	}
+	settleProxyGeneration(t, pg, withdrawal, server.RunnerID, healthy.Release.DaemonID)
+	event := destinationEvent("schedule-regrant")
+	if _, err = pg.GrantDestinationProject(ctx, domain.DestinationProjectGrant{DestinationID: destination.ID, ProjectID: resource.ProjectID, GrantedBy: event.ActorID, CreatedAt: event.CreatedAt}, event); err != nil {
+		t.Fatal(err)
+	}
+	current, err := pg.GetHostingRoute(ctx, route.ID)
+	if err != nil || current.Route.Enabled || current.Route.Version != withdrawn.Route.Version {
+		t.Fatal("permission restoration unexpectedly restored route", err)
+	}
+	input.IdempotencyKey = "schedule-source-stale"
+	input.ExpectedRouteVersion = route.Version
+	if _, err = pg.RequestHostingRoute(ctx, resource.ID, route.ID, "pop_schedule_stale", "usr_bootstrap", input, destinationEvent("schedule-stale")); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("stale route restore accepted", err)
+	}
+	input.IdempotencyKey = "schedule-source-restore"
+	input.ExpectedRouteVersion = current.Route.Version
+	restored, err := pg.RequestHostingRoute(ctx, resource.ID, route.ID, "pop_schedule_restore", "usr_bootstrap", input, destinationEvent("schedule-restore"))
+	if err != nil || !restored.Enabled || restored.ID != route.ID || restored.Hostname != route.Hostname || restored.PathPrefix != route.PathPrefix || restored.SelectedReleaseOperationID != healthy.ID || restored.Version != current.Route.Version+1 {
+		t.Fatal("explicit route restore changed identity", err)
+	}
+	settleProxyGeneration(t, pg, restored.OperationID, server.RunnerID, healthy.Release.DaemonID)
+}
