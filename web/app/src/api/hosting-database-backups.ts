@@ -72,7 +72,7 @@ export function parseDatabaseBackup(
     Number(v.timeout_seconds) < 1 ||
     Number(v.timeout_seconds) > 3600 ||
     !id(v.id) ||
-    !["postgresql.logical-local.v1", "postgresql.compose-logical-local.v1", "mysql.logical-local.v1"].includes(String(v.version)) ||
+    !["postgresql.logical-local.v1", "postgresql.compose-logical-local.v1", "mysql.logical-local.v1", "mysql.compose-logical-local.v1"].includes(String(v.version)) ||
     v.project_id !== scope.project ||
     v.source_resource_id !== database.resource.id ||
     !Number.isSafeInteger(v.source_generation) ||
@@ -104,7 +104,10 @@ export function parseDatabaseBackup(
   )
     return fail();
   if (database.engine && ((v.version === "mysql.logical-local.v1") !== (database.engine === "mysql") || database.engine === "redis")) return fail();
-  const componentVersion = v.version === "postgresql.compose-logical-local.v1";
+  const componentVersion = v.version === "postgresql.compose-logical-local.v1" || v.version === "mysql.compose-logical-local.v1";
+  const mysqlVersion = v.version === "mysql.logical-local.v1" || v.version === "mysql.compose-logical-local.v1";
+  if (componentVersion && database.engine) return fail();
+  if (v.version === "mysql.compose-logical-local.v1" && v.remote_target !== undefined) return fail();
   const component = (value: unknown): value is string => typeof value === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(value);
   if (componentVersion ? !component(v.source_component) || !id(v.source_deployed_operation_id) || (v.mode === "restore" ? !component(v.target_component) || !id(v.target_deployed_operation_id) : v.target_component !== undefined || v.target_deployed_operation_id !== undefined) : [v.source_component, v.source_deployed_operation_id, v.target_component, v.target_deployed_operation_id].some(value => value !== undefined)) return fail();
   if (v.blob !== undefined) {
@@ -119,7 +122,7 @@ export function parseDatabaseBackup(
       !Number.isSafeInteger(b.bytes) ||
       Number(b.bytes) < 5 ||
       Number(b.bytes) > 1073741824 ||
-      b.format !== (v.version === "mysql.logical-local.v1" ? "mysql_sql" : "postgresql_custom")
+      b.format !== (mysqlVersion ? "mysql_sql" : "postgresql_custom")
     )
       return fail();
   }
@@ -196,6 +199,7 @@ export async function requestDatabaseBackup(
   input: DatabaseBackupInput,
   signal: AbortSignal,
 ) {
+  if (input.component && input.remote_target !== undefined) return fail();
   if (input.remote_target !== undefined)
     parseRemoteBackupTarget(input.remote_target);
   const raw = await boundedDatabaseRequest(
@@ -223,6 +227,7 @@ export async function restoreDatabaseBackup(
   input: DatabaseRestoreInput,
   signal: AbortSignal,
 ) {
+  if (input.component_target && input.remote_source !== undefined) return fail();
   if (
     input.remote_source !== undefined &&
     (!id(input.remote_source.transfer_id) ||
@@ -253,7 +258,7 @@ export async function getDatabaseBackupComponents(scope: DatabaseScope, resource
  if (Object.keys(v).some(k => !["resource_id","resource_generation","operation_id","available","reason","components"].includes(k)) || v.resource_id !== resource || !Number.isSafeInteger(v.resource_generation) || Number(v.resource_generation)<1 || typeof v.available !== "boolean" || typeof v.reason !== "string" || (v.operation_id !== undefined && !id(v.operation_id)) || !Array.isArray(v.components) || v.components.length>16) return fail();
  const seen = new Set<string>();
  for (const item of v.components) {
-  if (!item || typeof item !== "object" || Array.isArray(item) || Object.keys(item).sort().join() !== "component,eligible,engine,major_version,reason,running" || typeof item.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(item.component) || seen.has(item.component) || item.engine !== "postgresql" || item.major_version !== 16 || typeof item.running !== "boolean" || typeof item.eligible !== "boolean" || typeof item.reason !== "string") return fail();
+  if (!item || typeof item !== "object" || Array.isArray(item) || Object.keys(item).sort().join() !== "component,eligible,engine,major_version,reason,running" || typeof item.component !== "string" || !/^[a-z][a-z0-9_-]{0,62}$/.test(item.component) || seen.has(item.component) || !((item.engine === "postgresql" && item.major_version === 16) || (item.engine === "mysql" && item.major_version === 8)) || typeof item.running !== "boolean" || typeof item.eligible !== "boolean" || typeof item.reason !== "string") return fail();
   seen.add(item.component);
  }
  if (v.available && (!id(v.operation_id) || v.components.length===0)) return fail();

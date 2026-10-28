@@ -130,7 +130,7 @@ function SchedulePanel({ resource, scope, owner, onDenied }: Props) {
       : undefined;
   const eligible = (name: string) =>
     !!evidence?.operation_id &&
-    evidence.components.some((c) => c.component === name && c.eligible);
+    evidence.components.some((c) => c.component === name && c.eligible && c.engine === "postgresql" && c.major_version === 16);
   const locked = pending || !!attempt;
   const unavailable =
     locked || schedules.isPending || schedules.isError || schedules.isFetching;
@@ -249,7 +249,7 @@ function SchedulePanel({ resource, scope, owner, onDenied }: Props) {
                 <option value={editing.component}>{editing.component}</option>
               ) : (
                 evidence?.components
-                  .filter((c) => c.eligible)
+                  .filter((c) => c.eligible && c.engine === "postgresql" && c.major_version === 16)
                   .map((c) => (
                     <option key={c.component} value={c.component}>
                       {c.component}

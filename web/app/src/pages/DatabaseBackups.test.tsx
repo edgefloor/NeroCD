@@ -480,11 +480,11 @@ test("backup workflow includes the retention policy and history panel", async ()
 });
 
 
-function mountComposeBackupPanel(sourceKind: "compose"|"git"="compose",targetKind: "compose"|"git"="compose"){
+function mountComposeBackupPanel(sourceKind: "compose"|"git"="compose",targetKind: "compose"|"git"="compose",engine: "postgresql"|"mysql"="postgresql"){
  const source=(kind:"compose"|"git")=>kind==="compose"?{kind}:{kind,git:{source_id:"source",generation:2,repository_url:"https://github.com/example/app",requested_ref:"changed-desired-ref",credential_kind:"public",settings:{strategy:"dockerfile"}}};
- const componentBackup={...completed,version:"postgresql.compose-logical-local.v1" as const,source_component:"postgresql",source_deployed_operation_id:"hop_source"};
+ const componentBackup={...completed,version:engine==="mysql"?"mysql.compose-logical-local.v1" as const:"postgresql.compose-logical-local.v1" as const,source_component:engine,source_deployed_operation_id:"hop_source",blob:{...completed.blob!,format:engine==="mysql"?"mysql_sql" as const:"postgresql_custom" as const}};
  vi.mocked(api.listDatabaseBackups).mockResolvedValue([componentBackup]);
- vi.mocked(api.getDatabaseBackupComponents).mockImplementation(async(_scope,id)=>({resource_id:id,resource_generation:id==="db"?2:3,operation_id:id==="db"?"hop_source":"hop_target",available:true,reason:"available",components:[{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]}));
+ vi.mocked(api.getDatabaseBackupComponents).mockImplementation(async(_scope,id)=>({resource_id:id,resource_generation:id==="db"?2:3,operation_id:id==="db"?"hop_source":"hop_target",available:true,reason:"available",components:[{component:engine,...(engine==="mysql"?{engine:"mysql" as const,major_version:8 as const}:{engine:"postgresql" as const,major_version:16 as const}),running:true,eligible:true,reason:"requires_runtime_profile_verification"},...(engine==="mysql"?[{component:"wrong_engine",engine:"postgresql" as const,major_version:16 as const,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]:[])]}));
  vi.mocked(hosting.listResources).mockResolvedValue({items:[{...database.resource,id:"target",name:"Distinct target",source:source(targetKind)}],total:1,limit:100,offset:0} as Awaited<ReturnType<typeof hosting.listResources>>);
  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
  render(<QueryClientProvider client={client}><ResourceComposeDatabaseBackups resource={{...database.resource,source:source(sourceKind)} as hosting.Resource} blocked={false}/></QueryClientProvider>);
@@ -514,12 +514,12 @@ test("Compose selection creates no demand and import carries exact distinct sett
 });
 
 
-test("Compose lost response freezes selection and preserves identical retry authority",async()=>{
- mountComposeBackupPanel();
+test.each(["postgresql","mysql"] as const)("Compose %s lost response freezes selection and preserves identical retry authority",async(engine)=>{
+ mountComposeBackupPanel("compose","compose",engine);
  vi.mocked(api.requestDatabaseBackup).mockRejectedValueOnce(new Error("response lost"));
  const selector=await screen.findByRole("combobox",{name:"Database backup component"});
- await waitFor(()=>expect(selector.querySelectorAll("option")).toHaveLength(2));
- fireEvent.change(selector,{target:{value:"postgresql"}});
+ await waitFor(()=>expect(selector.querySelectorAll("option")).toHaveLength(engine==="mysql"?3:2));
+ fireEvent.change(selector,{target:{value:engine}});
  fireEvent.click(screen.getByRole("button",{name:"Create logical backup"}));
  const retry=await screen.findByRole("button",{name:"Retry exact database request"});
  const first=vi.mocked(api.requestDatabaseBackup).mock.calls[0]?.[2];
@@ -527,7 +527,7 @@ test("Compose lost response freezes selection and preserves identical retry auth
  for(const label of ["Database backup component","Backup to restore","Restore target application","Restore target database component"]){expect((screen.getByRole("combobox",{name:label}) as HTMLSelectElement).disabled).toBe(true)}
  for(const name of ["Create logical backup","Restore database backup","Refresh database components","Refresh database backup history"]){expect((screen.getByRole("button",{name}) as HTMLButtonElement).disabled).toBe(true)}
  fireEvent.change(selector,{target:{value:""}});
- expect((selector as HTMLSelectElement).value).toBe("postgresql");
+ expect((selector as HTMLSelectElement).value).toBe(engine);
  fireEvent.click(retry);
  await waitFor(()=>expect(api.requestDatabaseBackup).toHaveBeenCalledTimes(2));
  expect(vi.mocked(api.requestDatabaseBackup).mock.calls[1]?.[2]).toBe(first);
@@ -593,4 +593,31 @@ test.each(["failed", "waiting_target", "uncertain"] as const)("MySQL download su
  expect(screen.getByText(/Download success does not prove import completion/)).toBeTruthy();
  expect(screen.getByText(new RegExp(`New-database restore · ${state} · restore`))).toBeTruthy();
  expect(screen.queryByText(/Import and readiness succeeded/)).toBeNull();
+});
+
+
+test("Compose MySQL imports a local archive only into a matching separate component",async()=>{
+ mountComposeBackupPanel("compose","compose","mysql");
+ const source=await screen.findByRole("combobox",{name:"Database backup component"});
+ await screen.findByRole("option",{name:"mysql · mysql 8"});
+ fireEvent.change(source,{target:{value:"mysql"}});
+ fireEvent.click(screen.getByRole("button",{name:"Create logical backup"}));
+ await waitFor(()=>expect(api.requestDatabaseBackup).toHaveBeenCalled());
+ expect(vi.mocked(api.requestDatabaseBackup).mock.calls[0]![2]).toEqual({request_id:expect.any(String),expected_resource_generation:2,component:"mysql",expected_deployed_operation_id:"hop_source"});
+ fireEvent.change(screen.getByRole("combobox",{name:"Backup to restore"}),{target:{value:"backup"}});
+ fireEvent.change(screen.getByRole("combobox",{name:"Restore target application"}),{target:{value:"target"}});
+ const target=screen.getByRole("combobox",{name:"Restore target database component"});
+ await waitFor(()=>expect(target.querySelectorAll("option")).toHaveLength(2));
+ expect(target.textContent).not.toContain("wrong_engine");
+ fireEvent.change(target,{target:{value:"mysql"}});
+ fireEvent.click(screen.getByRole("checkbox",{name:"Replace target database and interrupt its writers"}));
+ await waitFor(()=>expect((screen.getByRole("button",{name:"Restore database backup"}) as HTMLButtonElement).disabled).toBe(false));
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([{...completed,id:"held_restore",backup_id:"backup",mode:"restore",state:"failed",ownership_held:true,target_resource_id:"target",version:"mysql.compose-logical-local.v1",source_component:"mysql",source_deployed_operation_id:"hop_source",target_component:"mysql",target_deployed_operation_id:"hop_target",blob:{...completed.blob!,format:"mysql_sql"}}]);
+ fireEvent.click(screen.getByRole("button",{name:"Restore database backup"}));
+ await waitFor(()=>expect(api.restoreDatabaseBackup).toHaveBeenCalled());
+ expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3]).toEqual({request_id:expect.any(String),component_target:{resource_id:"target",component:"mysql",expected_deployed_operation_id:"hop_target",expected_resource_generation:3,acknowledge_replacement:true}});
+ await screen.findByText(/held_restore · restore · failed · mutation ownership retained/);
+ expect(screen.queryByRole("button",{name:"Retry exact database request"})).toBeNull();
+ expect(screen.getByText(/Failed or uncertain import/)).toBeTruthy();
+ expect(screen.queryByLabelText("Restore archive source")).toBeNull();
 });

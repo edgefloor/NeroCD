@@ -178,3 +178,27 @@ test("MySQL remote restore preserves the exact uploaded artifact reference and r
  vi.mocked(request).mockResolvedValue({ ...restored, backup_id: "foreign" });
  await expect(restoreDatabaseBackup(scope, { ...db, engine: "mysql" }, "backup", input, new AbortController().signal)).rejects.toThrow();
 });
+
+
+test("MySQL component archives bind SQL format, deployed evidence and local component scope", async () => {
+ const value={...operation,version:"mysql.compose-logical-local.v1",source_component:"mysql",source_deployed_operation_id:"hop_current",blob:{...operation.blob,format:"mysql_sql"}};
+ expect(parseDatabaseBackup(value,scope,db)).toEqual(value);
+ for(const patch of [{source_component:undefined},{source_deployed_operation_id:undefined},{blob:operation.blob},{remote_target:{target_id:"storage",revision:1}}]) expect(()=>parseDatabaseBackup({...value,...patch},scope,db)).toThrow();
+ for(const engine of ["mysql","postgresql"] as const) expect(()=>parseDatabaseBackup(value,scope,{...db,engine})).toThrow();
+ const input={request_id:"request",expected_resource_generation:1,component:"mysql",expected_deployed_operation_id:"hop_current"};
+ vi.mocked(request).mockResolvedValue(value);
+ await requestDatabaseBackup(scope,db,input,new AbortController().signal);
+ vi.mocked(request).mockClear();
+ await expect(requestDatabaseBackup(scope,db,{...input,remote_target:{target_id:"storage",revision:1}},new AbortController().signal)).rejects.toThrow();
+ await expect(restoreDatabaseBackup(scope,db,"backup",{request_id:"restore",component_target:{resource_id:"target",component:"mysql",expected_resource_generation:1,expected_deployed_operation_id:"hop_target",acknowledge_replacement:true},remote_source:{transfer_id:"upload",expected_target_revision:1}},new AbortController().signal)).rejects.toThrow();
+ expect(request).not.toHaveBeenCalled();
+});
+test("component discovery binds supported engine and major-version pairs",async()=>{
+ const value={resource_id:"db",resource_generation:1,operation_id:"hop_current",available:true,reason:"available",components:[{component:"mysql",engine:"mysql",major_version:8,running:true,eligible:true,reason:"requires_runtime_profile_verification"}]};
+ vi.mocked(request).mockResolvedValue(value);
+ expect((await getDatabaseBackupComponents(scope,"db")).components[0]?.engine).toBe("mysql");
+ for(const [engine,major_version] of [["mysql",16],["postgresql",8],["mariadb",8]]) {
+  vi.mocked(request).mockResolvedValue({...value,components:[{...value.components[0],engine,major_version}]});
+  await expect(getDatabaseBackupComponents(scope,"db")).rejects.toThrow();
+ }
+});

@@ -387,3 +387,13 @@ test.each(["Create backup schedule", "Enable schedule"])(
     });
   },
 );
+
+
+test("expanded discovery never offers MySQL components for PostgreSQL schedules",async()=>{
+ vi.mocked(backup.getDatabaseBackupComponents).mockResolvedValue({resource_id:"compose",resource_generation:3,operation_id:"current_deployment",available:true,reason:"",components:[{component:"mysql",engine:"mysql",major_version:8,running:true,eligible:true,reason:""},{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:""}]});
+ mount();
+ const select=await screen.findByLabelText("Scheduled database component");
+ await waitFor(()=>expect(select.querySelectorAll("option")).toHaveLength(2));
+ expect(select.textContent).toContain("postgresql");
+ expect(select.textContent).not.toContain("mysql");
+});
