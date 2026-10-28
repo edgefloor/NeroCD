@@ -70,3 +70,37 @@ func artifactEvents(events []ProcessEvent) string {
 	}
 	return out.String()
 }
+
+func TestCaptureArtifactsConfinesSymlinksToArtifactRoot(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "private"), []byte("private metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, intermediate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "final", true: "intermediate"}[intermediate], func(t *testing.T) {
+			root := t.TempDir()
+			target, path := filepath.Join(outside, "private"), "link"
+			if intermediate {
+				target, path = outside, "link/private"
+			}
+			if err := os.Symlink(target, filepath.Join(root, "link")); err != nil {
+				t.Fatal(err)
+			}
+			results, err := CaptureArtifacts(root, []domain.ArtifactSpec{{Name: "private", Path: path}}, nil)
+			if err == nil || len(results) != 0 {
+				t.Fatalf("escaping artifact exposed metadata: %+v, %v", results, err)
+			}
+		})
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "output"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("output", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	results, err := CaptureArtifacts(root, []domain.ArtifactSpec{{Name: "local", Path: "link"}}, nil)
+	if err != nil || len(results) != 1 || results[0].Size != 2 {
+		t.Fatalf("confined symlink should remain usable: %+v, %v", results, err)
+	}
+}
