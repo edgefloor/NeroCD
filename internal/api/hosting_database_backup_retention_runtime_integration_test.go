@@ -710,7 +710,7 @@ func TestHostingDatabaseBackupRetentionCompiledRunner(t *testing.T) {
 	remoteRequest := map[string]any{"request_id": backupRuntimeRequestID(t), "name": "Retention remote survivor", "remote_source": map[string]any{"transfer_id": upload.ID, "expected_target_revision": upload.TargetRevision}}
 	remoteAdmission := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](x.f, x.f.token, "POST", restorePath, remoteRequest, 202)
 	remoteDatabase, remoteApp := x.restoreApplication(survivor, remoteAdmission.ID, "retention_remote_survivor")
-	download := databaseRemoteAwait(x.f, survivor.ID, "download", "succeeded")
+	download := databaseRemoteAwait(x.f, survivor.ID, "download", "succeeded", remoteAdmission.ID)
 	if download.RestoreOperationID != remoteAdmission.ID || download.Blob == nil || *download.Blob != *survivor.Blob {
 		t.Fatal("retention recovery did not download the original remote archive")
 	}

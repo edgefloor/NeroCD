@@ -441,7 +441,7 @@ def backup_runtime_profile(schedule, remote="0", retention="0", notifications="0
         if (schedule, remote, retention, notifications) == ("0", "1", "0", "1"):
             return "^TestHostingBackupNotificationsCompiledRunner$", ["TestHostingBackupNotificationsCompiledRunner"], ["DATABASE_BACKUP_NOTIFICATIONS_PASS mysql " + proof for proof in ("dump_email_webhook", "upload_email_webhook", "source_replay_restart", "retry_exhaustion", "current_authority", "source_preserved")] + ["DATABASE_BACKUP_NOTIFICATIONS_BROWSER_PASS mysql"]
         if (schedule, remote, retention, notifications) == ("1", "1", "0", "0"):
-            return "^TestHostingDatabaseBackupRemoteCompiledRunner$", ["TestHostingDatabaseBackupRemoteCompiledRunner"], ["DATABASE_BACKUP_REMOTE_PASS mysql", "DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql", "DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql", "DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql"]
+            return "^TestHostingDatabaseBackupRemoteCompiledRunner$", ["TestHostingDatabaseBackupRemoteCompiledRunner"], ["DATABASE_BACKUP_REMOTE_PASS mysql", "DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql", "DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql", "DATABASE_BACKUP_REMOTE_GET_RESTORE_APP_PASS mysql", "DATABASE_BACKUP_REMOTE_CORRUPT_DOWNLOAD_HELD_PASS mysql", "DATABASE_BACKUP_REMOTE_BROWSER_PASS mysql"]
         if (schedule, remote, retention, notifications) != ("1", "0", "0", "0"):
             raise Failure("MySQL requires the exact local or remote schedule profile")
         return "^TestHostingDatabaseBackupScheduleCompiledRunner$", ["TestHostingDatabaseBackupScheduleCompiledRunner"], ["DATABASE_BACKUP_SCHEDULE_PASS mysql", "DATABASE_BACKUP_SCHEDULE_BROWSER_PASS mysql", "DATABASE_BACKUP_SCHEDULE_ADMISSION_FAILURE_PASS mysql source_unavailable"]

@@ -42,7 +42,7 @@ func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
 				}
 			}
 			credential, enrollment := filepath.Join(root, "credential"), filepath.Join(root, "enrollment")
-			caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseMySQLCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability}
+			caps := []string{domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingOwnedStorageCapability, domain.HostingDatabaseMySQLCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, "hosting_mysql_remote_restore_v1"}
 			var mu sync.Mutex
 			registered, consumed, claimed := false, false, false
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func TestRunnerMySQLRemoteCommandRegistrationAndEnrollment(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/runners/register":
 					var in runnerRegisterRequest
-					if json.NewDecoder(r.Body).Decode(&in) != nil || !slices.Contains(in.Capabilities, domain.HostingDatabaseMySQLBackupRemoteCapability) || !slices.Contains(in.Capabilities, domain.HostingDatabaseBackupRemoteCapability) || slices.Contains(in.Capabilities, "shell") {
+					if json.NewDecoder(r.Body).Decode(&in) != nil || !slices.Contains(in.Capabilities, domain.HostingDatabaseMySQLBackupRemoteCapability) || !slices.Contains(in.Capabilities, domain.HostingDatabaseBackupRemoteCapability) || !slices.Contains(in.Capabilities, "hosting_mysql_remote_restore_v1") || slices.Contains(in.Capabilities, "shell") {
 						t.Error("CLI did not advertise both configured transport adapters")
 					}
 					registered = true

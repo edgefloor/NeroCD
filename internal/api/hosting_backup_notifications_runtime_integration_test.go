@@ -1110,7 +1110,7 @@ func TestHostingBackupNotificationsCompiledRunner(t *testing.T) {
 	case <-time.After(90 * time.Second):
 		t.Fatal("actual denied upload committed ACK loss not reached")
 	}
-	failed := databaseRemoteAwait(f, backup.ID, "upload", "failed")
+	failed := databaseRemoteAwait(f, backup.ID, "upload", "failed", "")
 	if failed.FailureCode != "access_denied" || failed.Blob == nil || *failed.Blob != *backup.Blob {
 		t.Fatal("S3 denial did not retain exact successful local dump")
 	}

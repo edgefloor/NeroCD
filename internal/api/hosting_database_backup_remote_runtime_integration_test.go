@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -117,7 +118,7 @@ func databaseRemoteCopyResponse(out http.ResponseWriter, rec *httptest.ResponseR
 	_, _ = out.Write(rec.Body.Bytes())
 }
 
-func databaseRemoteAwait(f *databaseRunnerFixture, backup, mode, state string) databaseRemoteTransfer {
+func databaseRemoteAwait(f *databaseRunnerFixture, backup, mode, state, restore string) databaseRemoteTransfer {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(f.t.Context(), 90*time.Second)
 	defer cancel()
@@ -130,7 +131,7 @@ func databaseRemoteAwait(f *databaseRunnerFixture, backup, mode, state string) d
 		case <-ticker.C:
 			values := databaseRunnerJSON[[]databaseRemoteTransfer](f, f.token, "GET", "/api/v1/database-backups/"+backup+"/transfers", nil, 200)
 			for _, v := range values {
-				if v.Mode == mode && v.State == state {
+				if v.Mode == mode && v.State == state && v.RestoreOperationID == restore {
 					return v
 				}
 			}
@@ -315,7 +316,7 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		scheduled := backupRuntimeAwait(f, scheduledID)
-		upload := databaseRemoteAwait(f, scheduledID, "upload", "succeeded")
+		upload := databaseRemoteAwait(f, scheduledID, "upload", "succeeded", "")
 		if scheduled.Blob == nil || scheduled.Blob.Format != "mysql_sql" || upload.Version != "mysql.logical-s3-transfer.v1" || upload.Blob == nil || *upload.Blob != *scheduled.Blob || upload.TargetID != target.ID || upload.TargetRevision != target.Revision {
 			t.Fatal("scheduled remote MySQL identity changed")
 		}
@@ -331,7 +332,7 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	id := browser.await("backup")
 	diagnosticID = id
 	backup := backupRuntimeAwait(f, id)
-	failed := databaseRemoteAwait(f, id, "upload", "failed")
+	failed := databaseRemoteAwait(f, id, "upload", "failed", "")
 	if failed.FailureCode != "access_denied" || failed.Blob == nil || *failed.Blob != *backup.Blob || failed.TargetID != target.ID || failed.TargetRevision != target.Revision {
 		t.Fatal("Put denial did not preserve local archive and target identity")
 	}
@@ -381,7 +382,7 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 		}
 	}
 	f.remoteBackupWire.Store(nil)
-	uploaded := databaseRemoteAwait(f, id, "upload", "succeeded")
+	uploaded := databaseRemoteAwait(f, id, "upload", "succeeded", "")
 	if uploaded.ID == failed.ID || uploaded.Blob == nil || *uploaded.Blob != *backup.Blob || uploaded.TargetRevision != failed.TargetRevision {
 		t.Fatal("retry changed archive or target")
 	}
@@ -413,13 +414,6 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 		f.routes.assertSelected(application)
 		f.routes.record(t.Context(), application, "GET", "after_remote_retry", "source_remains_usable")
 		f.storage.assertFiles(f, application)
-		browser.setPhase("complete", id)
-		browser.finished()
-		f.assertRedacted()
-		fmt.Println("DATABASE_BACKUP_REMOTE_PASS mysql")
-		fmt.Println("DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql")
-		fmt.Println("DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql")
-		return
 	}
 	// Withhold only the exact fixture-owned CAS file. Metadata and staging remain,
 	// so successful remote restore must perform a real GET and re-publish the CAS.
@@ -436,12 +430,15 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	if os.Rename(cas, cas+".fixture-withheld") != nil {
 		t.Fatal("fixture CAS withholding failed")
 	}
+	if _, err := os.Lstat(cas); !os.IsNotExist(err) {
+		t.Fatal("exact local CAS still available before remote GET")
+	}
 	browser.setPhase("restore", id)
 	restoreID := browser.await("restore")
 	diagnosticID = restoreID
 	restored := backupRuntimeAwait(f, restoreID)
-	download := databaseRemoteAwait(f, id, "download", "succeeded")
-	if download.RestoreOperationID != restoreID || download.Blob == nil || *download.Blob != *backup.Blob || restored.TargetResourceID == source.Resource.ID {
+	download := databaseRemoteAwait(f, id, "download", "succeeded", restoreID)
+	if download.RestoreOperationID != restoreID || download.TargetRevision != uploaded.TargetRevision || download.Version != uploaded.Version || download.Blob == nil || *download.Blob != *backup.Blob || restored.TargetResourceID == source.Resource.ID {
 		t.Fatal("remote restore identity mismatch")
 	}
 	downloaded, e := os.ReadFile(cas)
@@ -455,7 +452,7 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	}
 	fresh := databaseRunnerJSON[domain.HostingDatabase](f, f.token, "GET", "/api/v1/resources/"+restored.TargetResourceID+"/database", nil, 200)
 	f.registerRouteDatabaseCleanup(fresh.Resource.ID)
-	if fresh.Binding.ID == source.Binding.ID || fresh.StorageRef == source.StorageRef || fresh.Credentials[0].SecretID == source.Credentials[0].SecretID {
+	if fresh.Engine != source.Engine || fresh.RecipeVersion != source.RecipeVersion || fresh.Binding.ID == source.Binding.ID || fresh.StorageRef == source.StorageRef || fresh.Credentials[0].SecretID == source.Credentials[0].SecretID {
 		t.Fatal("remote restore reused binding volume or credential")
 	}
 	distinct := backupRuntimeApplicationObserved(f, fresh, "remote_restored", browser.recordProgress)
@@ -466,26 +463,209 @@ func TestHostingDatabaseBackupRemoteCompiledRunner(t *testing.T) {
 	f.appRecord(distinct, "PUT", "new", "remote_new_write")
 	f.appRecord(distinct, "GET", "new", "remote_new_write")
 	f.appRecord(application, "GET", "after_snapshot", "source_stays_writable")
-	// A retry and recovery may transfer again, but must never dump again.
-	history := databaseRunnerJSON[[]domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/resources/"+source.Resource.ID+"/database-backups", nil, 200)
-	dumps := 0
-	for _, op := range history {
-		if op.Mode == "backup" {
-			dumps++
-			if op.ID != id || op.Blob == nil || *op.Blob != *backup.Blob {
-				t.Fatal("retry redumped source")
+	if mysql {
+		credential := fresh.Credentials[0]
+		for _, ref := range fresh.Credentials {
+			if ref.Role == "app" {
+				credential = ref
 			}
 		}
+		if distinct.ApplicationDatabase == nil || distinct.ApplicationDatabase.Binding.DatabaseResourceID != fresh.Resource.ID || distinct.ApplicationDatabase.Binding.DatabaseBindingID != fresh.Binding.ID || distinct.ApplicationDatabase.Binding.Alias != domain.HostingDatabaseBindingAlias(fresh.Binding.ID) || distinct.ApplicationDatabase.Binding.Credential.SecretID != credential.SecretID || distinct.ApplicationDatabase.Binding.Credential.Version != credential.Version {
+			t.Fatal("remote restored application lost exact target binding or credentials")
+		}
+		if databaseRemoteMissingRecord(t.Context(), distinct, "after_snapshot") != nil || databaseRemoteMissingRecord(t.Context(), application, "new") != nil {
+			t.Fatal("remote source and target records are not independent")
+		}
+		route := &applicationDatabaseRouteFixture{f: f, roots: f.routes.roots, publicRoot: f.routes.publicRoot, proxy: f.routes.proxy, hostname: "restored-mysql.example.test", daemonID: distinct.Release.DaemonID}
+		databaseRunnerJSON[domain.HostingHostnameGrant](f, f.adminToken, "POST", "/api/v1/servers/"+f.serverID+"/proxy/hostname-grants", domain.HostingHostnameGrantInput{ProjectID: distinct.ProjectID, Hostname: route.hostname}, 201)
+		route.route = databaseRunnerJSON[domain.HostingRoute](f, f.token, "POST", "/api/v1/resources/"+distinct.ResourceID+"/routes", domain.HostingRouteInput{IdempotencyKey: "remote_restored_route", Hostname: route.hostname, PathPrefix: "/", ExpectedHealthyOperationID: distinct.ID}, 202)
+		route.awaitProxy()
+		route.assertSelected(distinct)
+		route.record(t.Context(), distinct, "GET", "before", "remote_snapshot_origin")
+		route.record(t.Context(), distinct, "PUT", "restored_https", "independent_target_write")
+		route.record(t.Context(), distinct, "GET", "restored_https", "independent_target_write")
+		databaseRemoteCorruptMySQLDownload(f, silo, source, backup, uploaded, application)
+		route.assertSelected(distinct)
+		route.record(t.Context(), distinct, "GET", "restored_https", "independent_target_write")
 	}
-	if dumps != 1 {
-		t.Fatal("retry admitted another dump")
+	// A retry and recovery may transfer again, but must never dump again.
+	history := databaseRunnerJSON[[]domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/resources/"+source.Resource.ID+"/database-backups", nil, 200)
+	if !databaseRemoteDumpHistoryMatches(history, backup, scheduledID) {
+		t.Fatal("remote retry or restore changed exact source dump history")
 	}
 	browser.setPhase("complete", restoreID)
 	browser.finished()
 	f.assertRedacted()
+	if mysql {
+		fmt.Println("DATABASE_BACKUP_REMOTE_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_REPLAY_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_SCHEDULE_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_GET_RESTORE_APP_PASS mysql")
+		fmt.Println("DATABASE_BACKUP_REMOTE_CORRUPT_DOWNLOAD_HELD_PASS mysql")
+		return
+	}
 	fmt.Println("DATABASE_BACKUP_REMOTE_PASS postgresql")
 	fmt.Println("DATABASE_BACKUP_REMOTE_REPLAY_PASS postgresql")
 	fmt.Println("DATABASE_BACKUP_REMOTE_GET_RESTORE_APP_PASS postgresql")
+}
+
+func databaseRemoteDumpHistoryMatches(history []domain.HostingDatabaseBackupOperation, backup domain.HostingDatabaseBackupOperation, scheduled string) bool {
+	if backup.Blob == nil {
+		return false
+	}
+	expected := map[string]bool{backup.ID: true}
+	if scheduled != "" {
+		if scheduled == backup.ID {
+			return false
+		}
+		expected[scheduled] = true
+	}
+	for _, op := range history {
+		if op.Mode != "backup" {
+			continue
+		}
+		if !expected[op.ID] || op.State != "succeeded" || op.Blob == nil || op.ID == backup.ID && *op.Blob != *backup.Blob {
+			return false
+		}
+		delete(expected, op.ID)
+	}
+	return len(expected) == 0
+}
+
+func databaseRemoteMissingRecord(ctx context.Context, op domain.HostingOperation, key string) error {
+	if op.Result == nil || len(op.Result.ContainerID) != 64 || op.Snapshot.HostPort < 1024 || op.Snapshot.HostPort > 65535 {
+		return errors.New("invalid missing-record application identity")
+	}
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 7 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(op.Snapshot.HostPort)+"/records/"+key, nil)
+	if err != nil {
+		return errors.New("missing-record request invalid")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("missing-record request failed")
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 4097))
+	defer clear(body)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || len(body) > 4096 || response.StatusCode != http.StatusNotFound || response.Header.Get("X-NeroCD-Fixture-Instance") != op.Result.ContainerID[:12] {
+		return errors.New("missing-record response lacks exact application 404")
+	}
+	return nil
+}
+
+func TestDatabaseRemoteMissingRecordRequiresExactApplication404(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    int
+		instance  string
+		oversized bool
+		want      bool
+	}{
+		{"missing", 404, strings.Repeat("a", 12), false, true},
+		{"present", 200, strings.Repeat("a", 12), false, false},
+		{"unavailable", 503, strings.Repeat("a", 12), false, false},
+		{"other_application", 404, strings.Repeat("b", 12), false, false},
+		{"oversized", 404, strings.Repeat("a", 12), true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/records/missing" {
+					t.Error("wrong missing-record request")
+				}
+				w.Header().Set("X-NeroCD-Fixture-Instance", test.instance)
+				w.WriteHeader(test.status)
+				if test.oversized {
+					_, _ = io.WriteString(w, strings.Repeat("x", 4097))
+				}
+			}))
+			defer server.Close()
+			port, err := strconv.Atoi(strings.TrimPrefix(server.URL, "http://127.0.0.1:"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := domain.HostingOperation{Snapshot: domain.HostingSnapshot{HostPort: port}, Result: &domain.HostingResult{ContainerID: strings.Repeat("a", 64)}}
+			if got := databaseRemoteMissingRecord(t.Context(), op, "missing") == nil; got != test.want {
+				t.Fatalf("missing-record accepted=%v want=%v", got, test.want)
+			}
+			server.Close()
+			if databaseRemoteMissingRecord(t.Context(), op, "missing") == nil {
+				t.Fatal("transport failure accepted as missing record")
+			}
+		})
+	}
+}
+
+func databaseRemoteCorruptMySQLDownload(f *databaseRunnerFixture, silo *databaseRemoteSilo, source domain.HostingDatabase, backup domain.HostingDatabaseBackupOperation, uploaded databaseRemoteTransfer, application domain.HostingOperation) {
+	f.t.Helper()
+	if backup.Validate() != nil || backup.Blob == nil || backup.Blob.Format != "mysql_sql" || uploaded.Version != "mysql.logical-s3-transfer.v1" {
+		f.t.Fatal("corrupt-download fixture scope invalid")
+	}
+	var rawPlan []byte
+	var plan domain.HostingDatabaseBackupTransferPlan
+	if f.database.QueryRow(f.t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, uploaded.ID).Scan(&rawPlan) != nil || json.Unmarshal(rawPlan, &plan) != nil {
+		f.t.Fatal("saved upload plan unavailable")
+	}
+	key := "nerocd/mysql/" + backup.ID + "/" + strings.TrimPrefix(backup.Blob.Digest, "sha256:") + ".sql"
+	if plan.ObjectKey != key {
+		f.t.Fatal("corrupt-download object is not the exact owned backup")
+	}
+	cas := filepath.Join(f.root, "state", "logical-backups", strings.TrimPrefix(backup.Blob.Digest, "sha256:"))
+	raw, err := os.ReadFile(cas)
+	if err != nil || int64(len(raw)) != backup.Blob.Bytes {
+		clear(raw)
+		f.t.Fatal("downloaded exact CAS unavailable before corrupt check")
+	}
+	digest := sha256.Sum256(raw)
+	clear(raw)
+	if "sha256:"+hex.EncodeToString(digest[:]) != backup.Blob.Digest {
+		f.t.Fatal("downloaded CAS digest changed before corrupt check")
+	}
+	if os.Remove(cas) != nil {
+		f.t.Fatal("exact CAS removal failed")
+	}
+	if _, err := os.Lstat(cas); !os.IsNotExist(err) {
+		f.t.Fatal("local CAS remains available for corrupt remote restore")
+	}
+	silo.command("printf 'corrupt-owned-fixture-object' | mc pipe fixture/nerocd-runtime/" + key + " >/dev/null\n")
+	request := databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "POST", "/api/v1/database-backups/"+backup.ID+"/restores", domain.HostingDatabaseBackupRestoreInput{RequestID: backupRuntimeRequestID(f.t), Name: "Corrupt remote target", RemoteSource: &domain.BackupRemoteSource{TransferID: uploaded.ID, ExpectedTargetRevision: uploaded.TargetRevision}}, 202)
+	f.registerRouteDatabaseCleanup(request.TargetResourceID)
+	download := databaseRemoteAwait(f, backup.ID, "download", "failed", request.ID)
+	if download.BackupID != backup.ID || download.RestoreOperationID != request.ID || download.Version != uploaded.Version || download.FailureCode != "object_mismatch" {
+		f.t.Fatal("corrupt remote download did not fail with exact restore identity")
+	}
+	ctx, cancel := context.WithTimeout(f.t.Context(), 90*time.Second)
+	defer cancel()
+	for {
+		request = databaseRunnerJSON[domain.HostingDatabaseBackupOperation](f, f.token, "GET", "/api/v1/database-backups/"+request.ID, nil, 200)
+		if request.State == "uncertain" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			f.t.Fatal("corrupt download did not retain uncertain restore")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if !request.OwnershipHeld || request.FailureCode != "execution_failed" || request.TargetResourceID == source.Resource.ID {
+		f.t.Fatal("corrupt download released or reused source target")
+	}
+	var intents int
+	if f.database.QueryRow(f.t.Context(), `SELECT count(*) FROM hosting_database_backup_receipts WHERE operation_id=$1 AND phase='intent'`, request.ID).Scan(&intents) != nil || intents != 0 {
+		f.t.Fatal("corrupt download started database import")
+	}
+	databaseRunnerJSON[json.RawMessage](f, f.token, "POST", "/api/v1/resources/"+request.TargetResourceID+"/database/deployments", backupRuntimeHeldTargetDeploymentInput(), 409)
+	if _, err := os.Lstat(cas); !os.IsNotExist(err) {
+		f.t.Fatal("corrupt download published local CAS")
+	}
+	f.appRecord(application, "GET", "before", "remote_snapshot_origin")
+	f.appRecord(application, "GET", "after_snapshot", "source_stays_writable")
+	f.appRecord(application, "PUT", "after_corrupt_download", "source_remains_usable")
+	f.routes.assertSelected(application)
+	f.routes.record(f.t.Context(), application, "GET", "after_corrupt_download", "source_remains_usable")
+	f.storage.assertFiles(f, application)
 }
 
 func databaseRemoteAwaitBrowserPhase(f *databaseRunnerFixture, b *databaseBackupBrowserFixture, want string) {
@@ -758,5 +938,25 @@ func (f *databaseRunnerFixture) reportDatabaseRemoteValidationFailure(last datab
 	encoded, err := json.Marshal(evidence)
 	if err == nil {
 		_, _ = fmt.Fprintf(output, "DATABASE_BACKUP_REMOTE_FAILURE_EVIDENCE %s\n", encoded)
+	}
+}
+
+func TestDatabaseRemoteRestorePreservesExactDumpHistory(t *testing.T) {
+	blob := &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 1, Format: "mysql_sql"}
+	backup := domain.HostingDatabaseBackupOperation{ID: "immediate", Mode: "backup", State: "succeeded", Blob: blob}
+	scheduled := backup
+	scheduled.ID = "scheduled"
+	if !databaseRemoteDumpHistoryMatches([]domain.HostingDatabaseBackupOperation{backup}, backup, "") || !databaseRemoteDumpHistoryMatches([]domain.HostingDatabaseBackupOperation{scheduled, backup, {ID: "target", Mode: "restore"}}, backup, scheduled.ID) {
+		t.Fatal("existing PostgreSQL or MySQL source dump history rejected")
+	}
+	for _, invalid := range [][]domain.HostingDatabaseBackupOperation{{backup}, {scheduled, backup, backup}, {scheduled, backup, {ID: "extra", Mode: "backup", State: "succeeded", Blob: blob}}} {
+		if databaseRemoteDumpHistoryMatches(invalid, backup, scheduled.ID) {
+			t.Fatal("missing, duplicate or extra source dump accepted")
+		}
+	}
+	changed := backup
+	changed.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("b", 64), Bytes: 1, Format: "mysql_sql"}
+	if databaseRemoteDumpHistoryMatches([]domain.HostingDatabaseBackupOperation{scheduled, changed}, backup, scheduled.ID) {
+		t.Fatal("changed immediate archive accepted")
 	}
 }

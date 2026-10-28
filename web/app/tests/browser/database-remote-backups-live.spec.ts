@@ -102,7 +102,7 @@ test("real remote database denial retry and supported restore through embedded U
         backup = v.operation_id;
         return v.phase;
       },
-      { timeout: 120_000, intervals: [100, 250, 500] },
+      { timeout: m.engine === "mysql" ? 240_000 : 120_000, intervals: [100, 250, 500] },
     )
     .toBe("denied");
   expect(backup).toMatch(/^dbb_/);
@@ -123,20 +123,7 @@ test("real remote database denial retry and supported restore through embedded U
   expect(acknowledged.status()).toBe(204);
   await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 90_000 }).toBe("retry");
   await panel.getByRole("button", { name: `Retry upload for ${backup}`, exact: true }).click();
-  await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe(m.engine === "mysql" ? "complete" : "restore");
-  if (m.engine === "mysql") {
-    const uploads = panel.getByLabel(`Remote uploads for ${backup}`, { exact: true });
-    for (const width of [320, 390, 430, 1440]) {
-      await page.setViewportSize({ width, height: 900 });
-      await panel.getByRole("button", { name: "Refresh backup history", exact: true }).click();
-      await expect(uploads.getByText("Local dump: succeeded. Latest remote upload: succeeded.", { exact: true })).toBeVisible();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    }
-    await panel.getByLabel("Completed backup", { exact: true }).selectOption(backup);
-    await expect(panel.getByLabel("Restore archive source", { exact: true })).toHaveCount(0);
-    expect((await page.request.post(m.control_path + "/done", { headers, timeout: 5000 })).status()).toBe(204);
-    return;
-  }
+  await expect.poll(async () => (await (await safe(m.control_path + "/state")).json()).phase, { timeout: 120_000 }).toBe("restore");
   await panel.getByRole("button", { name: "Refresh backup history", exact: true }).click();
   await panel
     .getByLabel("Completed backup", { exact: true })
@@ -150,9 +137,13 @@ test("real remote database denial retry and supported restore through embedded U
   await panel
     .getByLabel("New database name", { exact: true })
     .fill("Restored application database");
+  const admitted = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/v1/database-backups/${backup}/restores`);
   await panel
     .getByRole("button", { name: "Restore into new database", exact: true })
     .click();
+  const response = await admitted;
+  expect(response.status()).toBe(202);
+  expect(response.request().postDataJSON().remote_source).toEqual({ transfer_id: transfer, expected_target_revision: 1 });
   let restored = "";
   await expect
     .poll(
