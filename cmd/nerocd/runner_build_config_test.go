@@ -104,11 +104,11 @@ func TestRunnerBuildCapabilitiesExplicitAndDisabledByDefault(t *testing.T) {
 		{nil, false, true, []string{domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, true, []string{domain.HostingBuildTaskType, domain.HostingPrivateGitCapability}, nil, true},
 		{c, false, false, []string{domain.HostingPrivateGitCapability}, nil, true},
-		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability}, false},
-		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability}, false},
+		{c, false, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
+		{c, true, false, []string{"shell"}, []string{domain.HostingBuildTaskType, domain.RunTypeProxyApply, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
 		{c, false, true, []string{"shell"}, nil, true},
 		{nil, false, true, []string{domain.HostingBuildTaskType}, nil, true},
-		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability}, false},
+		{c, false, true, []string{"opaque"}, []string{"opaque", domain.HostingBuildTaskType, domain.HostingBuildTriggerRevisionCapability, domain.HostingDockerfileArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability}, false},
 	} {
 		got, err := runnerBuildCapabilities(tc.config, tc.proxy, tc.specified, tc.caps)
 		if (err != nil) != tc.fail {
@@ -252,5 +252,11 @@ func TestBuildRegistryRequiresExplicitBuildConfiguration(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("configured build runtime omitted argument capability")
+	}
+}
+
+func TestBuildSecretsRequireExplicitBuildConfiguration(t *testing.T) {
+	if _, err := runnerBuildCapabilities(nil, false, true, []string{domain.HostingBuildSecretsCapability}); err == nil {
+		t.Fatal("build secrets advertised without build configuration")
 	}
 }

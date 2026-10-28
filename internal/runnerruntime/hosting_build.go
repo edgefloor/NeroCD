@@ -622,6 +622,9 @@ func buildEngineRequest(s domain.HostingBuildSnapshot, path, daemon string) host
 		}
 		request.InjectBuildArgs = settings.InjectBuildArgsToDockerfile == nil || *settings.InjectBuildArgsToDockerfile
 	}
+	for _, ref := range settings.BuildSecrets {
+		request.BuildSecrets = append(request.BuildSecrets, hostingbuild.SecretReference{Name: ref.Name, SecretID: ref.Secret.SecretID, Version: ref.Secret.Version})
+	}
 	if ref := s.Source.Settings.BuildRegistryCredential; ref != nil {
 		request.BuildRegistry = &hostingbuild.RegistryReference{SecretID: ref.SecretID, Version: ref.Version}
 	}

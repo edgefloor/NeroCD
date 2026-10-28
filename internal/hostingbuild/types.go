@@ -82,6 +82,7 @@ type Limits struct {
 
 // Request names an immutable source and explicit resource budgets.
 type Request struct {
+	BuildSecrets    []SecretReference  `json:",omitempty"`
 	BuildRegistry   *RegistryReference `json:",omitempty"`
 	InjectBuildArgs bool               `json:",omitempty"`
 	BuildArgs       map[string]string  `json:",omitempty"`

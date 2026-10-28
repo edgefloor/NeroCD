@@ -154,6 +154,7 @@ var publicRoutes = []PublicRoute{
 	{Method: http.MethodPut, Path: "/api/v1/resources/{id}/runtime-configuration"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/builds/source-credential"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/builds/registry-credential"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/builds/secrets"},
 	{Method: http.MethodGet, Path: "/api/v1/resources/{id}/source-grants"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/source-grants"},
 	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/source-grants/{grant_id}/revoke"},
@@ -623,6 +624,8 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerHostingRegistryCredential
 	case "/api/v1/runners/hosting/runtime-environment":
 		return s.runnerHostingRuntimeEnvironment
+	case "/api/v1/runners/builds/secrets":
+		return s.runnerBuildSecrets
 	case "/api/v1/runners/builds/registry-credential":
 		return s.runnerBuildRegistryCredential
 	case "/api/v1/runners/builds/source-credential":

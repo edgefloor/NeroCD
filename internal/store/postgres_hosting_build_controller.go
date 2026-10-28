@@ -182,6 +182,9 @@ func currentBuildExecution(ctx context.Context, tx pgx.Tx, b domain.HostingBuild
 	if err := requireBuildArgumentCapability(ctx, tx, b.Snapshot.RunnerID, b.Snapshot.Source.Settings); err != nil {
 		return err
 	}
+	if err := validateBuildSecrets(ctx, tx, b.ProjectID, b.Snapshot.Source.Settings); err != nil {
+		return err
+	}
 	return validateBuildRegistrySecret(ctx, tx, b.ProjectID, b.Snapshot.Source.Settings)
 }
 

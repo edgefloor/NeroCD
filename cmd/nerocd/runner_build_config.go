@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -147,7 +148,7 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		return nil, errors.New("git Compose requires matching explicit runner and operator policy")
 	}
 	for _, capability := range capabilities {
-		if (capability == domain.HostingDockerfileArgsCapability || capability == domain.HostingBuildRegistryCapability) && c == nil {
+		if (capability == domain.HostingDockerfileArgsCapability || capability == domain.HostingBuildRegistryCapability || capability == domain.HostingBuildSecretsCapability) && c == nil {
 			return nil, errors.New("dockerfile argument capability requires explicit build configuration")
 		}
 	}
@@ -211,6 +212,10 @@ func runnerBuildCapabilities(c *runnerruntime.BuildConfig, proxyConfigured, spec
 		if !found {
 			capabilities = append(capabilities, domain.HostingBuildRegistryCapability)
 		}
+	}
+
+	if c != nil && !slices.Contains(capabilities, domain.HostingBuildSecretsCapability) {
+		capabilities = append(capabilities, domain.HostingBuildSecretsCapability)
 	}
 
 	if compose {

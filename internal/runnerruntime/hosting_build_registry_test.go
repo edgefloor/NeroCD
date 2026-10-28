@@ -117,55 +117,62 @@ func (e scrubRegistryEngine) ScrubRegistryCredentials() error {
 	return hostingbuild.ScrubRegistryCredentials(e.state)
 }
 
-func TestBuildRegistryCleanupFailureBlocksReplayUntilReconciled(t *testing.T) {
-	e, client, a, at := buildFixture(t)
-	client.loseComplete = true
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if err := e.Execute(ctx, a, at); err == nil {
-		t.Fatal("lost completion unexpectedly accepted")
-	}
-	before, _ := json.Marshal(e.journal.Snapshot())
-	state := e.config.Engine.StateDir
-	blocked := filepath.Join(state, "fixture", "docker", "config.json")
-	if err := os.MkdirAll(blocked, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(blocked, "unexpected"), []byte("preserve"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	e.engine = scrubRegistryEngine{state: state, buildEngineFunc: func(context.Context, hostingbuild.Request) (hostingbuild.Result, error) {
-		t.Fatal("reconciliation rebuilt")
-		return hostingbuild.Result{}, nil
-	}}
-	if err := e.Reconcile(ctx); !errors.Is(err, hostingbuild.ErrCleanupUnconfirmed) {
-		t.Fatal("failed config scrub did not hold replay", err)
-	}
-	after, _ := json.Marshal(e.journal.Snapshot())
-	if string(before) != string(after) {
-		t.Fatal("cleanup failure changed durable completion")
-	}
-	// Exact operator removal repairs only the credential-path obstruction.
-	if err := os.Remove(filepath.Join(blocked, "unexpected")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(blocked); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(state, "cleanup_unconfirmed.json")
-	if err := os.WriteFile(marker, []byte("retained resource hold"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.Reconcile(ctx); err == nil {
-		t.Fatal("credential scrub weakened resource cleanup hold")
-	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatal("resource hold removed", err)
-	}
-	if err := os.Remove(marker); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.Reconcile(ctx); err != nil {
-		t.Fatal("verified cleanup did not allow metadata replay", err)
+func TestBuildMaterialCleanupFailureBlocksReplayUntilReconciled(t *testing.T) {
+	for _, kind := range []string{"registry", "secrets"} {
+		t.Run(kind, func(t *testing.T) {
+			e, client, a, at := buildFixture(t)
+			client.loseComplete = true
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if err := e.Execute(ctx, a, at); err == nil {
+				t.Fatal("lost completion unexpectedly accepted")
+			}
+			before, _ := json.Marshal(e.journal.Snapshot())
+			state := e.config.Engine.StateDir
+			blocked := filepath.Join(state, "fixture", "docker", "config.json")
+			if kind == "secrets" {
+				blocked = filepath.Join(state, "fixture", "build-secrets", "TOKEN")
+			}
+			if err := os.MkdirAll(blocked, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(blocked, "unexpected"), []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			e.engine = scrubRegistryEngine{state: state, buildEngineFunc: func(context.Context, hostingbuild.Request) (hostingbuild.Result, error) {
+				t.Fatal("reconciliation rebuilt")
+				return hostingbuild.Result{}, nil
+			}}
+			if err := e.Reconcile(ctx); !errors.Is(err, hostingbuild.ErrCleanupUnconfirmed) {
+				t.Fatal("failed config scrub did not hold replay", err)
+			}
+			after, _ := json.Marshal(e.journal.Snapshot())
+			if string(before) != string(after) {
+				t.Fatal("cleanup failure changed durable completion")
+			}
+			// Exact operator removal repairs only the credential-path obstruction.
+			if err := os.Remove(filepath.Join(blocked, "unexpected")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(blocked); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(state, "cleanup_unconfirmed.json")
+			if err := os.WriteFile(marker, []byte("retained resource hold"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Reconcile(ctx); err == nil {
+				t.Fatal("credential scrub weakened resource cleanup hold")
+			}
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatal("resource hold removed", err)
+			}
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Reconcile(ctx); err != nil {
+				t.Fatal("verified cleanup did not allow metadata replay", err)
+			}
+		})
 	}
 }

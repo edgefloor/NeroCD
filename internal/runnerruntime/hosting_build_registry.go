@@ -15,17 +15,21 @@ import (
 type buildRegistryClient interface {
 	BuildRegistryCredential(context.Context, string, domain.HostingBuildRegistryCredentialRequest, runnerclient.SourceCredentialTransport) (*domain.HostingRegistryCredentialDelivery, error)
 }
+type buildMaterialsEngine interface {
+	BuildWithMaterials(context.Context, hostingbuild.Request, hostingbuild.OutputSink, hostingbuild.BuildMaterialProviders) (hostingbuild.Result, error)
+}
+
+type buildSecretsClient interface {
+	BuildSecrets(context.Context, string, domain.HostingBuildSecretsRequest, runnerclient.SourceCredentialTransport) (*domain.HostingBuildSecretsDelivery, error)
+}
+
 type buildRegistryEngine interface {
 	BuildWithRegistryCredential(context.Context, hostingbuild.Request, hostingbuild.OutputSink, hostingbuild.RegistryCredentialProvider) (hostingbuild.Result, error)
 }
 
 func (e *BuildExecutor) runBuildEngine(ctx context.Context, b domain.HostingBuild, a domain.HostingBuildAuthority, intent string, request hostingbuild.Request, output *buildOutputAdapter) (hostingbuild.Result, error) {
-	if b.Snapshot.Source.Settings.BuildRegistryCredential == nil {
+	if b.Snapshot.Source.Settings.BuildRegistryCredential == nil && len(b.Snapshot.Source.Settings.BuildSecrets) == 0 {
 		return e.engine.(buildOutputEngine).BuildWithOutput(ctx, request, output.Sink)
-	}
-	engine, ok := e.engine.(buildRegistryEngine)
-	if !ok {
-		return hostingbuild.Result{}, errors.New("build registry engine unavailable")
 	}
 	provider := func(c context.Context) (hostingbuild.RegistryCredential, error) {
 		var zero hostingbuild.RegistryCredential
@@ -63,6 +67,21 @@ func (e *BuildExecutor) runBuildEngine(ctx context.Context, b domain.HostingBuil
 			return zero, err
 		}
 		return hostingbuild.RegistryCredential{Registry: credential.Registry, Username: credential.Username, Password: credential.Password}, nil
+	}
+	if len(b.Snapshot.Source.Settings.BuildSecrets) > 0 {
+		engine, ok := e.engine.(buildMaterialsEngine)
+		if !ok {
+			return hostingbuild.Result{}, errors.New("managed build secrets engine unavailable")
+		}
+		providers := hostingbuild.BuildMaterialProviders{Secrets: e.buildSecretsProvider(b, a, intent, request, output)}
+		if b.Snapshot.Source.Settings.BuildRegistryCredential != nil {
+			providers.Registry = provider
+		}
+		return engine.BuildWithMaterials(ctx, request, output.Sink, providers)
+	}
+	engine, ok := e.engine.(buildRegistryEngine)
+	if !ok {
+		return hostingbuild.Result{}, errors.New("build registry engine unavailable")
 	}
 	return engine.BuildWithRegistryCredential(ctx, request, output.Sink, provider)
 }

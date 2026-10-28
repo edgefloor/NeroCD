@@ -113,7 +113,13 @@ func (e *Engine) BuildWithOutput(parent context.Context, r Request, sink OutputS
 
 // BuildWithRegistryCredential supplies fresh authentication separately from immutable request identity.
 // Retained receipt replay never invokes provider.
-func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, sink OutputSink, provider RegistryCredentialProvider) (result Result, retErr error) {
+func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, sink OutputSink, provider RegistryCredentialProvider) (Result, error) {
+	return e.BuildWithMaterials(parent, r, sink, BuildMaterialProviders{Registry: provider})
+}
+
+// BuildWithMaterials supplies protected material only after retained receipt lookup.
+// Both providers run before any fresh engine output and never enter request identity.
+func (e *Engine) BuildWithMaterials(parent context.Context, r Request, sink OutputSink, providers BuildMaterialProviders) (result Result, retErr error) {
 	r = ownedBuildRequest(r)
 	if err := r.validate(parent); err != nil {
 		return result, err
@@ -169,11 +175,11 @@ func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, 
 	if err = os.WriteFile(filepath.Join(dir, "docker", "config.json"), []byte("{}"), 0600); err != nil {
 		return result, err
 	}
-	if r.BuildRegistry != nil {
+	if r.BuildRegistry != nil || len(r.BuildSecrets) > 0 {
 		// Installed immediately after config creation, before any material is delivered.
 		defer func() {
-			if cleanupErr := removeBuildRegistryConfig(dir); cleanupErr != nil {
-				retErr = errors.Join(ErrCleanupUnconfirmed, errors.New("build registry config cleanup failed"))
+			if cleanupErr := errors.Join(removeBuildRegistryConfig(dir), removeBuildSecrets(dir)); cleanupErr != nil {
+				retErr = errors.Join(retErr, ErrCleanupUnconfirmed, errors.New("protected build material cleanup failed"))
 			}
 			if retErr != nil {
 				held := errors.Is(retErr, ErrCleanupUnconfirmed)
@@ -191,11 +197,21 @@ func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, 
 				}
 			}
 		}()
-		if provider == nil {
-			return result, errors.New("build registry provider unavailable")
+		if r.BuildRegistry != nil {
+			if providers.Registry == nil {
+				return result, errors.New("build registry provider unavailable")
+			}
+			if err = writeBuildRegistryConfig(ctx, dir, providers.Registry); err != nil {
+				return result, err
+			}
 		}
-		if err = writeBuildRegistryConfig(ctx, dir, provider); err != nil {
-			return result, err
+		if len(r.BuildSecrets) > 0 {
+			if providers.Secrets == nil {
+				return result, errors.New("build secrets provider unavailable")
+			}
+			if err = writeBuildSecrets(ctx, dir, r.BuildSecrets, providers.Secrets); err != nil {
+				return result, err
+			}
 		}
 	}
 	if err = e.daemon(ctx, dir, r.DaemonID); err != nil {
@@ -214,6 +230,13 @@ func (e *Engine) BuildWithRegistryCredential(parent context.Context, r Request, 
 	}
 	if r.InjectBuildArgs {
 		if err = injectDockerfileBuildArgs(ctx, r, source); err != nil {
+			return result, err
+		}
+	}
+	if len(r.BuildSecrets) > 0 {
+		if err = transformPreparedDockerfile(ctx, r, source, func(ctx context.Context, raw []byte, limit int64) ([]byte, error) {
+			return dockerfileSecretMounts(ctx, raw, r.BuildSecrets, limit)
+		}); err != nil {
 			return result, err
 		}
 	}
@@ -583,6 +606,7 @@ func orderedBuildArguments(args map[string]string) []string {
 }
 
 func ownedBuildRequest(r Request) Request {
+	r.BuildSecrets = slices.Clone(r.BuildSecrets)
 	if r.BuildRegistry != nil {
 		ref := *r.BuildRegistry
 		r.BuildRegistry = &ref
@@ -596,6 +620,9 @@ func ownedBuildRequest(r Request) Request {
 
 func (r Request) buildxArguments(builder, frontend, source, filename, export string) []string {
 	buildArgs := []string{"build", "--no-cache", "--builder", builder, "--platform", r.Platform, "--provenance=false", "--sbom=false", "--progress=plain", "--network=default", "--build-arg", "BUILDKIT_SYNTAX=" + frontend, "--file", filepath.Join(source, filename), "--output", "type=docker,oci-mediatypes=true,dest=" + export + ",compression=gzip,force-compression=true", source}
+	for _, secret := range r.BuildSecrets {
+		buildArgs = append(buildArgs[:len(buildArgs)-1], "--secret", buildSecretArgument(secret.Name, filepath.Join(filepath.Dir(source), "build-secrets", secret.Name)), source)
+	}
 	for _, argument := range orderedBuildArguments(r.BuildArgs) {
 		buildArgs = append(buildArgs[:len(buildArgs)-1], "--build-arg", argument, source)
 	}

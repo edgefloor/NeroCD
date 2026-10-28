@@ -112,6 +112,11 @@ func parseHostingStackBuild(node *yaml.Node, settings HostingBuildSettings) (*Ho
 	if err != nil {
 		return nil, err
 	}
+	for _, secret := range settings.BuildSecrets {
+		if _, collision := args[secret.Name]; collision {
+			return nil, errors.New("compose public argument collides with build secret")
+		}
+	}
 	return &HostingStackBuild{Context: resolved, Dockerfile: dockerfile, Target: target, Args: args}, nil
 }
 

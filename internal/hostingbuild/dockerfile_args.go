@@ -15,7 +15,15 @@ import (
 
 // injectDockerfileBuildArgs changes only the private staged copy. The context
 // digest continues to identify original input; the request binds this transform.
-func injectDockerfileBuildArgs(ctx context.Context, r Request, source string) (retErr error) {
+func injectDockerfileBuildArgs(ctx context.Context, r Request, source string) error {
+	return transformPreparedDockerfile(ctx, r, source, func(ctx context.Context, raw []byte, limit int64) ([]byte, error) {
+		return dockerfileArgumentDeclarations(ctx, raw, r.BuildArgs, limit)
+	})
+}
+
+// transformPreparedDockerfile applies a bounded transform to the private staged
+// regular file. Original source identity and source checkout remain unchanged.
+func transformPreparedDockerfile(ctx context.Context, r Request, source string, transform func(context.Context, []byte, int64) ([]byte, error)) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -52,7 +60,7 @@ func injectDockerfileBuildArgs(ctx context.Context, r Request, source string) (r
 	if int64(len(original)) > limit {
 		return errors.New("dockerfile exceeds injection budget")
 	}
-	transformed, err := dockerfileArgumentDeclarations(ctx, original, r.BuildArgs, limit)
+	transformed, err := transform(ctx, original, limit)
 	if err != nil {
 		return err
 	}

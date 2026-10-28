@@ -18,6 +18,9 @@ var buildArgNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 var targetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 func (r Request) validateSettings() error {
+	if err := validateBuildSecretReferences(r); err != nil {
+		return err
+	}
 	if r.InjectBuildArgs && r.Strategy != Dockerfile {
 		return errors.New("ARG injection requires Dockerfile strategy")
 	}

@@ -111,7 +111,7 @@ func removeBuildRegistryConfig(dir string) error {
 	return syncDir(filepath.Join(dir, "docker"))
 }
 
-// ScrubRegistryCredentials removes only fixed credential files from private engine
+// ScrubRegistryCredentials removes fixed registry and build-secret files from private engine
 // build directories. It runs under the engine lock before replay or new effects.
 func ScrubRegistryCredentials(state string) error {
 	root, err := os.OpenRoot(state)
@@ -129,6 +129,10 @@ func ScrubRegistryCredentials(state string) error {
 		}
 		build, err := root.OpenRoot(entry.Name())
 		if err != nil {
+			return ErrCleanupUnconfirmed
+		}
+		if err = removeBuildSecrets(filepath.Join(state, entry.Name())); err != nil {
+			_ = build.Close()
 			return ErrCleanupUnconfirmed
 		}
 		docker, err := build.OpenRoot("docker")
