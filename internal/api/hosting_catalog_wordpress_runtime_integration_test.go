@@ -147,7 +147,12 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			if e != nil {
 				t.Logf("WordPress failed HTTPS trace kind=%s started=%s finished=%s elapsed_ms=%d connection=%t first_reused=%t first_was_idle=%t first_idle_ms=%d tls_done=%t wrote=%t wrote_failed=%t first_byte=%t", kind, requestStarted.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(requestStarted).Milliseconds(), gotConnection.Load(), reused.Load(), wasIdle.Load(), time.Duration(idleNanoseconds.Load()).Milliseconds(), tlsDone.Load(), wrote.Load(), wroteFailed.Load(), firstByte.Load())
 				var controls sync.WaitGroup
-				controls.Add(3)
+				controls.Add(4)
+				profileContext, cancelProfile := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancelProfile()
+				freshWritten, freshDone := make(chan struct{}), make(chan struct{})
+				var signalFreshWritten sync.Once
+				var freshProfileFirstByte atomic.Bool
 				beginControls := make(chan struct{})
 				go func() {
 					defer controls.Done()
@@ -212,11 +217,150 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 						t.Log("WordPress failure proxy expected_profile_available=false")
 					}
 				}()
+
+				go func() {
+					defer controls.Done()
+					<-beginControls
+					started := time.Now()
+					category := "unavailable"
+					defer func() {
+						pending := true
+						select {
+						case <-freshDone:
+							pending = false
+						default:
+						}
+						t.Logf("WordPress private proxy profile category=%s started=%s finished=%s elapsed_ms=%d fresh_pending=%t fresh_first_byte=%t", category, started.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(started).Milliseconds(), pending, freshProfileFirstByte.Load())
+					}()
+					select {
+					case <-freshWritten:
+					case <-freshDone:
+						category = "fresh_completed"
+						return
+					case <-profileContext.Done():
+						category = "deadline"
+						return
+					}
+					timer := time.NewTimer(300 * time.Millisecond)
+					defer timer.Stop()
+					select {
+					case <-timer.C:
+					case <-freshDone:
+						category = "fresh_completed"
+						return
+					case <-profileContext.Done():
+						category = "deadline"
+						return
+					}
+					select {
+					case <-freshDone:
+						category = "fresh_completed"
+						return
+					default:
+					}
+					if freshProfileFirstByte.Load() {
+						category = "fresh_first_byte"
+						return
+					}
+					profile, profileErr := storageRuntimeProxyProfileFor(f.root, f.proxyCleanupID, f.serverID, f.destinationID, "runner_storage_runtime_fixture", f.proxyCleanupDaemon)
+					if profileErr != nil || sourceProxy.Result == nil || !storageRuntimeContainerID.MatchString(sourceProxy.Result.ContainerID) {
+						category = "profile_unavailable"
+						return
+					}
+					command := func(args ...string) ([]byte, error) {
+						cmd := exec.CommandContext(profileContext, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...)
+						cmd.WaitDelay = time.Second
+						output, err := cmd.StdoutPipe()
+						if err != nil {
+							return nil, err
+						}
+						if err = cmd.Start(); err != nil {
+							return nil, err
+						}
+						raw, readErr := io.ReadAll(io.LimitReader(output, (64<<10)+1))
+						_ = output.Close()
+						waitErr := cmd.Wait()
+						if readErr != nil {
+							return nil, readErr
+						}
+						if waitErr != nil {
+							return nil, waitErr
+						}
+						if len(raw) > 64<<10 {
+							return nil, fmt.Errorf("bounded proxy inspection")
+						}
+						return raw, nil
+					}
+					daemon, daemonErr := command("info", "--format", "{{.ID}}")
+					image, imageErr := command("image", "inspect", profile.image, "--format", "{{.Id}}")
+					raw, inspectErr := command("container", "inspect", sourceProxy.Result.ContainerID, "--format", "{{json .}}")
+					defer clear(raw)
+					if daemonErr != nil || imageErr != nil || inspectErr != nil || strings.TrimSpace(string(daemon)) != profile.daemon {
+						category = "ownership_unavailable"
+						return
+					}
+					owned, ownedErr := storageRuntimeCheckProxy(raw, profile, sourceProxy.Result.ContainerID, strings.TrimSpace(string(image)))
+					if ownedErr != nil || !owned.State.Running {
+						category = "ownership_unavailable"
+						return
+					}
+					select {
+					case <-freshDone:
+						category = "fresh_completed"
+						return
+					default:
+					}
+					if freshProfileFirstByte.Load() {
+						category = "fresh_first_byte"
+						return
+					}
+					profileTransport := &http.Transport{Proxy: nil}
+					defer profileTransport.CloseIdleConnections()
+					profileClient := &http.Client{Transport: profileTransport, Timeout: time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+					request, requestErr := http.NewRequestWithContext(profileContext, http.MethodGet, "http://127.0.0.1:19080/debug/pprof/goroutine?debug=2", nil)
+					if requestErr != nil {
+						category = "request_construction"
+						return
+					}
+					response, profileErr := profileClient.Do(request)
+					if profileErr != nil {
+						category = "request_unavailable"
+						return
+					}
+					body, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+					closeErr := response.Body.Close()
+					defer clear(body)
+					if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+						category = "response_unavailable"
+						return
+					}
+					truncated := len(body) > 2<<20
+					if truncated {
+						body = body[:2<<20]
+					}
+					file, fileErr := os.OpenFile("/fixture/wordpress-proxy-goroutines.private", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+					if fileErr != nil {
+						category = "private_file_unavailable"
+						return
+					}
+					_, writeErr := file.Write(body)
+					fileCloseErr := file.Close()
+					if writeErr != nil || fileCloseErr != nil {
+						_ = os.Remove("/fixture/wordpress-proxy-goroutines.private")
+						category = "private_write_failed"
+						return
+					}
+					category = "captured"
+					t.Logf("WordPress private proxy profile bytes=%d sha256=%x truncated=%t", len(body), sha256.Sum256(body), truncated)
+				}()
 				for _, direct := range []bool{false, true} {
 					go func() {
 						defer controls.Done()
 						<-beginControls
 						started := time.Now()
+						if !direct {
+							defer close(freshDone)
+						}
 						controlTransport := transport.Clone()
 						controlURL, controlKind := url, "fresh_tls"
 						if direct {
@@ -241,9 +385,14 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 						var connected, connectFailed, handshake, handshakeFailed, firstByte atomic.Bool
 						if !direct {
 							controlRequest = controlRequest.WithContext(httptrace.WithClientTrace(controlRequest.Context(), &httptrace.ClientTrace{
-								ConnectDone:          func(_, _ string, err error) { connected.Store(true); connectFailed.Store(err != nil) },
-								TLSHandshakeDone:     func(_ tls.ConnectionState, err error) { handshake.Store(true); handshakeFailed.Store(err != nil) },
-								GotFirstResponseByte: func() { firstByte.Store(true) },
+								ConnectDone:      func(_, _ string, err error) { connected.Store(true); connectFailed.Store(err != nil) },
+								TLSHandshakeDone: func(_ tls.ConnectionState, err error) { handshake.Store(true); handshakeFailed.Store(err != nil) },
+								WroteRequest: func(info httptrace.WroteRequestInfo) {
+									if info.Err == nil {
+										signalFreshWritten.Do(func() { close(freshWritten) })
+									}
+								},
+								GotFirstResponseByte: func() { firstByte.Store(true); freshProfileFirstByte.Store(true) },
 							}))
 						}
 						response, controlErr := control.Do(controlRequest)
@@ -271,6 +420,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 				}
 				close(beginControls)
 				controls.Wait()
+				cancelProfile()
 				t.Fatalf("WordPress trusted HTTPS failed kind=%s category=%s", kind, wordpressRuntimeHTTPErrorCategory(e))
 			}
 			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {

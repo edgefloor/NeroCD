@@ -150,7 +150,7 @@ func (e *Engine) staticArgs() []string {
 	}
 	args := []string{"--global.checknewversion=false", "--global.sendanonymoususage=false", "--api=true", "--api.dashboard=false", "--api.insecure=true", fmt.Sprintf("--entrypoints.traefik.address=127.0.0.1:%d", e.settings.ManagementPort), "--entrypoints.web.address=:80", "--entrypoints.websecure.address=:443", "--providers.file.directory=/dynamic", "--providers.file.watch=true", "--providers.providersthrottleduration=100ms", "--certificatesresolvers.managed.acme.email=" + e.settings.Email, "--certificatesresolvers.managed.acme.storage=/certificates/acme.json", "--certificatesresolvers.managed.acme.caserver=" + ca, "--certificatesresolvers.managed.acme.httpchallenge.entrypoint=web", "--log.level=ERROR"}
 	if e.fixtureCA != "" {
-		args = append(args, "--certificatesresolvers.managed.acme.certificatesduration=1")
+		args = append(args, "--certificatesresolvers.managed.acme.certificatesduration=1", "--api.debug=true")
 	}
 	return args
 }

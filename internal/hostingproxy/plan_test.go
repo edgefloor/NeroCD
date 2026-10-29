@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -225,5 +226,22 @@ func TestEmptyGenerationOmitsStandaloneServicesAndKeepsMarker(t *testing.T) {
 		if len(routers) != 1 || len(middlewares) != 1 || routers[plan.prefix()+"-generation"] == nil || middlewares[plan.prefix()] == nil {
 			t.Fatal("empty generation lost its loaded generation proof")
 		}
+	}
+}
+
+func TestStaticArgsDebugIsFixtureOnly(t *testing.T) {
+	engine := &Engine{settings: Settings{CA: LetsEncryptStaging, ManagementPort: 19080}}
+	production := engine.staticArgs()
+	if slices.Contains(production, "--api.debug=true") {
+		t.Fatal("production enables debug")
+	}
+	engine.fixtureCA = "https://localhost:14000/dir"
+	fixture := engine.staticArgs()
+	if !slices.Contains(fixture, "--api.debug=true") || !slices.Contains(fixture, "--certificatesresolvers.managed.acme.caserver="+engine.fixtureCA) {
+		t.Fatal("fixture debug profile missing")
+	}
+	engine.fixtureCA = ""
+	if !reflect.DeepEqual(engine.staticArgs(), production) {
+		t.Fatal("production arguments changed")
 	}
 }
