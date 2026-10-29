@@ -101,8 +101,10 @@ WordPress administrator credentials. After deployment, add the matching HTTPS
 route and complete WordPress's own site and administrator setup in the application.
 
 The MySQL service belongs to this Compose stack. Native MySQL resource backup
-controls do not apply to it. WordPress backup, restore, upgrades, and migration
-remain outside this template's qualified workflow.
+controls do not apply to it. Use the application's component controls for
+[local MySQL backup and separate-stack database-only import](hosting-database-backups.md#compose-mysql-qualification).
+This does not restore WordPress media or rewrite URLs. Component schedules,
+remote copies, retention, upgrades and migration remain outside the qualified workflow.
 
 ## Install and deploy
 
@@ -590,3 +592,8 @@ Linux arm64 destination and test-CA HTTPS. It does not establish other
 architectures, public ACME, WordPress backup, catalog upgrades, plugin/theme
 administration, cross-host recovery, or automatic data rollback. Earlier catalog
 qualifications retain their own scope.
+
+The later [Compose MySQL database qualification](hosting-database-backups.md#compose-mysql-qualification)
+at `44f9b1d5` adds local SQL backup/import and held partial-import safety with
+current source post/PNG, redeployment and Stop/Start proof. It preserves the
+historical core qualification above rather than reusing its terminal marker.

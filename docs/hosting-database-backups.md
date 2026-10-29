@@ -68,6 +68,26 @@ into a separate target. Database archives do not restore application uploads.
 This workflow does not import arbitrary uploaded SQL, overwrite
 a live database, upgrade an engine, or move data across destinations.
 
+## Compose MySQL local backup and import
+
+For the pinned WordPress/MySQL stack, use the application's **Database backups**
+panel and select the healthy MySQL component. The runner requires
+`hosting_compose_mysql_backup_v1`; this is separate from native MySQL resource
+backups. The saved version is `mysql.compose-logical-local.v1`, with `mysql_sql`
+format and the pinned MySQL 8.4.13 profile.
+
+Select a completed local backup and a distinct, healthy stack's MySQL component
+on the same authorized destination. Review the target deployment and resource
+generation, then explicitly acknowledge replacement before importing. A changed
+target invalidates unsubmitted consent. A submitted retry keeps the original
+request and target evidence.
+
+Import changes the target database only. It does not restore WordPress files or
+rewrite the site's URL. Once an import is attempted, a failed or uncertain outcome
+retains target ownership and stopped writers; MySQL does not provide the PostgreSQL adapter's transactional
+rollback guarantee. Component schedules, remote copies, remote restore and
+retention remain unsupported. See the [qualified scope](#compose-mysql-qualification).
+
 ## Limits and local retention
 
 Protected server options `--database-backup-max-bytes` and
@@ -91,7 +111,7 @@ the existing content-addressed artifact store. Publication checks digest, size,
 owner, file type and link count and does not overwrite an existing artifact.
 A completed staging dump is retained if publication fails. The public history
 records `publication_failed`; this is a local publication failure, not an S3
-error. For PostgreSQL, configure copy cleanup separately through the
+error. For native PostgreSQL and MySQL, configure copy cleanup through the
 [retention policy](hosting-database-backup-retention.md).
 Operators must preserve the runner's protected state and storage; a local backup
 is not protection against loss of that destination.
@@ -183,3 +203,43 @@ Native MySQL now has a separate [local and remote retention qualification](hosti
 [Native MySQL schedules](hosting-database-backup-schedules.md#native-mysql-schedule-qualification)
 have separate qualification at `8d85d70b`, including restore from the exact
 scheduled artifact. The earlier immediate-backup evidence above retains its scope.
+
+## Compose MySQL qualification
+
+At `44f9b1d5` on 2026-10-29, the catalog WordPress/MySQL workflow completed a local
+SQL backup and import into a separate stack. Target snapshot reads and independent
+writes verified database isolation through the exact target HTTP endpoint using
+the source Host context. Source posts and the complete uploaded PNG remained
+available through trusted fixture-CA HTTPS, redeployment and Stop/Start. This does
+not establish target cross-hostname HTTPS, URL migration or media restoration.
+
+Corrupt archive rejection occurred before SQL effects. It does not promise
+uninterrupted target writers. A separate failure dropped a target table and then
+denied CREATE; the exact target's writers stayed stopped and ownership stayed
+held. The runner exited naturally with code 1, retaining the matching intent and
+uncertain journal entries. No additional run was acquired. No physical restart or
+reimport was attempted; earlier replay tests retain their own scope. Current
+credential scans and responsive browser controls at 320, 390, 430 and 1280 pixels
+passed.
+
+The selected test passed in 177.21 seconds; the unchanged gate completed in
+269.441 seconds with all four required markers. The [evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/44f9b1d5836fa589f5f82da70c15494aceed80bc/evidence-index.json)
+retains all 17 attempts, including earlier setup, browser and HTTPS failures,
+explicit diagnostic cancellation, exact source associations and cleanup. Owned
+containers and their Docker volume were removed. Host container/volume, image,
+build-cache and user-instance baselines were preserved.
+
+The proxy repair binds a named 10-second HTTP idle transport to each generation,
+with exact configuration/readback and historical-hash recovery checks. A focused
+109.095-second diagnostic reproduced failure on a new connection left unused for
+17 seconds. The separate 57.732-second standalone transport proof failed before
+retaining its first arm, so it does not independently prove expiry or a
+13-second active response. Implementation and fixture-repair exclusive durations
+were not measured; command and review intervals remain separate in the index.
+Inherited full-lint failures remain explicit: seven native findings and one Linux
+finding. Passing changed-code lint does not replace those results.
+
+Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
+Compose MySQL schedules, remote copies/restore, retention, engine upgrades,
+credential rotation and cross-destination recovery remain open. Historical native
+MySQL and core WordPress qualifications retain their original limits.
