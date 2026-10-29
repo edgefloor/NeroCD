@@ -3,6 +3,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/errors";
+import { hostingBindingQuery } from "../api/hosting-deployments";
 import { listResources, type Resource } from "../api/hosting";
 import type { BackupRecoveryLocator } from "../api/hosting-backup-notifications";
 import {
@@ -181,7 +182,6 @@ function DatabaseBackupsPanel(props: Parameters<typeof useDatabaseBackups>[0]) {
             key={v.id}
             v={v}
             recovery={recovery}
-            database={database}
             scope={scope}
             owner={owner}
             blocked={blocked}
@@ -433,7 +433,7 @@ function BackupUploadStatus({
   transfers,
   unavailable,
   recovery,
-}: Props & {
+}: Pick<Props, "scope" | "owner" | "blocked" | "onDenied" | "recovery"> & {
   backup: string;
   dumpState: string;
   transfers: DatabaseBackupTransfer[];
@@ -656,7 +656,12 @@ function ComposeDatabaseBackups(
     attempt,
     pending,
     owner,
-    setDenied,
+    retireComposeAccess,
+    destinations,
+    remoteTarget,
+    setRemoteTarget,
+    transfers,
+    destinationReady,
   } = useComposeDatabaseBackups(props);
 
   if (denied || revoked)
@@ -668,7 +673,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. MySQL component backups and imports are local only; retention is unavailable. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. Imports require a local archive; retention is unavailable. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
@@ -695,9 +700,19 @@ function ComposeDatabaseBackups(
             ))}
         </select>
       </label>
+      <BackupDestinationSelect
+        label="Immediate backup destination"
+        value={remoteTarget}
+        onChange={(value) => {
+          if (!locked) setRemoteTarget(value);
+        }}
+        destinations={destinations}
+        disabled={!owner || locked || !destinationReady}
+      />
       <Button
         disabled={
           !ready ||
+          !validSelectedBackupDestination(remoteTarget, destinations) ||
           !source?.operation_id ||
           !source.components.some(
             (c) => c.component === component && c.eligible,
@@ -712,6 +727,7 @@ function ComposeDatabaseBackups(
                 expected_resource_generation: source.resource_generation,
                 component,
                 expected_deployed_operation_id: source.operation_id,
+                ...(remoteTarget ? { remote_target: remoteTarget } : {}),
               },
             });
         }}
@@ -767,11 +783,25 @@ function ComposeDatabaseBackups(
         Refresh database backup history
       </Button>
       {history.data?.map((v) => (
-        <p key={v.id} role="status">
-          {v.id} · {v.mode} · {v.state}
-          {v.ownership_held ? " · mutation ownership retained" : ""}
-          {v.failure_code ? ` · ${v.failure_code}` : ""}
-        </p>
+        <div key={v.id} className="min-w-0 space-y-1 break-all">
+          <p role="status">
+            {v.id} · {v.mode} · {v.state}
+            {v.ownership_held ? " · mutation ownership retained" : ""}
+            {v.failure_code ? ` · ${v.failure_code}` : ""}
+          </p>
+          {v.mode === "backup" ? (
+            <BackupUploadStatus
+              scope={scope}
+              owner={owner}
+              blocked={locked}
+              onDenied={retireComposeAccess}
+              backup={v.id}
+              dumpState={v.state}
+              transfers={transfers.flatMap(t => t.data ?? []).filter(t => t.mode === "upload" && t.backup_id === v.id)}
+              unavailable={transfers[(history.data ?? []).filter(t => t.mode === "backup").findIndex(t => t.id === v.id)]?.isError ?? false}
+            />
+          ) : null}
+        </div>
       ))}
       {error ? <p role="alert">{databaseError(error)}</p> : null}
       {error && attempt ? (
@@ -790,7 +820,7 @@ function ComposeDatabaseBackups(
         resource={resource}
         scope={scope}
         owner={owner}
-        onDenied={() => setDenied(true)}
+        onDenied={retireComposeAccess}
       />
     </section>
   );
@@ -807,6 +837,7 @@ function useComposeDatabaseBackups({
   const client = useQueryClient();
   const context = { resource };
   const [component, setComponent] = useState("");
+  const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [backup, setBackup] = useState("");
   const [target, setTarget] = useState("");
   const [targetComponent, setTargetComponent] = useState("");
@@ -814,6 +845,24 @@ function useComposeDatabaseBackups({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
   const [denied, setDenied] = useState(false);
+  const bindingOptions = hostingBindingQuery(scope.project, resource.id, scope.actor);
+  const binding = useQuery({
+    ...bindingOptions,
+    enabled: !denied,
+    queryFn: (query) => readBackupMetadata(
+      query.signal,
+      () => bindingOptions.queryFn!(query),
+      retireComposeAccess,
+      [401, 403],
+    ),
+  });
+  const destinations = useDatabaseBackupDestinations({
+    component: binding.data && !binding.isFetching && !binding.isError ? { destination_id: binding.data.destination_id } : undefined,
+    scope,
+    owner,
+    blocked: denied || binding.isFetching || binding.isError || !binding.data,
+    onDenied: retireComposeAccess,
+  });
   const [attempt, setAttempt] = useState<Attempt>();
   const lifetime = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -853,6 +902,22 @@ function useComposeDatabaseBackups({
       )
         ? 3000
         : false,
+  });
+  const transfers = useQueries({
+    queries: (history.data ?? []).filter(v => v.mode === "backup").map(v => ({
+      queryKey: databaseBackupTransfersKey(scope, v.id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => readBackupMetadata(
+        signal,
+        () => listDatabaseBackupTransfers(scope, v.id, signal),
+        retireComposeAccess,
+        [401, 403],
+      ),
+      enabled: !denied,
+      retry: false,
+      refetchInterval: (query: { state: { data?: DatabaseBackupTransfer[] } }) =>
+        (v.remote_target && v.state === "succeeded" && v.blob && !query.state.data?.some(t => t.mode === "upload")) ||
+        query.state.data?.some(t => ["queued", "dispatched", "applying"].includes(t.state)) ? 3000 : false,
+    })),
   });
   const applications = useQuery({
     queryKey: ["database-import-applications", scope],
@@ -894,12 +959,17 @@ function useComposeDatabaseBackups({
     databaseDenied(targets.error) ||
     databaseDenied(history.error) ||
     databaseDenied(applications.error) ||
-    databaseDenied(targetEvidence.error);
+    databaseDenied(targetEvidence.error) ||
+    destinations.denied ||
+    databaseDenied(binding.error) ||
+    transfers.some(t => databaseDenied(t.error));
   function retireComposeAccess() {
     setDenied(true);
     lifetime.current?.abort();
     setAttempt(undefined);
+    setRemoteTarget(undefined);
     client.removeQueries({ queryKey: databaseBackupsKey(scope, resource.id) });
+    client.removeQueries({ queryKey: ["database-backup-transfers", scope.actor, scope.project] });
   }
   const source = settledDatabaseComponents(targets);
   const destination = settledDatabaseComponents(targetEvidence);
@@ -1008,7 +1078,12 @@ function useComposeDatabaseBackups({
     attempt,
     pending,
     owner,
-    setDenied,
+    retireComposeAccess,
+    destinations,
+    remoteTarget,
+    setRemoteTarget,
+    transfers,
+    destinationReady: Boolean(binding.data) && !binding.isFetching && !binding.isError,
   };
 }
 
@@ -1102,7 +1177,6 @@ function DatabaseBackupRequests({
 function DatabaseBackupRecord({
   v,
   recovery,
-  database,
   scope,
   owner,
   blocked,
@@ -1115,7 +1189,6 @@ function DatabaseBackupRecord({
   recovery:
     | import("@/api/hosting-backup-notifications").BackupRecoveryLocator
     | undefined;
-  database: import("@/api/hosting-databases").HostingDatabase;
   scope: import("@/api/hosting-databases").DatabaseScope;
   owner: boolean;
   blocked: boolean;
@@ -1171,7 +1244,6 @@ function DatabaseBackupRecord({
       {v.failure_code ? <p>Recorded reason: {v.failure_code}</p> : null}
       {v.mode === "backup" ? (
         <BackupUploadStatus
-          database={database}
           scope={scope}
           owner={owner}
           blocked={blocked}

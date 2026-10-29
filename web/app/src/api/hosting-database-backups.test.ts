@@ -180,10 +180,10 @@ test("MySQL remote restore preserves the exact uploaded artifact reference and r
 });
 
 
-test("MySQL component archives bind SQL format, deployed evidence and local component scope", async () => {
+test("MySQL component archives bind SQL format, deployed evidence and component scope", async () => {
  const value={...operation,version:"mysql.compose-logical-local.v1",source_component:"mysql",source_deployed_operation_id:"hop_current",blob:{...operation.blob,format:"mysql_sql"}};
  expect(parseDatabaseBackup(value,scope,db)).toEqual(value);
- for(const patch of [{source_component:undefined},{source_deployed_operation_id:undefined},{blob:operation.blob},{remote_target:{target_id:"storage",revision:1}}]) expect(()=>parseDatabaseBackup({...value,...patch},scope,db)).toThrow();
+ for(const patch of [{source_component:undefined},{source_deployed_operation_id:undefined},{blob:operation.blob}]) expect(()=>parseDatabaseBackup({...value,...patch},scope,db)).toThrow();
  for(const engine of ["mysql","postgresql"] as const) expect(()=>parseDatabaseBackup(value,scope,{...db,engine})).toThrow();
  const input={request_id:"request",expected_resource_generation:1,component:"mysql",expected_deployed_operation_id:"hop_current"};
  vi.mocked(request).mockResolvedValue(value);
@@ -212,4 +212,18 @@ test("PostgreSQL component remote backup and restore preserve exact admitted req
  vi.mocked(request).mockResolvedValue({...component,id:"restored",mode:"restore",target_resource_id:"target",target_component:"postgresql",target_deployed_operation_id:"hop_target"});
  expect((await restoreDatabaseBackup(scope,db,"backup",restoreInput,new AbortController().signal)).target_component).toBe("postgresql");
  expect(request).toHaveBeenLastCalledWith("/api/v1/database-backups/backup/restores",expect.objectContaining({method:"POST",body:restoreInput,requestID:"restore_remote"}));
+});
+
+
+test("MySQL component remote backup preserves the admitted target revision and engine fences", async () => {
+ const remote_target = { target_id: "storage", revision: 3 };
+ const value = { ...operation, version: "mysql.compose-logical-local.v1", source_component: "mysql", source_deployed_operation_id: "hop_source", blob: { ...operation.blob, format: "mysql_sql" }, remote_target };
+ const input = { request_id: "mysql_remote", expected_resource_generation: 2, component: "mysql", expected_deployed_operation_id: "hop_source", remote_target };
+ vi.mocked(request).mockResolvedValue(value);
+ expect((await requestDatabaseBackup(scope, db, input, new AbortController().signal)).remote_target).toEqual(remote_target);
+ expect(request).toHaveBeenLastCalledWith("/api/v1/resources/db/database-backups", expect.objectContaining({ method: "POST", body: input, requestID: "mysql_remote" }));
+ for (const patch of [{ remote_target: { ...remote_target, revision: 4 } }, { source_component: "other" }, { blob: operation.blob }]) {
+  vi.mocked(request).mockResolvedValue({ ...value, ...patch });
+  await expect(requestDatabaseBackup(scope, db, input, new AbortController().signal)).rejects.toThrow();
+ }
 });

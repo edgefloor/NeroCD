@@ -25,6 +25,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as hosting from "../api/hosting";
+import * as destinations from "../api/destinations";
+vi.mock("../api/destinations", async original => ({ ...(await original<typeof import("../api/destinations")>()), getResourceBinding: vi.fn() }));
 vi.mock("../api/hosting", async original => ({...(await original<typeof import("../api/hosting")>()), listResources:vi.fn()}));
 vi.mock("./ResourceDatabase",()=>({useDatabaseAccess:()=>({ready:true,refreshing:false,viewer:true,owner:true,scope:{actor:"owner",project:"project",environment:"env"}})}));
 import { DatabaseBackups, ResourceComposeDatabaseBackups } from "./DatabaseBackups";
@@ -83,6 +85,7 @@ const completed: DatabaseBackup = {
   },
 };
 beforeEach(() => {
+  vi.mocked(destinations.getResourceBinding).mockResolvedValue({ id: "binding", resource_id: "db", destination_id: "runner", runtime_namespace: "test", created_by: "owner", created_at: "2026-10-25T12:00:00Z" });
   vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
   vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([]);
   vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([]);
@@ -688,4 +691,86 @@ test.each(["postgresql", "mysql"] as const)("Compose %s metadata refresh retires
  await waitFor(()=>expect(api.restoreDatabaseBackup).toHaveBeenCalledTimes(2));
  expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[1]![3]).toBe(first);
  expect(first.component_target).toMatchObject({expected_deployed_operation_id:original.operation_id,expected_resource_generation:original.resource_generation});
+});
+
+test("Compose MySQL uses a currently validated remote destination and freezes it after an ambiguous backup response", async () => {
+ remoteFixture();
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ vi.mocked(api.requestDatabaseBackup).mockRejectedValueOnce(new Error("response lost"));
+ const source = await screen.findByRole("combobox", { name: "Database backup component" });
+ await screen.findByRole("option", { name: "mysql · mysql 8" });
+ fireEvent.change(source, { target: { value: "mysql" } });
+ const destination = screen.getByRole("combobox", { name: "Immediate backup destination" });
+ await screen.findByRole("option", { name: "Daily archive · revision 2" });
+ fireEvent.change(destination, { target: { value: "storage:2" } });
+ fireEvent.click(screen.getByRole("button", { name: "Create logical backup" }));
+ const retry = await screen.findByRole("button", { name: "Retry exact database request" });
+ const first = vi.mocked(api.requestDatabaseBackup).mock.calls[0]![2];
+ expect(first).toEqual({ request_id: expect.any(String), expected_resource_generation: 2, component: "mysql", expected_deployed_operation_id: "hop_source", remote_target: { target_id: "storage", revision: 2 } });
+ expect((destination as HTMLSelectElement).disabled).toBe(true);
+ fireEvent.change(destination, { target: { value: "" } });
+ expect((destination as HTMLSelectElement).value).toBe("storage:2");
+ fireEvent.click(retry);
+ await waitFor(() => expect(api.requestDatabaseBackup).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(api.requestDatabaseBackup).mock.calls[1]![2]).toBe(first);
+});
+
+test.each([{ destination_id: "other" }, { target_revision: 1 }])("Compose MySQL excludes a destination with stale or foreign validation %j", async patch => {
+ remoteFixture();
+ vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([{ ...validation, ...patch }]);
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByRole("option", { name: "mysql · mysql 8" });
+ await waitFor(() => expect(remote.listDatabaseBackupValidations).toHaveBeenCalled());
+ expect(screen.queryByRole("option", { name: "Daily archive · revision 2" })).toBeNull();
+});
+
+test("Compose MySQL preserves successful local backup when upload fails and retries only the exact upload", async () => {
+ const failed = { ...upload, version: "mysql.logical-s3-transfer.v1" as const, state: "failed" as const, failure_code: "access_denied" as const, blob: { ...completed.blob!, format: "mysql_sql" as const } };
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([failed]);
+ vi.mocked(remote.retryDatabaseBackupUpload).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce({ ...failed, id: "retry", state: "queued" });
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByText("Local dump: succeeded. Latest remote upload: failed.");
+ expect(screen.getByText(/The local dump result is unchanged/)).toBeTruthy();
+ fireEvent.click(screen.getByRole("button", { name: "Retry upload for backup" }));
+ const retry = await screen.findByRole("button", { name: "Retry the same upload request" });
+ const first = vi.mocked(remote.retryDatabaseBackupUpload).mock.calls[0]![2];
+ expect(first).toEqual({ request_id: expect.any(String), expected_transfer_id: "upload" });
+ fireEvent.click(retry);
+ await waitFor(() => expect(remote.retryDatabaseBackupUpload).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(remote.retryDatabaseBackupUpload).mock.calls[1]![2]).toBe(first);
+ expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+ expect(screen.queryByRole("combobox", { name: "Restore source" })).toBeNull();
+});
+
+test("Compose remote destinations require a binding for the current resource", async () => {
+ remoteFixture();
+ vi.mocked(destinations.getResourceBinding).mockResolvedValue({ id: "binding", resource_id: "other", destination_id: "runner", runtime_namespace: "test", created_by: "owner", created_at: completed.created_at });
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByRole("option", { name: "mysql · mysql 8" });
+ await waitFor(() => expect(destinations.getResourceBinding).toHaveBeenCalled());
+ expect(screen.queryByRole("option", { name: "Daily archive · revision 2" })).toBeNull();
+ expect(remote.listDatabaseBackupTargets).not.toHaveBeenCalled();
+});
+
+test("Compose remote binding denial retires backup controls", async () => {
+ vi.mocked(destinations.getResourceBinding).mockRejectedValue(new ApiError(403, "forbidden", "Denied"));
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByText("Component database backup access is unavailable.");
+ expect(screen.queryByRole("button", { name: "Create logical backup" })).toBeNull();
+ expect(remote.listDatabaseBackupTargets).not.toHaveBeenCalled();
+});
+
+test("Compose selected remote revision is rejected after destination metadata changes", async () => {
+ remoteFixture();
+ const client = mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByRole("option", { name: "mysql · mysql 8" });
+ fireEvent.change(screen.getByRole("combobox", { name: "Database backup component" }), { target: { value: "mysql" } });
+ await screen.findByRole("option", { name: "Daily archive · revision 2" });
+ fireEvent.change(screen.getByRole("combobox", { name: "Immediate backup destination" }), { target: { value: "storage:2" } });
+ expect((screen.getByRole("button", { name: "Create logical backup" }) as HTMLButtonElement).disabled).toBe(false);
+ vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([{ ...target, revision: 3 }]);
+ await act(async () => { await client.invalidateQueries({ queryKey: remote.databaseBackupTargetsKey(scope) }); });
+ await screen.findByText("Selected destination requires current validation");
+ expect((screen.getByRole("button", { name: "Create logical backup" }) as HTMLButtonElement).disabled).toBe(true);
+ expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
 });

@@ -107,7 +107,6 @@ export function parseDatabaseBackup(
   const componentVersion = v.version === "postgresql.compose-logical-local.v1" || v.version === "mysql.compose-logical-local.v1";
   const mysqlVersion = v.version === "mysql.logical-local.v1" || v.version === "mysql.compose-logical-local.v1";
   if (componentVersion && database.engine) return fail();
-  if (v.version === "mysql.compose-logical-local.v1" && v.remote_target !== undefined) return fail();
   const component = (value: unknown): value is string => typeof value === "string" && /^[a-z][a-z0-9_-]{0,62}$/.test(value);
   if (componentVersion ? !component(v.source_component) || !id(v.source_deployed_operation_id) || (v.mode === "restore" ? !component(v.target_component) || !id(v.target_deployed_operation_id) : v.target_component !== undefined || v.target_deployed_operation_id !== undefined) : [v.source_component, v.source_deployed_operation_id, v.target_component, v.target_deployed_operation_id].some(value => value !== undefined)) return fail();
   if (v.blob !== undefined) {

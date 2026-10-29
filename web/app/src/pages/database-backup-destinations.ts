@@ -21,6 +21,7 @@ import { useState } from "react";
 type Props = {
   database?: HostingDatabase;
   storage?: { resource: { id: string }; destination_id: string };
+  component?: { destination_id: string };
   scope: DatabaseScope;
   owner: boolean;
   blocked: boolean;
@@ -29,6 +30,7 @@ type Props = {
 export function useDatabaseBackupDestinations({
   database,
   storage,
+  component,
   scope,
   blocked,
   onDenied,
@@ -47,7 +49,7 @@ export function useDatabaseBackupDestinations({
     enabled:
       !blocked &&
       !accessRevoked &&
-      (!!storage || (database && ["postgresql", "mysql"].includes(database.engine))),
+      (!!storage || !!component || (database && ["postgresql", "mysql"].includes(database.engine))),
     retry: false,
   });
   const validations = useQueries({
@@ -93,6 +95,7 @@ export function useDatabaseBackupDestinations({
   const eligible = (targets.data ?? []).filter(
     (target, i) =>
       target.enabled &&
+      (!component || (!targets.isFetching && !validations[i]?.isFetching)) &&
       !validations[i]?.isError &&
       validations[i]?.data?.some(
         (v) =>
@@ -100,7 +103,7 @@ export function useDatabaseBackupDestinations({
           v.state === "succeeded" &&
           v.target_revision === target.revision &&
           v.destination_id ===
-            (storage?.destination_id ?? database?.binding?.destination_id),
+            (storage?.destination_id ?? component?.destination_id ?? database?.binding?.destination_id),
       ),
   );
   return {
