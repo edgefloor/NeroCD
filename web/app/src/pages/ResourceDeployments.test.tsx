@@ -704,6 +704,36 @@ test("Compose recorded components distinguish successful init completion from st
   expect(screen.getByText(/Observation complete · public component web/)).toBeTruthy();
 });
 
+test("same selected Compose operation needs detail refresh after history becomes healthy", async () => {
+  let healthy = false;
+  let detailReads = 0;
+  const observed = { ...operation, state: "succeeded", stack_source: { version: "managed-compose.v1", original_hash: "hash", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:1" }] }, result: { outcome: "ready", ready: true, restored: false, uncertain: false, stack: { observation_complete: true, public_component: "web", network_id: "network", volumes: [], components: [{ component: "web", container_id: "web-container", image_id: "web-image", operation_id: "hop_one", running: true, exit_code: 0, health: "healthy" }] } } };
+  composeBackend(false, (url, init) => {
+    if (url.includes("/hosting-operations/")) { detailReads++; return json(healthy ? observed : operation); }
+    if (url.includes("/deployments") && init.method !== "POST") return json(page([healthy ? observed : operation]));
+    return undefined;
+  });
+  setup("maintainer", [], false, compose);
+  await reviewCompose();
+  fireEvent.click(screen.getByRole("button", { name: "Deploy reviewed Compose" }));
+  await screen.findByRole("region", { name: "Deployment operation detail" });
+  await waitFor(() => expect(detailReads).toBeGreaterThan(0));
+  const initialReads = detailReads;
+  expect(screen.queryByRole("region", { name: "Recorded Compose components" })).toBeNull();
+  healthy = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh deployment history" }));
+  await screen.findByText(/^Succeeded ·/);
+  fireEvent.click(screen.getByRole("button", { name: "View operation hop_one" }));
+  await act(async () => { await Promise.resolve(); });
+  expect(detailReads).toBe(initialReads);
+  expect(screen.queryByRole("region", { name: "Recorded Compose components" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh operation" }));
+  await screen.findByRole("region", { name: "Recorded Compose components" });
+  expect(detailReads).toBe(initialReads + 1);
+  expect(screen.getByText(/Observation complete · public component web/)).toBeTruthy();
+  expect(screen.getByText(/Running · health healthy/)).toBeTruthy();
+});
+
 test("uncertain Compose delivery retains its exact request while the server holds competing mutations", async () => {
   let submissions = 0; let held = false;
   const fetch = composeBackend(false, (url, init) => {

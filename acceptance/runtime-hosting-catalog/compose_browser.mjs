@@ -212,14 +212,25 @@ async function wordpressWorkflow(h, initial) {
   await state("deploy");const firstOperation=await deploy(false);await report("deployed",firstOperation);
   await state("healthy");
   const deployments=application.getByRole("region",{name:`Image deployments for ${name}`,exact:true});
+  step="wordpress_healthy_history_refresh";
   await deployments.getByRole("button",{name:"Refresh deployment history",exact:true}).click();
+  step="wordpress_healthy_operation_view";
   await deployments.getByRole("button",{name:`View operation ${firstOperation}`,exact:true}).click();
+  step="wordpress_healthy_operation_refresh";
+  await deployments.getByRole("button",{name:"Refresh operation",exact:true}).click();
   const components=deployments.getByRole("region",{name:"Recorded Compose components",exact:true});
+  step="wordpress_healthy_observation";
   await expect(components).toContainText("Observation complete");
-  for(const component of ["wordpress","mysql"])await expect(components.getByRole("article",{name:`Component ${component}`,exact:true})).toContainText("Running");
+  for(const component of ["wordpress","mysql"]){
+    step="wordpress_healthy_component_"+component;
+    await expect(components.getByRole("article",{name:`Component ${component}`,exact:true})).toContainText("Running");
+  }
   for(const width of [1280,320,390,430]){
+    step="wordpress_healthy_layout_"+width;
     await page.setViewportSize({width,height:900});
-    if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error("WordPress hosting responsive overflow");
+    const layout=await page.evaluate(()=>({viewport:innerWidth,content:document.documentElement.scrollWidth}));
+    if(layout.content>layout.viewport){safe.wordpress_layout_viewport=layout.viewport;safe.wordpress_layout_content=layout.content;throw Error("WordPress hosting responsive overflow");}
+    step="wordpress_healthy_screenshot_"+width;
     await page.screenshot({path:resolve(evidence,`wordpress-hosting-${width}.png`),fullPage:true});
   }
   await page.setViewportSize({width:1280,height:900});await report("healthy",resourceID);
