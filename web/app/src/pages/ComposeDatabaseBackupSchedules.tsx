@@ -7,6 +7,10 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/errors";
+import { hostingBindingQuery } from "../api/hosting-deployments";
+import type { RemoteBackupTarget } from "../api/hosting-database-backup-targets";
+import { BackupDestinationSelect } from "./DatabaseBackupDestinations";
+import { useDatabaseBackupDestinations, validSelectedBackupDestination } from "./database-backup-destinations";
 import type { Resource } from "../api/hosting";
 import {
   databaseBackupSchedulesKey,
@@ -81,6 +85,11 @@ function SchedulePanel(props: Parameters<typeof useComposeSchedule>[0]) {
     setSelected,
     selected,
     occurrences,
+    remoteTarget,
+    setRemoteTarget,
+    destinations,
+    remoteAvailable,
+    bindingReady,
   } = useComposeSchedule(props);
 
   if (denied) return <p role="alert">Backup schedule access is unavailable.</p>;
@@ -94,7 +103,7 @@ function SchedulePanel(props: Parameters<typeof useComposeSchedule>[0]) {
         Save a five-field cron expression or every_minute, hourly, daily,
         weekly, monthly or yearly with an explicit IANA timezone. These
         schedules create local logical archives of PostgreSQL16 or MySQL8 database
-        records. Uploaded files are excluded.
+        records. MySQL schedules can also upload to a validated remote destination. Uploaded files are excluded.
       </p>
       <p>
         Each schedule keeps its database component. Create another schedule to
@@ -121,6 +130,11 @@ function SchedulePanel(props: Parameters<typeof useComposeSchedule>[0]) {
           review={review}
           locked={locked}
           components={components}
+          remoteTarget={remoteTarget}
+          setRemoteTarget={setRemoteTarget}
+          destinations={destinations}
+          remoteAvailable={remoteAvailable}
+          bindingReady={bindingReady}
         />
       ) : (
         <p>
@@ -198,6 +212,7 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
   const componentKey = ["database-backup-components", scope, resource.id];
   const [editing, setEditing] = useState<DatabaseBackupSchedule>();
   const [component, setComponent] = useState("");
+  const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [frequency, setFrequency] = useState("daily");
   const [timezone, setTimezone] = useState("UTC");
   const [enabled, setEnabled] = useState(true);
@@ -251,6 +266,25 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     enabled: owner,
     retry: false,
   });
+  const bindingOptions = hostingBindingQuery(scope.project, resource.id, scope.actor);
+  const binding = useQuery({
+    ...bindingOptions,
+    enabled: owner,
+    queryFn: query => readBackupMetadata(
+      query.signal,
+      () => bindingOptions.queryFn!(query),
+      retireScheduleAccess,
+      [401, 403],
+    ),
+  });
+  const bindingReady = Boolean(binding.data) && !binding.isFetching && !binding.isError;
+  const destinations = useDatabaseBackupDestinations({
+    component: bindingReady && binding.data ? { destination_id: binding.data.destination_id } : undefined,
+    scope,
+    owner,
+    blocked: !owner || !bindingReady,
+    onDenied: retireScheduleAccess,
+  });
   const occurrences = useQuery({
     queryKey: [...key, "occurrences", selected],
     queryFn: ({ signal }) =>
@@ -269,9 +303,13 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     databaseDenied(schedules.error) ||
     databaseDenied(components.error) ||
     databaseDenied(occurrences.error) ||
+    databaseDenied(binding.error) ||
+    destinations.denied ||
     databaseDenied(error);
   function retireScheduleAccess() {
     lifetime.current?.abort();
+    setAttempt(undefined);
+    setRemoteTarget(undefined);
     void client.cancelQueries({ queryKey: key });
     client.removeQueries({ queryKey: key });
     void client.cancelQueries({ queryKey: componentKey });
@@ -286,14 +324,18 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     components.data.resource_generation === resource.generation
       ? components.data
       : undefined;
-  const eligible = (name: string) =>
+  const mysqlComponent = (name: string) => evidence?.components.some(
+    c => c.component === name && c.eligible && c.engine === "mysql" && c.major_version === 8,
+  ) === true;
+  const remoteAvailable = mysqlComponent(component) && (!editing || editing.version === "mysql.compose-logical-local.schedule.v1");
+  const eligible = (name: string, remote?: RemoteBackupTarget) =>
     !!evidence?.operation_id &&
     evidence.components.some(
       (c) =>
         c.component === name && c.eligible &&
         ((c.engine === "postgresql" && c.major_version === 16) ||
           (c.engine === "mysql" && c.major_version === 8)),
-    );
+    ) && (!remote || (mysqlComponent(name) && bindingReady && validSelectedBackupDestination(remote, destinations)));
   const locked = pending || !!attempt;
   const unavailable =
     locked || schedules.isPending || schedules.isError || schedules.isFetching;
@@ -301,6 +343,7 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     if (unavailable) return;
     setEditing(schedule);
     setComponent(schedule?.component ?? "");
+    setRemoteTarget(schedule?.remote_target);
     setFrequency(schedule?.frequency ?? "daily");
     setTimezone(schedule?.timezone ?? "UTC");
     setEnabled(schedule?.enabled ?? true);
@@ -335,6 +378,7 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
       if (!next.schedule || editing?.id === out.id) {
         setEditing(out);
         setComponent(out.component ?? "");
+        setRemoteTarget(out.remote_target);
         setFrequency(out.frequency);
         setTimezone(out.timezone);
         setEnabled(out.enabled);
@@ -360,6 +404,7 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     nextEnabled: boolean,
     nextFrequency: string,
     nextTimezone: string,
+    nextRemote?: RemoteBackupTarget,
   ): DatabaseBackupScheduleInput {
     return {
       request_id: databaseRequestID(),
@@ -369,6 +414,7 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
       frequency: nextFrequency,
       timezone: nextTimezone,
       enabled: nextEnabled,
+      ...(nextRemote ? { remote_target: nextRemote } : {}),
       ...((nextEnabled || revision === 0) && evidence?.operation_id
         ? { expected_deployed_operation_id: evidence.operation_id }
         : {}),
@@ -402,6 +448,11 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
     setSelected,
     selected,
     occurrences,
+    remoteTarget,
+    setRemoteTarget,
+    destinations,
+    remoteAvailable,
+    bindingReady,
   };
 }
 
@@ -418,14 +469,16 @@ function ComposeScheduleEditor({
   review,
   locked,
   components,
+  remoteTarget,
 }: {
+  remoteTarget?: RemoteBackupTarget;
   unavailable: boolean;
   component: string;
   frequency: string;
   timezone: string;
   editing: DatabaseBackupSchedule | undefined;
   enabled: boolean;
-  eligible: (name: string) => boolean;
+  eligible: (name: string, remote?: RemoteBackupTarget) => boolean;
   submit: (next: Attempt) => Promise<void>;
   input: ReturnType<typeof useComposeSchedule>["input"];
   review: (schedule?: DatabaseBackupSchedule) => void;
@@ -442,7 +495,7 @@ function ComposeScheduleEditor({
           unavailable ||
           !component ||
           !validDatabaseBackupScheduleFields(frequency, timezone) ||
-          ((!editing || enabled) && !eligible(component))
+          ((!editing || enabled) && !eligible(component, remoteTarget))
         }
         onClick={() =>
           void submit({
@@ -453,6 +506,7 @@ function ComposeScheduleEditor({
               enabled,
               frequency,
               timezone,
+              remoteTarget,
             ),
           })
         }
@@ -491,7 +545,7 @@ function ComposeScheduleRow({
   owner: boolean;
   unavailable: boolean;
   review: (schedule?: DatabaseBackupSchedule) => void;
-  eligible: (name: string) => boolean;
+  eligible: (name: string, remote?: RemoteBackupTarget) => boolean;
   submit: (next: Attempt) => Promise<void>;
   input: ReturnType<typeof useComposeSchedule>["input"];
 }) {
@@ -502,7 +556,7 @@ function ComposeScheduleRow({
       </p>
       <p>Component: {s.component}</p>
       <p>
-        {s.frequency} · {s.timezone} · Local archive only
+        {s.frequency} · {s.timezone} · {s.remote_target ? `Remote destination ${s.remote_target.target_id}, revision ${s.remote_target.revision}` : "Local archive only"}
       </p>
       <p>
         {s.last_scheduled_at
@@ -531,7 +585,7 @@ function ComposeScheduleRow({
               disabled={
                 unavailable ||
                 !s.component ||
-                (!s.enabled && !eligible(s.component))
+                (!s.enabled && !eligible(s.component, s.remote_target))
               }
               onClick={() =>
                 void submit({
@@ -542,6 +596,7 @@ function ComposeScheduleRow({
                     !s.enabled,
                     s.frequency,
                     s.timezone,
+                    s.remote_target,
                   ),
                 })
               }
@@ -618,7 +673,17 @@ function ComposeScheduleForm({
   review,
   locked,
   components,
+  remoteTarget,
+  setRemoteTarget,
+  destinations,
+  remoteAvailable,
+  bindingReady,
 }: {
+  remoteTarget?: RemoteBackupTarget;
+  setRemoteTarget: React.Dispatch<React.SetStateAction<RemoteBackupTarget | undefined>>;
+  destinations: ReturnType<typeof useDatabaseBackupDestinations>;
+  remoteAvailable: boolean;
+  bindingReady: boolean;
   editing:
     | import("@/api/hosting-database-backup-schedules").DatabaseBackupSchedule
     | undefined;
@@ -632,7 +697,7 @@ function ComposeScheduleForm({
   setTimezone: React.Dispatch<React.SetStateAction<string>>;
   enabled: boolean;
   setEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  eligible: (name: string) => boolean;
+  eligible: (name: string, remote?: RemoteBackupTarget) => boolean;
   submit: (next: Attempt) => Promise<void>;
   input: ReturnType<typeof useComposeSchedule>["input"];
   review: ReturnType<typeof useComposeSchedule>["review"];
@@ -653,7 +718,7 @@ function ComposeScheduleForm({
           aria-label="Scheduled database component"
           value={component}
           disabled={unavailable || !!editing}
-          onChange={(e) => setComponent(e.target.value)}
+          onChange={(e) => { setComponent(e.target.value); setRemoteTarget(undefined); }}
         >
           <option value="">Select a database component</option>
           {editing?.component ? (
@@ -701,6 +766,15 @@ function ComposeScheduleForm({
         />
         Schedule enabled
       </label>
+      {remoteAvailable || remoteTarget ? (
+        <BackupDestinationSelect
+          label="Scheduled MySQL backup destination"
+          value={remoteTarget}
+          onChange={setRemoteTarget}
+          destinations={destinations}
+          disabled={unavailable || !bindingReady || !remoteAvailable}
+        />
+      ) : <p>PostgreSQL component schedules create local archives only.</p>}
       <ComposeScheduleEditor
         unavailable={unavailable}
         component={component}
@@ -714,6 +788,7 @@ function ComposeScheduleForm({
         review={review}
         locked={locked}
         components={components}
+        remoteTarget={remoteTarget}
       />
       {!evidence ? (
         <p role="status">

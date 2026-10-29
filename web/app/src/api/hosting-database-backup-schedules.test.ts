@@ -209,7 +209,7 @@ test("schedule safe view preserves the exact admitted remote destination revisio
 });
 
 test.each(["postgresql", "mysql"])(
-  "Compose %s projections preserve component and reject remote or inconsistent versions",
+  "Compose %s projections preserve component and reject inconsistent versions",
   (engine) => {
     const context = { resource: db.resource };
     const compose = {
@@ -218,6 +218,9 @@ test.each(["postgresql", "mysql"])(
       component: engine,
     };
     expect(parseDatabaseBackupSchedule(compose, scope, context)).toEqual(compose);
+    const remote = { ...compose, remote_target: { target_id: "remote", revision: 1 } };
+    if (engine === "mysql") expect(parseDatabaseBackupSchedule(remote, scope, context)).toEqual(remote);
+    else expect(() => parseDatabaseBackupSchedule(remote, scope, context)).toThrow();
     expect(
       parseDatabaseBackupOccurrence(
         { ...occurrence, component: "old_database" },
@@ -229,7 +232,6 @@ test.each(["postgresql", "mysql"])(
     for (const invalid of [
       { ...compose, component: undefined },
       { ...compose, component: "../db" },
-      { ...compose, remote_target: { target_id: "remote", revision: 1 } },
       { ...schedule, component: engine },
       { ...compose, version: "mysql.compose-logical-local.schedule.v2" },
     ])
@@ -275,7 +277,6 @@ test.each(["postgresql", "mysql"])(
     ).resolves.toEqual(compose);
     for (const invalid of [
       { ...input, expected_deployed_operation_id: undefined },
-      { ...input, remote_target: { target_id: "remote", revision: 1 } },
       { ...input, component: undefined },
     ])
       await expect(
@@ -355,4 +356,22 @@ test("MySQL remote schedules preserve the selected target revision in requests a
  vi.stubGlobal("fetch", fetch);
  expect((await saveDatabaseBackupSchedule(scope, mysql, "", input, new AbortController().signal)).remote_target).toEqual(remote_target);
  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(input);
+});
+
+test("Compose MySQL remote schedule create, edit and disable preserve exact target and request authority", async () => {
+ const remote_target = { target_id: "storage", revision: 3 };
+ const context = { resource: db.resource };
+ const base = { request_id: "create_remote", expected_resource_generation: 2, expected_version: 0, component: "mysql", expected_deployed_operation_id: "deployed", frequency: "daily", timezone: "UTC", enabled: true, remote_target };
+ const fetch = vi.fn();
+ vi.stubGlobal("fetch", fetch);
+ for (const input of [base, { ...base, request_id: "edit_remote", expected_version: 1, frequency: "hourly" }, { ...base, request_id: "disable_remote", expected_version: 2, enabled: false, expected_deployed_operation_id: undefined }]) {
+  const value = { ...schedule, version: "mysql.compose-logical-local.schedule.v1", component: "mysql", revision: input.expected_version + 1, frequency: input.frequency, enabled: input.enabled, remote_target };
+  fetch.mockResolvedValueOnce(new Response(JSON.stringify(value)));
+  const result = await saveDatabaseBackupSchedule(scope, context, input.expected_version ? "schedule" : "", input, new AbortController().signal);
+  expect(result.remote_target).toEqual(remote_target);
+  expect(JSON.parse(fetch.mock.calls.at(-1)![1].body)).toEqual(JSON.parse(JSON.stringify(input)));
+ }
+ const mismatched = { ...schedule, version: "mysql.compose-logical-local.schedule.v1", component: "mysql", remote_target: { ...remote_target, revision: 4 } };
+ fetch.mockResolvedValueOnce(new Response(JSON.stringify(mismatched)));
+ await expect(saveDatabaseBackupSchedule(scope, context, "", base, new AbortController().signal)).rejects.toThrow();
 });

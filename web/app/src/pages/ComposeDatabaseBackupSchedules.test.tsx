@@ -11,6 +11,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Resource } from "../api/hosting";
 import { ApiError } from "../api/errors";
+import * as destinations from "../api/destinations";
+import * as remote from "../api/hosting-database-backup-targets";
+vi.mock("../api/destinations", async original => ({ ...(await original<typeof import("../api/destinations")>()), getResourceBinding: vi.fn() }));
+vi.mock("../api/hosting-database-backup-targets", async original => ({ ...(await original<typeof remote>()), listDatabaseBackupTargets: vi.fn(), listDatabaseBackupValidations: vi.fn() }));
 import * as api from "../api/hosting-database-backup-schedules";
 import * as backup from "../api/hosting-database-backups";
 import { ComposeDatabaseBackupSchedules } from "./ComposeDatabaseBackupSchedules";
@@ -46,6 +50,9 @@ const saved: api.DatabaseBackupSchedule = {
 let values: api.DatabaseBackupSchedule[];
 beforeEach(() => {
   values = [];
+  vi.mocked(destinations.getResourceBinding).mockResolvedValue({ id: "binding", resource_id: "compose", destination_id: "runner", runtime_namespace: "test", created_by: "owner", created_at: saved.created_at });
+  vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([]);
+  vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([]);
   vi.mocked(api.listDatabaseBackupSchedules).mockImplementation(
     async () => values,
   );
@@ -457,4 +464,78 @@ test("mixed discovery offers eligible PostgreSQL16 and MySQL8 components only", 
   expect(screen.getByRole("option", { name: "mysql" })).toBeTruthy();
   expect(screen.getByRole("option", { name: "postgresql" })).toBeTruthy();
   expect(screen.queryByRole("option", { name: "unavailable_mysql" })).toBeNull();
+});
+
+function remoteFixture() {
+ vi.mocked(remote.listDatabaseBackupTargets).mockResolvedValue([{ id: "storage", project_id: "project", version: "postgresql.backup-target.v1", revision: 2, name: "Offsite", endpoint: "https://s3.example.invalid", bucket: "backups", region: "us-east-1", enabled: true, created_at: saved.created_at, updated_at: saved.updated_at }]);
+ vi.mocked(remote.listDatabaseBackupValidations).mockResolvedValue([{ id: "validation", version: "postgresql.logical-s3-transfer.v1", project_id: "project", target_id: "storage", target_revision: 2, destination_id: "runner", mode: "validate", state: "succeeded", failure_code: "", created_at: saved.created_at, updated_at: saved.updated_at }]);
+}
+
+test("MySQL component schedule pins remote target on create and edit, then disables with saved target despite unavailable runtime", async () => {
+ mysqlComponents();
+ remoteFixture();
+ const view = mount();
+ await choose("mysql");
+ await screen.findByRole("option", { name: "Offsite · revision 2" });
+ fireEvent.change(screen.getByRole("combobox", { name: "Scheduled MySQL backup destination" }), { target: { value: "storage:2" } });
+ await click("Create backup schedule");
+ await screen.findByText("Saved schedule schedule revision 1.");
+ expect(call()[3]).toMatchObject({ component: "mysql", remote_target: { target_id: "storage", revision: 2 }, expected_deployed_operation_id: "current_deployment" });
+ await click("Edit schedule");
+ fireEvent.change(screen.getByRole("textbox", { name: "Backup frequency" }), { target: { value: "hourly" } });
+ await click("Save schedule changes");
+ await screen.findByText("Saved schedule schedule revision 2.");
+ expect(call(1)[3]).toMatchObject({ expected_version: 1, remote_target: { target_id: "storage", revision: 2 }, frequency: "hourly" });
+ vi.mocked(backup.getDatabaseBackupComponents).mockRejectedValue(new Error("deployment unavailable"));
+ vi.mocked(destinations.getResourceBinding).mockRejectedValue(new Error("binding unavailable"));
+ vi.mocked(remote.listDatabaseBackupValidations).mockRejectedValue(new Error("credentials unavailable"));
+ await act(async () => { await view.client.invalidateQueries(); });
+ await click("Disable schedule");
+ await screen.findByText("Saved schedule schedule revision 3.");
+ expect(call(2)[3]).toMatchObject({ expected_version: 2, enabled: false, remote_target: { target_id: "storage", revision: 2 } });
+ expect(call(2)[3]).not.toHaveProperty("expected_deployed_operation_id");
+});
+
+test("MySQL remote schedule ambiguous response freezes exact target and request identity", async () => {
+ mysqlComponents();
+ remoteFixture();
+ mount();
+ await choose("mysql");
+ await screen.findByRole("option", { name: "Offsite · revision 2" });
+ fireEvent.change(screen.getByRole("combobox", { name: "Scheduled MySQL backup destination" }), { target: { value: "storage:2" } });
+ vi.mocked(api.saveDatabaseBackupSchedule).mockRejectedValueOnce(new Error("response lost"));
+ await click("Create backup schedule");
+ await screen.findByRole("button", { name: "Retry the same schedule request" });
+ expect((screen.getByRole("combobox", { name: "Scheduled MySQL backup destination" }) as HTMLSelectElement).disabled).toBe(true);
+ const first=call()[3];
+ await click("Retry the same schedule request");
+ await screen.findByText("Saved schedule schedule revision 1.");
+ expect(call(1)[3]).toBe(first);
+ expect(first.remote_target).toEqual({ target_id: "storage", revision: 2 });
+});
+
+test("PostgreSQL component schedules do not offer a remote destination", async () => {
+ remoteFixture();
+ mount();
+ await choose();
+ expect(screen.queryByRole("combobox", { name: "Scheduled MySQL backup destination" })).toBeNull();
+ await click("Create backup schedule");
+ expect(call()[3]).not.toHaveProperty("remote_target");
+});
+
+test("MySQL remote schedule cannot be enabled with stale validation but can still be disabled", async () => {
+ mysqlComponents();
+ remoteFixture();
+ values = [{ ...saved, version: "mysql.compose-logical-local.schedule.v1", component: "mysql", remote_target: { target_id: "storage", revision: 1 }, enabled: false }];
+ mount();
+ await screen.findByText(/Remote destination storage, revision 1/);
+ await screen.findByRole("option", { name: "mysql" });
+ expect((screen.getByRole("button", { name: "Enable schedule" }) as HTMLButtonElement).disabled).toBe(true);
+ await click("Edit schedule");
+ fireEvent.click(screen.getByRole("checkbox", { name: "Schedule enabled" }));
+ expect((screen.getByRole("button", { name: "Save schedule changes" }) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.click(screen.getByRole("checkbox", { name: "Schedule enabled" }));
+ await click("Save schedule changes");
+ expect(call()[3]).toMatchObject({ enabled: false, remote_target: { target_id: "storage", revision: 1 } });
+ expect(call()[3]).not.toHaveProperty("expected_deployed_operation_id");
 });

@@ -174,7 +174,7 @@ export function parseDatabaseBackupSchedule(
       v.version === "mysql.compose-logical-local.schedule.v1"
       ? database.engine !== undefined ||
         !componentName(v.component) ||
-        v.remote_target !== undefined
+        (v.version === "postgresql.compose-logical-local.schedule.v1" && v.remote_target !== undefined)
       : v.component !== undefined) ||
     (v.version === "mysql.logical-local.schedule.v1" &&
       database.engine !== "mysql") ||
@@ -316,7 +316,6 @@ export async function saveDatabaseBackupSchedule(
   if (
     input.component !== undefined
       ? !componentName(input.component) ||
-        input.remote_target !== undefined ||
         ((input.enabled || !schedule) &&
           !identifier(input.expected_deployed_operation_id)) ||
         (input.expected_deployed_operation_id !== undefined &&
