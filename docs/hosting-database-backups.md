@@ -87,8 +87,8 @@ rewrite the site's URL. Once target SQL execution is attempted, a failed or unce
 retains target ownership and stopped writers; MySQL does not provide the PostgreSQL adapter's transactional
 rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same archive/import path. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
-can copy a completed SQL archive to a validated target. Component remote schedules,
-remote restore and retention remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
+can copy a completed SQL archive to a validated target. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
+use that same upload path. Component remote restore and retention remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
 
@@ -244,7 +244,8 @@ finding. Passing changed-code lint does not replace those results.
 Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
 That qualification did not cover schedules. [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 passed later at `4c62e6cf`. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
-passed at `0c5ff34c`. Component remote schedules/restore, retention, engine upgrades,
+passed at `0c5ff34c`; [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification) followed at `3f451479`.
+Component remote restore, retention, engine upgrades,
 credential rotation and cross-destination recovery remain open. Historical native
 MySQL and core WordPress qualifications retain their original limits.
 
@@ -287,6 +288,7 @@ were exercised by the passing gate. Qualification 18's original cause remains
 unclassified; prior accepted qualifications retain their own evidence and limits.
 
 This covers one Linux arm64, rootful Docker destination with trusted-loopback
-Silo and fixture-CA source HTTPS. It does not qualify Compose MySQL remote
-schedules, remote-only restore, retention, media restoration, URL migration,
+Silo and fixture-CA source HTTPS. Remote schedules were qualified separately
+at `3f451479`; see [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification). This immediate-upload proof does not qualify
+remote-only restore, retention, media restoration, URL migration,
 public S3 providers or cross-destination recovery.

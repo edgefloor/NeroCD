@@ -8,9 +8,9 @@ path as [immediate backups](hosting-database-backups.md).
 
 Supported sources are the pinned standalone PostgreSQL 17.11 and MySQL 8.4.13
 recipes and qualified managed Compose PostgreSQL 16 and pinned MySQL 8.4.13
-components on their authorized stable destinations. Compose schedules create local database archives only. They do not
-include application uploads or support remote backup targets.
-Native PostgreSQL and MySQL schedules can select [remote backup targets](hosting-database-remote-backups.md)
+components on their authorized stable destinations. Compose archives contain database
+data, not application uploads. PostgreSQL component schedules remain local-only.
+Native PostgreSQL/MySQL and qualified Compose MySQL schedules can select [remote backup targets](hosting-database-remote-backups.md)
 explicitly by target ID and revision, as can standalone immediate backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure [failure alerts](hosting-backup-notifications.md) separately.
 Native PostgreSQL and MySQL also support independent [local and remote retention](hosting-database-backup-retention.md).
 A local archive remains dependent on that destination. Remote acceptance uses
@@ -281,5 +281,42 @@ MySQL remote copies/restore, retention, notifications, media restoration, URL
 migration and cross-destination recovery remain outside this qualification.
 
 [Immediate Compose MySQL remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
-was qualified separately at `0c5ff34c`. Component schedules remain local-only;
-the immediate upload qualification does not enable a schedule remote target.
+was qualified separately at `0c5ff34c`. That proof did not enable schedule remote
+targets; the later qualification below covers Compose MySQL only.
+
+## Compose MySQL remote schedule qualification
+
+At `3f451479` on 2026-10-29, a MySQL component schedule selected a validated S3
+target by ID and revision. The real hosting execution controller produced the due
+`mysql_sql` archive. Its upload failed under actual PUT denial while local backup
+success remained intact. The browser retried both that scheduled upload and the
+separate immediate upload using their exact failed IDs; new transfer IDs uploaded
+the same saved blobs, object keys, daemon and target revisions. Both object SHAs
+matched, and retries admitted no additional database dump.
+
+The browser exercised committed-response retry, edit/disable and history. The Go
+fixture verified the same remote target across all three immutable schedule
+revisions. Focused database tests also verified current/redeployed source identity,
+capability/target/credential/actor/grant denial, and historical disable/replay with
+an unavailable deployment or credentials. PostgreSQL component remote schedules
+remain rejected; existing native schedule behavior retains its own scope.
+
+The scheduled local archive remained the separate-stack import source. Source
+post/full-PNG preservation through trusted HTTPS, redeploy and Stop/Start,
+corrupt-archive rejection, held partial import, natural runner exit and credential
+scans passed. No physical restart or reimport was attempted. Browser controls at
+320, 390, 430 and 1280 pixels and served-asset hashes passed without interception.
+
+The selected test passed in 187.50 seconds; the gate exited zero after 289.344
+seconds with all seven markers. The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/3f4514798ec46e6519e7f11baef3bee280920a5d/evidence-index.json)
+retains source/build associations, the failed 54.094-second race group and the
+corrected grant/actor subtest pass, plus the earlier HTTP-method fixture repair.
+The controller already used `denied` for those authority failures; the test
+expectation was corrected without changing production behavior. Implementation,
+product repair, fixture repair, test execution and review/waiting are recorded
+separately; exclusive durations are unknown. Exact container, volume, image,
+build-cache and user-instance baselines matched after owned cleanup.
+
+This covers one Linux arm64, rootful Docker destination, trusted-loopback Silo
+and fixture-CA source HTTPS. It does not qualify remote-only component import,
+retention, media restoration, URL migration, public S3 or cross-destination recovery.

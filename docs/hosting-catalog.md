@@ -106,8 +106,9 @@ controls do not apply to it. Use the application's component controls for
 [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same pinned MySQL component and produce database-only archives. This does
 not restore WordPress media or rewrite URLs. [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
-accepts a validated S3 target and retries the saved SQL archive. Component remote
-schedules, remote restore, retention, upgrades and migration remain outside the qualified workflow.
+accepts a validated S3 target and retries the saved SQL archive. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
+use the same target and artifact checks. Component remote restore, retention,
+upgrades and migration remain outside the qualified workflow.
 
 ## Install and deploy
 
@@ -608,3 +609,7 @@ edit/disable/history, and the same source post/full-PNG and separate-target impo
 [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification) passed at `0c5ff34c`: PUT denial preserved the local SQL archive; a new transfer
 retried that exact artifact without another dump. Local schedule/import, source
 post/full-PNG preservation and held partial-import assertions also passed.
+
+[Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification) passed at `3f451479`: the real due SQL archive retained local success
+through PUT denial, then uploaded through a new transfer without another dump.
+Per-revision target history and the existing scheduled-artifact import remained intact.
