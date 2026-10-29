@@ -272,8 +272,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 						category = "profile_unavailable"
 						return
 					}
-					command := func(args ...string) ([]byte, error) {
-						cmd := exec.CommandContext(profileContext, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...)
+					boundedCommand := func(cmd *exec.Cmd) ([]byte, error) {
 						cmd.WaitDelay = time.Second
 						output, err := cmd.StdoutPipe()
 						if err != nil {
@@ -295,6 +294,9 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 							return nil, fmt.Errorf("bounded proxy inspection")
 						}
 						return raw, nil
+					}
+					command := func(args ...string) ([]byte, error) {
+						return boundedCommand(exec.CommandContext(profileContext, "/usr/local/bin/docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...))
 					}
 					daemon, daemonErr := command("info", "--format", "{{.ID}}")
 					image, imageErr := command("image", "inspect", profile.image, "--format", "{{.Id}}")
@@ -365,6 +367,64 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 					t.Logf("WordPress private proxy profile bytes=%d sha256=%x truncated=%t captured_at=%s fresh_pending=%t fresh_first_byte=%t", len(body), sha256.Sum256(body), truncated, time.Now().UTC().Format(time.RFC3339Nano), profilePendingAtSave, freshProfileFirstByte.Load())
 					// Socket evidence is a separate private artifact; its failure never discards the profile.
 					const socketScript = `set -eu
+if test "$1" = relay; then
+ published=$2; current=$3
+ gate='dockerd --host=unix:///var/run/docker.sock --feature=containerd-snapshotter=false --storage-driver=overlay2 '
+ test "$(cat /proc/1/comm)" = docker-init; test "$(readlink /proc/1/exe)" = /usr/local/bin/docker-init
+ test "$(tr '\000' ' ' </proc/1/cmdline)" = "docker-init -- $gate"
+ children() {
+  tasks=0; list=''
+  for file in /proc/$1/task/*/children; do tasks=$((tasks+1)); test "$tasks" -le 128 || return 73; values=$(cat "$file") || return 73; list="$list $values"; done
+  printf '%s\n' $list | sort -nu | awk 'NF {if(++n>128)exit 1;print}'
+ }
+ daemon=''; count=0
+ child_ids=$(children 1) || exit 73
+ for pid in $child_ids; do
+  count=$((count+1)); test "$count" -le 128
+  if test "$(cat /proc/$pid/comm)" = dockerd; then test -z "$daemon"; daemon=$pid; fi
+ done
+ test -n "$daemon"; test "$(readlink /proc/$daemon/exe)" = /usr/local/bin/dockerd
+ test "$(tr '\000' ' ' </proc/$daemon/cmdline)" = "$gate"
+ test "$(awk '/^PPid:/ {print $2}' /proc/$daemon/status)" = 1
+ for ns in pid net; do test "$(readlink /proc/$daemon/ns/$ns)" = "$(readlink /proc/1/ns/$ns)"; done
+ selected=''; count=0
+ daemon_ticks=$(awk '{print $22}' /proc/$daemon/stat)
+ child_ids=$(children "$daemon") || exit 73
+ for pid in $child_ids; do
+  count=$((count+1)); test "$count" -le 128
+  test "$(cat /proc/$pid/comm)" = docker-proxy || continue
+  test "$(readlink /proc/$pid/exe)" = /usr/local/bin/docker-proxy
+  test "$(awk '/^PPid:/ {print $2}' /proc/$pid/status)" = "$daemon"
+  for ns in pid net; do test "$(readlink /proc/$pid/ns/$ns)" = "$(readlink /proc/$daemon/ns/$ns)"; done
+  args=$(tr '\000' '|' </proc/$pid/cmdline)
+  prefix="/usr/local/bin/docker-proxy|-proto|tcp|-host-ip|127.0.0.1|-host-port|$published|-container-ip|"
+  case "$args" in "$prefix"*) suffix=${args#"$prefix"};; *) continue;; esac
+  backend=${suffix%%|*}
+  case "$suffix" in "$backend|-container-port|80|"|"$backend|-container-port|80|-use-listen-fd|") ;; *) exit 74;; esac
+  awk -v ip="$backend" 'BEGIN {n=split(ip,a,".");if(n!=4)exit 1;for(i=1;i<=4;i++)if(a[i]!~/^[0-9]+$/ || a[i]>255 || "x"sprintf("%d",a[i])!="x"a[i])exit 1}'
+  test -z "$selected"; selected=$pid; configured=$backend; saved_args=$args
+ done
+ test -n "$selected"
+ identity() {
+  test "$(cat /proc/$selected/comm)" = docker-proxy; test "$(readlink /proc/$selected/exe)" = /usr/local/bin/docker-proxy
+  test "$(awk '/^PPid:/ {print $2}' /proc/$selected/status)" = "$daemon"
+  test "$(tr '\000' '|' </proc/$selected/cmdline)" = "$saved_args"
+  for ns in pid net; do test "$(readlink /proc/$selected/ns/$ns)" = "$(readlink /proc/$daemon/ns/$ns)"; done
+ }
+ identity; ticks=$(awk '{print $22}' /proc/$selected/stat); mapping=''; count=0
+ for fd in /proc/$selected/fd/*; do
+  count=$((count+1)); test "$count" -le 256; target=$(readlink "$fd") || exit 73
+  case "$target" in socket:\[*\]) inode=${target#socket:[}; inode=${inode%]}; mapping="$mapping $selected ${fd##*/} $inode";; esac
+ done
+ matches=false; if test "$configured" = "$current"; then matches=true; fi
+ printf 'relay_pid=%s start_ticks=%s parent=%s configured_backend=%s:80 backend_matches_current=%s\nowned_socket_fds%s\n' "$selected" "$ticks" "$daemon" "$configured" "$matches" "$mapping"
+ backend_hex=$(awk -v ip="$configured" 'BEGIN{split(ip,a,".");printf "%02X%02X%02X%02X:0050",a[4],a[3],a[2],a[1]}')
+ frontend_hex=$(printf '0100007F:%04X' "$published")
+ awk -v owned="$mapping" -v front="$frontend_hex" -v back="$backend_hex" 'BEGIN{n=split(owned,f," ");for(i=3;i<=n;i+=3)o[f[i]]=1} FNR>1 && ($10 in o){role="other_owned";if($2==front)role=($4=="0A"?"frontend_listener":"frontend_accepted");if($3==back)role="backend";print role,FILENAME,$0}' /proc/net/tcp /proc/net/tcp6
+ identity; test "$(awk '{print $22}' /proc/$selected/stat)" = "$ticks"
+ test "$(awk '{print $22}' /proc/$daemon/stat)" = "$daemon_ticks"
+ exit
+fi
 command -v awk >/dev/null
 if test "$1" = source; then
  printf 'attribution=verified_container_network_namespace source_fd_mapping=unavailable\n'
@@ -417,8 +477,11 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 					if len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(sourcePort) {
 						return
 					}
-					snapshots := make([]map[string]any, 0, 2)
-					for _, target := range []struct{ role, id, port string }{{"proxy", owned.ID, fmt.Sprintf("%04X", sourcePort)}, {"source", source.ID, "0050"}} {
+					if net.ParseIP(network.IPAddress).To4() == nil {
+						return
+					}
+					snapshots := make([]map[string]any, 0, 3)
+					for _, target := range []struct{ role, id, port string }{{"proxy", owned.ID, fmt.Sprintf("%04X", sourcePort)}, {"source", source.ID, "0050"}, {"relay", "", strconv.Itoa(sourcePort)}} {
 						began := time.Now()
 						pendingAtStart := true
 						select {
@@ -427,7 +490,13 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 						default:
 						}
 						firstByteAtStart := freshProfileFirstByte.Load()
-						raw, socketErr := command("exec", target.id, "sh", "-c", socketScript, "socket-capture", target.role, target.port)
+						var raw []byte
+						var socketErr error
+						if target.role == "relay" {
+							raw, socketErr = boundedCommand(exec.CommandContext(profileContext, "/bin/sh", "-c", socketScript, "socket-capture", target.role, target.port, network.IPAddress))
+						} else {
+							raw, socketErr = command("exec", target.id, "sh", "-c", socketScript, "socket-capture", target.role, target.port)
+						}
 						defer clear(raw)
 						pending := true
 						select {
@@ -441,7 +510,7 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 						}
 						snapshots = append(snapshots, map[string]any{"role": target.role, "container_id": target.id, "started": began.UTC().Format(time.RFC3339Nano), "finished": time.Now().UTC().Format(time.RFC3339Nano), "fresh_pending_at_start": pendingAtStart, "fresh_first_byte_at_start": firstByteAtStart, "fresh_pending": pending, "fresh_first_byte": freshProfileFirstByte.Load(), "category": state, "data": string(raw)})
 					}
-					socketBody, marshalErr := json.Marshal(map[string]any{"source_attribution": "verified_container_network_namespace", "source_fd_mapping": "unavailable", "proxy_attribution": "pid1_fd_inode_and_published_port", "source_operation": sourceOperation.ID, "source_component": sourceWordPress, "source_networks": source.NetworkSettings.Networks, "snapshots": snapshots})
+					socketBody, marshalErr := json.Marshal(map[string]any{"source_attribution": "verified_container_network_namespace", "source_fd_mapping": "unavailable", "proxy_attribution": "pid1_fd_inode_and_published_port", "relay_attribution": "unique_dockerd_child_exact_frontend_argv_fd_inode", "source_operation": sourceOperation.ID, "source_component": sourceWordPress, "source_networks": source.NetworkSettings.Networks, "snapshots": snapshots})
 					defer clear(socketBody)
 					if marshalErr != nil || len(socketBody) > 192<<10 {
 						socketCategory = "bounded_encoding_unavailable"
