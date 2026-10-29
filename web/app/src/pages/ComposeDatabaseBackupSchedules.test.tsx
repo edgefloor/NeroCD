@@ -69,7 +69,15 @@ beforeEach(() => {
   });
   vi.mocked(api.saveDatabaseBackupSchedule).mockImplementation(
     async (_scope, _context, _id, input) => {
-      const out = { ...saved, ...input, revision: input.expected_version + 1 };
+      const out: api.DatabaseBackupSchedule = {
+        ...saved,
+        ...input,
+        version:
+          input.component === "mysql"
+            ? "mysql.compose-logical-local.schedule.v1"
+            : saved.version,
+        revision: input.expected_version + 1,
+      };
       values = [out];
       return out;
     },
@@ -113,52 +121,67 @@ function call(index = 0) {
   if (!value) throw new Error("Expected saved schedule request");
   return value;
 }
-async function choose() {
-  await screen.findByRole("option", { name: "postgresql" });
+async function choose(component = "postgresql") {
+  await screen.findByRole("option", { name: component });
   fireEvent.change(screen.getByLabelText("Scheduled database component"), {
-    target: { value: "postgresql" },
+    target: { value: component },
   });
 }
-test("owner creates and edits fixed component against current deployment then disables without runtime authority", async () => {
-  mount();
-  await choose();
-  await click("Create backup schedule");
-  await screen.findByText("Saved schedule schedule revision 1.");
-  expect(call()[1]).toEqual({ resource });
-  expect(call()[3]).toMatchObject({
-    component: "postgresql",
-    expected_deployed_operation_id: "current_deployment",
-    expected_resource_generation: 3,
-    expected_version: 0,
-  });
-  expect(
-    (screen.getByLabelText("Scheduled database component") as HTMLSelectElement)
-      .disabled,
-  ).toBe(true);
-  fireEvent.change(screen.getByLabelText("Backup frequency"), {
-    target: { value: "hourly" },
-  });
-  await click("Save schedule changes");
-  await screen.findByText("Saved schedule schedule revision 2.");
-  expect(call(1)[3]).toMatchObject({
-    expected_version: 1,
-    frequency: "hourly",
-    component: "postgresql",
-  });
-  await click("Disable schedule");
-  await screen.findByText("Saved schedule schedule revision 3.");
-  expect(call(2)[3]).toMatchObject({
-    expected_version: 2,
-    enabled: false,
-    component: "postgresql",
-  });
-  expect(call(2)[3].expected_deployed_operation_id).toBeUndefined();
-  expect(screen.queryByLabelText("Scheduled backup destination")).toBeNull();
-});
-test.each(["failed", "missing", "held"])(
-  "%s component evidence does not block history or disabling",
-  async (reason) => {
-    values = [saved];
+test.each(["postgresql", "mysql"] as const)(
+  "owner creates and edits fixed %s component against current deployment then disables without runtime authority",
+  async (component) => {
+    if (component === "mysql") mysqlComponents();
+    mount();
+    await choose(component);
+    await click("Create backup schedule");
+    await screen.findByText("Saved schedule schedule revision 1.");
+    expect(call()[1]).toEqual({ resource });
+    expect(call()[3]).toMatchObject({
+      component,
+      expected_deployed_operation_id: "current_deployment",
+      expected_resource_generation: 3,
+      expected_version: 0,
+    });
+    expect(
+      (screen.getByLabelText("Scheduled database component") as HTMLSelectElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.change(screen.getByLabelText("Backup frequency"), {
+      target: { value: "hourly" },
+    });
+    await click("Save schedule changes");
+    await screen.findByText("Saved schedule schedule revision 2.");
+    expect(call(1)[3]).toMatchObject({
+      expected_version: 1,
+      frequency: "hourly",
+      component,
+    });
+    await click("Disable schedule");
+    await screen.findByText("Saved schedule schedule revision 3.");
+    expect(call(2)[3]).toMatchObject({
+      expected_version: 2,
+      enabled: false,
+      component,
+    });
+    expect(call(2)[3].expected_deployed_operation_id).toBeUndefined();
+    expect(screen.queryByLabelText("Scheduled backup destination")).toBeNull();
+  },
+);
+test.each(
+  (["postgresql", "mysql"] as const).flatMap((component) =>
+    ["failed", "missing", "held"].map((reason) => ({ component, reason })),
+  ),
+)(
+  "$component history and disabling survive $reason evidence",
+  async ({ component, reason }) => {
+    values = [{
+      ...saved,
+      component,
+      version:
+        component === "mysql"
+          ? "mysql.compose-logical-local.schedule.v1"
+          : saved.version,
+    }];
     if (reason === "failed")
       vi.mocked(backup.getDatabaseBackupComponents).mockRejectedValue(
         new TypeError("offline"),
@@ -207,25 +230,29 @@ test("viewer reads historical operation without eligibility request or owner con
   expect(backup.getDatabaseBackupComponents).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Disable schedule" })).toBeNull();
 });
-test("ambiguous response replays identical identity and freezes edits", async () => {
-  vi.mocked(api.saveDatabaseBackupSchedule).mockRejectedValueOnce(
-    new TypeError("private_canary"),
-  );
-  mount();
-  await choose();
-  await click("Create backup schedule");
-  await screen.findByRole("button", {
-    name: "Retry the same schedule request",
-  });
-  const first = call()[3];
-  expect(
-    (screen.getByLabelText("Backup frequency") as HTMLInputElement).disabled,
-  ).toBe(true);
-  expect(screen.queryByText("private_canary")).toBeNull();
-  await click("Retry the same schedule request");
-  await screen.findByText("Saved schedule schedule revision 1.");
-  expect(call(1)[3]).toEqual(first);
-});
+test.each(["postgresql", "mysql"] as const)(
+  "ambiguous %s response replays identical identity and freezes edits",
+  async (component) => {
+    if (component === "mysql") mysqlComponents();
+    vi.mocked(api.saveDatabaseBackupSchedule).mockRejectedValueOnce(
+      new TypeError("private_canary"),
+    );
+    mount();
+    await choose(component);
+    await click("Create backup schedule");
+    await screen.findByRole("button", {
+      name: "Retry the same schedule request",
+    });
+    const first = call()[3];
+    expect(
+      (screen.getByLabelText("Backup frequency") as HTMLInputElement).disabled,
+    ).toBe(true);
+    expect(screen.queryByText("private_canary")).toBeNull();
+    await click("Retry the same schedule request");
+    await screen.findByText("Saved schedule schedule revision 1.");
+    expect(call(1)[3]).toEqual(first);
+  },
+);
 test("scope remount aborts mutation and removes old schedule metadata", async () => {
   let resolve!: (value: api.DatabaseBackupSchedule) => void;
   vi.mocked(api.saveDatabaseBackupSchedule).mockReturnValueOnce(
@@ -294,12 +321,27 @@ test("owner downgrade aborts pending mutation while preserving viewer history", 
   ).toBeTruthy();
 });
 
-test.each(["Create backup schedule", "Enable schedule"])(
-  "%s waits for matching generation and settled component refresh while disable and history stay available",
-  async (action) => {
-    values = [saved];
+test.each(
+  (["postgresql", "mysql"] as const).flatMap((component) =>
+    ["Create backup schedule", "Enable schedule"].map((action) => ({
+      component,
+      action,
+    })),
+  ),
+)(
+  "$component $action waits for matching generation and settled component refresh while disable and history stay available",
+  async ({ component, action }) => {
+    if (component === "mysql") mysqlComponents();
+    values = [{
+      ...saved,
+      component,
+      version:
+        component === "mysql"
+          ? "mysql.compose-logical-local.schedule.v1"
+          : saved.version,
+    }];
     const view = mount();
-    await choose();
+    await choose(component);
     const current = view.client.getQueryData<backup.DatabaseBackupComponents>([
       "database-backup-components",
       scope,
@@ -379,7 +421,7 @@ test.each(["Create backup schedule", "Enable schedule"])(
       expect(api.saveDatabaseBackupSchedule).toHaveBeenCalledTimes(2),
     );
     expect(call(1)[3]).toMatchObject({
-      component: "postgresql",
+      component,
       expected_resource_generation: 3,
       expected_deployed_operation_id: "newest_deployment",
       enabled: true,
@@ -389,11 +431,30 @@ test.each(["Create backup schedule", "Enable schedule"])(
 );
 
 
-test("expanded discovery never offers MySQL components for PostgreSQL schedules",async()=>{
- vi.mocked(backup.getDatabaseBackupComponents).mockResolvedValue({resource_id:"compose",resource_generation:3,operation_id:"current_deployment",available:true,reason:"",components:[{component:"mysql",engine:"mysql",major_version:8,running:true,eligible:true,reason:""},{component:"postgresql",engine:"postgresql",major_version:16,running:true,eligible:true,reason:""}]});
- mount();
- const select=await screen.findByLabelText("Scheduled database component");
- await waitFor(()=>expect(select.querySelectorAll("option")).toHaveLength(2));
- expect(select.textContent).toContain("postgresql");
- expect(select.textContent).not.toContain("mysql");
+function mysqlComponents() {
+  vi.mocked(backup.getDatabaseBackupComponents).mockResolvedValue({
+    resource_id: "compose",
+    resource_generation: 3,
+    operation_id: "current_deployment",
+    available: true,
+    reason: "",
+    components: [{ component: "mysql", engine: "mysql", major_version: 8, running: true, eligible: true, reason: "" }],
+  });
+}
+
+test("mixed discovery offers eligible PostgreSQL16 and MySQL8 components only", async () => {
+  vi.mocked(backup.getDatabaseBackupComponents).mockResolvedValue({
+    resource_id: "compose", resource_generation: 3, operation_id: "current_deployment", available: true, reason: "",
+    components: [
+      { component: "mysql", engine: "mysql", major_version: 8, running: true, eligible: true, reason: "" },
+      { component: "postgresql", engine: "postgresql", major_version: 16, running: true, eligible: true, reason: "" },
+      { component: "unavailable_mysql", engine: "mysql", major_version: 8, running: false, eligible: false, reason: "component_not_running" },
+    ],
+  });
+  mount();
+  const select = await screen.findByLabelText("Scheduled database component");
+  await waitFor(() => expect(select.querySelectorAll("option")).toHaveLength(3));
+  expect(screen.getByRole("option", { name: "mysql" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "postgresql" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "unavailable_mysql" })).toBeNull();
 });

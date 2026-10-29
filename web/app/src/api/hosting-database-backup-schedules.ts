@@ -17,6 +17,7 @@ export type DatabaseBackupSchedule = Omit<
   version:
     | "postgresql.logical-local.schedule.v1"
     | "postgresql.compose-logical-local.schedule.v1"
+    | "mysql.compose-logical-local.schedule.v1"
     | "mysql.logical-local.schedule.v1";
   component?: string;
   remote_target?: RemoteBackupTarget;
@@ -167,9 +168,13 @@ export function parseDatabaseBackupSchedule(
     !identifier(v.id) ||
     (v.version !== "postgresql.logical-local.schedule.v1" &&
       v.version !== "postgresql.compose-logical-local.schedule.v1" &&
+      v.version !== "mysql.compose-logical-local.schedule.v1" &&
       v.version !== "mysql.logical-local.schedule.v1") ||
-    (v.version === "postgresql.compose-logical-local.schedule.v1"
-      ? !componentName(v.component) || v.remote_target !== undefined
+    (v.version === "postgresql.compose-logical-local.schedule.v1" ||
+      v.version === "mysql.compose-logical-local.schedule.v1"
+      ? database.engine !== undefined ||
+        !componentName(v.component) ||
+        v.remote_target !== undefined
       : v.component !== undefined) ||
     (v.version === "mysql.logical-local.schedule.v1" &&
       database.engine !== "mysql") ||

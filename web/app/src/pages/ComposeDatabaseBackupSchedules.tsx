@@ -89,11 +89,11 @@ function SchedulePanel(props: Parameters<typeof useComposeSchedule>[0]) {
       aria-label="Component database backup schedules"
       className="min-w-0 space-y-3 rounded-xl border p-3"
     >
-      <h5 className="font-medium">PostgreSQL component backup schedules</h5>
+      <h5 className="font-medium">Database component backup schedules</h5>
       <p>
         Save a five-field cron expression or every_minute, hourly, daily,
         weekly, monthly or yearly with an explicit IANA timezone. These
-        schedules create local logical archives of PostgreSQL16 database
+        schedules create local logical archives of PostgreSQL16 or MySQL8 database
         records. Uploaded files are excluded.
       </p>
       <p>
@@ -288,7 +288,12 @@ function useComposeSchedule({ resource, scope, owner, onDenied }: Props) {
       : undefined;
   const eligible = (name: string) =>
     !!evidence?.operation_id &&
-    evidence.components.some((c) => c.component === name && c.eligible && c.engine === "postgresql" && c.major_version === 16);
+    evidence.components.some(
+      (c) =>
+        c.component === name && c.eligible &&
+        ((c.engine === "postgresql" && c.major_version === 16) ||
+          (c.engine === "mysql" && c.major_version === 8)),
+    );
   const locked = pending || !!attempt;
   const unavailable =
     locked || schedules.isPending || schedules.isError || schedules.isFetching;
@@ -655,7 +660,7 @@ function ComposeScheduleForm({
             <option value={editing.component}>{editing.component}</option>
           ) : (
             evidence?.components
-              .filter((c) => c.eligible && c.engine === "postgresql" && c.major_version === 16)
+              .filter((c) => eligible(c.component))
               .map((c) => (
                 <option key={c.component} value={c.component}>
                   {c.component}
