@@ -354,9 +354,17 @@ async function wordpressWorkflow(h, initial) {
     if(request.method()==='POST'&&new URL(request.url()).pathname===schedulePath)submitted.push(request.postDataJSON());
   };
   page.on('request',captureSchedule);
-  let schedule;
+  let schedule,scheduleTarget;
   try {
     await schedules.getByRole('combobox',{name:'Scheduled database component',exact:true}).selectOption('mysql');
+    const scheduleSelector=schedules.getByRole('combobox',{name:'Scheduled MySQL backup destination',exact:true});
+    const scheduleOptions=scheduleSelector.locator('option:not([value=""])');
+    await expect(scheduleOptions).toHaveCount(1);
+    const scheduleValue=await scheduleOptions.getAttribute('value');
+    const scheduleMatch=/^([A-Za-z0-9][A-Za-z0-9_-]{0,127}):([1-9][0-9]*)$/.exec(scheduleValue??'');
+    if(!scheduleMatch||!Number.isSafeInteger(Number(scheduleMatch[2])))throw Error('WordPress MySQL validated schedule target unavailable');
+    scheduleTarget={target_id:scheduleMatch[1],revision:Number(scheduleMatch[2])};
+    await scheduleSelector.selectOption(scheduleValue);
     await schedules.getByRole('textbox',{name:'Backup frequency',exact:true}).fill('every_minute');
     await schedules.getByRole('textbox',{name:'Backup timezone',exact:true}).fill('UTC');
     await schedules.getByRole('checkbox',{name:'Schedule enabled',exact:true}).check();
@@ -374,12 +382,13 @@ async function wordpressWorkflow(h, initial) {
   } finally { page.off('request',captureSchedule); }
   if(submitted.length!==2||JSON.stringify(submitted[0])!==JSON.stringify(submitted[1]))throw Error('WordPress MySQL schedule retry identity changed');
   const scheduleInput=submitted[0];
-  if(!scheduleInput.request_id||scheduleInput.component!=='mysql'||scheduleInput.expected_resource_generation!==sourceComponents.resource_generation||scheduleInput.expected_deployed_operation_id!==started||scheduleInput.expected_version!==0||scheduleInput.frequency!=='every_minute'||scheduleInput.timezone!=='UTC'||scheduleInput.enabled!==true||scheduleInput.remote_target!==undefined)throw Error('WordPress MySQL schedule request authority changed');
-  if(schedule.version!=='mysql.compose-logical-local.schedule.v1'||schedule.resource_id!==resourceID||schedule.component!=='mysql'||schedule.revision!==1||schedule.frequency!=='every_minute'||schedule.timezone!=='UTC'||schedule.enabled!==true||schedule.remote_target!==undefined)throw Error('WordPress MySQL schedule response changed');
+  if(!scheduleInput.request_id||scheduleInput.component!=='mysql'||scheduleInput.expected_resource_generation!==sourceComponents.resource_generation||scheduleInput.expected_deployed_operation_id!==started||scheduleInput.expected_version!==0||scheduleInput.frequency!=='every_minute'||scheduleInput.timezone!=='UTC'||scheduleInput.enabled!==true||scheduleInput.remote_target?.target_id!==scheduleTarget.target_id||scheduleInput.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL schedule request authority changed');
+  if(schedule.version!=='mysql.compose-logical-local.schedule.v1'||schedule.resource_id!==resourceID||schedule.component!=='mysql'||schedule.revision!==1||schedule.frequency!=='every_minute'||schedule.timezone!=='UTC'||schedule.enabled!==true||schedule.remote_target?.target_id!==scheduleTarget.target_id||schedule.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL schedule response changed');
   safe.wordpress_mysql_database_schedule_retry=true;
   for(const width of [320,390,430,1280]){
     await page.setViewportSize({width,height:900});
     await expect(schedules.getByRole('button',{name:'Disable schedule',exact:true})).toBeVisible();
+    await expect(schedules.getByRole('combobox',{name:'Scheduled MySQL backup destination',exact:true})).toBeVisible();
     if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress MySQL schedule controls responsive overflow');
   }
   step='wordpress_mysql_database_schedule_due';
@@ -392,8 +401,16 @@ async function wordpressWorkflow(h, initial) {
     return logicalBackup.state==='succeeded'&&logicalBackup.ownership_held===false&&logicalBackup.blob?.format==='mysql_sql';
   },{timeout:75000,intervals:[500,1000,2000]}).toBe(true);
   if(occurrence.schedule_id!==schedule.id||occurrence.schedule_revision!==1||occurrence.resource_id!==resourceID||occurrence.component!=='mysql'||occurrence.frequency!=='every_minute'||occurrence.timezone!=='UTC')throw Error('WordPress MySQL scheduled occurrence linkage changed');
-  if(logicalBackup.id!==occurrence.operation_id||logicalBackup.version!=='mysql.compose-logical-local.v1'||logicalBackup.source_resource_id!==resourceID||logicalBackup.source_component!=='mysql'||logicalBackup.source_deployed_operation_id!==started)throw Error('WordPress scheduled logical backup identity changed');
+  if(logicalBackup.id!==occurrence.operation_id||logicalBackup.version!=='mysql.compose-logical-local.v1'||logicalBackup.source_resource_id!==resourceID||logicalBackup.source_component!=='mysql'||logicalBackup.source_deployed_operation_id!==started||logicalBackup.remote_target?.target_id!==scheduleTarget.target_id||logicalBackup.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress scheduled logical backup identity changed');
   safe.wordpress_mysql_database_schedule_due=true;
+  step='wordpress_mysql_database_remote_schedule_failure';
+  let scheduledFailedUpload;
+  await expect.poll(async()=>{
+    const transfers=await checkedResponse(await context.request.get('/api/v1/database-backups/'+logicalBackup.id+'/transfers'),200);
+    scheduledFailedUpload=transfers.find(value=>value.mode==='upload'&&value.state==='failed');
+    return Boolean(scheduledFailedUpload);
+  },{timeout:30000,intervals:[500,1000,2000]}).toBe(true);
+  if(scheduledFailedUpload.version!=='mysql.logical-s3-transfer.v1'||scheduledFailedUpload.failure_code!=='access_denied'||scheduledFailedUpload.backup_id!==logicalBackup.id||scheduledFailedUpload.target_id!==scheduleTarget.target_id||scheduledFailedUpload.target_revision!==scheduleTarget.revision||JSON.stringify(scheduledFailedUpload.blob)!==JSON.stringify(logicalBackup.blob))throw Error('WordPress MySQL failed scheduled upload changed local archive');
   step='wordpress_mysql_database_schedule_edit_disable';
   const scheduleUpdate=()=>page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===schedulePath+'/'+schedule.id);
   await schedules.getByRole('button',{name:'Edit schedule',exact:true}).click();
@@ -403,13 +420,13 @@ async function wordpressWorkflow(h, initial) {
   await schedules.getByRole('button',{name:'Save schedule changes',exact:true}).click();
   const editResponse=await editPending,editInput=editResponse.request().postDataJSON();
   const edited=await checkedResponse(editResponse,200);
-  if(editInput.expected_version!==1||editInput.component!=='mysql'||editInput.expected_resource_generation!==sourceComponents.resource_generation||editInput.expected_deployed_operation_id!==started||edited.id!==schedule.id||edited.revision!==2||edited.component!=='mysql'||edited.version!==schedule.version||edited.frequency!=='* * * * *'||edited.timezone!=='Etc/UTC'||edited.enabled!==true||edited.remote_target!==undefined)throw Error('WordPress MySQL schedule edit identity changed');
+  if(editInput.expected_version!==1||editInput.component!=='mysql'||editInput.expected_resource_generation!==sourceComponents.resource_generation||editInput.expected_deployed_operation_id!==started||edited.id!==schedule.id||edited.revision!==2||edited.component!=='mysql'||edited.version!==schedule.version||edited.frequency!=='* * * * *'||edited.timezone!=='Etc/UTC'||edited.enabled!==true||editInput.remote_target?.target_id!==scheduleTarget.target_id||editInput.remote_target?.revision!==scheduleTarget.revision||edited.remote_target?.target_id!==scheduleTarget.target_id||edited.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL schedule edit identity changed');
   await expect(schedules).toContainText('Saved schedule '+schedule.id+' revision 2.');
   const disablePending=scheduleUpdate();
   await schedules.getByRole('button',{name:'Disable schedule',exact:true}).click();
   const disableResponse=await disablePending,disableInput=disableResponse.request().postDataJSON();
   const disabled=await checkedResponse(disableResponse,200);
-  if(disableInput.expected_version!==2||disableInput.component!=='mysql'||disableInput.expected_deployed_operation_id!==undefined||disabled.id!==schedule.id||disabled.revision!==3||disabled.component!=='mysql'||disabled.version!==schedule.version||disabled.frequency!==edited.frequency||disabled.timezone!==edited.timezone||disabled.enabled!==false||disabled.remote_target!==undefined)throw Error('WordPress MySQL schedule disable identity changed');
+  if(disableInput.expected_version!==2||disableInput.component!=='mysql'||disableInput.expected_deployed_operation_id!==undefined||disabled.id!==schedule.id||disabled.revision!==3||disabled.component!=='mysql'||disabled.version!==schedule.version||disabled.frequency!==edited.frequency||disabled.timezone!==edited.timezone||disabled.enabled!==false||disableInput.remote_target?.target_id!==scheduleTarget.target_id||disableInput.remote_target?.revision!==scheduleTarget.revision||disabled.remote_target?.target_id!==scheduleTarget.target_id||disabled.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL schedule disable identity changed');
   await expect(schedules).toContainText('Saved schedule '+schedule.id+' revision 3.');
   safe.wordpress_mysql_database_schedule_edit_disable=true;
   step='wordpress_mysql_database_schedule_history';
@@ -422,8 +439,11 @@ async function wordpressWorkflow(h, initial) {
   await expect(history).toContainText('succeeded');
   await expect(history).toContainText('Component: mysql · every_minute · UTC');
   const reloaded=await checkedResponse(await context.request.get(schedulePath),200);
-  if(reloaded.length!==1||reloaded[0].id!==schedule.id||reloaded[0].revision!==3||reloaded[0].enabled!==false||reloaded[0].component!=='mysql'||reloaded[0].version!==schedule.version)throw Error('WordPress MySQL disabled schedule history changed');
+  if(reloaded.length!==1||reloaded[0].id!==schedule.id||reloaded[0].revision!==3||reloaded[0].enabled!==false||reloaded[0].component!=='mysql'||reloaded[0].version!==schedule.version||reloaded[0].remote_target?.target_id!==scheduleTarget.target_id||reloaded[0].remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL disabled schedule history changed');
   safe.wordpress_mysql_database_schedule_history=true;
+  const scheduledRemoteHistory=backups.getByLabel('Remote uploads for '+logicalBackup.id,{exact:true});
+  await expect(scheduledRemoteHistory).toContainText('Local dump: succeeded. Latest remote upload: failed.');
+  await expect(scheduledRemoteHistory).toContainText('The local dump result is unchanged.');
   step='wordpress_mysql_database_remote_backup';
   const remoteSelector=backups.getByRole('combobox',{name:'Immediate backup destination',exact:true});
   const remoteOptions=remoteSelector.locator('option:not([value=""])');
@@ -432,6 +452,7 @@ async function wordpressWorkflow(h, initial) {
   const remoteMatch=/^([A-Za-z0-9][A-Za-z0-9_-]{0,127}):([1-9][0-9]*)$/.exec(remoteValue??'');
   if(!remoteMatch||!Number.isSafeInteger(Number(remoteMatch[2])))throw Error('WordPress MySQL validated remote target unavailable');
   const remoteTarget={target_id:remoteMatch[1],revision:Number(remoteMatch[2])};
+  if(remoteTarget.target_id!==scheduleTarget.target_id||remoteTarget.revision!==scheduleTarget.revision)throw Error('WordPress MySQL immediate and scheduled selected target differ');
   await backups.getByRole('combobox',{name:'Database backup component',exact:true}).selectOption('mysql');
   await remoteSelector.selectOption(remoteValue);
   const immediatePending=response(page,'/api/v1/resources/'+resourceID+'/database-backups');
@@ -455,6 +476,20 @@ async function wordpressWorkflow(h, initial) {
   safe.wordpress_mysql_database_remote_failure_local_success=true;
   await report('database_backed_up',logicalBackup.id);
   await state('database_mutate');
+  step='wordpress_mysql_database_remote_schedule_retry';
+  const scheduledRetryPending=response(page,'/api/v1/database-backups/'+logicalBackup.id+'/transfers/retry');
+  await scheduledRemoteHistory.getByRole('button',{name:'Retry upload for '+logicalBackup.id,exact:true}).click();
+  const scheduledRetryResponse=await scheduledRetryPending,scheduledRetryInput=scheduledRetryResponse.request().postDataJSON();
+  const scheduledRetry=await checkedResponse(scheduledRetryResponse,202);
+  if(!scheduledRetryInput.request_id||scheduledRetryInput.expected_transfer_id!==scheduledFailedUpload.id||scheduledRetry.id===scheduledFailedUpload.id||scheduledRetry.mode!=='upload'||scheduledRetry.version!==scheduledFailedUpload.version||scheduledRetry.backup_id!==logicalBackup.id||scheduledRetry.target_id!==scheduleTarget.target_id||scheduledRetry.target_revision!==scheduleTarget.revision||JSON.stringify(scheduledRetry.blob)!==JSON.stringify(logicalBackup.blob))throw Error('WordPress MySQL scheduled upload retry changed artifact or target');
+  await expect.poll(async()=>{
+    const transfers=await checkedResponse(await context.request.get('/api/v1/database-backups/'+logicalBackup.id+'/transfers'),200);
+    return transfers.some(value=>value.id===scheduledRetry.id&&value.state==='succeeded'&&value.backup_id===logicalBackup.id&&JSON.stringify(value.blob)===JSON.stringify(logicalBackup.blob));
+  },{timeout:30000,intervals:[500,1000,2000]}).toBe(true);
+  const retainedScheduled=await checkedResponse(await context.request.get('/api/v1/database-backups/'+logicalBackup.id),200);
+  if(retainedScheduled.state!=='succeeded'||retainedScheduled.ownership_held||JSON.stringify(retainedScheduled.blob)!==JSON.stringify(logicalBackup.blob)||retainedScheduled.remote_target?.target_id!==scheduleTarget.target_id||retainedScheduled.remote_target?.revision!==scheduleTarget.revision)throw Error('WordPress MySQL scheduled upload retry changed retained local backup');
+  await expect(scheduledRemoteHistory).toContainText('Latest remote upload: succeeded.');
+  safe.wordpress_mysql_database_remote_schedule_same_archive_retry=true;
   step='wordpress_mysql_database_remote_retry';
   const uploadRetryPending=response(page,'/api/v1/database-backups/'+remoteBackup.id+'/transfers/retry');
   await remoteHistory.getByRole('button',{name:'Retry upload for '+remoteBackup.id,exact:true}).click();
