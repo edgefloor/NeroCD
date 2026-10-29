@@ -2,6 +2,7 @@ package runnerruntime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -116,4 +117,79 @@ func TestImageDockerIntegration(t *testing.T) {
 	}
 	assertHTTP("B")
 	t.Logf("real Docker: A frozen at %s after tag moved; B %s; ordinary HTTP A/B; pull failure preserved B; HTTP readiness failure restored B", releaseA.CanonicalImage, releaseB.CanonicalImage)
+}
+
+// TestWordPressStackPrepareDockerIntegration exercises the real pre-apply path
+// without starting application services or acquiring mutation authority.
+func TestWordPressStackPrepareDockerIntegration(t *testing.T) {
+	if os.Getenv("NEROCD_WORDPRESS_PREPARE_RUNTIME") != "disposable-dind" {
+		t.Skip("requires the owned disposable WordPress preparation fixture")
+	}
+	expectedDaemon := os.Getenv("NEROCD_WORDPRESS_PREPARE_DAEMON")
+	if expectedDaemon == "" {
+		t.Fatal("exact owned daemon identity required")
+	}
+	template, ok := domain.LookupHostingCatalogTemplate("wordpress-with-mysql", domain.HostingCatalogWordPressVersion)
+	if !ok || template.Definition.Compose == nil {
+		t.Fatal("pinned WordPress catalog definition unavailable")
+	}
+	definition, err := domain.ParseHostingStack(*template.Definition.Compose)
+	if err != nil {
+		t.Fatal("pinned WordPress Compose definition invalid")
+	}
+	engine := testImageEngine(t)
+	engine.command = imageCommandFunc(func(ctx context.Context, name string, args []string, dir string, env []string) ([]byte, error) {
+		stage := "unexpected"
+		if name == "docker" && len(args) >= 5 {
+			switch args[4] {
+			case "compose":
+				stage = "compose_version"
+			case "info":
+				stage = "daemon_identity"
+			case "image":
+				if len(args) >= 7 && args[5] == "inspect" {
+					stage = "image_inspect"
+				} else if len(args) == 7 && args[5] == "pull" {
+					for _, service := range definition.Services {
+						normalized, normalizeErr := domain.NormalizeHostingImage(service.Image)
+						if normalizeErr == nil && args[6] == normalized {
+							stage = service.Name + "_pull"
+						}
+					}
+				}
+			}
+		} else if name == "docker-compose" {
+			stage = "compose_standalone_version"
+		}
+		if stage == "unexpected" {
+			return nil, errors.New("unexpected preparation command")
+		}
+		start := time.Now()
+		body, commandErr := (osProvenanceCommand{}).RunEnvironment(ctx, name, args, dir, env)
+		category, code := "success", 0
+		if commandErr != nil {
+			category, code = "command_failed", -1
+			var execution *provenanceExecutionError
+			if errors.As(commandErr, &execution) {
+				category = execution.reason
+			}
+			var exit *exec.ExitError
+			if errors.As(commandErr, &exit) {
+				code = exit.ExitCode()
+			}
+		}
+		t.Logf("WordPress preparation stage=%s category=%s exit=%d elapsed_ms=%d", stage, category, code, time.Since(start).Milliseconds())
+		return body, commandErr
+	})
+	if daemon, daemonErr := engine.daemonID(t.Context()); daemonErr != nil || daemon != expectedDaemon {
+		t.Fatal("owned preparation daemon mismatch")
+	}
+	release, images, err := engine.prepareStack(t.Context(), definition, nil)
+	if err != nil {
+		t.Fatal("WordPress stack preparation failed before apply")
+	}
+	if release.DaemonID != expectedDaemon || len(images) != len(definition.Services) || domain.ValidateHostingStackImages(definition, expectedDaemon, images) != nil {
+		t.Fatal("WordPress prepared image evidence mismatch")
+	}
+	t.Log("WORDPRESS_STACK_PREPARE_PASS: exact catalog images prepared; no apply executed")
 }
