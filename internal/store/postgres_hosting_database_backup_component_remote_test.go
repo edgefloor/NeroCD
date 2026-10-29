@@ -21,6 +21,24 @@ func TestPostgresComposeDatabaseRemoteBackupAndRestore(t *testing.T) {
 	source, sourceOp := deployBackupComponentStack(t, pg, base, server, destination, "a")
 	target, targetOp := deployBackupComponentStack(t, pg, base, server, destination, "b")
 	f, remote := remoteBackupFixtureFor(t, networkCaptureFixture{storageMaterializationFixture: storageMaterializationFixture{pg: pg, db: db, resource: source, runner: server.RunnerID, op: sourceOp}, service: hostingDatabaseApplication(t, pg), ctx: ctx})
+	if _, err := f.service.SaveDatabaseBackupSchedule(ctx, source.ID, "", domain.HostingDatabaseBackupScheduleInput{RequestID: "pg_component_remote_schedule_denied", ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID, Frequency: "every_minute", Timezone: "UTC", Enabled: true, RemoteTarget: &domain.BackupTargetSelection{TargetID: remote.ID, Revision: remote.Revision}}); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("PostgreSQL component remote schedule widened", err)
+	}
+	localSchedule, err := f.service.SaveDatabaseBackupSchedule(ctx, source.ID, "", domain.HostingDatabaseBackupScheduleInput{RequestID: "pg_component_local_schedule", ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID, Frequency: "every_minute", Timezone: "UTC", Enabled: true})
+	if err != nil {
+		t.Fatal("existing PostgreSQL local schedule", err)
+	}
+	// Even a historical/direct-SQL selection cannot enable the unqualified PG component due path.
+	if _, err = db.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_remote_targets(schedule_id,schedule_revision,target_id,target_revision) VALUES($1,1,$2,$3)`, localSchedule.ID, remote.ID, remote.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.ReconcileDatabaseBackupSchedules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	history, err := f.service.ListDatabaseBackupOccurrences(ctx, source.ID, localSchedule.ID)
+	if err != nil || len(history) != 1 || history[0].OperationID != "" || history[0].State != "skipped" {
+		t.Fatal("stored PG component remote selection admitted due work", err)
+	}
 	input := domain.HostingDatabaseBackupInput{RequestID: "component_remote_backup", ExpectedResourceGeneration: source.Generation, Component: "postgresql", ExpectedDeployedOperationID: sourceOp.ID, RemoteTarget: &domain.BackupTargetSelection{TargetID: remote.ID, Revision: remote.Revision}}
 	backup, err := f.service.RequestDatabaseBackup(ctx, source.ID, input)
 	if err != nil {

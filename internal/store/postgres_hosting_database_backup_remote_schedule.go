@@ -29,6 +29,13 @@ func (s *PostgresStore) saveBackupRemoteScheduleSelection(ctx context.Context, t
 	if selection == nil {
 		return nil
 	}
+	saved, err := sqlcgen.New(tx).ReadDatabaseBackupSchedule(ctx, id)
+	if err != nil {
+		return hostingError(err)
+	}
+	if saved.ResourceID != resource || saved.Revision != revision || saved.Component != "" && saved.ComponentBackupVersion != domain.HostingDatabaseMySQLBackupComponentVersion {
+		return ErrConflict
+	}
 	if !enabled && revision > 1 {
 		prior, err := backupRemoteScheduleSelection(ctx, tx, id, revision-1)
 		if err != nil {
@@ -54,12 +61,30 @@ func (s *PostgresStore) saveBackupRemoteScheduleSelection(ctx context.Context, t
 			return err
 		}
 	}
-	v, h, _, err := databaseBackupSource(ctx, tx, actor, resource)
-	if err != nil {
-		return err
-	}
 	limits := s.databaseBackupPolicy()
-	check := domain.HostingDatabaseBackupPlan{ActorID: actor, RunnerID: h.Snapshot.RunnerID, Source: h, Operation: domain.HostingDatabaseBackupOperation{ProjectID: v.Resource.ProjectID, Version: domain.HostingDatabaseBackupVersionFor(v.Engine, v.RecipeVersion)}, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
+	check := domain.HostingDatabaseBackupPlan{ActorID: actor, MaxBytes: limits.MaxBytes, TimeoutSeconds: limits.TimeoutSeconds}
+	if saved.Component != "" {
+		h, op, _, sourceErr := databaseBackupComponentSource(ctx, tx, actor, resource, saved.Component, domain.RoleOwner)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		if domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, saved.Component) != saved.ComponentBackupVersion {
+			return ErrConflict
+		}
+		check.RunnerID, check.Source, check.SourcePlan = h.Snapshot.RunnerID, h, *op.Plan
+		check.Operation = domain.HostingDatabaseBackupOperation{ProjectID: op.ProjectID, Version: saved.ComponentBackupVersion}
+		check.Component = &domain.HostingDatabaseBackupComponentPlan{Source: saved.Component}
+		if err = databaseBackupAgent(ctx, tx, check); err != nil {
+			return err
+		}
+	} else {
+		v, h, _, sourceErr := databaseBackupSource(ctx, tx, actor, resource)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		check.RunnerID, check.Source = h.Snapshot.RunnerID, h
+		check.Operation = domain.HostingDatabaseBackupOperation{ProjectID: v.Resource.ProjectID, Version: domain.HostingDatabaseBackupVersionFor(v.Engine, v.RecipeVersion)}
+	}
 	if _, err = backupRemoteSelect(ctx, tx, check, *selection); err != nil {
 		return err
 	}

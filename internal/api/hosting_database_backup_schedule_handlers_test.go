@@ -96,14 +96,24 @@ func databaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T, version 
 	}
 	disabledComponent := strings.TrimSuffix(update, "}") + `,"component":"postgresql"}`
 	archiveHTTPCall(t, server, "PUT", path+"/schedule", owner, disabledComponent, "application/json", 200)
+	for index, wire := range []string{componentBody, disabledComponent} {
+		wire = strings.Replace(wire, `"postgresql"`, `"mysql"`, 1)
+		wire = strings.TrimSuffix(wire, "}") + `,"remote_target":{"target_id":"target","revision":1}}`
+		method, endpoint := "POST", path
+		if index == 1 {
+			method, endpoint = "PUT", path+"/schedule"
+		}
+		archiveHTTPCall(t, server, method, endpoint, owner, wire, "application/json", 200)
+		if repo.input.Component != "mysql" || repo.input.RemoteTarget == nil || repo.input.RemoteTarget.TargetID != "target" || repo.input.RemoteTarget.Revision != 1 {
+			t.Fatal("MySQL component remote schedule wire changed")
+		}
+	}
 	beforeComponentInvalid := repo.calls
 	for _, invalid := range []string{
 		strings.TrimSuffix(body, "}") + `,"component":"postgresql"}`,
 		strings.TrimSuffix(body, "}") + `,"expected_deployed_operation_id":"hop_current"}`,
 		strings.Replace(componentBody, `"postgresql"`, `"bad.component"`, 1),
 		strings.Replace(componentBody, `"hop_current"`, `"invalid operation"`, 1),
-		strings.TrimSuffix(componentBody, "}") + `,"remote_target":{"target_id":"target","revision":1}}`,
-		strings.TrimSuffix(disabledComponent, "}") + `,"remote_target":{"target_id":"target","revision":1}}`,
 	} {
 		archiveHTTPCall(t, server, "POST", path, owner, invalid, "application/json", 400)
 	}

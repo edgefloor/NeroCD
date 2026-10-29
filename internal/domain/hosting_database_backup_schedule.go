@@ -101,7 +101,7 @@ func (in HostingDatabaseBackupScheduleInput) Validate() error {
 		if in.ExpectedDeployedOperationID != "" {
 			return ErrInvalidDatabaseBackupSchedule
 		}
-	} else if !stackName.MatchString(in.Component) || in.RemoteTarget != nil || (in.ExpectedDeployedOperationID != "" && !hostingProxyID.MatchString(in.ExpectedDeployedOperationID)) || ((in.Enabled || in.ExpectedVersion == 0) && in.ExpectedDeployedOperationID == "") {
+	} else if !stackName.MatchString(in.Component) || (in.ExpectedDeployedOperationID != "" && !hostingProxyID.MatchString(in.ExpectedDeployedOperationID)) || ((in.Enabled || in.ExpectedVersion == 0) && in.ExpectedDeployedOperationID == "") {
 		return ErrInvalidDatabaseBackupSchedule
 	}
 	_, _, _, err := backupSchedule(in.Frequency, in.Timezone)

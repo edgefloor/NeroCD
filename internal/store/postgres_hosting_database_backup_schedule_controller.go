@@ -140,6 +140,9 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 				if e == nil {
 					var remote *domain.BackupTargetSelection
 					remote, e = backupRemoteScheduleSelection(ctx, admission, schedule.ID, schedule.Revision)
+					if e == nil && remote != nil && schedule.Component != "" && schedule.ComponentBackupVersion != domain.HostingDatabaseMySQLBackupComponentVersion {
+						e = ErrConflict
+					}
 					if e == nil {
 						_, e = s.requestDatabaseBackupTx(ctx, admission, operation, schedule.ResourceID, schedule.ActorID, domain.HostingDatabaseBackupInput{Component: schedule.Component, ExpectedDeployedOperationID: deployed, RequestID: occurrence, ExpectedResourceGeneration: value.Resource.Generation, RemoteTarget: remote})
 					}

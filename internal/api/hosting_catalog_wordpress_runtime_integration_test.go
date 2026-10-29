@@ -922,7 +922,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	b.mu.Unlock()
 	b.set("database_backup", target.Resource.ID)
 	backup := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_backed_up"))
-	if backup.Version != "mysql.compose-logical-local.v1" || backup.SourceResourceID != resource.ID || backup.SourceComponent != "mysql" || backup.SourceDeployedOperationID != source.ID || backup.Blob == nil || backup.Blob.Format != "mysql_sql" {
+	if backup.Version != "mysql.compose-logical-local.v1" || backup.SourceResourceID != resource.ID || backup.SourceComponent != "mysql" || backup.SourceDeployedOperationID != source.ID || backup.Blob == nil || backup.Blob.Format != "mysql_sql" || backup.RemoteTarget == nil || backup.RemoteTarget.TargetID != remoteTarget.ID || backup.RemoteTarget.Revision != remoteTarget.Revision {
 		t.Fatal("WordPress MySQL backup identity changed")
 	}
 	b.mu.Lock()
@@ -931,7 +931,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	b.scheduleResource = ""
 	b.mu.Unlock()
 	var scheduleInput domain.HostingDatabaseBackupScheduleInput
-	if original == nil || retried == nil || !reflect.DeepEqual(original, retried) || !bytes.Equal(requestBytes, retryBytes) || json.Unmarshal(requestBytes, &scheduleInput) != nil || scheduleInput.Component != "mysql" || scheduleInput.ExpectedDeployedOperationID != source.ID || scheduleInput.ExpectedResourceGeneration != resource.Generation || !scheduleInput.Enabled || scheduleInput.ExpectedVersion != 0 || scheduleInput.Frequency != "every_minute" || scheduleInput.Timezone != "UTC" {
+	if original == nil || retried == nil || !reflect.DeepEqual(original, retried) || !bytes.Equal(requestBytes, retryBytes) || json.Unmarshal(requestBytes, &scheduleInput) != nil || scheduleInput.Component != "mysql" || scheduleInput.ExpectedDeployedOperationID != source.ID || scheduleInput.ExpectedResourceGeneration != resource.Generation || !scheduleInput.Enabled || scheduleInput.ExpectedVersion != 0 || scheduleInput.Frequency != "every_minute" || scheduleInput.Timezone != "UTC" || !reflect.DeepEqual(scheduleInput.RemoteTarget, backup.RemoteTarget) || !reflect.DeepEqual(original.RemoteTarget, backup.RemoteTarget) {
 		t.Fatal("WordPress MySQL schedule committed retry identity changed")
 	}
 	var scheduleVersion, revisionVersion, state string
@@ -958,22 +958,31 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 		t.Fatal("WordPress MySQL schedule history count changed")
 	}
 	versions.Close()
+	var remoteRevisions int
+	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backup_schedule_remote_targets WHERE schedule_id=$1 AND target_id=$2 AND target_revision=$3`, original.ID, remoteTarget.ID, remoteTarget.Revision).Scan(&remoteRevisions); err != nil || remoteRevisions != 3 {
+		t.Fatal("WordPress MySQL schedule remote target history changed", err)
+	}
 	t.Log("COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS real controller due; immutable MySQL engine and current started deployment; identical committed retry, edit/disable/history")
 	var remoteID string
-	if err := f.database.QueryRow(t.Context(), `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND plan->'operation'->'remote_target'->>'target_id'=$2`, resource.ID, remoteTarget.ID).Scan(&remoteID); err != nil {
+	if err := f.database.QueryRow(t.Context(), `SELECT id FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup' AND plan->'operation'->'remote_target'->>'target_id'=$2 AND id<>$3`, resource.ID, remoteTarget.ID, backup.ID).Scan(&remoteID); err != nil {
 		t.Fatal("WordPress MySQL immediate remote backup missing")
 	}
 	remoteBackup := composeRuntimeAwaitDatabaseBackup(t, f, remoteID)
 	if remoteBackup.ID == backup.ID || remoteBackup.Version != domain.HostingDatabaseMySQLBackupComponentVersion || remoteBackup.SourceDeployedOperationID != source.ID || remoteBackup.RemoteTarget == nil || remoteBackup.RemoteTarget.TargetID != remoteTarget.ID || remoteBackup.RemoteTarget.Revision != remoteTarget.Revision || remoteBackup.State != "succeeded" || remoteBackup.OwnershipHeld || remoteBackup.Blob == nil || remoteBackup.Blob.Format != "mysql_sql" {
 		t.Fatal("WordPress MySQL remote local publication changed")
 	}
-	failedUploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+remoteID+"/transfers", nil, 200)
-	if len(failedUploads) != 1 || failedUploads[0].Mode != "upload" || failedUploads[0].Version != domain.HostingDatabaseMySQLBackupTransferVersion || failedUploads[0].State != "failed" || failedUploads[0].FailureCode != "access_denied" || failedUploads[0].Blob == nil || *failedUploads[0].Blob != *remoteBackup.Blob {
-		t.Fatal("WordPress MySQL failed upload lost successful local archive")
-	}
-	var failedPlan domain.HostingDatabaseBackupTransferPlan
-	if err := f.database.QueryRow(t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, failedUploads[0].ID).Scan(&failedPlan); err != nil {
-		t.Fatal("WordPress MySQL failed upload plan unavailable")
+	remoteBackups := []domain.HostingDatabaseBackupOperation{backup, remoteBackup}
+	failedUploads := make([]domain.HostingDatabaseBackupTransfer, len(remoteBackups))
+	failedPlans := make([]domain.HostingDatabaseBackupTransferPlan, len(remoteBackups))
+	for i, saved := range remoteBackups {
+		uploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+saved.ID+"/transfers", nil, 200)
+		if len(uploads) != 1 || uploads[0].Mode != "upload" || uploads[0].Version != domain.HostingDatabaseMySQLBackupTransferVersion || uploads[0].State != "failed" || uploads[0].FailureCode != "access_denied" || uploads[0].Blob == nil || *uploads[0].Blob != *saved.Blob {
+			t.Fatal("WordPress MySQL failed upload lost successful local archive")
+		}
+		failedUploads[i] = uploads[0]
+		if err := f.database.QueryRow(t.Context(), `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, uploads[0].ID).Scan(&failedPlans[i]); err != nil {
+			t.Fatal("WordPress MySQL failed upload plan unavailable")
+		}
 	}
 	var dumpsBefore int
 	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsBefore); err != nil || dumpsBefore != 2 {
@@ -985,30 +994,36 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if _, err := strconv.ParseInt(later, 10, 64); err != nil {
 		t.Fatal("WordPress later source record identity invalid")
 	}
-	uploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+remoteID+"/transfers", nil, 200)
-	var retriedUpload domain.HostingDatabaseBackupTransfer
-	for _, upload := range uploads {
-		if upload.ID != failedUploads[0].ID && upload.State == "succeeded" {
-			retriedUpload = upload
+	for i, saved := range remoteBackups {
+		uploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+saved.ID+"/transfers", nil, 200)
+		var retriedUpload domain.HostingDatabaseBackupTransfer
+		for _, upload := range uploads {
+			if upload.ID != failedUploads[i].ID && upload.State == "succeeded" {
+				retriedUpload = upload
+			}
+		}
+		if len(uploads) != 2 || retriedUpload.ID == "" || retriedUpload.BackupID != saved.ID || retriedUpload.Version != failedUploads[i].Version || retriedUpload.Blob == nil || *retriedUpload.Blob != *saved.Blob {
+			t.Fatal("WordPress MySQL same archive retry changed")
+		}
+		var retryPlan domain.HostingDatabaseBackupTransferPlan
+		var predecessor string
+		if err := f.database.QueryRow(t.Context(), `SELECT plan,predecessor_id FROM hosting_database_backup_transfers WHERE id=$1`, retriedUpload.ID).Scan(&retryPlan, &predecessor); err != nil || predecessor != failedUploads[i].ID || retryPlan.ObjectKey != failedPlans[i].ObjectKey || retryPlan.LocationID != failedPlans[i].LocationID || retryPlan.DaemonID != failedPlans[i].DaemonID || retryPlan.Target != failedPlans[i].Target {
+			t.Fatal("WordPress MySQL retry redirected saved artifact or target", err)
+		}
+		localAfter := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+saved.ID, nil, 200)
+		if localAfter.State != "succeeded" || localAfter.OwnershipHeld || localAfter.Blob == nil || *localAfter.Blob != *saved.Blob {
+			t.Fatal("WordPress MySQL upload retry changed local success")
+		}
+		objectDigest := strings.Fields(string(silo.command("mc cat fixture/nerocd-storage-runtime/" + retryPlan.ObjectKey + " | sha256sum")))
+		if len(objectDigest) != 2 || "sha256:"+objectDigest[0] != saved.Blob.Digest {
+			t.Fatal("WordPress MySQL remote object digest changed")
 		}
 	}
-	if len(uploads) != 2 || retriedUpload.ID == "" || retriedUpload.BackupID != remoteID || retriedUpload.Version != failedUploads[0].Version || retriedUpload.Blob == nil || *retriedUpload.Blob != *remoteBackup.Blob {
-		t.Fatal("WordPress MySQL same archive retry changed")
-	}
-	var retryPlan domain.HostingDatabaseBackupTransferPlan
-	var predecessor string
-	if err := f.database.QueryRow(t.Context(), `SELECT plan,predecessor_id FROM hosting_database_backup_transfers WHERE id=$1`, retriedUpload.ID).Scan(&retryPlan, &predecessor); err != nil || predecessor != failedUploads[0].ID || retryPlan.ObjectKey != failedPlan.ObjectKey || retryPlan.LocationID != failedPlan.LocationID || retryPlan.DaemonID != failedPlan.DaemonID || retryPlan.Target != failedPlan.Target {
-		t.Fatal("WordPress MySQL retry redirected saved artifact or target", err)
-	}
-	localAfter := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+remoteID, nil, 200)
 	var dumpsAfter int
-	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != dumpsBefore || localAfter.State != "succeeded" || localAfter.OwnershipHeld || localAfter.Blob == nil || *localAfter.Blob != *remoteBackup.Blob {
-		t.Fatal("WordPress MySQL upload retry redumped or changed local success", err)
+	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != dumpsBefore {
+		t.Fatal("WordPress MySQL upload retry admitted another dump", err)
 	}
-	objectDigest := strings.Fields(string(silo.command("mc cat fixture/nerocd-storage-runtime/" + retryPlan.ObjectKey + " | sha256sum")))
-	if len(objectDigest) != 2 || "sha256:"+objectDigest[0] != remoteBackup.Blob.Digest {
-		t.Fatal("WordPress MySQL remote object digest changed")
-	}
+	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS real due archive retains local success on upload denial; same saved schedule artifact retried without another dump")
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_PASS immediate upload failure retains local SQL; retry publishes exact archive without second dump")
 	b.set("database_import", target.Resource.ID)
 	imported := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_imported"))

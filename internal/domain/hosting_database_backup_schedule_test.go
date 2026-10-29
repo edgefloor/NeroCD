@@ -136,12 +136,12 @@ func TestDatabaseBackupComponentScheduleInput(t *testing.T) {
 		{"invalid_component", func(v *HostingDatabaseBackupScheduleInput) { v.Component = "wrong.component" }, false},
 		{"remote", func(v *HostingDatabaseBackupScheduleInput) {
 			v.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
-		}, false},
+		}, true},
 		{"disabled_remote", func(v *HostingDatabaseBackupScheduleInput) {
 			v.Enabled = false
 			v.ExpectedVersion = 1
 			v.RemoteTarget = &BackupTargetSelection{TargetID: "target", Revision: 1}
-		}, false},
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := base
