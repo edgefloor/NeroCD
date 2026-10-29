@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,11 +119,24 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 				kind = "upload"
 			}
 			url := "https://catalog-runtime.example.test" + path
-			var gotConnection, reused, tlsDone, wrote, firstByte atomic.Bool
+			requestStarted := time.Now()
+			var gotConnection, reused, wasIdle, tlsDone, wrote, wroteFailed, firstByte atomic.Bool
+			var idleNanoseconds atomic.Int64
 			trace := &httptrace.ClientTrace{
-				GotConn:              func(info httptrace.GotConnInfo) { gotConnection.Store(true); reused.Store(info.Reused) },
-				TLSHandshakeDone:     func(tls.ConnectionState, error) { tlsDone.Store(true) },
-				WroteRequest:         func(httptrace.WroteRequestInfo) { wrote.Store(true) },
+				GotConn: func(info httptrace.GotConnInfo) {
+					if gotConnection.CompareAndSwap(false, true) {
+						reused.Store(info.Reused)
+						wasIdle.Store(info.WasIdle)
+						idleNanoseconds.Store(int64(info.IdleTime))
+					}
+				},
+				TLSHandshakeDone: func(tls.ConnectionState, error) { tlsDone.Store(true) },
+				WroteRequest: func(info httptrace.WroteRequestInfo) {
+					wrote.Store(true)
+					if info.Err != nil {
+						wroteFailed.Store(true)
+					}
+				},
 				GotFirstResponseByte: func() { firstByte.Store(true) },
 			}
 			request, requestErr := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), http.MethodGet, url, nil)
@@ -131,111 +145,132 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			}
 			r, e := client.Do(request)
 			if e != nil {
-				t.Logf("WordPress failed HTTPS trace kind=%s connection=%t reused=%t tls_done=%t wrote=%t first_byte=%t", kind, gotConnection.Load(), reused.Load(), tlsDone.Load(), wrote.Load(), firstByte.Load())
-				// Observe the already committed source generation without changing it.
-				profile, profileErr := storageRuntimeProxyProfileFor(f.root, f.proxyCleanupID, f.serverID, f.destinationID, "runner_storage_runtime_fixture", f.proxyCleanupDaemon)
-				if profileErr == nil && sourceProxy.Plan != nil && sourceProxy.Preparation != nil && sourceProxy.Result != nil && domain.ValidateHostingProxyPlan(*sourceProxy.Plan) == nil {
-					snapshot := sourceProxy.Plan.Snapshot
-					identity := hostingproxy.Identity{ProxyID: snapshot.ProxyID, ServerID: snapshot.ServerID, DestinationID: snapshot.DestinationID, RunnerID: snapshot.RunnerID, DaemonID: sourceProxy.Plan.DaemonID}
-					settings := hostingproxy.Settings{Directory: profile.directory, DockerBinary: "/usr/local/bin/docker", DockerSocket: "/var/run/docker.sock", Email: snapshot.Configuration.Email, CA: hostingproxy.CA(snapshot.Configuration.CA), ManagementPort: snapshot.Configuration.ManagementPort}
-					engine, engineErr := hostingproxy.NewFixture(settings, "https://localhost:14000/dir", f.roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
-					routes := make([]hostingproxy.Route, 0, len(snapshot.Routes))
-					var sourceRoute string
-					for _, route := range snapshot.Routes {
-						routes = append(routes, hostingproxy.Route{ID: route.RouteID, Hostname: route.Hostname, PathPrefix: route.PathPrefix, HostPort: route.HostPort})
-						if route.ResourceID == resourceID && int(route.HostPort) == sourcePort {
-							sourceRoute = route.RouteID
-						}
-					}
-					plan, planErr := hostingproxy.Prepare(identity, settings, uint64(snapshot.Generation), uint64(sourceProxy.Plan.PreviousGeneration), routes)
-					if snapshot.VerifiedSwitch != nil {
-						plan, planErr = hostingproxy.PrepareVerifiedSwitch(identity, settings, uint64(snapshot.Generation), uint64(sourceProxy.Plan.PreviousGeneration), routes, snapshot.VerifiedSwitch.RouteIDs())
-					}
-					matches := identity.ProxyID == f.proxyCleanupID && identity.ServerID == f.serverID && identity.DestinationID == f.destinationID && identity.RunnerID == "runner_storage_runtime_fixture" && identity.DaemonID == f.proxyCleanupDaemon && sourceRoute != "" && plan.Hash() == sourceProxy.Preparation.EngineHash && plan.StaticHash() == sourceProxy.Preparation.StaticHash
-					if engineErr == nil && planErr == nil && matches {
-						observeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-						observed, observeErr := engine.Observe(observeContext, plan)
-						cancel()
-						sourceObserved, httpReady, httpsReady := false, false, false
-						for _, route := range observed.Routes {
-							if route.RouteID == sourceRoute {
-								sourceObserved, httpReady, httpsReady = true, route.HTTPReady, route.HTTPSReady
+				t.Logf("WordPress failed HTTPS trace kind=%s started=%s finished=%s elapsed_ms=%d connection=%t first_reused=%t first_was_idle=%t first_idle_ms=%d tls_done=%t wrote=%t wrote_failed=%t first_byte=%t", kind, requestStarted.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(requestStarted).Milliseconds(), gotConnection.Load(), reused.Load(), wasIdle.Load(), time.Duration(idleNanoseconds.Load()).Milliseconds(), tlsDone.Load(), wrote.Load(), wroteFailed.Load(), firstByte.Load())
+				var controls sync.WaitGroup
+				controls.Add(3)
+				beginControls := make(chan struct{})
+				go func() {
+					defer controls.Done()
+					<-beginControls
+					started := time.Now()
+					defer func() {
+						t.Logf("WordPress failure control timing request=proxy_observe started=%s finished=%s elapsed_ms=%d", started.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(started).Milliseconds())
+					}()
+					// Observe the already committed source generation without changing it.
+					profile, profileErr := storageRuntimeProxyProfileFor(f.root, f.proxyCleanupID, f.serverID, f.destinationID, "runner_storage_runtime_fixture", f.proxyCleanupDaemon)
+					if profileErr == nil && sourceProxy.Plan != nil && sourceProxy.Preparation != nil && sourceProxy.Result != nil && domain.ValidateHostingProxyPlan(*sourceProxy.Plan) == nil {
+						snapshot := sourceProxy.Plan.Snapshot
+						identity := hostingproxy.Identity{ProxyID: snapshot.ProxyID, ServerID: snapshot.ServerID, DestinationID: snapshot.DestinationID, RunnerID: snapshot.RunnerID, DaemonID: sourceProxy.Plan.DaemonID}
+						settings := hostingproxy.Settings{Directory: profile.directory, DockerBinary: "/usr/local/bin/docker", DockerSocket: "/var/run/docker.sock", Email: snapshot.Configuration.Email, CA: hostingproxy.CA(snapshot.Configuration.CA), ManagementPort: snapshot.Configuration.ManagementPort}
+						engine, engineErr := hostingproxy.NewFixture(settings, "https://localhost:14000/dir", f.roots, []string{"--env", "LEGO_CA_CERTIFICATES=/certificates/root.pem"})
+						routes := make([]hostingproxy.Route, 0, len(snapshot.Routes))
+						var sourceRoute string
+						for _, route := range snapshot.Routes {
+							routes = append(routes, hostingproxy.Route{ID: route.RouteID, Hostname: route.Hostname, PathPrefix: route.PathPrefix, HostPort: route.HostPort})
+							if route.ResourceID == resourceID && int(route.HostPort) == sourcePort {
+								sourceRoute = route.RouteID
 							}
 						}
-						category := "none"
-						if observeErr != nil {
-							category = wordpressRuntimeHTTPErrorCategory(observeErr)
-							switch observeErr.Error() {
-							case "generation receipt not committed or mismatched":
-								category = "proxy_receipt_mismatch"
-							case "owned proxy not observable":
-								category = "proxy_ownership_unavailable"
-							case "traefik management unavailable", "traefik routers/services unavailable":
-								category = "proxy_management_unavailable"
-							case "loaded router count differs", "generation marker router not loaded", "loaded generation marker mismatch", "desired service is not loaded", "desired router is not loaded", "TLS router is not loaded":
-								category = "proxy_loaded_config_mismatch"
-							case "host/path generation probe failed":
-								category = "proxy_backend_http_probe"
-							case "selected route HTTP or trusted HTTPS verification failed; retain controller hold":
-								category = "proxy_selected_route_probe"
-							}
+						plan, planErr := hostingproxy.Prepare(identity, settings, uint64(snapshot.Generation), uint64(sourceProxy.Plan.PreviousGeneration), routes)
+						if snapshot.VerifiedSwitch != nil {
+							plan, planErr = hostingproxy.PrepareVerifiedSwitch(identity, settings, uint64(snapshot.Generation), uint64(sourceProxy.Plan.PreviousGeneration), routes, snapshot.VerifiedSwitch.RouteIDs())
 						}
-						t.Logf("WordPress failure proxy observe_ok=%t owned_container_match=%t generation_match=%t loaded_config_match=%t source_seen=%t source_http=%t source_https=%t category=%s", observeErr == nil, observed.ContainerID != "" && observed.ContainerID == sourceProxy.Result.ContainerID, observed.LoadedGeneration == uint64(snapshot.Generation), observed.LoadedGeneration == uint64(snapshot.Generation) && observed.Hash == plan.Hash(), sourceObserved, httpReady, httpsReady, category)
+						matches := identity.ProxyID == f.proxyCleanupID && identity.ServerID == f.serverID && identity.DestinationID == f.destinationID && identity.RunnerID == "runner_storage_runtime_fixture" && identity.DaemonID == f.proxyCleanupDaemon && sourceRoute != "" && plan.Hash() == sourceProxy.Preparation.EngineHash && plan.StaticHash() == sourceProxy.Preparation.StaticHash
+						if engineErr == nil && planErr == nil && matches {
+							observeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							observed, observeErr := engine.Observe(observeContext, plan)
+							cancel()
+							sourceObserved, httpReady, httpsReady := false, false, false
+							for _, route := range observed.Routes {
+								if route.RouteID == sourceRoute {
+									sourceObserved, httpReady, httpsReady = true, route.HTTPReady, route.HTTPSReady
+								}
+							}
+							category := "none"
+							if observeErr != nil {
+								category = wordpressRuntimeHTTPErrorCategory(observeErr)
+								switch observeErr.Error() {
+								case "generation receipt not committed or mismatched":
+									category = "proxy_receipt_mismatch"
+								case "owned proxy not observable":
+									category = "proxy_ownership_unavailable"
+								case "traefik management unavailable", "traefik routers/services unavailable":
+									category = "proxy_management_unavailable"
+								case "loaded router count differs", "generation marker router not loaded", "loaded generation marker mismatch", "desired service is not loaded", "desired router is not loaded", "TLS router is not loaded":
+									category = "proxy_loaded_config_mismatch"
+								case "host/path generation probe failed":
+									category = "proxy_backend_http_probe"
+								case "selected route HTTP or trusted HTTPS verification failed; retain controller hold":
+									category = "proxy_selected_route_probe"
+								}
+							}
+							t.Logf("WordPress failure proxy observe_ok=%t owned_container_match=%t generation_match=%t loaded_config_match=%t source_seen=%t source_http=%t source_https=%t category=%s", observeErr == nil, observed.ContainerID != "" && observed.ContainerID == sourceProxy.Result.ContainerID, observed.LoadedGeneration == uint64(snapshot.Generation), observed.LoadedGeneration == uint64(snapshot.Generation) && observed.Hash == plan.Hash(), sourceObserved, httpReady, httpsReady, category)
+						} else {
+							t.Log("WordPress failure proxy expected_profile_match=false")
+						}
 					} else {
-						t.Log("WordPress failure proxy expected_profile_match=false")
+						t.Log("WordPress failure proxy expected_profile_available=false")
 					}
-				} else {
-					t.Log("WordPress failure proxy expected_profile_available=false")
-				}
+				}()
 				for _, direct := range []bool{false, true} {
-					controlTransport := transport.Clone()
-					controlURL, controlKind := url, "fresh_tls"
-					if direct {
-						controlTransport = &http.Transport{Proxy: nil}
-						controlURL, controlKind = fmt.Sprintf("http://127.0.0.1:%d%s", sourcePort, path), "direct_source"
-					}
-					control := &http.Client{Transport: controlTransport, Timeout: 5 * time.Second}
-					controlRequest, controlErr := http.NewRequestWithContext(context.Background(), http.MethodGet, controlURL, nil)
-					if controlErr != nil {
+					go func() {
+						defer controls.Done()
+						<-beginControls
+						started := time.Now()
+						controlTransport := transport.Clone()
+						controlURL, controlKind := url, "fresh_tls"
+						if direct {
+							controlTransport = &http.Transport{Proxy: nil}
+							controlURL, controlKind = fmt.Sprintf("http://127.0.0.1:%d%s", sourcePort, path), "direct_source"
+						}
+						defer func() {
+							t.Logf("WordPress failure control timing request=%s started=%s finished=%s elapsed_ms=%d", controlKind, started.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(started).Milliseconds())
+						}()
+						control := &http.Client{Transport: controlTransport, Timeout: 5 * time.Second}
+						controlRequest, controlErr := http.NewRequestWithContext(context.Background(), http.MethodGet, controlURL, nil)
+						if controlErr != nil {
+							controlTransport.CloseIdleConnections()
+							t.Logf("WordPress failure control kind=%s request=%s category=request_construction", kind, controlKind)
+							return
+						}
+						if direct {
+							controlRequest.Host = "catalog-runtime.example.test:25443"
+							controlRequest.Header.Set("X-Forwarded-Proto", "https")
+							control.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+						}
+						var connected, connectFailed, handshake, handshakeFailed, firstByte atomic.Bool
+						if !direct {
+							controlRequest = controlRequest.WithContext(httptrace.WithClientTrace(controlRequest.Context(), &httptrace.ClientTrace{
+								ConnectDone:          func(_, _ string, err error) { connected.Store(true); connectFailed.Store(err != nil) },
+								TLSHandshakeDone:     func(_ tls.ConnectionState, err error) { handshake.Store(true); handshakeFailed.Store(err != nil) },
+								GotFirstResponseByte: func() { firstByte.Store(true) },
+							}))
+						}
+						response, controlErr := control.Do(controlRequest)
+						status, verified, matches, category := 0, false, false, "none"
+						if controlErr != nil {
+							category = wordpressRuntimeHTTPErrorCategory(controlErr)
+						} else {
+							data, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+							closeErr := response.Body.Close()
+							status, verified = response.StatusCode, response.TLS != nil && len(response.TLS.VerifiedChains) > 0
+							matches = len(data) <= 2<<20 && bytes.Contains(data, marker)
+							if kind == "upload" {
+								matches = bytes.Equal(data, marker)
+							}
+							if readErr != nil || closeErr != nil {
+								category = "body_read_or_close"
+							}
+						}
 						controlTransport.CloseIdleConnections()
-						t.Logf("WordPress failure control kind=%s request=%s category=request_construction", kind, controlKind)
-						continue
-					}
-					if direct {
-						controlRequest.Host = "catalog-runtime.example.test:25443"
-						controlRequest.Header.Set("X-Forwarded-Proto", "https")
-						control.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-					}
-					var connected, connectFailed, handshake, handshakeFailed, firstByte atomic.Bool
-					if !direct {
-						controlRequest = controlRequest.WithContext(httptrace.WithClientTrace(controlRequest.Context(), &httptrace.ClientTrace{
-							ConnectDone:          func(_, _ string, err error) { connected.Store(true); connectFailed.Store(err != nil) },
-							TLSHandshakeDone:     func(_ tls.ConnectionState, err error) { handshake.Store(true); handshakeFailed.Store(err != nil) },
-							GotFirstResponseByte: func() { firstByte.Store(true) },
-						}))
-					}
-					response, controlErr := control.Do(controlRequest)
-					status, verified, matches, category := 0, false, false, "none"
-					if controlErr != nil {
-						category = wordpressRuntimeHTTPErrorCategory(controlErr)
-					} else {
-						data, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
-						closeErr := response.Body.Close()
-						status, verified = response.StatusCode, response.TLS != nil && len(response.TLS.VerifiedChains) > 0
-						matches = len(data) <= 2<<20 && bytes.Contains(data, marker)
-						if kind == "upload" {
-							matches = bytes.Equal(data, marker)
+						if !direct {
+							t.Logf("WordPress fresh HTTPS trace connect_done=%t connect_failed=%t tls_done=%t tls_failed=%t first_byte=%t", connected.Load(), connectFailed.Load(), handshake.Load(), handshakeFailed.Load(), firstByte.Load())
 						}
-						if readErr != nil || closeErr != nil {
-							category = "body_read_or_close"
-						}
-					}
-					controlTransport.CloseIdleConnections()
-					if !direct {
-						t.Logf("WordPress fresh HTTPS trace connect_done=%t connect_failed=%t tls_done=%t tls_failed=%t first_byte=%t", connected.Load(), connectFailed.Load(), handshake.Load(), handshakeFailed.Load(), firstByte.Load())
-					}
-					t.Logf("WordPress failure control kind=%s request=%s status=%d verified=%t matches=%t category=%s", kind, controlKind, status, verified, matches, category)
+						t.Logf("WordPress failure control kind=%s request=%s status=%d verified=%t matches=%t category=%s", kind, controlKind, status, verified, matches, category)
+					}()
 				}
+				close(beginControls)
+				controls.Wait()
 				t.Fatalf("WordPress trusted HTTPS failed kind=%s category=%s", kind, wordpressRuntimeHTTPErrorCategory(e))
 			}
 			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
@@ -244,6 +279,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			}
 			body, e := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 			_ = r.Body.Close()
+			t.Logf("WordPress HTTPS request kind=%s started=%s finished=%s elapsed_ms=%d connection=%t first_reused=%t first_was_idle=%t first_idle_ms=%d wrote_failed=%t", kind, requestStarted.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), time.Since(requestStarted).Milliseconds(), gotConnection.Load(), reused.Load(), wasIdle.Load(), time.Duration(idleNanoseconds.Load()).Milliseconds(), wroteFailed.Load())
 			matches := bytes.Contains(body, marker)
 			if strings.HasPrefix(path, "/wp-content/uploads/") {
 				matches = bytes.Equal(body, marker)
