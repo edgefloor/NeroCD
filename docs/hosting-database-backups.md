@@ -83,7 +83,7 @@ target invalidates unsubmitted consent. A submitted retry keeps the original
 request and target evidence.
 
 Import changes the target database only. It does not restore WordPress files or
-rewrite the site's URL. Once an import is attempted, a failed or uncertain outcome
+rewrite the site's URL. Once target SQL execution is attempted, a failed or uncertain outcome
 retains target ownership and stopped writers; MySQL does not provide the PostgreSQL adapter's transactional
 rollback guarantee. Component schedules, remote copies, remote restore and
 retention remain unsupported. See the [qualified scope](#compose-mysql-qualification).
