@@ -346,13 +346,82 @@ async function wordpressWorkflow(h, initial) {
   await backups.getByRole('button',{name:'Refresh database components',exact:true}).click();
   await backups.getByRole('combobox',{name:'Database backup component',exact:true}).selectOption('mysql');
   await expect(backups).toContainText('MySQL component backups and imports are local only');
-  step='wordpress_mysql_logical_backup';
-  const backupPending=response(page,'/api/v1/resources/'+resourceID+'/database-backups');
-  await backups.getByRole('button',{name:'Create logical backup',exact:true}).click();
-  const backupResponse=await backupPending,backupInput=backupResponse.request().postDataJSON();
-  if(backupInput.component!=='mysql'||backupInput.expected_resource_generation!==sourceComponents.resource_generation||backupInput.expected_deployed_operation_id!==started||backupInput.remote_target!==undefined)throw Error('WordPress MySQL backup request identity changed');
-  const logicalBackup=await checkedResponse(backupResponse,202);
-  if(logicalBackup.version!=='mysql.compose-logical-local.v1'||logicalBackup.source_resource_id!==resourceID||logicalBackup.source_component!=='mysql')throw Error('WordPress logical backup response changed');
+  step='wordpress_mysql_database_schedule_create';
+  const schedules=backups.getByRole('region',{name:'Component database backup schedules',exact:true});
+  const schedulePath='/api/v1/resources/'+resourceID+'/database-backup-schedules';
+  const submitted=[];
+  const captureSchedule=request=>{
+    if(request.method()==='POST'&&new URL(request.url()).pathname===schedulePath)submitted.push(request.postDataJSON());
+  };
+  page.on('request',captureSchedule);
+  let schedule;
+  try {
+    await schedules.getByRole('combobox',{name:'Scheduled database component',exact:true}).selectOption('mysql');
+    await schedules.getByRole('textbox',{name:'Backup frequency',exact:true}).fill('every_minute');
+    await schedules.getByRole('textbox',{name:'Backup timezone',exact:true}).fill('UTC');
+    await schedules.getByRole('checkbox',{name:'Schedule enabled',exact:true}).check();
+    await schedules.getByRole('button',{name:'Create backup schedule',exact:true}).click();
+    // The real fixture commits the first POST before withholding its response.
+    // Recover through the operator's retained request rather than a second create.
+    step='wordpress_mysql_database_schedule_retry';
+    const retryPending=response(page,schedulePath);
+    await schedules.getByRole('button',{name:'Retry the same schedule request',exact:true}).click();
+    const retried=await retryPending;
+    schedule=await checkedResponse(retried,200);
+    await expect(schedules).toContainText('Saved schedule '+schedule.id+' revision 1.');
+  } finally { page.off('request',captureSchedule); }
+  if(submitted.length!==2||JSON.stringify(submitted[0])!==JSON.stringify(submitted[1]))throw Error('WordPress MySQL schedule retry identity changed');
+  const scheduleInput=submitted[0];
+  if(!scheduleInput.request_id||scheduleInput.component!=='mysql'||scheduleInput.expected_resource_generation!==sourceComponents.resource_generation||scheduleInput.expected_deployed_operation_id!==started||scheduleInput.expected_version!==0||scheduleInput.frequency!=='every_minute'||scheduleInput.timezone!=='UTC'||scheduleInput.enabled!==true||scheduleInput.remote_target!==undefined)throw Error('WordPress MySQL schedule request authority changed');
+  if(schedule.version!=='mysql.compose-logical-local.schedule.v1'||schedule.resource_id!==resourceID||schedule.component!=='mysql'||schedule.revision!==1||schedule.frequency!=='every_minute'||schedule.timezone!=='UTC'||schedule.enabled!==true||schedule.remote_target!==undefined)throw Error('WordPress MySQL schedule response changed');
+  safe.wordpress_mysql_database_schedule_retry=true;
+  for(const width of [320,390,430,1280]){
+    await page.setViewportSize({width,height:900});
+    await expect(schedules.getByRole('button',{name:'Disable schedule',exact:true})).toBeVisible();
+    if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress MySQL schedule controls responsive overflow');
+  }
+  step='wordpress_mysql_database_schedule_due';
+  let occurrence,logicalBackup;
+  await expect.poll(async()=>{
+    const values=await checkedResponse(await context.request.get(schedulePath+'/'+schedule.id+'/occurrences'),200);
+    occurrence=values.find(value=>value.operation_id);
+    if(!occurrence||occurrence.state!=='succeeded')return false;
+    logicalBackup=await checkedResponse(await context.request.get('/api/v1/database-backups/'+occurrence.operation_id),200);
+    return logicalBackup.state==='succeeded'&&logicalBackup.ownership_held===false&&logicalBackup.blob?.format==='mysql_sql';
+  },{timeout:75000,intervals:[500,1000,2000]}).toBe(true);
+  if(occurrence.schedule_id!==schedule.id||occurrence.schedule_revision!==1||occurrence.resource_id!==resourceID||occurrence.component!=='mysql'||occurrence.frequency!=='every_minute'||occurrence.timezone!=='UTC')throw Error('WordPress MySQL scheduled occurrence linkage changed');
+  if(logicalBackup.id!==occurrence.operation_id||logicalBackup.version!=='mysql.compose-logical-local.v1'||logicalBackup.source_resource_id!==resourceID||logicalBackup.source_component!=='mysql'||logicalBackup.source_deployed_operation_id!==started)throw Error('WordPress scheduled logical backup identity changed');
+  safe.wordpress_mysql_database_schedule_due=true;
+  step='wordpress_mysql_database_schedule_edit_disable';
+  const scheduleUpdate=()=>page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===schedulePath+'/'+schedule.id);
+  await schedules.getByRole('button',{name:'Edit schedule',exact:true}).click();
+  await schedules.getByRole('textbox',{name:'Backup frequency',exact:true}).fill('* * * * *');
+  await schedules.getByRole('textbox',{name:'Backup timezone',exact:true}).fill('Etc/UTC');
+  const editPending=scheduleUpdate();
+  await schedules.getByRole('button',{name:'Save schedule changes',exact:true}).click();
+  const editResponse=await editPending,editInput=editResponse.request().postDataJSON();
+  const edited=await checkedResponse(editResponse,200);
+  if(editInput.expected_version!==1||editInput.component!=='mysql'||editInput.expected_resource_generation!==sourceComponents.resource_generation||editInput.expected_deployed_operation_id!==started||edited.id!==schedule.id||edited.revision!==2||edited.component!=='mysql'||edited.version!==schedule.version||edited.frequency!=='* * * * *'||edited.timezone!=='Etc/UTC'||edited.enabled!==true||edited.remote_target!==undefined)throw Error('WordPress MySQL schedule edit identity changed');
+  await expect(schedules).toContainText('Saved schedule '+schedule.id+' revision 2.');
+  const disablePending=scheduleUpdate();
+  await schedules.getByRole('button',{name:'Disable schedule',exact:true}).click();
+  const disableResponse=await disablePending,disableInput=disableResponse.request().postDataJSON();
+  const disabled=await checkedResponse(disableResponse,200);
+  if(disableInput.expected_version!==2||disableInput.component!=='mysql'||disableInput.expected_deployed_operation_id!==undefined||disabled.id!==schedule.id||disabled.revision!==3||disabled.component!=='mysql'||disabled.version!==schedule.version||disabled.frequency!==edited.frequency||disabled.timezone!==edited.timezone||disabled.enabled!==false||disabled.remote_target!==undefined)throw Error('WordPress MySQL schedule disable identity changed');
+  await expect(schedules).toContainText('Saved schedule '+schedule.id+' revision 3.');
+  safe.wordpress_mysql_database_schedule_edit_disable=true;
+  step='wordpress_mysql_database_schedule_history';
+  await reloadHosting();
+  await expect(schedules).toContainText(schedule.id+' · revision 3 · Disabled');
+  await schedules.getByRole('listitem').filter({hasText:schedule.id}).getByRole('button',{name:'View occurrences',exact:true}).click();
+  const history=schedules.getByRole('region',{name:'Backup schedule occurrences',exact:true});
+  await expect(history).toContainText('Backup operation: '+logicalBackup.id);
+  await expect(history).toContainText('schedule revision 1');
+  await expect(history).toContainText('succeeded');
+  await expect(history).toContainText('Component: mysql · every_minute · UTC');
+  const reloaded=await checkedResponse(await context.request.get(schedulePath),200);
+  if(reloaded.length!==1||reloaded[0].id!==schedule.id||reloaded[0].revision!==3||reloaded[0].enabled!==false||reloaded[0].component!=='mysql'||reloaded[0].version!==schedule.version)throw Error('WordPress MySQL disabled schedule history changed');
+  safe.wordpress_mysql_database_schedule_history=true;
   await report('database_backed_up',logicalBackup.id);
   await state('database_mutate');
   const laterID=await checkWordPress('compose_backup');
