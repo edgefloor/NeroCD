@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"nerocd/internal/domain"
@@ -120,6 +121,8 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 				return client.HostingRegistryCredential(ctx, claim.Lease.RunnerID, domain.HostingRegistryCredentialRequest{Authority: a, DeliveryID: deliveryID}, runnerclient.RuntimeEnvironmentTransport{TrustedLoopbackHTTP: registryConfigs[0].TrustedLoopbackHTTP})
 			}
 		}
+		command := engine.command
+		engine.command = preparationImageCommand{command: command, log: os.Stdout}
 		switch {
 		case op.StackSource != nil:
 			release, images, prepareErr = engine.prepareStack(supervisor.Context(), *op.StackSource, deliver, op.ComposeResult)
@@ -133,6 +136,7 @@ func executeImageClaim(supervisor *attemptSupervisor, journal *runner.AttemptJou
 		default:
 			release, prepareErr = engine.Prepare(supervisor.Context(), op.Snapshot)
 		}
+		engine.command = command
 		if prepareErr != nil {
 			if supervisor.Context().Err() != nil {
 				return prepareErr

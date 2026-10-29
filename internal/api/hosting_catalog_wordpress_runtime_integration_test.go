@@ -45,6 +45,36 @@ func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T) {
 	wordpressRuntimeScenario(t, true)
 }
 
+// TestHostingCatalogWordPressInitialCompiledRunner stops after the first real
+// catalog deployment, before browser, preservation or schedule workflows.
+func TestHostingCatalogWordPressInitialCompiledRunner(t *testing.T) {
+	if os.Getenv("NEROCD_WORDPRESS_INITIAL_RUNTIME") != "disposable-dind" || os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true" || os.Getenv("NEROCD_COMPOSE_RUNTIME") != "disposable-dind" {
+		t.Skip("requires owned initial WordPress runtime fixture")
+	}
+	f := newStorageRuntimeFixture(t, false)
+	input := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("i", 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, DestinationID: f.destinationID, Name: "WordPress initial deployment", TemplateID: "wordpress-with-mysql", ImmutableVersion: wordpressFixtureVersion, PublicURL: "https://catalog-runtime.example.test:25443"}
+	storageRuntimeJSON[map[string]string](f, "POST", "/api/v1/hosting-catalog/installations", input, 503)
+	installed := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "POST", "/api/v1/hosting-catalog/installations", input, 201)
+	f.catalogBrowser.mu.Lock()
+	original, retried := f.catalogBrowser.original, f.catalogBrowser.retried
+	f.catalogBrowser.mu.Unlock()
+	if original == nil || retried == nil || !reflect.DeepEqual(*original, installed) || !reflect.DeepEqual(*retried, installed) {
+		t.Fatal("initial WordPress committed installation retry changed")
+	}
+	resource := installed.Resource
+	deployed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resource.ID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, IdempotencyKey: "wordpress-initial-runtime", ContainerPort: 80, HostPort: 20000, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 120}}, 202)
+	deployed = f.await(deployed.ID, "succeeded")
+	if deployed.Result == nil || deployed.Result.Stack == nil || !deployed.Result.Ready || deployed.Result.Uncertain || deployed.MutationHold || len(deployed.Result.Stack.Components) != 2 || len(deployed.Result.Stack.Volumes) != 2 {
+		t.Fatal("initial WordPress stack evidence unavailable")
+	}
+	for _, component := range deployed.Result.Stack.Components {
+		if !component.Running || component.Health != "healthy" {
+			t.Fatal("initial WordPress component unhealthy")
+		}
+	}
+	t.Log("WORDPRESS_INITIAL_RUNTIME_PASS: real compiled runner/catalog deployment; no browser or schedules")
+}
+
 func wordpressRuntimeScenario(t *testing.T, mysql bool) {
 	t.Helper()
 	if os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true" || os.Getenv("NEROCD_COMPOSE_RUNTIME") != "disposable-dind" {

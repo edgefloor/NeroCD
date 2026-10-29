@@ -1,13 +1,16 @@
 package runnerruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -448,5 +451,51 @@ func TestImageRestorationRechecksPreviousHostPolicyBeforeStart(t *testing.T) {
 	result := e.Apply(t.Context(), "current", p)
 	if previousStarted || !result.Uncertain || result.Restored || result.Ready {
 		t.Fatalf("unsafe previous container restarted: %+v started=%v", result, previousStarted)
+	}
+}
+
+type failingImageDiagnosticWriter struct{}
+
+func (failingImageDiagnosticWriter) Write([]byte) (int, error) {
+	return 0, errors.New("secret diagnostic writer failure")
+}
+
+func TestPreparationImageCommandFixedDiagnosticsDoNotChangeResult(t *testing.T) {
+	for _, tc := range []struct {
+		name, category string
+		err            error
+	}{
+		{"timeout", "timeout", &provenanceExecutionError{err: errors.New("secret cause"), reason: "deadline"}},
+		{"cancel", "canceled", context.Canceled},
+		{"unavailable", "unavailable", &exec.Error{Name: "secret executable", Err: errors.New("secret cause")}},
+		{"exit", "exit", &exec.ExitError{}},
+		{"unknown", "failed", &provenanceExecutionError{err: errors.New("secret cause"), reason: "secret reason"}},
+		{"success", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log bytes.Buffer
+			body := []byte("secret command output")
+			original := imageCommandFunc(func(context.Context, string, []string, string, []string) ([]byte, error) { return body, tc.err })
+			for _, writer := range []io.Writer{&log, failingImageDiagnosticWriter{}} {
+				command := preparationImageCommand{command: original, log: writer}
+				got, err := command.RunEnvironment(t.Context(), "docker", []string{"--host", "secret socket", "--config", "secret directory", "image", "pull", "secret image"}, "secret directory", []string{"SECRET=secret credential"})
+				if !bytes.Equal(got, body) || err != tc.err {
+					t.Fatal("preparation diagnostic changed command result")
+				}
+			}
+			if tc.err == nil {
+				if log.Len() != 0 {
+					t.Fatal("successful command emitted failure")
+				}
+				return
+			}
+			var record struct {
+				Event, Stage, Category string
+				Exit                   int
+			}
+			if json.Unmarshal(log.Bytes(), &record) != nil || record.Event != "hosting_preparation_command_failed" || record.Stage != "image_pull" || record.Category != tc.category || strings.Contains(log.String(), "secret") {
+				t.Fatal("preparation diagnostic escaped fixed vocabulary")
+			}
+		})
 	}
 }

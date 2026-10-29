@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -33,6 +34,64 @@ var pulledDigestLine = regexp.MustCompile(`(?m)^Digest: (sha256:[a-f0-9]{64})\s*
 type imageCommand interface {
 	RunEnvironment(context.Context, string, []string, string, []string) ([]byte, error)
 }
+
+// preparationImageCommand preserves command results while making pre-apply
+// failures visible independently of the durable attempt event reporter.
+type preparationImageCommand struct {
+	command imageCommand
+	log     io.Writer
+}
+
+func (c preparationImageCommand) RunEnvironment(ctx context.Context, name string, args []string, dir string, env []string) ([]byte, error) {
+	body, err := c.command.RunEnvironment(ctx, name, args, dir, env)
+	if err == nil {
+		return body, nil
+	}
+	stage := "other"
+	if name == "docker-compose" {
+		stage = "compose_version"
+	} else if name == "docker" && len(args) >= 5 {
+		switch args[4] {
+		case "compose":
+			stage = "compose_version"
+		case "info":
+			stage = "daemon_identity"
+		case "image":
+			if len(args) >= 6 && args[5] == "pull" {
+				stage = "image_pull"
+			} else if len(args) >= 6 && args[5] == "inspect" {
+				stage = "image_inspect"
+			}
+		}
+	}
+	category, code := "failed", -1
+	var execution *provenanceExecutionError
+	var exit *exec.ExitError
+	var unavailable *exec.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		category = "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "timeout"
+	case errors.As(err, &execution) && execution.reason == "canceled":
+		category = "canceled"
+	case execution != nil && execution.reason == "deadline":
+		category = "timeout"
+	case errors.As(err, &exit):
+		category, code = "exit", exit.ExitCode()
+	case errors.As(err, &unavailable):
+		category = "unavailable"
+	}
+	// Operational logging is best effort and cannot poison durable settlement.
+	_ = json.NewEncoder(c.log).Encode(struct {
+		Event    string `json:"event"`
+		Stage    string `json:"stage"`
+		Category string `json:"category"`
+		Exit     int    `json:"exit"`
+	}{"hosting_preparation_command_failed", stage, category, code})
+	return body, err
+}
+
 type imageEngine struct {
 	endpoint, configDir                string
 	stackCommandReady, stackStandalone bool

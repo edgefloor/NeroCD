@@ -1402,9 +1402,25 @@ class WordPressModeContractTests(unittest.TestCase):
             stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
             stub.chmod(0o700)
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]}
-            for mode in ["--wordpress", "--wordpress-mysql"]:
+            for mode in ["--wordpress", "--wordpress-mysql", "--wordpress-initial"]:
                 result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
+
+    def test_wordpress_initial_is_distinct_without_browser_claim(self):
+        source = GATE.read_text()
+        selector = source.split("case ${1:-} in\n", 1)[1].split("\nesac", 1)[0]
+        result = subprocess.run(["bash", "-c", "case ${1:-} in\n" + selector + "\nesac\nprintf '%s\\n' \"$wordpress\" \"$wordpress_mysql\" \"$wordpress_initial\" \"$owner\" \"$test_pattern\"", "fixture", "--wordpress-initial"], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ["true", "true", "true", "nerocd-catalog-wordpress-mysql-runtime-20261029", "^TestHostingCatalogWordPressInitialCompiledRunner$"])
+        block = source.split('if [[ "$wordpress_initial" == true ]]; then\n', 1)[1].split('\n else', 1)[0]
+        self.assertNotIn("node ", block)
+        self.assertIn('--env "NEROCD_WORDPRESS_INITIAL_RUNTIME=$initial_mode"', source)
+        verifier = source.split("<<'WORDPRESS_INITIAL_PASS'\n", 1)[1].split("\nWORDPRESS_INITIAL_PASS", 1)[0]
+        for passed in [True, False]:
+            with tempfile.TemporaryDirectory() as tmp:
+                log = Path(tmp) / "api.log"
+                log.write_text("--- PASS: TestHostingCatalogWordPressInitialCompiledRunner (1s)\nWORDPRESS_INITIAL_RUNTIME_PASS\n" if passed else "SKIP\nWORDPRESS_INITIAL_RUNTIME_PASS\n")
+                run = subprocess.run([sys.executable, "-c", verifier, str(log)], capture_output=True, text=True)
+                self.assertEqual(run.returncode == 0, passed)
 
     def test_wordpress_selector_and_compiled_test_identity(self):
         source = GATE.read_text()

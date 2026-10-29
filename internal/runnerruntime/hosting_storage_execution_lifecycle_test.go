@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -691,4 +692,17 @@ func testStoragePreparationFailureCompletion(t *testing.T, phase, worker, outcom
 	if err != nil || next.Run.ID != replacement.Run.ID || next.Lease != replacement.Lease {
 		t.Fatalf("next claim after settled failure was blocked: %v", err)
 	}
+}
+
+func TestStoragePreparationFailureSettlesWithUnavailableOperationalLog(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = reader.Close()
+	_ = writer.Close()
+	previous := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = previous }()
+	testStoragePreparationFailureCompletion(t, "prepare", "watcher", "ack", true)
 }

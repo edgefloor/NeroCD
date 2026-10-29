@@ -21,6 +21,7 @@ catalog=false
 managed_compose=false
 wordpress=false
 wordpress_mysql=false
+wordpress_initial=false
 git_compose=false
 uptime_kuma=false
 actual_budget=false
@@ -28,6 +29,7 @@ private_registry=false
 case ${1:-} in
  --wordpress) wordpress=true; managed_compose=true; catalog=true; owner=nerocd-catalog-wordpress-runtime-20261028; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogWordPressCompiledRunnerHTTPS$';;
  --wordpress-mysql) wordpress=true; wordpress_mysql=true; managed_compose=true; catalog=true; owner=nerocd-catalog-wordpress-mysql-runtime-20261029; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS$';;
+ --wordpress-initial) wordpress=true; wordpress_mysql=true; wordpress_initial=true; managed_compose=true; catalog=true; owner=nerocd-catalog-wordpress-mysql-runtime-20261029; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingCatalogWordPressInitialCompiledRunner$';;
  --private-registry) private_registry=true; catalog=true; owner=nerocd-private-registry-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingPrivateRegistryCompiledRunnerHTTPS$';;
  --git-compose) git_compose=true; managed_compose=true; catalog=true; archive=true; owner=nerocd-git-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingGitComposeVikunjaCompiledRunnerHTTPS$';;
  --managed-compose) managed_compose=true; catalog=true; archive=true; owner=nerocd-compose-vikunja-runtime-20261027; name=$owner-dind; volume=$owner-docker-data; test_pattern='^TestHostingComposeVikunjaCompiledRunnerHTTPS$';;
@@ -53,7 +55,7 @@ case ${1:-} in
     test_pattern='^(TestStorageRuntimeRollback|TestStorageRuntimeDocker.*|TestHostingStorageArchiveCompiledRunnerHTTPS|TestHostingStorageRemote(ReceiptFaultContract|ObservationFaultContract|ProductionContract)|TestHostingStorageBackupDeletionCompiledRunnerHTTPS)$'
    fi
   fi;;
- *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--wordpress|--wordpress-mysql|--managed-compose|--git-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
+ *) echo 'usage: gate.sh [--archive|--remote|--retention|--deletion|--catalog|--wordpress|--wordpress-mysql|--wordpress-initial|--managed-compose|--git-compose|--uptime-kuma|--actual-budget|--private-registry]' >&2; exit 2;;
 esac
 browser_publication=false
 if [[ "$remote" == true || "$catalog" == true ]]; then browser_publication=true; fi
@@ -753,8 +755,20 @@ elif [[ "$managed_compose" == true ]]; then
  git_compose_mode=''; if [[ "$git_compose" == true ]]; then git_compose_mode=disposable-dind; fi
  browser_origin=$(cat "$evidence/browser-origin")
  browser_key=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
- host_docker exec --workdir /workspace/internal/api --env "NEROCD_WORDPRESS_RUNTIME=$wordpress" --env "NEROCD_WORDPRESS_MYSQL_RUNTIME=$wordpress_mysql" --env "NEROCD_GIT_COMPOSE_RUNTIME=$git_compose_mode" --env "NEROCD_BUILDX_SHA256=sha256:${buildx_sha:-}" --env "NEROCD_PLANNER_IMAGE=${planner_id:-}" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout=20m > "$evidence/api-tests.log" 2>&1 &
+ initial_mode=''; test_timeout=20m
+ if [[ "$wordpress_initial" == true ]]; then initial_mode=disposable-dind; test_timeout=4m; fi
+ host_docker exec --workdir /workspace/internal/api --env "NEROCD_WORDPRESS_INITIAL_RUNTIME=$initial_mode" --env "NEROCD_WORDPRESS_RUNTIME=$wordpress" --env "NEROCD_WORDPRESS_MYSQL_RUNTIME=$wordpress_mysql" --env "NEROCD_GIT_COMPOSE_RUNTIME=$git_compose_mode" --env "NEROCD_BUILDX_SHA256=sha256:${buildx_sha:-}" --env "NEROCD_PLANNER_IMAGE=${planner_id:-}" --env "NEROCD_CGROUP_ROOT=/sys/fs/cgroup/$owner" --env NEROCD_COMPOSE_RUNTIME=disposable-dind --env NEROCD_CATALOG_RUNTIME=disposable-dind --env "NEROCD_CATALOG_BROWSER_ORIGIN=$browser_origin" --env "NEROCD_CATALOG_BROWSER_KEY=$browser_key" --env NEROCD_STORAGE_RUNTIME=disposable-dind --env 'NEROCD_TEST_DATABASE_URL=postgres://nerocd:isolated_fixture_only@127.0.0.1:5432/nerocd_storage_runtime?sslmode=disable' "$outer" /fixture/api.test -test.v -test.run "$test_pattern" -test.timeout="$test_timeout" > "$evidence/api-tests.log" 2>&1 &
  test_pid=$!
+ if [[ "$wordpress_initial" == true ]]; then
+  wait "$test_pid"
+  test_pid=''
+  python3 - "$evidence/api-tests.log" <<'WORDPRESS_INITIAL_PASS'
+import pathlib,sys
+text=pathlib.Path(sys.argv[1]).read_text()
+if "--- PASS: TestHostingCatalogWordPressInitialCompiledRunner " not in text or "SKIP" in text or "WORDPRESS_INITIAL_RUNTIME_PASS" not in text:
+ raise SystemExit("initial WordPress deployment did not pass")
+WORDPRESS_INITIAL_PASS
+ else
  NEROCD_WORDPRESS_RUNTIME="$wordpress" NEROCD_WORDPRESS_MYSQL_RUNTIME="$wordpress_mysql" NEROCD_CATALOG_BROWSER_ORIGIN="$browser_origin" NEROCD_CATALOG_BROWSER_KEY="$browser_key" NEROCD_CATALOG_HOST_EVIDENCE="$evidence" node acceptance/runtime-hosting-catalog/compose_browser.mjs > "$evidence/browser.log" 2>&1
  wait "$test_pid"
  test_pid=''
@@ -788,6 +802,7 @@ for key in ["browser_catalog_compose_install_identical_retry","catalog_compose_o
 for key in ["browser_compose_volume_remote_schedule_saved","browser_compose_volume_remote_schedule_occurrence","browser_compose_volume_remote_schedule_disabled","browser_compose_volume_remote_failure_history_reloaded","browser_compose_volume_remote_same_archive_retry"]:
  if browser.get(key) is not True:raise SystemExit("connected Compose remote schedule proof missing: "+key)
 COMPOSE_BROWSER_PASS
+ fi
 elif [[ "$catalog" == true ]]; then
  catalog_application=linkding; if [[ "$uptime_kuma" == true ]]; then catalog_application=uptime-kuma; elif [[ "$actual_budget" == true ]]; then catalog_application=actualbudget; elif [[ "$private_registry" == true ]]; then catalog_application=private-registry; fi
  browser_origin=$(cat "$evidence/browser-origin")
