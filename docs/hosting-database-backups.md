@@ -85,7 +85,8 @@ request and target evidence.
 Import changes the target database only. It does not restore WordPress files or
 rewrite the site's URL. Once target SQL execution is attempted, a failed or uncertain outcome
 retains target ownership and stopped writers; MySQL does not provide the PostgreSQL adapter's transactional
-rollback guarantee. Component schedules, remote copies, remote restore and
+rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
+use the same archive/import path. Component remote copies, remote restore and
 retention remain unsupported. See the [qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
@@ -240,6 +241,7 @@ Inherited full-lint failures remain explicit: seven native findings and one Linu
 finding. Passing changed-code lint does not replace those results.
 
 Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
-Compose MySQL schedules, remote copies/restore, retention, engine upgrades,
+That qualification did not cover schedules. [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
+passed later at `4c62e6cf`. Component remote copies/restore, retention, engine upgrades,
 credential rotation and cross-destination recovery remain open. Historical native
 MySQL and core WordPress qualifications retain their original limits.

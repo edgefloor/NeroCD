@@ -103,8 +103,10 @@ route and complete WordPress's own site and administrator setup in the applicati
 The MySQL service belongs to this Compose stack. Native MySQL resource backup
 controls do not apply to it. Use the application's component controls for
 [local MySQL backup and separate-stack database-only import](hosting-database-backups.md#compose-mysql-qualification).
-This does not restore WordPress media or rewrite URLs. Component schedules,
-remote copies, retention, upgrades and migration remain outside the qualified workflow.
+[Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
+use the same pinned MySQL component and produce database-only archives. This does
+not restore WordPress media or rewrite URLs. Component remote copies, retention,
+upgrades and migration remain outside the qualified workflow.
 
 ## Install and deploy
 
@@ -597,3 +599,7 @@ The later [Compose MySQL database qualification](hosting-database-backups.md#com
 at `44f9b1d5` adds local SQL backup/import and held partial-import safety with
 current source post/PNG, redeployment and Stop/Start proof. It preserves the
 historical core qualification above rather than reusing its terminal marker.
+
+[Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
+passed at `4c62e6cf` with a real controller due archive, committed-response retry,
+edit/disable/history, and the same source post/full-PNG and separate-target import proofs.

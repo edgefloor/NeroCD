@@ -7,8 +7,8 @@ backup format, protected execution limits, fenced runner, and new-database resto
 path as [immediate backups](hosting-database-backups.md).
 
 Supported sources are the pinned standalone PostgreSQL 17.11 and MySQL 8.4.13
-recipes and the qualified managed Compose PostgreSQL 16 component on their authorized stable
-destinations. Compose schedules create local database archives only. They do not
+recipes and qualified managed Compose PostgreSQL 16 and pinned MySQL 8.4.13
+components on their authorized stable destinations. Compose schedules create local database archives only. They do not
 include application uploads or support remote backup targets.
 Native PostgreSQL and MySQL schedules can select [remote backup targets](hosting-database-remote-backups.md)
 explicitly by target ID and revision, as can standalone immediate backups. A target edit does not redirect an existing schedule. Redis and user-supplied commands are unsupported. Configure [failure alerts](hosting-backup-notifications.md) separately.
@@ -88,15 +88,14 @@ do not accept `component` or `expected_deployed_operation_id`.
 cover accepted operations; discovery-only skips do not notify. A saved upload can
 supply [remote-only restore](hosting-database-remote-backups.md#native-mysql-remote-only-restore-qualification).
 Native MySQL supports [local and remote retention](hosting-database-backup-retention.md#native-mysql-retention-qualification).
-Compose MySQL schedules remain unsupported; only
-[immediate local component backup and database-only import](hosting-database-backups.md#compose-mysql-qualification)
-have separate qualification. The InnoDB snapshot
-and concurrent-DDL limits of immediate MySQL backups still apply.
+[Compose MySQL local schedules](#compose-mysql-schedule-qualification) have separate
+qualification alongside [immediate component backup and database-only import](hosting-database-backups.md#compose-mysql-qualification).
+The InnoDB snapshot and concurrent-DDL limits of immediate MySQL backups still apply.
 
-## Schedule a Compose PostgreSQL component
+## Schedule a Compose database component
 
-Use the application's **Database backups** panel and select its PostgreSQL
-component. The same resource-scoped endpoints accept the additional `component`
+Use the application's **Database backups** panel and select its qualified PostgreSQL 16
+or MySQL 8 component. The same resource-scoped endpoints accept the additional `component`
 and `expected_deployed_operation_id` fields. For example, add these fields to
 the POST document above, using the operation ID from the reviewed deployment:
 
@@ -107,14 +106,20 @@ the POST document above, using the operation ID from the reviewed deployment:
 }
 ```
 
-The component is immutable for the schedule's lifetime. Creation and enabling
+Use `mysql` instead of `postgresql` for the pinned WordPress/MySQL component.
+The response version is `mysql.compose-logical-local.schedule.v1` for MySQL or
+`postgresql.compose-logical-local.schedule.v1` for PostgreSQL. The saved component
+and backup engine version are immutable for the schedule's lifetime. Creation and enabling
 require a fresh review of the current settled deployment. Each due occurrence
 resolves that component from the current deployment, so a successful redeployment
 does not leave the schedule attached to its predecessor. Admission retains the
 exact deployment operation used for that backup.
 
 You can disable a schedule, inspect history, and replay an identical accepted
-request while the stack is unavailable. Current authorization still applies.
+request while the stack is unavailable. Responses and history retain the saved
+engine identity, even if the deployment is absent or has changed engine. Due
+admission requires the current healthy component to match that saved version.
+Current authorization still applies.
 A disable stops future discovery without canceling admitted work. The archive
 contains database records only. A separate-target database import does not restore
 the application's uploaded files or provide coordinated application recovery.
@@ -232,5 +237,42 @@ records source checks, responsive owner/viewer assertions, exact artifact restor
 and cleanup. The profile is one native Linux arm64 destination, trusted rootful
 Docker, and test-CA HTTPS. The full WebUI run retained 2,241 passing tests and one
 unrelated timeout; that test passed separately without a timeout change, and the
-separate build passed. MySQL remote copies, retention, notifications, Compose
-MySQL scheduling, production ACME, and cross-host recovery remain unqualified.
+separate build passed. At that revision, MySQL remote copies, retention,
+notifications, Compose MySQL scheduling, production ACME, and cross-host recovery
+remained unqualified. Later qualifications retain their own scope.
+
+## Compose MySQL schedule qualification
+
+At `4c62e6cf` on 2026-10-29, the existing `--wordpress-mysql` workflow created a
+local schedule for the pinned MySQL 8.4.13 component after source redeployment
+and Stop/Start. The first POST committed before its response was replaced with
+503; an identical retry returned the saved revision. The real hosting execution
+controller produced a due `mysql_sql` archive from that current deployment.
+The browser edited the frequency/timezone, disabled the schedule, and reloaded
+revisions 1, 2 and 3 with the revision-1 occurrence.
+
+That exact scheduled archive fed the existing separate-stack import proof.
+Snapshot records, later-source-write exclusion and independent target writes
+passed, while source posts and the complete uploaded PNG survived through
+trusted fixture-CA HTTPS. Corrupt CAS was rejected before SQL effects. A partial
+import dropped a target table before CREATE was denied; target writers stayed
+stopped and ownership stayed held. The runner exited naturally with code 1,
+retaining matching intent/uncertain authority and no additional acquired run.
+No physical restart or reimport was attempted. Source credential scans and
+responsive controls at 320, 390, 430 and 1280 pixels passed.
+
+The selected test passed in 184.21 seconds. The gate exited zero after 266.724
+seconds with all five required markers. The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/4c62e6cf5db662652d9bacd99468b0a93ae04a51/evidence-index.json)
+records current source/build associations, focused migration/authority tests,
+failed qualification and diagnostic attempts, and exact cleanup. Qualification 18's
+initial preparation failure remains unclassified. Separate initial-fixture ID
+and browser response-order defects were reproduced cheaply and repaired; a pass
+does not retroactively identify the original failure. Timing categories retain
+measured command intervals and mark exclusive implementation/repair time unknown.
+Host container, volume, image, build-cache and user-instance baselines were
+preserved. The unchanged immediate backup/import proof at `44f9b1d5` retains its
+own [evidence and limits](hosting-database-backups.md#compose-mysql-qualification).
+
+This covers one Linux arm64, rootful Docker destination and fixture CA. Compose
+MySQL remote copies/restore, retention, notifications, media restoration, URL
+migration and cross-destination recovery remain outside this qualification.
