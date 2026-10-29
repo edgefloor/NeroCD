@@ -10732,7 +10732,7 @@ components:
           },
           "version": {
             "type": "string",
-            "enum": ["postgresql.logical-local.schedule.v1", "postgresql.compose-logical-local.schedule.v1", "mysql.logical-local.schedule.v1"],
+            "enum": ["postgresql.logical-local.schedule.v1", "postgresql.compose-logical-local.schedule.v1", "mysql.logical-local.schedule.v1", "mysql.compose-logical-local.schedule.v1"],
             "description": "Selected from the actual supported native recipe or PostgreSQL Compose component. MySQL schedules are native; component is absent and remote_target pins an optional S3-compatible copy target."
           },
           "project_id": {
