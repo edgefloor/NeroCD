@@ -245,12 +245,15 @@ func TestHostingCatalogLinkdingCompiledRunnerHTTPS(t *testing.T) {
 // This private handshake sequences the browser; production handlers alone
 // authorize catalog, reveal and deployment requests. No credentials enter it.
 type catalogRuntimeBrowser struct {
-	mu                sync.Mutex
-	key, phase, id    string
-	imageReference    string
-	gitRepository     string
-	reports           chan hostingStorageRemoteRuntimeReport
-	original, retried *domain.HostingCatalogInstallation
+	mu                                    sync.Mutex
+	key, phase, id                        string
+	imageReference                        string
+	gitRepository                         string
+	reports                               chan hostingStorageRemoteRuntimeReport
+	original, retried                     *domain.HostingCatalogInstallation
+	scheduleResource                      string
+	scheduleOriginal, scheduleRetried     *domain.HostingDatabaseBackupSchedule
+	scheduleRequest, scheduleRetryRequest []byte
 }
 
 func newCatalogRuntimeBrowser(t *testing.T) *catalogRuntimeBrowser {
@@ -320,6 +323,52 @@ func TestCatalogRuntimeBrowserComposeDatabaseReports(t *testing.T) {
 	}
 }
 
+func TestCatalogRuntimeBrowserScheduleResponseLoss(t *testing.T) {
+	server, original, owner, viewer, _ := archiveHTTPFixture(t)
+	template, ok := domain.LookupHostingCatalogTemplate("wordpress-with-mysql", domain.HostingCatalogWordPressVersion)
+	if !ok {
+		t.Fatal("pinned WordPress template unavailable")
+	}
+	original.resource.Source = domain.ResourceSource{Kind: "compose", Compose: template.Definition.Compose}
+	repo := &backupScheduleHTTPRepository{databaseBackupHTTPRepository: &databaseBackupHTTPRepository{archiveHTTPRepository: original}}
+	repo.schedule = domain.HostingDatabaseBackupSchedule{Version: domain.HostingDatabaseMySQLBackupComponentScheduleVersion, Component: "mysql", ResourceID: original.resource.ID, ProjectID: original.resource.ProjectID}
+	mem := repo.MemoryStore
+	service, err := app.NewService(app.Dependencies{Auth: auth.ContextProvider{}, Users: mem, Sessions: mem, APITokens: mem, ServiceAccounts: mem, OIDC: mem, Hosting: repo, Destinations: mem, ManagedSecrets: mem, Projects: mem, Members: mem, Templates: mem, Sources: mem, Runs: repo, Runners: mem, Approvals: mem, Audit: mem, Deployments: mem, Observability: mem, ObservationWriter: mem, ObservationReader: mem, Retention: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.app = service
+	b := &catalogRuntimeBrowser{scheduleResource: repo.resource.ID}
+	path := "/api/v1/resources/" + repo.resource.ID + "/database-backup-schedules"
+	body := `{"request_id":"mysql_schedule_retry","expected_resource_generation":1,"expected_version":0,"component":"mysql","expected_deployed_operation_id":"hop_started","frequency":"every_minute","timezone":"UTC","enabled":true}`
+	call := func(method, target, token, payload string) (bool, int) {
+		request := httptest.NewRequest(method, target, strings.NewReader(payload))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Request-ID", "schedule-fault-contract")
+		response := httptest.NewRecorder()
+		handled := b.serve(response, request, server)
+		return handled, response.Code
+	}
+	for _, tc := range []struct{ method, path string }{{"GET", path}, {"POST", path + "/foreign"}, {"POST", "/api/v1/resources/foreign/database-backup-schedules"}} {
+		if handled, _ := call(tc.method, tc.path, owner, body); handled || b.scheduleOriginal != nil {
+			t.Fatal("schedule fault escaped exact method/resource")
+		}
+	}
+	if _, code := call("POST", path, viewer, body); code != 403 || b.scheduleOriginal != nil {
+		t.Fatal("denied request consumed response fault")
+	}
+	if _, code := call("POST", path, owner, strings.TrimSuffix(body, "}")+`,"unexpected":true}`); code != 400 || b.scheduleOriginal != nil {
+		t.Fatal("real closed decoder bypassed")
+	}
+	if _, code := call("POST", path, owner, body); code != 503 || b.scheduleOriginal == nil || repo.input.Component != "mysql" || repo.input.ExpectedDeployedOperationID != "hop_started" {
+		t.Fatal("real schedule request did not commit before response loss")
+	}
+	if _, code := call("POST", path, owner, body); code != 200 || b.scheduleRetried == nil || !bytes.Equal(b.scheduleRequest, b.scheduleRetryRequest) {
+		t.Fatal("schedule retry was not passed through unchanged")
+	}
+}
+
 func (b *catalogRuntimeBrowser) await(t *testing.T, action string) string {
 	t.Helper()
 	select {
@@ -369,6 +418,46 @@ func (b *catalogRuntimeBrowser) serve(w http.ResponseWriter, r *http.Request, se
 			return true
 		}
 		w.WriteHeader(404)
+		return true
+	}
+	b.mu.Lock()
+	scheduleResource := b.scheduleResource
+	b.mu.Unlock()
+	if scheduleResource != "" && r.Method == http.MethodPost && r.URL.Path == "/api/v1/resources/"+scheduleResource+"/database-backup-schedules" {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+		if err != nil || len(body) > 4096 {
+			writeErrorEnvelope(w, 400, "invalid_request", "fixture schedule request bound")
+			return true
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		receipt := httptest.NewRecorder()
+		server.ServeHTTP(receipt, r)
+		if receipt.Code == http.StatusOK {
+			var value domain.HostingDatabaseBackupSchedule
+			if json.Unmarshal(receipt.Body.Bytes(), &value) != nil {
+				w.WriteHeader(500)
+				return true
+			}
+			b.mu.Lock()
+			first := b.scheduleOriginal == nil
+			if first {
+				b.scheduleOriginal = &value
+				b.scheduleRequest = bytes.Clone(body)
+			} else {
+				b.scheduleRetried = &value
+				b.scheduleRetryRequest = bytes.Clone(body)
+			}
+			b.mu.Unlock()
+			if first {
+				writeJSON(w, 503, map[string]string{"code": "unavailable"})
+				return true
+			}
+		}
+		for name, values := range receipt.Header() {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(receipt.Code)
+		_, _ = w.Write(receipt.Body.Bytes())
 		return true
 	}
 	if r.Method == "POST" && r.URL.Path == "/api/v1/hosting-catalog/installations" {

@@ -862,11 +862,48 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	t.Helper()
 	target, deployed := wordpressRuntimeImportTarget(t, f, resource, installed, source, "b", 1)
 	b := f.catalogBrowser
+	b.mu.Lock()
+	b.scheduleResource = resource.ID
+	b.mu.Unlock()
 	b.set("database_backup", target.Resource.ID)
 	backup := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_backed_up"))
 	if backup.Version != "mysql.compose-logical-local.v1" || backup.SourceResourceID != resource.ID || backup.SourceComponent != "mysql" || backup.SourceDeployedOperationID != source.ID || backup.Blob == nil || backup.Blob.Format != "mysql_sql" {
 		t.Fatal("WordPress MySQL backup identity changed")
 	}
+	b.mu.Lock()
+	original, retried := b.scheduleOriginal, b.scheduleRetried
+	requestBytes, retryBytes := bytes.Clone(b.scheduleRequest), bytes.Clone(b.scheduleRetryRequest)
+	b.scheduleResource = ""
+	b.mu.Unlock()
+	var scheduleInput domain.HostingDatabaseBackupScheduleInput
+	if original == nil || retried == nil || !reflect.DeepEqual(original, retried) || !bytes.Equal(requestBytes, retryBytes) || json.Unmarshal(requestBytes, &scheduleInput) != nil || scheduleInput.Component != "mysql" || scheduleInput.ExpectedDeployedOperationID != source.ID || scheduleInput.ExpectedResourceGeneration != resource.Generation || !scheduleInput.Enabled || scheduleInput.ExpectedVersion != 0 || scheduleInput.Frequency != "every_minute" || scheduleInput.Timezone != "UTC" {
+		t.Fatal("WordPress MySQL schedule committed retry identity changed")
+	}
+	var scheduleVersion, revisionVersion, state string
+	var revision, occurrenceRevision, historyCount int64
+	var enabled bool
+	if err := f.database.QueryRow(t.Context(), `SELECT s.component_backup_version,s.revision,s.enabled,v.component_backup_version,o.schedule_revision,o.state,(SELECT count(*) FROM hosting_database_backup_schedule_versions h WHERE h.schedule_id=s.id) FROM hosting_database_backup_schedule_occurrences o JOIN hosting_database_backup_schedules s ON s.id=o.schedule_id JOIN hosting_database_backup_schedule_versions v ON v.schedule_id=s.id AND v.revision=o.schedule_revision WHERE o.operation_id=$1 AND s.id=$2`, backup.ID, original.ID).Scan(&scheduleVersion, &revision, &enabled, &revisionVersion, &occurrenceRevision, &state, &historyCount); err != nil || scheduleVersion != domain.HostingDatabaseMySQLBackupComponentVersion || revisionVersion != scheduleVersion || revision != 3 || enabled || occurrenceRevision != 1 || state != "admitted" || historyCount != 3 {
+		t.Fatal("WordPress MySQL due occurrence lost stored engine/revision identity")
+	}
+	versions, err := f.database.Query(t.Context(), `SELECT revision,frequency,timezone,enabled,component_backup_version FROM hosting_database_backup_schedule_versions WHERE schedule_id=$1 ORDER BY revision`, original.ID)
+	if err != nil {
+		t.Fatal("WordPress MySQL schedule history unavailable")
+	}
+	for i := int64(1); i <= 3; i++ {
+		var got int64
+		var frequency, zone, version string
+		var on bool
+		if !versions.Next() || versions.Scan(&got, &frequency, &zone, &on, &version) != nil || got != i || version != scheduleVersion || on != (i != 3) || i == 1 && (frequency != "every_minute" || zone != "UTC") || i != 1 && (frequency != "* * * * *" || zone != "Etc/UTC") {
+			versions.Close()
+			t.Fatal("WordPress MySQL schedule edit/disable history changed")
+		}
+	}
+	if versions.Next() || versions.Err() != nil {
+		versions.Close()
+		t.Fatal("WordPress MySQL schedule history count changed")
+	}
+	versions.Close()
+	t.Log("COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS real controller due; immutable MySQL engine and current started deployment; identical committed retry, edit/disable/history")
 	b.set("database_mutate", resource.ID)
 	later := b.await(t, "database_source_mutated")
 	if _, err := strconv.ParseInt(later, 10, 64); err != nil {

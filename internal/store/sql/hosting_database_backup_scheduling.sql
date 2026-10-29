@@ -2,19 +2,19 @@
 SELECT count(*) FROM hosting_database_backup_schedules WHERE resource_id=$1;
 
 -- name: CreateDatabaseBackupSchedule :exec
-INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10);
+INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component,component_backup_version) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11);
 
 -- name: UpdateDatabaseBackupSchedule :exec
 UPDATE hosting_database_backup_schedules SET actor_id=$2,revision=revision+1,frequency=$3,timezone=$4,enabled=$5,updated_at=clock_timestamp() WHERE id=$1;
 
 -- name: CreateDatabaseBackupScheduleVersion :exec
-INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component,component_backup_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
 
 -- name: CreateDatabaseBackupScheduleRequest :exec
 INSERT INTO hosting_database_backup_schedule_requests(resource_id,request_id,actor_id,request_hash,schedule_id,revision,response) VALUES($1,$2,$3,$4,$5,$6,$7);
 
 -- name: DatabaseBackupScheduleSchemaPresent :one
-SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='hosting_database_backup_schedules' AND column_name='component')::boolean;
+SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='hosting_database_backup_schedules' AND column_name='component_backup_version')::boolean;
 
 -- name: ReadDatabaseBackupScheduleDiscoveryClock :one
 SELECT clock_timestamp()::timestamptz AS backup_schedule_discovery_time;

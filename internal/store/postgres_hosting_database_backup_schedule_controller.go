@@ -107,6 +107,9 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 					e = ErrConflict
 				}
 				if e == nil {
+					if schedule.Component != "" {
+						value.Capability = domain.HostingDatabaseBackupCapabilityFor(schedule.ComponentBackupVersion)
+					}
 					target, targetErr := sqlcgen.New(admission).LockHostingResourceTarget(ctx, schedule.ResourceID)
 					e = targetErr
 					if e == nil {
@@ -127,7 +130,11 @@ func (s *PostgresStore) reconcileDatabaseBackupSchedule(ctx context.Context, id 
 				deployed := ""
 				if e == nil && schedule.Component != "" {
 					var h domain.HostingHealthy
-					h, _, _, e = databaseBackupComponentSource(ctx, admission, schedule.ActorID, schedule.ResourceID, schedule.Component, domain.RoleOwner)
+					var op domain.HostingOperation
+					h, op, _, e = databaseBackupComponentSource(ctx, admission, schedule.ActorID, schedule.ResourceID, schedule.Component, domain.RoleOwner)
+					if e == nil && domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, schedule.Component) != schedule.ComponentBackupVersion {
+						e = ErrConflict
+					}
 					deployed = h.OperationID
 				}
 				if e == nil {

@@ -1448,9 +1448,9 @@ class WordPressModeContractTests(unittest.TestCase):
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
         healthy=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved"]
         for mysql in [False,True]:
-            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
+            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
             test="TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS" if mysql else "TestHostingCatalogWordPressCompiledRunnerHTTPS"
-            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
+            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
             for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker","other_mode"]:
                 with self.subTest(mysql=mysql,kind=kind),tempfile.TemporaryDirectory() as tmp:
                     root=Path(tmp)

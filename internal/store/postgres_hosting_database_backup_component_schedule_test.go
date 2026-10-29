@@ -143,11 +143,11 @@ func TestPostgresComposeDatabaseBackupSchedule(t *testing.T) {
 						t.Error(e)
 					}
 				})
-				_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component,last_scheduled_at) SELECT 'dbs_wrong',project_id,resource_id,binding_id,destination_id,actor_id,1,frequency,timezone,false,'other',last_scheduled_at FROM hosting_database_backup_schedules WHERE id=$1`, created.ID)
+				_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component,component_backup_version,last_scheduled_at) SELECT 'dbs_wrong',project_id,resource_id,binding_id,destination_id,actor_id,1,frequency,timezone,false,'other',component_backup_version,last_scheduled_at FROM hosting_database_backup_schedules WHERE id=$1`, created.ID)
 				if e != nil {
 					t.Fatal(e)
 				}
-				_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component) VALUES('dbs_wrong',1,'usr_bootstrap',1,'every_minute','UTC',false,'other')`)
+				_, e = tx.Exec(ctx, `INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component,component_backup_version) VALUES('dbs_wrong',1,'usr_bootstrap',1,'every_minute','UTC',false,'other','postgresql.compose-logical-local.v1')`)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -196,11 +196,12 @@ func TestPostgresComposeDatabaseBackupSchedule(t *testing.T) {
 	}
 }
 
-func redeployScheduleStack(t *testing.T, pg *store.PostgresStore, server domain.Server, resource domain.Resource, previous domain.HostingOperation, remove bool) domain.HostingOperation {
+func redeployScheduleStack(t *testing.T, pg *store.PostgresStore, server domain.Server, resource domain.Resource, previous domain.HostingOperation, remove bool, beforeApply ...func(domain.HostingAuthority, domain.HostingOperation)) domain.HostingOperation {
 	t.Helper()
 	ctx := t.Context()
 	input := hostingDeploymentRequest()
 	input.ExpectedGeneration = resource.Generation
+	input.ExpectedRuntimeConfigurationGeneration = previous.Snapshot.RuntimeConfiguration.Generation
 	input.IdempotencyKey = "schedule-redeploy"
 	input.ManagedStack = &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}
 	op, err := pg.RequestHostingDeployment(ctx, "hop_schedule_redeploy", resource.ID, "usr_bootstrap", input, destinationEvent("schedule_redeploy"))
@@ -227,6 +228,9 @@ func redeployScheduleStack(t *testing.T, pg *store.PostgresStore, server domain.
 	prepared, err := pg.HostingPrepared(ctx, server.RunnerID, domain.HostingPreparedRequest{HostingAuthority: a, ReceiptID: "schedule_redeploy_prepared", Release: release, StackImages: images})
 	if err != nil {
 		t.Fatal("redeploy prepared", err)
+	}
+	for _, before := range beforeApply {
+		before(a, prepared)
 	}
 	if _, err = pg.HostingApplyBegin(ctx, server.RunnerID, a); err != nil {
 		t.Fatal("redeploy begin", err)

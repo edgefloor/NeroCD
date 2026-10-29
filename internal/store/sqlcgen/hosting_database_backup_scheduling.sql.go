@@ -51,20 +51,21 @@ func (q *Queries) CountDatabaseBackupSchedules(ctx context.Context, resourceID s
 }
 
 const createDatabaseBackupSchedule = `-- name: CreateDatabaseBackupSchedule :exec
-INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10)
+INSERT INTO hosting_database_backup_schedules(id,project_id,resource_id,binding_id,destination_id,actor_id,revision,frequency,timezone,enabled,component,component_backup_version) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11)
 `
 
 type CreateDatabaseBackupScheduleParams struct {
-	ID            string `json:"id"`
-	ProjectID     string `json:"project_id"`
-	ResourceID    string `json:"resource_id"`
-	BindingID     string `json:"binding_id"`
-	DestinationID string `json:"destination_id"`
-	ActorID       string `json:"actor_id"`
-	Frequency     string `json:"frequency"`
-	Timezone      string `json:"timezone"`
-	Enabled       bool   `json:"enabled"`
-	Component     string `json:"component"`
+	ID                     string `json:"id"`
+	ProjectID              string `json:"project_id"`
+	ResourceID             string `json:"resource_id"`
+	BindingID              string `json:"binding_id"`
+	DestinationID          string `json:"destination_id"`
+	ActorID                string `json:"actor_id"`
+	Frequency              string `json:"frequency"`
+	Timezone               string `json:"timezone"`
+	Enabled                bool   `json:"enabled"`
+	Component              string `json:"component"`
+	ComponentBackupVersion string `json:"component_backup_version"`
 }
 
 func (q *Queries) CreateDatabaseBackupSchedule(ctx context.Context, arg CreateDatabaseBackupScheduleParams) error {
@@ -79,6 +80,7 @@ func (q *Queries) CreateDatabaseBackupSchedule(ctx context.Context, arg CreateDa
 		arg.Timezone,
 		arg.Enabled,
 		arg.Component,
+		arg.ComponentBackupVersion,
 	)
 	return err
 }
@@ -159,7 +161,7 @@ func (q *Queries) CreateDatabaseBackupScheduleRequest(ctx context.Context, arg C
 }
 
 const createDatabaseBackupScheduleVersion = `-- name: CreateDatabaseBackupScheduleVersion :exec
-INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO hosting_database_backup_schedule_versions(schedule_id,revision,actor_id,expected_resource_generation,frequency,timezone,enabled,component,component_backup_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
 type CreateDatabaseBackupScheduleVersionParams struct {
@@ -171,6 +173,7 @@ type CreateDatabaseBackupScheduleVersionParams struct {
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
 	Component                  string `json:"component"`
+	ComponentBackupVersion     string `json:"component_backup_version"`
 }
 
 func (q *Queries) CreateDatabaseBackupScheduleVersion(ctx context.Context, arg CreateDatabaseBackupScheduleVersionParams) error {
@@ -183,6 +186,7 @@ func (q *Queries) CreateDatabaseBackupScheduleVersion(ctx context.Context, arg C
 		arg.Timezone,
 		arg.Enabled,
 		arg.Component,
+		arg.ComponentBackupVersion,
 	)
 	return err
 }
@@ -209,7 +213,7 @@ func (q *Queries) CreateEmptyDatabaseBackupScheduleRemoteSelection(ctx context.C
 }
 
 const databaseBackupScheduleSchemaPresent = `-- name: DatabaseBackupScheduleSchemaPresent :one
-SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='hosting_database_backup_schedules' AND column_name='component')::boolean
+SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='hosting_database_backup_schedules' AND column_name='component_backup_version')::boolean
 `
 
 func (q *Queries) DatabaseBackupScheduleSchemaPresent(ctx context.Context) (bool, error) {

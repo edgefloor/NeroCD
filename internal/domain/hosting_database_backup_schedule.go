@@ -19,6 +19,21 @@ const HostingDatabaseMySQLBackupScheduleVersion = "mysql.logical-local.schedule.
 // HostingDatabaseBackupComponentScheduleVersion identifies a Compose component schedule.
 const HostingDatabaseBackupComponentScheduleVersion = "postgresql.compose-logical-local.schedule.v1"
 
+// HostingDatabaseMySQLBackupComponentScheduleVersion identifies a local Compose MySQL schedule.
+const HostingDatabaseMySQLBackupComponentScheduleVersion = "mysql.compose-logical-local.schedule.v1"
+
+// HostingDatabaseBackupComponentScheduleVersionFor maps saved component engine identity.
+func HostingDatabaseBackupComponentScheduleVersionFor(backupVersion string) string {
+	switch backupVersion {
+	case HostingDatabaseBackupComponentVersion:
+		return HostingDatabaseBackupComponentScheduleVersion
+	case HostingDatabaseMySQLBackupComponentVersion:
+		return HostingDatabaseMySQLBackupComponentScheduleVersion
+	default:
+		return ""
+	}
+}
+
 // ErrInvalidDatabaseBackupSchedule reports invalid database backup schedule input.
 var ErrInvalidDatabaseBackupSchedule = errors.New("invalid database backup schedule")
 

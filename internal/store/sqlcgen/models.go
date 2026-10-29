@@ -644,21 +644,22 @@ type HostingDatabaseBackupRetentionResume struct {
 }
 
 type HostingDatabaseBackupSchedule struct {
-	ID              string     `json:"id"`
-	ProjectID       string     `json:"project_id"`
-	ResourceID      string     `json:"resource_id"`
-	BindingID       string     `json:"binding_id"`
-	DestinationID   string     `json:"destination_id"`
-	ActorID         string     `json:"actor_id"`
-	Revision        int64      `json:"revision"`
-	Frequency       string     `json:"frequency"`
-	Timezone        string     `json:"timezone"`
-	Enabled         bool       `json:"enabled"`
-	LastScheduledAt *time.Time `json:"last_scheduled_at"`
-	CheckedAt       time.Time  `json:"checked_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	Component       string     `json:"component"`
+	ID                     string     `json:"id"`
+	ProjectID              string     `json:"project_id"`
+	ResourceID             string     `json:"resource_id"`
+	BindingID              string     `json:"binding_id"`
+	DestinationID          string     `json:"destination_id"`
+	ActorID                string     `json:"actor_id"`
+	Revision               int64      `json:"revision"`
+	Frequency              string     `json:"frequency"`
+	Timezone               string     `json:"timezone"`
+	Enabled                bool       `json:"enabled"`
+	LastScheduledAt        *time.Time `json:"last_scheduled_at"`
+	CheckedAt              time.Time  `json:"checked_at"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	Component              string     `json:"component"`
+	ComponentBackupVersion string     `json:"component_backup_version"`
 }
 
 type HostingDatabaseBackupScheduleOccurrence struct {
@@ -708,6 +709,7 @@ type HostingDatabaseBackupScheduleVersion struct {
 	Timezone                   string `json:"timezone"`
 	Enabled                    bool   `json:"enabled"`
 	Component                  string `json:"component"`
+	ComponentBackupVersion     string `json:"component_backup_version"`
 }
 
 type HostingDatabaseBackupTarget struct {

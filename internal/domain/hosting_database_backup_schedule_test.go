@@ -152,3 +152,15 @@ func TestDatabaseBackupComponentScheduleInput(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseBackupComponentScheduleVersions(t *testing.T) {
+	for _, tc := range []struct{ backup, want string }{
+		{HostingDatabaseBackupComponentVersion, HostingDatabaseBackupComponentScheduleVersion},
+		{HostingDatabaseMySQLBackupComponentVersion, HostingDatabaseMySQLBackupComponentScheduleVersion},
+		{HostingDatabaseMySQLBackupVersion, ""}, {"mysql.compose-logical-local.v2", ""}, {"", ""},
+	} {
+		if got := HostingDatabaseBackupComponentScheduleVersionFor(tc.backup); got != tc.want {
+			t.Fatalf("component schedule version=%q, want %q", got, tc.want)
+		}
+	}
+}

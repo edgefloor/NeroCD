@@ -13,6 +13,9 @@ import (
 )
 
 func databaseBackupScheduleView(r sqlcgen.HostingDatabaseBackupSchedule, version string) domain.HostingDatabaseBackupSchedule {
+	if r.Component != "" {
+		version = domain.HostingDatabaseBackupComponentScheduleVersionFor(r.ComponentBackupVersion)
+	}
 	return domain.HostingDatabaseBackupSchedule{Component: r.Component, ID: r.ID, Version: version, ProjectID: r.ProjectID, ResourceID: r.ResourceID, Revision: r.Revision, Frequency: r.Frequency, Timezone: r.Timezone, Enabled: r.Enabled, LastScheduledAt: r.LastScheduledAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
@@ -99,12 +102,14 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if (value.Resource.Source.Kind == "compose" || value.Resource.Source.Kind == "git") != (in.Component != "") {
 			return zero, ErrConflict
 		}
+		componentVersion := ""
 		if in.Component != "" && (in.Enabled || existingID == "") {
 			h, op, _, e := databaseBackupComponentSource(ctx, tx, actor, resource, in.Component, domain.RoleOwner)
 			if e != nil {
 				return zero, e
 			}
-			if _, e = domain.HostingPostgresComponent(h, *op.Plan, in.Component); e != nil {
+			componentVersion = domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, in.Component)
+			if componentVersion == "" {
 				return zero, ErrConflict
 			}
 			if h.OperationID != in.ExpectedDeployedOperationID {
@@ -120,13 +125,16 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 			if count >= 100 {
 				return zero, ErrConflict
 			}
-			err = sqlcgen.New(tx).CreateDatabaseBackupSchedule(ctx, sqlcgen.CreateDatabaseBackupScheduleParams{Component: in.Component, ID: id, ProjectID: value.Resource.ProjectID, ResourceID: resource, BindingID: value.Binding.ID, DestinationID: value.Binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
+			err = sqlcgen.New(tx).CreateDatabaseBackupSchedule(ctx, sqlcgen.CreateDatabaseBackupScheduleParams{Component: in.Component, ComponentBackupVersion: componentVersion, ID: id, ProjectID: value.Resource.ProjectID, ResourceID: resource, BindingID: value.Binding.ID, DestinationID: value.Binding.DestinationID, ActorID: actor, Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		} else {
 			prior, e := q.LockDatabaseBackupSchedule(ctx, existingID)
 			if e != nil {
 				return zero, hostingError(e)
 			}
 			if prior.Component != in.Component || prior.ResourceID != resource || prior.ProjectID != value.Resource.ProjectID || prior.Revision != in.ExpectedVersion || prior.BindingID != value.Binding.ID || prior.DestinationID != value.Binding.DestinationID {
+				return zero, ErrConflict
+			}
+			if componentVersion != "" && componentVersion != prior.ComponentBackupVersion {
 				return zero, ErrConflict
 			}
 			id = existingID
@@ -139,7 +147,7 @@ func (s *PostgresStore) SaveDatabaseBackupSchedule(ctx context.Context, id, reso
 		if err != nil {
 			return zero, err
 		}
-		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleVersion(ctx, sqlcgen.CreateDatabaseBackupScheduleVersionParams{Component: in.Component, ScheduleID: id, Revision: int64(saved.Revision), ActorID: actor, ExpectedResourceGeneration: int64(in.ExpectedResourceGeneration), Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
+		err = sqlcgen.New(tx).CreateDatabaseBackupScheduleVersion(ctx, sqlcgen.CreateDatabaseBackupScheduleVersionParams{Component: in.Component, ComponentBackupVersion: saved.ComponentBackupVersion, ScheduleID: id, Revision: int64(saved.Revision), ActorID: actor, ExpectedResourceGeneration: int64(in.ExpectedResourceGeneration), Frequency: in.Frequency, Timezone: in.Timezone, Enabled: in.Enabled})
 		if err != nil {
 			return zero, err
 		}

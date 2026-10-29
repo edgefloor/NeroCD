@@ -77,7 +77,7 @@ func (q *Queries) ListDatabaseBackupOccurrences(ctx context.Context, scheduleID 
 }
 
 const listDatabaseBackupSchedules = `-- name: ListDatabaseBackupSchedules :many
-SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component FROM hosting_database_backup_schedules WHERE resource_id=$1 ORDER BY created_at,id LIMIT 100
+SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component, component_backup_version FROM hosting_database_backup_schedules WHERE resource_id=$1 ORDER BY created_at,id LIMIT 100
 `
 
 func (q *Queries) ListDatabaseBackupSchedules(ctx context.Context, resourceID string) ([]HostingDatabaseBackupSchedule, error) {
@@ -105,6 +105,7 @@ func (q *Queries) ListDatabaseBackupSchedules(ctx context.Context, resourceID st
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Component,
+			&i.ComponentBackupVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -117,7 +118,7 @@ func (q *Queries) ListDatabaseBackupSchedules(ctx context.Context, resourceID st
 }
 
 const lockDatabaseBackupSchedule = `-- name: LockDatabaseBackupSchedule :one
-SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component FROM hosting_database_backup_schedules WHERE id=$1 FOR UPDATE
+SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component, component_backup_version FROM hosting_database_backup_schedules WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) LockDatabaseBackupSchedule(ctx context.Context, id string) (HostingDatabaseBackupSchedule, error) {
@@ -139,12 +140,13 @@ func (q *Queries) LockDatabaseBackupSchedule(ctx context.Context, id string) (Ho
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Component,
+		&i.ComponentBackupVersion,
 	)
 	return i, err
 }
 
 const readDatabaseBackupSchedule = `-- name: ReadDatabaseBackupSchedule :one
-SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component FROM hosting_database_backup_schedules WHERE id=$1
+SELECT id, project_id, resource_id, binding_id, destination_id, actor_id, revision, frequency, timezone, enabled, last_scheduled_at, checked_at, created_at, updated_at, component, component_backup_version FROM hosting_database_backup_schedules WHERE id=$1
 `
 
 func (q *Queries) ReadDatabaseBackupSchedule(ctx context.Context, id string) (HostingDatabaseBackupSchedule, error) {
@@ -166,6 +168,7 @@ func (q *Queries) ReadDatabaseBackupSchedule(ctx context.Context, id string) (Ho
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Component,
+		&i.ComponentBackupVersion,
 	)
 	return i, err
 }

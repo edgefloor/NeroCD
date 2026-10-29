@@ -45,7 +45,7 @@ func (r *backupScheduleHTTPRepository) ListDatabaseBackupOccurrences(ctx context
 }
 
 func TestDatabaseBackupScheduleHTTPPermissionsAndClosedInputs(t *testing.T) {
-	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion} {
+	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion, domain.HostingDatabaseMySQLBackupComponentScheduleVersion} {
 		t.Run(version, func(t *testing.T) { databaseBackupScheduleHTTPPermissionsAndClosedInputs(t, version) })
 	}
 }
@@ -148,7 +148,7 @@ func TestDatabaseBackupScheduleOpenAPI(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC()
-	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseBackupComponentScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion} {
+	for _, version := range []string{domain.HostingDatabaseBackupScheduleVersion, domain.HostingDatabaseBackupComponentScheduleVersion, domain.HostingDatabaseMySQLBackupScheduleVersion, domain.HostingDatabaseMySQLBackupComponentScheduleVersion} {
 		schedule := domain.HostingDatabaseBackupSchedule{ID: "schedule", Version: version, ProjectID: "project", ResourceID: "resource", Revision: 1, Frequency: "daily", Timezone: "UTC", CreatedAt: now, UpdatedAt: now}
 		value = nil
 		raw, err := json.Marshal(schedule)

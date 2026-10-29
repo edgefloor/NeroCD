@@ -4042,7 +4042,7 @@ func openPostgresIntegrationStore(t *testing.T, ctx context.Context, label strin
 	return pg, database
 }
 
-func openPostgresEmptyIntegrationStore(t *testing.T, ctx context.Context, label string) (*store.PostgresStore, *pgxpool.Pool) {
+func openPostgresEmptyIntegrationStore(t *testing.T, ctx context.Context, label string, through ...string) (*store.PostgresStore, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("NEROCD_TEST_DATABASE_URL"))
 	if databaseURL == "" {
@@ -4069,7 +4069,11 @@ func openPostgresEmptyIntegrationStore(t *testing.T, ctx context.Context, label 
 		t.Fatal(err)
 	}
 	t.Cleanup(database.Close)
-	if err := applyEmbeddedMigrations(ctx, database, "", ""); err != nil {
+	last := ""
+	if len(through) != 0 {
+		last = through[0]
+	}
+	if err := applyEmbeddedMigrations(ctx, database, "", last); err != nil {
 		t.Fatal(err)
 	}
 	pg, err := store.OpenPostgres(ctx, schemaURL)
