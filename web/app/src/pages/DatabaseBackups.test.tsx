@@ -774,3 +774,96 @@ test("Compose selected remote revision is rejected after destination metadata ch
  expect((screen.getByRole("button", { name: "Create logical backup" }) as HTMLButtonElement).disabled).toBe(true);
  expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
 });
+
+const composeMySQLUpload = { ...upload, version: "mysql.logical-s3-transfer.v1" as const, blob: { ...completed.blob!, format: "mysql_sql" as const } };
+async function reviewComposeMySQLImport() {
+ await screen.findByRole("option", { name: "mysql · MySQL · backup" });
+ await screen.findByRole("option", { name: "Distinct target" });
+ fireEvent.change(await screen.findByRole("combobox", { name: "Backup to restore" }), { target: { value: "backup" } });
+ fireEvent.change(screen.getByRole("combobox", { name: "Restore target application" }), { target: { value: "target" } });
+ const component = screen.getByRole("combobox", { name: "Restore target database component" });
+ await waitFor(() => expect(component.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(component, { target: { value: "mysql" } });
+}
+
+test("Compose MySQL imports the explicitly chosen recorded upload with exact target authority and retains an ambiguous request", async () => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([composeMySQLUpload]);
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await reviewComposeMySQLImport();
+ await screen.findByRole("option", { name: /Saved remote object/ });
+ fireEvent.change(screen.getByRole("combobox", { name: "Restore archive source" }), { target: { value: "upload" } });
+ fireEvent.click(screen.getByRole("checkbox", { name: "Replace target database and interrupt its writers" }));
+ vi.mocked(api.restoreDatabaseBackup).mockRejectedValueOnce(new Error("response lost"));
+ fireEvent.click(screen.getByRole("button", { name: "Restore database backup" }));
+ const retry = await screen.findByRole("button", { name: "Retry exact database request" });
+ const first = vi.mocked(api.restoreDatabaseBackup).mock.calls[0]![3];
+ expect(first).toEqual({ request_id: expect.any(String), remote_source: { transfer_id: "upload", expected_target_revision: 2 }, component_target: { resource_id: "target", component: "mysql", expected_deployed_operation_id: "hop_target", expected_resource_generation: 3, acknowledge_replacement: true } });
+ expect((screen.getByRole("combobox", { name: "Restore archive source" }) as HTMLSelectElement).disabled).toBe(true);
+ fireEvent.change(screen.getByRole("combobox", { name: "Restore archive source" }), { target: { value: "" } });
+ fireEvent.click(retry);
+ await waitFor(() => expect(api.restoreDatabaseBackup).toHaveBeenCalledTimes(2));
+ expect(vi.mocked(api.restoreDatabaseBackup).mock.calls[1]![3]).toBe(first);
+});
+
+test.each([
+ { state: "failed" as const },
+ { state: "uncertain" as const },
+ { mode: "download" as const },
+ { backup_id: "other" },
+ { version: "postgresql.logical-s3-transfer.v1" as const },
+ { blob: { ...composeMySQLUpload.blob, digest: "sha256:" + "b".repeat(64) } },
+ { blob: { ...composeMySQLUpload.blob, bytes: 1 } },
+])("Compose MySQL excludes ineligible recorded upload %j", async patch => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([{ ...composeMySQLUpload, ...patch }]);
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await reviewComposeMySQLImport();
+ await waitFor(() => expect(remote.listDatabaseBackupTransfers).toHaveBeenCalled());
+ expect(screen.queryByRole("option", { name: /Saved remote object/ })).toBeNull();
+});
+
+test("Compose MySQL archive source A to local to A retires unsubmitted target replacement consent", async () => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([composeMySQLUpload]);
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await reviewComposeMySQLImport();
+ const source = screen.getByRole("combobox", { name: "Restore archive source" });
+ await screen.findByRole("option", { name: /Saved remote object/ });
+ fireEvent.change(source, { target: { value: "upload" } });
+ const ack = screen.getByRole("checkbox", { name: "Replace target database and interrupt its writers" });
+ fireEvent.click(ack);
+ expect((ack as HTMLInputElement).checked).toBe(true);
+ fireEvent.change(source, { target: { value: "" } });
+ fireEvent.change(source, { target: { value: "upload" } });
+ expect((ack as HTMLInputElement).checked).toBe(false);
+ expect((screen.getByRole("button", { name: "Restore database backup" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("Compose MySQL stale remote history retires consent and blocks import until explicit review", async () => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([composeMySQLUpload]);
+ const client = mountComposeBackupPanel("compose", "compose", "mysql");
+ await reviewComposeMySQLImport();
+ await screen.findByRole("option", { name: /Saved remote object/ });
+ fireEvent.change(screen.getByRole("combobox", { name: "Restore archive source" }), { target: { value: "upload" } });
+ const ack = screen.getByRole("checkbox", { name: "Replace target database and interrupt its writers" });
+ fireEvent.click(ack);
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([]);
+ await act(async () => { await client.invalidateQueries({ queryKey: remote.databaseBackupTransfersKey(scope, "backup") }); });
+ await screen.findByText("Refresh history and explicitly choose an eligible remote object before restoring.");
+ expect((ack as HTMLInputElement).checked).toBe(false);
+ expect((screen.getByRole("button", { name: "Restore database backup" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("PostgreSQL Compose imports keep the existing local source controls", async () => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockResolvedValue([composeMySQLUpload]);
+ mountComposeBackupPanel();
+ await screen.findByRole("option", { name: "postgresql · PostgreSQL · backup" });
+ fireEvent.change(screen.getByRole("combobox", { name: "Backup to restore" }), { target: { value: "backup" } });
+ expect(screen.queryByRole("combobox", { name: "Restore archive source" })).toBeNull();
+});
+
+test("Compose transfer authorization denial retires remote import controls", async () => {
+ vi.mocked(remote.listDatabaseBackupTransfers).mockRejectedValue(new ApiError(403, "forbidden", null));
+ mountComposeBackupPanel("compose", "compose", "mysql");
+ await screen.findByText("Component database backup access is unavailable.");
+ expect(screen.queryByRole("button", { name: "Restore database backup" })).toBeNull();
+ expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+});

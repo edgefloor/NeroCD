@@ -227,3 +227,16 @@ test("MySQL component remote backup preserves the admitted target revision and e
   await expect(requestDatabaseBackup(scope, db, input, new AbortController().signal)).rejects.toThrow();
  }
 });
+
+
+test("Compose MySQL remote import preserves saved upload and exact separate-target request on retry", async () => {
+ const input = { request_id: "mysql_remote_import", remote_source: { transfer_id: "upload", expected_target_revision: 3 }, component_target: { resource_id: "target", component: "mysql", expected_resource_generation: 4, expected_deployed_operation_id: "hop_target", acknowledge_replacement: true } };
+ const restored = { ...operation, version: "mysql.compose-logical-local.v1", source_component: "mysql", source_deployed_operation_id: "hop_source", blob: { ...operation.blob, format: "mysql_sql" }, id: "restored", mode: "restore", target_resource_id: "target", target_component: "mysql", target_deployed_operation_id: "hop_target" };
+ vi.mocked(request).mockResolvedValue(restored);
+ await restoreDatabaseBackup(scope, db, "backup", input, new AbortController().signal);
+ await restoreDatabaseBackup(scope, db, "backup", input, new AbortController().signal);
+ expect(vi.mocked(request).mock.calls[0]![1]).toMatchObject({ method: "POST", body: input, requestID: input.request_id });
+ expect(vi.mocked(request).mock.calls[1]![1]).toMatchObject({ body: input });
+ vi.mocked(request).mockResolvedValue({ ...restored, target_deployed_operation_id: "changed" });
+ await expect(restoreDatabaseBackup(scope, db, "backup", input, new AbortController().signal)).rejects.toThrow();
+});

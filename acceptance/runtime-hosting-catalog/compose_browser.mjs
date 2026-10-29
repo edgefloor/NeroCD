@@ -513,6 +513,7 @@ async function wordpressWorkflow(h, initial) {
   if(!targetComponents.available||targetComponents.resource_id===resourceID||!targetComponents.components.some(c=>c.component==='mysql'&&c.engine==='mysql'&&c.major_version===8&&c.running&&c.eligible))throw Error('WordPress import target discovery changed');
   await restorePanel.getByRole('button',{name:'Refresh database backup history',exact:true}).click();
   await restorePanel.getByRole('combobox',{name:'Backup to restore',exact:true}).selectOption(logicalBackup.id);
+  await restorePanel.getByRole('combobox',{name:'Restore archive source',exact:true}).selectOption(scheduledRetry.id);
   await restorePanel.getByRole('combobox',{name:'Restore target application',exact:true}).selectOption(backupState.id);
   await restorePanel.getByRole('combobox',{name:'Restore target database component',exact:true}).selectOption('mysql');
   await restorePanel.getByRole('checkbox',{name:'Replace target database and interrupt its writers',exact:true}).check();
@@ -522,12 +523,13 @@ async function wordpressWorkflow(h, initial) {
   const importPending=response(page,'/api/v1/database-backups/'+logicalBackup.id+'/restores');
   await restorePanel.getByRole('button',{name:'Restore database backup',exact:true}).click();
   const importResponse=await importPending,importInput=importResponse.request().postDataJSON(),selected=importInput.component_target;
-  if(selected?.resource_id!==backupState.id||selected.component!=='mysql'||selected.expected_deployed_operation_id!==targetComponents.operation_id||selected.expected_resource_generation!==targetComponents.resource_generation||selected.acknowledge_replacement!==true||importInput.remote_source!==undefined)throw Error('WordPress exact import authority changed');
+  if(selected?.resource_id!==backupState.id||selected.component!=='mysql'||selected.expected_deployed_operation_id!==targetComponents.operation_id||selected.expected_resource_generation!==targetComponents.resource_generation||selected.acknowledge_replacement!==true||importInput.remote_source?.transfer_id!==scheduledRetry.id||importInput.remote_source?.expected_target_revision!==scheduleTarget.revision)throw Error('WordPress exact import authority changed');
   const imported=await checkedResponse(importResponse,202);
   if(imported.target_resource_id!==backupState.id||imported.target_component!=='mysql'||imported.target_deployed_operation_id!==targetComponents.operation_id)throw Error('WordPress import response target changed');
   await report('database_imported',imported.id);
   await state('database_check');await checkWordPress('compose_import');
   safe.wordpress_mysql_database_backup_import=true;
+  safe.wordpress_mysql_database_remote_backup_import=true;
   safe.wordpress_database_only_source_uploads_preserved=true;
   await report('database_checked',postID);
   const terminal=await state('complete_mysql');

@@ -662,6 +662,10 @@ function ComposeDatabaseBackups(
     setRemoteTarget,
     transfers,
     destinationReady,
+    restoreSource,
+    setRestoreSource,
+    restoreTransfers,
+    remoteRestore,
   } = useComposeDatabaseBackups(props);
 
   if (denied || revoked)
@@ -673,7 +677,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. Imports require a local archive; retention is unavailable. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive or a recorded successful upload; retention is unavailable. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
@@ -772,6 +776,10 @@ function ComposeDatabaseBackups(
         selected={selected}
         chosen={chosen}
         submit={submit}
+        restoreSource={restoreSource}
+        setRestoreSource={setRestoreSource}
+        restoreTransfers={restoreTransfers}
+        remoteRestore={remoteRestore}
       />
       <Button
         variant="outline"
@@ -789,6 +797,9 @@ function ComposeDatabaseBackups(
             {v.ownership_held ? " · mutation ownership retained" : ""}
             {v.failure_code ? ` · ${v.failure_code}` : ""}
           </p>
+          {v.mode === "restore" ? transfers.flatMap(t => t.data ?? [])
+            .filter(t => t.mode === "download" && t.restore_operation_id === v.id)
+            .map(t => <p key={t.id}>Remote archive download: {t.state}. Restore operation: {v.state}. Download success does not prove import completion.</p>) : null}
           {v.mode === "backup" ? (
             <BackupUploadStatus
               scope={scope}
@@ -839,6 +850,7 @@ function useComposeDatabaseBackups({
   const [component, setComponent] = useState("");
   const [remoteTarget, setRemoteTarget] = useState<RemoteBackupTarget>();
   const [backup, setBackup] = useState("");
+  const [restoreSource, setRestoreSource] = useState("");
   const [target, setTarget] = useState("");
   const [targetComponent, setTargetComponent] = useState("");
   const [confirmation, setConfirmation] = useState({ identity: "", accepted: false });
@@ -968,6 +980,7 @@ function useComposeDatabaseBackups({
     lifetime.current?.abort();
     setAttempt(undefined);
     setRemoteTarget(undefined);
+    setRestoreSource("");
     client.removeQueries({ queryKey: databaseBackupsKey(scope, resource.id) });
     client.removeQueries({ queryKey: ["database-backup-transfers", scope.actor, scope.project] });
   }
@@ -988,7 +1001,21 @@ function useComposeDatabaseBackups({
       v.blob &&
       (v.version === "postgresql.compose-logical-local.v1" || v.version === "mysql.compose-logical-local.v1"),
   );
+  const selectedTransfers = transfers[(history.data ?? []).filter(v => v.mode === "backup").findIndex(v => v.id === selected?.id)];
+  const restoreTransfers = selected?.version === "mysql.compose-logical-local.v1" && !selectedTransfers?.isFetching && !selectedTransfers?.isError
+    ? (selectedTransfers?.data ?? []).filter(v =>
+      v.mode === "upload" && v.state === "succeeded" && v.backup_id === selected.id &&
+      v.version === "mysql.logical-s3-transfer.v1" && v.blob?.format === "mysql_sql" &&
+      v.blob.digest === selected.blob?.digest && v.blob.bytes === selected.blob?.bytes,
+    ) : [];
+  const remoteRestore = restoreTransfers.find(v => v.id === restoreSource);
   const confirmationIdentity = JSON.stringify([
+    restoreSource,
+    remoteRestore?.id,
+    remoteRestore?.target_id,
+    remoteRestore?.target_revision,
+    remoteRestore?.blob?.digest,
+    remoteRestore?.blob?.bytes,
     selected?.id,
     selected?.version,
     selected?.blob?.digest,
@@ -1084,6 +1111,10 @@ function useComposeDatabaseBackups({
     setRemoteTarget,
     transfers,
     destinationReady: Boolean(binding.data) && !binding.isFetching && !binding.isError,
+    restoreSource,
+    setRestoreSource,
+    restoreTransfers,
+    remoteRestore,
   };
 }
 
@@ -1571,7 +1602,15 @@ function ComposeDatabaseRestore({
   selected,
   chosen,
   submit,
+  restoreSource,
+  setRestoreSource,
+  restoreTransfers,
+  remoteRestore,
 }: {
+  restoreSource: string;
+  setRestoreSource: React.Dispatch<React.SetStateAction<string>>;
+  restoreTransfers: DatabaseBackupTransfer[];
+  remoteRestore: DatabaseBackupTransfer | undefined;
   backup: string;
   locked: boolean;
   setAck: React.Dispatch<React.SetStateAction<boolean>>;
@@ -1607,6 +1646,7 @@ function ComposeDatabaseRestore({
             if (!locked) {
               setAck(false);
               setBackup(e.target.value);
+              setRestoreSource("");
             }
           }}
         >
@@ -1626,6 +1666,31 @@ function ComposeDatabaseRestore({
             ))}
         </select>
       </label>
+      {selected?.version === "mysql.compose-logical-local.v1" ? (
+        <>
+          <label className="block">
+            Restore archive source
+            <select
+              aria-label="Restore archive source"
+              className="block w-full min-w-0 rounded border p-2"
+              value={restoreSource}
+              disabled={locked}
+              onChange={e => {
+                if (!locked) {
+                  setAck(false);
+                  setRestoreSource(e.target.value);
+                }
+              }}
+            >
+              <option value="">Local archive on the backup runner</option>
+              {restoreSource && !remoteRestore ? <option value={restoreSource} disabled>Selected remote object is no longer eligible</option> : null}
+              {restoreTransfers.map(v => <option key={v.id} value={v.id}>Saved remote object · {v.target_id} · upload {v.id}</option>)}
+            </select>
+          </label>
+          <p>Remote import downloads and verifies the recorded upload at its saved destination revision before starting target database replacement. A download failure can retain ownership before any target writer is stopped. Local import requires the archive on the original backup runner.</p>
+          {restoreSource && !remoteRestore ? <p role="alert">Refresh history and explicitly choose an eligible remote object before restoring.</p> : null}
+        </>
+      ) : null}
       <label className="block">
         Restore target application
         <select
@@ -1708,6 +1773,7 @@ function ComposeDatabaseRestore({
         disabled={
           !ready ||
           !selected ||
+          (Boolean(restoreSource) && !remoteRestore) ||
           !chosen ||
           !destination?.operation_id ||
           !destination.components.some(
@@ -1722,6 +1788,7 @@ function ComposeDatabaseRestore({
               backup: selected.id,
               input: {
                 request_id: databaseRequestID(),
+                ...(remoteRestore ? { remote_source: { transfer_id: remoteRestore.id, expected_target_revision: remoteRestore.target_revision } } : {}),
                 component_target: {
                   resource_id: chosen.id,
                   component: targetComponent,
