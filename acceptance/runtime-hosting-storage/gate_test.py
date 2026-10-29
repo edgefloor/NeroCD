@@ -1419,6 +1419,16 @@ class WordPressModeContractTests(unittest.TestCase):
         result = subprocess.run(["bash", "-c", "case ${1:-} in\n" + selector + "\nesac\nprintf '%s\\n' \"$wordpress\" \"$wordpress_mysql\" \"$owner\" \"$test_pattern\"", "fixture", "--wordpress-mysql"], capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.splitlines(), ["true", "true", "nerocd-catalog-wordpress-mysql-runtime-20261029", "^TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS$"])
         self.assertIn("func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T)", fixture)
+        # Exercise the selector's actual owner through the shared publication decoder.
+        import importlib.util
+        spec=importlib.util.spec_from_file_location("selected_publication", GATE.with_name("remote_evidence.py"))
+        publication=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(publication)
+        owner=result.stdout.splitlines()[2]
+        bindings={"18190/tcp":[{"HostIp":"127.0.0.1","HostPort":""}],"443/tcp":[{"HostIp":"127.0.0.1","HostPort":"25443"}]}
+        assigned=json.loads(json.dumps(bindings));assigned["18190/tcp"][0]["HostPort"]="49155"
+        value={"Name":"/"+owner+"-dind","Config":{"Labels":{"io.nerocd.storage-runtime.owner":owner}},"HostConfig":{"PortBindings":bindings},"NetworkSettings":{"Ports":assigned}}
+        self.assertEqual(publication.publication(value),"https://127.0.0.1:49155")
 
     def test_wordpress_effective_certificate_config_only_changes_validity(self):
         source = GATE.read_text()
