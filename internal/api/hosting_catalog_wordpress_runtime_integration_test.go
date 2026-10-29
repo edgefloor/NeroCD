@@ -411,13 +411,13 @@ if test "$1" = relay; then
   test "$(tr '\000' '|' </proc/$selected/cmdline)" = "$saved_args"
   for ns in pid net; do test "$(readlink /proc/$selected/ns/$ns)" = "$(readlink /proc/$daemon/ns/$ns)"; done
  }
- identity; ticks=$(awk '{print $22}' /proc/$selected/stat); mapping=''; count=0
+ identity; ticks=$(awk '{print $22}' /proc/$selected/stat); mapping=''; count=0; limited=false
  for fd in /proc/$selected/fd/*; do
-  count=$((count+1)); test "$count" -le 256; target=$(readlink "$fd") || exit 73
+  count=$((count+1)); if test "$count" -gt 256; then limited=true; break; fi; target=$(readlink "$fd") || exit 73
   case "$target" in socket:\[*\]) inode=${target#socket:[}; inode=${inode%]}; mapping="$mapping $selected ${fd##*/} $inode";; esac
  done
  matches=false; if test "$configured" = "$current"; then matches=true; fi
- printf 'relay_pid=%s start_ticks=%s parent=%s configured_backend=%s:80 backend_matches_current=%s\nowned_socket_fds%s\n' "$selected" "$ticks" "$daemon" "$configured" "$matches" "$mapping"
+ printf 'fd_limit_reached=%s\nrelay_pid=%s start_ticks=%s parent=%s configured_backend=%s:80 backend_matches_current=%s\nowned_socket_fds%s\n' "$limited" "$selected" "$ticks" "$daemon" "$configured" "$matches" "$mapping"
  backend_hex=$(awk -v ip="$configured" 'BEGIN{split(ip,a,".");printf "%02X%02X%02X%02X:0050",a[4],a[3],a[2],a[1]}')
  frontend_hex=$(printf '0100007F:%04X' "$published")
  awk -v owned="$mapping" -v front="$frontend_hex" -v back="$backend_hex" 'BEGIN{n=split(owned,f," ");for(i=3;i<=n;i+=3)o[f[i]]=1} FNR>1 && ($10 in o){role="other_owned";if($2==front)role=($4=="0A"?"frontend_listener":"frontend_accepted");if($3==back)role="backend";print role,FILENAME,$0}' /proc/net/tcp /proc/net/tcp6
@@ -507,6 +507,8 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 						state := "available"
 						if socketErr != nil {
 							state = "capability_or_read_unavailable"
+						} else if target.role == "relay" && bytes.HasPrefix(raw, []byte("fd_limit_reached=true\n")) {
+							state = "partial_fd_limit"
 						}
 						snapshots = append(snapshots, map[string]any{"role": target.role, "container_id": target.id, "started": began.UTC().Format(time.RFC3339Nano), "finished": time.Now().UTC().Format(time.RFC3339Nano), "fresh_pending_at_start": pendingAtStart, "fresh_first_byte_at_start": firstByteAtStart, "fresh_pending": pending, "fresh_first_byte": freshProfileFirstByte.Load(), "category": state, "data": string(raw)})
 					}
