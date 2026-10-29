@@ -279,3 +279,7 @@ own [evidence and limits](hosting-database-backups.md#compose-mysql-qualificatio
 This covers one Linux arm64, rootful Docker destination and fixture CA. Compose
 MySQL remote copies/restore, retention, notifications, media restoration, URL
 migration and cross-destination recovery remain outside this qualification.
+
+[Immediate Compose MySQL remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
+was qualified separately at `0c5ff34c`. Component schedules remain local-only;
+the immediate upload qualification does not enable a schedule remote target.

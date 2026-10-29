@@ -86,8 +86,9 @@ Import changes the target database only. It does not restore WordPress files or
 rewrite the site's URL. Once target SQL execution is attempted, a failed or uncertain outcome
 retains target ownership and stopped writers; MySQL does not provide the PostgreSQL adapter's transactional
 rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
-use the same archive/import path. Component remote copies, remote restore and
-retention remain unsupported. See the [qualified scope](#compose-mysql-qualification).
+use the same archive/import path. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
+can copy a completed SQL archive to a validated target. Component remote schedules,
+remote restore and retention remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
 
@@ -242,6 +243,50 @@ finding. Passing changed-code lint does not replace those results.
 
 Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
 That qualification did not cover schedules. [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
-passed later at `4c62e6cf`. Component remote copies/restore, retention, engine upgrades,
+passed later at `4c62e6cf`. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
+passed at `0c5ff34c`. Component remote schedules/restore, retention, engine upgrades,
 credential rotation and cross-destination recovery remain open. Historical native
 MySQL and core WordPress qualifications retain their original limits.
+
+## Compose MySQL immediate remote upload qualification
+
+At `0c5ff34c` on 2026-10-29, the existing WordPress/MySQL workflow selected a
+validated S3 target for an immediate component backup. The target must be enabled
+and validated at its current revision for the current destination. The existing
+`remote_target` fields and `mysql.logical-s3-transfer.v1` protocol are reused;
+the runner requires the database remote-backup opt-in and MySQL upload capability.
+
+An actual PUT denial left the local `mysql_sql` backup succeeded and released
+source ownership. The browser retried the failed transfer by its exact ID. A new
+transfer uploaded the same backup, blob digest, object key, daemon and target
+revision; the object SHA matched and no second database dump was admitted.
+The scheduled local archive still supplied the separate-stack import. Source
+post/full-PNG preservation through trusted HTTPS, redeploy and Stop/Start,
+corrupt-archive rejection, and held partial-import safety also passed. The runner
+exited naturally with code 1 after the deliberately uncertain import, retaining
+exact intent/uncertain authority and no subsequent acquired run. No physical
+restart or reimport was attempted.
+
+The selected test passed in 192.54 seconds; the gate exited zero after 289.867
+seconds with all six markers. Browser remote selection, failure/local success and
+same-artifact retry flags passed without interception. Responsive checks at
+320, 390, 430 and 1280 pixels and served-asset hashes passed. The credential scan
+covered the three source managed values and two S3 credential values in the
+journal, public operation metadata and runner logs.
+
+The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/0c5ff34cdcb7be1d2d8a3403b00aa61765a16d82/evidence-index.json)
+records source/build associations, focused migration upgrades/checksum replay,
+authority and transfer tests, earlier test/setup failures, and exact cleanup.
+The owned container and Docker data volume were removed; host container, volume,
+image, build-cache and user-instance identities matched the baseline. Command
+intervals are recorded separately from implementation, product repair, fixture
+repair and review/waiting; exclusive durations were not measured. A Linux CLI
+contract attempted in an unsuitable PostgreSQL-container host profile failed and
+is retained as setup evidence, not a CLI pass. The actual compiled runner options
+were exercised by the passing gate. Qualification 18's original cause remains
+unclassified; prior accepted qualifications retain their own evidence and limits.
+
+This covers one Linux arm64, rootful Docker destination with trusted-loopback
+Silo and fixture-CA source HTTPS. It does not qualify Compose MySQL remote
+schedules, remote-only restore, retention, media restoration, URL migration,
+public S3 providers or cross-destination recovery.

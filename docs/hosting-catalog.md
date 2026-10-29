@@ -105,8 +105,9 @@ controls do not apply to it. Use the application's component controls for
 [local MySQL backup and separate-stack database-only import](hosting-database-backups.md#compose-mysql-qualification).
 [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same pinned MySQL component and produce database-only archives. This does
-not restore WordPress media or rewrite URLs. Component remote copies, retention,
-upgrades and migration remain outside the qualified workflow.
+not restore WordPress media or rewrite URLs. [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
+accepts a validated S3 target and retries the saved SQL archive. Component remote
+schedules, remote restore, retention, upgrades and migration remain outside the qualified workflow.
 
 ## Install and deploy
 
@@ -603,3 +604,7 @@ historical core qualification above rather than reusing its terminal marker.
 [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 passed at `4c62e6cf` with a real controller due archive, committed-response retry,
 edit/disable/history, and the same source post/full-PNG and separate-target import proofs.
+
+[Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification) passed at `0c5ff34c`: PUT denial preserved the local SQL archive; a new transfer
+retried that exact artifact without another dump. Local schedule/import, source
+post/full-PNG preservation and held partial-import assertions also passed.
