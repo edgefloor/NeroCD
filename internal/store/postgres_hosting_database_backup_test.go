@@ -54,7 +54,7 @@ func completeClaimedBackup(t *testing.T, f networkCaptureFixture, a domain.Hosti
 	id := p.Operation.ID
 	in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "intent_" + id, PlanHash: p.Hash, Phase: "intent"}
 	if p.Component != nil {
-		in.ComponentVersion = domain.HostingDatabaseBackupComponentVersion
+		in.ComponentVersion = p.Operation.Version
 		in.WritersResumed = true
 		if p.Target != nil {
 			for _, c := range p.Target.Stack.Components {

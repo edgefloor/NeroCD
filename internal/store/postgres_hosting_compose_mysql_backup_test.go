@@ -248,9 +248,9 @@ func TestPostgresComposeMySQLBackupAdmissionDenials(t *testing.T) {
 			case "remote":
 				input.RemoteTarget = &domain.BackupTargetSelection{TargetID: "foreign_target", Revision: 1}
 			case "schedule":
-				_, err := f.service.SaveDatabaseBackupSchedule(f.ctx, f.source.Resource.ID, "", domain.HostingDatabaseBackupScheduleInput{RequestID: "unsupported_schedule", ExpectedResourceGeneration: 1, Component: "mysql", ExpectedDeployedOperationID: f.sourceOp.ID, Frequency: "every_minute", Timezone: "UTC", Enabled: true})
+				_, err := f.service.SaveDatabaseBackupSchedule(f.ctx, f.source.Resource.ID, "", domain.HostingDatabaseBackupScheduleInput{RequestID: "unsupported_schedule", ExpectedResourceGeneration: f.source.Resource.Generation, Component: "mysql", ExpectedDeployedOperationID: f.sourceOp.ID, Frequency: "every_minute", Timezone: "UTC", Enabled: true, RemoteTarget: &domain.BackupTargetSelection{TargetID: "foreign_target", Revision: 1}})
 				if err == nil {
-					t.Fatal("MySQL component schedule admitted")
+					t.Fatal("MySQL component remote schedule admitted")
 				}
 				return
 			}

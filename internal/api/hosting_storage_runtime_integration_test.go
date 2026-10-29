@@ -309,6 +309,9 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
 				caps = append(caps, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability)
 				caps = append(caps, "hosting_compose_mysql_backup_v1")
+				if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
+					caps = append(caps, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability)
+				}
 			}
 		}
 	}
@@ -467,6 +470,9 @@ func (f *storageRuntimeFixture) start(caps ...[]string) {
 				command.Args = append(command.Args, "--hosting-storage-backup-download")
 			}
 			command.Args = append(command.Args, "--hosting-registry-pull", "--hosting-runtime-logs", "--image-docker-endpoint", "unix:///var/run/docker.sock", "--hosting-database", "--execute", "--hosting-database-backups", "--database-state-root", filepath.Join(f.root, "database-state"), "--database-secret-root", filepath.Join(f.root, "database-secrets"))
+			if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
+				command.Args = append(command.Args, "--hosting-database-remote-backups", "--hosting-backup-remote-trusted-loopback=http://127.0.0.1:9000")
+			}
 		}
 	}
 	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {

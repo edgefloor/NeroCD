@@ -54,7 +54,7 @@ type HostingDatabaseBackupComponentPlan struct {
 }
 
 func (o HostingDatabaseBackupOperation) validateComponentIdentity() error {
-	if o.Version == HostingDatabaseMySQLBackupComponentVersion && o.RemoteTarget != nil {
+	if o.Version == HostingDatabaseMySQLBackupComponentVersion && o.Mode != "backup" && o.RemoteTarget != nil {
 		return ErrInvalidDatabaseBackup
 	}
 	if o.Version == HostingDatabaseBackupVersion || o.Version == HostingDatabaseMySQLBackupVersion {

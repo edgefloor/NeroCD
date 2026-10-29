@@ -35,7 +35,7 @@ func backupRemoteSelect(ctx context.Context, tx pgx.Tx, p domain.HostingDatabase
 	if !validated {
 		return zero, ErrConflict
 	}
-	if p.Operation.Version == domain.HostingDatabaseMySQLBackupVersion {
+	if domain.HostingDatabaseBackupTransferVersionFor(p.Operation.Version) == domain.HostingDatabaseMySQLBackupTransferVersion {
 		present, schemaErr := sqlcgen.New(tx).MySQLRemoteBackupSchemaPresent(ctx)
 		if schemaErr != nil {
 			return zero, schemaErr

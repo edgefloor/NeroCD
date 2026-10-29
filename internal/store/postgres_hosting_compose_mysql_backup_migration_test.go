@@ -124,3 +124,36 @@ func TestPostgresComposeMySQLScheduleMigrationBackfill(t *testing.T) {
 		t.Fatal("schedule guards lost protected search path", err)
 	}
 }
+
+func TestPostgresComposeMySQLRemoteMigrationUpgrade(t *testing.T) {
+	for _, prior := range []string{"0104_hosting_compose_mysql_backups.sql", "0105_hosting_compose_mysql_backup_schedules.sql"} {
+		t.Run(prior, func(t *testing.T) {
+			pg, database := openPostgresEmptyIntegrationStore(t, t.Context(), "component_remote_upgrade", prior)
+			t.Cleanup(func() { closePostgresStore(t, pg) })
+			after := prior
+			for range 2 {
+				if err := applyEmbeddedMigrations(t.Context(), database, after, "0106_hosting_compose_mysql_remote_backups.sql"); err != nil {
+					t.Fatal("component remote upgrade/replay", err)
+				}
+				after = "0105_hosting_compose_mysql_backup_schedules.sql"
+			}
+			rows, err := database.Query(t.Context(), `SELECT p.proname,p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=current_schema() AND p.proname IN ('nerocd_mysql_backup_consistent','nerocd_backup_remote_admission')`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var name string
+				var config []string
+				if rows.Scan(&name, &config) != nil || len(config) != 1 || !strings.HasPrefix(config[0], "search_path=pg_catalog, ") {
+					t.Fatal("remote guard search path")
+				}
+				count++
+			}
+			if rows.Err() != nil || count != 2 {
+				t.Fatal("remote guards unavailable", rows.Err())
+			}
+		})
+	}
+}

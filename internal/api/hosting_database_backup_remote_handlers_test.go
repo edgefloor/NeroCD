@@ -20,6 +20,7 @@ type remoteBackupHTTPRepository struct {
 	store.HostingDatabaseBackupRemoteRepository
 	target   domain.HostingDatabaseBackupTarget
 	transfer domain.HostingDatabaseBackupTransfer
+	retry    domain.HostingDatabaseBackupTransferRetryInput
 }
 
 func (r *remoteBackupHTTPRepository) SaveDatabaseBackupTarget(ctx context.Context, id, project, actor, existing string, in domain.HostingDatabaseBackupTargetInput, records *store.BackupRemoteCredentialRecords, _ store.BackupRemoteCredentialCompare) (domain.HostingDatabaseBackupTarget, error) {
@@ -64,8 +65,9 @@ func (r *remoteBackupHTTPRepository) GetDatabaseBackupTransfer(ctx context.Conte
 	r.calls++
 	return r.transfer, r.authorize(ctx, actor, domain.RoleViewer)
 }
-func (r *remoteBackupHTTPRepository) RetryDatabaseBackupTransfer(ctx context.Context, id, actor, backup string, _ domain.HostingDatabaseBackupTransferRetryInput) (domain.HostingDatabaseBackupTransfer, error) {
+func (r *remoteBackupHTTPRepository) RetryDatabaseBackupTransfer(ctx context.Context, id, actor, backup string, input domain.HostingDatabaseBackupTransferRetryInput) (domain.HostingDatabaseBackupTransfer, error) {
 	r.calls++
+	r.retry = input
 	return r.transfer, r.authorize(ctx, actor, domain.RoleOwner)
 }
 
@@ -110,4 +112,14 @@ func TestBackupRemoteHTTPPermissionsClosedInputsAndWriteOnlyCredentials(t *testi
 	archiveHTTPCall(t, server, "GET", validationPath, viewer, "", "", 200)
 	archiveHTTPCall(t, server, "GET", path+"/foreign/validations", viewer, "", "", 404)
 	archiveHTTPCall(t, server, "POST", "/api/v1/database-backups/backup/transfers/retry", viewer, `{"request_id":"retry","expected_transfer_id":"transfer"}`, "application/json", 403)
+	repo.transfer.Version = domain.HostingDatabaseMySQLBackupTransferVersion
+	repo.transfer.Mode = "upload"
+	repo.transfer.BackupID = "backup"
+	repo.transfer.Blob = &domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 42, Format: "mysql_sql"}
+	reply := archiveHTTPCall(t, server, "POST", "/api/v1/database-backups/backup/transfers/retry", owner, `{"request_id":"retry","expected_transfer_id":"transfer"}`, "application/json", 202)
+	var retry domain.HostingDatabaseBackupTransfer
+	if json.Unmarshal(reply.Body.Bytes(), &retry) != nil || retry.Version != domain.HostingDatabaseMySQLBackupTransferVersion || retry.Blob == nil || retry.Blob.Format != "mysql_sql" || repo.retry.RequestID != "retry" || repo.retry.ExpectedTransferID != "transfer" {
+		t.Fatal("MySQL retry wire changed")
+	}
+
 }

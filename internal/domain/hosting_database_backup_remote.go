@@ -33,7 +33,7 @@ func HostingDatabaseBackupTransferVersionFor(backupVersion string) string {
 	switch backupVersion {
 	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
 		return HostingDatabaseBackupTransferVersion
-	case HostingDatabaseMySQLBackupVersion:
+	case HostingDatabaseMySQLBackupVersion, HostingDatabaseMySQLBackupComponentVersion:
 		return HostingDatabaseMySQLBackupTransferVersion
 	default:
 		return ""

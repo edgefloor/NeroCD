@@ -154,9 +154,6 @@ func (s *PostgresStore) requestDatabaseBackupComponent(ctx context.Context, tx p
 	if err != nil {
 		return zero, err
 	}
-	if domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, in.Component) == domain.HostingDatabaseMySQLBackupComponentVersion && in.RemoteTarget != nil {
-		return zero, ErrConflict
-	}
 	hash := domain.HostingDocumentHash(struct {
 		Actor string
 		Input domain.HostingDatabaseBackupInput

@@ -20,6 +20,7 @@ type databaseBackupHTTPRepository struct {
 	*archiveHTTPRepository
 	store.HostingDatabaseRepository
 	value domain.HostingDatabaseBackupOperation
+	input domain.HostingDatabaseBackupInput
 	calls int
 }
 
@@ -34,6 +35,7 @@ func (r *databaseBackupHTTPRepository) RequestDatabaseBackup(ctx context.Context
 	if e := r.authorize(ctx, actor, domain.RoleOwner); e != nil {
 		return r.value, e
 	}
+	r.input = in
 	r.value.ID = id
 	r.value.BackupID = id
 	return r.value, nil
@@ -64,7 +66,10 @@ func TestDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
 func TestMySQLComponentDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T) {
 	testDatabaseBackupHTTPPermissionsAndClosedInputs(t, true)
 }
-func testDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T, component bool) {
+func TestMySQLComponentRemoteBackupHTTPContract(t *testing.T) {
+	testDatabaseBackupHTTPPermissionsAndClosedInputs(t, true, true)
+}
+func testDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T, component bool, remote ...bool) {
 	t.Helper()
 	server, original, owner, viewer, runner := archiveHTTPFixture(t)
 	original.resource.Kind = "database"
@@ -87,6 +92,10 @@ func testDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T, component bo
 		repo.value.SourceDeployedOperationID = "hop_source"
 		body = `{"request_id":"backup","expected_resource_generation":1,"component":"mysql","expected_deployed_operation_id":"hop_source"}`
 	}
+	if len(remote) > 0 && remote[0] {
+		repo.value.RemoteTarget = &domain.BackupTargetSelection{TargetID: "target", Revision: 3}
+		body = strings.TrimSuffix(body, "}") + `,"remote_target":{"target_id":"target","revision":3}}`
+	}
 	archiveHTTPCall(t, server, "POST", path, "", body, "application/json", 401)
 	archiveHTTPCall(t, server, "POST", path, runner, body, "application/json", 401)
 	archiveHTTPCall(t, server, "POST", path, viewer, body, "application/json", 403)
@@ -98,6 +107,12 @@ func testDatabaseBackupHTTPPermissionsAndClosedInputs(t *testing.T, component bo
 		t.Fatal("invalid JSON reached repository")
 	}
 	archiveHTTPCall(t, server, "POST", path, owner, body, "application/json", 202)
+	if len(remote) > 0 && remote[0] {
+		if repo.input.Component != "mysql" || repo.input.ExpectedDeployedOperationID != "hop_source" || !reflect.DeepEqual(repo.input.RemoteTarget, repo.value.RemoteTarget) {
+			t.Fatal("component remote request authority changed")
+		}
+	}
+
 	response := archiveHTTPCall(t, server, "GET", path, viewer, "", "", 200)
 	for _, unsafe := range []string{"credentials", "source_plan", "fence", "/private", "canary"} {
 		if strings.Contains(response.Body.String(), unsafe) {
