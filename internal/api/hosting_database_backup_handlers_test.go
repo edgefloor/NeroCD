@@ -170,6 +170,7 @@ func TestDatabaseBackupSchemaMatchesTypedFields(t *testing.T) {
 		{"component backup", "HostingDatabaseBackupInput", domain.HostingDatabaseBackupInput{RequestID: "backup", ExpectedResourceGeneration: 1, Component: "postgresql", ExpectedDeployedOperationID: "hop_deployed"}},
 		{"standalone restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", Name: "New database"}},
 		{"native remote restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", Name: "Remote MySQL target", RemoteSource: &domain.BackupRemoteSource{TransferID: "upload", ExpectedTargetRevision: 1}}},
+		{"component remote restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: "res_target", Component: "mysql", ExpectedDeployedOperationID: "hop_target", ExpectedResourceGeneration: 1, AcknowledgeReplacement: true}, RemoteSource: &domain.BackupRemoteSource{TransferID: "upload", ExpectedTargetRevision: 1}}},
 		{"component restore", "HostingDatabaseBackupRestoreInput", domain.HostingDatabaseBackupRestoreInput{RequestID: "restore", ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: "res_target", Component: "postgresql", ExpectedDeployedOperationID: "hop_target", ExpectedResourceGeneration: 1, AcknowledgeReplacement: true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

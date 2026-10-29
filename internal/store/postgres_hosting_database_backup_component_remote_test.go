@@ -8,6 +8,7 @@ import (
 
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/hostingjobs"
 	"nerocd/internal/store"
 )
 
@@ -71,8 +72,9 @@ func TestPostgresComposeDatabaseRemoteBackupAndRestore(t *testing.T) {
 	if download.ID == "" || download.RestoreOperationID != restored.ID || download.Version != domain.HostingDatabaseBackupTransferVersion {
 		t.Fatal("component restore lost exact PostgreSQL download")
 	}
-	// Finish this exact download before preparing import. This regression covers
-	// transfer compatibility, not concurrent component download/import ordering.
+	if err = pg.PrepareDatabaseBackup(ctx, restored.ID); !errors.Is(err, hostingjobs.ErrDatabaseBackupWaiting) {
+		t.Fatal("PostgreSQL component import escaped pending download", err)
+	}
 	settleRemoteTransfer(t, f, download.ID, "")
 	restored = completeBackup(t, f, restored.ID)
 	if restored.State != "succeeded" || restored.OwnershipHeld || restored.TargetResourceID != target.ID {
@@ -148,8 +150,73 @@ func TestPostgresComposeMySQLRemoteUploadRetryKeepsLocalArchive(t *testing.T) {
 	if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, f.source.Resource.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("upload retry admitted another dump", err)
 	}
+	// Exercise the forward guard replacement with the exact populated 0106
+	// upload history, then replay only 0107 without rewriting historical bytes.
+	if err = applyEmbeddedMigrations(f.ctx, f.db, "0105_hosting_compose_mysql_backup_schedules.sql", "0106_hosting_compose_mysql_remote_backups.sql"); err != nil {
+		t.Fatal("populated remote restore predecessor", err)
+	}
+	for range 2 {
+		if err = applyEmbeddedMigrations(f.ctx, f.db, "0106_hosting_compose_mysql_remote_backups.sql", "0107_hosting_compose_mysql_remote_restore.sql"); err != nil {
+			t.Fatal("populated component remote restore upgrade/replay", err)
+		}
+	}
 	restore := domain.HostingDatabaseBackupRestoreInput{RequestID: "mysql_remote_denied", ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: f.target.Resource.ID, Component: "mysql", ExpectedDeployedOperationID: f.targetOp.ID, ExpectedResourceGeneration: f.target.Resource.Generation, AcknowledgeReplacement: true}, RemoteSource: &domain.BackupRemoteSource{TransferID: upload.ID, ExpectedTargetRevision: target.Revision}}
 	if _, err = f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, restore); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("remote component restore widened", err)
+		t.Fatal("missing remote restore capability accepted", err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, runner, domain.HostingDatabaseMySQLRemoteRestoreCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_remove(capabilities,$2) WHERE id=$1`, runner, domain.HostingDatabaseMySQLBackupComponentCapability); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, restore); !errors.Is(err, store.ErrConflict) {
+		t.Fatal("remote component import bypassed local component capability", err)
+	}
+	var deniedRestores int
+	if err = f.db.QueryRow(f.ctx, `SELECT count(*) FROM hosting_database_backups WHERE mode='restore'`).Scan(&deniedRestores); err != nil || deniedRestores != 0 {
+		t.Fatal("denied remote component import retained target work", err)
+	}
+	if _, err = f.db.Exec(f.ctx, `UPDATE runners SET capabilities=array_append(capabilities,$2) WHERE id=$1`, runner, domain.HostingDatabaseMySQLBackupComponentCapability); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, restore)
+	if err != nil || restored.Version != domain.HostingDatabaseMySQLBackupComponentVersion || restored.TargetResourceID != f.target.Resource.ID {
+		t.Fatal("recorded MySQL upload separate-target import", err)
+	}
+	restoredAgain, err := f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, restore)
+	if err != nil || restoredAgain.ID != restored.ID {
+		t.Fatal("remote component restore replay", err)
+	}
+	if err = f.pg.PrepareDatabaseBackup(f.ctx, restored.ID); !errors.Is(err, hostingjobs.ErrDatabaseBackupWaiting) {
+		t.Fatal("component import escaped recorded download barrier", err)
+	}
+	download := mysqlRestoreDownload(t, network, backup.ID, restored.ID)
+	var downloadPlan domain.HostingDatabaseBackupTransferPlan
+	if err = f.db.QueryRow(f.ctx, `SELECT plan FROM hosting_database_backup_transfers WHERE id=$1`, download.ID).Scan(&downloadPlan); err != nil || download.Version != domain.HostingDatabaseMySQLBackupTransferVersion || downloadPlan.ObjectKey != next.ObjectKey || !reflect.DeepEqual(downloadPlan.Target, next.Target) || downloadPlan.DaemonID != next.DaemonID || !reflect.DeepEqual(download.Blob, backup.Blob) {
+		t.Fatal("component download changed recorded archive authority", err)
+	}
+	settleRemoteTransfer(t, network, download.ID, "")
+	restored = completeBackup(t, network, restored.ID)
+	if restored.State != "succeeded" || restored.OwnershipHeld || restored.TargetResourceID != f.target.Resource.ID {
+		t.Fatal("remote MySQL component import did not settle separate target")
+	}
+	restore.RequestID = "mysql_remote_corrupt"
+	blocked, err := f.service.RequestDatabaseBackupRestore(f.ctx, backup.ID, restore)
+	if err != nil {
+		t.Fatal("failed-download restore admission", err)
+	}
+	failedDownload := mysqlRestoreDownload(t, network, backup.ID, blocked.ID)
+	settleRemoteTransfer(t, network, failedDownload.ID, "object_mismatch")
+	if err = f.pg.PrepareDatabaseBackup(f.ctx, blocked.ID); err != nil {
+		t.Fatal("failed download barrier settlement", err)
+	}
+	blocked, err = f.service.GetDatabaseBackup(f.ctx, blocked.ID)
+	var runID *string
+	if err != nil || blocked.State != "uncertain" || blocked.FailureCode != "execution_failed" || !blocked.OwnershipHeld {
+		t.Fatal("failed download lost held target", err)
+	}
+	if err = f.db.QueryRow(f.ctx, `SELECT run_id FROM hosting_database_backups WHERE id=$1`, blocked.ID).Scan(&runID); err != nil || runID != nil {
+		t.Fatal("failed download dispatched component SQL import", err)
 	}
 }

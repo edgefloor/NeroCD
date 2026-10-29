@@ -225,9 +225,6 @@ func (s *PostgresStore) requestDatabaseBackupComponentRestore(ctx context.Contex
 	if err != nil {
 		return zero, err
 	}
-	if p.Operation.Version == domain.HostingDatabaseMySQLBackupComponentVersion && in.RemoteSource != nil {
-		return zero, ErrConflict
-	}
 	if p.Component == nil || p.Validate() != nil || original.Mode != "backup" || original.State != "succeeded" || original.Blob == nil || in.ComponentTarget.ResourceID == original.SourceResourceID {
 		return zero, ErrConflict
 	}

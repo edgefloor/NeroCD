@@ -994,6 +994,8 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if _, err := strconv.ParseInt(later, 10, 64); err != nil {
 		t.Fatal("WordPress later source record identity invalid")
 	}
+	var scheduledUpload domain.HostingDatabaseBackupTransfer
+	var scheduledObject string
 	for i, saved := range remoteBackups {
 		uploads := storageRuntimeJSON[[]domain.HostingDatabaseBackupTransfer](f, "GET", "/api/v1/database-backups/"+saved.ID+"/transfers", nil, 200)
 		var retriedUpload domain.HostingDatabaseBackupTransfer
@@ -1018,6 +1020,9 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 		if len(objectDigest) != 2 || "sha256:"+objectDigest[0] != saved.Blob.Digest {
 			t.Fatal("WordPress MySQL remote object digest changed")
 		}
+		if i == 0 {
+			scheduledUpload, scheduledObject = retriedUpload, retryPlan.ObjectKey
+		}
 	}
 	var dumpsAfter int
 	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != dumpsBefore {
@@ -1025,11 +1030,28 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	}
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS real due archive retains local success on upload denial; same saved schedule artifact retried without another dump")
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_PASS immediate upload failure retains local SQL; retry publishes exact archive without second dump")
+	cas := filepath.Join(f.root, "database-state", "logical-backups", strings.TrimPrefix(backup.Blob.Digest, "sha256:"))
+	archive, err := os.ReadFile(cas)
+	if err != nil || int64(len(archive)) != backup.Blob.Bytes || "sha256:"+fmt.Sprintf("%x", sha256.Sum256(archive)) != backup.Blob.Digest {
+		t.Fatal("scheduled remote import local archive identity unavailable")
+	}
+	clear(archive)
+	if os.Remove(cas) != nil {
+		t.Fatal("scheduled remote import owned CAS removal failed")
+	}
+	if _, err = os.Lstat(cas); !os.IsNotExist(err) {
+		t.Fatal("scheduled remote import local CAS still present")
+	}
 	b.set("database_import", target.Resource.ID)
 	imported := composeRuntimeAwaitDatabaseBackup(t, f, b.await(t, "database_imported"))
 	if imported.BackupID != backup.ID || imported.TargetResourceID != target.Resource.ID || imported.TargetComponent != "mysql" || imported.TargetDeployedOperationID != deployed.ID || imported.Blob == nil || *imported.Blob != *backup.Blob {
 		t.Fatal("WordPress import changed exact target or SQL archive")
 	}
+	var downloadVersion, downloadState, downloadRestore, downloadParent string
+	if err := f.database.QueryRow(t.Context(), `SELECT plan->'operation'->>'version',state,restore_operation_id,predecessor_id FROM hosting_database_backup_transfers WHERE restore_operation_id=$1 AND mode='download'`, imported.ID).Scan(&downloadVersion, &downloadState, &downloadRestore, &downloadParent); err != nil || downloadVersion != domain.HostingDatabaseMySQLBackupTransferVersion || downloadState != "succeeded" || downloadRestore != imported.ID || downloadParent != scheduledUpload.ID {
+		t.Fatal("remote-only component import lost exact recorded successful upload", err)
+	}
+	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS absent local CAS; exact recorded scheduled upload downloaded and imported into separate target")
 	parts := strings.SplitN(proof, "|", 2)
 	if len(parts) != 2 {
 		t.Fatal("WordPress source post proof missing")
@@ -1069,7 +1091,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if b.await(t, "database_checked") != parts[0] {
 		t.Fatal("WordPress source browser preservation proof changed")
 	}
-	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, backup, assertSource)
+	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, backup, scheduledUpload, scheduledObject, silo, assertSource)
 	t.Log("COMPOSE_MYSQL_DATABASE_IMPORT_PASS snapshot target write exact HTTP source Host; original HTTPS/uploads preserved; no filesystem or URL migration")
 	return terminal
 }
@@ -1124,11 +1146,11 @@ func wordpressRuntimePost(t *testing.T, operation domain.HostingOperation, actio
 
 // Failure targets are separate stacks. A held import is never reused or released
 // by this fixture, and source application files are never part of the SQL dump.
-func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, backup domain.HostingDatabaseBackupOperation, assertSource func()) domain.HostingDatabaseBackupOperation {
+func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, backup domain.HostingDatabaseBackupOperation, upload domain.HostingDatabaseBackupTransfer, objectKey string, silo *hostingStorageRemoteRuntimeSilo, assertSource func()) domain.HostingDatabaseBackupOperation {
 	t.Helper()
-	restore := func(target domain.HostingCatalogInstallation, deployed domain.HostingOperation, key string) domain.HostingDatabaseBackupOperation {
+	restore := func(target domain.HostingCatalogInstallation, deployed domain.HostingOperation, key string, remote *domain.BackupRemoteSource) domain.HostingDatabaseBackupOperation {
 		current := storageRuntimeJSON[domain.Resource](f, "GET", "/api/v1/resources/"+target.Resource.ID, nil, 200)
-		in := domain.HostingDatabaseBackupRestoreInput{RequestID: strings.Repeat(key, 32), ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: target.Resource.ID, Component: "mysql", ExpectedDeployedOperationID: deployed.ID, ExpectedResourceGeneration: current.Generation, AcknowledgeReplacement: true}}
+		in := domain.HostingDatabaseBackupRestoreInput{RequestID: strings.Repeat(key, 32), ComponentTarget: &domain.HostingDatabaseBackupComponentTarget{ResourceID: target.Resource.ID, Component: "mysql", ExpectedDeployedOperationID: deployed.ID, ExpectedResourceGeneration: current.Generation, AcknowledgeReplacement: true}, RemoteSource: remote}
 		op := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "POST", "/api/v1/database-backups/"+backup.ID+"/restores", in, 202)
 		for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); {
 			op = storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+op.ID, nil, 200)
@@ -1166,12 +1188,26 @@ func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, reso
 		}
 	}
 	t.Cleanup(restoreCAS)
-	corrupted := bytes.Clone(original)
-	corrupted[len(corrupted)-1] ^= 1
-	if err := os.WriteFile(cas, corrupted, 0600); err != nil {
-		t.Fatal(err)
+	if upload.BackupID != backup.ID || upload.State != "succeeded" || upload.Blob == nil || *upload.Blob != *backup.Blob || objectKey != domain.BackupRemoteObjectKey(backup.ID, *backup.Blob) {
+		t.Fatal("corrupt remote import object identity changed")
 	}
-	restore(corruptTarget, corruptDeployment, "d")
+	if os.Remove(cas) != nil {
+		t.Fatal("corrupt remote import CAS removal failed")
+	}
+	if _, err := os.Lstat(cas); !os.IsNotExist(err) {
+		t.Fatal("corrupt remote import local CAS remains")
+	}
+	silo.command("printf 'corrupt-owned-fixture-object' | mc pipe fixture/nerocd-storage-runtime/" + objectKey + " >/dev/null\n")
+	corrupt := restore(corruptTarget, corruptDeployment, "d", &domain.BackupRemoteSource{TransferID: upload.ID, ExpectedTargetRevision: upload.TargetRevision})
+	var importRuns, intents int
+	var downloadFailure string
+	if err := f.database.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM hosting_database_backups WHERE id=$1 AND run_id IS NOT NULL),(SELECT count(*) FROM hosting_database_backup_receipts WHERE operation_id=$1 AND phase='intent'),(SELECT failure_code FROM hosting_database_backup_transfers WHERE restore_operation_id=$1 AND mode='download')`, corrupt.ID).Scan(&importRuns, &intents, &downloadFailure); err != nil || importRuns != 0 || intents != 0 || downloadFailure != "object_mismatch" || corrupt.FailureCode != "execution_failed" {
+		t.Fatal("corrupt remote archive escaped download barrier", err)
+	}
+	writer := wordpressRuntimeComponent(t, corruptDeployment, "wordpress", true)
+	if strings.TrimSpace(string(storageRuntimeDocker(t, "container", "inspect", "--format", "{{.State.Running}}", writer.ContainerID))) != "true" {
+		t.Fatal("pre-import remote corruption stopped target writer")
+	}
 	restoreCAS()
 	if !restored {
 		t.Fatal("component CAS restoration failed")
@@ -1181,7 +1217,7 @@ func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, reso
 		t.Fatal("corrupt archive changed target SQL")
 	}
 	assertSource()
-	t.Log("COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS exact digest rejection before SQL; target held and source preserved")
+	t.Log("COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS absent CAS and corrupt recorded remote object rejected before SQL; target held with writers running")
 	partialTarget, partialDeployment := wordpressRuntimeImportTarget(t, f, resource, installed, source, "e", 3)
 	database := wordpressRuntimeComponent(t, partialDeployment, "mysql", true)
 	// These two static names are confined to this exact newly installed target.
@@ -1234,7 +1270,7 @@ fi`
 		return ids
 	}
 	beforeClaims := claimedRuns()
-	partial := restore(partialTarget, partialDeployment, "f")
+	partial := restore(partialTarget, partialDeployment, "f", nil)
 	wordpressRuntimeComponent(t, partialDeployment, "wordpress", false)
 	count := storageRuntimeDocker(t, "exec", "--user", "mysql", database.ContainerID, "/usr/bin/mysql", "--defaults-extra-file=/tmp/nerocd-import-fault/root.cnf", "--batch", "--skip-column-names", "-e", "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='wordpress' AND table_name='wp_commentmeta'")
 	if strings.TrimSpace(string(count)) != "0" {

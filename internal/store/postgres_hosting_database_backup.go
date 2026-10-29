@@ -520,7 +520,7 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 		if err != nil {
 			return false, err
 		}
-		if r.Mode == "restore" && p.Component == nil {
+		if r.Mode == "restore" {
 			var downloadState string
 			downloadState, e := sqlcgen.New(tx).ReadDatabaseBackupDownloadState(ctx, &r.ID)
 			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
@@ -534,6 +534,8 @@ func (s *PostgresStore) PrepareDatabaseBackup(ctx context.Context, id string) er
 				waiting = true
 				return true, nil
 			}
+		}
+		if r.Mode == "restore" && p.Component == nil {
 			child, err := hostingOperation(ctx, tx, *r.DeploymentOperationID)
 			if err != nil {
 				return false, err
