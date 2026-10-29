@@ -1222,7 +1222,7 @@ class GitComposeContractTests(unittest.TestCase):
         import re
         source = GATE.read_text()
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n", 1)[1].split("\nCOMPOSE_BROWSER_PASS", 1)[0]
-        branch = validator.split('raise SystemExit(0)', 1)[0]
+        branch = validator.split('if len(sys.argv)>3 and sys.argv[3]=="true":', 1)[1].split('raise SystemExit(0)', 1)[0]
         required = ast.literal_eval(re.search(r"for key in (\[.*?\]):", branch).group(1))
         self.assertIn("git_failures_preserved_records_uploads", required)
         self.assertIn("browser_git_compose_route_continuity", required)
