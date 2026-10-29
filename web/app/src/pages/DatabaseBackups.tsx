@@ -668,7 +668,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. MySQL component backups and imports are local only; schedules and retention are unavailable. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. MySQL component backups and imports are local only; retention is unavailable. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
