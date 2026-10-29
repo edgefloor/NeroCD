@@ -123,7 +123,7 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			if strings.HasPrefix(path, "/wp-content/uploads/") {
 				kind = "upload"
 			}
-			url := "https://catalog-runtime.example.test" + path
+			url := installed.Request.PublicURL + path
 			requestStarted := time.Now()
 			var gotConnection, reused, wasIdle, tlsDone, wrote, wroteFailed, firstByte atomic.Bool
 			var idleNanoseconds atomic.Int64
