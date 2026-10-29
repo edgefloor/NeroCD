@@ -365,9 +365,14 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 					t.Logf("WordPress private proxy profile bytes=%d sha256=%x truncated=%t captured_at=%s fresh_pending=%t fresh_first_byte=%t", len(body), sha256.Sum256(body), truncated, time.Now().UTC().Format(time.RFC3339Nano), profilePendingAtSave, freshProfileFirstByte.Load())
 					// Socket evidence is a separate private artifact; its failure never discards the profile.
 					const socketScript = `set -eu
-command -v awk >/dev/null; command -v readlink >/dev/null
+command -v awk >/dev/null
+if test "$1" = source; then
+ printf 'attribution=verified_container_network_namespace source_fd_mapping=unavailable\n'
+ awk -v port=":$2$" 'FNR>1 && $2 ~ port {print FILENAME, $0}' /proc/net/tcp /proc/net/tcp6
+ exit
+fi
+command -v readlink >/dev/null
 pids=1
-if test "$1" = source; then pids="1 $(cat /proc/1/task/1/children)"; fi
 mapping=''; processes=0
 for pid in $pids; do
  processes=$((processes+1)); test "$processes" -le 32
@@ -385,18 +390,27 @@ printf 'owned_socket_fds%s\n' "$mapping"
 awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=3;i<=n;i+=3) owners[fields[i]]=1} FNR>1 && ($10 in owners) && ($2 ~ port || $3 ~ port) {print FILENAME, $0}' /proc/net/tcp /proc/net/tcp6`
 					socketCategory := "source_unavailable"
 					defer func() { t.Logf("WordPress private proxy sockets category=%s", socketCategory) }()
+					if !storageRuntimeContainerID.MatchString(sourceWordPress.ContainerID) || sourceOperation.Result == nil || sourceOperation.Result.Stack == nil || !storageRuntimeContainerID.MatchString(sourceOperation.Result.Stack.NetworkID) {
+						return
+					}
 					sourceRaw, sourceErr := command("container", "inspect", sourceWordPress.ContainerID, "--format", "{{json .}}")
 					defer clear(sourceRaw)
 					var source struct {
 						ID, Image       string
 						Config          struct{ Labels map[string]string }
 						State           struct{ Running bool }
+						HostConfig      struct{ NetworkMode string }
 						NetworkSettings struct {
 							Ports    map[string][]struct{ HostIP, HostPort string }
-							Networks json.RawMessage
+							Networks map[string]struct{ NetworkID, IPAddress, Gateway, EndpointID string }
 						}
 					}
-					if sourceErr != nil || json.Unmarshal(sourceRaw, &source) != nil || !storageRuntimeContainerID.MatchString(sourceWordPress.ContainerID) || source.ID != sourceWordPress.ContainerID || source.Image != sourceWordPress.ImageID || !source.State.Running || source.Config.Labels["io.nerocd.binding"] != sourceOperation.Snapshot.BindingID || source.Config.Labels["io.nerocd.operation"] != sourceWordPress.OperationID || source.Config.Labels["io.nerocd.stack.component"] != "wordpress" {
+					if sourceErr != nil || json.Unmarshal(sourceRaw, &source) != nil || source.ID != sourceWordPress.ContainerID || source.Image != sourceWordPress.ImageID || !source.State.Running || source.Config.Labels["io.nerocd.binding"] != sourceOperation.Snapshot.BindingID || source.Config.Labels["io.nerocd.operation"] != sourceWordPress.OperationID || source.Config.Labels["io.nerocd.stack.component"] != "wordpress" {
+						return
+					}
+					expectedNetwork := domain.HostingStackObjectID(sourceOperation.Snapshot.BindingID, "network", "private")
+					network, networkPresent := source.NetworkSettings.Networks[expectedNetwork]
+					if source.HostConfig.NetworkMode != expectedNetwork || len(source.NetworkSettings.Networks) != 1 || !networkPresent || network.NetworkID != sourceOperation.Result.Stack.NetworkID {
 						return
 					}
 					ports := source.NetworkSettings.Ports["80/tcp"]
@@ -427,7 +441,7 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 						}
 						snapshots = append(snapshots, map[string]any{"role": target.role, "container_id": target.id, "started": began.UTC().Format(time.RFC3339Nano), "finished": time.Now().UTC().Format(time.RFC3339Nano), "fresh_pending_at_start": pendingAtStart, "fresh_first_byte_at_start": firstByteAtStart, "fresh_pending": pending, "fresh_first_byte": freshProfileFirstByte.Load(), "category": state, "data": string(raw)})
 					}
-					socketBody, marshalErr := json.Marshal(map[string]any{"source_operation": sourceOperation.ID, "source_component": sourceWordPress, "source_networks": source.NetworkSettings.Networks, "snapshots": snapshots})
+					socketBody, marshalErr := json.Marshal(map[string]any{"source_attribution": "verified_container_network_namespace", "source_fd_mapping": "unavailable", "proxy_attribution": "pid1_fd_inode_and_published_port", "source_operation": sourceOperation.ID, "source_component": sourceWordPress, "source_networks": source.NetworkSettings.Networks, "snapshots": snapshots})
 					defer clear(socketBody)
 					if marshalErr != nil || len(socketBody) > 192<<10 {
 						socketCategory = "bounded_encoding_unavailable"
