@@ -1406,6 +1406,36 @@ class WordPressModeContractTests(unittest.TestCase):
                 result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
 
+    def test_wordpress_schedule_retry_waits_for_first_response(self):
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        response = browser.split("const response =", 1)[1].split("const appOrigin", 1)[0]
+        checked = "async function checkedResponse" + browser.split("async function checkedResponse", 1)[1].split("async function upload", 1)[0]
+        start = "    const firstPending=response(page,schedulePath);" if "    const firstPending=response(page,schedulePath);" in browser else "    await schedules.getByRole('button',{name:'Create backup schedule',exact:true}).click();"
+        sequence = browser.split(start, 1)[1].split("    await expect(schedules).toContainText", 1)[0]
+        script = r"""
+const safe={}, path='/api/v1/resources/res_fixture/database-backup-schedules';
+let step='', schedule, releaseFirst; const firstDelivered=new Promise(r=>releaseFirst=r), waits=[], sent=[];
+const page={waitForResponse:predicate=>new Promise(resolve=>waits.push({predicate,resolve}))};
+function emit(status){const result={status:()=>status,request:()=>({method:()=> 'POST'}),url:()=> 'https://fixture.invalid'+path,body:async()=>Buffer.from(JSON.stringify({id:'schedule_fixture',revision:1}))};for(const wait of waits.splice(0)){if(wait.predicate(result))wait.resolve(result);else waits.push(wait);}}
+const body={request_id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',component:'mysql',expected_version:0};
+const schedules={getByRole:(_,{name})=>({click:async()=>{sent.push(JSON.stringify(body));if(name==='Create backup schedule'){setTimeout(()=>{emit(Number(process.argv[1]));releaseFirst();},0);}else{await firstDelivered;emit(Number(process.argv[2]));}}})};
+const schedulePath=path;
+""" + "const response =" + response + checked + "\n(async()=>{try{\n" + start + sequence + r"""
+console.log(JSON.stringify({status:safe.checked_response_status,sent}));
+}catch(error){console.log(JSON.stringify({status:safe.checked_response_status,failure:safe.checked_response_failure,sent}));}})();
+"""
+        for first, second, passed in [(503, 200, True), (503, 503, False), (500, 200, False)]:
+            with self.subTest(first=first, second=second):
+                run = subprocess.run(["node", "-e", script, str(first), str(second)], capture_output=True, text=True, timeout=5, check=True)
+                result = json.loads(run.stdout)
+                self.assertEqual(result.get("failure") is None, passed, result)
+                if passed:
+                    self.assertEqual(result["status"], 200)
+                    self.assertEqual(len(result["sent"]), 2)
+                    self.assertEqual(result["sent"][0], result["sent"][1])
+                else:
+                    self.assertEqual(result["failure"], "status_mismatch")
+
     def test_wordpress_initial_is_distinct_without_browser_claim(self):
         source = GATE.read_text()
         selector = source.split("case ${1:-} in\n", 1)[1].split("\nesac", 1)[0]

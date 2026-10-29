@@ -360,7 +360,9 @@ async function wordpressWorkflow(h, initial) {
     await schedules.getByRole('textbox',{name:'Backup frequency',exact:true}).fill('every_minute');
     await schedules.getByRole('textbox',{name:'Backup timezone',exact:true}).fill('UTC');
     await schedules.getByRole('checkbox',{name:'Schedule enabled',exact:true}).check();
+    const firstPending=response(page,schedulePath);
     await schedules.getByRole('button',{name:'Create backup schedule',exact:true}).click();
+    await checkedResponse(await firstPending,503);
     // The real fixture commits the first POST before withholding its response.
     // Recover through the operator's retained request rather than a second create.
     step='wordpress_mysql_database_schedule_retry';
