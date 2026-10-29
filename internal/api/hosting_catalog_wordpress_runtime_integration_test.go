@@ -30,6 +30,7 @@ import (
 	"nerocd/internal/app"
 	"nerocd/internal/domain"
 	"nerocd/internal/hostingproxy"
+	"nerocd/internal/runner"
 	"nerocd/internal/runnerclient"
 )
 
@@ -37,8 +38,20 @@ const wordpressFixtureVersion = "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v
 const wordpressFixtureImage = "wordpress:7.1.3-php8.3-apache@sha256:f6056dcd9e4c146cc9f150b99b1ec62d875712a66dcab4005042778b0310e834"
 
 func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
+	wordpressRuntimeScenario(t, false)
+}
+
+func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T) {
+	wordpressRuntimeScenario(t, true)
+}
+
+func wordpressRuntimeScenario(t *testing.T, mysql bool) {
+	t.Helper()
 	if os.Getenv("NEROCD_WORDPRESS_RUNTIME") != "true" || os.Getenv("NEROCD_COMPOSE_RUNTIME") != "disposable-dind" {
 		t.Skip("requires approved WordPress catalog profile")
+	}
+	if (os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true") != mysql {
+		t.Skip("requires exact WordPress terminal scenario")
 	}
 	f := newStorageRuntimeFixture(t, false)
 	b := f.catalogBrowser
@@ -111,6 +124,22 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 			t.Fatal("WordPress generated secret empty")
 		}
 		secretValues[credential.Name] = revealed.Value
+	}
+	finish := func(operations ...any) {
+		f.stop()
+		journal, e := os.ReadFile(filepath.Join(f.root, "journal", "journal.json"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		ordinary, _ := json.Marshal(operations)
+		for _, value := range secretValues {
+			if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
+				t.Fatal("WordPress managed credential entered public operation/journal/log")
+			}
+		}
+		clear(secretValues)
+		clear(journal)
+		clear(ordinary)
 	}
 	assertApplication := func() {
 		t.Helper()
@@ -662,7 +691,16 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 	if b.await(t, "app_start_checked") != proof {
 		t.Fatal("WordPress Start lost post/media")
 	}
-	wordpressRuntimeDatabaseBackupImport(t, f, resource, installed, started, proof, assertApplication)
+	if mysql {
+		terminal := wordpressRuntimeDatabaseBackupImport(t, f, resource, installed, started, proof, assertApplication)
+		b.set("complete_mysql", terminal.ID)
+		if b.await(t, "done") != resourceID {
+			t.Fatal("WordPress MySQL completion resource mismatch")
+		}
+		finish(installed, first, second, stopped, started, terminal)
+		t.Log("WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS")
+		return
+	}
 	// An unavailable immutable image must fail before replacing either writer.
 	source := resource.Source
 	changed := *source.Compose
@@ -751,20 +789,7 @@ awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=
 	if b.await(t, "done") != resourceID {
 		t.Fatal("WordPress completion resource mismatch")
 	}
-	f.stop()
-	journal, e := os.ReadFile(filepath.Join(f.root, "journal", "journal.json"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	ordinary, _ := json.Marshal([]any{installed, first, second, stopped, started, failed, held})
-	for _, value := range secretValues {
-		if bytes.Contains(journal, []byte(value)) || bytes.Contains(ordinary, []byte(value)) || strings.Contains(f.logs.String(), value) {
-			t.Fatal("WordPress managed credential entered public operation/journal/log")
-		}
-	}
-	clear(secretValues)
-	clear(journal)
-	clear(ordinary)
+	finish(installed, first, second, stopped, started, failed, held)
 	t.Log("WORDPRESS_CATALOG_RUNTIME_PASS")
 }
 
@@ -833,7 +858,7 @@ func TestStorageRuntimeComposeRunnerConfiguration(t *testing.T) {
 
 // Direct target reads retain the saved source Host context. This proves database
 // import through WordPress, not URL migration or HTTPS on another hostname.
-func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, proof string, assertSource func()) {
+func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, proof string, assertSource func()) domain.HostingDatabaseBackupOperation {
 	t.Helper()
 	target, deployed := wordpressRuntimeImportTarget(t, f, resource, installed, source, "b", 1)
 	b := f.catalogBrowser
@@ -891,8 +916,9 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if b.await(t, "database_checked") != parts[0] {
 		t.Fatal("WordPress source browser preservation proof changed")
 	}
-	wordpressRuntimeImportFailures(t, f, resource, installed, source, backup, assertSource)
+	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, backup, assertSource)
 	t.Log("COMPOSE_MYSQL_DATABASE_IMPORT_PASS snapshot target write exact HTTP source Host; original HTTPS/uploads preserved; no filesystem or URL migration")
+	return terminal
 }
 
 func wordpressRuntimeImportTarget(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, key string, offset int) (domain.HostingCatalogInstallation, domain.HostingOperation) {
@@ -945,7 +971,7 @@ func wordpressRuntimePost(t *testing.T, operation domain.HostingOperation, actio
 
 // Failure targets are separate stacks. A held import is never reused or released
 // by this fixture, and source application files are never part of the SQL dump.
-func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, backup domain.HostingDatabaseBackupOperation, assertSource func()) {
+func wordpressRuntimeImportFailures(t *testing.T, f *storageRuntimeFixture, resource domain.Resource, installed domain.HostingCatalogInstallation, source domain.HostingOperation, backup domain.HostingDatabaseBackupOperation, assertSource func()) domain.HostingDatabaseBackupOperation {
 	t.Helper()
 	restore := func(target domain.HostingCatalogInstallation, deployed domain.HostingOperation, key string) domain.HostingDatabaseBackupOperation {
 		current := storageRuntimeJSON[domain.Resource](f, "GET", "/api/v1/resources/"+target.Resource.ID, nil, 200)
@@ -1039,7 +1065,23 @@ fi`
 	}
 	t.Cleanup(clean)
 	storageRuntimeDocker(t, "exec", "--user", "mysql", database.ContainerID, "sh", "-ec", setup)
-	restore(partialTarget, partialDeployment, "f")
+	claimedRuns := func() []string {
+		f.logs.mu.Lock()
+		defer f.logs.mu.Unlock()
+		var ids []string
+		for _, line := range strings.Split(f.logs.String(), "\n") {
+			var event struct {
+				Event string `json:"event"`
+				RunID string `json:"run_id"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Event == "claimed_run" {
+				ids = append(ids, event.RunID)
+			}
+		}
+		return ids
+	}
+	beforeClaims := claimedRuns()
+	partial := restore(partialTarget, partialDeployment, "f")
 	wordpressRuntimeComponent(t, partialDeployment, "wordpress", false)
 	count := storageRuntimeDocker(t, "exec", "--user", "mysql", database.ContainerID, "/usr/bin/mysql", "--defaults-extra-file=/tmp/nerocd-import-fault/root.cnf", "--batch", "--skip-column-names", "-e", "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='wordpress' AND table_name='wp_commentmeta'")
 	if strings.TrimSpace(string(count)) != "0" {
@@ -1049,7 +1091,63 @@ fi`
 	// Repairing fixture privileges does not release the operation or start writers.
 	wordpressRuntimeComponent(t, partialDeployment, "wordpress", false)
 	assertSource()
+	// The deliberately uncertain import is terminal for this runner and journal.
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		exited, category, code := storageRuntimeRunnerExit(f.process)
+		if exited {
+			if category != "process_exit" || code != 1 {
+				t.Fatal("uncertain import runner terminal outcome changed")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("uncertain import runner did not exit")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	f.stop()
+	journal, err := runner.OpenAttemptJournal(filepath.Join(f.root, "journal"))
+	if err != nil {
+		t.Fatal("held import journal unavailable")
+	}
+	entries := journal.Snapshot().DatabaseBackup
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var pair []runner.JournalDatabaseBackup
+	for _, entry := range entries {
+		if entry.Request.OperationID == partial.ID {
+			pair = append(pair, entry)
+		}
+	}
+	if len(pair) != 2 {
+		t.Fatal("held import lost intent or uncertain receipt")
+	}
+	intent, uncertain := pair[0], pair[1]
+	if intent.Request.Phase != "intent" {
+		intent, uncertain = uncertain, intent
+	}
+	if intent.Request.Phase != "intent" || uncertain.Request.Phase != "uncertain" || uncertain.Request.FailureCode != "execution_failed" || uncertain.Request.WritersResumed || !reflect.DeepEqual(intent.Request.Writers, uncertain.Request.Writers) || intent.Request.HostingAuthority != uncertain.Request.HostingAuthority || !reflect.DeepEqual(intent.Plan, uncertain.Plan) {
+		t.Fatal("held import journal authority or writer evidence changed")
+	}
+	for _, entry := range pair {
+		plan, authority := entry.Plan, entry.Request.HostingAuthority
+		if plan.Validate() != nil || entry.Request.PlanHash != plan.Hash || authority.OperationID != partial.ID || authority.RunID != entry.Attempt.RunID || authority.LeaseID != entry.Attempt.LeaseID || authority.Attempt != entry.Attempt.Attempt || authority.Fence != entry.Attempt.Fence || plan.Operation.Version != "mysql.compose-logical-local.v1" || plan.Operation.BackupID != backup.ID || plan.Operation.TargetResourceID != partialTarget.Resource.ID || plan.Operation.TargetComponent != "mysql" || plan.Operation.TargetDeployedOperationID != partialDeployment.ID || plan.Operation.Blob == nil || *plan.Operation.Blob != *backup.Blob {
+			t.Fatal("held import journal lost exact target or archive")
+		}
+	}
+	afterClaims := claimedRuns()
+	if len(afterClaims) != len(beforeClaims)+1 || !reflect.DeepEqual(beforeClaims, afterClaims[:len(beforeClaims)]) || afterClaims[len(afterClaims)-1] != uncertain.Request.RunID {
+		t.Fatal("uncertain import acquired an additional run")
+	}
+	current := storageRuntimeJSON[domain.HostingDatabaseBackupOperation](f, "GET", "/api/v1/database-backups/"+partial.ID, nil, 200)
+	if current.State != "uncertain" || !current.OwnershipHeld || current.TargetResourceID != partial.TargetResourceID || current.TargetDeployedOperationID != partial.TargetDeployedOperationID || current.Blob == nil || *current.Blob != *backup.Blob {
+		t.Fatal("terminal runner released held import")
+	}
+	wordpressRuntimeComponent(t, partialDeployment, "wordpress", false)
+	t.Log("WordPress MySQL terminal journal retained intent and uncertain authority; expected runner exit; no additional acquired claim")
 	t.Log("COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS actual DROP then denied CREATE; exact target writers stopped and ownership held; source preserved")
+	return current
 }
 
 func wordpressRuntimeComponent(t *testing.T, operation domain.HostingOperation, name string, running bool) domain.HostingStackComponent {

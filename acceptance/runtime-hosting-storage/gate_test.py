@@ -1402,8 +1402,9 @@ class WordPressModeContractTests(unittest.TestCase):
             stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
             stub.chmod(0o700)
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]}
-            result = subprocess.run(["/bin/bash", str(gate), "--wordpress"], env=env, capture_output=True, text=True, check=True)
-            self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", "--wordpress"])
+            for mode in ["--wordpress", "--wordpress-mysql"]:
+                result = subprocess.run(["/bin/bash", str(gate), mode], env=env, capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.splitlines(), ["acceptance/runtime-hosting-storage/gate.sh", mode])
 
     def test_wordpress_selector_and_compiled_test_identity(self):
         source = GATE.read_text()
@@ -1413,7 +1414,11 @@ class WordPressModeContractTests(unittest.TestCase):
         fixture = Path("internal/api/hosting_catalog_wordpress_runtime_integration_test.go").read_text()
         self.assertIn("func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T)", fixture)
         self.assertIn('--env "NEROCD_WORDPRESS_RUNTIME=$wordpress"', source)
-        self.assertIn('NEROCD_WORDPRESS_RUNTIME="$wordpress" NEROCD_CATALOG_BROWSER_ORIGIN=', source)
+        self.assertIn('NEROCD_WORDPRESS_RUNTIME="$wordpress" NEROCD_WORDPRESS_MYSQL_RUNTIME="$wordpress_mysql" NEROCD_CATALOG_BROWSER_ORIGIN=', source)
+        self.assertIn('--env "NEROCD_WORDPRESS_MYSQL_RUNTIME=$wordpress_mysql"', source)
+        result = subprocess.run(["bash", "-c", "case ${1:-} in\n" + selector + "\nesac\nprintf '%s\\n' \"$wordpress\" \"$wordpress_mysql\" \"$owner\" \"$test_pattern\"", "fixture", "--wordpress-mysql"], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), ["true", "true", "nerocd-catalog-wordpress-mysql-runtime-20261029", "^TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS$"])
+        self.assertIn("func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T)", fixture)
 
     def test_wordpress_effective_certificate_config_only_changes_validity(self):
         source = GATE.read_text()
@@ -1431,22 +1436,36 @@ class WordPressModeContractTests(unittest.TestCase):
     def test_wordpress_pass_contract_rejects_unrelated_or_incomplete_proof(self):
         source = GATE.read_text()
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
-        required=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved","wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold","wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive"]
-        for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker"]:
-            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp:
-                root=Path(tmp)
-                proof={"status":"passed","intercepted_requests":False,**dict.fromkeys(required,True)}
-                if kind=="missing":del proof[required[-1]]
-                if kind=="false":proof[required[-1]]=False
-                if kind=="numeric":proof[required[-1]]=1
-                if kind=="intercepted":proof["intercepted_requests"]=True
-                output="--- PASS: TestHostingCatalogWordPressCompiledRunnerHTTPS (1s)\nWORDPRESS_CATALOG_RUNTIME_PASS\nCOMPOSE_MYSQL_DATABASE_IMPORT_PASS\nCOMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS\nCOMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS\n"
-                if kind=="skip":output+="SKIP"
-                if kind=="wrong_test":output=output.replace("TestHostingCatalogWordPressCompiledRunnerHTTPS","TestHostingComposeVikunjaCompiledRunnerHTTPS")
-                if kind=="missing_marker":output=output.replace("WORDPRESS_CATALOG_RUNTIME_PASS","")
-                (root/"browser.json").write_text(json.dumps(proof));(root/"runtime.log").write_text(output)
-                result=subprocess.run([sys.executable,"-c",validator,str(root/"runtime.log"),str(root/"browser.json"),"false","true"],capture_output=True,text=True)
-                self.assertEqual(result.returncode==0,kind=="valid",result.stderr)
+        healthy=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved"]
+        for mysql in [False,True]:
+            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
+            test="TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS" if mysql else "TestHostingCatalogWordPressCompiledRunnerHTTPS"
+            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
+            for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker","other_mode"]:
+                with self.subTest(mysql=mysql,kind=kind),tempfile.TemporaryDirectory() as tmp:
+                    root=Path(tmp)
+                    proof={"status":"passed","intercepted_requests":False,**dict.fromkeys(required,True)}
+                    if kind=="missing":del proof[required[-1]]
+                    if kind=="false":proof[required[-1]]=False
+                    if kind=="numeric":proof[required[-1]]=1
+                    if kind=="intercepted":proof["intercepted_requests"]=True
+                    output="--- PASS: "+test+" (1s)\n"+"\n".join(markers)+"\n"
+                    if kind=="skip":output+="SKIP"
+                    if kind=="wrong_test":output=output.replace(test,"TestHostingComposeVikunjaCompiledRunnerHTTPS")
+                    if kind=="missing_marker":output=output.replace(markers[0],"")
+                    if kind=="other_mode":output=output.replace(markers[0],"WORDPRESS_CATALOG_RUNTIME_PASS" if mysql else "WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS")
+                    (root/"browser.json").write_text(json.dumps(proof));(root/"runtime.log").write_text(output)
+                    result=subprocess.run([sys.executable,"-c",validator,str(root/"runtime.log"),str(root/"browser.json"),"false","true",str(mysql).lower()],capture_output=True,text=True)
+                    self.assertEqual(result.returncode==0,kind=="valid",result.stderr)
+
+    def test_wordpress_terminal_browser_modes(self):
+        source=Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        branch=source.split("if(process.env.NEROCD_WORDPRESS_MYSQL_RUNTIME === 'true') {",1)[1].split("await state('app_failure_recheck')",1)[0]
+        self.assertIn("await state('database_backup')",branch)
+        self.assertIn("await state('complete_mysql')",branch)
+        self.assertIn("held.ownership_held!==true",branch)
+        self.assertIn("safe.wordpress_mysql_terminal_held=true",branch)
+        self.assertIn("return;",branch)
 
 if __name__ == "__main__":
     unittest.main()

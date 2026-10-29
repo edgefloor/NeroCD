@@ -325,6 +325,7 @@ async function wordpressWorkflow(h, initial) {
   const stopping=response(page,`/api/v1/resources/${resourceID}/stack-stop`);await lifecycle.getByRole('button',{name:'Confirm Stop Compose',exact:true}).click();const stopped=await checkedResponse(stopping,202);if(stopped.stack_stop_plan?.target?.operation_id!==second)throw Error('WordPress Stop target changed');await report('stopped',stopped.id);
   await state('start');await reloadHosting();const started=await deploy(true,stopped.id);await report('started',started);
   await state('app_start_recheck');await checkWordPress('start');safe.wordpress_stop_start_preserved=true;await report('app_start_checked',proof);
+  if(process.env.NEROCD_WORDPRESS_MYSQL_RUNTIME === 'true') {
   const backupState=await state('database_backup');
   await reloadHosting();
   const backups=application.getByRole('region',{name:'Component database backups',exact:true});
@@ -369,6 +370,12 @@ async function wordpressWorkflow(h, initial) {
   safe.wordpress_mysql_database_backup_import=true;
   safe.wordpress_database_only_source_uploads_preserved=true;
   await report('database_checked',postID);
+  const terminal=await state('complete_mysql');
+  const held=await checkedResponse(await context.request.get('/api/v1/database-backups/'+terminal.id),200);
+  if(held.id!==terminal.id||held.state!=='uncertain'||held.ownership_held!==true||held.target_component!=='mysql'||held.target_resource_id===resourceID)throw Error('WordPress MySQL terminal hold changed');
+  safe.wordpress_mysql_terminal_held=true;await report('done',resourceID);
+  return;
+  }
   await state('app_failure_recheck');await checkWordPress('failed-image-prepare');safe.wordpress_failed_prepare_preserved=true;await report('app_failure_checked',proof);
   const terminal=await state('complete');
   const held=await checkedResponse(await context.request.get('/api/v1/hosting-operations/'+terminal.id),200);
