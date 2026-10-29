@@ -92,6 +92,8 @@ Native MySQL supports [local and remote retention](hosting-database-backup-reten
 qualification alongside [immediate component backup and database-only import](hosting-database-backups.md#compose-mysql-qualification).
 The InnoDB snapshot and concurrent-DDL limits of immediate MySQL backups still apply.
 
+<a id="schedule-a-compose-postgresql-component"></a>
+
 ## Schedule a Compose database component
 
 Use the application's **Database backups** panel and select its qualified PostgreSQL 16
@@ -248,8 +250,9 @@ local schedule for the pinned MySQL 8.4.13 component after source redeployment
 and Stop/Start. The first POST committed before its response was replaced with
 503; an identical retry returned the saved revision. The real hosting execution
 controller produced a due `mysql_sql` archive from that current deployment.
-The browser edited the frequency/timezone, disabled the schedule, and reloaded
-revisions 1, 2 and 3 with the revision-1 occurrence.
+The browser saved revisions 1, 2 and 3, then reloaded disabled revision 3 and the
+revision-1 occurrence. The Go fixture verified immutable stored history for all
+three revisions.
 
 That exact scheduled archive fed the existing separate-stack import proof.
 Snapshot records, later-source-write exclusion and independent target writes
