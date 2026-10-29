@@ -72,7 +72,7 @@ func New(s Settings) (*Engine, error) {
 	return &Engine{settings: s, verifyTimeout: 15 * time.Second}, nil
 }
 func (e *Engine) validate(p Plan) error {
-	if p.hash == "" || !reflect.DeepEqual(p.settings, e.settings) {
+	if p.transportPolicy > 1 || p.hash == "" || !reflect.DeepEqual(p.settings, e.settings) {
 		return errors.New("plan does not belong to engine settings")
 	}
 	return platform()
@@ -125,7 +125,7 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 		result.ContainerID = c.ID
 	}
 	if old.Hash == p.hash && old.Generation == p.generation {
-		if !reflect.DeepEqual(old.Verification, p.verification) {
+		if old.TransportPolicy != p.transportPolicy || !reflect.DeepEqual(old.Verification, p.verification) {
 			result.Outcome = Uncertain
 			return result, errors.New("generation verification policy mismatch")
 		}
@@ -165,6 +165,8 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 	previous := p
 	previous.generation = old.Generation
 	previous.hash = old.Hash
+	previous.transportPolicy = old.TransportPolicy
+	previous.verification = old.Verification
 	previous.routes = append([]Route(nil), old.Routes...)
 	if p.verification != nil {
 		// The selected old routes must be a recoverable baseline before intent.
@@ -182,7 +184,7 @@ func (e *Engine) apply(ctx context.Context, p Plan, install bool) (result Result
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
-	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent", Verification: p.verification}
+	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent", Verification: p.verification, TransportPolicy: p.transportPolicy}
 	// An intent precedes external effects. Any lost response after this point is uncertain.
 	if err = s.save(next); err != nil {
 		result.Outcome = Uncertain
@@ -316,7 +318,7 @@ func (e *Engine) Observe(ctx context.Context, p Plan) (Result, error) {
 	if err != nil {
 		return result, err
 	}
-	if r.Identity != p.identity || r.Hash != p.hash || r.Generation != p.generation || r.Phase != "committed" || !reflect.DeepEqual(r.Verification, p.verification) {
+	if r.Identity != p.identity || r.Hash != p.hash || r.Generation != p.generation || r.Phase != "committed" || r.TransportPolicy != p.transportPolicy || !reflect.DeepEqual(r.Verification, p.verification) {
 		return result, errors.New("generation receipt not committed or mismatched")
 	}
 	if err = s.checkFile("certificates/acme.json"); err != nil {

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -44,6 +45,21 @@ func (e *Engine) loadedConfiguration(ctx context.Context, p Plan, interruptedSto
 	if err := e.daemon(ctx, p); err != nil {
 		return err
 	}
+	if p.transportPolicy > 1 {
+		return errors.New("unknown proxy transport policy")
+	}
+	if p.transportPolicy == 1 {
+		root, err := os.OpenRoot(e.settings.Directory)
+		if err != nil {
+			return err
+		}
+		state := &storage{root: root}
+		body, readErr := state.read("dynamic/routes.yml")
+		closeErr := root.Close()
+		if readErr != nil || closeErr != nil || !bytes.Equal(body, p.dynamic()) {
+			return errors.New("proxy transport configuration file differs")
+		}
+	}
 	data, err := e.raw(ctx)
 	if err != nil {
 		return err
@@ -56,7 +72,10 @@ func (e *Engine) loadedConfiguration(ctx context.Context, p Plan, interruptedSto
 	}
 	var services map[string]struct {
 		Status       string
-		LoadBalancer struct{ Servers []struct{ URL string } }
+		LoadBalancer struct {
+			Servers          []struct{ URL string }
+			ServersTransport string
+		}
 	}
 	if json.Unmarshal(data["routers"], &routers) != nil || json.Unmarshal(data["services"], &services) != nil {
 		return errors.New("traefik routers/services unavailable")
@@ -86,6 +105,12 @@ func (e *Engine) loadedConfiguration(ctx context.Context, p Plan, interruptedSto
 		service, ok := services[name+"@file"]
 		if !ok || service.Status != "enabled" || len(service.LoadBalancer.Servers) != 1 || service.LoadBalancer.Servers[0].URL != fmt.Sprintf("http://127.0.0.1:%d", r.HostPort) {
 			return errors.New("desired service is not loaded")
+		}
+		if p.transportPolicy == 0 && service.LoadBalancer.ServersTransport != "" {
+			return errors.New("legacy service transport differs")
+		}
+		if p.transportPolicy == 1 && service.LoadBalancer.ServersTransport != p.transportName()+"@file" {
+			return errors.New("desired service transport is not loaded")
 		}
 		for _, suffix := range []string{"-http", "-https"} {
 			router, ok := routers[name+suffix+"@file"]

@@ -109,6 +109,16 @@ func interruptedLoadedEngine(t *testing.T, verifiedPrior bool) (*Engine, Plan, P
 		}
 		for name, service := range dynamic.HTTP.Services {
 			service["status"] = "enabled"
+			balancer := service["loadBalancer"].(map[string]any)
+			if transport, ok := balancer["serversTransport"].(string); ok {
+				balancer["serversTransport"] = transport + "@file"
+			}
+			if fault == "missing_transport" {
+				delete(balancer, "serversTransport")
+			}
+			if fault == "foreign_transport" {
+				balancer["serversTransport"] = "foreign@file"
+			}
 			if fault == "foreign_service" {
 				service["loadBalancer"] = map[string]any{"servers": []map[string]string{{"url": "http://127.0.0.1:29999"}}}
 			}
@@ -146,7 +156,23 @@ func interruptedLoadedEngine(t *testing.T, verifiedPrior bool) (*Engine, Plan, P
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Portable management tests retain legacy policy; the current owned-file
+	// guard is exercised without skips by the Linux test binary.
+	if runtime.GOOS != "linux" {
+		prior.transportPolicy = 0
+		prior.rehash()
+		next.transportPolicy = 0
+		next.rehash()
+	}
 	state.active = prior
+	for _, subdir := range []string{"dynamic", "certificates", "docker-config"} {
+		if err = os.MkdirAll(filepath.Join(dir, subdir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.WriteFile(filepath.Join(dir, "dynamic/routes.yml"), prior.dynamic(), 0600); err != nil {
+		t.Fatal(err)
+	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.mu.Lock()
 		defer state.mu.Unlock()
@@ -236,6 +262,9 @@ func TestInterruptedStorageLoadedGuardAcceptsOnlyStoppedSelectedBackend(t *testi
 			}
 			state.mu.Lock()
 			state.active = next
+			if err := os.WriteFile(filepath.Join(e.settings.Directory, "dynamic/routes.yml"), next.dynamic(), 0600); err != nil {
+				t.Fatal(err)
+			}
 			state.mu.Unlock()
 			if result, err := e.verifiedObservation(t.Context(), next, "proxy"); err == nil || result.Outcome != Uncertain {
 				t.Fatal("candidate readiness accepted marker-bearing502", result, err)
@@ -321,6 +350,12 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
+	if runtime.GOOS != "linux" {
+		prior.transportPolicy = 0
+		prior.rehash()
+		next.transportPolicy = 0
+		next.rehash()
+	}
 	e.settings = settings
 	fixture.mu.Lock()
 	fixture.active = prior
@@ -352,7 +387,7 @@ esac
 
 func saveInterruptedReceipt(t *testing.T, e *Engine, p Plan, phase string) {
 	t.Helper()
-	r := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: phase, Verification: p.verification}
+	r := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: phase, Verification: p.verification, TransportPolicy: p.transportPolicy}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -578,5 +613,49 @@ func TestInterruptedStorageReceiptForwardRecoveryRetainsExactFailedHistory(t *te
 	foreign.routes[0].HostPort++
 	if verifyInterruptedTestReceipt(t.Context(), e, current, prior, &foreign, Refused, prior.generation) == nil {
 		t.Fatal("changed failed history accepted")
+	}
+}
+
+func TestLoopbackTransportReadbackBindsPolicyAndLegacyBytes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux owned-file validation; execute Linux test binary")
+	}
+	for _, mode := range []string{"current", "legacy", "legacy_foreign_transport", "missing_transport", "foreign_transport", "changed_file", "unknown_policy"} {
+		t.Run(mode, func(t *testing.T) {
+			e, p, _, state := interruptedLoadedEngine(t, false)
+			state.status["selected"] = http.StatusOK
+			if mode == "legacy" || mode == "legacy_foreign_transport" {
+				p.transportPolicy = 0
+				p.rehash()
+				state.active = p
+			}
+			saveInterruptedReceipt(t, e, p, "committed")
+			if mode == "missing_transport" || mode == "foreign_transport" {
+				state.fault = mode
+			}
+			if mode == "legacy_foreign_transport" {
+				state.fault = "foreign_transport"
+			}
+			if mode == "changed_file" {
+				if err := os.WriteFile(filepath.Join(e.settings.Directory, "dynamic/routes.yml"), []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "unknown_policy" {
+				p.transportPolicy = 2
+			}
+			err := e.loaded(t.Context(), p)
+			if (mode == "current" || mode == "legacy") != (err == nil) {
+				t.Fatalf("unexpected loaded policy result: %v", err)
+			}
+			if mode == "legacy" {
+				current := p
+				current.transportPolicy = 1
+				current.rehash()
+				if e.loaded(t.Context(), current) == nil {
+					t.Fatal("legacy state certified new policy")
+				}
+			}
+		})
 	}
 }

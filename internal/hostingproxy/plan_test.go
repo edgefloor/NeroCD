@@ -1,6 +1,7 @@
 package hostingproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,8 @@ func TestVerifiedSwitchPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Hash() != "9cffee96230e38954d791c399d4d3232fca232640e39e8d17b3a9c59057407c3" || legacy.StaticHash() != "692bfb830ae0de4882aca2429ba27675418b1493606bf4bf001460185e8ef712" {
+	historical, historicalErr := legacy.MatchRecordedHash("9cffee96230e38954d791c399d4d3232fca232640e39e8d17b3a9c59057407c3")
+	if historicalErr != nil || historical.transportPolicy != 0 || historical.Hash() == legacy.Hash() || legacy.StaticHash() != "692bfb830ae0de4882aca2429ba27675418b1493606bf4bf001460185e8ef712" {
 		t.Fatal("legacy serialized hash contract changed")
 	}
 	ids := []string{"one"}
@@ -243,5 +245,61 @@ func TestStaticArgsDebugIsFixtureOnly(t *testing.T) {
 	engine.fixtureCA = ""
 	if !reflect.DeepEqual(engine.staticArgs(), production) {
 		t.Fatal("production arguments changed")
+	}
+}
+
+func TestLoopbackTransportPolicyHashesAndLegacyMatching(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		var p Plan
+		var err error
+		routes := []Route{{ID: "one", Hostname: "app.example.test", PathPrefix: "/", HostPort: 12000}}
+		if strict {
+			p, err = PrepareVerifiedSwitch(testIdentity(), testSettings(), 2, 1, routes, []string{"one"})
+		} else {
+			p, err = Prepare(testIdentity(), testSettings(), 2, 1, routes)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy := p
+		legacy.transportPolicy = 0
+		legacy.rehash()
+		if legacy.hash == p.hash || legacy.staticHash != p.staticHash {
+			t.Fatal("transport policy hash separation failed")
+		}
+		for _, expected := range []Plan{p, legacy} {
+			got, err := p.MatchRecordedHash(expected.hash)
+			if err != nil || !reflect.DeepEqual(got, expected) {
+				t.Fatal("recorded exact policy reconstruction failed")
+			}
+		}
+		for _, hash := range []string{"", digest("foreign")} {
+			if _, err := p.MatchRecordedHash(hash); err == nil {
+				t.Fatal("unrecorded transport policy accepted")
+			}
+		}
+		var document map[string]map[string]json.RawMessage
+		if err = json.Unmarshal(p.dynamic(), &document); err != nil {
+			t.Fatal(err)
+		}
+		var transports map[string]struct {
+			MaxIdleConnsPerHost int
+			ForwardingTimeouts  struct{ IdleConnTimeout string }
+		}
+		if err = json.Unmarshal(document["http"]["serversTransports"], &transports); err != nil || len(transports) != 1 || transports[p.transportName()].ForwardingTimeouts.IdleConnTimeout != "10s" || transports[p.transportName()].MaxIdleConnsPerHost != 200 {
+			t.Fatal("bounded idle transport missing")
+		}
+		var services map[string]struct {
+			LoadBalancer struct{ ServersTransport string }
+		}
+		if err = json.Unmarshal(document["http"]["services"], &services); err != nil {
+			t.Fatal(err)
+		}
+		if services[p.prefix()+"-one"].LoadBalancer.ServersTransport != p.transportName() {
+			t.Fatal("service transport binding missing")
+		}
+		if bytes.Contains(legacy.dynamic(), []byte("serversTransport")) {
+			t.Fatal("legacy generation bytes gained a transport")
+		}
 	}
 }

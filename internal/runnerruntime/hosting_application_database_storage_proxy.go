@@ -30,7 +30,10 @@ func applicationStorageProxyPlans(config ProxyConfig, plan domain.HostingProxyPl
 	} else {
 		prior, err = hostingproxy.PrepareVerifiedSwitch(identity, settings, uint64(proof.PriorGeneration), uint64(proof.PriorPreviousGeneration), priorRoutes, proof.PriorRequiredRouteIDs)
 	}
-	if err != nil || prior.Hash() != proof.PriorEngineHash {
+	if err == nil {
+		prior, err = prior.MatchRecordedHash(proof.PriorEngineHash)
+	}
+	if err != nil {
 		return hostingproxy.Plan{}, nil, errApplicationDatabaseExecution
 	}
 	if proof.Action == "switch" {
@@ -62,7 +65,10 @@ func applicationStorageProxyPlans(config ProxyConfig, plan domain.HostingProxyPl
 		routes = append(routes, hostingproxy.Route{ID: r.RouteID, Hostname: r.Hostname, PathPrefix: r.PathPrefix, HostPort: r.HostPort})
 	}
 	failed, err := hostingproxy.PrepareVerifiedSwitch(identity, settings, uint64(proof.FailedGeneration), uint64(proof.PriorGeneration), routes, s.VerifiedSwitch.RouteIDs())
-	if err != nil || failed.Hash() != proof.FailedEngineHash {
+	if err == nil {
+		failed, err = failed.MatchRecordedHash(proof.FailedEngineHash)
+	}
+	if err != nil {
 		return hostingproxy.Plan{}, nil, errApplicationDatabaseExecution
 	}
 	return prior, &failed, nil

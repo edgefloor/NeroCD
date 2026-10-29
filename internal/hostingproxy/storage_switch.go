@@ -19,7 +19,7 @@ func (e *Engine) ApplyInterruptedStorageSwitch(ctx context.Context, p, prior Pla
 	if before == nil || e.validate(p) != nil || e.validate(prior) != nil || p.verification == nil || p.previous != prior.generation || p.identity != prior.identity || p.staticHash != prior.staticHash {
 		return result, errors.New("invalid interrupted storage switch")
 	}
-	baseline := receipt{Identity: prior.identity, StaticHash: prior.staticHash, Hash: prior.hash, Generation: prior.generation, Routes: prior.Routes(), Phase: "committed", Verification: prior.verification}
+	baseline := receipt{Identity: prior.identity, StaticHash: prior.staticHash, Hash: prior.hash, Generation: prior.generation, Routes: prior.Routes(), Phase: "committed", Verification: prior.verification, TransportPolicy: prior.transportPolicy}
 	if p.switchPredecessor(baseline, false) != nil {
 		return result, errors.New("interrupted switch route scope changed")
 	}
@@ -38,7 +38,7 @@ func (e *Engine) ApplyInterruptedStorageSwitch(ctx context.Context, p, prior Pla
 		return result, err
 	}
 	matches := func(value receipt, plan Plan, committed bool) bool {
-		return value.Identity == plan.identity && value.StaticHash == plan.staticHash && value.Generation == plan.generation && value.Hash == plan.hash && reflect.DeepEqual(value.Routes, plan.routes) && reflect.DeepEqual(value.Verification, plan.verification) && (!committed && (value.Phase == "intent" || value.Phase == "committed") || value.Phase == "committed")
+		return value.Identity == plan.identity && value.StaticHash == plan.staticHash && value.Generation == plan.generation && value.Hash == plan.hash && value.TransportPolicy == plan.transportPolicy && reflect.DeepEqual(value.Routes, plan.routes) && reflect.DeepEqual(value.Verification, plan.verification) && (!committed && (value.Phase == "intent" || value.Phase == "committed") || value.Phase == "committed")
 	}
 	if matches(old, p, true) {
 		if err = e.daemon(ctx, p); err != nil {
@@ -89,7 +89,7 @@ func (e *Engine) ApplyInterruptedStorageSwitch(ctx context.Context, p, prior Pla
 	if err = before(ctx); err != nil || ctx.Err() != nil {
 		return result, errors.New("storage switch current writer authority unavailable")
 	}
-	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent", Verification: p.verification}
+	next := receipt{Identity: p.identity, StaticHash: p.staticHash, Hash: p.hash, Generation: p.generation, Routes: p.Routes(), Phase: "intent", Verification: p.verification, TransportPolicy: p.transportPolicy}
 	result.Outcome = Uncertain
 	if err = state.save(next); err != nil {
 		return result, err
@@ -171,7 +171,7 @@ func (e *Engine) verifyInterruptedStorageReceipt(ctx context.Context, current, p
 	if current.hash == "" || prior.hash == "" || !reflect.DeepEqual(current.settings, e.settings) || !reflect.DeepEqual(prior.settings, e.settings) || current.verification == nil || current.previous != prior.generation || current.identity != prior.identity || current.staticHash != prior.staticHash {
 		return errors.New("invalid interrupted receipt history")
 	}
-	baseline := receipt{Identity: prior.identity, StaticHash: prior.staticHash, Hash: prior.hash, Generation: prior.generation, Routes: prior.Routes(), Phase: "committed", Verification: prior.verification}
+	baseline := receipt{Identity: prior.identity, StaticHash: prior.staticHash, Hash: prior.hash, Generation: prior.generation, Routes: prior.Routes(), Phase: "committed", Verification: prior.verification, TransportPolicy: prior.transportPolicy}
 	if current.switchPredecessor(baseline, false) != nil {
 		return errors.New("interrupted receipt route scope changed")
 	}
@@ -192,7 +192,7 @@ func (e *Engine) verifyInterruptedStorageReceipt(ctx context.Context, current, p
 	default:
 		return errors.New("interrupted receipt outcome is unresolved or unsupported")
 	}
-	if local.Phase != "committed" || local.Identity != expected.identity || local.StaticHash != expected.staticHash || local.Hash != expected.hash || local.Generation != expected.generation || !reflect.DeepEqual(local.Routes, expected.routes) || !reflect.DeepEqual(local.Verification, expected.verification) {
+	if local.Phase != "committed" || local.Identity != expected.identity || local.StaticHash != expected.staticHash || local.Hash != expected.hash || local.TransportPolicy != expected.transportPolicy || local.Generation != expected.generation || !reflect.DeepEqual(local.Routes, expected.routes) || !reflect.DeepEqual(local.Verification, expected.verification) {
 		return errors.New("interrupted local receipt differs from exact settled history")
 	}
 	if !bytes.Equal(file, expected.dynamic()) {

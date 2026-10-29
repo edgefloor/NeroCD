@@ -18,6 +18,7 @@ type receipt struct {
 	Routes           []Route
 	Phase            string
 	Verification     *verificationPolicy `json:",omitempty"`
+	TransportPolicy  uint8               `json:",omitempty"`
 }
 type storage struct {
 	root *os.Root
@@ -149,9 +150,15 @@ func (s *storage) load() (receipt, error) {
 	}
 	var r receipt
 	e = json.Unmarshal(b, &r)
+	if e == nil && r.TransportPolicy > 1 {
+		e = errors.New("unknown proxy transport policy")
+	}
 	return r, e
 }
 func (s *storage) save(r receipt) error {
+	if r.TransportPolicy > 1 {
+		return errors.New("unknown proxy transport policy")
+	}
 	b, e := json.Marshal(r)
 	if e != nil {
 		return e

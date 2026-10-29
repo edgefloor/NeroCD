@@ -2,12 +2,14 @@ package runnerruntime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -363,15 +365,18 @@ func TestProxyTaskCannotEnterUnconfiguredExecutionOrGenericCompletion(t *testing
 }
 
 func TestProxyStartupReplayNeverRetriesEffectsOrClearsUncertainty(t *testing.T) {
-	for _, mode := range []string{"committed", "canceled_before_admission", "uncommitted_expired", "uncertain", "restore", "changed_local", "missing_local_receipt"} {
+	for _, mode := range []string{"committed", "legacy_committed", "canceled_before_admission", "uncommitted_expired", "uncertain", "restore", "changed_local", "missing_local_receipt"} {
 		t.Run(mode, func(t *testing.T) {
 			claim, op, journal, config, engine := proxyRuntimeFixture(t)
 			supervisor := newAttemptSupervisor(claim.Lease)
 			defer supervisor.Close()
 			a := hostingAuthority(claim.Run.ID, op.ID, claim.Lease)
-			_, _, preparation, err := prepareProxyEngine(t.Context(), config, *op.Plan, nil)
+			_, local, preparation, err := prepareProxyEngine(t.Context(), config, *op.Plan, nil)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if mode == "legacy_committed" {
+				preparation.EngineHash = proxyLegacyHashForTest(t, local, uint64(op.Generation), uint64(op.Plan.PreviousGeneration), nil)
 			}
 			op.Preparation = &preparation
 			intent := proxyJournalEntry(supervisor, claim.Lease, a, *op.Plan, preparation, "apply_intent")
@@ -419,7 +424,7 @@ func TestProxyStartupReplayNeverRetriesEffectsOrClearsUncertainty(t *testing.T) 
 			}))
 			defer server.Close()
 			err = reconcileProxyJournal(server.URL, "dedicated", claim.Lease.RunnerID, journal, config)
-			wantSuccess := mode == "committed" || mode == "canceled_before_admission"
+			wantSuccess := mode == "committed" || mode == "legacy_committed" || mode == "canceled_before_admission"
 			if (err == nil) != wantSuccess || wantSuccess && journal.Depth() != 0 || !wantSuccess && len(journal.Snapshot().Proxy) != 2 || engine.effects.Load() != 0 {
 				t.Fatalf("replay changed evidence or effects: mode=%s err=%v depth=%d effects=%d", mode, err, journal.Depth(), engine.effects.Load())
 			}
@@ -494,4 +499,35 @@ func TestProxyLocalReceiptPreservesOrdinaryVerification(t *testing.T) {
 	if err = verifyProxyLocalReceipt(engine, local, *op.Plan, config, result); !errors.Is(err, sentinel) || calls != 1 || engine.effects.Load() != 0 {
 		t.Fatalf("ordinary verifier bypassed: err=%v calls=%d", err, calls)
 	}
+}
+
+func proxyLegacyHashForTest(t *testing.T, p hostingproxy.Plan, generation, previous uint64, required []string) string {
+	t.Helper()
+	hash := func(value any) string {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%x", sha256.Sum256(raw))
+	}
+	base := hash(struct {
+		Static               string
+		Generation, Previous uint64
+		Routes               []hostingproxy.Route
+	}{p.StaticHash(), generation, previous, p.Routes()})
+	if len(required) > 0 {
+		ids := append([]string(nil), required...)
+		sort.Strings(ids)
+		base = hash(struct {
+			Plan         string
+			Verification struct {
+				Version          uint8
+				RequiredRouteIDs []string
+			}
+		}{base, struct {
+			Version          uint8
+			RequiredRouteIDs []string
+		}{1, ids}})
+	}
+	return base
 }

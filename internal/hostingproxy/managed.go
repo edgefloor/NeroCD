@@ -100,12 +100,14 @@ func (e *Engine) VerifyManagedReceipt(ctx context.Context, plan Plan, outcome Ou
 	if generation == 0 && outcome == Refused && local.Generation == 0 && local.Phase == "" {
 		return nil
 	}
-	if local.Generation != generation || local.Phase != "committed" || local.Identity != plan.identity || local.StaticHash != plan.staticHash || outcome == Applied && local.Hash != plan.hash {
+	if local.Generation != generation || local.Phase != "committed" || local.Identity != plan.identity || local.StaticHash != plan.staticHash || outcome == Applied && (local.Hash != plan.hash || local.TransportPolicy != plan.transportPolicy) {
 		return errors.New("local proxy receipt does not match settled result")
 	}
 	previous := plan
 	previous.generation = local.Generation
 	previous.hash = local.Hash
+	previous.transportPolicy = local.TransportPolicy
+	previous.verification = local.Verification
 	previous.routes = append([]Route(nil), local.Routes...)
 	container, err := e.find(ctx, previous)
 	if err != nil {

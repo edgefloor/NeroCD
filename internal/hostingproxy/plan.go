@@ -19,6 +19,11 @@ import (
 // Image pins the official multi-platform Traefik image by immutable OCI digest.
 const Image = "docker.io/library/traefik@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368"
 
+// Retire unused HTTP connections before the publication relay's initial
+// keepalive probe; this does not impose an active request deadline.
+const loopbackIdleConnTimeout = "10s"
+const loopbackMaxIdleConnsPerHost = 200
+
 // CA selects one of the supported public ACME directories.
 type CA string
 
@@ -55,6 +60,7 @@ type Plan struct {
 	generation, previous uint64
 	routes               []Route
 	hash, staticHash     string
+	transportPolicy      uint8
 	verification         *verificationPolicy
 }
 
@@ -122,7 +128,7 @@ func Prepare(i Identity, s Settings, generation, previous uint64, routes []Route
 	if generation == 0 || generation <= previous || len(routes) > 1000 {
 		return Plan{}, errors.New("invalid generation or route count")
 	}
-	p := Plan{identity: i, settings: s, generation: generation, previous: previous, routes: append([]Route(nil), routes...)}
+	p := Plan{transportPolicy: 1, identity: i, settings: s, generation: generation, previous: previous, routes: append([]Route(nil), routes...)}
 	ids, bindings := map[string]bool{}, map[string]bool{}
 	for _, r := range p.routes {
 		if !idPattern.MatchString(r.ID) || !hostPattern.MatchString(r.Hostname) || len(r.Hostname) > 253 || r.HostPort < 1024 || r.HostPort == s.ManagementPort {
@@ -147,11 +153,7 @@ func Prepare(i Identity, s Settings, generation, previous uint64, routes []Route
 		Settings Settings
 		Image    string
 	}{i, s, Image})
-	p.hash = digest(struct {
-		Static               string
-		Generation, Previous uint64
-		Routes               []Route
-	}{p.staticHash, generation, previous, p.routes})
+	p.rehash()
 	return p, nil
 }
 
@@ -178,12 +180,57 @@ func PrepareVerifiedSwitch(i Identity, s Settings, generation, previous uint64, 
 		}
 	}
 	p.verification = &verificationPolicy{Version: 1, RequiredRouteIDs: ids}
-	p.hash = digest(struct {
-		Plan         string
-		Verification *verificationPolicy
-	}{p.hash, p.verification})
+	p.rehash()
 	return p, nil
 }
+
+// MatchRecordedHash reconstructs only the current or defined legacy transport
+// policy when its hash exactly matches already authorized historical evidence.
+func (p Plan) MatchRecordedHash(expected string) (Plan, error) {
+	if p.transportPolicy > 1 || p.hash == "" {
+		return Plan{}, errors.New("unknown proxy transport policy")
+	}
+	if expected == p.hash {
+		return p, nil
+	}
+	legacy := p
+	legacy.transportPolicy = 0
+	legacy.rehash()
+	if expected == legacy.hash {
+		return legacy, nil
+	}
+	return Plan{}, errors.New("recorded proxy configuration hash differs")
+}
+
+func (p *Plan) rehash() {
+	p.hash = digest(struct {
+		Static               string
+		Generation, Previous uint64
+		Routes               []Route
+	}{p.staticHash, p.generation, p.previous, p.routes})
+	if p.transportPolicy == 1 {
+		p.hash = digest(struct {
+			Plan            string
+			TransportPolicy struct {
+				Version             uint8
+				IdleConnTimeout     string
+				MaxIdleConnsPerHost int
+			}
+		}{p.hash, struct {
+			Version             uint8
+			IdleConnTimeout     string
+			MaxIdleConnsPerHost int
+		}{1, loopbackIdleConnTimeout, loopbackMaxIdleConnsPerHost}})
+	}
+	if p.verification != nil {
+		p.hash = digest(struct {
+			Plan         string
+			Verification *verificationPolicy
+		}{p.hash, p.verification})
+	}
+}
+
+func (p Plan) transportName() string { return p.prefix() + "-loopback" }
 
 func (p Plan) required(id string) bool {
 	if p.verification == nil {
@@ -229,7 +276,11 @@ func (p Plan) dynamic() []byte {
 		if r.PathPrefix != "/" {
 			rule += " && (Path(`" + r.PathPrefix + "`) || PathPrefix(`" + r.PathPrefix + "/`))"
 		}
-		services[name] = map[string]any{"loadBalancer": map[string]any{"servers": []any{map[string]string{"url": fmt.Sprintf("http://127.0.0.1:%d", r.HostPort)}}}}
+		balancer := map[string]any{"servers": []any{map[string]string{"url": fmt.Sprintf("http://127.0.0.1:%d", r.HostPort)}}}
+		if p.transportPolicy == 1 {
+			balancer["serversTransport"] = p.transportName()
+		}
+		services[name] = map[string]any{"loadBalancer": balancer}
 		for _, secure := range []bool{false, true} {
 			suffix, entry := "-http", "web"
 			if secure {
@@ -247,6 +298,9 @@ func (p Plan) dynamic() []byte {
 	// carries its marker router and middleware so withdrawal is verifiable.
 	if len(services) != 0 {
 		http["services"] = services
+		if p.transportPolicy == 1 {
+			http["serversTransports"] = map[string]any{p.transportName(): map[string]any{"maxIdleConnsPerHost": loopbackMaxIdleConnsPerHost, "forwardingTimeouts": map[string]string{"idleConnTimeout": loopbackIdleConnTimeout}}}
+		}
 	}
 	b, _ := json.Marshal(map[string]any{"http": http})
 	return b

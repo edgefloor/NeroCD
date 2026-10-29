@@ -131,6 +131,12 @@ func prepareProxyEngine(ctx context.Context, config ProxyConfig, plan domain.Hos
 	if err != nil {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, err
 	}
+	if prepared != nil {
+		local, err = local.MatchRecordedHash(prepared.EngineHash)
+		if err != nil {
+			return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, err
+		}
+	}
 	preparation := domain.HostingProxyPreparation{DaemonID: daemon, EngineHash: local.Hash(), StaticHash: local.StaticHash(), PlanHash: plan.Hash}
 	if prepared != nil && *prepared != preparation || plan.DaemonID != "" && plan.DaemonID != daemon {
 		return nil, hostingproxy.Plan{}, domain.HostingProxyPreparation{}, errors.New("local proxy settings, daemon or engine plan changed")
