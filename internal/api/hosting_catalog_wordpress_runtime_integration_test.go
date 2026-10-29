@@ -65,6 +65,8 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 	b.set("deploy", resourceID)
 	first := f.await(b.await(t, "deployed"), "succeeded")
 	var sourcePort int
+	var sourceOperation domain.HostingOperation
+	var sourceWordPress domain.HostingStackComponent
 	verify := func(op domain.HostingOperation) {
 		t.Helper()
 		if op.Result == nil || op.Result.Stack == nil || !op.Result.Ready || op.Result.Uncertain || op.MutationHold || len(op.Result.Stack.Components) != 2 || len(op.Result.Stack.Volumes) != 2 || op.Release == nil {
@@ -81,9 +83,12 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 				}
 			} else if component.Component != "wordpress" {
 				t.Fatal("unexpected WordPress component")
+			} else {
+				sourceWordPress = component
 			}
 		}
 		sourcePort = op.Snapshot.HostPort
+		sourceOperation = op
 	}
 	verify(first)
 	b.set("healthy", resourceID)
@@ -351,7 +356,98 @@ func TestHostingCatalogWordPressCompiledRunnerHTTPS(t *testing.T) {
 						return
 					}
 					category = "captured"
-					t.Logf("WordPress private proxy profile bytes=%d sha256=%x truncated=%t", len(body), sha256.Sum256(body), truncated)
+					profilePendingAtSave := true
+					select {
+					case <-freshDone:
+						profilePendingAtSave = false
+					default:
+					}
+					t.Logf("WordPress private proxy profile bytes=%d sha256=%x truncated=%t captured_at=%s fresh_pending=%t fresh_first_byte=%t", len(body), sha256.Sum256(body), truncated, time.Now().UTC().Format(time.RFC3339Nano), profilePendingAtSave, freshProfileFirstByte.Load())
+					// Socket evidence is a separate private artifact; its failure never discards the profile.
+					const socketScript = `set -eu
+command -v awk >/dev/null; command -v readlink >/dev/null
+pids=1
+if test "$1" = source; then pids="1 $(cat /proc/1/task/1/children)"; fi
+mapping=''; processes=0
+for pid in $pids; do
+ processes=$((processes+1)); test "$processes" -le 32
+ comm=$(cat "/proc/$pid/comm")
+ case "$1:$comm" in proxy:traefik|source:apache2) ;; *) exit 72;; esac
+ ls "/proc/$pid/fd" >/dev/null
+ descriptors=0
+ for fd in /proc/$pid/fd/*; do
+  descriptors=$((descriptors+1)); test "$descriptors" -le 256
+  target=$(readlink "$fd") || exit 73
+  case "$target" in socket:\[*\]) inode=${target#socket:[}; inode=${inode%]}; mapping="$mapping $pid ${fd##*/} $inode";; esac
+ done
+done
+printf 'owned_socket_fds%s\n' "$mapping"
+awk -v owned="$mapping" -v port=":$2$" 'BEGIN {n=split(owned,fields," "); for(i=3;i<=n;i+=3) owners[fields[i]]=1} FNR>1 && ($10 in owners) && ($2 ~ port || $3 ~ port) {print FILENAME, $0}' /proc/net/tcp /proc/net/tcp6`
+					socketCategory := "source_unavailable"
+					defer func() { t.Logf("WordPress private proxy sockets category=%s", socketCategory) }()
+					sourceRaw, sourceErr := command("container", "inspect", sourceWordPress.ContainerID, "--format", "{{json .}}")
+					defer clear(sourceRaw)
+					var source struct {
+						ID, Image       string
+						Config          struct{ Labels map[string]string }
+						State           struct{ Running bool }
+						NetworkSettings struct {
+							Ports    map[string][]struct{ HostIP, HostPort string }
+							Networks json.RawMessage
+						}
+					}
+					if sourceErr != nil || json.Unmarshal(sourceRaw, &source) != nil || !storageRuntimeContainerID.MatchString(sourceWordPress.ContainerID) || source.ID != sourceWordPress.ContainerID || source.Image != sourceWordPress.ImageID || !source.State.Running || source.Config.Labels["io.nerocd.binding"] != sourceOperation.Snapshot.BindingID || source.Config.Labels["io.nerocd.operation"] != sourceWordPress.OperationID || source.Config.Labels["io.nerocd.stack.component"] != "wordpress" {
+						return
+					}
+					ports := source.NetworkSettings.Ports["80/tcp"]
+					if len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(sourcePort) {
+						return
+					}
+					snapshots := make([]map[string]any, 0, 2)
+					for _, target := range []struct{ role, id, port string }{{"proxy", owned.ID, fmt.Sprintf("%04X", sourcePort)}, {"source", source.ID, "0050"}} {
+						began := time.Now()
+						pendingAtStart := true
+						select {
+						case <-freshDone:
+							pendingAtStart = false
+						default:
+						}
+						firstByteAtStart := freshProfileFirstByte.Load()
+						raw, socketErr := command("exec", target.id, "sh", "-c", socketScript, "socket-capture", target.role, target.port)
+						defer clear(raw)
+						pending := true
+						select {
+						case <-freshDone:
+							pending = false
+						default:
+						}
+						state := "available"
+						if socketErr != nil {
+							state = "capability_or_read_unavailable"
+						}
+						snapshots = append(snapshots, map[string]any{"role": target.role, "container_id": target.id, "started": began.UTC().Format(time.RFC3339Nano), "finished": time.Now().UTC().Format(time.RFC3339Nano), "fresh_pending_at_start": pendingAtStart, "fresh_first_byte_at_start": firstByteAtStart, "fresh_pending": pending, "fresh_first_byte": freshProfileFirstByte.Load(), "category": state, "data": string(raw)})
+					}
+					socketBody, marshalErr := json.Marshal(map[string]any{"source_operation": sourceOperation.ID, "source_component": sourceWordPress, "source_networks": source.NetworkSettings.Networks, "snapshots": snapshots})
+					defer clear(socketBody)
+					if marshalErr != nil || len(socketBody) > 192<<10 {
+						socketCategory = "bounded_encoding_unavailable"
+						return
+					}
+					socketFile, socketFileErr := os.OpenFile("/fixture/wordpress-proxy-sockets.private", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+					if socketFileErr != nil {
+						socketCategory = "private_file_unavailable"
+						return
+					}
+					_, socketWriteErr := socketFile.Write(socketBody)
+					socketCloseErr := socketFile.Close()
+					if socketWriteErr != nil || socketCloseErr != nil {
+						_ = os.Remove("/fixture/wordpress-proxy-sockets.private")
+						socketCategory = "private_write_failed"
+						return
+					}
+					socketCategory = "recorded"
+					t.Logf("WordPress private proxy sockets bytes=%d sha256=%x", len(socketBody), sha256.Sum256(socketBody))
+
 				}()
 				for _, direct := range []bool{false, true} {
 					go func() {
