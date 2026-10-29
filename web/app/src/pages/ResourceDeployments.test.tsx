@@ -705,6 +705,7 @@ test("Compose recorded components distinguish successful init completion from st
 });
 
 test("same selected Compose operation needs detail refresh after history becomes healthy", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   let healthy = false;
   let detailReads = 0;
   const observed = { ...operation, state: "succeeded", stack_source: { version: "managed-compose.v1", original_hash: "hash", public_component: "web", container_port: 3000, volumes: [], services: [{ name: "web", image: "web:1" }] }, result: { outcome: "ready", ready: true, restored: false, uncertain: false, stack: { observation_complete: true, public_component: "web", network_id: "network", volumes: [], components: [{ component: "web", container_id: "web-container", image_id: "web-image", operation_id: "hop_one", running: true, exit_code: 0, health: "healthy" }] } } };
