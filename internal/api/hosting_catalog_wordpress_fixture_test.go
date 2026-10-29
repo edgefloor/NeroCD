@@ -19,8 +19,17 @@ import (
 	"nerocd/internal/domain"
 )
 
+func wordpressInitialCatalogRequest(t *testing.T, environment, destination string) domain.HostingCatalogInstallInput {
+	t.Helper()
+	return domain.HostingCatalogInstallInput{RequestID: storageRemoteRuntimeRequestID(t), ProjectID: "proj_platform", ProjectEnvironmentID: environment, DestinationID: destination, Name: "WordPress initial deployment", TemplateID: "wordpress-with-mysql", ImmutableVersion: "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1", PublicURL: "https://catalog-runtime.example.test:25443"}
+}
+
+func wordpressInitialDeploymentRequest(generation int64) domain.HostingDeploymentInput {
+	return domain.HostingDeploymentInput{ExpectedGeneration: generation, ExpectedRuntimeConfigurationGeneration: 1, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, IdempotencyKey: "wordpress-initial-runtime", ContainerPort: 80, HostPort: 20000, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 120}}
+}
+
 func TestWordPressCatalogFixtureRequestContract(t *testing.T) {
-	input := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("c", 32), ProjectID: "proj_platform", ProjectEnvironmentID: "env_fixture", DestinationID: "dest_fixture", Name: "WordPress acceptance", TemplateID: "wordpress-with-mysql", ImmutableVersion: "coolify-b12d1386.wordpress-7.1.3-mysql-8.4.13.v1", PublicURL: "https://catalog-runtime.example.test:25443"}
+	input := wordpressInitialCatalogRequest(t, "env_fixture", "dest_fixture")
 	raw, _ := json.Marshal(input)
 	var decoded domain.HostingCatalogInstallInput
 	if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/hosting-catalog/installations", bytes.NewReader(raw)), &decoded) || !reflect.DeepEqual(input, decoded) || decoded.Validate() != nil {
@@ -43,7 +52,7 @@ func TestWordPressFixtureExactTemplateAndDeploymentContract(t *testing.T) {
 	if err != nil || definition.PublicComponent != "wordpress" || definition.ContainerPort != 80 {
 		t.Fatal("preparation-fault source invalid")
 	}
-	input := domain.HostingDeploymentInput{ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, ExpectedGeneration: 1, ExpectedRuntimeConfigurationGeneration: 1, IdempotencyKey: "wordpress-deploy", ContainerPort: 80, HostPort: 18080, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 120}}
+	input := wordpressInitialDeploymentRequest(1)
 	for _, mode := range []string{"deploy", "replace", "start"} {
 		if mode != "deploy" {
 			input.StorageRouteContinuity = &domain.HostingStorageRouteContinuityInput{ExpectedLoadedGeneration: 2, ExpectedLoadedProxyOperationID: "pop_fixture", Routes: []domain.HostingRouteSwitchSelection{{RouteID: "route_fixture", ExpectedVersion: 1, ExpectedSelectedReleaseOperationID: "hop_previous"}}}

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -51,7 +52,14 @@ func TestHostingCatalogAPIAuthenticationAndClosedInput(t *testing.T) {
 }
 
 func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
+	testHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t, "", nil)
+}
+
+func testHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T, only string, fault func(http.ResponseWriter, *http.Request, http.Handler) bool) {
 	for _, tc := range []struct{ id, version string }{{"linkding", domain.HostingCatalogLinkdingVersion}, {"uptime-kuma", domain.HostingCatalogUptimeKumaVersion}, {"actualbudget", domain.HostingCatalogActualBudgetVersion}, {"vikunja-with-postgresql", domain.HostingCatalogVikunjaVersion}, {"wordpress-with-mysql", domain.HostingCatalogWordPressVersion}} {
+		if only != "" && tc.id != only {
+			continue
+		}
 		t.Run(tc.id, func(t *testing.T) {
 			server, pg, database := newHostingBuildAPIFixture(t)
 			compose := tc.id == "vikunja-with-postgresql" || tc.id == "wordpress-with-mysql"
@@ -91,6 +99,9 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			if compose {
 				in.PublicURL = "https://tasks.example.test"
 			}
+			if tc.id == "wordpress-with-mysql" {
+				in = wordpressInitialCatalogRequest(t, env.ID, detail.Destination.ID)
+			}
 			call := func(input domain.HostingCatalogInstallInput, status int) []byte {
 				t.Helper()
 				raw, e := json.Marshal(input)
@@ -101,11 +112,18 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 				request.Header.Set("Authorization", "Bearer "+token)
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
-				server.ServeHTTP(response, request)
+				if fault == nil || !fault(response, request, server) {
+					server.ServeHTTP(response, request)
+				}
 				if response.Code != status {
 					t.Fatalf("catalog decoder status got=%d want=%d", response.Code, status)
 				}
 				return response.Body.Bytes()
+			}
+			if tc.id == "wordpress-with-mysql" {
+				old := in
+				old.RequestID = strings.Repeat("i", 32)
+				call(old, 400)
 			}
 			badURL := in
 			if compose {
@@ -160,6 +178,9 @@ func TestHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t *testing.T) {
 			call(in, 409)
 			if _, err = database.Exec(ctx, `UPDATE runners SET capabilities=array_append(capabilities,$1) WHERE id=$2`, domain.HostingReleasePortsCapability, detail.Server.RunnerID); err != nil {
 				t.Fatal(err)
+			}
+			if fault != nil {
+				call(in, 503)
 			}
 			raw := call(in, 201)
 			var installed domain.HostingCatalogInstallation

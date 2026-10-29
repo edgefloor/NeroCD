@@ -45,6 +45,16 @@ func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T) {
 	wordpressRuntimeScenario(t, true)
 }
 
+func TestWordPressInitialCatalogCommittedRetryContract(t *testing.T) {
+	browser := &catalogRuntimeBrowser{}
+	testHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t, "wordpress-with-mysql", browser.serve)
+	browser.mu.Lock()
+	defer browser.mu.Unlock()
+	if browser.original == nil || browser.retried == nil || !reflect.DeepEqual(*browser.original, *browser.retried) {
+		t.Fatal("initial WordPress handler did not preserve committed installation")
+	}
+}
+
 // TestHostingCatalogWordPressInitialCompiledRunner stops after the first real
 // catalog deployment, before browser, preservation or schedule workflows.
 func TestHostingCatalogWordPressInitialCompiledRunner(t *testing.T) {
@@ -52,7 +62,7 @@ func TestHostingCatalogWordPressInitialCompiledRunner(t *testing.T) {
 		t.Skip("requires owned initial WordPress runtime fixture")
 	}
 	f := newStorageRuntimeFixture(t, false)
-	input := domain.HostingCatalogInstallInput{RequestID: strings.Repeat("i", 32), ProjectID: "proj_platform", ProjectEnvironmentID: f.environmentID, DestinationID: f.destinationID, Name: "WordPress initial deployment", TemplateID: "wordpress-with-mysql", ImmutableVersion: wordpressFixtureVersion, PublicURL: "https://catalog-runtime.example.test:25443"}
+	input := wordpressInitialCatalogRequest(t, f.environmentID, f.destinationID)
 	storageRuntimeJSON[map[string]string](f, "POST", "/api/v1/hosting-catalog/installations", input, 503)
 	installed := storageRuntimeJSON[domain.HostingCatalogInstallation](f, "POST", "/api/v1/hosting-catalog/installations", input, 201)
 	f.catalogBrowser.mu.Lock()
@@ -62,7 +72,7 @@ func TestHostingCatalogWordPressInitialCompiledRunner(t *testing.T) {
 		t.Fatal("initial WordPress committed installation retry changed")
 	}
 	resource := installed.Resource
-	deployed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resource.ID+"/deployments", domain.HostingDeploymentInput{ExpectedGeneration: resource.Generation, ExpectedRuntimeConfigurationGeneration: 1, ManagedStack: &domain.HostingStackDeploymentInput{AcknowledgeInterruption: true}, IdempotencyKey: "wordpress-initial-runtime", ContainerPort: 80, HostPort: 20000, Readiness: domain.HostingReadiness{Path: "/", TimeoutSeconds: 120}}, 202)
+	deployed := storageRuntimeJSON[domain.HostingOperation](f, "POST", "/api/v1/resources/"+resource.ID+"/deployments", wordpressInitialDeploymentRequest(resource.Generation), 202)
 	deployed = f.await(deployed.ID, "succeeded")
 	if deployed.Result == nil || deployed.Result.Stack == nil || !deployed.Result.Ready || deployed.Result.Uncertain || deployed.MutationHold || len(deployed.Result.Stack.Components) != 2 || len(deployed.Result.Stack.Volumes) != 2 {
 		t.Fatal("initial WordPress stack evidence unavailable")
