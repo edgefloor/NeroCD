@@ -614,3 +614,5 @@ through PUT denial, then uploaded through a new transfer without another dump.
 Per-revision target history and the existing scheduled-artifact import remained intact.
 
 [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) passed at `b36972a8`: the scheduled upload supplied a separate-target import with local CAS absent. A corrupt remote object was rejected before SQL with writers running; the separate partial-SQL case retained stopped writers and target ownership.
+
+[Compose MySQL retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) passed at `be5ecd83`: automatic local pruning preserved the remote survivor, which restored a separate target; reviewed manual remote deletion and identical API replay admitted one batch. Newest-copy protection and existing source post/full-PNG and failed-import safeguards passed.

@@ -1,6 +1,6 @@
 # Hosted database backup retention
 
-Database owners can configure local and remote retention independently on the database backup panel. Viewers can read the policy, saved previews and execution history. Retention concerns native PostgreSQL and MySQL recovery copies; it does not remove databases, application uploads, platform backups or historical operation receipts.
+Database owners can configure local and remote retention independently on the database backup panel. Viewers can read the policy, saved previews and execution history. Retention concerns native PostgreSQL and MySQL recovery copies and qualified Compose PostgreSQL/MySQL database components; it does not remove databases, application uploads, platform backups or historical operation receipts.
 
 Each location has three limits: `keep_count`, `keep_days` and `max_bytes`. Zero means unlimited for that limit. Limits are combined as a union, so a copy matching any limit can be selected. Local and remote references are computed independently from the newest successful copy recorded at that location.
 
@@ -120,6 +120,56 @@ fixture repairs, and verified cleanup. The profile is pinned MySQL 8.4.13 on
 native Linux arm64, rootful classic-store Docker, one host and destination,
 fixture-CA application HTTPS, and owned Silo through loopback HTTP. It does not
 qualify production S3 HTTPS, other providers' conditional-delete behavior,
-cross-destination recovery, destination disk loss, or Compose MySQL retention.
+cross-destination recovery, destination disk loss, or the later [Compose MySQL retention qualification](#compose-mysql-retention-qualification).
 Seven native and one Linux inherited full-lint findings remain recorded as
 failed checks; new-finding lint checks passed with unchanged-source evidence.
+
+
+## Compose MySQL retention qualification
+
+At `be5ecd83` on 2026-10-30, the existing WordPress/MySQL gate passed with all
+11 required markers. The selected compiled-runner test passed in 192.55 seconds;
+the complete gate exited 0 in 276.508138 seconds. The browser used the real UI
+without interception at 320, 390, 430 and 1280 pixels, with exact served assets.
+
+The resource-scoped policy and preview carry a server-derived immutable
+`source_scope` of `mysql.compose-logical-local.v1` and component `mysql`.
+Selection counts only that original engine/component. Saved policy reads,
+disable and exact replay remain available after the source deployment becomes
+unavailable. Existing native and PostgreSQL policies retain their saved scope;
+changing an existing policy to another engine/component is not supported.
+
+The workflow preserved the original two-archive upload-retry checkpoint, then
+made two real database mutations and published distinct third/fourth archives.
+Actual publication reconciliation automatically deleted the third local copy
+while its recorded remote upload and the newest fourth copy survived. The
+browser restored that exact remote survivor into a separate MySQL target with
+local CAS absent, retaining the earlier mutation and excluding the later one.
+It then reviewed and executed an independent remote keep-one batch. An identical
+authenticated API submission returned the same execution and immutable copy set,
+with one admitted batch. This is physical API replay evidence, not a lost-response
+UI retry; that UI retry behavior has focused source-test evidence.
+
+Physical assertions cover newest-copy protection, selected-copy removal and
+survivor recovery. Shared-copy and unknown-delete protections retain their
+focused native/MySQL tests; this fixture does not guarantee a shared digest.
+The source post and full PNG survived routing, redeploy and Stop/Start. Corrupt
+remote bytes were rejected before SQL with target ownership held and writers
+running; a separate partial-SQL failure held stopped writers. Natural runner
+exit, exact intent/uncertain authority, no subsequent acquired claim and the
+source/S3 credential scans passed.
+
+The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/be5ecd83757aab73a11205206088e591018d203b/evidence-index.json)
+retains source/check associations, all 11 markers, browser assets and cleanup.
+Qualification 24 failed at the wrong-bucket observer and exited 143 after owned
+cancellation. Qualification 25 exited 1 after a 403 within a broad manual step;
+its exact failing request remains unknown. The missing replay-header defect was
+reproduced and repaired independently. Both failed attempts remain in the index.
+Implementation, product-defect repair, fixture repair, test execution and
+review/waiting are separate categories; exclusive durations are unknown. Exact
+container, volume, image, build-cache and user-instance baselines matched after
+owned cleanup.
+
+This covers one Linux arm64 rootful destination, trusted-loopback Silo and
+fixture-CA HTTPS. Arbitrary S3-path and staged local imports, media/URL migration,
+public S3 provider qualification and cross-destination recovery remain open.

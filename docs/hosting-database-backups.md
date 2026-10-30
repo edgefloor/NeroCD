@@ -88,7 +88,7 @@ retains target ownership and stopped writers; MySQL does not provide the Postgre
 rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same archive/import path. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
 can copy a completed SQL archive to a validated target. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use that same upload path. [Recorded remote import](#compose-mysql-recorded-remote-import-qualification) recovers a separate target from a successful upload. Component retention, arbitrary S3-path and staged local imports remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
+use that same upload path. [Recorded remote import](#compose-mysql-recorded-remote-import-qualification) recovers a separate target from a successful upload. [Component retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) supports independent automatic local/remote limits and survivor recovery. Arbitrary S3-path and staged local imports remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
 
@@ -245,7 +245,7 @@ Qualification covers one Linux arm64, rootful Docker destination and fixture CA.
 That qualification did not cover schedules. [Local Compose MySQL schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 passed later at `4c62e6cf`. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
 passed at `0c5ff34c`; [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification) followed at `3f451479`.
-Recorded remote import was qualified later at `b36972a8`. Component retention, engine upgrades,
+Recorded remote import was qualified later at `b36972a8`, and [component retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) at `be5ecd83`. Engine upgrades,
 credential rotation and cross-destination recovery remain open. Historical native
 MySQL and core WordPress qualifications retain their original limits.
 
@@ -329,5 +329,7 @@ Qualification 18's original cause remains unclassified.
 
 This covers recorded successful uploads on one Linux arm64 rootful destination,
 trusted-loopback Silo and fixture-CA source HTTPS. Arbitrary S3-path import, staged
-local SQL import, automatic component retention, public S3 providers and
+local SQL import, public S3 providers and
 cross-destination recovery remain outside this qualification.
+
+[Compose MySQL retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) was qualified later at `be5ecd83`; the recorded-import evidence above retains its original scope.

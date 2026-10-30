@@ -321,4 +321,4 @@ This covers one Linux arm64, rootful Docker destination, trusted-loopback Silo
 and fixture-CA source HTTPS. It does not qualify remote-only component import,
 retention, media restoration, URL migration, public S3 or cross-destination recovery.
 
-The later [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) qualification at `b36972a8` uses the successful scheduled upload with local CAS absent. This leaves the schedule qualification above unchanged and does not add component retention.
+The later [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) qualification at `b36972a8` uses the successful scheduled upload with local CAS absent. This leaves the schedule qualification above unchanged. [Compose MySQL retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) was qualified separately at `be5ecd83`, using later real publications and the surviving remote archive.
