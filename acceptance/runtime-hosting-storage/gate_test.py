@@ -1429,6 +1429,50 @@ console.log(JSON.stringify([
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=5)
         self.assertEqual(json.loads(result.stdout), ["backup3", "backup2", None, None, None, None, None, "backup2"])
 
+    def test_wordpress_silo_policy_allows_retention_without_allowing_initial_put(self):
+        source = Path("internal/api/hosting_storage_remote_runtime_integration_test.go").read_text()
+        method = "func (s *hostingStorageRemoteRuntimeSilo) policy(" + source.split("func (s *hostingStorageRemoteRuntimeSilo) policy(", 1)[1].split("func hostingStorageRemoteRuntimeProxy(", 1)[0]
+        program = r'''package main
+import ("encoding/json"; "fmt"; "os")
+type policyFailure struct{}
+func (*policyFailure) Fatal(...any) { panic("policy marshal failed") }
+type hostingStorageRemoteRuntimeSilo struct { t *policyFailure; script string }
+func (s *hostingStorageRemoteRuntimeSilo) command(script string) []byte { s.script=script; return nil }
+''' + method + r'''
+func main() {
+ scripts:=[]string{}
+ for _, c:=range []struct{wordpress,retention string;put bool}{
+  {"true","",false},{"true","",true},{"","disposable-dind",false},{"","",false},{"","",true},
+ } {
+  os.Setenv("NEROCD_WORDPRESS_MYSQL_RUNTIME",c.wordpress)
+  os.Setenv("NEROCD_STORAGE_RETENTION_RUNTIME",c.retention)
+  silo:=&hostingStorageRemoteRuntimeSilo{t:&policyFailure{}}
+  silo.policy(c.put,true)
+  scripts=append(scripts,silo.script)
+ }
+ raw,err:=json.Marshal(scripts);if err!=nil{panic(err)};fmt.Println(string(raw))
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy.go"
+            path.write_text(program)
+            result = subprocess.run(["go", "run", str(path)], capture_output=True, text=True, check=True, timeout=30)
+        scripts = json.loads(result.stdout)
+        policies = [json.loads(script.split("\n", 1)[1].split("\nPOLICY\n", 1)[0]) for script in scripts]
+        expected = [
+            {"s3:GetObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+            {"s3:GetObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"},
+            {"s3:GetObject", "s3:DeleteObject", "s3:DeleteObjectVersion"},
+            {"s3:GetObject"}, {"s3:GetObject", "s3:PutObject"},
+        ]
+        for policy, actions, script in zip(policies, expected, scripts):
+            self.assertEqual(set(policy["Statement"][1]["Action"]), actions)
+            self.assertEqual(policy["Statement"][0]["Action"], ["s3:ListBucket"])
+            self.assertEqual(policy["Statement"][1]["Resource"], ["arn:aws:s3:::nerocd-storage-runtime/nerocd/*"])
+            self.assertIn("mc admin policy attach fixture fixture-storage", script)
+        config = source.split("func (s *hostingStorageRemoteRuntimeSilo) policy(", 1)[0]
+        self.assertNotIn('NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" ||', config)
+
     def test_wordpress_retention_uses_existing_explicit_runner_opt_in(self):
         fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
         capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {', 1)[1].split("\n\t\t\t\t}", 1)[0]

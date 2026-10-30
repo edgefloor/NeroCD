@@ -199,7 +199,7 @@ func newHostingStorageRemoteRuntimeFixture(t *testing.T) *hostingStorageRemoteRu
 		if json.Unmarshal(raw, &cfg) != nil {
 			t.Fatal("archive configuration")
 		}
-		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
+		if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
 			cfg["backup_retention"] = true
 			caps = append(caps, domain.RunTypeStorageBackupRetention, domain.HostingStorageBackupRetentionCapability, domain.HostingStorageBackupDeletionCapability)
 		}
@@ -353,7 +353,7 @@ mc admin user add fixture "$FIXTURE_ACCESS" "$FIXTURE_SECRET" >/dev/null
 }
 func (s *hostingStorageRemoteRuntimeSilo) policy(put, attach bool) {
 	actions := []string{"s3:GetObject"}
-	if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" {
+	if os.Getenv("NEROCD_STORAGE_RETENTION_RUNTIME") == "disposable-dind" || os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
 		actions = append(actions, "s3:DeleteObject", "s3:DeleteObjectVersion")
 	}
 	if put {
