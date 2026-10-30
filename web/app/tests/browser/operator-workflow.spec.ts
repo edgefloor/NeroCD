@@ -359,7 +359,7 @@ test("settings cards contain controls and wrap long membership text on narrow sc
   await page.getByRole("button", { name: "Update access" }).click();
   expect((await response).status()).toBe(200);
   const accessCard = page.getByText("Project access", { exact: true }).locator('xpath=ancestor::*[@data-slot="card"]');
-  await expect(accessCard.locator("span").filter({ hasText: projectName })).toBeVisible();
+  await expect(accessCard.locator("span").filter({ hasNot: page.locator("select") }).filter({ hasText: projectName })).toBeVisible();
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
@@ -369,7 +369,7 @@ test("settings cards contain controls and wrap long membership text on narrow sc
         const bounds = control.getBoundingClientRect();
         return { left: bounds.left, right: bounds.right };
       });
-      const member = Array.from(card.querySelectorAll<HTMLElement>("span"), (element) => element.textContent?.includes(String(name)) ? element : undefined).find(Boolean);
+      const member = Array.from(card.querySelectorAll<HTMLElement>("span"), (element) => !element.querySelector("select") && element.textContent?.includes(String(name)) ? element : undefined).find(Boolean);
       if (!member) throw new Error("long membership text is unavailable");
       return {
         cardLeft: cardBounds.left,
