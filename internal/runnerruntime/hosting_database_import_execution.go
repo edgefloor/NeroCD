@@ -158,7 +158,10 @@ func executeDatabaseImportWithEngine(s *attemptSupervisor, j *runner.AttemptJour
 		return j.AckDatabaseImport(result.ID)
 	}
 	if stage {
-		_ = cleanupExpiredExternalImportStages(ctx, e.host)
+		_ = cleanupExpiredExternalImportStages(ctx, e.host, func(ctx context.Context, in domain.HostingDatabaseImportStageCleanup) (bool, error) {
+			out, err := client.HostingDatabaseImportStageCleanup(ctx, in)
+			return out.Delete, err
+		})
 		file, err := createExternalImportStage(ctx, e.host, sp)
 		if err != nil {
 			return finish(nil, "stage_failed", externalImportFailure(err), nil)

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"nerocd/internal/domain"
 	"nerocd/internal/runner"
 	"os"
@@ -137,7 +138,7 @@ func TestExternalStageExpiryNeverSweepsSharedCASOrImportIntent(t *testing.T) {
 			if _, err = e.store.Put(t.Context(), bytes.NewReader(data), key, int64(len(data))); err != nil {
 				t.Fatal(err)
 			}
-			if err = cleanupExpiredExternalImportStages(t.Context(), e.host); err != nil {
+			if err = cleanupExpiredExternalImportStages(t.Context(), e.host, func(context.Context, domain.HostingDatabaseImportStageCleanup) (bool, error) { return true, nil }); err != nil {
 				t.Fatal(err)
 			}
 			_, err = os.Stat(filepath.Join(e.host.stateRoot, "external-import-stages", p.Stage.ID+".sql"))
@@ -191,5 +192,71 @@ func TestExternalImportJournalRestartCannotReexecuteIntent(t *testing.T) {
 	}
 	if len(j.Snapshot().DatabaseImports) != 1 {
 		t.Fatal("unpaired intent silently acknowledged")
+	}
+}
+
+func TestExternalStageExpiredCleanupPreservesQueuedConsumption(t *testing.T) {
+	for _, state := range []string{"consumed", "expired", "unknown"} {
+		t.Run(state, func(t *testing.T) {
+			e, p := externalImportTestPlan(t)
+			p.Stage.CreatedAt = time.Now().UTC().Add(-3 * time.Hour)
+			p.Stage.UpdatedAt = p.Stage.CreatedAt
+			p.Hash = ""
+			p.Hash = domain.HostingDocumentHash(p)
+			h, err := createExternalImportStage(t.Context(), e.host, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := inspectExternalSQL(t.Context(), strings.NewReader("CREATE TABLE preserved(id INT);"), h.file, domain.HostingDatabaseImportMaxBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.file.Sync() != nil {
+				t.Fatal("flush")
+			}
+			proof, err := externalImportFileProof(h.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now().UTC().Add(-2 * time.Hour)
+			receipt := domain.HostingDatabaseImportReadyReceipt{StageID: p.Stage.ID, PlanHash: p.Hash, SourceBytes: result.SourceBytes, Compression: result.Compression, Blob: result.Blob, File: proof, ReadyAt: at, ExpiresAt: at.Add(time.Hour)}
+			receipt.Hash = domain.HostingDocumentHash(receipt)
+			if receipt.ValidateFor(p) != nil || externalImportWriteDocument(h.root, h.id+".ready", receipt) != nil {
+				t.Fatal("expired immutable receipt setup")
+			}
+			ip := domain.HostingDatabaseImportPlan{StagePlan: p, Receipt: receipt, Operation: domain.HostingDatabaseImportOperation{ID: "queued_import", Version: domain.HostingDatabaseImportVersion, StageID: p.Stage.ID, TargetResourceID: p.Stage.TargetResourceID, TargetComponent: "mysql", TargetDeployedOperationID: p.Target.OperationID, State: "queued", OwnershipHeld: true, CreatedAt: at.Add(time.Minute), UpdatedAt: at.Add(time.Minute)}}
+			ip.Hash = domain.HostingDocumentHash(ip)
+			if err = h.Close(); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			err = cleanupExpiredExternalImportStages(t.Context(), e.host, func(ctx context.Context, in domain.HostingDatabaseImportStageCleanup) (bool, error) {
+				calls++
+				if in.StageID != p.Stage.ID || in.PlanHash != p.Hash || in.ReadyHash != receipt.Hash {
+					t.Fatal("cleanup changed exact stage proof")
+				}
+				if state == "unknown" {
+					return false, errors.New("unavailable controller")
+				}
+				return state == "expired", nil
+			})
+			if calls != 1 {
+				t.Fatal("cleanup skipped atomic controller reservation")
+			}
+			opened, openErr := openExternalImportStage(t.Context(), e.host, ip)
+			if state == "expired" {
+				if err != nil || openErr == nil {
+					t.Fatal("authorized expired input remained")
+				}
+				return
+			}
+			if state == "unknown" && err == nil {
+				t.Fatal("unknown cleanup authority was not explicit")
+			}
+			if openErr != nil {
+				t.Fatal("consumed/unknown input was deleted before first execution", openErr)
+			}
+			_ = opened.Close()
+		})
 	}
 }

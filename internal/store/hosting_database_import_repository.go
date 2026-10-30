@@ -17,4 +17,5 @@ type HostingDatabaseImportRepository interface {
 	DatabaseImportMutation(context.Context, string, domain.HostingDatabaseImportMutation) (domain.HostingDatabaseImportReceiptResult, error)
 	AuthorizeDatabaseImportCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest) (BackupRemoteCredentialAuthorization, error)
 	RevalidateDatabaseImportCredentials(context.Context, string, string, domain.BackupRemoteCredentialRequest, domain.BackupRemoteCredentialMetadata) error
+	AuthorizeDatabaseImportStageCleanup(context.Context, string, domain.HostingDatabaseImportStageCleanup) (domain.HostingDatabaseImportStageCleanupResult, error)
 }

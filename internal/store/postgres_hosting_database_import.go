@@ -362,12 +362,16 @@ func externalImportAuthority(ctx context.Context, tx pgx.Tx, runner string, a do
 		return ErrConflict
 	}
 	q := sqlcgen.New(tx)
+	if _, err := q.LockRunID(ctx, a.RunID); err != nil {
+		return hostingError(err)
+	}
 	var err error
-	if a.RunID == "db_import_stage_"+a.OperationID {
+	switch a.RunID {
+	case "db_import_stage_" + a.OperationID:
 		_, err = q.LockDatabaseImportStageAuthority(ctx, sqlcgen.LockDatabaseImportStageAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: int32(a.Attempt), Fence: a.Fence, Column7: live})
-	} else if a.RunID == "db_import_"+a.OperationID {
+	case "db_import_" + a.OperationID:
 		_, err = q.LockDatabaseImportAuthority(ctx, sqlcgen.LockDatabaseImportAuthorityParams{ID: a.OperationID, RunID: &a.RunID, RunnerID: runner, ID_2: a.LeaseID, Attempt: int32(a.Attempt), Fence: a.Fence, Column7: live})
-	} else {
+	default:
 		return ErrConflict
 	}
 	return hostingError(err)
@@ -379,6 +383,9 @@ func (s *PostgresStore) DatabaseImportStagePlan(ctx context.Context, runner stri
 		var p domain.HostingDatabaseImportStagePlan
 		if a.RunID != "db_import_stage_"+a.OperationID {
 			return p, ErrConflict
+		}
+		if e := externalImportOperationResource(ctx, tx, runner, a); e != nil {
+			return p, e
 		}
 		row, e := sqlcgen.New(tx).LockDatabaseImportStage(ctx, a.OperationID)
 		if e != nil {
@@ -401,6 +408,9 @@ func (s *PostgresStore) DatabaseImportPlan(ctx context.Context, runner string, a
 		var p domain.HostingDatabaseImportPlan
 		if a.RunID != "db_import_"+a.OperationID {
 			return p, ErrConflict
+		}
+		if e := externalImportOperationResource(ctx, tx, runner, a); e != nil {
+			return p, e
 		}
 		row, e := sqlcgen.New(tx).LockDatabaseImport(ctx, a.OperationID)
 		if e != nil {
@@ -425,6 +435,9 @@ func (s *PostgresStore) DatabaseImportMutation(ctx context.Context, runner strin
 	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseImportReceiptResult, error) {
 		var out domain.HostingDatabaseImportReceiptResult
 		q := sqlcgen.New(tx)
+		if e := externalImportOperationResource(ctx, tx, runner, in.HostingAuthority); e != nil {
+			return out, e
+		}
 		// Lock the operation before its lease, in the same order as plan reads.
 		stage := in.RunID == "db_import_stage_"+in.OperationID
 		var sp domain.HostingDatabaseImportStagePlan
@@ -624,6 +637,9 @@ func externalImportCredentialAuthority(ctx context.Context, tx pgx.Tx, runner, t
 	if in.Validate() != nil || in.RetentionCopyID != "" || in.Authority.RunID != "db_import_stage_"+in.Authority.OperationID {
 		return p, expiry, ErrConflict
 	}
+	if e := externalImportOperationResource(ctx, tx, runner, in.Authority); e != nil {
+		return p, expiry, e
+	}
 	row, e := sqlcgen.New(tx).LockDatabaseImportStage(ctx, in.Authority.OperationID)
 	if e != nil {
 		return p, expiry, hostingError(e)
@@ -704,4 +720,97 @@ func (s *PostgresStore) RevalidateDatabaseImportCredentials(ctx context.Context,
 		return true, nil
 	})
 	return e
+}
+
+// All new family entry points acquire resource/destination before operation and
+// lease rows, matching public confirmation/replay and expiry cleanup.
+func externalImportOperationResource(ctx context.Context, tx pgx.Tx, runner string, a domain.HostingAuthority) error {
+	q := sqlcgen.New(tx)
+	var actor, resource, binding, project, expectedRunner string
+	switch a.RunID {
+	case "db_import_stage_" + a.OperationID:
+		row, e := q.ReadDatabaseImportStage(ctx, a.OperationID)
+		if e != nil {
+			return hostingError(e)
+		}
+		actor, resource, binding, project, expectedRunner = row.ActorID, row.TargetResourceID, row.TargetBindingID, row.ProjectID, row.RunnerID
+	case "db_import_" + a.OperationID:
+		row, e := q.ReadDatabaseImport(ctx, a.OperationID)
+		if e != nil {
+			return hostingError(e)
+		}
+		actor, resource, binding, project, expectedRunner = row.ActorID, row.TargetResourceID, row.TargetBindingID, row.ProjectID, row.RunnerID
+	default:
+		return ErrConflict
+	}
+	if expectedRunner != runner {
+		return ErrConflict
+	}
+	r, e := externalImportResourceAuthority(ctx, tx, actor, resource, domain.RoleOwner)
+	if e != nil {
+		return e
+	}
+	if r.BindingID != binding || r.ProjectID != project || r.RunnerID != runner {
+		return ErrConflict
+	}
+	return nil
+}
+
+// AuthorizeDatabaseImportStageCleanup atomically excludes new confirmation before
+// permitting exact local deletion. A consumed reservation never expires here.
+func (s *PostgresStore) AuthorizeDatabaseImportStageCleanup(ctx context.Context, runner string, in domain.HostingDatabaseImportStageCleanup) (domain.HostingDatabaseImportStageCleanupResult, error) {
+	if in.Validate() != nil {
+		return domain.HostingDatabaseImportStageCleanupResult{}, domain.ErrInvalidDatabaseImport
+	}
+	return buildTransaction(ctx, s, func(tx pgx.Tx) (domain.HostingDatabaseImportStageCleanupResult, error) {
+		out := domain.HostingDatabaseImportStageCleanupResult{HostingDatabaseImportStageCleanup: in}
+		a := domain.HostingAuthority{OperationID: in.StageID, RunID: "db_import_stage_" + in.StageID}
+		if e := externalImportOperationResource(ctx, tx, runner, a); e != nil {
+			return out, e
+		}
+		if e := externalImportRunner(ctx, tx, runner, "stage"); e != nil {
+			return out, e
+		}
+		q := sqlcgen.New(tx)
+		row, e := q.LockDatabaseImportStage(ctx, in.StageID)
+		if e != nil {
+			return out, hostingError(e)
+		}
+		var p domain.HostingDatabaseImportStagePlan
+		if json.Unmarshal(row.Plan, &p) != nil || p.Validate() != nil || p.Hash != in.PlanHash || row.PlanHash != in.PlanHash || p.RunnerID != runner {
+			return out, ErrConflict
+		}
+		v, e := externalImportStageView(row.Body)
+		if e != nil {
+			return out, e
+		}
+		if v.State == "consumed" {
+			return out, nil
+		}
+		if v.State == "failed" && in.ReadyHash == "" {
+			out.Delete = true
+			return out, nil
+		}
+		if v.State != "ready" && v.State != "expired" {
+			return out, nil
+		}
+		var receipt domain.HostingDatabaseImportReadyReceipt
+		if json.Unmarshal(row.ReadyReceipt, &receipt) != nil || receipt.ValidateFor(p) != nil || in.ReadyHash != receipt.Hash || v.StageHash != receipt.Hash {
+			return out, ErrConflict
+		}
+		var expired bool
+		if e = tx.QueryRow(ctx, "SELECT $1::timestamptz<=clock_timestamp()", receipt.ExpiresAt).Scan(&expired); e != nil {
+			return out, e
+		}
+		if !expired {
+			return out, nil
+		}
+		v.State = "expired"
+		v.UpdatedAt = time.Now().UTC()
+		if e = q.SetDatabaseImportStage(ctx, sqlcgen.SetDatabaseImportStageParams{ID: v.ID, Body: buildJSON(v), ReadyReceipt: row.ReadyReceipt}); e != nil {
+			return out, e
+		}
+		out.Delete = true
+		return out, nil
+	})
 }

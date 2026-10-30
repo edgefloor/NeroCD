@@ -291,7 +291,10 @@ func (h *externalImportStageHandle) discard() error {
 
 // cleanupExpiredExternalImportStages examines at most the fixed private-stage
 // budget. An import intent or busy lock preserves its input for reconciliation.
-func cleanupExpiredExternalImportStages(ctx context.Context, config DatabaseEngineConfig) error {
+func cleanupExpiredExternalImportStages(ctx context.Context, config DatabaseEngineConfig, authorize func(context.Context, domain.HostingDatabaseImportStageCleanup) (bool, error)) error {
+	if authorize == nil {
+		return databaseImportError("authority_denied")
+	}
 	pool, err := config.lock(ctx, "external_import_pool")
 	if err != nil {
 		return databaseImportError("stage_unavailable")
@@ -335,6 +338,7 @@ func cleanupExpiredExternalImportStages(ctx context.Context, config DatabaseEngi
 			if _, err = root.Lstat(id + ".import"); err == nil || !errors.Is(err, os.ErrNotExist) {
 				return
 			}
+			request := domain.HostingDatabaseImportStageCleanup{StageID: id, PlanHash: owner.Plan.Hash}
 			expires := owner.Plan.Stage.CreatedAt.Add(time.Duration(owner.Plan.TimeoutSeconds)*time.Second + domain.HostingDatabaseImportStageTTL)
 			if _, err = root.Lstat(id + ".ready"); err == nil {
 				var receipt domain.HostingDatabaseImportReadyReceipt
@@ -343,11 +347,20 @@ func cleanupExpiredExternalImportStages(ctx context.Context, config DatabaseEngi
 					return
 				}
 				expires = receipt.ExpiresAt
+				request.ReadyHash = receipt.Hash
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return
 			}
 			err = nil
 			if time.Now().Before(expires) {
+				return
+			}
+			allowed, authErr := authorize(ctx, request)
+			if authErr != nil {
+				err = databaseImportError("authority_denied")
+				return
+			}
+			if !allowed {
 				return
 			}
 			file, openErr := root.OpenFile(id+".sql", os.O_RDONLY|syscall.O_NOFOLLOW, 0)

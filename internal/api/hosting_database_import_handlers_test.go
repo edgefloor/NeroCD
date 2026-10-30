@@ -74,6 +74,24 @@ func TestExternalDatabaseImportHTTPRealDecodersAndAuthority(t *testing.T) {
 			t.Fatal("invalid external input reached persistence")
 		}
 	}
+
+	stagePath := "/api/v1/resources/" + repo.resource.ID + "/database-import-stages"
+	originalKey := "nerocd/operator-import/gzip.data"
+	beforeUnicode := repo.calls
+	for _, key := range []string{"invalid" + string([]byte{0xff}) + ".sql", `\ud800.sql`, `\udc00.sql`, `\ud800x.sql`} {
+		archiveHTTPCall(t, server, "POST", stagePath, owner, strings.Replace(stageBody, originalKey, key, 1), "application/json", 400)
+	}
+	if repo.calls != beforeUnicode {
+		t.Fatal("malformed Unicode reached stage persistence")
+	}
+	for _, tc := range []struct{ wire, want string }{{"literal�.sql", "literal�.sql"}, {`\ud83d\ude00.sql`, "😀.sql"}} {
+		archiveHTTPCall(t, server, "POST", stagePath, owner, strings.Replace(stageBody, originalKey, tc.wire, 1), "application/json", 202)
+		if repo.stageInput.S3Source.ObjectKey != tc.want {
+			t.Fatal("valid Unicode key was normalized or repaired")
+		}
+	}
+	// Restore the original valid sample for the exact request identity assertion.
+	archiveHTTPCall(t, server, "POST", stagePath, owner, stageBody, "application/json", 202)
 	if repo.stageInput.S3Source.ObjectKey != "nerocd/operator-import/gzip.data" || repo.importInput.StageID != "stage" || !repo.importInput.ComponentTarget.AcknowledgeReplacement {
 		t.Fatal("exact external authority lost")
 	}

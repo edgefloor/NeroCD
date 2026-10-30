@@ -80,3 +80,18 @@ func (c Client) HostingDatabaseImportMutation(ctx context.Context, in domain.Hos
 	}
 	return out, nil
 }
+
+// HostingDatabaseImportStageCleanup obtains atomic permission to delete an exact expired stage.
+func (c Client) HostingDatabaseImportStageCleanup(ctx context.Context, in domain.HostingDatabaseImportStageCleanup) (domain.HostingDatabaseImportStageCleanupResult, error) {
+	var r databaseImportResponse[domain.HostingDatabaseImportStageCleanupResult]
+	if in.Validate() != nil {
+		return r.value, domain.ErrInvalidDatabaseImport
+	}
+	if e := c.post(databaseBackupProtectedContext(ctx), "/api/v1/runners/hosting/database-import-stage/cleanup", in, &r); e != nil {
+		return r.value, e
+	}
+	if r.value.HostingDatabaseImportStageCleanup != in {
+		return r.value, domain.ErrInvalidDatabaseImport
+	}
+	return r.value, nil
+}

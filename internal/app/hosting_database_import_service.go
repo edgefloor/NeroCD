@@ -121,3 +121,19 @@ func (s *Service) RunnerDatabaseImportMutation(ctx context.Context, in domain.Ho
 	}
 	return repo.DatabaseImportMutation(ctx, r.ID, in)
 }
+
+// RunnerDatabaseImportStageCleanup authorizes exact local expiry cleanup without live S3 access.
+func (s *Service) RunnerDatabaseImportStageCleanup(ctx context.Context, in domain.HostingDatabaseImportStageCleanup) (domain.HostingDatabaseImportStageCleanupResult, error) {
+	if in.Validate() != nil {
+		return domain.HostingDatabaseImportStageCleanupResult{}, InvalidInput(domain.ErrInvalidDatabaseImport)
+	}
+	r, e := s.requireRunnerPrincipal(ctx)
+	if e != nil {
+		return domain.HostingDatabaseImportStageCleanupResult{}, e
+	}
+	repo, ok := s.hosting.(store.HostingDatabaseImportRepository)
+	if !ok {
+		return domain.HostingDatabaseImportStageCleanupResult{}, store.ErrConflict
+	}
+	return repo.AuthorizeDatabaseImportStageCleanup(ctx, r.ID, in)
+}

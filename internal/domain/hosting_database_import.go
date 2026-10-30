@@ -359,3 +359,25 @@ type HostingDatabaseImportReceiptResult struct {
 	Stage  *HostingDatabaseImportStage     `json:"stage,omitempty"`
 	Import *HostingDatabaseImportOperation `json:"import,omitempty"`
 }
+
+// HostingDatabaseImportStageCleanup asks whether this exact owned stage may be removed.
+// The controller expires unconsumed bytes atomically against confirmation first.
+type HostingDatabaseImportStageCleanup struct {
+	StageID   string `json:"stage_id"`
+	PlanHash  string `json:"plan_hash"`
+	ReadyHash string `json:"ready_hash,omitempty"`
+}
+
+// Validate binds cleanup to immutable staging evidence, never an arbitrary path.
+func (in HostingDatabaseImportStageCleanup) Validate() error {
+	if !databaseImportFileID.MatchString(in.StageID) || !imageSHA256.MatchString(in.PlanHash) || in.ReadyHash != "" && !imageSHA256.MatchString(in.ReadyHash) {
+		return ErrInvalidDatabaseImport
+	}
+	return nil
+}
+
+// HostingDatabaseImportStageCleanupResult permits deletion only after controller reservation checks.
+type HostingDatabaseImportStageCleanupResult struct {
+	HostingDatabaseImportStageCleanup
+	Delete bool `json:"delete"`
+}
