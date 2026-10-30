@@ -36,6 +36,10 @@ function DeploymentRow({
   environment?: Environment;
   revision?: Revision;
 }): ReactNode {
+  const showGuidance = [
+    "waiting_confirmation", "cancel_requested", "rolling_back", "rolled_back",
+    "rollback_failed", "manual_intervention", "failed",
+  ].includes(deployment.status);
   return (
     <Card className="min-w-0">
       <CardContent className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -51,9 +55,9 @@ function DeploymentRow({
           >
             {environment?.name ?? deployment.environment_id}
           </Link>
-          <p className="text-sm text-muted-foreground">
+          {showGuidance ? <p className="text-sm text-muted-foreground">
             {deploymentStateMessage(deployment)}
-          </p>
+          </p> : null}
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
             {revision?.git_commit?.trim() || "Commit unavailable"} ·{" "}
             {deployment.id}
@@ -271,8 +275,7 @@ export function DeploymentsView(props: DeploymentsViewProps): ReactNode {
               </form>
             ) : (
               <p className="text-sm text-muted-foreground" role="status">
-                You can inspect deployment history, but an operator role is
-                required to request, confirm, or cancel deployments.
+                An operator role is required to deploy, confirm or cancel.
               </p>
             )}
           </div>

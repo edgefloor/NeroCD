@@ -134,7 +134,8 @@ test("deployment submission errors belong to their selected target and clear dur
 test.each(["environment a", "MAIN", "abc"])("deployment history matches resolved metadata %s", (q) => {
   render(<DeploymentsView {...props} deployments={[{ id: "dep_one", environment_id: "env_a", desired_revision_id: "revision_a", status: "queued" } as never]} selectedServiceID="service_a" selectedEnvironmentID="env_a" q={q} />);
   expect(screen.queryByText("No deployments match this view")).toBeNull();
-  expect(screen.getByText("Queued for an eligible runner.")).toBeTruthy();
+  expect(screen.getByText("Queued", { exact: true })).toBeTruthy();
+  expect(screen.getByText(/dep_one/)).toBeTruthy();
 });
 
 test("deployment metadata filtering omits unrelated history", () => {

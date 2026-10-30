@@ -1,5 +1,5 @@
 import { useId, type FormEvent, type ReactNode } from "react";
-import { Settings, Shield, User, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,11 +49,13 @@ export function SettingsView({
 
   return <section className="grid min-w-0 gap-4 lg:grid-cols-2">
     <Card className="min-w-0">
-      <CardHeader><CardTitle>Principal</CardTitle></CardHeader>
-      <CardContent className="grid min-w-0 gap-2">
-        <p className="min-w-0 break-words"><User className="mr-2 inline h-4 w-4" />{principal.name}</p>
-        <p className="min-w-0 break-words"><Shield className="mr-2 inline h-4 w-4" />{principal.email}</p>
-        <p className="min-w-0 break-words"><Settings className="mr-2 inline h-4 w-4" />{principal.roles.join(", ")}</p>
+      <CardHeader><CardTitle>Your account</CardTitle></CardHeader>
+      <CardContent>
+        <dl className="grid min-w-0 gap-3 text-sm">
+          <div><dt className="text-xs text-muted-foreground">Name</dt><dd className="break-words">{principal.name}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Email</dt><dd className="break-words">{principal.email}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Global roles</dt><dd className="break-words">{principal.roles.length ? principal.roles.join(", ") : "None"}</dd></div>
+        </dl>
       </CardContent>
     </Card>
     <Card className="min-w-0">

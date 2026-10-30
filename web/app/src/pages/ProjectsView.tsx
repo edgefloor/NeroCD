@@ -66,15 +66,16 @@ function ProjectCard({
           ) : null}
           <p className="text-xs text-muted-foreground">Created {formatDate(project.created_at)}</p>
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">On this page</span>
           <Badge variant="secondary" className="text-xs">
-            {projectTemplates.length} templates in loaded page
+            {projectTemplates.length} templates
           </Badge>
           <Badge variant="secondary" className="text-xs">
-            {projectRuns.length} runs in loaded page
+            {projectRuns.length} runs
           </Badge>
           <Badge variant="secondary" className="text-xs">
-            {projectRepos.length} sources in loaded page
+            {projectRepos.length} sources
           </Badge>
         </div>
         {canOperate ? <div className="flex max-w-full flex-wrap gap-2 md:shrink-0">

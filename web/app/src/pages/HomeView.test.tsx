@@ -74,6 +74,6 @@ test.each([true, false])("hosting guidance leads while legacy activity loading i
   expect(screen.getByRole("heading", { name: "Host an application" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "Connect a server" }).getAttribute("href")).toBe("/runners");
   expect(screen.getByRole("link", { name: "Configure an application" }).getAttribute("href")).toBe("/projects");
-  expect(screen.getByText(/Server enrollment and administration require/)).toBeTruthy();
+  expect(screen.getByText(/Requires a system or runner administrator/)).toBeTruthy();
   if (!loading) expect(screen.getByRole("heading", { name: "Host an application" }).compareDocumentPosition(screen.getByRole("heading", { name: "Advanced automation activity" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

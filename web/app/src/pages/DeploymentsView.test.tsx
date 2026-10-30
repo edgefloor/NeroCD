@@ -23,6 +23,8 @@ test("operator intent keys are fresh, opaque browser-generated values", () => {
 });
 
 
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, to, params: _params, search: _search, ...props }: { children: React.ReactNode; to: string; params?: unknown; search?: unknown }) => <a href={to} {...props}>{children}</a> }));
+
 afterEach(cleanup);
 
 test.each(["confirm", "cancel"] as const)("deployment %s feedback remains beside disabled actions while pending", (action) => {
@@ -120,4 +122,10 @@ test("StrictMode retires missing revisions before commit without resurrecting th
   expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Immutable revision" }).value).toBe("");
   fireEvent.submit(screen.getByRole("form", { name: "Request deployment" }));
   expect(props.onCreate).not.toHaveBeenCalled();
+});
+
+
+test.each(["rollback_failed", "manual_intervention"])("deployment history retains required intervention guidance for %s", (status) => {
+  render(<DeploymentsView deployments={[{ id: "deployment", environment_id: "environment", status } as never]} projects={[{ id: "project", name: "Project" }] as never} services={[{ id: "service", project_id: "project", name: "Service" }] as never} environments={[{ id: "environment", service_id: "service", name: "Production" }] as never} revisions={[]} selectedServiceID="service" selectedEnvironmentID="environment" canOperate={false} onCreate={vi.fn()} onServiceChange={vi.fn()} onEnvironmentChange={vi.fn()} />);
+  expect(screen.getByText(/Operator intervention is required/)).toBeTruthy();
 });

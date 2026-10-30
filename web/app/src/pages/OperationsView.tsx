@@ -14,6 +14,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 
 function seconds(value: number | undefined): string {
   if (!Number.isFinite(value) || value === undefined) return "—";
@@ -69,7 +70,7 @@ export function OperationsView({
     return (
       <Card>
         <CardContent className="p-6" role="status">
-          Loading authoritative operations status…
+          Loading operations status…
         </CardContent>
       </Card>
     );
@@ -84,8 +85,7 @@ export function OperationsView({
                 Operations status is temporarily unavailable
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                No partial operational snapshot is shown. Check readiness and
-                retry after the database and schema are healthy.
+                Check database connectivity and schema readiness, then retry.
               </p>
             </div>
           </div>
@@ -97,6 +97,10 @@ export function OperationsView({
     (snapshot.deployments.applying ?? 0) +
     (snapshot.deployments.verifying ?? 0) +
     (snapshot.deployments.rolling_back ?? 0);
+  const checkRunners = snapshot.expired_leases > 0 || snapshot.oldest_runner_heartbeat_seconds > 120 || snapshot.runner_renew_failures > 0;
+  const checkDeployments = snapshot.deployment_health_failed > 0 || snapshot.rollback_failed > 0;
+  const checkBackups = snapshot.backup_outcome === "failure" || snapshot.backup_schedule_status === "backoff" || snapshot.backup_schedule_failures > 0;
+  const hasFollowUp = snapshot.queue_depth > 0 || checkRunners || checkDeployments || checkBackups;
   return (
     <section
       className="space-y-6"
@@ -109,7 +113,7 @@ export function OperationsView({
           <p className="text-sm text-muted-foreground">
             {unavailable
               ? "Last loaded snapshot. Refresh failed; retry to get current status."
-              : "Authoritative PostgreSQL snapshot. Refreshes while this page is visible."}
+              : "Refreshes while this page is visible."}
           </p>
         </div>
         {unavailable ? (
@@ -178,20 +182,19 @@ export function OperationsView({
         onUpdate={onRetentionUpdate}
         onExecute={onRetentionExecute}
       />
-      <Card>
-        <CardHeader>
-          <CardTitle>Operator response</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          <p>
-            Investigate an increasing queue age, expired leases, stale runner
-            heartbeats, failed deployment health, or failed backups. The page
-            intentionally omits raw metrics, identifiers, paths, and diagnostic
-            payloads; use the protected operational runbook and audited
-            resources for follow-up.
-          </p>
-        </CardContent>
-      </Card>
+      {hasFollowUp ? (
+        <Card>
+          <CardHeader><CardTitle>Follow up</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-sm">
+              {snapshot.queue_depth > 0 ? <li><Link className="underline underline-offset-4" to="/runs">Review queued runs</Link> and check runner availability if the queue is not moving.</li> : null}
+              {checkRunners ? <li><Link className="underline underline-offset-4" to="/runners">Check runner connectivity</Link> for expired leases, missed heartbeats or renewal failures.</li> : null}
+              {checkDeployments ? <li><Link className="underline underline-offset-4" to="/deployments">Review failed deployments</Link> before retrying.{snapshot.rollback_failed > 0 ? " Failed rollbacks require manual recovery." : ""}</li> : null}
+              {checkBackups ? <li>Check the backup failure reason and schedule above before the next backup attempt.</li> : null}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
     </section>
   );
 }

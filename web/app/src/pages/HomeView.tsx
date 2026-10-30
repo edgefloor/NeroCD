@@ -31,10 +31,6 @@ export function HostingStart() {
       <h2 id="hosting-start-heading" className="text-xl font-semibold">
         Host an application
       </h2>
-      <p className="text-sm text-muted-foreground">
-        Connect a server, then configure an application in a project and
-        environment using an image or Git source.
-      </p>
       <div className="grid min-w-0 gap-4 md:grid-cols-2">
         <div className="min-w-0 space-y-2">
           <Link
@@ -44,9 +40,7 @@ export function HostingStart() {
             Connect a server
           </Link>
           <p className="text-sm text-muted-foreground">
-            Enroll a dedicated runner and register its hosting server. Server
-            enrollment and administration require a system administrator or
-            runner administrator.
+            Register a hosting server. Requires a system or runner administrator.
           </p>
         </div>
         <div className="min-w-0 space-y-2">
@@ -57,17 +51,10 @@ export function HostingStart() {
             Configure an application
           </Link>
           <p className="text-sm text-muted-foreground">
-            Choose your project and environment, then save an image or Git
-            application. Project permissions control application changes.
+            Choose a project and environment, then save and deploy an image or Git application.
           </p>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">
-        The application controls its destination, deployment, runtime status,
-        logs, and routes. Saving configuration does not deploy it. A heartbeat
-        does not establish readiness, and a saved route does not establish
-        HTTPS.
-      </p>
     </section>
   );
 }

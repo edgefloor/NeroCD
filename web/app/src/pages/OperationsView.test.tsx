@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import { OperationsView } from "./OperationsView";
 
+vi.mock("@tanstack/react-router", () => ({ Link: ({ children, to, ...props }: { children: React.ReactNode; to: string }) => <a href={to} {...props}>{children}</a> }));
+
 afterEach(cleanup);
 
 const status = { readiness: "ready", snapshot: { queue_depth: 0, queue_oldest_age_seconds: 0, active_leases: 0, expired_leases: 0, oldest_runner_heartbeat_seconds: 0, deployments: { applying: 0, verifying: 0, rolling_back: 0 }, deployment_health_passed: 0, deployment_health_failed: 0, rollback_succeeded: 0, rollback_failed: 0, runner_journal_depth: 0, runner_retry_count: 0, runner_renew_failures: 0, backup_outcome: "none", backup_age_seconds: 0, backup_reason: "none", backup_schedule_status: "backoff", backup_schedule_next_seconds: 60, backup_schedule_failures: 1, pool: { acquired: 0, total: 0, idle: 0 } } } as never;
@@ -159,4 +161,23 @@ test("refresh failure preserves an open confirmation and blocks execution", () =
   }
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+
+test("follow-up actions reflect reported issues and preserve stale snapshot warnings", () => {
+  const issues = { ...status as object, snapshot: { ...(status as { snapshot: object }).snapshot, queue_depth: 2, expired_leases: 1, rollback_failed: 1 } } as never;
+  render(<OperationsView status={issues} loading={false} unavailable canAdmin />);
+  expect(screen.getByRole("link", { name: "Review queued runs" }).getAttribute("href")).toBe("/runs");
+  expect(screen.getByRole("link", { name: "Check runner connectivity" }).getAttribute("href")).toBe("/runners");
+  expect(screen.getByRole("link", { name: "Review failed deployments" }).getAttribute("href")).toBe("/deployments");
+  expect(screen.getByText(/Failed rollbacks require manual recovery/)).toBeTruthy();
+  expect(screen.getByText(/Last loaded snapshot/)).toBeTruthy();
+  expect(screen.queryByText("Ready", { exact: true })).toBeNull();
+});
+
+test("follow-up guidance is absent when the snapshot reports no issues", () => {
+  const clear = { ...status as object, snapshot: { ...(status as { snapshot: object }).snapshot, backup_schedule_status: "disabled", backup_schedule_failures: 0 } } as never;
+  render(<OperationsView status={clear} loading={false} unavailable={false} canAdmin />);
+  expect(screen.queryByRole("heading", { name: "Follow up" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Review queued runs" })).toBeNull();
 });
