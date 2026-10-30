@@ -1329,7 +1329,7 @@ type wordpressRuntimeExternalSQLSample struct {
 }
 
 func wordpressRuntimeExternalSQLSamples() []wordpressRuntimeExternalSQLSample {
-	plain := []byte("CREATE TABLE IF NOT EXISTS nerocd_external_import_proof(id INT PRIMARY KEY, marker VARCHAR(64)); INSERT INTO nerocd_external_import_proof VALUES(1,'plain') ON DUPLICATE KEY UPDATE marker='plain';\n")
+	plain := []byte("CREATE TABLE IF NOT EXISTS nerocd_external_import_proof(id INT PRIMARY KEY, marker VARCHAR(64), executor_user VARCHAR(128)); INSERT INTO nerocd_external_import_proof VALUES(1,'plain',CURRENT_USER()) ON DUPLICATE KEY UPDATE marker='plain';\n")
 	update := []byte("UPDATE nerocd_external_import_proof SET marker='gzip' WHERE id=1;\n")
 	var encoded bytes.Buffer
 	writer := gzip.NewWriter(&encoded)
@@ -1410,6 +1410,11 @@ func wordpressRuntimeVerifyExternalSQL(t *testing.T, f *storageRuntimeFixture, i
 		if err := f.database.QueryRow(t.Context(), `SELECT count(*),COALESCE(max(next_attempt-1),0) FROM task_runs WHERE id=$1 AND run_spec->>'type'=$2`, importRun, domain.RunTypeDatabaseImport).Scan(&importTasks, &importAttempts); err != nil || importTasks != 1 || importAttempts != 1 {
 			t.Fatal("external SQL API replay duplicated a task or execution", err)
 		}
+	}
+	database := wordpressRuntimeComponent(t, deployed, "mysql", true)
+	expectedUser := strings.TrimSpace(string(storageRuntimeDocker(t, "exec", database.ContainerID, "sh", "-c", `printf '%s' "$MYSQL_USER"`)))
+	if expectedUser == "" || expectedUser == "root" || wordpressRuntimeExternalSQL(t, deployed, "SELECT SUBSTRING_INDEX(executor_user,'@',1) FROM nerocd_external_import_proof WHERE id=1") != expectedUser {
+		t.Fatal("external SQL did not execute as the intended target application database account")
 	}
 	if wordpressRuntimeExternalSQL(t, deployed, "SELECT marker FROM nerocd_external_import_proof WHERE id=1") != "gzip" || wordpressRuntimeExternalSQL(t, source, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='nerocd_external_import_proof'") != "0" {
 		t.Fatal("external plain creation followed by gzip update did not stay on separate target")
