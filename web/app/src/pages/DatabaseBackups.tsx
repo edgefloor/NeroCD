@@ -32,6 +32,7 @@ import {
 } from "../api/hosting-databases";
 import { currentGitStackQuery } from "../api/hosting-stack-lifecycle";
 import { Button } from "../components/ui/button";
+import { ComposeDatabaseExternalImport } from "./ComposeDatabaseExternalImport";
 import { ComposeDatabaseBackupSchedules } from "./ComposeDatabaseBackupSchedules";
 import {
   BackupDestinationSelect,
@@ -627,14 +628,16 @@ function GitComposeDatabaseBackups({
 function ComposeDatabaseBackups(
   props: Parameters<typeof useComposeDatabaseBackups>[0],
 ) {
+  const [externalSource, setExternalSource] = useState(false);
+  const [externalBusy, setExternalBusy] = useState(false);
   const {
     denied,
     revoked,
     component,
-    locked,
+    locked: operationLocked,
     setComponent,
     source,
-    ready,
+    ready: operationReady,
     submit,
     targets,
     backup,
@@ -648,6 +651,7 @@ function ComposeDatabaseBackups(
     scope,
     targetComponent,
     destination,
+    targetEvidenceRevision,
     ack,
     setAck,
     selected,
@@ -668,6 +672,8 @@ function ComposeDatabaseBackups(
     remoteRestore,
   } = useComposeDatabaseBackups(props);
 
+  const locked = operationLocked || externalBusy;
+  const ready = operationReady && !externalBusy;
   if (denied || revoked)
     return <p role="alert">Component database backup access is unavailable.</p>;
   return (
@@ -677,7 +683,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive or a recorded successful upload. Retention for the qualified mysql component is configured below. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive, a recorded successful upload or an inspected configured S3 object. Retention for the qualified mysql component is configured below. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
@@ -757,7 +763,14 @@ function ComposeDatabaseBackups(
           deployment settles.
         </p>
       ) : null}
+      <label className="block">Database import source<select className="block w-full min-w-0 rounded border p-2" value={externalSource ? "s3" : "backup"} disabled={locked} onChange={e => { if (!locked) { setAck(false); setExternalSource(e.target.value === "s3"); } }}><option value="backup">Recorded database backup</option><option value="s3">Configured S3 object · MySQL SQL</option></select></label>
       <ComposeDatabaseRestore
+        externalSource={externalSource}
+        targetEvidenceRevision={targetEvidenceRevision}
+        externalBlocked={operationLocked}
+        onExternalBusy={setExternalBusy}
+        owner={owner}
+        onDenied={retireComposeAccess}
         backup={backup}
         locked={locked}
         setAck={setAck}
@@ -861,6 +874,7 @@ function useComposeDatabaseBackups({
   const [restoreSource, setRestoreSource] = useState("");
   const [target, setTarget] = useState("");
   const [targetComponent, setTargetComponent] = useState("");
+  const [targetEvidenceRevision, setTargetEvidenceRevision] = useState(0);
   const [confirmation, setConfirmation] = useState({ identity: "", accepted: false });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -964,13 +978,16 @@ function useComposeDatabaseBackups({
   );
   const targetEvidence = useQuery({
     queryKey: ["database-backup-components", scope, chosen?.id],
-    queryFn: ({ signal }) =>
-      readBackupMetadata(
+    queryFn: async ({ signal }) => {
+      const value = await readBackupMetadata(
         signal,
         () => getDatabaseBackupComponents(scope, chosen!.id, signal),
         retireComposeAccess,
         [401, 403],
-      ),
+      );
+      if (!signal.aborted) setTargetEvidenceRevision(revision => revision + 1);
+      return value;
+    },
     retry: false,
     enabled: Boolean(chosen) && !denied,
   });
@@ -1105,6 +1122,7 @@ function useComposeDatabaseBackups({
     scope,
     targetComponent,
     destination,
+    targetEvidenceRevision,
     ack,
     setAck,
     selected,
@@ -1592,6 +1610,12 @@ function settledDatabaseComponents(
 }
 
 function ComposeDatabaseRestore({
+  externalSource,
+  targetEvidenceRevision,
+  externalBlocked,
+  onExternalBusy,
+  owner,
+  onDenied,
   backup,
   locked,
   setAck,
@@ -1615,6 +1639,12 @@ function ComposeDatabaseRestore({
   restoreTransfers,
   remoteRestore,
 }: {
+  externalSource: boolean;
+  targetEvidenceRevision: number;
+  externalBlocked: boolean;
+  onExternalBusy: (busy: boolean) => void;
+  owner: boolean;
+  onDenied: () => void;
   restoreSource: string;
   setRestoreSource: React.Dispatch<React.SetStateAction<string>>;
   restoreTransfers: DatabaseBackupTransfer[];
@@ -1638,13 +1668,14 @@ function ComposeDatabaseRestore({
   chosen: ReturnType<typeof useComposeDatabaseBackups>["chosen"];
   submit: (next: Attempt) => Promise<void>;
 }) {
-  const matchesArchive = (c: { eligible: boolean; engine: string; major_version: number }) =>
-    c.eligible && Boolean(selected) &&
-    (selected?.version === "mysql.compose-logical-local.v1"
+  const matchesArchive = (c: { component: string; eligible: boolean; engine: string; major_version: number }) =>
+    (!externalSource || c.component === "mysql") && c.eligible && (externalSource || Boolean(selected)) &&
+    (externalSource || selected?.version === "mysql.compose-logical-local.v1"
       ? c.engine === "mysql" && c.major_version === 8
       : c.engine === "postgresql" && c.major_version === 16);
   return (
     <>
+      {!externalSource ? <>
       <label className="block">
         Backup to restore
         <select
@@ -1699,6 +1730,7 @@ function ComposeDatabaseRestore({
           {restoreSource && !remoteRestore ? <p role="alert">Refresh history and explicitly choose an eligible remote object before restoring.</p> : null}
         </>
       ) : null}
+      </> : null}
       <label className="block">
         Restore target application
         <select
@@ -1759,6 +1791,7 @@ function ComposeDatabaseRestore({
         </select>
       </label>
       {destination ? <p>Reviewed target deployment {destination.operation_id}, generation {destination.resource_generation}.</p> : null}
+      {externalSource ? <ComposeDatabaseExternalImport targetResourceID={target} targetEvidenceRevision={targetEvidenceRevision} scope={scope} owner={owner} blocked={externalBlocked} onBusy={onExternalBusy} onDenied={onDenied} target={chosen && destination?.operation_id && destination.components.some(c => c.component === targetComponent && matchesArchive(c)) ? {resource_id:chosen.id,component:targetComponent,expected_deployed_operation_id:destination.operation_id,expected_resource_generation:destination.resource_generation} : undefined} /> : <>
       <label className="block">
         <input
           type="checkbox"
@@ -1810,6 +1843,7 @@ function ComposeDatabaseRestore({
       >
         Restore database backup
       </Button>
+      </>}
     </>
   );
 }

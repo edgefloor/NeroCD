@@ -1,3 +1,5 @@
+import * as externalImports from "../api/hosting-database-imports";
+vi.mock("../api/hosting-database-imports",async original=>({...await original<typeof import("../api/hosting-database-imports")>(),inspectDatabaseImport:vi.fn(),getDatabaseImportStage:vi.fn(),requestDatabaseImport:vi.fn(),getDatabaseImport:vi.fn()}));
 vi.mock("../api/hosting-database-backup-retention", async (original) => ({
   ...(await original<typeof import("../api/hosting-database-backup-retention")>()),
   getRetentionPolicy: vi.fn(async () => null),
@@ -22,6 +24,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -883,4 +886,31 @@ test("Compose PostgreSQL without a saved matching MySQL policy offers no retenti
  await screen.findByText(/Compose MySQL retention is unavailable until/);
  expect(screen.queryByRole("heading", { name: "Compose MySQL backup retention" })).toBeNull();
  expect(screen.queryByRole("button", { name: "Save retention policy" })).toBeNull();
+});
+
+
+test("configured S3 import qualifies a separate target with no recorded backup and locks shared controls during inspection",async()=>{
+ remoteFixture();
+ vi.mocked(destinations.getResourceBinding).mockImplementation(async id=>({id:"binding",resource_id:id,destination_id:"runner",runtime_namespace:"test",created_by:"owner",created_at:completed.created_at}));
+ const client=mountComposeBackupPanel("compose","compose","mysql");
+ vi.mocked(api.listDatabaseBackups).mockResolvedValue([]);
+ await act(async()=>{await client.invalidateQueries({queryKey:api.databaseBackupsKey(scope,"db")});});
+ fireEvent.change(screen.getByRole("combobox",{name:"Database import source"}),{target:{value:"s3"}});
+ expect(screen.queryByRole("combobox",{name:"Backup to restore"})).toBeNull();
+ fireEvent.change(screen.getByRole("combobox",{name:"Restore target application"}),{target:{value:"target"}});
+ const component=screen.getByRole("combobox",{name:"Restore target database component"});
+ await waitFor(()=>expect(component.querySelectorAll("option")).toHaveLength(2));
+ fireEvent.change(component,{target:{value:"mysql"}});
+ await within(screen.getByRole("region",{name:"External S3 database import"})).findByRole("option",{name:"Daily archive · revision 2"});
+ fireEvent.change(screen.getByLabelText("S3 import destination"),{target:{value:"storage:2"}});fireEvent.change(screen.getByLabelText("S3 object key"),{target:{value:"external.sql"}});
+ let release!:(stage:Awaited<ReturnType<typeof externalImports.inspectDatabaseImport>>)=>void;
+ vi.mocked(externalImports.inspectDatabaseImport).mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+ fireEvent.click(screen.getByRole("button",{name:"Inspect S3 object"}));
+ await waitFor(()=>expect(externalImports.inspectDatabaseImport).toHaveBeenCalledOnce());
+ expect((screen.getByRole("combobox",{name:"Database import source"}) as HTMLSelectElement).disabled).toBe(true);
+ expect((screen.getByRole("combobox",{name:"Restore target application"}) as HTMLSelectElement).disabled).toBe(true);
+ expect(api.requestDatabaseBackup).not.toHaveBeenCalled();expect(api.restoreDatabaseBackup).not.toHaveBeenCalled();
+ const queued={id:"stage",version:"mysql.compose-external-s3-stage.v1" as const,target_resource_id:"target",component:"mysql" as const,expected_deployed_operation_id:"hop_target",expected_resource_generation:3,s3_source:{target_id:"storage",revision:2,object_key:"external.sql"},state:"queued" as const,created_at:completed.created_at,updated_at:completed.updated_at};
+ vi.mocked(externalImports.getDatabaseImportStage).mockResolvedValue(queued);
+ await act(async()=>release(queued));await screen.findByText(/Inspection stage · queued/);
 });

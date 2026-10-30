@@ -49,7 +49,9 @@ export function useDatabaseBackupDestinations({
     enabled:
       !blocked &&
       !accessRevoked &&
-      (!!storage || !!component || (database && ["postgresql", "mysql"].includes(database.engine))),
+      (!!storage ||
+        !!component ||
+        (database && ["postgresql", "mysql"].includes(database.engine))),
     retry: false,
   });
   const validations = useQueries({
@@ -103,10 +105,24 @@ export function useDatabaseBackupDestinations({
           v.state === "succeeded" &&
           v.target_revision === target.revision &&
           v.destination_id ===
-            (storage?.destination_id ?? component?.destination_id ?? database?.binding?.destination_id),
+            (storage?.destination_id ??
+              component?.destination_id ??
+              database?.binding?.destination_id),
       ),
   );
   return {
+    evidenceRevision: [
+      targets.dataUpdatedAt,
+      client.getQueryState(databaseBackupTargetsKey(scope))?.dataUpdateCount ??
+        0,
+      ...(targets.data ?? []).flatMap((target, index) => [
+        validations[index]?.dataUpdatedAt,
+        client.getQueryState([
+          ...databaseBackupValidationsKey(scope, target.id),
+          storage ? "storage" : "database",
+        ])?.dataUpdateCount ?? 0,
+      ]),
+    ],
     targets,
     validations,
     eligible,
