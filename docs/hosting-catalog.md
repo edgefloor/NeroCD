@@ -107,7 +107,7 @@ controls do not apply to it. Use the application's component controls for
 use the same pinned MySQL component and produce database-only archives. This does
 not restore WordPress media or rewrite URLs. [Compose MySQL immediate remote upload](hosting-database-backups.md#compose-mysql-immediate-remote-upload-qualification)
 accepts a validated S3 target and retries the saved SQL archive. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use the same target and artifact checks. [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) supports a separate target from a recorded successful upload. [Independent retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) and [external S3 plain/gzip import](hosting-database-backups.md#external-s3-compose-mysql-import) are qualified separately. Staged local imports, upgrades and migration remain open.
+use the same target and artifact checks. [Compose MySQL recorded remote import](hosting-database-backups.md#compose-mysql-recorded-remote-import-qualification) supports a separate target from a recorded successful upload. [Independent retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) and [external S3 plain/gzip import](hosting-database-backups.md#external-s3-compose-mysql-import) are qualified separately. [Browser local-file plain/gzip import](hosting-database-backups.md#browser-local-file-compose-mysql-import) is also qualified. Server-path import, upgrades and migration remain open.
 
 ## Install and deploy
 
@@ -621,3 +621,9 @@ Per-revision target history and the existing scheduled-artifact import remained 
 passed at `7a1ca1b2`: independently seeded plain/gzip SQL was inspected and imported
 once into a separate target as its application account. Truncated gzip was
 rejected before SQL; source data/uploads and the existing failure safeguards passed.
+
+
+[Browser local-file Compose MySQL import](hosting-database-backups.md#browser-local-file-compose-mysql-import)
+passed at `2ca60518`: real File uploads of plain/gzip SQL used immutable private
+stages and reviewed separate-target application-account execution. Truncated gzip
+was rejected before ownership; source posts/uploads and legacy failure safeguards passed.

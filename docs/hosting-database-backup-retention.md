@@ -171,9 +171,10 @@ container, volume, image, build-cache and user-instance baselines matched after
 owned cleanup.
 
 This covers one Linux arm64 rootful destination, trusted-loopback Silo and
-fixture-CA HTTPS. Arbitrary S3-path and staged local imports, media/URL migration,
-public S3 provider qualification and cross-destination recovery remain open.
+fixture-CA HTTPS. Operator-provided S3 objects and browser files are outside this
+retention qualification; media/URL migration, public S3 provider qualification and
+cross-destination recovery remain open.
 
 
 [External S3 plain/gzip import](hosting-database-backups.md#external-s3-compose-mysql-import)
-was qualified later at `7a1ca1b2`; the retention evidence above retains its original scope.
+was qualified later at `7a1ca1b2`, and [browser local-file import](hosting-database-backups.md#browser-local-file-compose-mysql-import) at `2ca60518`; the retention evidence above retains its original scope.

@@ -88,7 +88,7 @@ retains target ownership and stopped writers; MySQL does not provide the Postgre
 rollback guarantee. [Local component schedules](hosting-database-backup-schedules.md#compose-mysql-schedule-qualification)
 use the same archive/import path. [Immediate remote upload](#compose-mysql-immediate-remote-upload-qualification)
 can copy a completed SQL archive to a validated target. [Compose MySQL remote schedules](hosting-database-backup-schedules.md#compose-mysql-remote-schedule-qualification)
-use that same upload path. [Recorded remote import](#compose-mysql-recorded-remote-import-qualification) recovers a separate target from a successful upload. [Component retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) supports independent automatic local/remote limits and survivor recovery. Arbitrary S3-path and staged local imports remain unsupported. See the [local qualified scope](#compose-mysql-qualification).
+use that same upload path. [Recorded remote import](#compose-mysql-recorded-remote-import-qualification) recovers a separate target from a successful upload. [Component retention](hosting-database-backup-retention.md#compose-mysql-retention-qualification) supports independent automatic local/remote limits and survivor recovery. [External S3 inspection](#external-s3-compose-mysql-import) and [browser local-file import](#browser-local-file-compose-mysql-import) support operator-provided plain/gzip SQL through separate immutable staging. See the [local qualified scope](#compose-mysql-qualification).
 
 ## Limits and local retention
 
@@ -400,6 +400,62 @@ uses a deterministic writer seam; the full run physically covers the existing
 generated-dump partial-import hold. No physical restart/reimport was attempted.
 
 This qualification covers one Linux arm64 rootful Docker destination,
-trusted-loopback Silo and fixture-CA HTTPS. Staged local file import, public S3
-providers, cross-destination recovery, engine upgrades and full Coolify parity
-remain open. Earlier qualifications retain their own scope and limits.
+trusted-loopback Silo and fixture-CA HTTPS. Browser files were qualified later
+below; public S3 providers, cross-destination recovery, engine upgrades and full
+Coolify parity remain open. Earlier qualifications retain their own scope and limits.
+
+
+## Browser local-file Compose MySQL import
+
+The qualified WordPress/MySQL panel accepts a browser-selected plain or gzip SQL
+file for a separate, current, healthy MySQL target. The runner requires
+`--hosting-database-external-imports` and the
+`hosting_compose_mysql_import_upload_v1` capability, alongside database execution,
+runtime-environment delivery and its durable journal. No S3 credentials are needed.
+
+Choose **Local SQL file · MySQL**, select the separate target and file, and
+prepare the upload. Send the selected file once, then wait for verified readiness.
+Metadata admission returns an immutable stage ID before the browser sends one raw
+File body. The display-only filename is 1–255 UTF-8 bytes without controls or path
+separators. Declared size must be positive and at most 10 GiB; actual encoded and
+decoded bytes are independently bounded. Gzip is detected by magic and its full
+checksum is verified. Upload admission expires within one hour. The ready stage
+then has a separate one-hour confirmation deadline.
+
+Review the verified size, compression and SQL digest, acknowledge replacement,
+and confirm. The existing private stage, target/daemon fencing and nonroot
+application-account executor apply. Metadata and import API replay return the
+original identities after current authorization. An ambiguous body response is
+resolved by stage GET, never automatic retransmission. The controller permits
+one active body per actor and two per controller process. Definitive pre-body
+rejection permits a fresh stage; there is no chunk resume or server-path API.
+
+Interrupted unready uploads discard only exact owned partial bytes. Restart
+retains the durable intent and may leave recovery held; it does not automatically
+settle the operation or resend bytes. Ready, consumed and mismatched files remain
+protected. Inspection rejection does not acquire target ownership or stop writers.
+The existing uncertain-SQL ownership and stopped-writer rules still apply.
+
+### Browser local-file qualification
+
+Qualification29 at `2ca60518` passed on 2026-10-30 with all thirteen markers,
+selected test 224.72 seconds and gate exit zero after 315.982 seconds. The actual
+browser uploaded plain SQL and gzip under a non-gzip filename, confirmed both,
+and rejected truncated gzip before ownership. `CURRENT_USER()` matched the
+configured nonroot target account. Exact metadata/import API replay created no
+additional work or backup provenance. Source post/full-PNG, redeploy, Stop/Start,
+schedules, retention, external S3 import and legacy failed-import safeguards
+passed, as did responsive/served assets, credential scans and exact owned cleanup.
+
+The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/2ca60518357387504b8f25c2a0b761552a60f716/evidence-index.json)
+binds source, Linux binaries, frontend manifest, checks, review intervals and all
+seven resource-baseline comparisons. Formatting, pinned lint-new, vet, full Go
+tests, shell checks, tagged Linux fixture compilation, TS/Vite and Go embedding
+passed. Earlier focused failures and repairs remain recorded. Real-socket
+interruption and restart cleanup are focused evidence; the full run physically
+covers truncated upload rejection and the legacy generated-dump partial-SQL hold.
+Replay is authenticated API replay, not physical UI response-loss recovery.
+
+This remains one Linux arm64 rootful Docker destination with fixture-CA HTTPS.
+Resumable/chunked uploads, server-local paths, broader engine profiles and full
+Coolify parity remain open. Prior qualifications retain their original scope.
