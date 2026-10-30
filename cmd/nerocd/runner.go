@@ -74,6 +74,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	storageDownloads := fs.Bool("hosting-storage-backup-download", false, "enable local archive streaming through one explicitly configured controller")
 	storageArchiveFile := fs.String("storage-archive-config-file", "", "explicit owned mode0600 qualified native helper configuration; storage archive execution is disabled when absent")
 	backupRetention := fs.Bool("hosting-database-backup-retention", false, "enable fenced exact-copy local and remote backup retention")
+	externalImports := fs.Bool("hosting-database-external-imports", false, "enable fenced external S3 SQL inspection and single app-user Compose MySQL import")
 	remoteDatabaseBackups := fs.Bool("hosting-database-remote-backups", false, "enable fenced PostgreSQL and MySQL S3 copies and separate-database remote restores")
 	remoteEndpoints := fs.String("hosting-backup-remote-endpoints", "", "operator-approved private HTTPS origins, comma-separated")
 	remoteCIDRs := fs.String("hosting-backup-remote-cidrs", "", "operator-approved private endpoint CIDRs, comma-separated")
@@ -118,6 +119,12 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 			return errors.New("route continuity requires connected execution and strict proxy switching")
 		}
 		databaseConfig.RouteContinuity = true
+	}
+	if *externalImports {
+		if databaseConfig == nil || !*hostingRuntimeEnv || !*execute || *journalDir == "" {
+			return errors.New("external imports require database execution, runtime environment and durable journal")
+		}
+		databaseConfig.ExternalImports = true
 	}
 	if *backupRetention {
 		if databaseConfig == nil || !*remoteDatabaseBackups {
@@ -285,6 +292,14 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 	registrationCapabilities, err = runnerDatabaseCapabilities(*hostingDatabase, capabilitiesSpecified || proxyConfig.Enabled() || buildConfig != nil || *localBuildDeploy || *hostingRuntimeEnv || *hostingObservation || *hostingRuntimeLogs, registrationCapabilities)
 	if err != nil {
 		return err
+	}
+	if *externalImports {
+		registrationCapabilities = append(registrationCapabilities, domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportCapability)
+	}
+	for _, capability := range registrationCapabilities {
+		if (capability == domain.RunTypeDatabaseImportStage || capability == domain.RunTypeDatabaseImport || capability == domain.HostingDatabaseImportStageCapability || capability == domain.HostingDatabaseImportCapability) && !*externalImports {
+			return errors.New("external import capabilities require explicit execution opt-in")
+		}
 	}
 	if *remoteDatabaseBackups {
 		if *backupRetention {
@@ -456,7 +471,7 @@ func runRunnerWithBuildConfigLoader(args []string, loadBuildConfig func(string) 
 		identityContext, stop = signal.NotifyContext(identityContext, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 	}
-	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{StorageBackupDownloads: *storageDownloads, StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, ComposeBuild: buildConfig != nil && buildConfig.Compose, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RegistryPull: *hostingRegistryPull, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
+	effectiveRunnerID, err := runnerclient.New(*server, runnerToken).RuntimeExecutionIdentityWithOptions(identityContext, runnerclient.RuntimeExecutionOptions{ExternalDatabaseImports: *externalImports, StorageBackupDownloads: *storageDownloads, StorageBackupRetention: archiveConfig != nil && archiveConfig.BackupRetention, DatabaseBackupRetention: *backupRetention, RemoteDatabaseBackups: *remoteDatabaseBackups, LogicalDatabaseBackups: *logicalDatabaseBackups, ApplicationDatabaseStorage: *hostingApplicationDatabaseStorage, ApplicationDatabaseRouteContinuity: *hostingApplicationDatabaseRouteContinuity, ApplicationDatabase: *hostingApplicationDatabase, DatabaseMaintenance: *hostingDatabaseMaintenance, StorageArchive: archiveConfig != nil, RemoteStorageBackups: archiveConfig != nil && archiveConfig.RemoteBackups, Database: *hostingDatabase, DatabaseNetworkCaptureAutomatic: *hostingDatabaseCapture, DatabaseUpgrade: *hostingDatabaseUpgrade, Proxy: proxyConfig.Enabled(), ProxyVerifiedSwitch: *proxyVerifiedSwitch, Build: buildConfig != nil, ComposeBuild: buildConfig != nil && buildConfig.Compose, LocalBuild: *localBuildDeploy, PrivateGit: buildConfig != nil && buildConfig.PrivateGit != nil, RegistryPull: *hostingRegistryPull, RuntimeEnvironment: *hostingRuntimeEnv, Observation: *hostingObservation, RuntimeLogs: *hostingRuntimeLogs, Readiness: *hostingReadiness})
 	if err != nil {
 		return fmt.Errorf("resolve runner identity: %w", err)
 	}

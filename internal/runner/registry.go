@@ -75,6 +75,12 @@ func (r Registry) BuildPlan(run domain.TaskRun) (domain.RunnerPrimitivePlan, err
 		}
 		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
 	}
+	if run.RunSpec.Type == domain.RunTypeDatabaseImportStage || run.RunSpec.Type == domain.RunTypeDatabaseImport {
+		if err := domain.ValidateDatabaseImportTask(run); err != nil {
+			return domain.RunnerPrimitivePlan{}, err
+		}
+		return domain.RunnerPrimitivePlan{RunID: run.ID}, nil
+	}
 	if run.RunSpec.Type == domain.RunTypeDatabaseBackup {
 		if err := domain.ValidateDatabaseBackupTask(run); err != nil {
 			return domain.RunnerPrimitivePlan{}, err

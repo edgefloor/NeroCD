@@ -68,7 +68,8 @@ func (c Client) RuntimeExecutionIdentity(ctx context.Context, proxyConfigured, b
 
 // RuntimeExecutionOptions selects explicitly configured local execution modes.
 type RuntimeExecutionOptions struct {
-	StorageBackupDownloads bool
+	ExternalDatabaseImports bool
+	StorageBackupDownloads  bool
 
 	RegistryPull                                                                                                                 bool
 	StorageBackupRetention                                                                                                       bool
@@ -272,6 +273,15 @@ func (c Client) RuntimeExecutionIdentityWithOptions(ctx context.Context, options
 	}
 	if applicationCap != options.ApplicationDatabase || maintenanceCap != options.DatabaseMaintenance || (applicationCap || maintenanceCap) && (!options.Database || !options.DatabaseNetworkCaptureAutomatic || !options.DatabaseUpgrade || !options.RuntimeEnvironment || !imageCap || !releaseCap || !databaseCapable || !storageCapable || !captureCapable || !upgradeCapable || shellCapable || options.DatabaseNetworkCapture) {
 		return "", errors.New("authenticated connected database capabilities do not match explicit configuration")
+	}
+	importCaps := []string{domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportStageCapability, domain.HostingDatabaseImportCapability}
+	for _, capability := range importCaps {
+		if slices.Contains(result.Capabilities, capability) != options.ExternalDatabaseImports {
+			return "", errors.New("external import capability does not match explicit configuration")
+		}
+	}
+	if options.ExternalDatabaseImports && (!options.Database || !options.RuntimeEnvironment || !slices.Contains(result.Capabilities, domain.HostingStackCapability) || shellCapable) {
+		return "", errors.New("external import execution profile unavailable")
 	}
 	retentionCap, retentionTask := false, false
 	for _, capability := range result.Capabilities {

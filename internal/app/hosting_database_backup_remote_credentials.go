@@ -28,6 +28,7 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 	if err != nil {
 		return nil, err
 	}
+	externalStage := in.Authority.RunID == "db_import_stage_"+in.Authority.OperationID
 	storageRetention := in.Authority.RunID == "storage_retention_"+in.Authority.OperationID
 	storageFamily := in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID
 	token = strings.TrimSpace(token)
@@ -45,6 +46,9 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		}
 		if storageFamily {
 			capability, kind = domain.HostingStorageBackupRemoteCapability, domain.RunTypeStorageBackupTransfer
+		}
+		if externalStage {
+			capability, kind = domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImportStage
 		}
 		if e != nil || identity.RunnerID != principal.ID || !slices.Contains(identity.Capabilities, capability) || !slices.Contains(identity.Capabilities, kind) {
 			return false
@@ -66,7 +70,13 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	var a store.BackupRemoteCredentialAuthorization
-	if storageRetention {
+	if externalStage {
+		r, ok := s.hosting.(store.HostingDatabaseImportRepository)
+		if !ok {
+			return nil, domain.ErrBackupRemoteCredentials
+		}
+		a, err = r.AuthorizeDatabaseImportCredentials(ctx, principal.ID, runnerTokenHash(token), in)
+	} else if storageRetention {
 		r, ok := s.hosting.(store.HostingStorageBackupRetentionCredentialRepository)
 		if !ok {
 			return nil, domain.ErrBackupRemoteCredentials
@@ -108,6 +118,9 @@ func (s *Service) runnerBackupCredentials(ctx context.Context, in domain.BackupR
 		return nil, domain.ErrBackupRemoteCredentials
 	}
 	validate := func() error {
+		if externalStage {
+			return s.hosting.(store.HostingDatabaseImportRepository).RevalidateDatabaseImportCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
+		}
 		if storageRetention {
 			return s.hosting.(store.HostingStorageBackupRetentionCredentialRepository).RevalidateStorageBackupRetentionCredentials(ctx, principal.ID, runnerTokenHash(token), in, a.Metadata)
 		}

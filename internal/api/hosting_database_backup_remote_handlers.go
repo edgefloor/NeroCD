@@ -32,6 +32,11 @@ func (s *Server) runnerBackupRemoteCredentials(w http.ResponseWriter, r *http.Re
 	if !decodeDatabaseBackup(w, r, &in) {
 		return
 	}
+	externalRoute := r.URL.Path == "/api/v1/runners/hosting/database-import-stage/credentials"
+	if externalRoute != (in.Authority.RunID == "db_import_stage_"+in.Authority.OperationID) {
+		writeErrorEnvelope(w, 400, "invalid_request", "credential family mismatch")
+		return
+	}
 	storageRoute := strings.HasPrefix(r.URL.Path, "/api/v1/runners/hosting/storage-backup-transfer/")
 	storageRetentionRoute := strings.HasPrefix(r.URL.Path, "/api/v1/runners/hosting/storage-backup-retention/")
 	storageRetentionAuthority := in.Authority.RunID == "storage_retention_"+in.Authority.OperationID

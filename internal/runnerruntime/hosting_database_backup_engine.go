@@ -216,7 +216,14 @@ func openDatabaseBackupEngine(ctx context.Context, config DatabaseExecutionConfi
 	return e, nil
 }
 func (e *databaseBackupEngine) Close() error {
-	return errors.Join(e.root.Close(), e.store.Close(), e.image.Close())
+	var rootErr, storeErr error
+	if e.root != nil {
+		rootErr = e.root.Close()
+	}
+	if e.store != nil {
+		storeErr = e.store.Close()
+	}
+	return errors.Join(rootErr, storeErr, e.image.Close())
 }
 
 // Docker reports mounts as an unordered collection. Preserve every tuple and

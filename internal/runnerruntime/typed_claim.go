@@ -12,7 +12,7 @@ import (
 // A generic plan must never select a different path or provide extra effects.
 func validateTypedExecutionClaim(claim domain.ClaimedRun) error {
 	switch strings.TrimSpace(claim.Run.RunSpec.Type) {
-	case domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.RunTypeLocalBuildDeploy,
+	case domain.RunTypeDatabaseImportStage, domain.RunTypeDatabaseImport, domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.RunTypeLocalBuildDeploy,
 		domain.RunTypeDatabaseDeploy, domain.RunTypeProxyApply, domain.HostingBuildTaskType,
 		domain.RunTypeStorageArchive, domain.RunTypeStorageBackupTransfer, domain.RunTypeStorageBackupRetention,
 		domain.RunTypeDatabaseBackup, domain.RunTypeDatabaseBackupTransfer, domain.RunTypeDatabaseBackupRetention,

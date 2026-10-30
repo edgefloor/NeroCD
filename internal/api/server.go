@@ -261,7 +261,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/hosting-operations/") {
 		w.Header().Set("Cache-Control", "no-store")
 	}
-	if storageDownloadPath(r.URL.Path) || hostingStorageBackupDeletionPath(r.URL.Path) || hostingStorageBackupSchedulePath(r.URL.Path) || hostingStorageBackupRemotePath(r.URL.Path) || hostingNotificationPath(r.URL.Path) || hostingStorageBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
+	if hostingDatabaseImportRunnerPath(r.URL.Path) || hostingDatabaseImportPath(r.URL.Path) || storageDownloadPath(r.URL.Path) || hostingStorageBackupDeletionPath(r.URL.Path) || hostingStorageBackupSchedulePath(r.URL.Path) || hostingStorageBackupRemotePath(r.URL.Path) || hostingNotificationPath(r.URL.Path) || hostingStorageBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRetentionPath(r.URL.Path) || hostingDatabaseBackupRemotePath(r.URL.Path) || hostingDatabaseBackupSchedulePath(r.URL.Path) || hostingDatabaseBackupPath(r.URL.Path) || databaseNetworkCapturePath(r.URL.Path) || hostingStoragePath(r.URL.Path) || hostingStorageArchivePath(r.URL.Path) || hostingStorageArchiveRunnerPath(r.URL.Path) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if hostingStorageRouteRecoveryPath(r.URL.Path) {
@@ -486,7 +486,7 @@ func requiresAuth(path string) bool {
 }
 
 func requiresRunnerAuth(path string) bool {
-	if storageDownloadRunnerPath(path) || hostingStorageBackupTransferRunnerPath(path) || hostingStorageBackupRetentionRunnerPath(path) || hostingDatabaseBackupRetentionRunnerPath(path) || hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
+	if hostingDatabaseImportRunnerPath(path) || storageDownloadRunnerPath(path) || hostingStorageBackupTransferRunnerPath(path) || hostingStorageBackupRetentionRunnerPath(path) || hostingDatabaseBackupRetentionRunnerPath(path) || hostingDatabaseBackupTransferRunnerPath(path) || hostingDatabaseBackupRunnerPath(path) || databaseConnectionRunnerPath(path) || databaseNetworkCapturePath(path) || hostingStorageArchiveRunnerPath(path) {
 		return true
 	}
 	switch path {

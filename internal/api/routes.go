@@ -3,6 +3,15 @@ package api
 import "net/http"
 
 var publicRoutes = []PublicRoute{
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import/plan"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/mutation"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import/mutation"},
+	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/database-import-stage/credentials"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-import-stages"},
+	{Method: http.MethodGet, Path: "/api/v1/database-import-stages/{id}"},
+	{Method: http.MethodPost, Path: "/api/v1/resources/{id}/database-imports"},
+	{Method: http.MethodGet, Path: "/api/v1/database-imports/{id}"},
 	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}/archive-options"},
 	{Method: http.MethodGet, Path: "/api/v1/storage-backups/{id}/archive"},
 	{Method: http.MethodPost, Path: "/api/v1/runners/hosting/storage-backup-download/plan"},
@@ -450,6 +459,24 @@ func (s *Server) handlerFor(path string) http.HandlerFunc {
 		return s.runnerDatabaseBackupTransferPlan
 	case "/api/v1/runners/hosting/database-backup-transfer/mutation":
 		return s.runnerDatabaseBackupTransferMutation
+	case "/api/v1/runners/hosting/database-import-stage/plan":
+		return s.runnerDatabaseImportStagePlan
+	case "/api/v1/runners/hosting/database-import/plan":
+		return s.runnerDatabaseImportPlan
+	case "/api/v1/runners/hosting/database-import-stage/mutation":
+		return s.runnerDatabaseImportMutation
+	case "/api/v1/runners/hosting/database-import/mutation":
+		return s.runnerDatabaseImportMutation
+	case "/api/v1/runners/hosting/database-import-stage/credentials":
+		return s.runnerBackupRemoteCredentials
+	case "/api/v1/resources/{id}/database-import-stages":
+		return s.requestDatabaseImportStage
+	case "/api/v1/database-import-stages/{id}":
+		return s.getDatabaseImportStage
+	case "/api/v1/resources/{id}/database-imports":
+		return s.requestDatabaseImport
+	case "/api/v1/database-imports/{id}":
+		return s.getDatabaseImport
 	case "/api/v1/resources/{id}/database-backups":
 		return s.hostingDatabaseBackups
 	case "/api/v1/resources/{id}/database-backup-components":

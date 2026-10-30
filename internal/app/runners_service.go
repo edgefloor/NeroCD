@@ -423,6 +423,31 @@ func (s *Service) ClaimRun(ctx context.Context) (domain.ClaimedRun, error) {
 		if plan.DeploymentID != claim.Run.RunSpec.Inputs["deployment_id"] || plan.ProjectID != claim.Run.ProjectID || plan.RunID != claim.Run.ID || plan.LeaseID != claim.Lease.ID || plan.Attempt != claim.Lease.Attempt || plan.Fence != claim.Lease.Fence {
 			return domain.ClaimedRun{}, store.ErrConflict
 		}
+
+	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseImportStage || claim.Run.RunSpec.Type == domain.RunTypeDatabaseImport {
+		if domain.ValidateDatabaseImportTask(claim.Run) != nil || claim.Lease.RunID != claim.Run.ID || claim.Lease.RunnerID != principal.ID {
+			return domain.ClaimedRun{}, store.ErrConflict
+		}
+		a := domain.HostingAuthority{OperationID: claim.Run.RunSpec.HostingOperationID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+		if claim.Run.RunSpec.Type == domain.RunTypeDatabaseImportStage {
+			p, e := s.RunnerDatabaseImportStagePlan(ctx, a)
+			if e != nil {
+				return domain.ClaimedRun{}, e
+			}
+			if p.RunnerID != principal.ID {
+				return domain.ClaimedRun{}, store.ErrConflict
+			}
+		} else {
+			p, e := s.RunnerDatabaseImportPlan(ctx, a)
+			if e != nil {
+				return domain.ClaimedRun{}, e
+			}
+			if p.StagePlan.RunnerID != principal.ID {
+				return domain.ClaimedRun{}, store.ErrConflict
+			}
+		}
+		claim.PrimitivePlan = domain.RunnerPrimitivePlan{RunID: claim.Run.ID}
+		return claim, nil
 	} else if claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention {
 		if domain.ValidateStorageBackupRetentionTask(claim.Run) != nil || claim.Lease.RunID != claim.Run.ID || claim.Lease.RunnerID != principal.ID {
 			return domain.ClaimedRun{}, store.ErrConflict

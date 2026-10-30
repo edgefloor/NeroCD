@@ -126,6 +126,7 @@ func componentBackupEngineFixtureFor(t *testing.T, mode string, mysql bool) (*da
 	e, _, _ := backupEngineFixture(t)
 	stop := stackStopTestPlan(t)
 	plan, h := stop.TargetPlan, stop.Target
+	plan.Snapshot.RunnerID = "runner"
 	databaseComponent, mount, commandName, protocol := "db", "/var/lib/postgresql/data", "postgres", domain.HostingDatabaseBackupComponentVersion
 	if mysql {
 		databaseComponent, mount, commandName, protocol = "mysql", "/var/lib/mysql", "mysqld", domain.HostingDatabaseMySQLBackupComponentVersion

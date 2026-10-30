@@ -868,6 +868,63 @@ type HostingDatabaseDeployment struct {
 	Credentials   json.RawMessage `json:"credentials"`
 }
 
+type HostingDatabaseImport struct {
+	ID               string          `json:"id"`
+	StageID          string          `json:"stage_id"`
+	ProjectID        string          `json:"project_id"`
+	TargetResourceID string          `json:"target_resource_id"`
+	TargetBindingID  string          `json:"target_binding_id"`
+	ActorID          string          `json:"actor_id"`
+	RequestID        string          `json:"request_id"`
+	RequestHash      string          `json:"request_hash"`
+	RunnerID         string          `json:"runner_id"`
+	DaemonID         string          `json:"daemon_id"`
+	Plan             json.RawMessage `json:"plan"`
+	PlanHash         string          `json:"plan_hash"`
+	Body             json.RawMessage `json:"body"`
+	OwnershipHeld    bool            `json:"ownership_held"`
+	RunID            *string         `json:"run_id"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+type HostingDatabaseImportDelivery struct {
+	DeliveryID string          `json:"delivery_id"`
+	StageID    string          `json:"stage_id"`
+	Metadata   json.RawMessage `json:"metadata"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseImportReceipt struct {
+	OperationID string          `json:"operation_id"`
+	Phase       string          `json:"phase"`
+	ReceiptID   string          `json:"receipt_id"`
+	Authority   json.RawMessage `json:"authority"`
+	Body        json.RawMessage `json:"body"`
+	BodyHash    string          `json:"body_hash"`
+	Response    json.RawMessage `json:"response"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type HostingDatabaseImportStage struct {
+	ID               string          `json:"id"`
+	ProjectID        string          `json:"project_id"`
+	TargetResourceID string          `json:"target_resource_id"`
+	TargetBindingID  string          `json:"target_binding_id"`
+	ActorID          string          `json:"actor_id"`
+	RequestID        string          `json:"request_id"`
+	RequestHash      string          `json:"request_hash"`
+	RunnerID         string          `json:"runner_id"`
+	DaemonID         string          `json:"daemon_id"`
+	Plan             json.RawMessage `json:"plan"`
+	PlanHash         string          `json:"plan_hash"`
+	Body             json.RawMessage `json:"body"`
+	ReadyReceipt     []byte          `json:"ready_receipt"`
+	RunID            *string         `json:"run_id"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
 type HostingDatabaseMembershipHead struct {
 	DatabaseBindingID string          `json:"database_binding_id"`
 	ConnectionID      string          `json:"connection_id"`

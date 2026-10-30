@@ -68,6 +68,7 @@ type JournalProvenance struct {
 
 // JournalSnapshot is a copy of pending durable attempt mutations.
 type JournalSnapshot struct {
+	DatabaseImports          []JournalDatabaseImport          `json:"database_imports,omitempty"`
 	StorageBackupRetentions  []JournalStorageBackupRetention  `json:"storage_backup_retentions,omitempty"`
 	DatabaseBackupRetentions []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
 	StorageBackupTransfers   []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
@@ -86,23 +87,25 @@ type JournalSnapshot struct {
 }
 
 type journalState struct {
-	StackBaseVersion         int                              `json:"stack_base_version,omitempty"`
-	StorageBackupRetentions  []JournalStorageBackupRetention  `json:"storage_backup_retentions,omitempty"`
-	DatabaseBackupRetentions []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
-	StorageBackupTransfers   []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
-	DatabaseBackupTransfers  []JournalDatabaseBackupTransfer  `json:"database_backup_transfers,omitempty"`
-	DatabaseBackup           []JournalDatabaseBackup          `json:"database_backup,omitempty"`
-	DatabaseNetworkCapture   []JournalDatabaseNetworkCapture  `json:"database_network_capture,omitempty"`
-	StorageArchive           []JournalStorageArchive          `json:"storage_archive,omitempty"`
-	BuildLogs                []JournalBuildLog                `json:"build_logs,omitempty"`
-	BuildLogCursors          []JournalBuildLogCursor          `json:"build_log_cursors,omitempty"`
-	Build                    []JournalBuild                   `json:"build,omitempty"`
-	Proxy                    []JournalProxy                   `json:"proxy,omitempty"`
-	Hosting                  []JournalHosting                 `json:"hosting,omitempty"`
-	Version                  int                              `json:"version"`
-	Events                   []JournalEvent                   `json:"events"`
-	Completions              []JournalCompletion              `json:"completions"`
-	Provenance               []JournalProvenance              `json:"provenance"`
+	ExternalImportBaseVersion int                              `json:"external_import_base_version,omitempty"`
+	DatabaseImports           []JournalDatabaseImport          `json:"database_imports,omitempty"`
+	StackBaseVersion          int                              `json:"stack_base_version,omitempty"`
+	StorageBackupRetentions   []JournalStorageBackupRetention  `json:"storage_backup_retentions,omitempty"`
+	DatabaseBackupRetentions  []JournalDatabaseBackupRetention `json:"database_backup_retentions,omitempty"`
+	StorageBackupTransfers    []JournalStorageBackupTransfer   `json:"storage_backup_transfers,omitempty"`
+	DatabaseBackupTransfers   []JournalDatabaseBackupTransfer  `json:"database_backup_transfers,omitempty"`
+	DatabaseBackup            []JournalDatabaseBackup          `json:"database_backup,omitempty"`
+	DatabaseNetworkCapture    []JournalDatabaseNetworkCapture  `json:"database_network_capture,omitempty"`
+	StorageArchive            []JournalStorageArchive          `json:"storage_archive,omitempty"`
+	BuildLogs                 []JournalBuildLog                `json:"build_logs,omitempty"`
+	BuildLogCursors           []JournalBuildLogCursor          `json:"build_log_cursors,omitempty"`
+	Build                     []JournalBuild                   `json:"build,omitempty"`
+	Proxy                     []JournalProxy                   `json:"proxy,omitempty"`
+	Hosting                   []JournalHosting                 `json:"hosting,omitempty"`
+	Version                   int                              `json:"version"`
+	Events                    []JournalEvent                   `json:"events"`
+	Completions               []JournalCompletion              `json:"completions"`
+	Provenance                []JournalProvenance              `json:"provenance"`
 }
 
 // AttemptJournal is an append-before-send, atomic-rewrite journal. The secure
@@ -125,6 +128,22 @@ func OpenAttemptJournal(path string) (*AttemptJournal, error) {
 		if err := json.Unmarshal(contents, &j.state); err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("decode runner journal: %w", err)
+		}
+		if j.state.Version == 24 {
+			if decodeDatabaseJournal(contents, &j.state) != nil || len(j.state.DatabaseImports) == 0 || j.state.ExternalImportBaseVersion < journalFormatVersion || j.state.ExternalImportBaseVersion > 23 {
+				_ = store.Close()
+				return nil, errors.New("invalid external import journal version")
+			}
+			j.state.Version = j.state.ExternalImportBaseVersion
+			j.state.ExternalImportBaseVersion = 0
+			contents, err = json.Marshal(j.state)
+			if err != nil {
+				_ = store.Close()
+				return nil, err
+			}
+		} else if len(j.state.DatabaseImports) > 0 || j.state.ExternalImportBaseVersion != 0 {
+			_ = store.Close()
+			return nil, errors.New("external imports require journal version 24")
 		}
 		// Validate the original bytes before a stack wrapper is normalized. Re-marshal
 		// would otherwise erase duplicate keys and typed field case aliases.
@@ -350,6 +369,11 @@ func (j *AttemptJournal) DiscardAttempt(authority AttemptIdentity) error {
 			return errors.New("storage transfer evidence requires explicit acknowledgment")
 		}
 	}
+	for _, entry := range j.state.DatabaseImports {
+		if sameAttemptAuthority(entry.Attempt, authority) {
+			return errors.New("external import requires explicit receipt acknowledgment")
+		}
+	}
 	for _, entry := range j.state.DatabaseBackupTransfers {
 		if sameAttemptAuthority(entry.Attempt, authority) {
 			return errors.New("remote transfer evidence requires explicit acknowledgment")
@@ -429,7 +453,7 @@ func sameAttemptAuthority(left, right AttemptIdentity) bool {
 func (j *AttemptJournal) Snapshot() JournalSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return JournalSnapshot{StorageBackupRetentions: cloneStorageBackupRetentions(j.state.StorageBackupRetentions), StorageBackupTransfers: cloneStorageBackupTransfers(j.state.StorageBackupTransfers), DatabaseBackupRetentions: cloneDatabaseBackupRetentions(j.state.DatabaseBackupRetentions), DatabaseBackupTransfers: cloneDatabaseBackupTransfers(j.state.DatabaseBackupTransfers), DatabaseBackup: cloneDatabaseBackups(j.state.DatabaseBackup),
+	return JournalSnapshot{DatabaseImports: cloneDatabaseImports(j.state.DatabaseImports), StorageBackupRetentions: cloneStorageBackupRetentions(j.state.StorageBackupRetentions), StorageBackupTransfers: cloneStorageBackupTransfers(j.state.StorageBackupTransfers), DatabaseBackupRetentions: cloneDatabaseBackupRetentions(j.state.DatabaseBackupRetentions), DatabaseBackupTransfers: cloneDatabaseBackupTransfers(j.state.DatabaseBackupTransfers), DatabaseBackup: cloneDatabaseBackups(j.state.DatabaseBackup),
 		DatabaseNetworkCapture: cloneDatabaseNetworkCaptures(j.state.DatabaseNetworkCapture),
 		StorageArchive:         cloneStorageArchiveEntries(j.state.StorageArchive),
 		BuildLogs:              cloneBuildLogs(j.state.BuildLogs),
@@ -460,10 +484,13 @@ func NewJournalID(prefix string) (string, error) {
 }
 
 func (j *AttemptJournal) entryCountLocked() int {
-	return len(j.state.StorageBackupRetentions) + len(j.state.StorageBackupTransfers) + len(j.state.DatabaseBackupRetentions) + len(j.state.DatabaseBackupTransfers) + len(j.state.DatabaseBackup) + len(j.state.DatabaseNetworkCapture) + len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
+	return len(j.state.DatabaseImports) + len(j.state.StorageBackupRetentions) + len(j.state.StorageBackupTransfers) + len(j.state.DatabaseBackupRetentions) + len(j.state.DatabaseBackupTransfers) + len(j.state.DatabaseBackup) + len(j.state.DatabaseNetworkCapture) + len(j.state.StorageArchive) + len(j.state.Events) + len(j.state.Completions) + len(j.state.Provenance) + len(j.state.Hosting) + len(j.state.Proxy) + len(j.state.Build) + len(j.state.BuildLogs) + len(j.state.BuildLogCursors)
 }
 
 func (j *AttemptJournal) persistLocked() error {
+	if e := validateJournalDatabaseImports(j.state); e != nil {
+		return e
+	}
 	if err := validateJournalStorageBackupTransfers(j.state); err != nil {
 		return err
 	}
@@ -560,6 +587,10 @@ func (j *AttemptJournal) persistLocked() error {
 		wire.StackBaseVersion = state.Version
 		wire.Version = 23
 	}
+	if len(state.DatabaseImports) > 0 {
+		wire.ExternalImportBaseVersion = wire.Version
+		wire.Version = 24
+	}
 	contents, err := json.Marshal(wire)
 	if err != nil {
 		return err
@@ -575,6 +606,9 @@ func (j *AttemptJournal) persistLocked() error {
 }
 
 func validateJournalState(state journalState) error {
+	if e := validateJournalDatabaseImports(state); e != nil {
+		return e
+	}
 	if len(state.StorageBackupRetentions) > 0 {
 		if state.Version != 22 {
 			return errors.New("storage retention journal version mismatch")
@@ -582,7 +616,7 @@ func validateJournalState(state journalState) error {
 		if err := validateJournalStorageBackupRetentions(state); err != nil {
 			return err
 		}
-		if len(state.StorageBackupRetentions)+len(state.StorageBackupTransfers)+len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
+		if len(state.DatabaseImports)+len(state.StorageBackupRetentions)+len(state.StorageBackupTransfers)+len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 			return errors.New("runner journal entry limit exceeded")
 		}
 		state.StorageBackupRetentions = nil
@@ -724,7 +758,7 @@ func validateJournalState(state journalState) error {
 	if state.Version < journalFormatVersion || state.Version > 20 {
 		return fmt.Errorf("unsupported runner journal version %d", state.Version)
 	}
-	if len(state.StorageBackupTransfers)+len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
+	if len(state.DatabaseImports)+len(state.StorageBackupTransfers)+len(state.DatabaseBackupRetentions)+len(state.DatabaseBackupTransfers)+len(state.DatabaseBackup)+len(state.DatabaseNetworkCapture)+len(state.StorageArchive)+len(state.Events)+len(state.Completions)+len(state.Provenance)+len(state.Hosting)+len(state.Proxy)+len(state.Build)+len(state.BuildLogs)+len(state.BuildLogCursors) > journalMaxEntries {
 		return errors.New("runner journal entry limit exceeded")
 	}
 	ids := make(map[string]struct{}, len(state.Events)+len(state.Completions)+len(state.Provenance))

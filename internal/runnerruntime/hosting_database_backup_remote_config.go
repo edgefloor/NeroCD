@@ -11,7 +11,7 @@ import (
 func databaseBackupRemotePolicy(c DatabaseExecutionConfig) (backupRemoteNetworkPolicy, error) {
 	p := backupRemoteNetworkPolicy{privateOrigins: map[string][]netip.Prefix{}}
 	invalid := errors.New("invalid protected remote backup network policy")
-	if !c.RemoteBackups && (len(c.RemoteEndpoints) > 0 || len(c.RemoteCIDRs) > 0 || c.RemoteFixtureOrigin != "") {
+	if !c.RemoteBackups && !c.ExternalImports && (len(c.RemoteEndpoints) > 0 || len(c.RemoteCIDRs) > 0 || c.RemoteFixtureOrigin != "") {
 		return p, invalid
 	}
 	if len(c.RemoteEndpoints) > 32 || len(c.RemoteCIDRs) > 32 {

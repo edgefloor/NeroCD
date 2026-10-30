@@ -15,6 +15,8 @@ var ErrBackupRemoteCredentials = errors.New("remote backup credentials unavailab
 
 // HostingStorageBackupRetentionCredentialPurpose identifies credentials issued for storage backup
 // retention.
+const HostingDatabaseImportCredentialPurpose = "hosting_mysql_external_stage_credentials.v1"
+
 const HostingStorageBackupRetentionCredentialPurpose = "hosting_storage_backup_retention_credentials.v1"
 
 // HostingDatabaseBackupRetentionCredentialPurpose identifies credentials issued for database
@@ -43,6 +45,13 @@ func (r BackupRemoteCredentialRequest) Validate() error {
 	if r.RetentionCopyID != "" {
 		a := r.Authority
 		if !validRuntimeReferenceID(r.RetentionCopyID) || !validRuntimeReferenceID(a.OperationID) || (a.RunID != "db_retention_"+a.OperationID && a.RunID != "storage_retention_"+a.OperationID) || !validRuntimeReferenceID(a.LeaseID) || a.Attempt < 1 || a.Attempt > math.MaxInt32 || len(a.Fence) < 1 || len(a.Fence) > 256 || !validRuntimeReferenceID(r.DeliveryID) || !imageSHA256.MatchString(r.PlanHash) || len(r.DaemonID) < 1 || len(r.DaemonID) > 256 {
+			return ErrBackupRemoteCredentials
+		}
+		return nil
+	}
+	if r.Authority.RunID == "db_import_stage_"+r.Authority.OperationID {
+		check := HostingDatabaseImportMutation{HostingAuthority: r.Authority, ReceiptID: r.DeliveryID, PlanHash: r.PlanHash, Phase: "stage_intent", DaemonID: r.DaemonID}
+		if check.Validate() != nil {
 			return ErrBackupRemoteCredentials
 		}
 		return nil
@@ -87,6 +96,9 @@ func (m BackupRemoteCredentialMetadata) Validate() error {
 		if m.Request.Authority.RunID == "storage_retention_"+m.Request.Authority.OperationID {
 			expected = HostingStorageBackupRetentionCredentialPurpose
 		}
+	}
+	if m.Request.Authority.RunID == "db_import_stage_"+m.Request.Authority.OperationID && m.Request.RetentionCopyID == "" {
+		expected = HostingDatabaseImportCredentialPurpose
 	}
 	if m.Purpose != expected || m.Request.Validate() != nil || !validRuntimeReferenceID(m.RunnerID) || m.RequestHash != HostingDocumentHash(struct {
 		Runner  string

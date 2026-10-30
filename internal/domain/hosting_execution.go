@@ -28,7 +28,7 @@ const (
 )
 
 func isHostingExecution(spec RunSpec) bool {
-	return strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupRetention || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupTransfer || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackup || strings.TrimSpace(spec.Type) == RunTypeDatabaseNetworkCapture || strings.TrimSpace(spec.Type) == RunTypeStorageArchive || strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
+	return strings.TrimSpace(spec.Type) == RunTypeDatabaseImportStage || strings.TrimSpace(spec.Type) == RunTypeDatabaseImport || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupRetention || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackupTransfer || strings.TrimSpace(spec.Type) == RunTypeDatabaseBackup || strings.TrimSpace(spec.Type) == RunTypeDatabaseNetworkCapture || strings.TrimSpace(spec.Type) == RunTypeStorageArchive || strings.TrimSpace(spec.Type) == HostingBuildTaskType || spec.HostingBuildID != "" || strings.TrimSpace(spec.Type) == RunTypeLocalBuildDeploy || strings.TrimSpace(spec.Type) == RunTypeImageDeploy || strings.TrimSpace(spec.Type) == RunTypeDatabaseDeploy || strings.TrimSpace(spec.Type) == RunTypeProxyApply || spec.HostingOperationID != "" || spec.HostingMode != "" || spec.ProxyOperationID != "" || spec.ProxyMode != ""
 }
 
 // ContainsHostingExecution inspects both accepted workflow representations for

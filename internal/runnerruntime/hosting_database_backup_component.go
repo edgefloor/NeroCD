@@ -209,23 +209,27 @@ func (e *databaseBackupEngine) componentImportQuiescent(ctx context.Context, id 
 }
 
 func (e *databaseBackupEngine) resumeComponentWriters(ctx context.Context, p domain.HostingDatabaseBackupPlan, before func(context.Context) error) error {
+	return e.resumeVerifiedComponentWriters(ctx, *p.Target, *p.TargetPlan, before)
+}
+
+func (e *databaseBackupEngine) resumeVerifiedComponentWriters(ctx context.Context, target domain.HostingHealthy, plan domain.HostingApplyPlan, before func(context.Context) error) error {
 	for _, writer := range e.writers {
 		if databaseAuthorize(ctx, before) != nil {
 			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageAuthority, errDatabaseBackupHeld)
 		}
 		actual, err := e.image.inspectStackContainer(ctx, writer.ContainerID)
-		if err != nil || actual.Image != writer.ImageID || stackContainerMatches(actual, writer.OperationID, *p.TargetPlan, p.Target.Stack.NetworkID) != nil {
+		if err != nil || actual.Image != writer.ImageID || stackContainerMatches(actual, writer.OperationID, plan, target.Stack.NetworkID) != nil {
 			return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageWriterResume, errDatabaseBackupHeld)
 		}
 		if actual.State.Running != writer.Running {
 			if !writer.Running {
 				return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageWriterResume, errDatabaseBackupHeld)
 			}
-			if _, err = e.image.mutate(ctx, p.Target.Release.DaemonID, "container", "start", writer.ContainerID); err != nil {
+			if _, err = e.image.mutate(ctx, target.Release.DaemonID, "container", "start", writer.ContainerID); err != nil {
 				return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageWriterResume, errDatabaseBackupHeld)
 			}
 			actual, err = e.image.inspectStackContainer(ctx, writer.ContainerID)
-			if err != nil || !actual.State.Running || stackContainerMatches(actual, writer.OperationID, *p.TargetPlan, p.Target.Stack.NetworkID) != nil {
+			if err != nil || !actual.State.Running || stackContainerMatches(actual, writer.OperationID, plan, target.Stack.NetworkID) != nil {
 				return databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageWriterResume, errDatabaseBackupHeld)
 			}
 		}
@@ -264,29 +268,8 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 			result = errors.Join(result, err)
 		}
 	}()
-	for _, writer := range e.writers {
-		if !writer.Running {
-			continue
-		}
-		if databaseAuthorize(ctx, before) != nil {
-			return blob, failure(databaseBackupStageAuthority)
-		}
-		actual, err := e.image.inspectStackContainer(ctx, writer.ContainerID)
-		if err != nil || !actual.State.Running || stackContainerMatches(actual, writer.OperationID, *p.TargetPlan, p.Target.Stack.NetworkID) != nil {
-			return blob, failure(databaseBackupStageWriterState)
-		}
-		if _, err = e.image.mutate(ctx, p.Target.Release.DaemonID, "container", "stop", "--time", "10", writer.ContainerID); err != nil {
-			return blob, failure(databaseBackupStageWriterStop)
-		}
-	}
-	if databaseAuthorize(ctx, before) != nil {
-		return blob, failure(databaseBackupStageAuthority)
-	}
-	for _, writer := range e.writers {
-		actual, err := e.image.inspectStackContainer(ctx, writer.ContainerID)
-		if err != nil || actual.State.Running || stackContainerMatches(actual, writer.OperationID, *p.TargetPlan, p.Target.Stack.NetworkID) != nil {
-			return blob, failure(databaseBackupStageWriterState)
-		}
+	if err = e.stopVerifiedComponentWriters(ctx, *p.Target, *p.TargetPlan, before); err != nil {
+		return blob, err
 	}
 	// Unknown SQL clients are not covered by the platform hold or stack inventory.
 	clientArgs := componentDatabaseExec(db.ContainerID, false, "/bin/sh", "-ceu", componentPostgresEnvironment+`/usr/local/bin/psql --username="$u" --dbname="$d" --no-psqlrc --tuples-only --no-align --command="SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND pid <> pg_backend_pid()"`)
@@ -332,4 +315,35 @@ func (e *databaseBackupEngine) componentRestore(ctx context.Context, p domain.Ho
 		return blob, databaseBackupErrorAt(databaseBackupPhasePostImport, databaseBackupStageAuthority, errDatabaseBackupHeld)
 	}
 	return *p.Operation.Blob, nil
+}
+
+func (e *databaseBackupEngine) stopVerifiedComponentWriters(ctx context.Context, target domain.HostingHealthy, plan domain.HostingApplyPlan, before func(context.Context) error) error {
+	failure := func(stage databaseBackupStage) error {
+		return databaseBackupErrorAt(databaseBackupPhaseExecution, stage, errDatabaseBackupHeld)
+	}
+	for _, writer := range e.writers {
+		if !writer.Running {
+			continue
+		}
+		if databaseAuthorize(ctx, before) != nil {
+			return failure(databaseBackupStageAuthority)
+		}
+		actual, err := e.image.inspectStackContainer(ctx, writer.ContainerID)
+		if err != nil || !actual.State.Running || stackContainerMatches(actual, writer.OperationID, plan, target.Stack.NetworkID) != nil {
+			return failure(databaseBackupStageWriterState)
+		}
+		if _, err = e.image.mutate(ctx, target.Release.DaemonID, "container", "stop", "--time", "10", writer.ContainerID); err != nil {
+			return failure(databaseBackupStageWriterStop)
+		}
+	}
+	if databaseAuthorize(ctx, before) != nil {
+		return failure(databaseBackupStageAuthority)
+	}
+	for _, writer := range e.writers {
+		actual, err := e.image.inspectStackContainer(ctx, writer.ContainerID)
+		if err != nil || actual.State.Running || stackContainerMatches(actual, writer.OperationID, plan, target.Stack.NetworkID) != nil {
+			return failure(databaseBackupStageWriterState)
+		}
+	}
+	return nil
 }

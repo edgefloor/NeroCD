@@ -114,6 +114,9 @@ func (c Client) hostingBackupCredentials(ctx context.Context, runner string, in 
 	if in.Authority.RunID == "storage_transfer_"+in.Authority.OperationID {
 		path = "/api/v1/runners/hosting/storage-backup-transfer/credentials"
 	}
+	if in.Authority.RunID == "db_import_stage_"+in.Authority.OperationID {
+		path = "/api/v1/runners/hosting/database-import-stage/credentials"
+	}
 	if retention {
 		path = "/api/v1/runners/hosting/database-backup-retention/credentials"
 		if in.Authority.RunID == "storage_retention_"+in.Authority.OperationID {

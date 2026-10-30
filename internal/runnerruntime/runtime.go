@@ -324,6 +324,9 @@ func RunContext(ctx context.Context, config Config) error {
 	if err := reconcileDatabaseBackupTransferJournal(ctx, config, journal); err != nil {
 		return err
 	}
+	if err := reconcileDatabaseImportJournal(ctx, config, journal); err != nil {
+		return err
+	}
 	if err := reconcileDatabaseBackupJournal(ctx, config, journal); err != nil {
 		return err
 	}
@@ -531,6 +534,10 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		if options.storageArchive == nil || (claim.Run.RunSpec.HostingMode == domain.HostingStorageBackupDownloadMode && !options.storageArchive.BackupDownloads) || (claim.Run.RunSpec.HostingMode != domain.HostingStorageBackupDownloadMode && !options.storageArchive.RemoteBackups) || domain.ValidateStorageBackupTransferTask(claim.Run) != nil {
 			return errors.New("storage remote backup execution not configured")
 		}
+	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseImportStage || claim.Run.RunSpec.Type == domain.RunTypeDatabaseImport {
+		if options.database == nil || !options.database.ExternalImports || domain.ValidateDatabaseImportTask(claim.Run) != nil {
+			return errors.New("invalid or unconfigured external import task")
+		}
 	} else if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		if options.database == nil || !options.database.RemoteBackups || domain.ValidateDatabaseBackupTransferTask(claim.Run) != nil {
 			return errors.New("invalid or unconfigured remote backup task")
@@ -621,7 +628,7 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 		return fmt.Errorf("confirm lease authority: %w", err)
 	}
 	var validators []func(domain.RunLease) error
-	if claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseImportStage || claim.Run.RunSpec.Type == domain.RunTypeDatabaseImport || claim.Run.RunSpec.Type == domain.RunTypeComposeDeploy || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeStorageBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupRetention || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer || claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackup || claim.Run.RunSpec.Type == domain.RunTypeStorageArchive || claim.Run.RunSpec.Type == domain.RunTypeDatabaseDeploy || claim.Run.RunSpec.Type == domain.RunTypeLocalBuildDeploy || claim.Run.RunSpec.Type == domain.RunTypeImageDeploy && options.database != nil && options.database.ApplicationDatabase {
 		validate := exactBuildLease(claim.Lease)
 		if err := validate(initialRenew); err != nil {
 			return err
@@ -651,6 +658,9 @@ func executeClaimWithOptionsContext(parent context.Context, server string, token
 			return executeStorageBackupDownloadClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.storageArchive)
 		}
 		return executeStorageBackupTransferClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.storageArchive)
+	}
+	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseImportStage || claim.Run.RunSpec.Type == domain.RunTypeDatabaseImport {
+		return executeDatabaseImportClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
 	}
 	if claim.Run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer {
 		return executeDatabaseBackupTransferClaim(supervisor, journal, databaseCompletionDrain(supervisor, reporter, watcher, renewer), server, token, claim, options.imageEndpoint, options.database)
