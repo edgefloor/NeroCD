@@ -628,7 +628,8 @@ function GitComposeDatabaseBackups({
 function ComposeDatabaseBackups(
   props: Parameters<typeof useComposeDatabaseBackups>[0],
 ) {
-  const [externalSource, setExternalSource] = useState(false);
+  const [importSource, setImportSource] = useState<"backup" | "s3" | "upload">("backup");
+  const externalSource = importSource !== "backup";
   const [externalBusy, setExternalBusy] = useState(false);
   const {
     denied,
@@ -683,7 +684,7 @@ function ComposeDatabaseBackups(
     >
       <h5 className="font-medium">Compose database logical backups</h5>
       <p>
-        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive, a recorded successful upload or an inspected configured S3 object. Retention for the qualified mysql component is configured below. Archives contain
+        Qualified official PostgreSQL16 and pinned MySQL8.4.13 components only. Backups can upload to a validated destination. MySQL imports can use a local archive, a recorded successful upload an inspected configured S3 object, or a staged local SQL file. Retention for the qualified mysql component is configured below. Archives contain
         database records, not uploaded files or volume contents. The runner
         verifies the live profile before execution. Source writes may continue
         during backup.
@@ -763,9 +764,10 @@ function ComposeDatabaseBackups(
           deployment settles.
         </p>
       ) : null}
-      <label className="block">Database import source<select className="block w-full min-w-0 rounded border p-2" value={externalSource ? "s3" : "backup"} disabled={locked} onChange={e => { if (!locked) { setAck(false); setExternalSource(e.target.value === "s3"); } }}><option value="backup">Recorded database backup</option><option value="s3">Configured S3 object · MySQL SQL</option></select></label>
+      <label className="block">Database import source<select className="block w-full min-w-0 rounded border p-2" value={importSource} disabled={locked} onChange={e => { if (!locked) { setAck(false); setImportSource(e.target.value as "backup" | "s3" | "upload"); } }}><option value="backup">Recorded database backup</option><option value="s3">Configured S3 object · MySQL SQL</option><option value="upload">Local SQL file · MySQL</option></select></label>
       <ComposeDatabaseRestore
         externalSource={externalSource}
+        sourceKind={importSource === "upload" ? "upload" : "s3"}
         targetEvidenceRevision={targetEvidenceRevision}
         externalBlocked={operationLocked}
         onExternalBusy={setExternalBusy}
@@ -1611,6 +1613,7 @@ function settledDatabaseComponents(
 
 function ComposeDatabaseRestore({
   externalSource,
+  sourceKind,
   targetEvidenceRevision,
   externalBlocked,
   onExternalBusy,
@@ -1640,6 +1643,7 @@ function ComposeDatabaseRestore({
   remoteRestore,
 }: {
   externalSource: boolean;
+  sourceKind: "s3" | "upload";
   targetEvidenceRevision: number;
   externalBlocked: boolean;
   onExternalBusy: (busy: boolean) => void;
@@ -1791,7 +1795,7 @@ function ComposeDatabaseRestore({
         </select>
       </label>
       {destination ? <p>Reviewed target deployment {destination.operation_id}, generation {destination.resource_generation}.</p> : null}
-      {externalSource ? <ComposeDatabaseExternalImport targetResourceID={target} targetEvidenceRevision={targetEvidenceRevision} scope={scope} owner={owner} blocked={externalBlocked} onBusy={onExternalBusy} onDenied={onDenied} target={chosen && destination?.operation_id && destination.components.some(c => c.component === targetComponent && matchesArchive(c)) ? {resource_id:chosen.id,component:targetComponent,expected_deployed_operation_id:destination.operation_id,expected_resource_generation:destination.resource_generation} : undefined} /> : <>
+      {externalSource ? <ComposeDatabaseExternalImport sourceKind={sourceKind} targetResourceID={target} targetEvidenceRevision={targetEvidenceRevision} scope={scope} owner={owner} blocked={externalBlocked} onBusy={onExternalBusy} onDenied={onDenied} target={chosen && destination?.operation_id && destination.components.some(c => c.component === targetComponent && matchesArchive(c)) ? {resource_id:chosen.id,component:targetComponent,expected_deployed_operation_id:destination.operation_id,expected_resource_generation:destination.resource_generation} : undefined} /> : <>
       <label className="block">
         <input
           type="checkbox"

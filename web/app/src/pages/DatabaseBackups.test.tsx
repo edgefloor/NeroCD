@@ -914,3 +914,22 @@ test("configured S3 import qualifies a separate target with no recorded backup a
  vi.mocked(externalImports.getDatabaseImportStage).mockResolvedValue(queued);
  await act(async()=>release(queued));await screen.findByText(/Inspection stage · queued/);
 });
+
+
+test("local SQL import controls qualify a separate MySQL target without recorded backups", async () => {
+  remoteFixture();
+  vi.mocked(destinations.getResourceBinding).mockImplementation(async id => ({id:"binding",resource_id:id,destination_id:"runner",runtime_namespace:"test",created_by:"owner",created_at:completed.created_at}));
+  const client = mountComposeBackupPanel("compose", "compose", "mysql");
+  vi.mocked(api.listDatabaseBackups).mockResolvedValue([]);
+  await act(async () => { await client.invalidateQueries({queryKey:api.databaseBackupsKey(scope,"db")}); });
+  fireEvent.change(screen.getByRole("combobox", {name:"Database import source"}), {target:{value:"upload"}});
+  fireEvent.change(screen.getByRole("combobox", {name:"Restore target application"}), {target:{value:"target"}});
+  const component = screen.getByRole("combobox", {name:"Restore target database component"});
+  await waitFor(() => expect(component.querySelectorAll("option")).toHaveLength(2));
+  fireEvent.change(component, {target:{value:"mysql"}});
+  const panel = screen.getByRole("region", {name:"Local SQL file import"});
+  expect(within(panel).getByLabelText("Local SQL file")).toBeDefined();
+  expect(screen.queryByRole("combobox", {name:"Backup to restore"})).toBeNull();
+  expect(screen.queryByLabelText("S3 import destination")).toBeNull();
+  expect(api.requestDatabaseBackup).not.toHaveBeenCalled();
+});
