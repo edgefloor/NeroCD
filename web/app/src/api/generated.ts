@@ -825,6 +825,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runners/hosting/database-backup-download/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an exact local archive under current runner lease authority */
+        post: operations["runnerDatabaseBackupDownloadPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runners/hosting/database-backup-download/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send one verified local archive to its waiting browser request */
+        post: operations["runnerDatabaseBackupDownloadStream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}/archive-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check current owner access to a local database backup download
+         * @description Local copies only for qualified native and Compose PostgreSQL/MySQL versions. No live database credentials or deployment required. No S3 refetch. Unknown query parameters and Range are rejected before creating work.
+         */
+        get: operations["databaseBackupArchiveOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/database-backups/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream one exact local database backup through a single controller
+         * @description Owner-only local attachment, no-store, exact Content-Length. Filename is the backup ID with .dump for postgresql_custom or .sql for mysql_sql. Maximum 1 GiB. No Range or resume, no S3 fallback. Invalid IDs, query parameters and Range are rejected before session creation.
+         */
+        get: operations["downloadDatabaseBackupArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners/hosting/storage-backup-download/plan": {
         parameters: {
             query?: never;
@@ -8182,6 +8256,40 @@ export interface components {
             depth: number;
             path_bytes: number;
         };
+        HostingDatabaseBackupDownloadStream: components["schemas"]["HostingAuthority"] & {
+            plan_hash: string;
+            /** @enum {string} */
+            failure_code?: "" | "archive_unavailable";
+        };
+        HostingDatabaseBackupDownloadPlan: {
+            /** @enum {string} */
+            version: "database.logical-local-download.v1";
+            /** @enum {string} */
+            backup_version: "postgresql.logical-local.v1" | "mysql.logical-local.v1" | "postgresql.compose-logical-local.v1" | "mysql.compose-logical-local.v1";
+            server_id: string;
+            session_id: string;
+            actor_id: string;
+            project_id: string;
+            resource_id: string;
+            binding_id: string;
+            backup_id: string;
+            copy_id: string;
+            runner_id: string;
+            destination_id: string;
+            daemon_id: string;
+            blob: components["schemas"]["HostingDatabaseBackupBlob"];
+            local_copy: components["schemas"]["BackupLocalCopyProof"];
+            /** Format: date-time */
+            expires_at: string;
+            hash: string;
+        };
+        HostingDatabaseBackupDownloadOptions: {
+            available: boolean;
+            /** @enum {string} */
+            reason_code: "" | "disabled" | "backup_not_succeeded" | "local_copy_unavailable" | "copy_busy" | "runner_unavailable" | "placement_changed";
+            backup_id: string;
+            blob?: components["schemas"]["HostingDatabaseBackupBlob"];
+        };
         HostingStorageBackupDownloadStream: components["schemas"]["HostingAuthority"] & {
             plan_hash: string;
             /** @enum {string} */
@@ -11269,7 +11377,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
-            /** @description Prior body attempt returns current stage; a target-authority conflict returns an error envelope, never retry authority */
+            /** @description Prior body attempt returns current stage; admission, expiry or stream failure returns ErrorResponse. GET resolves ambiguous outcomes */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13785,6 +13893,199 @@ export interface operations {
             413: components["responses"]["Error"];
             415: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    runnerDatabaseBackupDownloadPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostingAuthority"];
+            };
+        };
+        responses: {
+            /** @description Immutable one-use download plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupDownloadPlan"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description Authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    runnerDatabaseBackupDownloadStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    metadata: components["schemas"]["HostingDatabaseBackupDownloadStream"];
+                    /** Format: binary */
+                    archive?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Exact stream or unavailable-copy notice acknowledged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session_id: string;
+                        plan_hash: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description Authority denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stream identity or framing mismatch */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    databaseBackupArchiveOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current download eligibility */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostingDatabaseBackupDownloadOptions"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description Current owner or destination access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadDatabaseBackupArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified local archive attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Authority revoked */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Local copy missing */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Backup state or copy reservation changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download capacity exhausted */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download capability or controller rendezvous unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download deadline exceeded */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     runnerStorageBackupDownloadPlan: {

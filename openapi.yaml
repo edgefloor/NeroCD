@@ -2389,6 +2389,109 @@ paths:
         }
       }
     }
+  /api/v1/runners/hosting/database-backup-download/plan:
+    post:
+      operationId: runnerDatabaseBackupDownloadPlan
+      security: [{bearerAuth: []}]
+      summary: Resolve an exact local archive under current runner lease authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostingAuthority'
+      responses:
+        '200':
+          description: Immutable one-use download plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingDatabaseBackupDownloadPlan'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403': {description: Authority denied}
+        '503': {description: Controller rendezvous unavailable}
+  /api/v1/runners/hosting/database-backup-download/stream:
+    post:
+      operationId: runnerDatabaseBackupDownloadStream
+      security: [{bearerAuth: []}]
+      summary: Send one verified local archive to its waiting browser request
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [metadata]
+              properties:
+                metadata:
+                  $ref: '#/components/schemas/HostingDatabaseBackupDownloadStream'
+                archive: {type: string, format: binary}
+            encoding:
+              metadata: {contentType: application/json}
+              archive: {contentType: application/octet-stream}
+      responses:
+        '200':
+          description: Exact stream or unavailable-copy notice acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [session_id, plan_hash]
+                properties:
+                  session_id: {type: string}
+                  plan_hash: {type: string}
+        '401':
+          $ref: '#/components/responses/Error'
+        '403': {description: Authority denied}
+        '409': {description: Stream identity or framing mismatch}
+        '503': {description: Controller rendezvous unavailable}
+  /api/v1/database-backups/{id}/archive-options:
+    get:
+      operationId: databaseBackupArchiveOptions
+      summary: Check current owner access to a local database backup download
+      description: Local copies only for qualified native and Compose PostgreSQL/MySQL versions. No live database credentials or deployment required. No S3 refetch. Unknown query parameters and Range are rejected before creating work.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Current download eligibility
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostingDatabaseBackupDownloadOptions'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          description: Current owner or destination access denied
+  /api/v1/database-backups/{id}/archive:
+    get:
+      operationId: downloadDatabaseBackupArchive
+      summary: Stream one exact local database backup through a single controller
+      description: Owner-only local attachment, no-store, exact Content-Length. Filename is the backup ID with .dump for postgresql_custom or .sql for mysql_sql. Maximum 1 GiB. No Range or resume, no S3 fallback. Invalid IDs, query parameters and Range are rejected before session creation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Verified local archive attachment
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '401': {description: Authentication required}
+        '403': {description: Authority revoked}
+        '404': {description: Local copy missing}
+        '409': {description: Backup state or copy reservation changed}
+        '429': {description: Download capacity exhausted}
+        '503': {description: Download capability or controller rendezvous unavailable}
+        '504': {description: Download deadline exceeded}
   /api/v1/runners/hosting/storage-backup-download/plan:
     post:
       operationId: runnerStorageBackupDownloadPlan
@@ -16150,6 +16253,54 @@ components:
         },
         "description": "All six limits are explicit. file_bytes <= data_bytes <= archive_bytes. Zero is never a default or unbounded."
       }
+    HostingDatabaseBackupDownloadStream:
+      allOf:
+        - $ref: '#/components/schemas/HostingAuthority'
+        - type: object
+          required: [plan_hash]
+          properties:
+            plan_hash: {type: string}
+            failure_code:
+              type: string
+              enum: ['', archive_unavailable]
+    HostingDatabaseBackupDownloadPlan:
+      type: object
+      additionalProperties: false
+      required: [version, backup_version, server_id, session_id, actor_id, project_id, resource_id, binding_id, backup_id, copy_id, runner_id, destination_id, daemon_id, blob, local_copy, expires_at, hash]
+      properties:
+        version: {type: string, enum: [database.logical-local-download.v1]}
+        backup_version:
+          type: string
+          enum: [postgresql.logical-local.v1, mysql.logical-local.v1, postgresql.compose-logical-local.v1, mysql.compose-logical-local.v1]
+        server_id: {type: string}
+        session_id: {type: string}
+        actor_id: {type: string}
+        project_id: {type: string}
+        resource_id: {type: string}
+        binding_id: {type: string}
+        backup_id: {type: string}
+        copy_id: {type: string}
+        runner_id: {type: string}
+        destination_id: {type: string}
+        daemon_id: {type: string}
+        blob:
+          $ref: '#/components/schemas/HostingDatabaseBackupBlob'
+        local_copy:
+          $ref: '#/components/schemas/BackupLocalCopyProof'
+        expires_at: {type: string, format: date-time}
+        hash: {type: string}
+    HostingDatabaseBackupDownloadOptions:
+      type: object
+      additionalProperties: false
+      required: [available, reason_code, backup_id]
+      properties:
+        available: {type: boolean}
+        reason_code:
+          type: string
+          enum: ['', disabled, backup_not_succeeded, local_copy_unavailable, copy_busy, runner_unavailable, placement_changed]
+        backup_id: {type: string}
+        blob:
+          $ref: '#/components/schemas/HostingDatabaseBackupBlob'
     HostingStorageBackupDownloadStream:
       allOf:
         - $ref: '#/components/schemas/HostingAuthority'
