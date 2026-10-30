@@ -993,6 +993,11 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsBefore); err != nil || dumpsBefore != 2 {
 		t.Fatal("WordPress MySQL backup count changed", err)
 	}
+	downloadWriterStates := map[string][]byte{}
+	for _, component := range source.Result.Stack.Components {
+		downloadWriterStates[component.ContainerID] = storageRuntimeDocker(t, "inspect", component.ContainerID, "--format", "{{.Id}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")
+	}
+	downloadSince := time.Now().Format(time.RFC3339Nano)
 	silo.policy(true, false)
 	b.set("database_mutate", resource.ID)
 	later := b.await(t, "database_source_mutated")
@@ -1027,6 +1032,16 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	var dumpsAfter int
 	if err := f.database.QueryRow(t.Context(), `SELECT count(*) FROM hosting_database_backups WHERE source_resource_id=$1 AND mode='backup'`, resource.ID).Scan(&dumpsAfter); err != nil || dumpsAfter != dumpsBefore {
 		t.Fatal("WordPress MySQL upload retry admitted another dump", err)
+	}
+	for id, before := range downloadWriterStates {
+		if !bytes.Equal(before, storageRuntimeDocker(t, "inspect", id, "--format", "{{.Id}} {{.State.Running}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.RestartCount}}")) {
+			t.Fatal("database artifact download changed source writer identity or state")
+		}
+		for _, action := range []string{"start", "die", "stop"} {
+			if len(bytes.TrimSpace(storageRuntimeDocker(t, "events", "--since", downloadSince, "--until", time.Now().Format(time.RFC3339Nano), "--filter", "container="+id, "--filter", "event="+action, "--format", "{{.Action}}"))) != 0 {
+				t.Fatal("database artifact download interrupted a source writer")
+			}
+		}
 	}
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS real due archive retains local success on upload denial; same saved schedule artifact retried without another dump")
 	t.Log("COMPOSE_MYSQL_DATABASE_REMOTE_PASS immediate upload failure retains local SQL; retry publishes exact archive without second dump")
@@ -1325,6 +1340,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	assertSource()
 	t.Log("COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS independently seeded plain and magic-detected gzip SQL; immutable receipts; application-user target imports and identical API replay; truncated gzip rejected before SQL; source and writers preserved without backup provenance")
 	t.Log("COMPOSE_MYSQL_LOCAL_FILE_IMPORT_PASS real browser File plain and magic-detected gzip; immutable upload receipts and exact metadata/import API replay; application-account target SQL; truncated gzip rejected before ownership; no backup provenance or new dump; interrupted-stream failures covered separately by focused seams")
+	t.Log("COMPOSE_MYSQL_DATABASE_DOWNLOAD_PASS native browser attachment exact saved MySQL bytes and digest; no new dump or source writer lifecycle event; deleted local copy unavailable despite recorded remote survivor")
 	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS third local removed by real automatic publication; exact surviving remote imported; mutation A retained and later B excluded")
 	terminal := wordpressRuntimeImportFailures(t, f, resource, installed, source, fourth, fourthUpload, fourthObject, silo, assertSource)
 	t.Log("COMPOSE_MYSQL_DATABASE_IMPORT_PASS snapshot target write exact HTTP source Host; original HTTPS/uploads preserved; no filesystem or URL migration")

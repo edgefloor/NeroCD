@@ -525,6 +525,26 @@ async function wordpressWorkflow(h, initial) {
   if(retainedLocal.state!=='succeeded'||retainedLocal.ownership_held||JSON.stringify(retainedLocal.blob)!==JSON.stringify(remoteLocal.blob))throw Error('WordPress MySQL upload retry changed retained local backup');
   await expect(remoteHistory).toContainText('Latest remote upload: succeeded.');
   safe.wordpress_mysql_database_remote_same_archive_retry=true;
+  step='wordpress_mysql_database_backup_download';
+  const databaseDownload=backups.getByRole('region',{name:'Download for database backup '+retainedLocal.id,exact:true});
+  const databaseOptionsPath='/api/v1/database-backups/'+retainedLocal.id+'/archive-options';
+  const databaseOptionsPending=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname===databaseOptionsPath);
+  await databaseDownload.getByRole('button',{name:'Refresh download availability',exact:true}).click();
+  const databaseOptions=await checkedResponse(await databaseOptionsPending,200);
+  if(databaseOptions.available!==true||databaseOptions.reason_code!==''||databaseOptions.backup_id!==retainedLocal.id||!databaseOptions.blob||['digest','bytes','format'].some(name=>databaseOptions.blob[name]!==retainedLocal.blob[name]))throw Error('WordPress database download changed saved local artifact');
+  const databaseDownloadLink=databaseDownload.getByRole('link',{name:'Download database backup',exact:true});
+  await expect(databaseDownloadLink).toHaveAttribute('href','/api/v1/database-backups/'+retainedLocal.id+'/archive');
+  const databaseDownloadRoot=await mkdtemp(resolve(tmpdir(),'nerocd-database-download-'));
+  try {
+    const [savedDownload]=await Promise.all([page.waitForEvent('download'),databaseDownloadLink.click()]);
+    if(savedDownload.suggestedFilename()!==retainedLocal.id+'.sql')throw Error('WordPress database download attachment filename changed');
+    await savedDownload.saveAs(resolve(databaseDownloadRoot,'backup.sql'));
+    if(await savedDownload.failure())throw Error('WordPress native database backup download failed');
+    const savedBytes=await readFile(resolve(databaseDownloadRoot,'backup.sql'));
+    const savedDigest='sha256:'+createHash('sha256').update(savedBytes).digest('hex');
+    if(savedBytes.length!==retainedLocal.blob.bytes||savedDigest!==retainedLocal.blob.digest)throw Error('WordPress downloaded database bytes differ from saved artifact');
+    safe.wordpress_mysql_database_backup_download=true;
+  } finally { await rm(databaseDownloadRoot,{recursive:true}); }
   step='wordpress_mysql_database_retention_automatic_policy';
   const retentionPath='/api/v1/resources/'+resourceID+'/database-backup-retention';
   const retention=backups.getByRole('region',{name:'Compose MySQL backup retention',exact:true});
@@ -549,6 +569,17 @@ async function wordpressWorkflow(h, initial) {
   if(!survivor)throw Error('WordPress MySQL automatic retention survivor unavailable');
   safe.wordpress_mysql_database_retention_automatic=true;
   const restorePanel=application.getByRole('region',{name:'Component database backups',exact:true});
+  step='wordpress_mysql_database_download_missing_local';
+  const missingDownload=backups.getByRole('region',{name:'Download for database backup '+survivor.backup.id,exact:true});
+  const missingOptionsPath='/api/v1/database-backups/'+survivor.backup.id+'/archive-options';
+  const missingOptionsPending=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname===missingOptionsPath);
+  await missingDownload.getByRole('button',{name:'Refresh download availability',exact:true}).click();
+  const missingOptions=await checkedResponse(await missingOptionsPending,200);
+  if(missingOptions.backup_id!==survivor.backup.id||missingOptions.available!==false||missingOptions.reason_code!=='local_copy_unavailable')throw Error('WordPress remote survivor became downloadable without its local copy');
+  await expect(missingDownload.getByRole('button',{name:'Download database backup',exact:true})).toBeDisabled();
+  await expect(missingDownload.getByRole('link',{name:'Download database backup',exact:true})).toHaveCount(0);
+  await checkedResponse(await context.request.get('/api/v1/database-backups/'+survivor.backup.id+'/archive'),404);
+  safe.wordpress_mysql_database_download_missing_local=true;
   step='wordpress_mysql_import_target_discovery';
   const targetComponents=await checkedResponse(await context.request.get('/api/v1/resources/'+backupState.id+'/database-backup-components'),200);
   if(!targetComponents.available||targetComponents.resource_id===resourceID||!targetComponents.components.some(c=>c.component==='mysql'&&c.engine==='mysql'&&c.major_version===8&&c.running&&c.eligible))throw Error('WordPress import target discovery changed');

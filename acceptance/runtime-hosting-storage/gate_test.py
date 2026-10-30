@@ -1667,6 +1667,41 @@ func main() {
         cli = Path("cmd/nerocd/runner.go").read_text()
         self.assertIn('fs.Bool("hosting-database-backup-retention", false', cli)
 
+    def test_wordpress_database_download_preserves_native_identity_ordering_and_cleanup(self):
+        browser = Path("acceptance/runtime-hosting-catalog/compose_browser.mjs").read_text()
+        sequence = browser.split("  step='wordpress_mysql_database_backup_download';", 1)[1].split("  step='wordpress_mysql_database_retention_automatic_policy';", 1)[0]
+        script = r"""
+const {createHash}=require('node:crypto');const {resolve}=require('node:path');const {tmpdir}=require('node:os');
+const {mkdtemp,readFile,writeFile,rm,access}=require('node:fs/promises');
+const bytes=Buffer.from('owned mysql SQL fixture');const retainedLocal={id:'backup',blob:{bytes:bytes.length,digest:'sha256:'+createHash('sha256').update(bytes).digest('hex'),format:'mysql_sql'}};
+let step='',armed=false,optionsArmed=false,root;const safe={};
+const link={click:async()=>{if(!armed)throw Error('download listener not armed')}};
+const region={getByRole:(role,{name})=>name==='Download database backup'?link:{click:async()=>{if(!optionsArmed)throw Error('options listener not armed')}}};
+const backups={getByRole:()=>region};const checkedResponse=async value=>value;
+const expect=()=>({toHaveAttribute:async(name,value)=>{if(name!=='href'||value!=='/api/v1/database-backups/backup/archive')throw Error('wrong native path')}});
+const page={waitForResponse:()=>{optionsArmed=true;return Promise.resolve({available:true,reason_code:'',backup_id:'backup',blob:retainedLocal.blob})},waitForEvent:()=>{armed=true;return Promise.resolve({suggestedFilename:()=> 'backup.sql',saveAs:async path=>{root=resolve(path,'..');await writeFile(path,process.argv[1]==='corrupt'?Buffer.from('wrong'):bytes)},failure:async()=>process.argv[1]==='failed'?'failed':null})}};
+(async()=>{let failed=false;try{
+""" + sequence + r"""
+}catch{failed=true}let cleaned=false;try{await access(root)}catch{cleaned=true}console.log(JSON.stringify({failed,cleaned,safe}));})();
+"""
+        for mode in ["valid", "corrupt", "failed"]:
+            with self.subTest(mode=mode):
+                run = subprocess.run(["node", "-e", script, mode], capture_output=True, text=True, check=True, timeout=5)
+                result = json.loads(run.stdout)
+                self.assertTrue(result["cleaned"])
+                self.assertEqual(result["failed"], mode != "valid")
+                self.assertEqual(result["safe"].get("wordpress_mysql_database_backup_download",False), mode == "valid")
+        missing = browser.split("  step='wordpress_mysql_database_download_missing_local';", 1)[1].split("  step='wordpress_mysql_import_target_discovery';", 1)[0]
+        self.assertIn("missingOptions.reason_code!=='local_copy_unavailable'", missing)
+        self.assertIn("toHaveCount(0)", missing)
+        self.assertIn("survivor.backup.id+'/archive'),404)", missing)
+
+    def test_wordpress_database_download_profile_is_explicit(self):
+        fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
+        capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {',1)[1].split("\n\t\t\t\t}",1)[0]
+        self.assertIn("domain.HostingDatabaseBackupDownloadCapability", capabilities)
+        self.assertIn('"--hosting-database-backup-download"', fixture)
+
     def test_wordpress_external_import_uses_explicit_typed_runner_opt_in(self):
         fixture = Path("internal/api/hosting_storage_runtime_integration_test.go").read_text()
         capabilities = fixture.split('if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {', 1)[1].split("\n\t\t\t\t}", 1)[0]
@@ -1764,9 +1799,9 @@ console.log(JSON.stringify({status:safe.checked_response_status,sent}));
         validator = source.split("<<'COMPOSE_BROWSER_PASS'\n",1)[1].split("\nCOMPOSE_BROWSER_PASS",1)[0]
         healthy=["served_assets_match_manifest","wordpress_install_retry","wordpress_setup_post_media","wordpress_redeploy_preserved","wordpress_stop_start_preserved"]
         for mysql in [False,True]:
-            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import","wordpress_mysql_database_retention_automatic","wordpress_mysql_database_retention_survivor_import","wordpress_mysql_database_retention_manual_retry","wordpress_mysql_external_s3_plain_import","wordpress_mysql_external_s3_gzip_import","wordpress_mysql_external_s3_inspection_rejected","wordpress_mysql_local_file_plain_import","wordpress_mysql_local_file_gzip_import","wordpress_mysql_local_file_inspection_rejected"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
+            required=healthy+(["wordpress_mysql_database_backup_import","wordpress_database_only_source_uploads_preserved","wordpress_mysql_database_controls_responsive","wordpress_mysql_terminal_held","wordpress_mysql_database_schedule_due","wordpress_mysql_database_schedule_retry","wordpress_mysql_database_schedule_edit_disable","wordpress_mysql_database_schedule_history","wordpress_mysql_database_remote_backup","wordpress_mysql_database_remote_failure_local_success","wordpress_mysql_database_remote_same_archive_retry","wordpress_mysql_database_remote_schedule_same_archive_retry","wordpress_mysql_database_remote_backup_import","wordpress_mysql_database_retention_automatic","wordpress_mysql_database_retention_survivor_import","wordpress_mysql_database_retention_manual_retry","wordpress_mysql_external_s3_plain_import","wordpress_mysql_external_s3_gzip_import","wordpress_mysql_external_s3_inspection_rejected","wordpress_mysql_local_file_plain_import","wordpress_mysql_local_file_gzip_import","wordpress_mysql_local_file_inspection_rejected","wordpress_mysql_database_backup_download","wordpress_mysql_database_download_missing_local"] if mysql else ["wordpress_failed_prepare_preserved","wordpress_truthful_mutation_hold"])
             test="TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS" if mysql else "TestHostingCatalogWordPressCompiledRunnerHTTPS"
-            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS","COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS","COMPOSE_MYSQL_LOCAL_FILE_IMPORT_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
+            markers=["WORDPRESS_COMPOSE_MYSQL_RUNTIME_PASS","COMPOSE_MYSQL_DATABASE_IMPORT_PASS","COMPOSE_MYSQL_CORRUPT_ARCHIVE_PASS","COMPOSE_MYSQL_PARTIAL_IMPORT_HELD_PASS","COMPOSE_MYSQL_DATABASE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_SCHEDULE_PASS","COMPOSE_MYSQL_DATABASE_REMOTE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_MANUAL_PASS","COMPOSE_MYSQL_DATABASE_RETENTION_SURVIVOR_PASS","COMPOSE_MYSQL_EXTERNAL_S3_IMPORT_PASS","COMPOSE_MYSQL_LOCAL_FILE_IMPORT_PASS","COMPOSE_MYSQL_DATABASE_DOWNLOAD_PASS"] if mysql else ["WORDPRESS_CATALOG_RUNTIME_PASS"]
             for kind in ["valid","missing","false","numeric","intercepted","skip","wrong_test","missing_marker","other_mode"]:
                 with self.subTest(mysql=mysql,kind=kind),tempfile.TemporaryDirectory() as tmp:
                     root=Path(tmp)
