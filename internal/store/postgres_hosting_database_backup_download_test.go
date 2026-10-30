@@ -3,10 +3,15 @@ package store_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"nerocd/internal/api"
 	"nerocd/internal/app"
 	"nerocd/internal/auth"
 	"nerocd/internal/domain"
+	"nerocd/internal/runnerclient"
 	"nerocd/internal/store"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +55,14 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 	for _, kind := range []string{"native_pg", "native_mysql", "compose_pg", "compose_mysql"} {
 		t.Run(kind, func(t *testing.T) {
 			f, input := databaseDownloadFixture(t, kind)
+			httpServer := httptest.NewTLSServer(api.NewServer(f.service, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+			defer httpServer.Close()
+			runnerToken := "image-hosting-fixture-token"
+			complete := func(a domain.HostingAuthority, status, key string) (domain.RunLease, error) {
+				client := runnerclient.New(httpServer.URL, runnerToken)
+				client.HTTP = httpServer.Client()
+				return client.Complete(t.Context(), runnerclient.CompleteRequest{LeaseID: a.LeaseID, Attempt: a.Attempt, Fence: a.Fence, Status: status, CompletionKey: key})
+			}
 			publish := func(request string, owned bool) domain.HostingDatabaseBackupOperation {
 				in := input
 				in.RequestID = request
@@ -58,6 +71,9 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 					t.Fatal(err)
 				}
 				a, p := claimBackup(t, f, b.ID)
+				if _, err := complete(a, domain.RunFailed, "deny_mutating_backup"); err == nil {
+					t.Fatal("generic HTTP completion admitted mutating backup")
+				}
 				m := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "intent_" + b.ID, PlanHash: p.Hash, Phase: "intent"}
 				if p.Component != nil {
 					m.ComponentVersion = p.Operation.Version
@@ -110,13 +126,14 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 			if !errors.Is(err, store.ErrConflict) {
 				t.Fatal("retention ignored active reader", err)
 			}
-			_, err = f.service.RotateRunnerToken(f.ctx, app.RunnerTokenInput{RunnerID: f.runner})
+			rotated, err := f.service.RotateRunnerToken(f.ctx, app.RunnerTokenInput{RunnerID: f.runner})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err = f.db.Exec(f.ctx, `UPDATE runner_enrollments SET credential_hash=(SELECT token_hash FROM runners WHERE id=$1) WHERE runner_id=$1 AND revoked_at IS NULL`, f.runner); err != nil {
 				t.Fatal(err)
 			}
+			runnerToken = rotated.Token
 			var hash string
 			if err = f.db.QueryRow(f.ctx, `SELECT token_hash FROM runners WHERE id=$1`, f.runner).Scan(&hash); err != nil {
 				t.Fatal(err)
@@ -146,6 +163,62 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 			if _, err = f.service.BeginDatabaseBackupDownload(ctx, in); !errors.Is(err, store.ErrConflict) {
 				t.Fatal("second stream attempt", err)
 			}
+			if err = f.service.CloseDatabaseBackupDownload(f.ctx, plan.SessionID, true); err != nil {
+				t.Fatal("durable success settlement", err)
+			}
+			if _, err = complete(stale, domain.RunSucceeded, "download_success"); err == nil {
+				t.Fatal("stale HTTP completion accepted")
+			}
+			for range 2 {
+				if _, err = complete(a, domain.RunSucceeded, "download_success"); err != nil {
+					t.Fatal("HTTP success completion/replay", err)
+				}
+			}
+			// A lost stream acknowledgment may retire metadata as failed without
+			// erasing the already delivered browser archive or sending bytes again.
+			for _, status := range []string{domain.RunFailed, domain.RunSucceeded} {
+				if _, err = complete(a, status, "different_completion"); err == nil {
+					t.Fatal("HTTP completion CAS admitted a different key")
+				}
+			}
+			plan, err = f.service.CreateDatabaseBackupDownload(f.ctx, "download_lost_ack", backup.ID, time.Now().Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim, err = f.service.ClaimRun(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a = domain.HostingAuthority{OperationID: plan.SessionID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			in = domain.HostingDatabaseBackupDownloadStream{HostingAuthority: a, PlanHash: plan.Hash}
+			if _, err = f.service.BeginDatabaseBackupDownload(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+			if err = f.service.CloseDatabaseBackupDownload(f.ctx, plan.SessionID, true); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, err = complete(a, domain.RunFailed, "lost_stream_ack"); err != nil {
+					t.Fatal("HTTP lost ACK completion/replay", err)
+				}
+			}
+			var delivered string
+			if err = f.db.QueryRow(f.ctx, `SELECT state FROM hosting_database_backup_downloads WHERE id=$1`, plan.SessionID).Scan(&delivered); err != nil || delivered != "succeeded" {
+				t.Fatal("lost ACK erased delivered evidence", err)
+			}
+			plan, err = f.service.CreateDatabaseBackupDownload(f.ctx, "download_failed", backup.ID, time.Now().Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim, err = f.service.ClaimRun(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a = domain.HostingAuthority{OperationID: plan.SessionID, RunID: claim.Run.ID, LeaseID: claim.Lease.ID, Attempt: claim.Lease.Attempt, Fence: claim.Lease.Fence}
+			in = domain.HostingDatabaseBackupDownloadStream{HostingAuthority: a, PlanHash: plan.Hash}
+			if _, err = f.service.BeginDatabaseBackupDownload(ctx, in); err != nil {
+				t.Fatal(err)
+			}
 			if _, err = f.db.Exec(f.ctx, `UPDATE destination_project_grants SET revoked_at=clock_timestamp() WHERE destination_id=$1 AND project_id=$2`, plan.DestinationID, plan.ProjectID); err != nil {
 				t.Fatal(err)
 			}
@@ -169,9 +242,8 @@ func TestPostgresDatabaseDownloadHistoricalCopyAuthorityAndRetention(t *testing.
 			if _, err = f.service.RunnerDatabaseBackupDownloadPlan(ctx, a); err == nil {
 				t.Fatal("revoked stream replay")
 			}
-			now := time.Now().UTC()
 			for range 2 {
-				if _, err = f.pg.CompleteLeaseRequest(ctx, a.LeaseID, f.runner, domain.RunFailed, a.Attempt, a.Fence, "download_closed", now, domain.RunFailed, &now, nil, nil, domain.AuditEvent{}); err != nil {
+				if _, err = complete(a, domain.RunFailed, "download_closed"); err != nil {
 					t.Fatal("metadata completion/replay", err)
 				}
 			}

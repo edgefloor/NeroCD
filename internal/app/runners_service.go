@@ -667,6 +667,9 @@ func (s *Service) CompleteLease(ctx context.Context, leaseID string, status stri
 	if downloadCompletion {
 		_, repositoryErr := s.storageDownloadRepository()
 		downloadCompletion = repositoryErr == nil
+	} else if run.RunSpec.Type == domain.RunTypeDatabaseBackupTransfer && run.RunSpec.HostingMode == domain.HostingDatabaseBackupDownloadMode && domain.ValidateDatabaseBackupTransferTask(run) == nil {
+		_, repositoryErr := s.databaseDownloadRepository()
+		downloadCompletion = repositoryErr == nil
 	}
 	if run.RunSpec.Type == domain.RunTypeComposeDeploy || domain.ContainsHostingExecution(run.RunSpec, run.Workflow) && !downloadCompletion {
 		return domain.RunLease{}, store.ErrConflict
