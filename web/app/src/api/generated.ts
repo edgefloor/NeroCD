@@ -10080,7 +10080,14 @@ export interface components {
             local: components["schemas"]["BackupRetentionLimits"];
             remote: components["schemas"]["BackupRetentionLimits"];
         };
+        HostingDatabaseBackupRetentionSourceScope: {
+            /** @enum {string} */
+            backup_version: "mysql.compose-logical-local.v1";
+            /** @enum {string} */
+            component: "mysql";
+        };
         HostingDatabaseBackupRetentionPolicy: {
+            source_scope?: components["schemas"]["HostingDatabaseBackupRetentionSourceScope"];
             /** @enum {string} */
             version: "postgresql.backup-retention.v1" | "mysql.backup-retention.v1";
             project_id: string;
@@ -10120,6 +10127,7 @@ export interface components {
             protected_reasons: ("newest" | "shared" | "active" | "upload_pending" | "unproven_ownership" | "external" | "unsupported_conditional" | "reserved" | "unavailable" | "batch_limit" | "active_or_recovery" | "superseded")[];
         };
         HostingDatabaseBackupRetentionPreview: {
+            source_scope?: components["schemas"]["HostingDatabaseBackupRetentionSourceScope"];
             id: string;
             /** @enum {string} */
             version: "postgresql.backup-retention.v1" | "mysql.backup-retention.v1";

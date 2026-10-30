@@ -19981,6 +19981,16 @@ components:
           }
         }
       }
+    HostingDatabaseBackupRetentionSourceScope:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["backup_version", "component"],
+        "properties": {
+          "backup_version": {"type": "string", "enum": ["mysql.compose-logical-local.v1"]},
+          "component": {"type": "string", "enum": ["mysql"]}
+        }
+      }
     HostingDatabaseBackupRetentionPolicy:
       {
         "type": "object",
@@ -19999,6 +20009,7 @@ components:
           "updated_at"
         ],
         "properties": {
+          "source_scope": {"$ref": "#/components/schemas/HostingDatabaseBackupRetentionSourceScope"},
           "version": {
             "type": "string",
             "enum": ["postgresql.backup-retention.v1", "mysql.backup-retention.v1"]
@@ -20166,6 +20177,7 @@ components:
           "created_at"
         ],
         "properties": {
+          "source_scope": {"$ref": "#/components/schemas/HostingDatabaseBackupRetentionSourceScope"},
           "id": {
             "type": "string"
           },
