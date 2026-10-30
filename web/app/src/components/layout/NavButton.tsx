@@ -13,8 +13,8 @@ export function NavButton({ item, active, onClick }: {
   const Icon = navigationIcons[item.key];
   return (
     <a href={item.to} aria-current={active ? "page" : undefined}
-      className={cn("flex min-h-10 w-full items-center gap-2.5 rounded-md border-l-2 border-transparent px-3 py-2 text-sm font-normal lg:min-h-9 transition-colors hover:bg-sidebar-panel",
-        active ? "border-sidebar-primary bg-sidebar-panel text-sidebar-primary" : "text-sidebar-muted")}
+      className={cn("flex min-h-10 w-full items-center gap-2.5 rounded px-2 py-2 text-sm font-normal lg:min-h-8 lg:py-1.5 transition-colors hover:bg-sidebar-panel",
+        active ? "bg-sidebar-panel text-sidebar-foreground" : "text-sidebar-muted")}
       onClick={(event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();

@@ -725,6 +725,24 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   await expect(page.getByRole("navigation", { name: "Desktop navigation" })).toBeVisible();
   await page.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page).toHaveURL(/\/runs$/);
+  for (const name of ["Account", "Notifications"]) {
+    for (const [from, to] of [[1440, 320], [320, 1440]]) {
+      await page.setViewportSize({ width: from!, height: 844 });
+      const trigger = page.getByRole("button", { name, exact: true });
+      await expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+      await expect(trigger).toHaveAttribute("aria-expanded", "false");
+      const controls = await trigger.getAttribute("aria-controls");
+      expect(controls).toBeTruthy();
+      await trigger.click();
+      const dialog = page.getByRole("dialog", { name, exact: true });
+      await expect(dialog).toHaveCount(1);
+      await expect(dialog).toHaveAttribute("id", controls!);
+      await page.setViewportSize({ width: to!, height: 844 });
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByRole("button", { name, exact: true })).toBeFocused();
+    }
+  }
 });
 
 test("header and notification controls fit narrow and intermediate viewports", async ({ page }, testInfo) => {
