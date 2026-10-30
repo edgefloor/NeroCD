@@ -26,14 +26,26 @@ func retentionFixture(t *testing.T) networkCaptureFixture {
 func ownedRetentionBackup(t *testing.T, f networkCaptureFixture, index int) domain.HostingDatabaseBackupOperation {
 	return ownedRetentionBackupTarget(t, f, index, nil)
 }
+func retentionBackupInput(f networkCaptureFixture, request string, target *domain.BackupTargetSelection) domain.HostingDatabaseBackupInput {
+	input := domain.HostingDatabaseBackupInput{RequestID: request, ExpectedResourceGeneration: f.resource.Generation, RemoteTarget: target}
+	if f.op.Plan != nil && f.op.Plan.Stack != nil {
+		input.Component, input.ExpectedDeployedOperationID = "mysql", f.op.ID
+	}
+	return input
+}
+
 func ownedRetentionBackupTarget(t *testing.T, f networkCaptureFixture, index int, target *domain.BackupTargetSelection) domain.HostingDatabaseBackupOperation {
 	t.Helper()
-	v, e := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: fmt.Sprintf("retention_backup_%d", index), ExpectedResourceGeneration: f.resource.Generation, RemoteTarget: target})
+	input := retentionBackupInput(f, fmt.Sprintf("retention_backup_%d", index), target)
+	v, e := f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, input)
 	if e != nil {
 		t.Fatal(e)
 	}
 	a, p := claimBackup(t, f, v.ID)
 	in := domain.HostingDatabaseBackupMutation{HostingAuthority: a, ReceiptID: "retention_intent_" + v.ID, PlanHash: p.Hash, Phase: "intent"}
+	if p.Component != nil {
+		in.ComponentVersion, in.WritersResumed = p.Operation.Version, true
+	}
 	if _, e = f.pg.DatabaseBackupMutation(f.ctx, f.runner, in); e != nil {
 		t.Fatal(e)
 	}
@@ -99,7 +111,7 @@ func testBackupRetentionPolicyPreviewExecutionReplay(t *testing.T, f networkCapt
 		t.Fatal("execution replay", e)
 	}
 	// New archive admission cannot race the held immutable batch.
-	if _, e = f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, domain.HostingDatabaseBackupInput{RequestID: "reserved_producer", ExpectedResourceGeneration: f.resource.Generation}); !errors.Is(e, store.ErrConflict) {
+	if _, e = f.service.RequestDatabaseBackup(f.ctx, f.resource.ID, retentionBackupInput(f, "reserved_producer", nil)); !errors.Is(e, store.ErrConflict) {
 		t.Fatal("pool producer admitted during reservation", e)
 	}
 	if e = f.pg.PrepareDatabaseBackupRetention(f.ctx, execution.ID); e != nil {
@@ -315,6 +327,11 @@ func testBackupRetentionAutomaticPublicationOrdering(t *testing.T, mysql bool) {
 	} else {
 		f, target = remoteBackupFixture(t)
 	}
+	testBackupRetentionAutomaticPublicationFixture(t, f, target, capability)
+}
+
+func testBackupRetentionAutomaticPublicationFixture(t *testing.T, f networkCaptureFixture, target domain.HostingDatabaseBackupTarget, capability string) {
+	t.Helper()
 	if _, e := f.db.Exec(f.ctx, `UPDATE runners SET capabilities=capabilities||ARRAY[$2,$3]::text[] WHERE id=$1`, f.runner, domain.RunTypeDatabaseBackupRetention, capability); e != nil {
 		t.Fatal(e)
 	}

@@ -9,3 +9,9 @@ SELECT body FROM hosting_database_backup_retention_executions WHERE resource_id=
 
 -- name: MySQLBackupRetentionSchemaPresent :one
 SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_backup_retention_schema_compatible()') IS NOT NULL)::boolean;
+
+-- name: MySQLComponentBackupRetentionSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_component_retention_schema_compatible()') IS NOT NULL)::boolean;
+
+-- name: ReadDatabaseBackupRetentionSourceScope :one
+SELECT body FROM hosting_database_backup_retention_policies WHERE resource_id=$1;

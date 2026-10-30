@@ -19,3 +19,19 @@ func TestBackupRetentionLocalIdentityIncludesStableServer(t *testing.T) {
 		t.Fatal("replacement runner on same server changed physical pool identity")
 	}
 }
+
+func TestBackupRetentionScopeDoesNotReinterpretHistoricalCopies(t *testing.T) {
+	scope := &domain.HostingDatabaseBackupRetentionSourceScope{BackupVersion: domain.HostingDatabaseMySQLBackupComponentVersion, Component: "mysql"}
+	plan := domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{Version: scope.BackupVersion, SourceComponent: scope.Component}, Component: &domain.HostingDatabaseBackupComponentPlan{Source: scope.Component}}
+	if !backupRetentionScopeMatches(domain.HostingDatabaseMySQLBackupRetentionVersion, scope, plan) || backupRetentionScopeMatches(domain.HostingDatabaseMySQLBackupRetentionVersion, nil, plan) || backupRetentionScopeMatches(domain.HostingDatabaseBackupRetentionVersion, nil, plan) {
+		t.Fatal("component scope crossed a legacy engine boundary")
+	}
+	plan.Component.Source = "other"
+	if backupRetentionScopeMatches(domain.HostingDatabaseMySQLBackupRetentionVersion, scope, plan) {
+		t.Fatal("same-engine foreign component selected")
+	}
+	plan.Operation.Version = domain.HostingDatabaseBackupComponentVersion
+	if backupRetentionScopeMatches(domain.HostingDatabaseMySQLBackupRetentionVersion, scope, plan) {
+		t.Fatal("historical PostgreSQL copy selected")
+	}
+}

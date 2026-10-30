@@ -45,6 +45,17 @@ func (q *Queries) MySQLBackupRetentionSchemaPresent(ctx context.Context) (bool, 
 	return column_1, err
 }
 
+const mySQLComponentBackupRetentionSchemaPresent = `-- name: MySQLComponentBackupRetentionSchemaPresent :one
+SELECT (to_regprocedure(current_schema()||'.nerocd_mysql_component_retention_schema_compatible()') IS NOT NULL)::boolean
+`
+
+func (q *Queries) MySQLComponentBackupRetentionSchemaPresent(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, mySQLComponentBackupRetentionSchemaPresent)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const readDatabaseBackupRetentionCopy = `-- name: ReadDatabaseBackupRetentionCopy :one
 SELECT body,availability,identity_hash,location_hash FROM hosting_database_backup_copies WHERE id=$1 FOR SHARE
 `
@@ -74,6 +85,17 @@ SELECT body FROM hosting_database_backup_retention_policies WHERE resource_id=$1
 
 func (q *Queries) ReadDatabaseBackupRetentionPolicy(ctx context.Context, resourceID string) (json.RawMessage, error) {
 	row := q.db.QueryRow(ctx, readDatabaseBackupRetentionPolicy, resourceID)
+	var body json.RawMessage
+	err := row.Scan(&body)
+	return body, err
+}
+
+const readDatabaseBackupRetentionSourceScope = `-- name: ReadDatabaseBackupRetentionSourceScope :one
+SELECT body FROM hosting_database_backup_retention_policies WHERE resource_id=$1
+`
+
+func (q *Queries) ReadDatabaseBackupRetentionSourceScope(ctx context.Context, resourceID string) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, readDatabaseBackupRetentionSourceScope, resourceID)
 	var body json.RawMessage
 	err := row.Scan(&body)
 	return body, err

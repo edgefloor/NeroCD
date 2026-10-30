@@ -16,25 +16,88 @@ import (
 	"nerocd/internal/store/sqlcgen"
 )
 
-// Every retention boundary derives its engine from the actual eligible source.
-func databaseBackupRetentionAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (databaseBackupScheduleSource, error) {
-	value, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, role)
+type databaseBackupRetentionSource struct {
+	databaseBackupScheduleSource
+	Scope *domain.HostingDatabaseBackupRetentionSourceScope
+}
+
+// Saved policies retain their original archive scope even when the deployment
+// is unavailable or now runs another engine. Placement and owner checks remain current.
+// The immutable scope is read without a policy lock before the pool lock.
+func databaseBackupRetentionAuthority(ctx context.Context, tx pgx.Tx, actor, resource, role string) (databaseBackupRetentionSource, error) {
+	base, err := databaseBackupScheduleAuthority(ctx, tx, actor, resource, role)
+	value := databaseBackupRetentionSource{databaseBackupScheduleSource: base}
 	if err != nil {
 		return value, err
 	}
-	if domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version) == "" {
-		return databaseBackupScheduleSource{}, ErrConflict
+	raw, err := sqlcgen.New(tx).ReadDatabaseBackupRetentionSourceScope(ctx, resource)
+	if err == nil {
+		var saved domain.HostingDatabaseBackupRetentionPolicy
+		if json.Unmarshal(raw, &saved) != nil || saved.ResourceID != resource || saved.ProjectID != base.Resource.ProjectID || !backupRetentionScopeValid(saved.Version, saved.SourceScope) {
+			return value, ErrConflict
+		}
+		value.Scope = saved.SourceScope
+		value.Version = domain.HostingDatabaseBackupScheduleVersion
+		if saved.Version == domain.HostingDatabaseMySQLBackupRetentionVersion {
+			value.Version = domain.HostingDatabaseMySQLBackupScheduleVersion
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return value, err
+	} else if base.Resource.Source.Kind == "compose" || base.Resource.Source.Kind == "git" {
+		h, op, _, sourceErr := databaseBackupComponentSource(ctx, tx, actor, resource, "", role)
+		if sourceErr != nil {
+			return value, sourceErr
+		}
+		postgres := false
+		for _, component := range h.Stack.Components {
+			version := domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, component.Component)
+			postgres = postgres || version == domain.HostingDatabaseBackupComponentVersion
+			if version == domain.HostingDatabaseMySQLBackupComponentVersion {
+				value.Scope = &domain.HostingDatabaseBackupRetentionSourceScope{BackupVersion: domain.HostingDatabaseMySQLBackupComponentVersion, Component: component.Component}
+				value.Version = domain.HostingDatabaseMySQLBackupComponentScheduleVersion
+			}
+		}
+		if !postgres && value.Scope == nil || postgres && value.Scope != nil {
+			return value, ErrConflict
+		}
 	}
-	if value.Version == domain.HostingDatabaseMySQLBackupScheduleVersion {
+	if value.Scope != nil {
+		present, schemaErr := sqlcgen.New(tx).MySQLComponentBackupRetentionSchemaPresent(ctx)
+		if schemaErr != nil {
+			return value, schemaErr
+		}
+		if !present {
+			return value, ErrConflict
+		}
+	}
+	if domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version) == "" {
+		return value, ErrConflict
+	}
+	if domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version) == domain.HostingDatabaseMySQLBackupRetentionVersion {
 		present, e := sqlcgen.New(tx).MySQLBackupRetentionSchemaPresent(ctx)
 		if e != nil {
 			return value, e
 		}
 		if !present {
-			return databaseBackupScheduleSource{}, ErrConflict
+			return value, ErrConflict
 		}
 	}
 	return value, nil
+}
+
+func backupRetentionScopeValid(version string, scope *domain.HostingDatabaseBackupRetentionSourceScope) bool {
+	return domain.HostingDatabaseBackupRetentionFormat(version) != "" && (scope == nil || version == domain.HostingDatabaseMySQLBackupRetentionVersion && scope.Validate() == nil)
+}
+
+func backupRetentionScopeMatches(version string, scope *domain.HostingDatabaseBackupRetentionSourceScope, p domain.HostingDatabaseBackupPlan) bool {
+	if domain.HostingDatabaseBackupRetentionVersionForBackup(p.Operation.Version) != version {
+		return false
+	}
+	if scope == nil {
+		// An old policy never gains the newly supported component scope.
+		return p.Operation.Version != domain.HostingDatabaseMySQLBackupComponentVersion
+	}
+	return scope.Validate() == nil && p.Component != nil && p.Operation.Version == scope.BackupVersion && p.Component.Source == scope.Component && p.Operation.SourceComponent == scope.Component
 }
 
 func backupRetentionLock(ctx context.Context, tx pgx.Tx) error {
@@ -51,7 +114,7 @@ func backupRetentionPolicy(ctx context.Context, tx pgx.Tx, resource, version str
 		return nil, err
 	}
 	var p domain.HostingDatabaseBackupRetentionPolicy
-	if json.Unmarshal(raw, &p) != nil || p.Version != version || p.ResourceID != resource {
+	if json.Unmarshal(raw, &p) != nil || p.Version != version || p.ResourceID != resource || !backupRetentionScopeValid(p.Version, p.SourceScope) {
 		return nil, ErrConflict
 	}
 	return &p, nil
@@ -122,7 +185,23 @@ func (s *PostgresStore) SaveDatabaseBackupRetention(ctx context.Context, actor, 
 		if revision != in.ExpectedRevision || value.Resource.Generation != in.ExpectedResourceGeneration {
 			return zero, ErrConflict
 		}
-		out := domain.HostingDatabaseBackupRetentionPolicy{Version: domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version), ProjectID: value.Resource.ProjectID, ResourceID: resource, Revision: revision + 1, ResourceGeneration: value.Resource.Generation, Enabled: in.Enabled, Automatic: in.Automatic, Local: in.Local, Remote: in.Remote, CreatedAt: created, UpdatedAt: now}
+		if in.Enabled && value.Scope != nil {
+			h, op, _, sourceErr := databaseBackupComponentSource(ctx, tx, actor, resource, value.Scope.Component, domain.RoleOwner)
+			if sourceErr != nil {
+				return zero, sourceErr
+			}
+			if domain.HostingDatabaseBackupComponentVersionFor(h, *op.Plan, value.Scope.Component) != value.Scope.BackupVersion {
+				return zero, ErrConflict
+			}
+			check := domain.HostingDatabaseBackupPlan{Operation: domain.HostingDatabaseBackupOperation{Version: value.Scope.BackupVersion}, Component: &domain.HostingDatabaseBackupComponentPlan{Source: value.Scope.Component}, RunnerID: h.Snapshot.RunnerID}
+			if e = databaseBackupAgent(ctx, tx, check); e != nil {
+				return zero, e
+			}
+			if _, e = sqlcgen.New(tx).LockDatabaseBackupRetentionRunner(ctx, sqlcgen.LockDatabaseBackupRetentionRunnerParams{ID: h.Snapshot.RunnerID, Column2: domain.HostingDatabaseMySQLBackupRetentionCapability, Column3: domain.RunTypeDatabaseBackupRetention}); e != nil {
+				return zero, hostingError(e)
+			}
+		}
+		out := domain.HostingDatabaseBackupRetentionPolicy{SourceScope: value.Scope, Version: domain.HostingDatabaseBackupRetentionVersionForSchedule(value.Version), ProjectID: value.Resource.ProjectID, ResourceID: resource, Revision: revision + 1, ResourceGeneration: value.Resource.Generation, Enabled: in.Enabled, Automatic: in.Automatic, Local: in.Local, Remote: in.Remote, CreatedAt: created, UpdatedAt: now}
 		e = sqlcgen.New(tx).SaveDatabaseBackupRetentionPolicy(ctx, sqlcgen.SaveDatabaseBackupRetentionPolicyParams{ResourceID: resource, ProjectID: out.ProjectID, ActorID: actor, Revision: int64(out.Revision), Body: buildJSON(out)})
 		if e != nil {
 			return zero, e
@@ -282,7 +361,7 @@ func backupRetentionRegisterRemote(ctx context.Context, tx pgx.Tx, r backupRemot
 	return e
 }
 
-func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) ([]domain.BackupRetentionCopy, error) {
+func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string, policy domain.HostingDatabaseBackupRetentionPolicy) ([]domain.BackupRetentionCopy, error) {
 	// Successful legacy operations remain visible, but never acquire new deletion
 	// rights merely because a current agent can read their matching contents.
 	ids, e := sqlcgen.New(tx).ListLegacyDatabaseBackupIDs(ctx, resource)
@@ -332,6 +411,17 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 		if json.Unmarshal(raw, &c) != nil {
 			return nil, ErrConflict
 		}
+		original, e := sqlcgen.New(tx).ReadDatabaseBackup(ctx, c.Item.BackupID)
+		if e != nil {
+			return nil, e
+		}
+		originalPlan, e := databaseBackupPlan(original)
+		if e != nil {
+			return nil, e
+		}
+		if !backupRetentionScopeMatches(policy.Version, policy.SourceScope, originalPlan) {
+			continue
+		}
 		c.Item.Availability = availability
 		c.Item.ProtectedReasons = []string{}
 		if refs > 0 {
@@ -360,7 +450,7 @@ func backupRetentionInventory(ctx context.Context, tx pgx.Tx, resource string) (
 }
 func backupRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, actor string, p domain.HostingDatabaseBackupRetentionPolicy) (domain.HostingDatabaseBackupRetentionPreview, []domain.BackupRetentionCopy, error) {
 	var zero domain.HostingDatabaseBackupRetentionPreview
-	inventory, e := backupRetentionInventory(ctx, tx, resource)
+	inventory, e := backupRetentionInventory(ctx, tx, resource, p)
 	if e != nil {
 		return zero, nil, e
 	}
@@ -371,7 +461,7 @@ func backupRetentionPreviewTx(ctx context.Context, tx pgx.Tx, id, resource, acto
 		byID[c.Item.CopyID] = c
 	}
 	items, local, remote, truncated := domain.SelectBackupRetention(p, visible)
-	out := domain.HostingDatabaseBackupRetentionPreview{ID: id, Version: p.Version, ProjectID: p.ProjectID, ResourceID: resource, PolicyRevision: p.Revision, LocalReferenceAt: local, RemoteReferenceAt: remote, SelectionTruncated: truncated, Items: items, CreatedAt: time.Now().UTC()}
+	out := domain.HostingDatabaseBackupRetentionPreview{SourceScope: p.SourceScope, ID: id, Version: p.Version, ProjectID: p.ProjectID, ResourceID: resource, PolicyRevision: p.Revision, LocalReferenceAt: local, RemoteReferenceAt: remote, SelectionTruncated: truncated, Items: items, CreatedAt: time.Now().UTC()}
 	chosen := []domain.BackupRetentionCopy{}
 	for _, item := range items {
 		if item.Selected {
@@ -508,11 +598,11 @@ func (s *PostgresStore) ExecuteDatabaseBackupRetention(ctx context.Context, id, 
 		if e != nil {
 			return zero, hostingError(e)
 		}
-		if json.Unmarshal(raw, &preview) != nil || json.Unmarshal(copyRaw, &chosen) != nil || preview.PlanHash != in.ExpectedPlanHash || len(chosen) == 0 || len(chosen) > 100 {
+		if json.Unmarshal(raw, &preview) != nil || json.Unmarshal(copyRaw, &chosen) != nil || preview.PlanHash != in.ExpectedPlanHash || domain.HostingDocumentHash(preview.SourceScope) != domain.HostingDocumentHash(p.SourceScope) || len(chosen) == 0 || len(chosen) > 100 {
 			return zero, ErrConflict
 		}
 		// Recompute against the complete current inventory, never trust UI selection.
-		current, e := backupRetentionInventory(ctx, tx, resource)
+		current, e := backupRetentionInventory(ctx, tx, resource, *p)
 		if e != nil {
 			return zero, e
 		}
@@ -610,6 +700,14 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 	if e != nil {
 		return hostingError(e)
 	}
+	previewRow, e := sqlcgen.New(tx).ReadDatabaseBackupRetentionPreview(ctx, sqlcgen.ReadDatabaseBackupRetentionPreviewParams{ID: p.Operation.PreviewID, ResourceID: p.Operation.ResourceID, PolicyRevision: p.Operation.PolicyRevision})
+	if e != nil {
+		return e
+	}
+	var preview domain.HostingDatabaseBackupRetentionPreview
+	if json.Unmarshal(previewRow.Body, &preview) != nil || preview.PlanHash != p.Operation.PlanHash || domain.HostingDocumentHash(preview.SourceScope) != domain.HostingDocumentHash(value.Scope) || !backupRetentionScopeValid(p.Operation.Version, preview.SourceScope) {
+		return ErrConflict
+	}
 	for _, c := range p.Copies {
 		original, e := sqlcgen.New(tx).ReadDatabaseBackup(ctx, c.Item.BackupID)
 		if e != nil {
@@ -619,7 +717,7 @@ func backupRetentionCurrent(ctx context.Context, tx pgx.Tx, p domain.HostingData
 		if e != nil {
 			return e
 		}
-		if domain.HostingDatabaseBackupRetentionVersionForBackup(originalPlan.Operation.Version) != p.Operation.Version {
+		if !backupRetentionScopeMatches(p.Operation.Version, preview.SourceScope, originalPlan) {
 			return ErrConflict
 		}
 		if c.DestinationID != value.Binding.DestinationID {

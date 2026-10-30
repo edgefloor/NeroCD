@@ -25,7 +25,7 @@ func HostingDatabaseBackupRetentionVersionForSchedule(version string) string {
 	switch version {
 	case HostingDatabaseBackupScheduleVersion, HostingDatabaseBackupComponentScheduleVersion:
 		return HostingDatabaseBackupRetentionVersion
-	case HostingDatabaseMySQLBackupScheduleVersion:
+	case HostingDatabaseMySQLBackupScheduleVersion, HostingDatabaseMySQLBackupComponentScheduleVersion:
 		return HostingDatabaseMySQLBackupRetentionVersion
 	}
 	return ""
@@ -36,7 +36,7 @@ func HostingDatabaseBackupRetentionVersionForBackup(version string) string {
 	switch version {
 	case HostingDatabaseBackupVersion, HostingDatabaseBackupComponentVersion:
 		return HostingDatabaseBackupRetentionVersion
-	case HostingDatabaseMySQLBackupVersion:
+	case HostingDatabaseMySQLBackupVersion, HostingDatabaseMySQLBackupComponentVersion:
 		return HostingDatabaseMySQLBackupRetentionVersion
 	}
 	return ""
@@ -123,19 +123,35 @@ func (in HostingDatabaseBackupRetentionInput) Validate() error {
 	return nil
 }
 
+// HostingDatabaseBackupRetentionSourceScope binds a server-selected component archive protocol.
+// It is not a caller-selected service or a native database identity.
+type HostingDatabaseBackupRetentionSourceScope struct {
+	BackupVersion string `json:"backup_version"`
+	Component     string `json:"component"`
+}
+
+// Validate recognizes the qualified Compose MySQL retention scope.
+func (s HostingDatabaseBackupRetentionSourceScope) Validate() error {
+	if s.BackupVersion != HostingDatabaseMySQLBackupComponentVersion || s.Component != "mysql" {
+		return ErrInvalidDatabaseBackupRetention
+	}
+	return nil
+}
+
 // HostingDatabaseBackupRetentionPolicy records the configured database backup retention rules.
 type HostingDatabaseBackupRetentionPolicy struct {
-	Version            string                `json:"version"`
-	ProjectID          string                `json:"project_id"`
-	ResourceID         string                `json:"resource_id"`
-	Revision           int64                 `json:"revision"`
-	ResourceGeneration int64                 `json:"resource_generation"`
-	Enabled            bool                  `json:"enabled"`
-	Automatic          bool                  `json:"automatic"`
-	Local              BackupRetentionLimits `json:"local"`
-	Remote             BackupRetentionLimits `json:"remote"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
+	SourceScope        *HostingDatabaseBackupRetentionSourceScope `json:"source_scope,omitempty"`
+	Version            string                                     `json:"version"`
+	ProjectID          string                                     `json:"project_id"`
+	ResourceID         string                                     `json:"resource_id"`
+	Revision           int64                                      `json:"revision"`
+	ResourceGeneration int64                                      `json:"resource_generation"`
+	Enabled            bool                                       `json:"enabled"`
+	Automatic          bool                                       `json:"automatic"`
+	Local              BackupRetentionLimits                      `json:"local"`
+	Remote             BackupRetentionLimits                      `json:"remote"`
+	CreatedAt          time.Time                                  `json:"created_at"`
+	UpdatedAt          time.Time                                  `json:"updated_at"`
 }
 
 // HostingDatabaseBackupRetentionPreviewInput describes the requested database backup retention
@@ -169,17 +185,18 @@ type BackupRetentionItem struct {
 
 // HostingDatabaseBackupRetentionPreview records a saved database backup retention selection.
 type HostingDatabaseBackupRetentionPreview struct {
-	ID                 string                `json:"id"`
-	Version            string                `json:"version"`
-	ProjectID          string                `json:"project_id"`
-	ResourceID         string                `json:"resource_id"`
-	PolicyRevision     int64                 `json:"policy_revision"`
-	PlanHash           string                `json:"plan_hash"`
-	LocalReferenceAt   *time.Time            `json:"local_reference_at"`
-	RemoteReferenceAt  *time.Time            `json:"remote_reference_at"`
-	SelectionTruncated bool                  `json:"selection_truncated"`
-	Items              []BackupRetentionItem `json:"items"`
-	CreatedAt          time.Time             `json:"created_at"`
+	SourceScope        *HostingDatabaseBackupRetentionSourceScope `json:"source_scope,omitempty"`
+	ID                 string                                     `json:"id"`
+	Version            string                                     `json:"version"`
+	ProjectID          string                                     `json:"project_id"`
+	ResourceID         string                                     `json:"resource_id"`
+	PolicyRevision     int64                                      `json:"policy_revision"`
+	PlanHash           string                                     `json:"plan_hash"`
+	LocalReferenceAt   *time.Time                                 `json:"local_reference_at"`
+	RemoteReferenceAt  *time.Time                                 `json:"remote_reference_at"`
+	SelectionTruncated bool                                       `json:"selection_truncated"`
+	Items              []BackupRetentionItem                      `json:"items"`
+	CreatedAt          time.Time                                  `json:"created_at"`
 }
 
 // HostingDatabaseBackupRetentionExecutionInput describes the requested database backup retention
