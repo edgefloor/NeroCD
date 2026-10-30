@@ -740,7 +740,12 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
       animations.forEach((animation) => animation.pause());
       frames.push([0, 200, 400].map((time) => {
         animations.forEach((animation) => { animation.currentTime = time; });
-        return { width: sidebar.getBoundingClientRect().width, margin: workspace.getBoundingClientRect().left };
+        return {
+          width: sidebar.getBoundingClientRect().width,
+          margin: workspace.getBoundingClientRect().left,
+          icons: Array.from(sidebar.querySelectorAll("nav a > svg"), (icon) => ({ x: icon.getBoundingClientRect().x, y: icon.getBoundingClientRect().y })),
+          labels: Array.from(sidebar.querySelectorAll("nav a .sidebar-label"), (label) => ({ height: label.getBoundingClientRect().height, whiteSpace: getComputedStyle(label).whiteSpace })),
+        };
       }));
       animations.forEach((animation) => animation.finish());
       await new Promise(requestAnimationFrame);
@@ -748,7 +753,12 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
     return frames;
   });
   for (const frames of motion) {
-    for (const frame of frames) expect(Math.abs(frame.width - frame.margin)).toBeLessThan(1);
+    for (const frame of frames) {
+      expect(Math.abs(frame.width - frame.margin)).toBeLessThan(1);
+      expect(frame.icons).toEqual(frames[0]!.icons);
+      expect(frame.labels).toEqual(frames[0]!.labels);
+      expect(frame.labels.every((label) => label.whiteSpace === "nowrap")).toBe(true);
+    }
     expect(frames[1]!.width).toBeGreaterThan(48);
     expect(frames[1]!.width).toBeLessThan(264);
   }
@@ -756,6 +766,20 @@ test("mobile menu has labeled routes, traps focus, and keeps account actions rea
   expect(motion[0]![2]!.width).toBe(48);
   expect(motion[1]![0]!.width).toBe(48);
   expect(motion[1]![2]!.width).toBe(264);
+  await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+  await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(48);
+  await page.setViewportSize({ width: 393, height: 844 });
+  await page.setViewportSize({ width: 1440, height: 844 });
+  expect(await page.evaluate(() => ({
+    width: document.querySelector(".desktop-navigation-sidebar")!.getBoundingClientRect().width,
+    margin: document.querySelector(".shell-workspace")!.getBoundingClientRect().left,
+    animations: document.querySelector(".shell-workspace")!.getAnimations().length,
+  }))).toEqual({ width: 48, margin: 48, animations: 0 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Expand sidebar", exact: true }).click();
+  await expect(page.locator(".mobile-app-shell")).toHaveAttribute("data-sidebar-motion", "false");
+  await expect.poll(() => page.locator(".desktop-navigation-sidebar").evaluate((element) => element.getBoundingClientRect().width)).toBe(264);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.locator(".mobile-bottom-navigation")).toHaveCount(0);

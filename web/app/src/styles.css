@@ -348,16 +348,23 @@ input[type="password"] {
 @media (min-width: 1024px) {
   .desktop-navigation-sidebar {
     width: 264px;
-    transition: width 400ms cubic-bezier(0.19, 1, 0.22, 1);
   }
 
   .desktop-navigation-sidebar[data-collapsed="true"] { width: 48px; }
+
+  [data-sidebar-motion="true"] .desktop-navigation-sidebar { transition: width 400ms cubic-bezier(0.19, 1, 0.22, 1); }
+  [data-sidebar-motion="true"] .shell-workspace { transition: margin-left 400ms cubic-bezier(0.19, 1, 0.22, 1); }
+
+  .desktop-navigation-sidebar .sidebar-label { opacity: 1; }
+  .desktop-navigation-sidebar[data-collapsed="true"] .sidebar-label { opacity: 0; }
+  [data-sidebar-motion="true"] .desktop-navigation-sidebar .sidebar-label { transition: opacity 80ms linear 160ms; }
+  [data-sidebar-motion="true"] .desktop-navigation-sidebar[data-collapsed="true"] .sidebar-label { transition-delay: 0ms; }
+
 
   .shell-workspace[data-sidebar-open="true"] { margin-left: 264px; }
 
   .shell-workspace {
     margin-left: 48px;
-    transition: margin-left 400ms cubic-bezier(0.19, 1, 0.22, 1);
     min-height: calc(100vh - 1px);
     margin-top: 1px;
     margin-right: 1px;
@@ -428,8 +435,9 @@ input[type="password"] {
 
 @media (prefers-reduced-motion: reduce) {
   .mobile-navigation-drawer { animation-duration: 0ms; }
-  .desktop-navigation-sidebar,
-  .shell-workspace { transition: none; }
+  [data-sidebar-motion="true"] .desktop-navigation-sidebar,
+  [data-sidebar-motion="true"] .shell-workspace,
+  [data-sidebar-motion="true"] .desktop-navigation-sidebar .sidebar-label { transition: none; }
 }
 
 @supports (appearance: base-select) and selector(::picker(select)) {
@@ -464,4 +472,14 @@ input[type="password"] {
   select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:focus-visible { outline: none; }
 
   select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:disabled { opacity: 0.5; }
+
+  .dark select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"])::picker(select) {
+    background: #302d33;
+    border-color: #514b56;
+  }
+
+  .dark select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:hover,
+  .dark select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:focus-visible,
+  .dark select[data-slot="select"]:not([multiple]):is(:not([size]), [size="1"]) option:checked { background: #48414e; }
+
 }

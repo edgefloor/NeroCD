@@ -29,6 +29,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarMotion, setSidebarMotion] = useState(false);
   const filterRef = useRef<HTMLInputElement>(null);
   const dialogID = useId();
   const accountDialogID = `${dialogID}-account`;
@@ -40,9 +41,12 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
 
   useEffect(() => {
     const breakpoint = window.matchMedia("(min-width: 1024px)");
-    const closeOnDesktop = () => { if (breakpoint.matches) setMobileMenuOpen(false); };
+    const closeOnDesktop = () => { setSidebarMotion(false); if (breakpoint.matches) setMobileMenuOpen(false); };
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const stopMotion = () => { if (reducedMotion.matches) setSidebarMotion(false); };
     breakpoint.addEventListener("change", closeOnDesktop);
-    return () => breakpoint.removeEventListener("change", closeOnDesktop);
+    reducedMotion.addEventListener("change", stopMotion);
+    return () => { breakpoint.removeEventListener("change", closeOnDesktop); reducedMotion.removeEventListener("change", stopMotion); };
   }, []);
 
   useEffect(() => {
@@ -70,7 +74,7 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
       {navigationGroups.map((group) => {
         const grouped = items.filter((item) => item.group === group);
         if (!grouped.length) return null;
-        return <div key={group}>{!iconOnly && <p className="mb-1 px-2 text-xs font-normal text-muted-foreground">{group}</p>}
+        return <div key={group}><p className="sidebar-label mb-1 h-4 shrink-0 whitespace-nowrap px-2 text-xs font-normal text-muted-foreground" aria-hidden={iconOnly}>{group}</p>
           <div className="space-y-0.5">{grouped.map((item) => <NavButton key={item.key} item={item} iconOnly={iconOnly} active={view === item.key} onClick={() => { setView(item.key); setMobileMenuOpen(false); }} />)}</div>
         </div>;
       })}
@@ -78,23 +82,23 @@ export function Shell({ snapshot, view, setView, notice, query, setQuery, theme,
   );
 
   return (
-    <div className="mobile-app-shell bg-sidebar text-foreground">
+    <div data-sidebar-motion={sidebarMotion} className="mobile-app-shell bg-sidebar text-foreground">
       <a href="#page-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground" onClick={(event) => {
         event.preventDefault();
         contentRef.current?.focus();
         contentRef.current?.scrollIntoView({ block: "start" });
       }}>Skip to page content</a>
-      <aside id={sidebarID} data-collapsed={!sidebarOpen} className="desktop-navigation-sidebar fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-x-hidden bg-sidebar lg:flex">
-        <div className={`flex h-[42px] shrink-0 items-center gap-2.5 ${sidebarOpen ? "px-4" : "px-2"}`}>
-          {sidebarOpen && <><img src="/logo.png" alt="" className="h-7 w-7 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong></>}
-          <Button variant="ghost" size="icon-sm" className="ml-auto shrink-0 text-sidebar-muted" aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={sidebarOpen} aria-controls={sidebarID} onClick={(event) => { setSidebarOpen(!sidebarOpen); event.currentTarget.focus({ preventScroll: true }); }}>{sidebarOpen ? <PanelLeftClose aria-hidden="true" className="size-4" /> : <PanelLeftOpen aria-hidden="true" className="size-4" />}</Button>
+      <aside id={sidebarID} data-collapsed={!sidebarOpen} className="desktop-navigation-sidebar fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col overflow-x-hidden bg-sidebar lg:flex" onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "width") setSidebarMotion(false); }}>
+        <div className="relative flex h-[42px] shrink-0 items-center gap-2.5 px-4">
+          <span className="sidebar-label flex shrink-0 items-center gap-2.5 whitespace-nowrap" aria-hidden={!sidebarOpen}><img src="/logo.png" alt="" className="h-7 w-7 shrink-0 object-contain" /><strong className="text-base font-semibold tracking-tight">NeroCD</strong></span>
+          <Button variant="ghost" size="icon-sm" className="absolute right-2 top-[5px] shrink-0 text-sidebar-muted" aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} aria-expanded={sidebarOpen} aria-controls={sidebarID} onClick={(event) => { setSidebarMotion(!window.matchMedia("(prefers-reduced-motion: reduce)").matches); setSidebarOpen(!sidebarOpen); event.currentTarget.focus({ preventScroll: true }); }}>{sidebarOpen ? <PanelLeftClose aria-hidden="true" className="size-4" /> : <PanelLeftOpen aria-hidden="true" className="size-4" />}</Button>
         </div>
-        <div className="px-2 pt-3"><Button variant="ghost" className={`w-full gap-2 font-normal text-sidebar-muted ${sidebarOpen ? "justify-start px-2" : "justify-center px-0"}`} onClick={onOpenSearch} aria-label="Search navigation" title={!sidebarOpen ? "Search navigation" : undefined}><Search aria-hidden="true" className="h-4 w-4 shrink-0" />{sidebarOpen && "Search"}</Button></div>
+        <div className="px-2 pt-3"><Button variant="ghost" className="w-full justify-start gap-2 overflow-hidden px-2 font-normal text-sidebar-muted" onClick={onOpenSearch} aria-label="Search navigation" title={!sidebarOpen ? "Search navigation" : undefined}><Search aria-hidden="true" className="h-4 w-4 shrink-0" /><span className="sidebar-label shrink-0 whitespace-nowrap" aria-hidden={!sidebarOpen}>Search</span></Button></div>
         {navigation("Desktop navigation", !sidebarOpen)}
         <div className="shrink-0 border-t border-sidebar-border px-2 py-2">
-          <div className={`flex gap-1 ${sidebarOpen ? "items-center" : "flex-col"}`}>
-            <Button variant="ghost" className={`min-w-0 gap-2 font-normal text-sidebar-muted ${sidebarOpen ? "flex-1 justify-start px-2" : "w-full justify-center px-0"}`} aria-label="Account" title={!sidebarOpen ? "Account" : undefined} aria-haspopup="dialog" aria-expanded={accountOpen} aria-controls={accountDialogID} onClick={(event) => { accountTriggerRef.current = event.currentTarget; setAccountOpen(true); }}><UserRound aria-hidden="true" className="h-4 w-4 shrink-0" />{sidebarOpen && "Account"}</Button>
-            <Button variant="ghost" size="icon-sm" className="text-sidebar-muted" aria-label="Notifications" title={!sidebarOpen ? "Notifications" : undefined} aria-haspopup="dialog" aria-expanded={notificationsOpen} aria-controls={notificationsDialogID} onClick={(event) => { notificationsTriggerRef.current = event.currentTarget; setNotificationsOpen(true); }}><Bell aria-hidden="true" className="h-4 w-4" /></Button>
+          <div className="flex flex-col gap-1">
+            <Button variant="ghost" className="w-full min-w-0 justify-start gap-2 overflow-hidden px-2 font-normal text-sidebar-muted" aria-label="Account" title={!sidebarOpen ? "Account" : undefined} aria-haspopup="dialog" aria-expanded={accountOpen} aria-controls={accountDialogID} onClick={(event) => { accountTriggerRef.current = event.currentTarget; setAccountOpen(true); }}><UserRound aria-hidden="true" className="h-4 w-4 shrink-0" /><span className="sidebar-label shrink-0 whitespace-nowrap" aria-hidden={!sidebarOpen}>Account</span></Button>
+            <Button variant="ghost" className="w-full min-w-0 justify-start gap-2 overflow-hidden px-2 font-normal text-sidebar-muted" aria-label="Notifications" title={!sidebarOpen ? "Notifications" : undefined} aria-haspopup="dialog" aria-expanded={notificationsOpen} aria-controls={notificationsDialogID} onClick={(event) => { notificationsTriggerRef.current = event.currentTarget; setNotificationsOpen(true); }}><Bell aria-hidden="true" className="h-4 w-4 shrink-0" /><span className="sidebar-label shrink-0 whitespace-nowrap" aria-hidden={!sidebarOpen}>Notifications</span></Button>
           </div>
         </div>
       </aside>
