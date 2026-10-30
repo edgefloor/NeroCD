@@ -18,6 +18,8 @@ export type DatabaseImportTarget = Pick<
   | "expected_resource_generation"
 >;
 const maxBytes = 10 * 1024 ** 3;
+const enumValue = (v: unknown, choices: readonly string[]): v is string =>
+  typeof v === "string" && choices.includes(v);
 const id = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const digest = (v: unknown) =>
@@ -121,12 +123,18 @@ export function parseDatabaseImportStage(
       expectedTarget.expected_deployed_operation_id ||
     v.expected_resource_generation !==
       expectedTarget.expected_resource_generation ||
-    !["queued", "running", "ready", "failed", "expired", "consumed"].includes(
-      String(v.state),
-    ) ||
+    !enumValue(v.state, [
+      "queued",
+      "running",
+      "ready",
+      "failed",
+      "expired",
+      "consumed",
+    ]) ||
     !date(v.created_at) ||
     !date(v.updated_at) ||
-    (v.failure_code !== undefined && !failureCodes.has(String(v.failure_code)))
+    (v.failure_code !== undefined &&
+      (typeof v.failure_code !== "string" || !failureCodes.has(v.failure_code)))
   )
     return fail();
   if (
@@ -147,7 +155,7 @@ export function parseDatabaseImportStage(
   if (
     (v.source_bytes !== undefined && !positive(v.source_bytes, maxBytes)) ||
     (v.compression !== undefined &&
-      !["plain", "gzip"].includes(String(v.compression))) ||
+      !enumValue(v.compression, ["plain", "gzip"])) ||
     (v.stage_hash !== undefined && !digest(v.stage_hash)) ||
     (v.expires_at !== undefined && !date(v.expires_at))
   )
@@ -204,15 +212,20 @@ export function parseDatabaseImportOperation(
     v.target_component !== "mysql" ||
     v.target_component !== t.component ||
     v.target_deployed_operation_id !== t.expected_deployed_operation_id ||
-    !["queued", "running", "succeeded", "failed", "uncertain"].includes(
-      String(v.state),
-    ) ||
+    !enumValue(v.state, [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "uncertain",
+    ]) ||
     typeof v.ownership_held !== "boolean" ||
     typeof v.writers_resumed !== "boolean" ||
     !date(v.created_at) ||
     !date(v.updated_at) ||
     (v.failure_code !== undefined &&
-      !failureCodes.has(String(v.failure_code))) ||
+      (typeof v.failure_code !== "string" ||
+        !failureCodes.has(v.failure_code))) ||
     (v.state === "succeeded" && (v.ownership_held || !v.writers_resumed)) ||
     (v.state === "uncertain" && !v.ownership_held)
   )

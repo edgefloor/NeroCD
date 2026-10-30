@@ -205,3 +205,84 @@ test("invalid local input does not issue an import", async () => {
   ).rejects.toThrow();
   expect(request).not.toHaveBeenCalled();
 });
+
+for (const value of [
+  ["ready"],
+  [["ready"]],
+  { toString: () => "ready" },
+  new String("ready"),
+]) {
+  test(`rejects coerced inspection state ${JSON.stringify(value)}`, () => {
+    const {
+      source_bytes: _source,
+      compression: _compression,
+      staged_blob: _blob,
+      stage_hash: _hash,
+      expires_at: _expiry,
+      ...incomplete
+    } = stage;
+    expect(() =>
+      parseDatabaseImportStage({ ...incomplete, state: value }, target, s3),
+    ).toThrow();
+  });
+}
+for (const state of ["uncertain", "succeeded", "running"]) {
+  for (const value of [[state], { toString: () => state }, new String(state)]) {
+    test(`rejects coerced import state ${state} ${JSON.stringify(value)}`, () => {
+      expect(() =>
+        parseDatabaseImportOperation(
+          {
+            ...operation,
+            state: value,
+            ownership_held: false,
+            writers_resumed: false,
+          },
+          input,
+        ),
+      ).toThrow();
+    });
+  }
+}
+for (const value of [
+  ["gzip"],
+  { toString: () => "plain" },
+  new String("gzip"),
+]) {
+  test(`rejects coerced inspection compression ${JSON.stringify(value)}`, () => {
+    expect(() =>
+      parseDatabaseImportStage({ ...stage, compression: value }, target, s3),
+    ).toThrow();
+  });
+}
+for (const value of [
+  ["execution_failed"],
+  { toString: () => "interrupted" },
+  new String("execution_failed"),
+]) {
+  test(`rejects coerced failure code ${JSON.stringify(value)}`, () => {
+    expect(() =>
+      parseDatabaseImportStage({ ...stage, failure_code: value }, target, s3),
+    ).toThrow();
+    expect(() =>
+      parseDatabaseImportOperation(
+        { ...operation, failure_code: value },
+        input,
+      ),
+    ).toThrow();
+  });
+}
+test("strict literal states preserve ready and uncertain invariants", () => {
+  expect(parseDatabaseImportStage(stage, target, s3).state).toBe("ready");
+  expect(
+    parseDatabaseImportOperation(
+      { ...operation, state: "uncertain", ownership_held: true },
+      input,
+    ).state,
+  ).toBe("uncertain");
+  expect(() =>
+    parseDatabaseImportOperation(
+      { ...operation, state: "uncertain", ownership_held: false },
+      input,
+    ),
+  ).toThrow();
+});
