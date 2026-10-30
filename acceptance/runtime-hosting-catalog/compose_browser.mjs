@@ -606,6 +606,67 @@ async function wordpressWorkflow(h, initial) {
   await retention.getByRole('button',{name:'Refresh retention history',exact:true}).click();
   await expect(retention).toContainText('Remote result: succeeded');
   safe.wordpress_mysql_database_retention_manual_retry=true;
+  // Keep source A selected; the import target picker intentionally excludes it.
+  await restorePanel.getByRole('combobox',{name:'Database import source',exact:true}).selectOption('s3');
+  await restorePanel.getByRole('combobox',{name:'Restore target application',exact:true}).selectOption(backupState.id);
+  await restorePanel.getByRole('combobox',{name:'Restore target database component',exact:true}).selectOption('mysql');
+  const external=restorePanel.getByRole('region',{name:'External S3 database import',exact:true});
+  await external.getByRole('combobox',{name:'S3 import destination',exact:true}).selectOption(scheduleTarget.target_id+':'+scheduleTarget.revision);
+  const stagePath='/api/v1/resources/'+backupState.id+'/database-import-stages';
+  const externalImportPath='/api/v1/resources/'+backupState.id+'/database-imports';
+  for(const sample of [
+    {name:'plain',key:'nerocd/operator-import/plain.sql',compression:'plain'},
+    {name:'gzip',key:'nerocd/operator-import/gzip.data',compression:'gzip'},
+    {name:'rejected',key:'nerocd/operator-import/broken.sql',compression:null},
+  ]){
+    step='wordpress_mysql_external_s3_'+sample.name+'_inspect';
+    await external.getByRole('textbox',{name:'S3 object key',exact:true}).fill(sample.key);
+    const inspectionPending=response(page,stagePath);
+    await external.getByRole('button',{name:'Inspect S3 object',exact:true}).click();
+    const inspectionResponse=await inspectionPending,inspectionInput=inspectionResponse.request().postDataJSON();
+    let inspected=await checkedResponse(inspectionResponse,202);
+    if(inspectionInput.component!=='mysql'||inspectionInput.expected_deployed_operation_id!==targetComponents.operation_id||inspectionInput.expected_resource_generation!==targetComponents.resource_generation||inspectionInput.s3_source.target_id!==scheduleTarget.target_id||inspectionInput.s3_source.revision!==scheduleTarget.revision||inspectionInput.s3_source.object_key!==sample.key||inspected.target_resource_id!==backupState.id||inspected.component!=='mysql'||inspected.expected_deployed_operation_id!==targetComponents.operation_id||inspected.s3_source.object_key!==sample.key)throw Error('WordPress external inspection authority changed');
+    const stageID=inspected.id;
+    await expect.poll(async()=>{
+      inspected=await checkedResponse(await context.request.get('/api/v1/database-import-stages/'+stageID),200);
+      return ['ready','failed','expired','consumed'].includes(inspected.state);
+    },{timeout:60000,intervals:[100,500,1000]}).toBe(true);
+    if(sample.compression===null){
+      if(inspected.state!=='failed'||inspected.failure_code!=='unsupported_format')throw Error('WordPress corrupt gzip inspection was not safely rejected');
+      await expect(external).toContainText('Inspection '+stageID+' · failed');
+      await expect(external.getByRole('checkbox',{name:'Replace target database with this inspected SQL and interrupt its writers',exact:true})).toBeDisabled();
+      await expect(external.getByRole('button',{name:'Import inspected SQL',exact:true})).toBeDisabled();
+      safe.wordpress_mysql_external_s3_inspection_rejected=true;
+      continue;
+    }
+    if(inspected.state!=='ready'||inspected.version!=='mysql.compose-external-s3-stage.v1'||inspected.compression!==sample.compression||!Number.isSafeInteger(inspected.source_bytes)||inspected.source_bytes<1||inspected.source_bytes>10737418240||inspected.staged_blob?.format!=='mysql_sql'||!Number.isSafeInteger(inspected.staged_blob.bytes)||inspected.staged_blob.bytes<1||inspected.staged_blob.bytes>10737418240||!/^sha256:[a-f0-9]{64}$/.test(inspected.staged_blob.digest)||!/^sha256:[a-f0-9]{64}$/.test(inspected.stage_hash)||Date.parse(inspected.expires_at)<=Date.now())throw Error('WordPress external inspection receipt changed');
+    const receipt=external.getByRole('region',{name:'Inspected SQL object',exact:true});
+    await expect(receipt).toContainText(inspected.stage_hash);
+    await expect(receipt).toContainText(inspected.staged_blob.digest);
+    await expect(receipt).toContainText(sample.key);
+    for(const width of [320,390,430,1280]){await page.setViewportSize({width,height:900});await expect(receipt).toBeVisible();if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('WordPress external SQL import controls responsive overflow');}
+    step='wordpress_mysql_external_s3_'+sample.name+'_import';
+    await external.getByRole('checkbox',{name:'Replace target database with this inspected SQL and interrupt its writers',exact:true}).check();
+    const externalImportPending=response(page,externalImportPath);
+    await external.getByRole('button',{name:'Import inspected SQL',exact:true}).click();
+    const externalImportResponse=await externalImportPending,externalImportInput=externalImportResponse.request().postDataJSON();
+    let externalImported=await checkedResponse(externalImportResponse,202);
+    const externalTarget=externalImportInput.component_target;
+    if(externalImportInput.stage_id!==stageID||externalImportInput.expected_stage_hash!==inspected.stage_hash||externalTarget.resource_id!==backupState.id||externalTarget.component!=='mysql'||externalTarget.expected_deployed_operation_id!==targetComponents.operation_id||externalTarget.expected_resource_generation!==targetComponents.resource_generation||externalTarget.acknowledge_replacement!==true||externalImported.stage_id!==stageID||externalImported.target_resource_id!==backupState.id)throw Error('WordPress external import changed reviewed stage or target');
+    // Deliberate authenticated API replay, independent of UI ambiguity recovery.
+    const externalReplay=await checkedResponse(await context.request.post(externalImportPath,{headers:{"X-NeroCD-CSRF":"1",Origin:origin},data:externalImportInput}),202);
+    if(externalReplay.id!==externalImported.id||externalReplay.stage_id!==stageID||externalReplay.target_resource_id!==backupState.id||externalReplay.target_component!=='mysql'||externalReplay.target_deployed_operation_id!==targetComponents.operation_id)throw Error('WordPress external SQL API replay created another import');
+    const externalImportID=externalImported.id;
+    await expect.poll(async()=>{
+      externalImported=await checkedResponse(await context.request.get('/api/v1/database-imports/'+externalImportID),200);
+      return ['succeeded','failed','uncertain'].includes(externalImported.state);
+    },{timeout:60000,intervals:[100,500,1000]}).toBe(true);
+    if(externalImported.version!=='mysql.compose-external-import.v1'||externalImported.state!=='succeeded'||externalImported.ownership_held||!externalImported.writers_resumed)throw Error('WordPress external import did not settle with writers resumed');
+    await expect(external).toContainText('External import '+externalImportID+' · succeeded');
+    if(sample.name==='plain')safe.wordpress_mysql_external_s3_plain_import=true;
+    else safe.wordpress_mysql_external_s3_gzip_import=true;
+  }
+  await checkWordPress('external_mysql_import');
   await report('database_checked',postID);
   const terminal=await state('complete_mysql');
   const held=await checkedResponse(await context.request.get('/api/v1/database-backups/'+terminal.id),200);
