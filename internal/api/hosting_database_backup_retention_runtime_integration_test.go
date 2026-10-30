@@ -472,11 +472,11 @@ func databaseRetentionObservationDocument(raw []byte) bool {
 	}
 }
 
-func databaseRetentionObserveRemote(ctx context.Context, client *s3.Client, key string) string {
+func databaseRetentionObserveRemote(ctx context.Context, client *s3.Client, bucket, key string) string {
 	out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String("nerocd-runtime"), Prefix: aws.String(key), MaxKeys: aws.Int32(2),
+		Bucket: aws.String(bucket), Prefix: aws.String(key), MaxKeys: aws.Int32(2),
 	})
-	if err != nil || out == nil || out.Name == nil || *out.Name != "nerocd-runtime" ||
+	if err != nil || out == nil || out.Name == nil || *out.Name != bucket ||
 		out.Prefix == nil || *out.Prefix != key || out.IsTruncated == nil || *out.IsTruncated ||
 		out.KeyCount == nil || *out.KeyCount != int32(len(out.Contents)) || len(out.Contents) > 2 || len(out.CommonPrefixes) != 0 {
 		return "unknown"
@@ -534,7 +534,7 @@ func (x *databaseRetentionFixture) assertCopies(p databaseRetentionPreview, dele
 				CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("observation redirect denied") },
 			})
 			ctx, cancel := context.WithTimeout(x.f.t.Context(), 3*time.Second)
-			observation := databaseRetentionObserveRemote(ctx, client, key)
+			observation := databaseRetentionObserveRemote(ctx, client, "nerocd-runtime", key)
 			cancel()
 			transport.CloseIdleConnections()
 			if observation == "unknown" {
@@ -1702,6 +1702,8 @@ func TestDatabaseBackupRetentionUnknownFaultScope(t *testing.T) {
 // The SDK decodes these in-memory HTTP responses, so parsing failures exercise
 // the same boundary as physical Silo observations without starting a service.
 type databaseRetentionObservationHTTP struct {
+	bucket  string
+	key     string
 	status  int
 	body    string
 	err     error
@@ -1712,7 +1714,14 @@ type databaseRetentionObservationHTTP struct {
 
 func (c *databaseRetentionObservationHTTP) Do(r *http.Request) (*http.Response, error) {
 	c.calls++
-	c.scoped = r.Method == "GET" && r.URL.Scheme == "http" && r.URL.Host == "127.0.0.1:9000" && r.URL.Path == "/nerocd-runtime" && r.URL.Query().Get("list-type") == "2" && r.URL.Query().Get("prefix") == "nerocd/postgresql/owned-backup/archive.dump" && r.URL.Query().Get("max-keys") == "2"
+	bucket, key := c.bucket, c.key
+	if bucket == "" {
+		bucket = "nerocd-runtime"
+	}
+	if key == "" {
+		key = "nerocd/postgresql/owned-backup/archive.dump"
+	}
+	c.scoped = r.Method == "GET" && r.URL.Scheme == "http" && r.URL.Host == "127.0.0.1:9000" && r.URL.Path == "/"+bucket && r.URL.Query().Get("list-type") == "2" && r.URL.Query().Get("prefix") == key && r.URL.Query().Get("max-keys") == "2"
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -1728,52 +1737,60 @@ type databaseRetentionObservationReadError struct{ err error }
 func (r databaseRetentionObservationReadError) Read([]byte) (int, error) { return 0, r.err }
 
 func TestDatabaseBackupRetentionRemoteAbsenceRequiresSuccessfulObservation(t *testing.T) {
-	const key = "nerocd/postgresql/owned-backup/archive.dump"
-	inventory := func(contents string, count int, truncated bool) string {
-		return fmt.Sprintf(`<ListBucketResult><Name>nerocd-runtime</Name><Prefix>%s</Prefix><KeyCount>%d</KeyCount><IsTruncated>%t</IsTruncated>%s</ListBucketResult>`, key, count, truncated, contents)
-	}
-	present := "<Contents><Key>" + key + "</Key></Contents>"
-	canary := "private-error-url-credential-canary"
-	for _, tc := range []struct {
-		name, body, want string
-		status           int
-		err, readErr     error
-	}{
-		{name: "missing", status: 200, body: inventory("", 0, false), want: "missing"},
-		{name: "present", status: 200, body: inventory(present, 1, false), want: "present"},
-		{name: "different_suffix", status: 200, body: inventory("<Contents><Key>"+key+".other</Key></Contents>", 1, false), want: "missing"},
-		{name: "transport_failure", err: errors.New(canary), want: "unknown"},
-		{name: "command_failure", err: errors.New("exit status 1: " + canary), want: "unknown"},
-		{name: "authorization_failure", status: 403, body: "<Error><Code>AccessDenied</Code><Message>" + canary + "</Message></Error>", want: "unknown"},
-		{name: "server_failure", status: 500, body: canary, want: "unknown"},
-		{name: "not_found_error", status: 404, body: "<Error><Code>NoSuchKey</Code></Error>", want: "unknown"},
-		{name: "deadline", err: context.DeadlineExceeded, want: "unknown"},
-		{name: "parsing_failure", status: 200, body: "<ListBucketResult><broken>" + canary, want: "unknown"},
-		{name: "wrong_root", status: 200, body: strings.ReplaceAll(inventory("", 0, false), "ListBucketResult", "UnexpectedRoot"), want: "unknown"},
-		{name: "malformed_tail", status: 200, body: inventory("", 0, false) + "<broken", want: "unknown"},
-		{name: "second_root", status: 200, body: inventory("", 0, false) + "<another/>", want: "unknown"},
-		{name: "overflow_after_root", status: 200, body: inventory("", 0, false) + strings.Repeat(" ", 65<<10), want: "unknown"},
-		{name: "read_error_after_root", status: 200, body: inventory("", 0, false), readErr: errors.New(canary), want: "unknown"},
-		{name: "empty_response", status: 200, want: "unknown"},
-		{name: "oversize_response", status: 200, body: "<ListBucketResult><Name>" + strings.Repeat("x", 65<<10) + "</Name></ListBucketResult>", want: "unknown"},
-		{name: "truncated", status: 200, body: inventory("", 0, true), want: "unknown"},
-		{name: "count_mismatch", status: 200, body: inventory("", 1, false), want: "unknown"},
-		{name: "over_bound", status: 200, body: inventory(present+present+present, 3, false), want: "unknown"},
-		{name: "wrong_bucket", status: 200, body: strings.ReplaceAll(inventory("", 0, false), "nerocd-runtime", canary), want: "unknown"},
-		{name: "wrong_prefix", status: 200, body: strings.ReplaceAll(inventory("", 0, false), key, canary), want: "unknown"},
-		{name: "outside_prefix", status: 200, body: inventory("<Contents><Key>"+canary+"</Key></Contents>", 1, false), want: "unknown"},
-		{name: "missing_key", status: 200, body: inventory("<Contents></Contents>", 1, false), want: "unknown"},
-		{name: "incomplete_inventory", status: 200, body: "<ListBucketResult><Name>nerocd-runtime</Name></ListBucketResult>", want: "unknown"},
+	for _, profile := range []struct{ name, bucket, key string }{
+		{"native_postgresql", "nerocd-runtime", "nerocd/postgresql/owned-backup/archive.dump"},
+		{"native_mysql", "nerocd-runtime", domain.BackupRemoteObjectKey("owned-backup", domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 123, Format: "mysql_sql"})},
+		{"wordpress_mysql", "nerocd-storage-runtime", domain.BackupRemoteObjectKey("owned-backup", domain.HostingDatabaseBackupBlob{Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 123, Format: "mysql_sql"})},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			wire := &databaseRetentionObservationHTTP{status: tc.status, body: tc.body, err: tc.err, readErr: tc.readErr}
-			client := databaseRetentionObservationClient("fixture-access", "fixture-secret", wire)
-			got := databaseRetentionObserveRemote(t.Context(), client, key)
-			if got != tc.want {
-				t.Fatalf("observation classification = %q, want %q", got, tc.want)
+		t.Run(profile.name, func(t *testing.T) {
+			key, bucket := profile.key, profile.bucket
+			inventory := func(contents string, count int, truncated bool) string {
+				return fmt.Sprintf(`<ListBucketResult><Name>%s</Name><Prefix>%s</Prefix><KeyCount>%d</KeyCount><IsTruncated>%t</IsTruncated>%s</ListBucketResult>`, bucket, key, count, truncated, contents)
 			}
-			if wire.calls != 1 || !wire.scoped {
-				t.Fatal("observation must make exactly one bounded request for the owned exact prefix")
+			present := "<Contents><Key>" + key + "</Key></Contents>"
+			canary := "private-error-url-credential-canary"
+			for _, tc := range []struct {
+				name, body, want string
+				status           int
+				err, readErr     error
+			}{
+				{name: "missing", status: 200, body: inventory("", 0, false), want: "missing"},
+				{name: "present", status: 200, body: inventory(present, 1, false), want: "present"},
+				{name: "different_suffix", status: 200, body: inventory("<Contents><Key>"+key+".other</Key></Contents>", 1, false), want: "missing"},
+				{name: "transport_failure", err: errors.New(canary), want: "unknown"},
+				{name: "command_failure", err: errors.New("exit status 1: " + canary), want: "unknown"},
+				{name: "authorization_failure", status: 403, body: "<Error><Code>AccessDenied</Code><Message>" + canary + "</Message></Error>", want: "unknown"},
+				{name: "server_failure", status: 500, body: canary, want: "unknown"},
+				{name: "not_found_error", status: 404, body: "<Error><Code>NoSuchKey</Code></Error>", want: "unknown"},
+				{name: "deadline", err: context.DeadlineExceeded, want: "unknown"},
+				{name: "parsing_failure", status: 200, body: "<ListBucketResult><broken>" + canary, want: "unknown"},
+				{name: "wrong_root", status: 200, body: strings.ReplaceAll(inventory("", 0, false), "ListBucketResult", "UnexpectedRoot"), want: "unknown"},
+				{name: "malformed_tail", status: 200, body: inventory("", 0, false) + "<broken", want: "unknown"},
+				{name: "second_root", status: 200, body: inventory("", 0, false) + "<another/>", want: "unknown"},
+				{name: "overflow_after_root", status: 200, body: inventory("", 0, false) + strings.Repeat(" ", 65<<10), want: "unknown"},
+				{name: "read_error_after_root", status: 200, body: inventory("", 0, false), readErr: errors.New(canary), want: "unknown"},
+				{name: "empty_response", status: 200, want: "unknown"},
+				{name: "oversize_response", status: 200, body: "<ListBucketResult><Name>" + strings.Repeat("x", 65<<10) + "</Name></ListBucketResult>", want: "unknown"},
+				{name: "truncated", status: 200, body: inventory("", 0, true), want: "unknown"},
+				{name: "count_mismatch", status: 200, body: inventory("", 1, false), want: "unknown"},
+				{name: "over_bound", status: 200, body: inventory(present+present+present, 3, false), want: "unknown"},
+				{name: "wrong_bucket", status: 200, body: strings.ReplaceAll(inventory("", 0, false), bucket, canary), want: "unknown"},
+				{name: "wrong_prefix", status: 200, body: strings.ReplaceAll(inventory("", 0, false), key, canary), want: "unknown"},
+				{name: "outside_prefix", status: 200, body: inventory("<Contents><Key>"+canary+"</Key></Contents>", 1, false), want: "unknown"},
+				{name: "missing_key", status: 200, body: inventory("<Contents></Contents>", 1, false), want: "unknown"},
+				{name: "incomplete_inventory", status: 200, body: "<ListBucketResult><Name>" + bucket + "</Name></ListBucketResult>", want: "unknown"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					wire := &databaseRetentionObservationHTTP{bucket: bucket, key: key, status: tc.status, body: tc.body, err: tc.err, readErr: tc.readErr}
+					client := databaseRetentionObservationClient("fixture-access", "fixture-secret", wire)
+					got := databaseRetentionObserveRemote(t.Context(), client, bucket, key)
+					if got != tc.want {
+						t.Fatalf("observation classification = %q, want %q", got, tc.want)
+					}
+					if wire.calls != 1 || !wire.scoped {
+						t.Fatal("observation must make exactly one bounded request for the owned exact prefix")
+					}
+				})
 			}
 		})
 	}

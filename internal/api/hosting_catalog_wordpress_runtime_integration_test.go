@@ -1138,7 +1138,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	observerTransport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 3 * time.Second}
 	defer observerTransport.CloseIdleConnections()
 	observer := databaseRetentionObservationClient(silo.access, silo.secret, &http.Client{Transport: observerTransport, Timeout: 3 * time.Second})
-	if databaseRetentionObserveRemote(t.Context(), observer, thirdObject) != "present" || databaseRetentionObserveRemote(t.Context(), observer, fourthObject) != "present" {
+	if databaseRetentionObserveRemote(t.Context(), observer, "nerocd-storage-runtime", thirdObject) != "present" || databaseRetentionObserveRemote(t.Context(), observer, "nerocd-storage-runtime", fourthObject) != "present" {
 		t.Fatal("WordPress independent automatic local pruning changed surviving remote objects")
 	}
 	t.Log("COMPOSE_MYSQL_DATABASE_RETENTION_AUTOMATIC_PASS saved scoped automatic policy; real later publications; third local absent, remote survivor and newest fourth preserved")
@@ -1264,7 +1264,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 				}
 			}
 		} else if item.Location == "remote" && (item.Selected || item.Availability == "available") {
-			observation := databaseRetentionObserveRemote(t.Context(), observer, domain.BackupRemoteObjectKey(saved.ID, *saved.Blob))
+			observation := databaseRetentionObserveRemote(t.Context(), observer, "nerocd-storage-runtime", domain.BackupRemoteObjectKey(saved.ID, *saved.Blob))
 			if item.Selected {
 				remoteDeleted++
 				if observation != "missing" {
@@ -1278,7 +1278,7 @@ func wordpressRuntimeDatabaseBackupImport(t *testing.T, f *storageRuntimeFixture
 	if selectedCount != len(manual.Items) || remoteDeleted == 0 || !newestProtected {
 		t.Fatal("WordPress retention exact selection or newest protection missing")
 	}
-	if databaseRetentionObserveRemote(t.Context(), observer, fourthObject) != "present" {
+	if databaseRetentionObserveRemote(t.Context(), observer, "nerocd-storage-runtime", fourthObject) != "present" {
 		t.Fatal("WordPress newest remote archive unavailable for failure qualification")
 	}
 	assertSource()
