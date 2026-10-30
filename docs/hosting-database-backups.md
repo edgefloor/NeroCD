@@ -459,3 +459,49 @@ Replay is authenticated API replay, not physical UI response-loss recovery.
 This remains one Linux arm64 rootful Docker destination with fixture-CA HTTPS.
 Resumable/chunked uploads, server-local paths, broader engine profiles and full
 Coolify parity remain open. Prior qualifications retain their original scope.
+
+
+## Download a saved local backup
+
+With `--hosting-database-backup-download` enabled on both controller and runner,
+project owners can use **Download** on a succeeded native or Compose PostgreSQL/MySQL
+backup. The runner needs `hosting_database_backup_download_v1` alongside its existing
+database execution capabilities. Enrollment supports up to 64 capabilities; the
+tag limit remains 32.
+
+The download returns the original local archive, from five bytes through 1 GiB,
+with the saved digest and size. PostgreSQL custom archives use `<backup-id>.dump`;
+MySQL SQL archives use `<backup-id>.sql`. It creates no dump and does not stop
+writers. Current owner, destination and runner authority still apply, but a live
+source deployment or database credentials are not required. A missing or deleted
+local copy is unavailable even when a successful S3 copy exists; this action never
+fetches remote bytes.
+
+A fenced local read holds the copy against retention for the bounded transfer.
+One actor can have one active database download, with two per controller and a
+300-second deadline. Cancellation or authority loss interrupts the stream. There
+is no Range, resume or restart byte replay. If the browser received the bytes but
+the runner lost its acknowledgment, recovery settles terminal metadata without
+sending the archive again; browser delivery and runner outcome can differ.
+
+### Database download qualification
+
+Qualification33 at `4e8139ef` passed on 2026-10-30: all fourteen markers,
+selected test 231.67 seconds, gate exit zero after 320.774 seconds. The actual
+WordPress/MySQL browser attachment matched the saved filename, length and digest;
+a deleted local copy had no link and returned 404 despite its recorded remote
+survivor. Source records/uploads, redeploy, Stop/Start, schedules, retention,
+imports, corrupt/partial SQL safeguards, responsive/served assets, credential scans
+and exact owned cleanup passed. Native database resources and PostgreSQL variants
+have focused format, authority, retention and HTTP/service/PostgreSQL completion
+evidence, rather than separate physical deployment qualifications.
+
+The [safe evidence index](/Users/bubble/.local/share/nerocd/acceptance/runtime-hosting-compose-mysql-20261029/4e8139eff261cf43e4a9be8fe839d9c6e9e93b3c/evidence-index.json)
+binds source, artifacts, checks and reviews. It preserves three failed full runs:
+enrollment capacity, runtime identity projection and service completion admission.
+Their full commands cost 842.742 seconds; the one-qualification aim was not met.
+The repaired boundaries have focused before/after evidence, including real
+HTTPS/service/PostgreSQL completion and replay. Full Go tests and affected later
+checks retain their exact revision/dependency scope. Editing durations are
+unmeasured; test and review intervals remain separate. Prior accepted import and
+backup scopes are unchanged.

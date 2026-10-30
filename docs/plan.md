@@ -95,7 +95,11 @@ without another archive or interruption. Scheduled remote copies
 [passed qualification at `26998a435`](hosting-storage-remote-backups.md#compose-remote-schedule-qualification),
 including local success through denied upload and same-archive retry.
 Local archive download is [accepted at `ff6b200c`](hosting-storage-archive.md#local-download-qualification)
-for the bounded single-controller profile, with native Compose browser proof. The pinned PHP reference has no
+for the bounded single-controller profile, with native Compose browser proof.
+[Local database backup download](hosting-database-backups.md#database-download-qualification)
+is accepted at `4e8139ef`: exact saved MySQL browser bytes, no remote fallback,
+with focused native/Compose PostgreSQL/MySQL coverage and physical Compose MySQL proof.
+The pinned PHP reference has no
 archive restore action: `VolumeBackupRecoveryJob` resumes stopped containers and
 cleans partial remote uploads. Compose archive restore and coordinated database
 and upload recovery are separate NeroCD expansions, not missing upstream restore
