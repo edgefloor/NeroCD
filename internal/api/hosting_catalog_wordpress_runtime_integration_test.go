@@ -49,6 +49,48 @@ func TestHostingCatalogWordPressMySQLCompiledRunnerHTTPS(t *testing.T) {
 	wordpressRuntimeScenario(t, true)
 }
 
+func TestWordPressMySQLFixtureEnrollmentProfile(t *testing.T) {
+	t.Setenv("NEROCD_CATALOG_RUNTIME", "disposable-dind")
+	t.Setenv("NEROCD_COMPOSE_RUNTIME", "disposable-dind")
+	t.Setenv("NEROCD_WORDPRESS_MYSQL_RUNTIME", "true")
+	t.Setenv("NEROCD_GIT_COMPOSE_RUNTIME", "")
+	t.Setenv("NEROCD_CATALOG_APPLICATION", "wordpress")
+	capabilities := storageRuntimeCapabilities(false)
+	distinct := map[string]bool{}
+	for _, capability := range capabilities {
+		distinct[capability] = true
+	}
+	if len(capabilities) != 33 || len(distinct) != len(capabilities) {
+		t.Fatalf("exact WordPress MySQL profile entries=%d distinct=%d", len(capabilities), len(distinct))
+	}
+	if !distinct[domain.HostingDatabaseBackupDownloadCapability] {
+		t.Fatal("download capability missing from actual fixture profile")
+	}
+	server, _ := newTestServer()
+	token := createTestSession(t, server)
+	input := app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: capabilities}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded app.RunnerEnrollmentInput
+	if !decodeBody(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/runner-enrollments", bytes.NewReader(raw)), &decoded) || !reflect.DeepEqual(decoded, input) {
+		t.Fatal("actual fixture enrollment body decoder changed")
+	}
+	request := httptest.NewRequest("POST", "/api/v1/runner-enrollments", bytes.NewReader(raw))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("actual fixture enrollment status=%d want201: %s", response.Code, response.Body.String())
+	}
+	var created app.CreatedRunnerEnrollment
+	if json.Unmarshal(response.Body.Bytes(), &created) != nil || !reflect.DeepEqual(created.Enrollment.Capabilities, capabilities) {
+		t.Fatal("actual fixture enrollment changed supported capabilities")
+	}
+}
+
 func TestWordPressInitialCatalogCommittedRetryContract(t *testing.T) {
 	browser := &catalogRuntimeBrowser{}
 	testHostingCatalogHTTPCurrentLookupAndRuntimeDefinitions(t, "wordpress-with-mysql", browser.serve)

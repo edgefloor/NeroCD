@@ -170,6 +170,37 @@ func storageRuntimeTrust(t *testing.T, root string) (*x509.CertPool, []byte) {
 	return nil, nil
 }
 
+func storageRuntimeCapabilities(archive bool) []string {
+	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability}
+	if archive && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
+		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
+		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+			caps = append(caps, "hosting_storage_backup_download_v1", "hosting_compose_storage_archive_v1", domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability, "hosting_compose_storage_remote_v1")
+		}
+	}
+	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
+		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
+		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
+			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
+			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
+				caps = append(caps, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability)
+				caps = append(caps, "hosting_compose_mysql_backup_v1")
+				if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
+					caps = append(caps, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, domain.HostingDatabaseMySQLRemoteRestoreCapability, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseMySQLBackupRetentionCapability)
+					caps = append(caps, domain.RunTypeDatabaseImportStage, domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportCapability, domain.HostingDatabaseImportUploadCapability, domain.HostingDatabaseBackupDownloadCapability)
+				}
+			}
+		}
+	}
+	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
+		caps = append(caps, "hosting_registry_pull_v1", domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability, domain.HostingApplicationDatabaseCapability)
+	}
+	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
+		caps = append(caps, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability)
+	}
+	return caps
+}
+
 func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixture {
 	t.Helper()
 	if os.Getenv("NEROCD_STORAGE_RUNTIME") != "disposable-dind" {
@@ -280,12 +311,10 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 		Token string `json:"token"`
 	}](f, "", http.MethodPost, "/api/v1/sessions", map[string]string{"email": "admin@example.local", "password": "admin"}, 201)
 	f.token = login.Token
-	caps := []string{domain.RunTypeComposeDeploy, domain.RunTypeImageDeploy, domain.HostingReleasePortsCapability, domain.RunTypeProxyApply, domain.HostingProxyVerifiedSwitchCapability, domain.HostingOwnedStorageCapability}
+	caps := storageRuntimeCapabilities(len(archive) > 0 && archive[0])
 	if len(archive) > 0 && archive[0] && os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
 		storageRuntimeConfigureArchive(t, f, pg)
-		caps = append(caps, domain.RunTypeStorageArchive, domain.HostingStorageArchiveCapability)
 		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, "hosting_storage_backup_download_v1", "hosting_compose_storage_archive_v1", domain.RunTypeStorageBackupTransfer, domain.HostingStorageBackupRemoteCapability, "hosting_compose_storage_remote_v1")
 			raw, err := os.ReadFile(f.archiveConfig)
 			if err != nil {
 				t.Fatal("Compose remote archive configuration unavailable")
@@ -301,26 +330,6 @@ func newStorageRuntimeFixture(t *testing.T, archive ...bool) *storageRuntimeFixt
 				t.Fatal("Compose remote archive configuration write failed")
 			}
 		}
-	}
-	if os.Getenv("NEROCD_CATALOG_RUNTIME") == "disposable-dind" {
-		caps = append(caps, domain.HostingRuntimeEnvironmentCapability, domain.HostingOwnedStorageRuntimeCapability)
-		if os.Getenv("NEROCD_COMPOSE_RUNTIME") == "disposable-dind" {
-			caps = append(caps, domain.HostingRegistryPullCapability, domain.HostingStackCapability, domain.HostingStackLifecycleCapability, domain.HostingRuntimeLogsCapability, domain.HostingStackRuntimeLogsCapability)
-			if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") != "disposable-dind" {
-				caps = append(caps, domain.HostingDatabaseBackupComponentCapability, domain.RunTypeDatabaseBackup, domain.HostingDatabaseBackupCapability, domain.HostingDatabaseMySQLBackupCapability, domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability)
-				caps = append(caps, "hosting_compose_mysql_backup_v1")
-				if os.Getenv("NEROCD_WORDPRESS_MYSQL_RUNTIME") == "true" {
-					caps = append(caps, domain.RunTypeDatabaseBackupTransfer, domain.HostingDatabaseBackupRemoteCapability, domain.HostingDatabaseMySQLBackupRemoteCapability, domain.HostingDatabaseMySQLRemoteRestoreCapability, domain.RunTypeDatabaseBackupRetention, domain.HostingDatabaseMySQLBackupRetentionCapability)
-					caps = append(caps, domain.RunTypeDatabaseImportStage, domain.HostingDatabaseImportStageCapability, domain.RunTypeDatabaseImport, domain.HostingDatabaseImportCapability, domain.HostingDatabaseImportUploadCapability, domain.HostingDatabaseBackupDownloadCapability)
-				}
-			}
-		}
-	}
-	if os.Getenv("NEROCD_CATALOG_APPLICATION") == "private-registry" {
-		caps = append(caps, "hosting_registry_pull_v1", domain.RunTypeDatabaseDeploy, domain.HostingDatabaseCapability, domain.HostingDatabaseMySQLCapability, domain.HostingDatabaseNetworkCaptureCapability, domain.HostingDatabaseUpgradeCapability, domain.HostingApplicationDatabaseCapability)
-	}
-	if os.Getenv("NEROCD_GIT_COMPOSE_RUNTIME") == "disposable-dind" {
-		caps = append(caps, domain.HostingBuildTaskType, domain.HostingPrivateGitCapability, domain.HostingGitComposeBuildCapability, domain.HostingGitComposeArgsCapability, domain.HostingBuildRegistryCapability, domain.HostingBuildSecretsCapability)
 	}
 	f.capabilities = append([]string(nil), caps...)
 	enrollment := storageRuntimeJSON[app.CreatedRunnerEnrollment](f, http.MethodPost, "/api/v1/runner-enrollments", app.RunnerEnrollmentInput{RunnerID: "runner_storage_runtime_fixture", RunnerName: "owned storage fixture", Capabilities: caps}, 201)
